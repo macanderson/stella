@@ -4,7 +4,7 @@
 //! written against: **Rust may additionally have an in-process path, but the
 //! wire path must be the one CI exercises.** If Rust could reach a capability
 //! Python cannot ask for, the wire contract becomes second-class and rots. So
-//! this transport is deliberately not a richer seam — a [`WrapperHandler`]
+//! this transport is not a richer seam — a [`WrapperHandler`]
 //! takes and returns the exact same owned request/response values a
 //! [`SubprocessWrapper`](super::SubprocessWrapper) carries over stdio, and
 //! there is nothing a handler can say that a JSON message could not.
@@ -51,8 +51,8 @@ pub trait WrapperHandler: Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`WrapperError::Handler`] is the variant a handler builds for its own
-    /// failures; the transport variants are not reachable from here.
+    /// [`WrapperError::Handler`] is the case a handler builds for its own
+    /// failures; the transport cases are not reachable from here.
     async fn before_turn(
         &self,
         request: BeforeTurnRequest,

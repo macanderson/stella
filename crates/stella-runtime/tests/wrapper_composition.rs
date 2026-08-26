@@ -428,7 +428,7 @@ name = "execute"
 /// Together: at most one arbiter, and only an arbiter has requirements, so a
 /// union over "at most one non-empty set" cannot disagree with itself. If
 /// either half ever loosens, this is the test that goes red, and the fold
-/// needs a check it deliberately does not have.
+/// needs a check it does not have.
 #[test]
 fn only_an_arbiter_may_declare_requirements_which_is_why_they_cannot_collide() {
     let refused = PluginManifest::from_toml_str(DISAGREEING_REQUIREMENT)
@@ -447,7 +447,7 @@ fn only_an_arbiter_may_declare_requirements_which_is_why_they_cannot_collide() {
     .expect("one member's requirements and another's none is a union of one");
 }
 
-/// A composition with no members has no variant id and no stage order, so it
+/// A composition with no members has no pipeline id and no stage order, so it
 /// is refused rather than driving a turn with nothing wrapping it.
 #[test]
 fn an_empty_composition_is_refused() {

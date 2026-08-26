@@ -84,11 +84,11 @@ impl Observer for JsonlSink {
         };
         let Ok(mut json) = serde_json::to_vec(&line) else {
             // Unreachable: every field is serde-clean. Silence beats a panic
-            // here — invariant 5, and losing a log line must never lose a turn.
+            // here — AGENTS.md #5, and losing a log line must never lose a turn.
             return;
         };
         json.push(b'\n');
-        // A failed write is dropped deliberately: stderr being closed or full
+        // A failed write is dropped: stderr being closed or full
         // is not a reason to fail a request that otherwise succeeded.
         if let Ok(mut out) = self.out.lock() {
             let _ = out.write_all(&json);

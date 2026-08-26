@@ -62,8 +62,8 @@ pub struct SessionSpec {
     pub tools: Vec<ToolContract>,
     /// Who this turn's tool calls are made *as*, as far as [`Self::gate`] is
     /// concerned. A host supplies its own opaque identity
-    /// ([`Principal::Host`]); the engine deliberately does not interpret it
-    /// (invariant #1).
+    /// ([`Principal::Host`]); the engine does not interpret it
+    /// (AGENTS.md #1).
     pub principal: Principal,
     /// The authorization gate every remoted tool call passes before its
     /// request frame leaves (#3286) — the same seam, at the same position,

@@ -12,7 +12,7 @@
 //! `Outcome::Met` and reported as "every declared requirement is met", with
 //! nothing anywhere distinguishing an observation from a claim.
 //!
-//! The fixture is deliberately the one from `wrapper_decided_flip.rs`, because
+//! The fixture is the one from `wrapper_decided_flip.rs`, because
 //! that file is the *reference shape* an author copies: its plugin
 //! string-matches the request and asserts a flip it never ran. That is not a
 //! misuse to be scolded — it is what a self-reporting plugin legitimately

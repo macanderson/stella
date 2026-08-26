@@ -37,11 +37,11 @@
 //! sets are *already* two arbiters. One rule subsumes all three.
 //!
 //! Those checks were deleted rather than kept as belt-and-braces. An error
-//! variant that cannot fire is worse than no variant: it reads to the next
+//! case that cannot fire is worse than no case: it reads to the next
 //! maintainer as a guarantee somebody tested, and it is dead code that
 //! survives every gate.
 //!
-//! # What it deliberately does not do
+//! # What it does not do
 //!
 //! It does not merge behaviour, only declarations. The per-round fold — whose
 //! messages land in what order, which role intent wins, how scopes union — is
@@ -72,7 +72,7 @@ pub(crate) struct Composition {
     /// cannot hold anything open: the composition stops after one round, which
     /// is exactly what a set of steering-grade contributors should do.
     ///
-    /// Deliberately one member's grant rather than a merged one. `max_holds`
+    /// One member's grant rather than a merged one. `max_holds`
     /// is a number a human consented to beside a named plugin at install; a
     /// merged ceiling would be a number nobody agreed to.
     pub(crate) hold_grant: LoopGrant,
@@ -83,7 +83,7 @@ pub(crate) struct Composition {
 /// # Errors
 ///
 /// [`WrapperError::EmptyComposition`] for no members, and one of the four
-/// conflict variants in this module's header for members that cannot be
+/// conflict cases in this module's header for members that cannot be
 /// reconciled.
 pub(crate) fn compose(manifests: &[PluginManifest]) -> Result<Composition, WrapperError> {
     if manifests.is_empty() {
@@ -125,7 +125,7 @@ fn merge_stage_order(manifests: &[PluginManifest]) -> Result<Vec<StageName>, Wra
     let mut order: Vec<StageName> = Vec::new();
     // Which member first placed each stage — carried only so a conflict can
     // name both sides rather than only the one that noticed. An association
-    // list rather than a map because `StageName` is deliberately not `Ord`
+    // list rather than a map because `StageName` is not `Ord`
     // (it is an open vocabulary, #3963), and the list is as long as the stage
     // order, which is a handful of entries.
     let mut placed_by: Vec<(StageName, String)> = Vec::new();

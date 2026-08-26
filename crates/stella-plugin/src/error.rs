@@ -1,6 +1,6 @@
-//! Why a manifest was rejected, as a typed answer (invariant 5).
+//! Why a manifest was rejected, as a typed answer (AGENTS.md #5).
 //!
-//! Every variant names the rule it enforces and carries the identifiers a
+//! Every case names the rule it enforces and carries the identifiers a
 //! caller needs to point at the offending declaration. A host surfacing one
 //! of these to a plugin author should be able to print it verbatim and have
 //! the fix be obvious.
@@ -14,11 +14,11 @@ use crate::wrapper::{HostStage, Signal, SignalKind, StageName};
 
 /// A manifest failed to parse or failed validation.
 ///
-/// Parsing and validation are deliberately one error type: a caller loading a
+/// Parsing and validation are one error type: a caller loading a
 /// manifest cannot act differently on "the TOML was malformed" versus "the
 /// TOML was well-formed but claims a grant it may not have" — both mean the
 /// plugin does not load, and both are the author's to fix. What a caller
-/// *does* branch on is which rule failed, which is what the variants encode.
+/// *does* branch on is which rule failed, which is what the cases encode.
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
     /// The TOML itself was rejected — syntax, an unknown key (every table
@@ -718,9 +718,9 @@ pub enum ManifestError {
 
     /// `[wrapper] id` was empty. The id is what the store's
     /// `pipeline_variant` column records (#3388), so it is the join key of
-    /// every per-variant comparison; a blank one makes a measured run
+    /// every per-pipeline comparison; a blank one makes a measured run
     /// indistinguishable from an unmeasured one.
-    #[error("[wrapper] id must not be empty: it is the variant id every execution row records")]
+    #[error("[wrapper] id must not be empty: it is the pipeline id every execution row records")]
     EmptyWrapperId,
 
     /// `[[wrapper.stages]]` declared no stages. A wrapper that runs no
@@ -788,7 +788,7 @@ pub enum ManifestError {
 
     /// A stage's `if` text is outside the closed condition grammar.
     ///
-    /// Deliberately not a parser suggestion box: the grammar is two shapes
+    /// Not a parser suggestion box: the grammar is two shapes
     /// and stays that way, because a Turing-complete condition in a manifest
     /// is a second program with no gate on it
     /// (`doc:turn-loop-wrappers` §9.4).
@@ -844,7 +844,7 @@ pub enum ManifestError {
 
     /// A condition read a signal that only a **later** stage publishes.
     ///
-    /// The stage-graph check. Without it, a hand-written variant's failure
+    /// The stage-graph check. Without it, a hand-written case's failure
     /// mode is a wedged run at round three; with it, the same manifest is a
     /// rejection with a reason at load.
     #[error(

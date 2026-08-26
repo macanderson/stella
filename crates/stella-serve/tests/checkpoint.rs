@@ -271,7 +271,7 @@ async fn a_served_turn_writes_a_resume_point_at_every_step_boundary() {
 /// building an `Engine` would need a provider and a tool executor that
 /// reconstitution never reaches.
 ///
-/// What this deliberately does **not** claim is that *serve* resumes. No route
+/// What this does **not** claim is that *serve* resumes. No route
 /// accepts a checkpoint back, on purpose — a resumed turn's first act is a
 /// reverse request only a host can answer (`crate::checkpoint`'s module docs)
 /// — so the continuing is the host's, in the host's process, and the missing
@@ -359,7 +359,7 @@ async fn a_resume_point_outlives_the_session_it_belongs_to() {
 async fn a_checkpoint_is_returned_byte_for_byte() {
     let (addr, store) = start_durable_server().await;
     let id = "session-0123456789abcdef0123456789abcdef";
-    // Deliberately NOT alphabetical: `version` then `step` is declaration
+    // NOT alphabetical: `version` then `step` is declaration
     // order, and an accidental re-encode would sort `step` first.
     let stored = "{\"version\":1,\"step\":4,\"zeta\":true,\"alpha\":false}";
     store.put(&CheckpointKey::new(id).unwrap(), stored).unwrap();

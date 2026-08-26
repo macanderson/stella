@@ -18,7 +18,7 @@
 //! [`CalibrationMap`] keys by the model string the provider reports, and says
 //! so: the provider dimension is handled "where samples are persisted", which
 //! for the CLI is `stella-store` keying telemetry by `(provider, model)`. This
-//! crate deliberately has no store, so that half has to live here — hence a
+//! crate has no store, so that half has to live here — hence a
 //! map *per `provider_id`*, minted on first use. Without it two hosts pointing
 //! `openai` and `openai-compatible-proxy` at the same model name would blend
 //! their tokenizers' drift into one average that describes neither.

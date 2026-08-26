@@ -1906,7 +1906,7 @@ export interface ProposedHunk {
 /**
  * One streamed fragment of an in-flight model completion.
  *
- * Text and thinking are distinct variants rather than one string because the
+ * Text and thinking are distinct cases rather than one string because the
  * two must never be confused downstream: thinking renders as collapsible,
  * visibly-secondary content while answer text is the reply — the same
  * separation `ToolCallObserver` keeps between `text_delta` and
@@ -2461,7 +2461,7 @@ export type Withholder = "project_untrusted" | "managed_ceiling";
  * One frame emitted by the engine toward the host over the outbound stream.
  *
  * Not `Clone`: every frame is produced once and moved onto the channel, so no
- * consumer ever needs a second copy. The variants own their payloads outright
+ * consumer ever needs a second copy. The cases own their payloads outright
  * rather than borrowing — the port adapters in `remote.rs` pay whatever copy
  * that costs once, at construction (a completion request arrives borrowed and
  * is materialized with `CompletionRequestRef::into_owned`; a tool's `input`
@@ -2515,7 +2515,7 @@ export type KnownTypeTag =
 // ── the envelope ────────────────────────────────────────────────────────────
 //
 // `seq` is added by the transport at delivery time, not by the engine, so it
-// is not a field on any ServerFrame variant above. On the wire it sits
+// is not a field on any ServerFrame case above. On the wire it sits
 // alongside them: `{"seq":12,"type":"event","event":{…}}`.
 //
 // It is monotonic and gapless in DELIVERY order, starting at 1, and is also
@@ -2638,7 +2638,7 @@ export interface ProviderDeltaIn {
 // reported in the create response's `clamped` array as
 // {knob, requested, effective} — a request is never silently honored at a
 // value it did not get. retry_policy and loop_detection are operator policy
-// and are deliberately not on this object.
+// and are not on this object.
 
 /**
  * The caller-policy slice of `EngineConfig`, settable per turn (#1167) as

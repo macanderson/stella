@@ -12,7 +12,7 @@
 //! missed before — and a hard blocker tomorrow, because `stella-serve` cannot
 //! link a binary.
 //!
-//! This crate is that shared home. It is deliberately the *bottom* half of the
+//! This crate is that shared home. It is the *bottom* half of the
 //! stack only: resources, not ports. See [`SessionRuntime`] for where the line
 //! falls and why.
 //!
@@ -35,7 +35,7 @@
 //! `stella-cli`'s seven drivers, which have all five resources and re-type the
 //! assembly today.
 //!
-//! # The invariant
+//! # The rule
 //!
 //! **Nothing in this crate reads the process environment or the current
 //! directory.** Every ambient switch the CLI consults — `STELLA_NO_SETTINGS`,
@@ -56,7 +56,7 @@
 //!
 //! [`wrapper`] is the turn-loop wrapper contract (#3380, `doc:wrapper-socket`).
 //! It is here for the same reason the construction sequence is: `before_turn`
-//! performs recall and `after_turn` spawns processes, which invariant 2 forbids
+//! performs recall and `after_turn` spawns processes, which AGENTS.md #2 forbids
 //! in `stella-core`, and this crate already owns the layer above the engine
 //! while reading no ambient environment. `judge` and `again` are free functions
 //! beside the trait — synchronous, total and I/O-free — so no plugin, in any

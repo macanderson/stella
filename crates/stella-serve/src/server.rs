@@ -360,7 +360,7 @@ impl ServeConfig {
 /// # Operational limits
 ///
 /// This is a sidecar for one trusted host, not an internet-facing server, and
-/// the deployment must supply what it deliberately omits:
+/// the deployment must supply what it omits:
 ///
 /// - **Turns are capped, connections are not.** At most 32 may be registered at
 ///   once — past that, `POST /v1/turns` answers `429` with a `Retry-After` —

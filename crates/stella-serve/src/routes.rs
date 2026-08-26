@@ -52,7 +52,7 @@ struct TurnRequest {
     /// The host's own identity for this turn's tool calls, opaque to the
     /// engine (#3286) — it reaches the authorization gate as
     /// `Principal::Host(id)` and nothing engine-side interprets it
-    /// (invariant #1). Omitted reads as an unnamed host.
+    /// (AGENTS.md #1). Omitted reads as an unnamed host.
     #[serde(default)]
     principal: Option<String>,
     messages: Vec<CompletionMessage>,
@@ -306,7 +306,7 @@ pub(crate) async fn method_not_allowed(
 /// `GET /healthz` — liveness. Is this process alive?
 ///
 /// Unauthenticated, and unconditionally `200` while the process can answer at
-/// all. It deliberately says nothing about whether the server should be sent
+/// all. It says nothing about whether the server should be sent
 /// work: that is [`handle_ready`]'s question, and conflating the two is what
 /// makes an orchestrator either restart a draining instance (reading
 /// not-ready as dead) or keep routing to it (having no way to ask).
@@ -340,7 +340,7 @@ pub(crate) async fn handle_ready(
 /// Authenticated on purpose (#930 asks for exactly this): occupancy, 401 counts
 /// and reverse-request timings describe the host's traffic, and an open metrics
 /// endpoint is a free reconnaissance surface. Pull, never push — nothing here
-/// dials out, per AGENTS.md invariant 3.
+/// dials out, per AGENTS.md #3.
 pub(crate) async fn handle_metrics(
     res: &mut Responder<'_>,
     state: &ServerState,
@@ -587,7 +587,7 @@ pub(crate) async fn handle_events(
     // ending is final, so the session drops here and `Drop for Session`
     // cancels the turn, releasing its thread now rather than at end of scope.
     //
-    // Asked of the reason rather than compared against one variant: a hang-up
+    // Asked of the reason rather than compared against one case: a hang-up
     // surfaces as an EOF *or* as the failed write that follows it, whichever
     // the `select!` in `stream_frames` happens to see first, and both have to
     // land here. See `StreamEndReason::leaves_the_turn_resumable`.
@@ -698,7 +698,7 @@ async fn write_replay(
 
 /// The frame sent when a client's resume point has already been evicted.
 ///
-/// Its own `type`, not a `ServerFrame` variant: this is a statement about the
+/// Its own `type`, not a `ServerFrame` case: this is a statement about the
 /// *transport* — what the server can no longer supply — not something the
 /// engine produced, and folding it into the engine's frame vocabulary would
 /// oblige every non-resuming consumer to handle a case it can never see.
@@ -1085,7 +1085,7 @@ pub(crate) async fn handle_resume(
 /// matters and `200` only while the in-memory copy made it redundant.
 ///
 /// So `200` here does not mean "this session exists" — it means "this id has a
-/// resume point", and those are deliberately different questions. A live
+/// resume point", and those are different questions. A live
 /// session and a crashed one are indistinguishable on this route, which is
 /// what lets a host recover without first knowing whether it needs to.
 ///

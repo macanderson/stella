@@ -59,7 +59,7 @@ use crate::wrapper::{StageName, Wrapper};
 ///
 /// A monotone ladder: each grade includes every grade below it, which is what
 /// [`Participation::includes`] encodes and the derived ordering makes
-/// mechanical. The variants are declared weakest-first so `Ord` *is* the
+/// mechanical. The cases are declared weakest-first so `Ord` *is* the
 /// ladder — reordering them would silently invert every gate built on it.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
@@ -330,7 +330,7 @@ pub struct Subloop {
 
 /// One `[roles.<name>]` entry — a routing *intent*, never a credential or a
 /// URL. The host resolves the tier against the user's BYOK providers
-/// (parity invariant 8), soft-failing to the session default with a notice.
+/// (parity AGENTS.md #8), soft-failing to the session default with a notice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Role {
@@ -388,7 +388,7 @@ pub struct PluginManifest {
     /// Arbiter only: the enumerable definition of done. Keys are the names
     /// a hold cites; values are the human-readable statement of each
     /// requirement. A `BTreeMap` so iteration order is deterministic
-    /// (invariant 7's discipline — anything that reaches a prompt or a
+    /// (AGENTS.md #7's discipline — anything that reaches a prompt or a
     /// journal must not depend on hash order).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirements: Option<BTreeMap<String, String>>,
@@ -425,7 +425,7 @@ pub struct PluginManifest {
     /// each graded in the gate's own [`stella_protocol::RiskLevel`], with the
     /// reason a human reads at install (`doc:pipeline-as-plugins` §A1).
     ///
-    /// Deliberately gated on **no** participation grade. The `[loop]` ladder
+    /// Gated on **no** participation grade. The `[loop]` ladder
     /// governs a plugin's say in the turn; this governs what it may touch,
     /// and the two are orthogonal: a `none`-grade content bundle shipping one
     /// custom tool that runs `git push` is asking for more of the world than
@@ -498,7 +498,7 @@ impl PluginManifest {
     /// The only constructor that vouches for a manifest: parsing enforces
     /// the shape rules (unknown keys, unknown hook names, unknown grades all
     /// fail here) and validation enforces the cross-field rules (each one
-    /// documented on its [`ManifestError`] variant). Pure — no I/O, no
+    /// documented on its [`ManifestError`] case). Pure — no I/O, no
     /// environment.
     pub fn from_toml_str(text: &str) -> Result<Self, ManifestError> {
         let manifest: PluginManifest = toml::from_str(text)?;
@@ -1274,7 +1274,7 @@ mod tests {
     /// The required assertion is the first one: `participation = "none"` —
     /// the honest grade for a plugin that never runs inside a turn — used to
     /// make every capability unreachable, and that is the defect the phase
-    /// exists to fix. The rest pin the asymmetry deliberately: no grade is
+    /// exists to fix. The rest pin the asymmetry: no grade is
     /// required, no `points` prerequisite applies (a driver call is made during
     /// a driver session, not during a wrapper point), and the `[loop]` rules
     /// that *do* transfer — deduplicated, a coherent allowance — still hold.

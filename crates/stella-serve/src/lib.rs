@@ -31,7 +31,7 @@
 //!
 //! The HTTP/SSE transport that exposes this over a socket is a thin layer on top
 //! of [`Session`] (SSE = the frame stream; POST endpoints = the resolve calls);
-//! it is deliberately a separate slice so the `!Send` concurrency bridge here is
+//! it is a separate slice so the `!Send` concurrency bridge here is
 //! provable in isolation.
 //!
 //! # Bounding a turn that stops making progress
@@ -54,7 +54,7 @@
 //!
 //! # Observing and intervening in a served turn
 //!
-//! Two seams, both added in #1298 and both deliberately shaped by who is
+//! Two seams, both added in #1298 and both shaped by who is
 //! allowed to use them:
 //!
 //! - [`ServeExtension`] is the **operator's** hook plane. Installed in

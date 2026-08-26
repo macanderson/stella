@@ -1,11 +1,11 @@
-//! Why a child conversation failed, as a typed answer (invariant 5) — once for
+//! Why a child conversation failed, as a typed answer (AGENTS.md #5) — once for
 //! the wrapper socket ([`WrapperError`]) and once for the driver channel
 //! ([`DriverError`]).
 //!
 //! The two are siblings rather than one enum with a mode, for
 //! [`driver_call`](super::driver_call)'s reason one layer up: a wrapper answers
 //! a point inside a turn and a driver opens a session that starts them, so half
-//! of [`WrapperError`]'s variants name things a driver cannot reach (a role it
+//! of [`WrapperError`]'s cases name things a driver cannot reach (a role it
 //! did not declare, a mistyped signal, a stage order that would not resolve,
 //! the point it was asked versus the point it answered). Handing a driver's
 //! caller those arms would be handing it a `match` it can never complete
@@ -54,13 +54,13 @@ pub enum WrapperError {
     /// at all: a credential the manifest asked for is dropped at
     /// `SubprocessWrapper::declare` and reported in `AdmittedWrapper::refused`,
     /// and the plugin runs without it exactly as the install consent said it
-    /// would. This variant exists because that report has already been printed
+    /// would. This case exists because that report has already been printed
     /// by the time the registry grows, so a second silent drop would reach
     /// nobody — the plugin would run without a variable its author believed it
     /// had, with nothing anywhere saying why. Refusing the dispatch is what
     /// turns an invisible narrowing back into a sentence somebody reads.
     ///
-    /// A host that catches it reads it the same way as every other variant
+    /// A host that catches it reads it the same way as every other case
     /// here: the wrapper contributed nothing to this point, not that it had
     /// nothing to contribute.
     #[error(
@@ -168,7 +168,7 @@ pub enum WrapperError {
     ///
     /// The refusal a declared-but-ungranted call gets is delivered *to the
     /// plugin*, which is the fail-open direction the channel is built around.
-    /// This variant is the one case where that is impossible: with no gate
+    /// This case is the one case where that is impossible: with no gate
     /// offering a call there is no conversation, so stdin was closed after the
     /// request and there is no way back to the plugin. Reported to the host
     /// instead of waiting for the deadline, because "my plugin hangs" is a much
@@ -196,7 +196,7 @@ pub enum WrapperError {
     /// already died, mid-conversation.
     ///
     /// **Distinct from [`WrapperError::UnannouncedCall`] on purpose**, even
-    /// though both leave a call unanswered: that variant means the manifest
+    /// though both leave a call unanswered: that case means the manifest
     /// declares no `[loop] calls`, or no [`HostCallGate`](super::HostCallGate)
     /// was ever attached — a manifest or host misconfiguration, fixed by
     /// editing `[loop] calls` or attaching a gate. Neither is true here — this
@@ -293,7 +293,7 @@ pub enum WrapperError {
          [roles]"
     )]
     UndeclaredRole {
-        /// The wrapper's variant id.
+        /// The wrapper's pipeline id.
         wrapper: String,
         /// The undeclared intent.
         role: String,
@@ -308,7 +308,7 @@ pub enum WrapperError {
          signal"
     )]
     MistypedSignal {
-        /// The wrapper's variant id.
+        /// The wrapper's pipeline id.
         wrapper: String,
         /// The signal published at the wrong type.
         signal: stella_plugin::Signal,
@@ -321,7 +321,7 @@ pub enum WrapperError {
     /// A manifest was bound to the dispatcher without declaring `[wrapper]`.
     ///
     /// Not a defect in the plugin — a manifest may declare hooks, an oracle and
-    /// nothing else — but there is no stage order to resolve and no variant id
+    /// nothing else — but there is no stage order to resolve and no pipeline id
     /// to record for it, so there is nothing to drive.
     #[error("plugin `{plugin}` declares no [wrapper] block, so it has no stage order to run")]
     NotAWrapper {
@@ -340,10 +340,10 @@ pub enum WrapperError {
     /// guessing.
     ///
     /// The source is boxed because `ManifestError` is the larger of the two
-    /// types by some margin, and every other variant here would pay for it.
+    /// types by some margin, and every other case here would pay for it.
     #[error("wrapper `{wrapper}` could not resolve its stage order: {source}")]
     Unresolvable {
-        /// The wrapper's variant id.
+        /// The wrapper's pipeline id.
         wrapper: String,
         /// Why the resolution failed.
         #[source]
@@ -356,7 +356,7 @@ pub enum WrapperError {
     /// already knows.
     #[error("wrapper `{wrapper}` failed at {point}: {detail}")]
     Handler {
-        /// The wrapper's variant id.
+        /// The wrapper's pipeline id.
         wrapper: String,
         /// Which point it failed at.
         point: stella_plugin::WrapperPoint,
@@ -366,9 +366,9 @@ pub enum WrapperError {
 
     /// A composition was bound with no members at all.
     ///
-    /// Distinct from "the variant names nothing installed", which the host
+    /// Distinct from "the case names nothing installed", which the host
     /// answers before it reaches here: this is a caller handing the dispatcher
-    /// an empty list, which has no variant id and no stage order and would
+    /// an empty list, which has no pipeline id and no stage order and would
     /// otherwise drive a turn with nothing wrapping it.
     #[error("a wrapper composition must name at least one plugin")]
     EmptyComposition,
@@ -400,7 +400,7 @@ pub enum WrapperError {
     /// Two composed manifests are both arbiter-grade.
     ///
     /// One turn has one thing deciding when it is finished. This is the only
-    /// grade conflict a composition can have, and it is deliberately the only
+    /// grade conflict a composition can have, and it is the only
     /// one checked, because the manifest schema makes it subsume the two that
     /// look like siblings: `ManifestError::OracleRequiresArbiter` and
     /// `RequirementsRequireArbiter` both refuse their block below arbiter
@@ -425,7 +425,7 @@ pub enum WrapperError {
 
 /// A driver session could not be opened, or its answer could not be used.
 ///
-/// [`WrapperError`]'s shape, minus every variant that is about standing inside
+/// [`WrapperError`]'s shape, minus every case that is about standing inside
 /// a turn and plus nothing: a driver session has one point, carries no protocol
 /// version on the wire (`stella_plugin::DriveRequest`), and contributes nothing
 /// to a turn that would need admitting. What is left is what can go wrong

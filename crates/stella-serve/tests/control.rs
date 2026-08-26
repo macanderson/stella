@@ -274,7 +274,7 @@ async fn a_paused_turn_holds_at_the_boundary_until_resumed() {
     }
 }
 
-/// The liveness invariant from `stella-serve/src/controls.rs`: a cancel must
+/// The liveness rule from `stella-serve/src/controls.rs`: a cancel must
 /// release the pause gate, or a paused-then-cancelled turn parks its OS
 /// thread forever. This test hangs (and fails on its timeouts) if that
 /// release is ever lost.

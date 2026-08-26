@@ -2,7 +2,7 @@
 //! report, for a plugin that drives turns rather than sitting inside one.
 //!
 //! `doc:backlog-self-driving` §3.0. [`super::host_call`] is the identical
-//! apparatus for the wrapper socket, and this module is deliberately its
+//! apparatus for the wrapper socket, and this module is its
 //! sibling rather than its generalisation: the two share the refusal
 //! vocabulary ([`HostCallRefusal`]) because the reasons a host declines are
 //! properties of asking, not of who asked — and share nothing else, because the
@@ -37,7 +37,7 @@
 //! # What this host can actually do at B0
 //!
 //! Nothing yet, and that is stated rather than implied: [`NoDriverCapabilities`]
-//! answers every verb [`HostCallRefusal::Unsupported`], which is invariant 10's
+//! answers every verb [`HostCallRefusal::Unsupported`], which is AGENTS.md #10's
 //! discipline pointed at capabilities — a declared gap delivered *to* the
 //! driver, never a silence. B1–B6 (#3599) implement the verbs, one family at a
 //! time; this module is what makes it possible for any of them to be held.
@@ -108,7 +108,7 @@ impl DriverCapabilities for NoDriverCapabilities {
 ///
 /// Unreachable on the shipping path — a transport only relays an ask once it
 /// has a session to relay it to — and written as a value rather than an
-/// `expect` because invariant 5 makes no exception for "I checked earlier".
+/// `expect` because AGENTS.md #5 makes no exception for "I checked earlier".
 /// [`NoHostCalls`](super::NoHostCalls) is the same shape in the wrapper
 /// socket's context.
 pub(super) fn unserved(call: DriverCall) -> DriverCallOutcome {
@@ -225,7 +225,7 @@ impl DriverCallGate {
     pub fn refusals(&self) -> Vec<RefusedDriverCall> {
         // A poisoned lock means some other call panicked mid-record; losing the
         // report because of an unrelated panic would be the silence this
-        // apparatus refuses, which is also invariant 5's line for an `unwrap`
+        // apparatus refuses, which is also AGENTS.md #5's line for an `unwrap`
         // on runtime state.
         self.refusals
             .lock()

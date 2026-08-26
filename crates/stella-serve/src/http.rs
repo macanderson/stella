@@ -3,7 +3,7 @@
 //! the read-only dashboard did not: request bodies (POST), bearer auth, and
 //! long-lived Server-Sent-Events responses.
 //!
-//! Deliberately minimal: one request per connection, `Connection: close`, an
+//! Minimal: one request per connection, `Connection: close`, an
 //! SSE writer that streams frames until the turn ends and then closes. Enough
 //! for a governed sidecar behind the host, not a general-purpose server.
 //!
@@ -21,7 +21,7 @@ use tokio::net::TcpStream;
 
 /// Cap on the request head (request line + headers) we will buffer.
 ///
-/// Split from [`MAX_BODY_BYTES`] deliberately: a head and a body are abused in
+/// Split from [`MAX_BODY_BYTES`]: a head and a body are abused in
 /// different ways and deserve different ceilings. No legitimate client sends
 /// 64 KiB of headers, so anything past this is a peer trickling header bytes to
 /// hold the connection — the read deadline bounds how long that can last, and

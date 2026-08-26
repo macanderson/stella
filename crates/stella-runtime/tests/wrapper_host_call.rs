@@ -168,7 +168,7 @@ async fn a_plugin_asks_for_recall_mid_point_and_contributes_what_it_was_given() 
 /// **A plugin that asks and then walks away is named as such** (#3794): it was
 /// served, it exited cleanly, and it never answered the point.
 ///
-/// The distinction is the whole point of the variant. Silence from a plugin
+/// The distinction is the whole point of the case. Silence from a plugin
 /// that asked for nothing is `NoResponse` — a plugin with nothing to say —
 /// and silence from one that was mid-errand names the errand, so its author is
 /// pointed at the call it abandoned rather than at the point in general. The

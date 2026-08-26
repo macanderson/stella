@@ -99,7 +99,7 @@ pub fn seed_calibration(
 ///
 /// The per-dialect match itself lives in `stella_model::factory`, which also
 /// enforces the catalog seed floor, so a phantom model slug is a named error
-/// before any wire call. What this adds is nothing — deliberately. The
+/// before any wire call. What this adds is nothing —. The
 /// *synced-catalog* escalation and its suggestions stay in `stella-cli`,
 /// because that layer owns the on-disk catalog; a caller that wants the
 /// richer diagnostic runs its own validation first and then calls this. That

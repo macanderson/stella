@@ -205,7 +205,7 @@ fn declaring_request(root: &Path, program: &str, args: &[&str]) -> WrapperReques
 /// verification plugin the one that could never reach a credited flip on a
 /// cargo witness. `cargo test --test flip` names `flip`; the artifact is
 /// `tests/flip.rs` by cargo's convention and by nothing in the invocation, and
-/// the host is deliberately forbidden from deriving it (#3587,
+/// the host is forbidden from deriving it (#3587,
 /// `crates/stella-cli/src/wrapper_candidate.rs`).
 ///
 /// What the host does with the declaration — snapshot it, compare after the
@@ -287,7 +287,7 @@ async fn an_invocation_with_no_reachable_artifact_declares_nothing() {
 /// difference between testing the port and testing a second implementation of
 /// the thing that was ported.
 ///
-/// It is the invariant the whole design rests on: `Flipped` is reachable only
+/// It is the rule the whole design rests on: `Flipped` is reachable only
 /// by passing through `Failing` for the same normalized command. A plugin that
 /// credited a green test whose red was never observed would turn "verified" into
 /// "the tests pass", which is what every honest verification story has to
@@ -299,7 +299,7 @@ async fn a_pass_with_no_prior_failure_proves_nothing() {
 
     // The three baselines that are not red. Each pairs with a test that
     // passes, so the *only* thing standing between this and a credited flip is
-    // the invariant.
+    // the rule.
     for baseline in ["not-run", "passed", "unobserved"] {
         let request: WrapperRequest = serde_json::from_str(&format!(
             r#"{{"point":"after_turn","body":{{"protocol_version":1,"wrapper":"witness-v1",
@@ -380,7 +380,7 @@ async fn a_test_that_is_still_red_is_not_achieved_rather_than_unobservable() {
     );
 }
 
-/// The other half of the contract: `AfterTurnResponse` has no error variant,
+/// The other half of the contract: `AfterTurnResponse` has no error case,
 /// so a plugin that cannot answer **fails** — non-zero exit, one line on
 /// stderr, nothing on stdout — and the host reads the silence as
 /// `EvidenceSet::unobserved`.

@@ -329,7 +329,7 @@ const ENVELOPE_SUFFIX: &str = "
 // ── the envelope ────────────────────────────────────────────────────────────
 //
 // `seq` is added by the transport at delivery time, not by the engine, so it
-// is not a field on any ServerFrame variant above. On the wire it sits
+// is not a field on any ServerFrame case above. On the wire it sits
 // alongside them: `{\"seq\":12,\"type\":\"event\",\"event\":{…}}`.
 //
 // It is monotonic and gapless in DELIVERY order, starting at 1, and is also
@@ -400,7 +400,7 @@ const ENGINE_HEADER: &str = "
 // reported in the create response's `clamped` array as
 // {knob, requested, effective} — a request is never silently honored at a
 // value it did not get. retry_policy and loop_detection are operator policy
-// and are deliberately not on this object.
+// and are not on this object.
 ";
 
 const INBOUND_HEADER: &str = "

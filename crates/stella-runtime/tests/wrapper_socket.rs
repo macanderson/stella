@@ -294,7 +294,7 @@ async fn a_wrapper_plugin_participates_in_a_turn_and_the_host_decides_its_verdic
     );
 }
 
-/// Invariant 7, end to end: whatever a wrapper contributes can only become a
+/// AGENTS.md #7, end to end: whatever a wrapper contributes can only become a
 /// message *after* the byte-stable prefix. A wrapper that could reach the
 /// system prompt would make every installed plugin a per-turn cache miss for
 /// every user who installed it.
@@ -345,7 +345,7 @@ async fn a_response_naming_an_undeclared_role_is_refused() {
 /// The child's environment is exactly what it was granted and nothing else.
 /// A plugin is third-party code a user installed; inheriting the operator's
 /// environment would hand it every credential the shell was carrying, which
-/// would make invariant 3 a policy rather than a property.
+/// would make AGENTS.md #3 a policy rather than a property.
 #[tokio::test]
 async fn the_child_sees_exactly_the_environment_it_was_given() {
     // The premise, asserted rather than assumed: this variable really is in
@@ -689,7 +689,7 @@ fn only_an_arbiter_can_hold_a_turn_open() {
 /// visible at install consent, but a bend in the socket's own rule that every
 /// capability arrives in the request (`doc:wrapper-socket` §6).
 ///
-/// The three measurements are deliberately facts about the *filesystem and the
+/// The three measurements are facts about the *filesystem and the
 /// argv*, not echoes: `root_reached` is 1 only if the directory named in the
 /// request really holds the candidate's test file, so a grant carrying a
 /// plausible-looking path nothing lives at scores 0.

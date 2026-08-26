@@ -40,17 +40,17 @@
 //!   wrapper that only works when a TTY or a git checkout is present is a CLI
 //!   feature, not a socket. A wrapper names a *role intent*
 //!   ([`BeforeTurnResponse::role`]); the host resolves it against the user's
-//!   BYOK providers and makes every model call itself (invariant 3).
+//!   BYOK providers and makes every model call itself (AGENTS.md #3).
 //! - **[`PROTOCOL_VERSION`] rides on every message and the contract is
 //!   additive-only.** Every table also denies unknown fields, which is not in
 //!   tension with that: a field the host does not know, at a version the host
 //!   accepts, is a typo — and the crate's whole posture is that a manifest
 //!   which quietly does nothing is worse than one that refuses to load.
-//! - **Invariant 4.** Every type round-trips through `serde_json`
+//! - **AGENTS.md #4.** Every type round-trips through `serde_json`
 //!   byte-for-byte; `tests/wire_contract.rs` asserts it rather than promising
 //!   it.
 //!
-//! # Invariant 7 is encoded, not remembered
+//! # AGENTS.md #7 is encoded, not remembered
 //!
 //! Contributed context is a [`VolatileContext`], whose body is a private field
 //! and whose only exit is [`VolatileContext::into_message`], returning a
@@ -79,7 +79,7 @@ use crate::wrapper::{Signal, SignalKind, StageName};
 
 /// The version every message on this wire carries.
 ///
-/// Additive-only: a new optional field, a new enum variant with a default, a
+/// Additive-only: a new optional field, a new enum case with a default, a
 /// new `[roles]` intent all keep this number. It moves only for a change a
 /// version-1 reader could misread, and a host refuses a message whose version
 /// is *above* the one it supports rather than silently dropping the half it
@@ -88,7 +88,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The points a plugin answers.
 ///
-/// Closed, and deliberately two: `judge` and `again` are host functions, not
+/// Closed, and two: `judge` and `again` are host functions, not
 /// messages (module docs). A third point is a design change, not a new value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -121,7 +121,7 @@ impl std::fmt::Display for WrapperPoint {
 ///
 /// Adjacently framed rather than internally tagged so the body keeps
 /// `deny_unknown_fields` — an internally tagged enum hands the tag field down
-/// into the variant, where a denying struct rejects it. `Serialize` is derived
+/// into the case, where a denying struct rejects it. `Serialize` is derived
 /// from that framing; `Deserialize` is written out by hand over a two-key
 /// envelope that denies unknown fields, because the derived reader for the
 /// same framing accepts any number of keys beside `point` and `body` and drops
@@ -418,8 +418,8 @@ pub enum TestBaseline {
 pub struct BeforeTurnRequest {
     /// The version this message is written at.
     pub protocol_version: u32,
-    /// The variant id of the wrapper being asked — `StageProgram::variant`,
-    /// and the join key of every per-variant comparison (#3388).
+    /// The pipeline id of the wrapper being asked — `StageProgram::variant`,
+    /// and the join key of every per-pipeline comparison (#3388).
     pub wrapper: String,
     /// Which declared stage this call is for. `before_turn` runs once per
     /// stage the resolved [`StageProgram`](crate::StageProgram) says runs.
@@ -515,7 +515,7 @@ pub struct BeforeTurnResponse {
     /// carries it forward into the next stage's
     /// [`BeforeTurnRequest::published`], so a later stage's *plugin* reads it.
     ///
-    /// **A declared gap, not a silence** (invariant 10's discipline), and it is
+    /// **A declared gap, not a silence** (AGENTS.md #10's discipline), and it is
     /// narrower than it was: a published value still cannot reach a
     /// *condition*, because [`Wrapper::resolve`](crate::Wrapper::resolve) takes
     /// one up-front [`SignalValues`](crate::SignalValues) snapshot and decides
@@ -548,7 +548,7 @@ impl BeforeTurnResponse {
 
 /// Context a wrapper contributes to a turn.
 ///
-/// **The invariant-7 constraint, encoded in the type.** Contributed context
+/// **The AGENTS.md #7 constraint, encoded in the type.** Contributed context
 /// rides as a volatile message *after* the byte-stable system-prompt prefix,
 /// never inside it: prompt-cache hits are a feature, and a wrapper that could
 /// inject into the stable prefix would make every installed plugin a per-turn
@@ -622,7 +622,7 @@ impl VolatileContext {
 
     /// Where this contribution came from, for a journal or the deck.
     ///
-    /// A borrow rather than a move, and deliberately the *only* borrowing
+    /// A borrow rather than a move, and the *only* borrowing
     /// accessor: a label is provenance a surface prints beside the
     /// contribution, and it is not the body. There is no `text(&self)` beside
     /// it — that would hand back the one string the type exists to keep out of
@@ -698,7 +698,7 @@ pub enum SignalValue {
 pub struct AfterTurnRequest {
     /// The version this message is written at.
     pub protocol_version: u32,
-    /// The variant id of the wrapper being asked.
+    /// The pipeline id of the wrapper being asked.
     pub wrapper: String,
     /// Which declared stage this evidence is about, mirroring
     /// [`BeforeTurnRequest::stage`] on the other side of the same round.
@@ -931,7 +931,7 @@ pub enum EvidenceProvenance {
     /// it answers is a *plugin's* ask — the plugin reads it and reports the
     /// flip, so the evidence stays `PluginReported`. A host that ran the check
     /// on its own account and built evidence from it would be the producer this
-    /// variant is waiting for.
+    /// case is waiting for.
     HostObserved,
 }
 
@@ -948,7 +948,7 @@ pub enum EvidenceProvenance {
 pub struct VerdictRule {
     /// The enumerable definition of done: requirement name → the statement a
     /// hold cites. A `BTreeMap`, so the order a verdict reports failures in is
-    /// deterministic (invariant 7's discipline).
+    /// deterministic (AGENTS.md #7's discipline).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub requirements: BTreeMap<String, String>,
     /// The plugin's oracle — its flip/tamper policy and its checks, when the
@@ -1071,7 +1071,7 @@ impl std::fmt::Display for UnmetRequirement {
     }
 }
 
-/// Why a requirement is unmet. Closed: each variant is one thing the evidence
+/// Why a requirement is unmet. Closed: each case is one thing the evidence
 /// vocabulary can determinately say went wrong.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1247,7 +1247,7 @@ mod tests {
     use crate::wrapper::HostStage;
 
     /// The one exit from [`VolatileContext`] is a non-system message, which is
-    /// invariant 7 held structurally rather than by review. If a future edit
+    /// AGENTS.md #7 held structurally rather than by review. If a future edit
     /// adds a placement field or changes the role, this fails.
     #[test]
     fn contributed_context_can_only_become_a_message_after_the_stable_prefix() {

@@ -9,7 +9,7 @@
 //! but their text, which is what makes the manifest a declaration the code
 //! reads rather than a description of one hardcoded path.
 //!
-//! What these tests deliberately do **not** claim: that either variant *runs*.
+//! What these tests do **not** claim: that either case *runs*.
 //! Everything here is the load-time contract, which is complete on its own —
 //! the four wrapper interception points that bind a stage name to a turn
 //! landed in #3380/#3479 and are driven from
@@ -44,7 +44,7 @@ fn wrapper_manifest(stages: &str) -> String {
     )
 }
 
-// --- The two variants both load, from the same code. ---------------------
+// --- The two cases both load, from the same code. ---------------------
 
 #[test]
 fn todays_stage_order_loads_as_a_manifest() {
@@ -73,7 +73,7 @@ fn todays_stage_order_loads_as_a_manifest() {
 /// #3408 P2: `Wrapper` crosses a crate boundary on the wire — `stella-cli`'s
 /// `PipelineFrame::variant` persists it beside a killed run's checkpoint so a
 /// resume restores the same manifest, not the built-in `classic` fallback
-/// (invariant 4: serde-first, round-trip when a type crosses a boundary).
+/// (AGENTS.md #4: serde-first, round-trip when a type crosses a boundary).
 /// `Wrapper`/`WrapperStage` already derive `Serialize`/`Deserialize`; this is
 /// the witness that the round-trip is actually byte-identical, not merely
 /// that the derive compiles.
@@ -162,7 +162,7 @@ fn the_shipped_conditions_parse_to_the_branches_they_transcribe() {
 
 /// The mirror the [`StageName`] docs claim, mechanically: the manifest
 /// vocabulary is one-to-one onto the workspace's one stage vocabulary. The
-/// `match` is exhaustive, so a new [`StageKind`] variant fails this file to
+/// `match` is exhaustive, so a new [`StageKind`] case fails this file to
 /// compile rather than leaving a boundary no wrapper can name.
 #[test]
 fn every_stage_the_workspace_names_is_declarable() {
@@ -219,7 +219,7 @@ fn every_stage_the_workspace_names_is_declarable() {
 /// **execute**, **witness** or **verify** publishes loads, and resolves into
 /// the order the values imply. Before this change none of those signals
 /// existed — every condition here was `UnknownSignal`, and four of the seven
-/// stage names were an unknown-variant parse error.
+/// stage names were an unknown-case parse error.
 #[test]
 fn a_variant_gated_on_the_new_signals_loads_and_resolves() {
     let wrapper = parse(EVIDENCE_V1)
@@ -229,7 +229,7 @@ fn a_variant_gated_on_the_new_signals_loads_and_resolves() {
     assert_eq!(wrapper.id, "evidence-v1");
     // The new stage names and conditions survive a serde round-trip too, the
     // same claim `both_variants_round_trip_through_toml_and_json` makes of the
-    // two older fixtures (invariant 4).
+    // two older fixtures (AGENTS.md #4).
     let parsed = parse(EVIDENCE_V1).unwrap();
     assert_eq!(parsed, parse(&toml::to_string(&parsed).unwrap()).unwrap());
     let json = serde_json::to_string(&parsed).unwrap();
@@ -419,7 +419,7 @@ fn an_unpublished_signal_error_names_the_published_set() {
 /// The rule this replaces, and why replacing it is not a weakening.
 ///
 /// Until #3963 a name outside the host's twelve was a `ManifestError::Parse` —
-/// serde refusing an unknown enum variant — on the argument that a stage the
+/// serde refusing an unknown enum case — on the argument that a stage the
 /// host cannot dispatch is a manifest that quietly does nothing. The argument
 /// was right and its conclusion no longer follows: the host *can* dispatch this
 /// stage, because dispatch iterates the resolved program rather than matching
@@ -866,7 +866,7 @@ fn a_duplicate_contributed_stage_is_still_a_load_error() {
     }
 }
 
-/// Invariant 4 for the newly-open field: the manifest a host re-serializes is
+/// AGENTS.md #4 for the newly-open field: the manifest a host re-serializes is
 /// the manifest it read, contributed name included.
 #[test]
 fn a_contributed_stage_round_trips_through_serde() {

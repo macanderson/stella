@@ -163,7 +163,7 @@ pub enum OracleProcessSource {
 
 /// Whether a fail→pass flip is required before the oracle's requirement is
 /// credited. Closed, so an unknown value is a load error rather than a
-/// silently weaker contract; a further relaxation adds a variant here.
+/// silently weaker contract; a further relaxation adds a case here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FlipPolicy {
@@ -187,7 +187,7 @@ pub enum FlipPolicy {
     NotApplicable,
 }
 
-/// How the host detects witness-artifact tampering. One variant today, for
+/// How the host detects witness-artifact tampering. One case today, for
 /// the same reason as [`FlipPolicy`].
 ///
 /// **This names what the *host* does, not what the plugin does.** Snapshotting
@@ -298,7 +298,7 @@ mod tests {
 
     /// The flip vocabulary's wire strings, pinned on both sides. `kebab-case`
     /// replaced `lowercase` when `not-applicable` joined the enum, which is
-    /// invisible for `Required` and would silently rename any future variant
+    /// invisible for `Required` and would silently rename any future case
     /// spelled in two words — every shipped manifest naming it would stop
     /// loading. Pinning both spellings makes that a red test instead.
     #[test]

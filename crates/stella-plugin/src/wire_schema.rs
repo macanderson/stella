@@ -21,9 +21,9 @@
 //! - **a string field gaining or losing a format or pattern constraint** —
 //!   likewise invisible to a corpus, which only ever shows one example value.
 //!
-//! The third — an enum whose variant set grows — is caught by both, and by the
+//! The third — an enum whose case set grows — is caught by both, and by the
 //! compiler first: `wire_corpus` enumerates every closed enum with a successor
-//! `match`, so a new variant is an `E0004` there before it can go unpublished
+//! `match`, so a new case is an `E0004` there before it can go unpublished
 //! anywhere.
 //!
 //! # What the corpus catches and this does not, which is why both ship
@@ -37,7 +37,7 @@
 //! meet. Neither artifact subsumes the other, so `docs/wire/` carries both and
 //! `scripts/check-wire-schema.sh` diffs both.
 //!
-//! # What it deliberately does not describe
+//! # What it does not describe
 //!
 //! **The envelope's refusal of unknown keys.** `WrapperRequest` and
 //! `WrapperResponse` have hand-written `Deserialize` impls over a two-key
@@ -52,7 +52,7 @@
 //! [`crate::DriveRequest`] and their answers cross the same pipes and are
 //! published in the corpus; they are not published here, because
 //! [`crate::HostCallOk`] is an **untagged** union whose whole contract is that
-//! its variants are discriminable by their required key sets — a property
+//! its cases are discriminable by their required key sets — a property
 //! JSON Schema states as `oneOf` and does not check. Publishing a schema that
 //! looks authoritative about a union nothing validates would be worse than
 //! publishing none. The corpus shows every arm's real bytes, which is what an

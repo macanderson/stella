@@ -33,7 +33,7 @@ refusal of model credentials narrows it further, which this crate deliberately
 cannot express because it has no credential vocabulary.
 
 `[wrapper]` (#3381) is the turn-loop wrapper's stage order, declared instead
-of hardcoded: an ordered `[[wrapper.stages]]` list under one variant id — the
+of hardcoded: an ordered `[[wrapper.stages]]` list under one pipeline id — the
 id the store's `pipeline_variant` column records (#3388). Two properties make
 it a gate rather than documentation:
 
@@ -46,7 +46,7 @@ it a gate rather than documentation:
   signal that only a *later* stage publishes is rejected at load — and so is
   one reading a signal whose publisher is declared earlier but **conditional**,
   because that stage produces nothing on the turns it is skipped. A
-  hand-written variant fails with a reason instead of wedging mid-run.
+  hand-written case fails with a reason instead of wedging mid-run.
 
 `Wrapper::resolve` is the reader that enforces those rules: the host
 fills in `SignalValues` — one field per published signal, no `Default`, so an
@@ -88,7 +88,7 @@ consent document. `[loop]` says what a plugin may do *inside* a turn; this
 says what it may reach *outside* one — a tool name, the grade it asks for in
 `stella_protocol::RiskLevel` (the gate's own vocabulary, not a second one),
 the reason a human reads, and any limit the plugin *claims* it will keep to.
-It is gated on no participation grade, deliberately: a `none`-grade content
+It is gated on no participation grade: a `none`-grade content
 bundle shipping one custom tool that runs `git push` asks for more of the
 world than an `observer` that only watches, and tying the list to the ladder
 would let the widest grant hide behind the weakest grade.
@@ -201,7 +201,7 @@ before it crosses.
 - `src/manifest.rs` — the types (`PluginManifest`, `LoopGrant`,
   `Participation`, `HookEvent`, `Subloop`, `Role`), parsing, and every
   **cross-block** validation rule — a grade against a block, a block against
-  another block — each documented on the `ManifestError` variant that
+  another block — each documented on the `ManifestError` case that
   enforces it. A rule true of one block whatever else the manifest says lives
   with that block's own module instead.
 - `src/oracle.rs` (#3730) — the `[oracle]` block: `Oracle`, `OracleCommand`,
@@ -266,19 +266,19 @@ before it crosses.
 - `src/driver.rs` — the `[driver]` block and the drive-session wire shapes
   (`DriverGrant`, `DriverCall`, `DriveRequest`/`DriveResponse`): a plugin that
   starts turns rather than taking part in one.
-- `src/error.rs` — `ManifestError`, typed per rule (invariant 5).
+- `src/error.rs` — `ManifestError`, typed per rule (AGENTS.md #5).
 - `tests/manifest_grades.rs` + `tests/fixtures/*.toml` — slice A's
   acceptance: one fixture per grade, round-tripped through both TOML and
-  `serde_json` (invariant 4), and the undeclared-hook filter proven against
+  `serde_json` (AGENTS.md #4), and the undeclared-hook filter proven against
   the fixtures.
 - `tests/wrapper_stages.rs` + `tests/fixtures/wrapper-*.toml` — #3381's
-  acceptance: the shipped stage order and a cheaper second variant, differing
+  acceptance: the shipped stage order and a cheaper second case, differing
   in nothing but their text, plus one rejection test per load rule.
 - `tests/wrapper_program.rs` — #3408's acceptance for the reader: a manifest
   resolves into a stage order, and the proptest property that the two graph
   rules make that resolution total, deterministic and order-preserving for
   every set of signal values.
-- `tests/wire_contract.rs` — invariant 4 held to the letter for the wrapper
+- `tests/wire_contract.rs` — AGENTS.md #4 held to the letter for the wrapper
   socket: `WrapperRequest`/`WrapperResponse` and everything reachable from them
   round-tripped byte-for-byte through `serde_json` at both their fullest and
   emptiest legal shape, every closed vocabulary pinned on both sides, and an

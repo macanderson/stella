@@ -25,7 +25,7 @@ use stella_protocol::{
 /// One frame emitted by the engine toward the host over the outbound stream.
 ///
 /// Not `Clone`: every frame is produced once and moved onto the channel, so no
-/// consumer ever needs a second copy. The variants own their payloads outright
+/// consumer ever needs a second copy. The cases own their payloads outright
 /// rather than borrowing — the port adapters in `remote.rs` pay whatever copy
 /// that costs once, at construction (a completion request arrives borrowed and
 /// is materialized with `CompletionRequestRef::into_owned`; a tool's `input`
@@ -88,7 +88,7 @@ pub enum ServerFrame {
     /// The hold announced by [`ServerFrame::TurnHeld`] is over and the turn is
     /// proceeding (#932). Emitted once, paired with the `TurnHeld` before it.
     ///
-    /// Carries nothing, deliberately: the gate is released by
+    /// Carries nothing: the gate is released by
     /// `POST /resume`, by a cancel, and by the turn's entry being torn down,
     /// and from inside the gate those are indistinguishable. A host learns
     /// which it was from what follows — more frames, or `turn_complete`.
@@ -121,7 +121,7 @@ impl From<TurnOutcome> for TurnOutcomeWire {
             TurnOutcome::Completed { text, cost_usd } => {
                 TurnOutcomeWire::Completed { text, cost_usd }
             }
-            // The wire frame deliberately does not carry `kind` yet — a
+            // The wire frame does not carry `kind` yet — a
             // serve-surface field is a spec + conformance change, tracked
             // separately. The reason string still travels.
             TurnOutcome::Aborted {
@@ -184,7 +184,7 @@ pub struct ProviderDeltaIn {
 
 /// One streamed fragment of an in-flight model completion.
 ///
-/// Text and thinking are distinct variants rather than one string because the
+/// Text and thinking are distinct cases rather than one string because the
 /// two must never be confused downstream: thinking renders as collapsible,
 /// visibly-secondary content while answer text is the reply — the same
 /// separation `ToolCallObserver` keeps between `text_delta` and
@@ -256,7 +256,7 @@ pub enum ProviderErrorWire {
         message: String,
     },
     /// The provider refused to fund the requested output ceiling. Carried
-    /// as its own variant rather than folded into `Terminal` because a host
+    /// as its own case rather than folded into `Terminal` because a host
     /// driving the engine over the wire must be able to tell a repairable
     /// refusal from the end of the turn — the same split the engine-side
     /// recovery keys on.
@@ -549,7 +549,7 @@ mod tests {
 
     /// The host classifies a failure once, at its own adapter, and the engine's
     /// retry logic must behave exactly as it would with a local provider. That
-    /// only holds if every class survives the round trip — a variant that maps
+    /// only holds if every class survives the round trip — a case that maps
     /// to the wrong one silently changes whether a failed call is retried.
     #[test]
     fn every_provider_error_class_survives_the_round_trip() {

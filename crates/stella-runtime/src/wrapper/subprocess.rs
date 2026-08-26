@@ -80,7 +80,7 @@
 //! - **It clears the environment and sets exactly what it was given.** A
 //!   plugin is third-party code a user installed; inheriting the operator's
 //!   environment hands it `ANTHROPIC_API_KEY` and every other credential the
-//!   shell was carrying, silently, forever — which would make invariant 3's
+//!   shell was carrying, silently, forever — which would make AGENTS.md #3's
 //!   "every model call is made by the host" a policy rather than a property.
 //!   Default-deny is structural: [`SubprocessWrapper::declare`] takes the pairs,
 //!   so an empty list is what a caller that thought about nothing gets. The
@@ -153,7 +153,7 @@ pub const MAX_WRAPPER_TIMEOUT: Duration = Duration::from_millis(MAX_HOOK_TIMEOUT
 /// with it.
 ///
 /// **Credentials only.** An ambient-authority name (`SSH_AUTH_SOCK`,
-/// `GIT_SSH_COMMAND`) is deliberately admitted: it is disclosed in the consent
+/// `GIT_SSH_COMMAND`) is admitted: it is disclosed in the consent
 /// text, a plugin that drives git over a deploy key genuinely needs one, and
 /// unlike a credential it cannot spend the user's model budget. Refusing it
 /// would break a legitimate plugin to prevent nothing the install consent did
@@ -771,7 +771,7 @@ impl SubprocessWrapper {
                                     // Unreachable in practice: nothing else
                                     // takes `writer` before this arm can run.
                                     // Named rather than unwrapped, per
-                                    // invariant 5.
+                                    // AGENTS.md #5.
                                     None => std::io::Error::other(
                                         "the writer task's outcome was already taken",
                                     ),
@@ -796,7 +796,7 @@ impl SubprocessWrapper {
                             Some(channel) => channel.call(call.args).await,
                             // Unreachable: `frames` is `Some` only when a
                             // channel was opened. Written as a value rather
-                            // than an `expect`, because invariant 5 makes no
+                            // than an `expect`, because AGENTS.md #5 makes no
                             // exception for "I checked earlier".
                             None => super::host_call::NoHostCalls.call(call.args).await,
                         };

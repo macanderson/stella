@@ -133,7 +133,7 @@ impl FrameBacklog {
 
 /// Whether this frame may be dropped under pressure.
 ///
-/// Deliberately written as an exhaustive match rather than
+/// Written as an exhaustive match rather than
 /// `matches!(f, Event { .. })`: a future frame type must force a decision
 /// here, and the compiler is the only reviewer guaranteed to notice. Getting
 /// this wrong in the *safe* direction costs memory; getting it wrong in the

@@ -89,7 +89,7 @@ pub struct SubAgentPolicy {
 ///
 /// Generous enough that ordinary delegation never trips it, small enough that
 /// a model looping on `delegate` cannot quietly spend a deployment's month on
-/// research. The same number `stella-cli`'s dispatcher uses, deliberately: one
+/// research. The same number `stella-cli`'s dispatcher uses: one
 /// surface having a laxer default than the other is how a capability's cost
 /// profile drifts between them.
 pub const DEFAULT_SUB_AGENT_POOL_USD: f64 = 2.0;
@@ -312,7 +312,7 @@ const CHILD_SYSTEM_PROMPT: &str = "You are a research sub-agent. You have been g
      what you ruled out; a confident wrong answer is far worse than an honest gap.";
 
 /// Ceiling on the characters a child may hand back — the context-economy
-/// guarantee in mechanism form, and deliberately not model-settable.
+/// guarantee in mechanism form, and not model-settable.
 const REPORT_CHARS: usize = 8_000;
 
 /// The host's tool set with `delegate` layered on top (#1297).
@@ -523,7 +523,7 @@ impl ToolExecutor for DelegatingTools<'_> {
 
     /// Forwarded: letting the empty default stand would silently serialize
     /// the host executor's sibling spawns (see the port's contract). The
-    /// `delegate` this wrapper itself implements is deliberately not added here —
+    /// `delegate` this wrapper itself implements is not added here —
     /// claiming it needs a witness on the remoted dispatch path first.
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()

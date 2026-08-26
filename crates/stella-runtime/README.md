@@ -65,7 +65,7 @@ one loop, several doors, and everything wrapped around it a plugin
 wrapper contract `before_turn` / `after_turn` / `judge` / `again?` (#3380) —
 **lives here** ([`src/wrapper/`](src/wrapper), landed #3479), and the reason is
 the boundary above: `before_turn` recalls and researches, `after_turn` runs a
-test command or an oracle process, and invariant #2 forbids that I/O inside
+test command or an oracle process, and AGENTS.md #2 forbids that I/O inside
 [`stella-core`](../stella-core). A socket defined in core would either be a
 trait core never calls, or a trait core awaits — which puts a process spawn
 inside the engine (`doc:turn-loop-wrappers` §9.1). This crate already owns
@@ -232,7 +232,7 @@ decision recorded for every seam at every `assemble` call site. Whatever
 implements the wrapper socket's future child-turn port earns the same
 discipline only by calling `assemble` itself — nothing today connects the two.
 
-## The invariant: no ambient reads
+## The rule: no ambient reads
 
 **Nothing in this crate reads the process environment or the current
 directory.** Every ambient switch the CLI consults — `STELLA_NO_SETTINGS`, the
@@ -272,14 +272,14 @@ it crosses.
 | `src/wrapper/subprocess.rs` | `SubprocessWrapper` — the transport CI exercises: spawns `[runtime].argv`, writes the request as one line of JSON on stdin, reads the response on stdout, and `refuses_env_name` — the default-deny env-allowlist check `stella-cli`'s consent prompt also renders. |
 | `src/wrapper/in_process.rs` | `InProcessWrapper`/`WrapperHandler` — the fast path §3 permits for Rust, over the identical owned request/response types the subprocess transport uses. |
 | `src/wrapper/verdict.rs` | `judge` and `again` — synchronous, total, I/O-free functions over `VerdictRule` and `EvidenceSet`; property-tested (`tests/wrapper_verdict.rs`) over the closed evidence vocabulary. |
-| `src/wrapper/error.rs` | `WrapperError`, typed per failure mode (unreachable, over budget, unusable, undeclared role, mistyped signal), and `DriverError` beside it — the driver channel's own failures, minus every variant that is about standing inside a turn. |
+| `src/wrapper/error.rs` | `WrapperError`, typed per failure mode (unreachable, over budget, unusable, undeclared role, mistyped signal), and `DriverError` beside it — the driver channel's own failures, minus every case that is about standing inside a turn. |
 | `src/wrapper/driver_call.rs` | The host half of the driver channel: the gate, the ceiling, and the report for a plugin that drives turns instead of sitting inside one (`doc:backlog-self-driving` §3.0). |
 | `src/wrapper/driver_subprocess.rs` | `SubprocessDriver` — the driver channel's transport (#3634): spawns the driver, writes the `DriveRequest` on stdin, relays every capability ask through the gate, and reads back the `next` that ends the session. One budget covers the whole session, and `refuses_env_name` withholds model credentials here exactly as it does for a wrapper. |
 | `src/wrapper/framing.rs` | Where one message ends on a child's stdout, and the one task that owns its stdin — shared by both transports, because a second framer would be quadratic and pass its tests. |
 | `src/wrapper/host_call.rs` | The host half of the host-call channel: a plugin may ask the host for a capability, never reach for one itself — this module is the half that decides and applies the install-time grant (`doc:wrapper-socket` §6b). |
 | `src/wrapper/child_turn.rs` | The `ChildTurn` port: the host spends a model call at a declared role intent (`triage`, `planner`, `witness_author`, …) so a plugin never holds a provider credential itself (`doc:turn-loop-wrappers` §9.3). |
 | `src/wrapper/candidate_fanout.rs` | The `candidate_fanout`/`adopt_candidate` plane: N isolated writable workspaces, one worker turn in each, and the one adoption that lands a winner — over a `CandidateWorkspaces` substrate a host supplies (`stella-cli`'s worktree one, #3892; a host with none installs no plane and both calls answer `unavailable`). #3844, `doc:wrapper-socket` §6b. |
-| `tests/no_ambient_reads.rs` | The executable form of the invariant above. |
+| `tests/no_ambient_reads.rs` | The executable form of the rule above. |
 | `tests/runtime_build.rs` | The construction sequence's own witnesses (#3733): `RuntimeError::WorkspaceRoot` on a root that is not a directory, `with_provider` beating the spec's own adapter, and each `parts::*` step — a disabled store creating no `.stella/`, an unopenable one degrading to a `Notice` instead of failing, calibration starting at 1.0, and observed-vs-enforced budget. Every root is an explicit `TempDir`, never the process's own directory. |
 | `tests/fixtures/wrapper-plugin-fixture.rs` | The portable plugin the socket's own tests drive (#3497). `std` only — no `serde`, no `stella-plugin`, no JSON parser — so it holds to the same no-SDK contract a `printf`-and-`case` shell script does while compiling wherever the workspace does. Located with `env!("CARGO_BIN_EXE_wrapper-plugin-fixture")`; kept out of dist. Under `tests/` rather than `src/bin/` because its `env-probe` mode must read its own environment, and `src/` is what `no_ambient_reads.rs` forbids that in. |
 | `tests/wrapper_socket.rs` | The socket's end-to-end proof: a subprocess plugin driven through `TurnWrapper` by the test's own round loop. It proves the socket *answers*; what it cannot prove is that anything in the workspace holds the same order, which is what `tests/wrapper_dispatch.rs` is for. Runs on every platform since #3497; one test stays `#[cfg(unix)]` — a real `/bin/sh` script, because "a plugin need not be written in Rust" is a claim only a plugin that is not Rust can make. |

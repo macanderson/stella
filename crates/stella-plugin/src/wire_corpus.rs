@@ -4,7 +4,7 @@
 //! A machine-checked description of the **wrapper socket** wire format.
 //!
 //! `doc:wrapper-socket` §3 commitment 2 says `docs/wire/` is generated and
-//! gate-checked "precisely so that a renamed field or a re-tagged variant lands
+//! gate-checked "precisely so that a renamed field or a re-tagged case lands
 //! on the author's screen instead of in a consumer's parser; the wrapper wire
 //! contract joins it on the same terms". This module is that join.
 //!
@@ -32,7 +32,7 @@
 //! catches:
 //!
 //! - a renamed field — the key changes in every case that carries it;
-//! - a re-tagged variant or a changed `rename_all` — the tag changes;
+//! - a re-tagged case or a changed `rename_all` — the tag changes;
 //! - an added or removed field — a key appears or disappears in the full case;
 //! - an optional field made required, or a required one made optional — the
 //!   *minimal* case is what makes this visible, which is why a message with an
@@ -49,19 +49,19 @@
 //! a tag whose spelling and whose schema move together — all leave a legal
 //! document behind. The corpus shows the two exact strings a plugin's parser
 //! will meet. It also covers the host-call and driver channels, which the
-//! schema deliberately does not.
+//! schema does not.
 //!
 //! # Totality is the compiler's job, not a reviewer's
 //!
-//! A corpus that silently omits a variant is decoration. Every closed enum on
+//! A corpus that silently omits a case is decoration. Every closed enum on
 //! this wire is enumerated by a **successor function** rather than an array,
 //! because the compiler checks a `match` and cannot check a `&[…]`: adding a
-//! variant makes the successor match non-exhaustive (`E0004`), so the new
-//! variant reaches the corpus in the change that introduces it. Every struct is
+//! case makes the successor match non-exhaustive (`E0004`), so the new
+//! case reaches the corpus in the change that introduces it. Every struct is
 //! built with an exhaustive literal and no `..Default::default()`, so adding a
 //! field is `E0063` in this file.
 //!
-//! That is the same enforcement shape as invariant 10's consumer ledger, for
+//! That is the same enforcement shape as AGENTS.md #10's consumer ledger, for
 //! the same reason: a table nothing makes you write is a table that goes stale.
 //!
 //! # Determinism
@@ -114,7 +114,7 @@ const NOTE: &str = "GENERATED FILE — DO NOT EDIT. Every message the wrapper \
 /// Propagates a `serde_json` failure. None of these values can produce one —
 /// no non-string map key, no non-finite float — but the exporter reports it
 /// rather than panicking, because a wire contract that cannot be written must
-/// say so (invariant 5).
+/// say so (AGENTS.md #5).
 pub fn artifacts() -> Result<Vec<(&'static str, String)>, serde_json::Error> {
     let mut body = serde_json::to_string_pretty(&corpus()?)?;
     body.push('\n');
@@ -150,9 +150,9 @@ fn case<T: Serialize>(name: &'static str, message: &T) -> Result<Value, serde_js
 /// One successful host-call answer, named by [`ok_case`] rather than by hand.
 ///
 /// The naming is the point: it routes every published answer through the
-/// `match` that makes [`HostCallOk`] total here, so a new variant cannot reach
+/// `match` that makes [`HostCallOk`] total here, so a new case cannot reach
 /// this list unnamed. `suffix` distinguishes the `full`/`minimal` pair for the
-/// one variant that has an omissible member.
+/// one case that has an omissible member.
 fn ok_result(id: u32, ok: HostCallOk, suffix: &str) -> Result<Value, serde_json::Error> {
     let name = format!("{}{suffix}", ok_case(&ok));
     Ok(json!({
@@ -233,7 +233,7 @@ fn host_results() -> Result<Value, serde_json::Error> {
         // tells a plugin which result it is holding. Publishing it is therefore
         // publishing the *discriminator*: a key renamed here does not merely
         // change a field, it makes a `child_turn` answer decode as the `recall`
-        // variant tried before it. No optional member, so no pair.
+        // case tried before it. No optional member, so no pair.
         ok_result(4, HostCallOk::ChildTurn(child_turn_result()), "")?,
         // The one result with an omissible member, so it appears twice: a
         // `run_test` that observed nothing prints no `output` key at all, and a
@@ -250,7 +250,7 @@ fn host_results() -> Result<Value, serde_json::Error> {
             "",
         )?,
         // Both its members are required, which is exactly what keeps it out of
-        // the `recall` variant tried before it: `RecallResult`'s only field
+        // the `recall` case tried before it: `RecallResult`'s only field
         // defaults, so an empty table already belongs to that arm. Publishing
         // the adoption answer beside it makes the same point once more — the
         // two tables share no key at all, and this file is where a change to
@@ -372,7 +372,7 @@ fn parts() -> Result<Value, serde_json::Error> {
 
 /// Every value of every closed enum on this wire, in its serialized form.
 ///
-/// The messages above carry one variant each; a re-tagged variant they do not
+/// The messages above carry one case each; a re-tagged case they do not
 /// happen to carry would otherwise be invisible. Each list is enumerated by the
 /// successor functions below, so it cannot fall behind its enum.
 fn vocabulary() -> Result<Value, serde_json::Error> {
@@ -411,13 +411,13 @@ fn values<T: Serialize>(items: Vec<T>) -> Result<Value, serde_json::Error> {
         .map(Value::Array)
 }
 
-/// Walk a closed enum from its first variant to its last.
+/// Walk a closed enum from its first case to its last.
 fn enumerate<T: Copy>(first: T, next: fn(T) -> Option<T>) -> Vec<T> {
     std::iter::successors(Some(first), |item| next(*item)).collect()
 }
 
 // ---------------------------------------------------------------------------
-// Successor functions. Each one is exhaustive by the compiler: a new variant
+// Successor functions. Each one is exhaustive by the compiler: a new case
 // makes the `match` non-exhaustive, and the only way to compile again is to
 // place it in the chain — which puts it in the corpus.
 // ---------------------------------------------------------------------------
@@ -500,7 +500,7 @@ fn signal_value_after(value: SignalValue) -> Option<SignalValue> {
 /// The published-signal vocabulary.
 ///
 /// `Signal::ALL` exists and would be shorter, but nothing enforces that it is
-/// exhaustive — it is a hand-written array, and a variant added without
+/// exhaustive — it is a hand-written array, and a case added without
 /// touching it compiles. This chain does not.
 fn signal_after(signal: Signal) -> Option<Signal> {
     match signal {
@@ -852,7 +852,7 @@ fn test_run_result_minimal() -> TestRunResult {
 /// walked by the fieldless successor the closed enums above use.
 ///
 /// A `match` with no wildcard is still the compiler's check, which is the
-/// property this file is built on: adding a variant to that union is an `E0004`
+/// property this file is built on: adding a case to that union is an `E0004`
 /// **here**, in the file that publishes it, rather than a silent omission from
 /// the one artifact a plugin author reads to learn what the discriminator is.
 /// It was a hand-written list until `run_test` was added (#3580) and nothing
@@ -904,7 +904,7 @@ fn recall_frame_minimal() -> RecallFrame {
 
 /// Built through the constructor rather than as a literal, because
 /// [`VolatileContext`]'s fields are private: the body is reachable only by
-/// spending the value as a user message, which is invariant 7 held by the
+/// spending the value as a user message, which is AGENTS.md #7 held by the
 /// compiler rather than by review (#3524).
 fn volatile_context() -> VolatileContext {
     VolatileContext::new("witness", "the authored test fails on the pre-turn tree")
@@ -978,7 +978,7 @@ mod tests {
     /// The `minimal` half of each pair is what makes optionality visible, and
     /// it only does that if it is genuinely the emptier of the two.
     ///
-    /// Two claims, and deliberately not a third. Its keys must be a **subset**
+    /// Two claims, and not a third. Its keys must be a **subset**
     /// of the full case's — a key only the minimal case carries means the pair
     /// was mis-authored and the diff would then be about the corpus rather than
     /// about the wire. And the two must differ *somewhere*, or the second case

@@ -12,7 +12,7 @@
 //!
 //! — two free functions, synchronous, total, I/O-free, over owned data. They
 //! are not trait methods and there is no wire message that addresses them
-//! (`stella_plugin::WrapperPoint` has two variants), so a plugin cannot
+//! (`stella_plugin::WrapperPoint` has two cases), so a plugin cannot
 //! implement either one in Rust, in Python, or in anything else. That is the
 //! property that keeps "a verification plugin quietly calls a model to decide
 //! done" impossible **by construction** rather than by policy: the failure it
@@ -123,7 +123,7 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     for (name, statement) in &rule.requirements {
         // Every check naming this requirement conjoins with every other one
         // (`stella_plugin::OracleCheck`), and that whole conjunction then
-        // conjoins with the flip below — the loop deliberately falls through
+        // conjoins with the flip below — the loop falls through
         // to it rather than `continue`ing past it (#3510).
         let mut decided_by_check = false;
         for check in oracle.checks.iter().filter(|c| &c.requirement == name) {
@@ -338,7 +338,7 @@ pub fn again(verdict: &Verdict, round: &RoundState, grant: &LoopGrant) -> Contin
 /// The correction a held-open turn is told, rendered deterministically from
 /// the unmet clauses.
 ///
-/// Byte-stable for the same input (invariant 7's discipline): the clauses
+/// Byte-stable for the same input (AGENTS.md #7's discipline): the clauses
 /// arrive in `[requirements]` order because [`judge`] walks a `BTreeMap`, so
 /// two runs over the same evidence produce the same bytes.
 ///

@@ -8,7 +8,7 @@
 //! host — that gap closed on the `stella run` door
 //! (`crates/stella-cli/src/wrapper_plugin.rs::bind_installed`).
 //!
-//! # What this file grades, and what it deliberately does not
+//! # What this file grades, and what it does not
 //!
 //! `plugins/stella-plan` contributes at exactly one stage (`plan`), and doing
 //! so always spends its one `child_turn` call — there is no "plan" vector
@@ -173,7 +173,7 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
             "{name}: no candidate grant, nothing structural to scope — see \
              main.py's module doc for why zero scope entries is a decision"
         );
-        // Invariant 7, checked on the value rather than trusted.
+        // AGENTS.md #7, checked on the value rather than trusted.
         for context in response.context {
             assert_eq!(context.into_message().role, MessageRole::User, "{name}");
         }
@@ -182,7 +182,7 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
     assert!(graded >= 3, "only {graded} response vectors ran");
 }
 
-/// The other half of the contract: `BeforeTurnResponse` has no error variant,
+/// The other half of the contract: `BeforeTurnResponse` has no error case,
 /// so a plugin that cannot answer **fails** — non-zero exit, one line on
 /// stderr, nothing on stdout — and the host runs the turn without the
 /// contribution.

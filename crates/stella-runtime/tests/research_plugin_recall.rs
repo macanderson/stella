@@ -335,7 +335,7 @@ fn every_recall_vector_ends_at_its_golden_contribution() {
                 .unwrap_or_else(|e| panic!("{name}'s golden is not a response: {e}"));
         assert_eq!(response, golden, "{name} did not answer with its golden");
 
-        // Invariant 7, checked on the value rather than trusted. A recall
+        // AGENTS.md #7, checked on the value rather than trusted. A recall
         // plugin contributes on every turn it runs, which is exactly the shape
         // that would wreck prompt-cache hits if it reached the byte-stable
         // prefix — and the one exit from a contribution is

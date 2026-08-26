@@ -27,7 +27,7 @@
 //! is a **closed** union: a message is a host call or the point response, never
 //! both and never a third thing.
 //!
-//! # What this deliberately is not
+//! # What this is not
 //!
 //! **Not an RPC surface.** [`HostCall`] is a closed enum of three capabilities,
 //! and a plugin may only make a call its manifest declared — refused the way an
@@ -98,7 +98,7 @@ use crate::wire::{
 ///   tree and discard its siblings. Its own capability rather than a field on
 ///   the fan-out result, because a plugin that only scores candidates and one
 ///   that also lands one are different grants for a human to read at install,
-///   and invariant 9 says a parameter may scope an operation and never select
+///   and AGENTS.md #9 says a parameter may scope an operation and never select
 ///   one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -401,7 +401,7 @@ fn classify<E: serde::de::Error>(
 /// One host call: `{"call": …, "id": …, "args": {…}}`.
 ///
 /// The `id` is the plugin's own correlation number and the host echoes it back
-/// as [`HostCallResponse::result`]. It is deliberately the *plugin's* to choose:
+/// as [`HostCallResponse::result`]. It is the *plugin's* to choose:
 /// a plugin that pipelines two calls needs to tell the answers apart, and a
 /// number the host assigned would arrive too late to be useful.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -442,7 +442,7 @@ impl HostCallRequest {
 ///
 /// Adjacently tagged (`call` / `args`) for the reason
 /// [`WrapperRequest`](crate::WrapperRequest) is: an internally tagged enum hands
-/// the tag down into the variant, where a `deny_unknown_fields` struct rejects
+/// the tag down into the case, where a `deny_unknown_fields` struct rejects
 /// it, and every argument table here denies unknown fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "call", content = "args", rename_all = "snake_case")]
@@ -495,7 +495,7 @@ pub struct RecallArgs {
 /// The role is an *intent* — the name of a `[roles.<name>]` entry the same
 /// manifest declares — never a model id, a provider, a URL or a credential. The
 /// host resolves it against the user's BYOK providers, carves the budget, runs
-/// the turn and settles once, so invariant 3's "every model call is made by the
+/// the turn and settles once, so AGENTS.md #3's "every model call is made by the
 /// host" survives a plugin asking for one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -668,10 +668,10 @@ pub enum HostCallOutcome {
 ///
 /// **Untagged**, because §6b's shape puts the result directly under `ok` —
 /// `{"result": 1, "ok": {"frames": [ … ]}}` — and the plugin already knows which
-/// capability the id it chose belongs to. The cost of untagged is that variants
-/// must stay discriminable by their required keys alone: a second variant whose
+/// capability the id it chose belongs to. The cost of untagged is that cases
+/// must stay discriminable by their required keys alone: a second case whose
 /// table could be read as a `recall` result would make decoding order-dependent.
-/// So the rule for adding one, stated where it will be read: **every variant's
+/// So the rule for adding one, stated where it will be read: **every case's
 /// required key set must be disjoint from every other's**, and
 /// `wire_corpus.rs` publishes each so a violation is a diff.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -697,8 +697,8 @@ pub enum HostCallOk {
 /// so a plugin that wanted to know what ran already knows.
 ///
 /// Its required keys are `candidate`, `assertions` and `output`, and
-/// `candidate` alone is disjoint from every other variant's required set — the
-/// rule [`HostCallOk`] states for adding an untagged variant.
+/// `candidate` alone is disjoint from every other case's required set — the
+/// rule [`HostCallOk`] states for adding an untagged case.
 /// [`AdoptCandidateResult`] is the near miss and is not one: it requires
 /// `adopted`, not `candidate`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -735,7 +735,7 @@ pub struct TestRunResult {
 
 /// What one `child_turn` produced.
 ///
-/// Deliberately the child's *report* and nothing else. A plugin does not get
+/// The child's *report* and nothing else. A plugin does not get
 /// the transcript, the tool calls, the token counts or the dollars: those are
 /// the host's accounting, and the whole reason a child turn is worth spending
 /// is that its context stays on the host's side of the seam
@@ -744,7 +744,7 @@ pub struct TestRunResult {
 ///
 /// Its required keys are `role`, `seat`, `report` and `completed`, and every
 /// one of them is disjoint from [`RecallResult`]'s `frames` — the rule
-/// [`HostCallOk`] states for adding an untagged variant, satisfied here by
+/// [`HostCallOk`] states for adding an untagged case, satisfied here by
 /// construction rather than by inspection, since both tables deny unknown
 /// fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -775,10 +775,10 @@ pub struct ChildTurnResult {
 ///
 /// Both fields are **required** on the wire, and that is a hard constraint
 /// rather than stylistic: [`HostCallOk`] is untagged and its rule is that every
-/// variant's required key set must be disjoint from every other's.
+/// case's required key set must be disjoint from every other's.
 /// [`RecallResult`]'s only field defaults, so `{}` reads as a recall answer —
 /// a fan-out result whose `candidates` defaulted would be a table that decodes
-/// as the wrong variant the moment a host had nothing to report.
+/// as the wrong case the moment a host had nothing to report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateFanoutResult {
@@ -796,7 +796,7 @@ pub struct CandidateFanoutResult {
 
 /// One candidate of a fan-out, as the plugin receives it.
 ///
-/// The evidence half is deliberately small and deliberately *mechanical*:
+/// The evidence half is small and deliberately *mechanical*:
 /// a handle to re-address it, a root to read and test it in, the turn's own
 /// report, whether it finished, and how big the diff is. What is absent is a
 /// score — scoring is the plugin's whole job, and a host that shipped one
@@ -1203,7 +1203,7 @@ mod tests {
         );
 
         // And the other direction: frames still read as frames, though `recall`
-        // is the variant tried first and would happily swallow a table it
+        // is the case tried first and would happily swallow a table it
         // recognised.
         let frames = HostCallResponse::ok(5, HostCallOk::Recall(RecallResult::default()));
         let text = serde_json::to_string(&frames).expect("encodes");

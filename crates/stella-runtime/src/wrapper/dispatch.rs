@@ -39,7 +39,7 @@
 //! the only value this module will apply — so the check is the step that
 //! produces the thing you apply rather than a step beside it.
 //!
-//! # Invariant 7 is spent here, exactly once
+//! # AGENTS.md #7 is spent here, exactly once
 //!
 //! A contribution reaches the host as an already-built [`CompletionMessage`],
 //! because this module calls
@@ -85,7 +85,7 @@ pub const DEFAULT_HOST_MAX_HOLDS: u32 = 2;
 
 /// Everything a wrapper's round is opened with.
 ///
-/// Owned, and deliberately the same facts the wire carries: a host that drives
+/// Owned, and the same facts the wire carries: a host that drives
 /// this over HTTP fills the identical struct from a request body.
 #[derive(Debug, Clone)]
 pub struct RoundInput {
@@ -170,7 +170,7 @@ impl TurnPrelude {
     /// [`VolatileContext::into_message`](stella_plugin::VolatileContext::into_message),
     /// so appending them **after** the byte-stable system prefix is the only
     /// thing a host can do with them and still be writing sensible code
-    /// (invariant 7). The correction from a held-open round rides last, in the
+    /// (AGENTS.md #7). The correction from a held-open round rides last, in the
     /// same form.
     #[must_use]
     pub fn into_messages(self) -> Vec<CompletionMessage> {
@@ -226,7 +226,7 @@ pub trait TurnDriver {
 /// What one wrapper's whole loop concluded.
 #[derive(Debug)]
 pub struct DispatchReport {
-    /// The variant id that ran — `StageProgram::variant`, and what
+    /// The pipeline id that ran — `StageProgram::variant`, and what
     /// `executions.pipeline_variant` records (#3388).
     pub variant: String,
     /// How many turns the driver was asked for. At least 1.
@@ -343,7 +343,7 @@ impl Member {
     fn variant(&self) -> &str {
         // `bind_composed` refused a manifest without one, so the fallback is
         // unreachable — written as a fallback rather than an `expect` because
-        // invariant 5 does not make an exception for "I checked earlier".
+        // AGENTS.md #5 does not make an exception for "I checked earlier".
         self.manifest
             .wrapper
             .as_ref()
@@ -390,7 +390,7 @@ impl WrapperDispatch {
     /// [`WrapperError::NotAWrapper`] when the manifest declares no `[wrapper]`
     /// block. That is not a defect in the plugin — a manifest may declare hooks
     /// and nothing else — it just means there is no stage order to resolve and
-    /// no variant id to record, so there is nothing here to drive.
+    /// no pipeline id to record, so there is nothing here to drive.
     pub fn bind(
         manifest: PluginManifest,
         wrapper: Arc<dyn TurnWrapper>,
@@ -457,7 +457,7 @@ impl WrapperDispatch {
         self
     }
 
-    /// The variant id this wrapper runs under.
+    /// The pipeline id this wrapper runs under.
     ///
     /// For a composition it is the members' ids joined with `,` — the same
     /// text the selection named — so the store's `pipeline_variant` column
@@ -558,7 +558,7 @@ impl WrapperDispatch {
             // and must not be dressed as the plugin's report of nothing
             // (#3513). Either way the flip is `Unobservable` and `judge`
             // abstains; what differs is whose silence it is.
-            // Taken before the merge, because it deliberately does not survive
+            // Taken before the merge, because it does not survive
             // it: `EvidenceSet` is the closed vocabulary `judge` is total over,
             // and this is the wrapper's own free text (#3840). It rejoins the
             // verdict afterwards, where nothing can decide anything with it.

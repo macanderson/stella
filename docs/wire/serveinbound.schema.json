@@ -385,7 +385,7 @@
       "type": "object"
     },
     "ProviderDelta": {
-      "description": "One streamed fragment of an in-flight model completion.\n\nText and thinking are distinct variants rather than one string because the\ntwo must never be confused downstream: thinking renders as collapsible,\nvisibly-secondary content while answer text is the reply — the same\nseparation `ToolCallObserver` keeps between `text_delta` and\n`reasoning_delta`, carried across the wire.",
+      "description": "One streamed fragment of an in-flight model completion.\n\nText and thinking are distinct cases rather than one string because the\ntwo must never be confused downstream: thinking renders as collapsible,\nvisibly-secondary content while answer text is the reply — the same\nseparation `ToolCallObserver` keeps between `text_delta` and\n`reasoning_delta`, carried across the wire.",
       "oneOf": [
         {
           "description": "A fragment of user-visible answer text.",
@@ -614,7 +614,7 @@
           "type": "object"
         },
         {
-          "description": "The provider refused to fund the requested output ceiling. Carried\nas its own variant rather than folded into `Terminal` because a host\ndriving the engine over the wire must be able to tell a repairable\nrefusal from the end of the turn — the same split the engine-side\nrecovery keys on.",
+          "description": "The provider refused to fund the requested output ceiling. Carried\nas its own case rather than folded into `Terminal` because a host\ndriving the engine over the wire must be able to tell a repairable\nrefusal from the end of the turn — the same split the engine-side\nrecovery keys on.",
           "properties": {
             "affordable_output_tokens": {
               "format": "uint32",

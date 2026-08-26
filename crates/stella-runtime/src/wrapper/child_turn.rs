@@ -8,7 +8,7 @@
 //! > `witness_author`); the host resolves the intent against the user's BYOK
 //! > providers, carves the budget, attaches gate/steering/hooks, runs the turn,
 //! > and settles once. For an out-of-process wrapper this is a JSON request on
-//! > stdio and every model call is made by the host — invariant #3 and #3245 §3,
+//! > stdio and every model call is made by the host — AGENTS.md #3 and #3245 §3,
 //! > intact.*
 //!
 //! Every clause of that is a requirement, and this module is where each one is
@@ -105,7 +105,7 @@ pub const DEFAULT_HOST_MAX_CHILD_TURNS: u32 = 4;
 /// `doc:turn-loop-wrappers` §9.2 prefers a declared role to a `judge`: a
 /// verifier-tier call hidden inside a plugin is a call nobody can audit.
 ///
-/// **Consumer** (invariant 10's discipline, pointed at a host report rather
+/// **Consumer** (AGENTS.md #10's discipline, pointed at a host report rather
 /// than an event): `stella-cli`'s wrapper driver reads it after a run and
 /// prints one line per child turn beside
 /// [`RefusedCall`](super::RefusedCall) — `wrapper_plugin::spend_lines`, which
@@ -512,7 +512,7 @@ impl<P: ChildTurnPlane + ?Sized> ChildTurnPlane for std::sync::Arc<P> {
 /// (`crates/stella-pipeline`, deleted in #3865): the token a plugin
 /// reads must be the token the telemetry carries, and two spellings of that is
 /// how the last one drifted. The fallback is unreachable for a fieldless enum
-/// and exists only to keep this total (invariant 5 — no `expect` on a value a
+/// and exists only to keep this total (AGENTS.md #5 — no `expect` on a value a
 /// caller supplied).
 fn seat_token(seat: ModelCallRole) -> String {
     serde_json::to_value(seat)

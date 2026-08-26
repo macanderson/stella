@@ -43,7 +43,7 @@ impl Persistence {
 
 /// The provider to build, as already-resolved parts.
 ///
-/// Deliberately owned rather than borrowed from a `Config`: the serve sidecar
+/// Owned rather than borrowed from a `Config`: the serve sidecar
 /// builds one of these per session from a request body, and the CLI builds one
 /// from its loaded config. Neither shape is privileged, so neither is baked in.
 ///

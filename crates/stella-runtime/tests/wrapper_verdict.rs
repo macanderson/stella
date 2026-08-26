@@ -380,7 +380,7 @@ fn a_rule_that_never_passed_validation_still_cannot_be_silently_met() {
     assert_eq!(requirement, REQUIREMENT);
     // The abstention carries the author's diagnosis and nothing else. It used
     // to carry the whole `ManifestError::UnparsableCheck` rendering, which
-    // repeats the requirement name and the check text the variant already has
+    // repeats the requirement name and the check text the case already has
     // its own fields for — `judge` reached that string by calling `rule()` and
     // stringifying the error, one of the three places it re-implemented the
     // evaluator that lives in `stella_plugin` (#3515).
@@ -835,7 +835,7 @@ proptest! {
     }
 
     /// **A check narrows done; it never widens it.** This is the durable
-    /// statement of #3510's invariant, and the reason it is a property rather
+    /// statement of #3510's rule, and the reason it is a property rather
     /// than a case: it is quantified over every oracle a manifest can express,
     /// not over the one shape that happened to be reported.
     ///

@@ -75,7 +75,7 @@ pub struct GoalRun {
 /// checkpoint seam at every step boundary. A goal run is the case where both
 /// matter most, since it is the longest-lived thing this server does.
 ///
-/// The rest is `run_goal`'s contract, kept deliberately identical:
+/// The rest is `run_goal`'s contract, kept identical:
 ///
 /// - each round takes its own receipt turn slot (worker even, verifier odd), so
 ///   two rounds' manifests cannot collide;

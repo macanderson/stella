@@ -4,7 +4,7 @@
 //! The typed vocabulary of everything this server does at a boundary.
 //!
 //! Modelled on `stella-protocol`'s [`AgentEvent`](stella_protocol::AgentEvent),
-//! deliberately: one variant per boundary, internally tagged, serde-first, and —
+//!: one case per boundary, internally tagged, serde-first, and —
 //! the part that matters most — **work the server throws away gets a name**
 //! rather than vanishing into a `let _ =`. `AgentEvent::SpeculationDiscarded` is
 //! the pattern; [`ServeEvent::ReverseTimedOut`] and its neighbours are this
@@ -12,7 +12,7 @@
 //!
 //! # Every field here is structurally content-free
 //!
-//! Records are written to stderr, and operators ship stderr. So no variant
+//! Records are written to stderr, and operators ship stderr. So no case
 //! carries prompt text, tool arguments, tool results, model output, a
 //! filesystem path, a raw request path, or a full turn id. The only `String`s
 //! are `addr` (operator-supplied), the two `error` fields (our own
@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 /// How loud a record is. Ordered so filtering is a comparison: an event passes
 /// when `event.level() <= filter`.
 ///
-/// Derived from the variant rather than stored on it, so a record's severity
-/// can never disagree with what happened, and adding a variant forces the
+/// Derived from the case rather than stored on it, so a record's severity
+/// can never disagree with what happened, and adding a case forces the
 /// author to classify it (the match in [`ServeEvent::level`] is exhaustive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,7 +86,7 @@ impl LevelFilter {
 /// Which endpoint a request reached, as a **template**.
 ///
 /// The raw path is never recorded, because for seven of these it contains
-/// the turn id (and two more carry a session id). Serde renames each variant to its template so a record reads like
+/// the turn id (and two more carry a session id). Serde renames each case to its template so a record reads like
 /// an access log without any rendering step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Route {
@@ -137,7 +137,7 @@ pub enum Route {
     /// `GET` (read back) and `DELETE` (reclaim) — see [`Route::TurnCheckpoint`].
     #[serde(rename = "/v1/sessions/{id}/checkpoint")]
     SessionCheckpoint,
-    /// A path that matched no route. The path itself is deliberately dropped:
+    /// A path that matched no route. The path itself is dropped:
     /// a 404 probe is attacker-controlled text, and this is a log.
     #[serde(rename = "<unrouted>")]
     Unrouted,
@@ -175,11 +175,11 @@ impl Route {
     /// 7 of 14 before this existed), and the cross-surface capability matrix
     /// (`stella-parity`) sweeps it so a route added here without a matrix row
     /// fails the workspace tests. [`Route::Unrouted`] is the 404 sentinel,
-    /// not a route, and is deliberately absent.
+    /// not a route, and is absent.
     ///
-    /// Kept honest by [`Route::is_real`]: adding a `Route` variant fails that
+    /// Kept honest by [`Route::is_real`]: adding a `Route` case fails that
     /// method's exhaustive match until the author classifies it, and the
-    /// tests assert `ALL` contains exactly the `is_real` variants it names —
+    /// tests assert `ALL` contains exactly the `is_real` cases it names —
     /// so the array cannot silently lag the enum.
     pub const ALL: [Route; 18] = [
         Route::Healthz,
@@ -203,8 +203,8 @@ impl Route {
     ];
 
     /// Whether this is a real, dispatchable route rather than the 404
-    /// sentinel. Deliberately an exhaustive match with no wildcard: adding a
-    /// `Route` variant is a compile error here until the author classifies
+    /// sentinel. An exhaustive match with no wildcard: adding a
+    /// `Route` case is a compile error here until the author classifies
     /// it — and classifying it real without adding it to [`Route::ALL`]
     /// fails `all_lists_every_real_route_exactly_once`.
     #[must_use]
@@ -430,7 +430,7 @@ impl StreamEndReason {
     /// up is discovered by whichever of the two notices first: the read, as EOF
     /// ([`Self::PeerDisconnected`]), or the next write, as a broken pipe
     /// ([`Self::WriteFailed`]). Those races are decided by `tokio::select!`,
-    /// which polls its branches in a deliberately randomized order — so without
+    /// which polls its branches in a randomized order — so without
     /// this, a coin flip inside the runtime decided whether a host that dropped
     /// its connection could resume the turn it had already paid a model call
     /// for, or got `404 unknown turn` on reconnect. The distinction is still
@@ -560,7 +560,7 @@ pub struct TurnTally {
     pub parked_spans: u32,
     /// Parked waits that closed with an `AgentEvent::TurnWoken`.
     ///
-    /// Deliberately counted apart from [`Self::parked_spans`] rather than
+    /// Counted apart from [`Self::parked_spans`] rather than
     /// assumed equal to it: the engine's park loop returns early — without a
     /// wake — when the turn is cancelled or a soft stop is latched
     /// (`stella-core::driver::waiting`). So a turn can settle with a span
@@ -572,7 +572,7 @@ pub struct TurnTally {
     /// `AgentEvent::TurnWoken.polls_used`.
     ///
     /// The park's own progress axis — the direct analogue of [`Self::stages`]
-    /// for a turn that is deliberately making no stage progress. A park whose
+    /// for a turn that is making no stage progress. A park whose
     /// probes are climbing is working; one at zero probes woke immediately.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub parked_polls: u64,
@@ -805,7 +805,7 @@ pub enum ServeEvent {
 }
 
 impl ServeEvent {
-    /// This event's severity. Exhaustive by construction: a new variant does
+    /// This event's severity. Exhaustive by construction: a new case does
     /// not compile until it is classified.
     #[must_use]
     pub fn level(&self) -> Level {
@@ -880,10 +880,10 @@ mod tests {
     use super::*;
 
     /// The registry is honest in both directions: `ALL` names exactly the
-    /// `is_real` routes (adding a variant trips `is_real`'s exhaustive match,
+    /// `is_real` routes (adding a case trips `is_real`'s exhaustive match,
     /// and classifying it real without joining `ALL` fails here), with no
     /// duplicates. The dispatch-side half — every template classifies back to
-    /// its own variant — lives beside `classify` in `server.rs`.
+    /// its own case — lives beside `classify` in `server.rs`.
     #[test]
     fn all_lists_every_real_route_exactly_once() {
         let mut seen = std::collections::BTreeSet::new();
@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(seen.len(), Route::ALL.len());
     }
 
-    /// Invariant 4: every type crossing a crate boundary round-trips through
+    /// AGENTS.md #4: every type crossing a crate boundary round-trips through
     /// `serde_json` byte-for-byte.
     #[test]
     fn events_round_trip_byte_for_byte() {
@@ -977,7 +977,7 @@ mod tests {
     /// socket first — the read, as EOF, or the next write, as a broken pipe.
     /// Both must keep the turn resumable.
     ///
-    /// This is the invariant, not a restatement of the implementation: the two
+    /// This is the rule, not a restatement of the implementation: the two
     /// are raced by a `tokio::select!` that randomizes which branch it polls,
     /// so when only `PeerDisconnected` parked the turn, a coin flip inside the
     /// runtime decided whether a host that dropped its connection could resume

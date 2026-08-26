@@ -39,7 +39,7 @@
 //! machine-independent because every path the plugin reports is
 //! workspace-relative.
 //!
-//! # What this file deliberately does not do
+//! # What this file does not do
 //!
 //! It never constructs a [`WrapperDispatch`](stella_runtime::wrapper) and never
 //! runs a turn. Grading the plugin against the *host sequence* that dispatches
@@ -263,7 +263,7 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
              `StageName::Host(HostStage::Research).publishes()` is empty in the host, so there \
              is none it could honestly publish"
         );
-        // Invariant 7, checked on the value rather than trusted. The one exit
+        // AGENTS.md #7, checked on the value rather than trusted. The one exit
         // from a contribution is `VolatileContext::into_message`, and what it
         // returns is a *user* message — one that rides after the byte-stable
         // system prefix, never inside it, so an installed plugin can never
@@ -277,7 +277,7 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
 }
 
 /// The other half of the contract, and not an afterthought:
-/// `BeforeTurnResponse` has no error variant, so a plugin that cannot answer
+/// `BeforeTurnResponse` has no error case, so a plugin that cannot answer
 /// **fails** — non-zero exit, one line on stderr, nothing on stdout — and the
 /// host runs the turn without the contribution.
 ///
@@ -362,7 +362,7 @@ fn every_vector_is_graded_by_exactly_one_sibling() {
 
 /// What the shipped manifest declares, asserted against the extraction's own
 /// bar: `before_turn` **only**, no arbiter powers, and no `[wrapper]` stage
-/// order — this plugin participates in a turn, it does not author a variant.
+/// order — this plugin participates in a turn, it does not author a case.
 #[test]
 fn the_shipped_manifest_declares_before_turn_and_nothing_stronger() {
     let manifest = manifest();

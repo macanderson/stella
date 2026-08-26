@@ -43,7 +43,7 @@ use stella_runtime::wrapper::{
 /// What a human consents to at install: this plugin answers `before_turn`, may
 /// ask for both halves of the capability, and declares three role intents.
 ///
-/// `scout` and `nowhere` are declared deliberately. The seat rule has to be
+/// `scout` and `nowhere` are declared. The seat rule has to be
 /// tested against roles the *manifest permits*, or it proves only that the
 /// manifest check works.
 const CANDIDATES_MANIFEST: &str = r#"

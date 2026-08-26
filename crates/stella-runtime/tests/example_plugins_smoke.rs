@@ -19,7 +19,7 @@
 //!    which is the exact failure §9 rule 4 exists to catch.
 //! 2. **Rule 1 still holds** — the three manifests are byte-identical except
 //!    the single `argv` line naming each implementation's program. That is the
-//!    examples' own invariant (`plugins/ci/check-manifests-identical.py`), and
+//!    examples' own rule (`plugins/ci/check-manifests-identical.py`), and
 //!    it is worth re-checking here because a grammar change that forces an
 //!    edit to one of them is exactly the moment the three drift apart.
 //! 3. **The plugins still answer** — each committed `after_turn` vector goes

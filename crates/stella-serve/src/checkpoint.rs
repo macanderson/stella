@@ -5,7 +5,7 @@
 //!
 //! [`stella_core::step::CheckpointSink`] says *when* a checkpoint is written —
 //! at the one step boundary where the transcript is guaranteed well-paired —
-//! and deliberately says nothing about where. `crate::session::drive_turn`
+//! and says nothing about where. `crate::session::drive_turn`
 //! already reaches both of its seams, calling the same
 //! `Engine::persist_checkpoint` / `discard_checkpoint` the CLI driver calls.
 //! What was missing was everything on the other side of the seam: nothing set
@@ -26,7 +26,7 @@
 //!
 //! # Why the server may own this record when it may not own the workspace
 //!
-//! `stella-serve` deliberately has no `stella-store` dependency and no
+//! `stella-serve` has no `stella-store` dependency and no
 //! workspace root: every tool call is answered by the host (see
 //! `crate::remote`), so the tree lives on the host's side and a server that
 //! invented a filesystem location for *the work* would be writing against a

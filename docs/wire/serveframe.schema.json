@@ -4132,7 +4132,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "One frame emitted by the engine toward the host over the outbound stream.\n\nNot `Clone`: every frame is produced once and moved onto the channel, so no\nconsumer ever needs a second copy. The variants own their payloads outright\nrather than borrowing — the port adapters in `remote.rs` pay whatever copy\nthat costs once, at construction (a completion request arrives borrowed and\nis materialized with `CompletionRequestRef::into_owned`; a tool's `input`\narrives as `&Value` and is cloned there) — which is what lets a frame cross\nfrom the session thread to the server runtime.",
+  "description": "One frame emitted by the engine toward the host over the outbound stream.\n\nNot `Clone`: every frame is produced once and moved onto the channel, so no\nconsumer ever needs a second copy. The cases own their payloads outright\nrather than borrowing — the port adapters in `remote.rs` pay whatever copy\nthat costs once, at construction (a completion request arrives borrowed and\nis materialized with `CompletionRequestRef::into_owned`; a tool's `input`\narrives as `&Value` and is cloned there) — which is what lets a frame cross\nfrom the session thread to the server runtime.",
   "oneOf": [
     {
       "description": "A normal agent event — stream it to the UI. Never requires a response.",
@@ -4225,7 +4225,7 @@
       "type": "object"
     },
     {
-      "description": "The hold announced by [`ServerFrame::TurnHeld`] is over and the turn is\nproceeding (#932). Emitted once, paired with the `TurnHeld` before it.\n\nCarries nothing, deliberately: the gate is released by\n`POST /resume`, by a cancel, and by the turn's entry being torn down,\nand from inside the gate those are indistinguishable. A host learns\nwhich it was from what follows — more frames, or `turn_complete`.",
+      "description": "The hold announced by [`ServerFrame::TurnHeld`] is over and the turn is\nproceeding (#932). Emitted once, paired with the `TurnHeld` before it.\n\nCarries nothing: the gate is released by\n`POST /resume`, by a cancel, and by the turn's entry being torn down,\nand from inside the gate those are indistinguishable. A host learns\nwhich it was from what follows — more frames, or `turn_complete`.",
       "properties": {
         "type": {
           "const": "turn_released",
