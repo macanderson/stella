@@ -335,11 +335,23 @@ Adding a deck tab:
    UPPERCASE by convention.
 2. Write `src/views/<tab>.rs` exposing
    `render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer)`,
-   pulling every color from `theme` and recording viewport metrics onto
+   pulling every colour from `stella_tui_theme::token` and every state glyph
+   from `stella_tui_theme::glyph`, and recording viewport metrics onto
    `ui.metrics`. Register it in [`src/views.rs`](src/views.rs).
+   [`src/views/mcp_tab.rs`](src/views/mcp_tab.rs) is the worked example.
+   `area` is the content band `render_deck` has already carved between the tab
+   row and the pulse row, and the chrome around it is
+   [`src/views/frame.rs`](src/views/frame.rs)'s — so a tab fills the band and
+   draws no box of its own.
 3. Add the match arm in `render_deck` ([`src/deck_render.rs`](src/deck_render.rs)).
-4. Add a `handle_<tab>_key` in [`src/deck_ui.rs`](src/deck_ui.rs) and wire it
-   into the per-tab dispatch, taking `composer_empty` and honoring the
+4. Write `handle_<tab>_key` in a `src/deck_ui/<tab>_keys.rs` submodule the way
+   [`src/deck_ui/mcp_keys.rs`](src/deck_ui/mcp_keys.rs),
+   [`src/deck_ui/issues_keys.rs`](src/deck_ui/issues_keys.rs) and
+   [`src/deck_ui/skills_keys.rs`](src/deck_ui/skills_keys.rs) do, then add its
+   `mod`/`use` pair and the `match ui.tab` arm in
+   [`src/deck_ui.rs`](src/deck_ui.rs). That file is the god file named above and
+   is closed to growth, so the handler body goes in the submodule and only the
+   three wiring lines land here. Take `composer_empty` and honour the
    empty-composer rule for bare-letter hotkeys.
 5. `deck_renders_every_tab_with_real_content` in
    [`tests/deck_snapshot.rs`](tests/deck_snapshot.rs) iterates the tabs — extend
