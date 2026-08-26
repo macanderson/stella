@@ -222,6 +222,96 @@ fn main() {
                  \"text\":\"granted {granted} refused {refused}\"}}]}}}}"
             ));
         }
+        // ── driver-socket conversations (`driver_socket.rs`, #4697) ──
+        //
+        // These answer at the `drive` point rather than `before_turn`, and
+        // each exits 1 on an answer it did not expect. That is the scripts'
+        // own discipline and it is kept: a driver that reads an unexpected
+        // answer and carries on would turn a host fault into a plausible
+        // decision, which is the thing this file exists to catch.
+
+        // Confirms the request named its session, asks a declared capability,
+        // and sleeps on a served answer.
+        "drive-sleep" => {
+            let request = read_line();
+            if !request.contains("\"session\":\"cycle-17\"") {
+                eprintln!("the driver was not told which session it is in");
+                std::process::exit(1);
+            }
+            emit("{\"call\":\"backlog_next\",\"id\":1}");
+            let answer = read_line();
+            if !(answer.contains("\"result\":1") && answer.contains("ok")) {
+                eprintln!("the host did not perform the declared capability: {answer}");
+                std::process::exit(1);
+            }
+            emit("{\"point\":\"drive\",\"body\":{\"next\":{\"sleep\":{\"secs\":900}}}}");
+        }
+        // Asks something it never declared, reads the refusal, then degrades
+        // to what it may do — a refusal is a value, never a death.
+        "drive-degrade" => {
+            let _request = read_line();
+            emit("{\"call\":\"deliver_merge\",\"id\":1}");
+            let refused = read_line();
+            if !refused.contains("\"refusal\":\"undeclared\"") {
+                eprintln!("a capability this driver never declared was performed: {refused}");
+                std::process::exit(1);
+            }
+            emit("{\"call\":\"backlog_file\",\"id\":2}");
+            let served = read_line();
+            let reason = if served.contains("\"result\":2") && served.contains("ok") {
+                "merge was not granted; filed the finding and stopped"
+            } else {
+                "the session died on a refusal"
+            };
+            emit(&drive_halt(reason));
+        }
+        // Reads a refusal the host gives for a capability it cannot serve at
+        // all, and halts with what it was told.
+        "drive-unsupported" => {
+            let _request = read_line();
+            emit("{\"call\":\"backlog_next\",\"id\":1}");
+            let answer = read_line();
+            let reason = if answer.contains("\"refusal\":\"unsupported\"") {
+                "the host has no backlog yet".to_string()
+            } else {
+                format!("unexpected: {}", answer.trim())
+            };
+            emit(&drive_halt(&reason));
+        }
+        // Asks twice so the second meets a ceiling the first spent.
+        "drive-allowance" => {
+            let _request = read_line();
+            emit("{\"call\":\"backlog_next\",\"id\":1}");
+            let _first = read_line();
+            emit("{\"call\":\"backlog_next\",\"id\":2}");
+            let second = read_line();
+            let reason = if second.contains("\"refusal\":\"allowance-spent\"") {
+                "one ask per session here"
+            } else {
+                "the ceiling did not hold"
+            };
+            emit(&drive_halt(reason));
+        }
+        // Reads the request to EOF rather than by line — a driver that asks
+        // nothing, so the host closes and this must still decide.
+        "drive-eof" => {
+            let request = read_request();
+            let reason = if request.contains("\"point\":\"drive\"") {
+                "read the whole session request to EOF"
+            } else {
+                "unexpected request"
+            };
+            emit(&drive_halt(reason));
+        }
+        // Asks a capability the host never announced, reads whatever comes
+        // back, and decides anyway. The host is expected to fail the session
+        // before this decision is ever read.
+        "drive-unannounced" => {
+            let _request = read_line();
+            emit("{\"call\":\"backlog_next\",\"id\":1}");
+            let _answer = read_line();
+            emit(&drive_halt("unreachable"));
+        }
         "call-once" => {
             let _request = read_line();
             emit(arg(&args, 1));
@@ -394,6 +484,50 @@ fn main() {
         "candidate-probe" => candidate_probe(&read_request()),
         "flood" => flood(arg(&args, 1).parse().unwrap_or(0), arg(&args, 2)),
         "trailing" => trailing(arg(&args, 1).parse().unwrap_or(0)),
+        // A driver that decides, then keeps writing past its answer. Reads
+        // the request first so the host has asked before the flood starts.
+        // The driver-socket twin of `ask-forever`. Separate rather than
+        // shared because the two sockets have different vocabularies:
+        // `recall` is a wrapper capability and the driver's decoder refuses
+        // it by name, so reusing that mode here fails on a decode error
+        // instead of on the budget the test is about.
+        // Reports which of three named variables reached the driver, as
+        // `10` present / `0` absent — the `${NAME:+1}0` idiom, which states
+        // a variable's *absence* without ever putting its value on the wire.
+        // A credential must read `0` here, so the mode can never be allowed
+        // to echo what it found.
+        "drive-env-probe" => {
+            let _request = read_line();
+            let present = |name: &str| {
+                if std::env::var_os(name).is_some() {
+                    "10"
+                } else {
+                    "0"
+                }
+            };
+            emit(&drive_halt(&format!(
+                "key={} inherited={} ordinary={}",
+                present(arg(&args, 1)),
+                present(arg(&args, 2)),
+                present(arg(&args, 3)),
+            )));
+        }
+        "drive-ask-forever" => {
+            let _request = read_line();
+            loop {
+                emit("{\"call\":\"backlog_next\",\"id\":1}");
+                if read_line().is_empty() {
+                    return;
+                }
+            }
+        }
+        "drive-trailing" => {
+            let _request = read_line();
+            trailing_after(
+                "{\"point\":\"drive\",\"body\":{\"next\":{\"sleep\":{\"secs\":60}}}}",
+                arg(&args, 1).parse().unwrap_or(0),
+            );
+        }
         "background" => background(arg(&args, 1)),
         "heartbeat" => heartbeat(arg(&args, 1)),
         other => {
@@ -440,6 +574,13 @@ fn emit(message: &str) {
     let mut stdout = std::io::stdout();
     let _ = writeln!(stdout, "{message}");
     let _ = stdout.flush();
+}
+
+/// A `drive` response that halts with this reason.
+fn drive_halt(reason: &str) -> String {
+    format!(
+        "{{\"point\":\"drive\",\"body\":{{\"next\":{{\"halt\":{{\"reason\":\"{reason}\"}}}}}}}}"
+    )
 }
 
 /// A `before_turn` response carrying one `note`-labelled context line.
@@ -628,7 +769,17 @@ fn flood(bytes: usize, heartbeat_path: &str) -> ! {
 /// Answer the point correctly, then keep writing to stdout past the pipe
 /// buffer the host has stopped draining.
 fn trailing(bytes: usize) {
-    emit("{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1,\"context\":[]}}");
+    trailing_after(
+        "{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1,\"context\":[]}}",
+        bytes,
+    );
+}
+
+/// [`trailing`] over an answer the caller chooses — `driver_socket.rs` needs
+/// the same deadlock reproduced after a `drive` answer, which is a different
+/// point and so a different literal.
+fn trailing_after(answer: &str, bytes: usize) {
+    emit(answer);
     let mut stdout = std::io::stdout();
     let chunk = vec![b'a'; 8 * 1024];
     let mut written = 0;

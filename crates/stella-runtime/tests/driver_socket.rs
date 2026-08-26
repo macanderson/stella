@@ -21,8 +21,6 @@
 //! `wrapper_transport_limits.rs` now drive — and this file has not moved onto
 //! it yet.
 
-#![cfg(unix)]
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -81,27 +79,35 @@ fn gate(
     Arc::new(DriverCallGate::declare(grant, ceiling, capabilities))
 }
 
-fn driver(script: &str, gate: Arc<DriverCallGate>, timeout: Duration) -> SubprocessDriver {
-    SubprocessDriver::declare(
-        vec!["/bin/sh".into(), "-c".into(), script.into()],
-        Vec::new(),
-        timeout,
-    )
-    .expect("the transport is declared with a program and a budget")
-    .driver
-    .serving(gate)
+/// The ask `an_abandoned_session_is_not_a_decision` makes before walking away:
+/// `call-once` emits it and exits without reading the answer.
+const BACKLOG_ASK: &[&str] = &["call-once", "{\"call\":\"backlog_next\",\"id\":1}"];
+
+/// A driver that reads its request, complains on stderr and dies deciding
+/// nothing — the existing `exit` mode, exit code 0.
+const CRASHES: &[&str] = &["exit", "0", "the driver crashed before deciding"];
+
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
+
+fn argv(mode: &[&str]) -> Vec<String> {
+    let mut argv = vec![FIXTURE.to_string()];
+    argv.extend(mode.iter().map(|part| (*part).to_string()));
+    argv
+}
+
+fn driver(mode: &[&str], gate: Arc<DriverCallGate>, timeout: Duration) -> SubprocessDriver {
+    SubprocessDriver::declare(argv(mode), Vec::new(), timeout)
+        .expect("the transport is declared with a program and a budget")
+        .driver
+        .serving(gate)
 }
 
 /// A driver with no gate at all — the host that attached none. Stdin closes
 /// after the request, exactly as it does for a manifest declaring no calls.
-fn ungated(script: &str, timeout: Duration) -> SubprocessDriver {
-    SubprocessDriver::declare(
-        vec!["/bin/sh".into(), "-c".into(), script.into()],
-        Vec::new(),
-        timeout,
-    )
-    .expect("the transport is declared with a program and a budget")
-    .driver
+fn ungated(mode: &[&str], timeout: Duration) -> SubprocessDriver {
+    SubprocessDriver::declare(argv(mode), Vec::new(), timeout)
+        .expect("the transport is declared with a program and a budget")
+        .driver
 }
 
 /// **The witness.** A driver is opened, asks the host for a capability it
@@ -120,22 +126,7 @@ async fn a_driver_holds_a_session_asks_for_a_capability_and_says_what_comes_next
 
     // The session identity is read back out of the request, so the answer is
     // genuinely a function of what the host opened rather than a fixed string.
-    let script = r#"
-read -r request
-case "$request" in
-  *'"session":"cycle-17"'*) ;;
-  *) printf 'the driver was not told which session it is in\n' >&2 ; exit 1 ;;
-esac
-printf '%s\n' '{"call":"backlog_next","id":1}'
-read -r answer
-case "$answer" in
-  *'"result":1'*'"ok"'*) secs=900 ;;
-  *) printf 'the host did not perform the declared capability: %s\n' "$answer" >&2 ; exit 1 ;;
-esac
-printf '{"point":"drive","body":{"next":{"sleep":{"secs":%s}}}}\n' "$secs"
-"#;
-
-    let response = driver(script, Arc::clone(&gate), Duration::from_secs(10))
+    let response = driver(&["drive-sleep"], Arc::clone(&gate), Duration::from_secs(10))
         .drive(DriveRequest::new("cycle-17"))
         .await
         .expect("the driver was opened, served, and ended its own session");
@@ -169,27 +160,14 @@ async fn an_undeclared_capability_is_refused_to_the_driver_and_the_session_conti
     );
     let gate = gate(grant, DEFAULT_DRIVER_MAX_CALLS, Box::new(Serves));
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"deliver_merge","id":1}'
-read -r refused
-case "$refused" in
-  *'"refusal":"undeclared"'*) ;;
-  *) printf 'a capability this driver never declared was performed: %s\n' "$refused" >&2 ; exit 1 ;;
-esac
-printf '%s\n' '{"call":"backlog_file","id":2}'
-read -r served
-case "$served" in
-  *'"result":2'*'"ok"'*) reason="merge was not granted; filed the finding and stopped" ;;
-  *) reason="the session died on a refusal" ;;
-esac
-printf '{"point":"drive","body":{"next":{"halt":{"reason":"%s"}}}}\n' "$reason"
-"#;
-
-    let response = driver(script, Arc::clone(&gate), Duration::from_secs(10))
-        .drive(DriveRequest::new("cycle-18"))
-        .await
-        .expect("a refused capability is a value the driver reads, never a death");
+    let response = driver(
+        &["drive-degrade"],
+        Arc::clone(&gate),
+        Duration::from_secs(10),
+    )
+    .drive(DriveRequest::new("cycle-18"))
+    .await
+    .expect("a refused capability is a value the driver reads, never a death");
 
     assert_eq!(
         response.next,
@@ -219,21 +197,14 @@ async fn the_shipping_host_performs_no_capability_yet_and_the_driver_is_told() {
         Box::new(NoDriverCapabilities),
     );
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"backlog_next","id":1}'
-read -r answer
-case "$answer" in
-  *'"refusal":"unsupported"'*) reason="the host has no backlog yet" ;;
-  *) reason="unexpected: $answer" ;;
-esac
-printf '{"point":"drive","body":{"next":{"halt":{"reason":"%s"}}}}\n' "$reason"
-"#;
-
-    let response = driver(script, Arc::clone(&gate), Duration::from_secs(10))
-        .drive(DriveRequest::new("cycle-19"))
-        .await
-        .expect("an unsupported capability is answered, not fatal");
+    let response = driver(
+        &["drive-unsupported"],
+        Arc::clone(&gate),
+        Duration::from_secs(10),
+    )
+    .drive(DriveRequest::new("cycle-19"))
+    .await
+    .expect("an unsupported capability is answered, not fatal");
     assert_eq!(
         response.next,
         DriveNext::Halt {
@@ -251,23 +222,14 @@ async fn the_session_allowance_is_the_hosts_and_a_spent_one_is_answered() {
     let gate = gate(grant_of(DRIVING_MANIFEST), 1, Box::new(Serves));
     assert_eq!(gate.max_calls(), 1, "the manifest's ask of 4 is clamped");
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"backlog_next","id":1}'
-read -r first
-printf '%s\n' '{"call":"backlog_next","id":2}'
-read -r second
-case "$second" in
-  *'"refusal":"allowance-spent"'*) reason="one ask per session here" ;;
-  *) reason="the ceiling did not hold" ;;
-esac
-printf '{"point":"drive","body":{"next":{"halt":{"reason":"%s"}}}}\n' "$reason"
-"#;
-
-    let response = driver(script, Arc::clone(&gate), Duration::from_secs(10))
-        .drive(DriveRequest::new("cycle-20"))
-        .await
-        .expect("a spent allowance is answered, not fatal");
+    let response = driver(
+        &["drive-allowance"],
+        Arc::clone(&gate),
+        Duration::from_secs(10),
+    )
+    .drive(DriveRequest::new("cycle-20"))
+    .await
+    .expect("a spent allowance is answered, not fatal");
     assert_eq!(
         response.next,
         DriveNext::Halt {
@@ -302,21 +264,12 @@ async fn a_driver_that_declares_no_capability_gets_its_eof_and_is_not_left_hangi
         "an empty [driver] calls list can never be served"
     );
 
-    let script = r#"
-request=$(cat)
-case "$request" in
-  *'"point":"drive"'*) reason="read the whole session request to EOF" ;;
-  *) reason="unexpected request" ;;
-esac
-printf '{"point":"drive","body":{"next":{"halt":{"reason":"%s"}}}}\n' "$reason"
-"#;
-
     // Served by the gate, not by `ungated`: the transport's own
     // `offers_calls()` consultation is the thing under test, and a driver with
     // no gate at all would reach the same EOF for a different reason.
     let budget = Duration::from_secs(10);
     let started = Instant::now();
-    let response = driver(script, Arc::clone(&gate), budget)
+    let response = driver(&["drive-eof"], Arc::clone(&gate), budget)
         .drive(DriveRequest::new("cycle-21"))
         .await
         .expect("a driver that asks for nothing still ends its session");
@@ -338,16 +291,9 @@ printf '{"point":"drive","body":{"next":{"halt":{"reason":"%s"}}}}\n' "$reason"
 /// manifest declares no `[driver] calls`, or this host attached no gate.
 #[tokio::test]
 async fn an_ask_with_no_channel_open_is_reported_rather_than_waited_out() {
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"backlog_next","id":1}'
-read -r answer
-printf '{"point":"drive","body":{"next":{"halt":{"reason":"unreachable"}}}}\n'
-"#;
-
     let budget = Duration::from_secs(10);
     let started = Instant::now();
-    let failed = ungated(script, budget)
+    let failed = ungated(&["drive-unannounced"], budget)
         .drive(DriveRequest::new("cycle-22"))
         .await
         .expect_err("an unanswerable ask is a failure, not a silence");
@@ -390,12 +336,7 @@ async fn a_driver_that_asks_and_then_ends_without_a_next_names_what_it_abandoned
 
     // Asks, and exits without ever reading the answer. Its stdout closes with
     // the ask as the last thing it said.
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"backlog_next","id":1}'
-"#;
-
-    let failed = driver(script, Arc::clone(&gate), Duration::from_secs(10))
+    let failed = driver(BACKLOG_ASK, Arc::clone(&gate), Duration::from_secs(10))
         .drive(DriveRequest::new("cycle-79"))
         .await
         .expect_err("an abandoned session is not a decision");
@@ -420,12 +361,7 @@ printf '%s\n' '{"call":"backlog_next","id":1}'
 /// restart a broken driver forever.
 #[tokio::test]
 async fn a_driver_that_ends_without_a_next_is_a_failure_rather_than_a_halt() {
-    let script = r#"
-cat >/dev/null
-printf 'the driver crashed before deciding\n' >&2
-"#;
-
-    let failed = ungated(script, Duration::from_secs(10))
+    let failed = ungated(CRASHES, Duration::from_secs(10))
         .drive(DriveRequest::new("cycle-23"))
         .await
         .expect_err("silence is not a decision");
@@ -445,16 +381,13 @@ printf 'the driver crashed before deciding\n' >&2
 /// not a decode failure about the answer it never wrote.
 #[tokio::test]
 async fn a_driver_that_dies_loudly_is_reported_with_its_status_and_stderr() {
-    let script = r#"
-cat >/dev/null
-printf 'no issue provider configured\n' >&2
-exit 3
-"#;
-
-    let failed = ungated(script, Duration::from_secs(10))
-        .drive(DriveRequest::new("cycle-24"))
-        .await
-        .expect_err("a non-zero exit is a failure");
+    let failed = ungated(
+        &["exit", "3", "no issue provider configured"],
+        Duration::from_secs(10),
+    )
+    .drive(DriveRequest::new("cycle-24"))
+    .await
+    .expect_err("a non-zero exit is a failure");
 
     assert!(
         matches!(&failed, DriverError::Exit { status, stderr, .. }
@@ -477,16 +410,8 @@ async fn the_session_cannot_outlive_its_budget_by_asking() {
     let budget = Duration::from_millis(700);
 
     // Never writes a `next`. Every iteration is a legitimate, declared ask.
-    let script = r#"
-read -r request
-while :; do
-  printf '%s\n' '{"call":"backlog_next","id":1}'
-  read -r answer || exit 0
-done
-"#;
-
     let started = Instant::now();
-    let failed = driver(script, Arc::clone(&gate), budget)
+    let failed = driver(&["drive-ask-forever"], Arc::clone(&gate), budget)
         .drive(DriveRequest::new("cycle-25"))
         .await
         .expect_err("a session that never ends is killed at its budget");
@@ -560,14 +485,13 @@ async fn a_driver_is_denied_the_model_credential_and_inherits_none_from_the_host
     // cannot — the same probe `tests/wrapper_env_refusal.rs` uses, and it
     // reports the *absence* of a variable without ever putting its value on
     // the wire.
-    let probe = r#"
-read -r request
-printf '{"point":"drive","body":{"next":{"halt":{"reason":"key=%s inherited=%s ordinary=%s"}}}}\n' \
-  "${ANTHROPIC_API_KEY:+1}0" "${STELLA_DRIVER_INHERITANCE_PROBE:+1}0" "${STELLA_DRIVER_ROLE:+1}0"
-"#;
-
     let admitted = SubprocessDriver::declare(
-        vec!["/bin/sh".into(), "-c".into(), probe.into()],
+        argv(&[
+            "drive-env-probe",
+            "ANTHROPIC_API_KEY",
+            "STELLA_DRIVER_INHERITANCE_PROBE",
+            "STELLA_DRIVER_ROLE",
+        ]),
         vec![
             // Declared by the manifest, and refused: a credential.
             ("ANTHROPIC_API_KEY".into(), "sk-must-not-arrive".into()),
@@ -618,19 +542,14 @@ printf '{"point":"drive","body":{"next":{"halt":{"reason":"key=%s inherited=%s o
 async fn a_driver_that_talks_after_deciding_does_not_wedge_the_session() {
     let budget = Duration::from_secs(8);
     let trailing_past_one_pipe_buffer = 3 * 64 * 1024;
-    let script = format!(
-        "read -r request\n\
-         printf '%s\\n' '{{\"point\":\"drive\",\"body\":{{\"next\":{{\"sleep\":{{\"secs\":60}}}}}}}}'\n\
-         yes stella | tr -d '\\n' | head -c {trailing_past_one_pipe_buffer}\n",
-    );
-
     let started = Instant::now();
-    let response = ungated(&script, budget)
-        .drive(DriveRequest::new("cycle-28"))
-        .await
-        .expect(
-            "a driver that decided correctly and then kept talking is not lost to a pipe deadlock",
-        );
+    let response = ungated(
+        &["drive-trailing", &trailing_past_one_pipe_buffer.to_string()],
+        budget,
+    )
+    .drive(DriveRequest::new("cycle-28"))
+    .await
+    .expect("a driver that decided correctly and then kept talking is not lost to a pipe deadlock");
     let elapsed = started.elapsed();
 
     assert_eq!(
