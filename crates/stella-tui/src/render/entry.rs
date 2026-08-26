@@ -506,25 +506,14 @@ fn entry_body(
                 out,
             );
         }
-        TranscriptEntry::Compaction {
-            before_tokens,
-            after_tokens,
-            evicted,
-            deduped,
-        } => {
-            push_note(
-                "⇣ compacted",
-                quiet(),
-                vec![
-                    Span::styled(format!("{before_tokens}→{after_tokens} tok"), value()),
-                    Span::styled(
-                        format!("  ·  {evicted} evicted · {deduped} deduped"),
-                        quiet(),
-                    ),
-                ],
-                width,
-                out,
-            );
+        // The router's (SPEC 6.3's one quiet line). This arm delegates for the
+        // same reason `ToolStart` below does: it used to hold a live-looking
+        // v1 row (`⇣ compacted … tok`) that `projected_rows` had made
+        // unreachable, and a dead match arm drifts silently — neither
+        // `dead-code-allows` nor `module-reachability` sees inside a match
+        // (#4157's lesson, restated at the router).
+        TranscriptEntry::Compaction { .. } => {
+            projected_rows(entry, view, expanded, width, out);
         }
         TranscriptEntry::BudgetTick {
             spent_usd,
@@ -941,5 +930,105 @@ fn ci_status_color(status: CiStatus) -> Color {
         CiStatus::Running => theme::WARNING_BRIGHT,
         CiStatus::Passing => theme::OK,
         CiStatus::Failing => theme::BAD,
+    }
+}
+
+#[cfg(test)]
+mod entry_body_tests {
+    use super::*;
+
+    fn text_of(lines: &[Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    /// The witness for the dead-arm hazard (#4157's shape): `entry_body`'s
+    /// compaction arm must draw exactly what the router's projection draws,
+    /// because the router intercepts `Compaction` and the long-form arm is
+    /// otherwise unreachable — where it sat drawing a stale `⇣ compacted … tok`
+    /// row that nothing could ever see, until the day the router narrowed and
+    /// it silently could.
+    #[test]
+    fn the_compaction_arm_agrees_with_the_projection_it_shadows() {
+        let entry = TranscriptEntry::Compaction {
+            before_tokens: 74_000,
+            after_tokens: 69_000,
+            evicted: 0,
+            deduped: 0,
+        };
+        let width = 100;
+        let mut via_router = Vec::new();
+        assert!(projected_rows(
+            &entry,
+            EntryView::default(),
+            false,
+            width,
+            &mut via_router,
+        ));
+        let mut via_body = Vec::new();
+        entry_body(
+            &entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            width,
+            &mut via_body,
+        );
+        assert_eq!(
+            text_of(&via_body),
+            text_of(&via_router),
+            "entry_body's compaction arm drifted from the projection"
+        );
+        // One quiet line — SPEC 6.3's whole ask for compaction — from the
+        // projection, and the same one line through both routes.
+        assert_eq!(via_router.len(), 1, "{:?}", text_of(&via_router));
+        assert!(
+            text_of(&via_router)[0].contains("compacted 74k→69k"),
+            "{:?}",
+            text_of(&via_router)
+        );
+    }
+
+    /// The same event through [`entry_lines`] — the path every frame actually
+    /// takes: the one quiet line plus the block-closing spacer, and nothing
+    /// else, so neither route can double-print a compaction.
+    #[test]
+    fn a_compaction_renders_one_quiet_line_through_the_full_path() {
+        let entry = TranscriptEntry::Compaction {
+            before_tokens: 74_000,
+            after_tokens: 69_000,
+            evicted: 0,
+            deduped: 0,
+        };
+        let mut out = Vec::new();
+        entry_lines(
+            &entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            100,
+            &mut out,
+        );
+        let rows = text_of(&out);
+        assert_eq!(
+            rows.iter().filter(|r| r.contains("compacted")).count(),
+            1,
+            "{rows:?}"
+        );
+        assert_eq!(
+            out.len(),
+            2,
+            "one quiet line and its trailing spacer: {rows:?}"
+        );
+        assert!(rows[1].trim().is_empty(), "{rows:?}");
     }
 }
