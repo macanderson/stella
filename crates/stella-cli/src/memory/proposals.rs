@@ -27,6 +27,7 @@
 //! produce a proposal that is recorded and visible but never eligible — spec §7.
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 
 use stella_context::{ContextStore, LedgerAppend};
 use stella_core::context_record::{
@@ -34,6 +35,7 @@ use stella_core::context_record::{
     ProposalScore, RecordProposalKind, RecordProposalStatus, confidence_from_score,
 };
 use stella_core::skills::{self, Skill, SkillCandidate, SkillMineConfig, SkillObservation};
+use stella_protocol::provenance::ProvenanceGrade;
 
 /// A mined candidate together with the durable proposal recorded for it.
 pub(crate) struct InducedProposal {
@@ -213,6 +215,73 @@ pub(crate) fn all_proposals(store: &ContextStore, limit: usize) -> Vec<ProposalR
         .into_iter()
         .filter_map(|row| serde_json::from_str::<ProposalRecord>(&row.body).ok())
         .collect()
+}
+
+/// Ledger revisions read for a grade lookup — generous, because a candidate
+/// stops being re-proposed once its skill file exists (`already_captured`
+/// takes over), so the real count per workspace is small.
+const GRADE_PEEK_READ_LIMIT: usize = 5_000;
+
+/// `.stella/private/context.db`, if it already exists — pure enough to be the
+/// whole guard: it stats one path and creates nothing, mirroring
+/// `stella_store::rules_peek::existing_store_db`'s reasoning for `store.db`.
+/// No legacy fallback: `context.db`'s records are "born canonical"
+/// (`stella_core::context_record::lifecycle`'s module doc) with no
+/// pre-`private/` layout to have moved from.
+fn existing_context_db(workspace_root: &Path) -> Option<std::path::PathBuf> {
+    let path = workspace_root
+        .join(".stella")
+        .join("private")
+        .join("context.db");
+    path.is_file().then_some(path)
+}
+
+/// The evidence grade recorded against each skill candidate id, read straight
+/// off `.stella/private/context.db` without opening it as a store.
+///
+/// [`ContextStore::open`] runs migrations and registers an embedder
+/// fingerprint on every call — a write, correct for a session and wrong for
+/// the SKILLS tab, which calls this on every refresh. [`stella_context::peek_records_of_kind`]
+/// is the ledger crate's own answer to that problem (mirrors
+/// `stella_store::rules_peek`'s identical reasoning for `store.db`), so this
+/// resolves the path and parses the bodies — the typed half `stella-context`
+/// does not own — and nothing more. A workspace with no ledger
+/// at all — the common case, since the shipped lexical loop never writes one
+/// — answers an empty map.
+///
+/// Folds every `Knowledge` proposal ever recorded for a candidate with
+/// [`ProvenanceGrade::weakest`] — #2782's rule 1, that combining evidence can
+/// only weaken it, applied across ledger revisions the same way `EvidencePool`
+/// applies it across observations within one revision. A candidate with no
+/// recorded proposal — every skill the lexical loop wrote, and any typed-loop
+/// skill from before this existed — is simply absent from the map: absent,
+/// not a weak grade this invented.
+pub(crate) fn peek_grade_by_candidate(workspace_root: &Path) -> HashMap<String, ProvenanceGrade> {
+    let mut grades: HashMap<String, ProvenanceGrade> = HashMap::new();
+    let Some(db_path) = existing_context_db(workspace_root) else {
+        return grades;
+    };
+    let records = stella_context::peek_records_of_kind(
+        &db_path,
+        ContextRecordKind::RecordProposal.as_str(),
+        GRADE_PEEK_READ_LIMIT,
+    );
+    for record in records {
+        let Ok(proposal) = serde_json::from_str::<ProposalRecord>(&record.body) else {
+            continue;
+        };
+        if proposal.proposal_kind != RecordProposalKind::Knowledge {
+            continue;
+        }
+        let Some(grade) = proposal.provenance else {
+            continue;
+        };
+        grades
+            .entry(proposal.candidate_id)
+            .and_modify(|g| *g = ProvenanceGrade::weakest([*g, grade]).unwrap_or(*g))
+            .or_insert(grade);
+    }
+    grades
 }
 
 #[cfg(test)]

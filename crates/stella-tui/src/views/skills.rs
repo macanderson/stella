@@ -209,9 +209,19 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         // A contributed skill names its package instead of a version and a
         // scope: neither is a thing it has (`skill_manager::contributed_rows`),
         // and whose it is is the column a reader of this row actually needs.
+        //
+        // A learned row names the grade of the evidence that promoted it
+        // (#4871) when the ledger still has one — the same `snake_case` token
+        // `stella proposals` prints, so a reader learns one vocabulary rather
+        // than two. Absent for a skill mined before the ledger existed, or
+        // under the shipped lexical loop, which records no proposal at all —
+        // there is no grade to name, not a missing feature.
         let meta = match (&row.contributed_by, row.origin.as_str()) {
             (Some(plugin), _) => format!(" via {plugin} "),
-            (None, "auto") => " learned ".to_string(),
+            (None, "auto") => match &row.evidence_grade {
+                Some(grade) => format!(" learned · {grade} "),
+                None => " learned ".to_string(),
+            },
             (None, _) => format!(" {ver} · {} ", row.scope.label()),
         };
         let name = format!("{:<24}", row.name);
@@ -530,9 +540,28 @@ mod tests {
             description: format!("{name} does a thing"),
             body: format!("body of {name}"),
             origin: "workspace".to_string(),
+            evidence_grade: None,
             enabled,
             version,
             latest,
+            removable: true,
+            contributed_by: None,
+        }
+    }
+
+    /// A learned (`origin: auto`) row, optionally carrying the evidence grade
+    /// the SKILLS tab looked up for it (#4871).
+    fn learned_row(name: &str, evidence_grade: Option<&str>) -> SkillRow {
+        SkillRow {
+            scope: SkillScope::Project,
+            name: name.to_string(),
+            description: format!("{name} does a thing"),
+            body: format!("body of {name}"),
+            origin: "auto".to_string(),
+            evidence_grade: evidence_grade.map(str::to_string),
+            enabled: true,
+            version: 1,
+            latest: 1,
             removable: true,
             contributed_by: None,
         }
@@ -562,6 +591,34 @@ mod tests {
         assert!(text.contains("[ ]"), "disabled box:\n{text}");
         assert!(text.contains("v2/3"), "pinned-older version shown:\n{text}");
         assert!(text.contains("pdf-extract"), "{text}");
+    }
+
+    /// A learned skill's row names the grade of the evidence that promoted it
+    /// (#4871), and two skills promoted from different-strength evidence read
+    /// as different rows rather than both saying only "learned". A learned
+    /// row with no grade at all (mined before the ledger existed, or under
+    /// the shipped lexical loop) still reads plainly as "learned".
+    #[test]
+    fn learned_rows_name_their_evidence_grade_and_differ_by_it() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.view = SkillsView {
+            rows: vec![
+                learned_row("from-build-failures", Some("environment_observation")),
+                learned_row("from-model-opinion", Some("model_critique")),
+            ],
+            status: None,
+            busy: false,
+            created: None,
+        };
+        let area = Rect::new(0, 0, 120, 20);
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("learned · environment_observation"), "{text}");
+        assert!(text.contains("learned · model_critique"), "{text}");
     }
 
     #[test]
