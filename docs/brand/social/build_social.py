@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
+import json
 import random
 import re
 import shutil
@@ -72,6 +74,24 @@ REPO_SLUG = "macanderson/stella"
 INSTALL_CMD = "brew install macanderson/tap/stella"
 TAGLINE = "the terminal agent — faster · cheaper · more accurate"
 STAR_CTA = "star the repo"
+
+# The kit is normative for the tagline the way README.md is for the install
+# line, and `check_tagline` holds these to it. The kit's own copy is the hero
+# `<p class="tag">`; everything below is a copy of it.
+#
+# What the tagline *claims* is a separate question and an open one -- two of its
+# three legs disagree with this repository's own published run (#3631). This
+# guard takes no position on that. It makes the sentence editable in one place:
+# whichever way the claim is settled, the kit moves and every copy is named
+# until it follows.
+KIT_PAGE = REPO / "docs" / "brand" / "brand-guidelines.html"
+TAGLINE_MANIFEST = REPO / "docs" / "brand" / "pwa" / "manifest.webmanifest"
+TAGLINE_COPIES = (
+    "website/src/app/manifest.ts",
+    "website/src/app/opengraph-image.tsx",
+    "docs/brand/site/stella-site-mock.html",
+    "docs/brand/site/stella-mobile-mock.html",
+)
 
 # JetBrains Mono is monospace: one advance, every glyph, forever.
 ADVANCE = ck.ADVANCE
@@ -718,6 +738,59 @@ def check_install_line() -> None:
         raise SystemExit(f"repo slug is not org/repo: {REPO_SLUG!r}")
 
 
+def flatten(text: str) -> str:
+    """Markup out, entities in, one space between words.
+
+    The tagline is written five different ways in the tree and means the same
+    thing every time: `&middot;` for `·`, `\\u00b7` for the same, a `<b>` in the
+    middle of the sentence, and a line break wherever the source wrapped. A
+    comparison that could not see through those would report drift that is not
+    there, which is worse than not looking -- it teaches the next reader to
+    ignore it.
+    """
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", text))).strip()
+
+
+def check_tagline() -> None:
+    """Every published copy of the tagline must be the kit's.
+
+    The install line has been held to README.md since this script was written;
+    the tagline was held to nothing, so the kit and its copies could drift with
+    nothing to report it (#3631). They had: the two site mocks carry a longer
+    form, which is legitimate -- they extend the sentence rather than restate it
+    -- so a copy is required to *contain* the kit's tagline, and the two places
+    that are a description field rather than a sentence are held to it exactly.
+    """
+    hero = re.search(r'<p class="tag">(.*?)</p>', KIT_PAGE.read_text(encoding="utf-8"), re.S)
+    if hero is None:
+        raise SystemExit(
+            f"no <p class=\"tag\"> hero in {KIT_PAGE.relative_to(REPO)}; the kit is "
+            "where the tagline is defined, so this guard cannot read it."
+        )
+    kit = flatten(hero.group(1))
+    if kit != TAGLINE:
+        raise SystemExit(
+            f"tagline drift: the kit says {kit!r}\n"
+            f"                 TAGLINE says {TAGLINE!r}\n"
+            "The kit is normative — update TAGLINE (and re-render), or fix the kit."
+        )
+
+    described = json.loads(TAGLINE_MANIFEST.read_text(encoding="utf-8"))["description"]
+    if described != TAGLINE:
+        raise SystemExit(
+            f"tagline drift in {TAGLINE_MANIFEST.relative_to(REPO)}: "
+            f"description is {described!r}, kit says {TAGLINE!r}"
+        )
+
+    for rel in TAGLINE_COPIES:
+        path = REPO / rel
+        if TAGLINE not in flatten(path.read_text(encoding="utf-8")):
+            raise SystemExit(
+                f"tagline drift in {rel}: it does not carry the kit's tagline "
+                f"{TAGLINE!r}"
+            )
+
+
 def check_fits(lo: Layout) -> None:
     """Nothing may reach the edge, and the safe box is a hard boundary."""
     if lo.mark_only:
@@ -778,10 +851,14 @@ def main() -> int:
     args = ap.parse_args()
 
     check_install_line()
+    check_tagline()
     for lo in LAYOUTS:
         check_fits(lo)
     if args.check:
-        print(f"ok — install line and {len(LAYOUTS)} layouts fit")
+        print(
+            f"ok — install line, tagline across {len(TAGLINE_COPIES) + 2} copies, "
+            f"and {len(LAYOUTS)} layouts fit"
+        )
         return 0
 
     if not shutil.which("rsvg-convert"):

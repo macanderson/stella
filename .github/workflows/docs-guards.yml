@@ -1,9 +1,10 @@
 name: docs-guards
 
-# Eight guards over prose. None needs a Rust toolchain, which is why they live
-# here rather than in ci.yml -- that workflow deliberately skips its Rust jobs
-# for a diff confined to `docs/**`, `website/**` and `*.md` (a job-level prose
-# filter since #1892), and this one triggers on exactly those paths.
+# The guards over prose, listed below and enumerated by the job's own steps.
+# None needs a Rust toolchain, which is why they live here rather than in ci.yml
+# -- that workflow deliberately skips its Rust jobs for a diff confined to
+# `docs/**`, `website/**` and `*.md` (a job-level prose filter since #1892), and
+# this one triggers on exactly those paths.
 #
 #  1. doc-links (scripts/check-doc-links.py): every citation resolves to a
 #     document that has declared an identity. Documents are addressed by a
@@ -59,6 +60,14 @@ name: docs-guards
 #     diff ci.yml's Rust job is skipped for, which is why the filter above
 #     widened from `website/content/docs/**` to `website/**`.
 #
+#  9. the brand art's sources (docs/brand/social/build_social.py --check): the
+#     banner's install line against README.md, and its tagline against the kit
+#     page (#3631). Both are cross-file string claims that a render bakes into a
+#     PNG a platform then caches, so drift is unfixable after the fact. The
+#     script had never run in automation -- only a human following
+#     docs/brand/README.md ever invoked it. `--check` returns before it reaches
+#     rsvg-convert, so it needs no renderer and no desktop font.
+#
 # Rust sources are in the path filter because the first three read them: a
 # citation added to a .rs comment is exactly how one goes stale, and the
 # subcommand list the third guard checks is itself a Rust enum.
@@ -79,6 +88,7 @@ on:
       - "scripts/check-website-inputs.sh"
       - "scripts/website-rust-inputs.txt"
       - "scripts/file-size-baseline.txt"
+      - "README.md"
       - ".github/workflows/docs-guards.yml"
   push:
     branches: [main]
@@ -97,6 +107,7 @@ on:
       - "scripts/check-website-inputs.sh"
       - "scripts/website-rust-inputs.txt"
       - "scripts/file-size-baseline.txt"
+      - "README.md"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
 
@@ -174,3 +185,17 @@ jobs:
       - name: nothing outside docs/design cites docs/design
         if: ${{ !cancelled() }}
         run: bash scripts/check-design-refs.sh
+
+      # The brand kit's two cross-file strings: the install line against
+      # README.md, and now the tagline against the kit (#3631). `--check`
+      # renders nothing and needs neither rsvg-convert nor a desktop font --
+      # it returns before either is reached -- so it costs a second here.
+      #
+      # It had never run in automation at all. `check_install_line` has guarded
+      # the banner's install command since the script was written, and the only
+      # thing invoking it was a human following docs/brand/README.md. A guard
+      # nobody runs is the same as no guard, which is the gap #4089 found for
+      # five others.
+      - name: the brand art's install line and tagline match their sources
+        if: ${{ !cancelled() }}
+        run: python3 docs/brand/social/build_social.py --check
