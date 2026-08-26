@@ -59,6 +59,7 @@ fn an_inferred_rule_is_never_blocking() {
             tool: None,
             deny_path_glob: Some("src/**".into()),
             deny_command_glob: None,
+            allow_command_glob: None,
         }),
         score: 30,
     };
@@ -112,6 +113,7 @@ fn a_written_rule_file_is_prompt_only() {
             tool: Some("Bash".into()),
             deny_path_glob: None,
             deny_command_glob: Some("rm *".into()),
+            allow_command_glob: None,
         }),
         score: 30,
     };

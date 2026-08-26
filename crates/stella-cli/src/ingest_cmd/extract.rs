@@ -139,6 +139,13 @@ struct Claim {
     guard_tool: Option<String>,
     #[serde(default)]
     guard_deny_command: Option<String>,
+    // Carried through extraction even though an extracted record can never
+    // arm a guard (`bridge::may_block` refuses `imported`): dropping it here
+    // would mean a human re-authoring the record under their own origin
+    // inherits a *wider* deny than the source stated, and over-blocking looks
+    // like the rule working rather than like data loss.
+    #[serde(default)]
+    guard_allow_command: Option<String>,
     #[serde(default)]
     guard_deny_path: Option<String>,
     #[serde(default)]
@@ -936,6 +943,7 @@ fn build_proposal(
         mode,
         guard_tool: claim.guard_tool.clone(),
         guard_deny_command: claim.guard_deny_command.clone(),
+        guard_allow_command: claim.guard_allow_command.clone(),
         guard_deny_path: claim.guard_deny_path.clone(),
         severity: None,
         on_violation: None,

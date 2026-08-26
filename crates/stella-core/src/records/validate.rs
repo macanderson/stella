@@ -417,6 +417,7 @@ mod tests {
             mode,
             guard_tool: Some("Edit".to_string()),
             guard_deny_command: None,
+            guard_allow_command: None,
             guard_deny_path: Some(paths.first().copied().unwrap_or("**").to_string()),
             severity: None,
             on_violation: None,

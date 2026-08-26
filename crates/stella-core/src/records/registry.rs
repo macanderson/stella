@@ -553,6 +553,11 @@ fn record_from_markdown(rule: &Rule, trust: Trust) -> LoadedRecord {
             mode: EnforcementMode::Hard,
             guard_tool: guard.tool.clone(),
             guard_deny_command: guard.deny_command_glob.clone(),
+            // Carried, not dropped. Losing the exception here would widen the
+            // guard on the way into the record — the rule would start
+            // blocking the scoped form it was written to permit, and
+            // over-blocking reads as the rule working rather than as a bug.
+            guard_allow_command: guard.allow_command_glob.clone(),
             guard_deny_path: guard.deny_path_glob.clone(),
             severity: None,
             on_violation: None,

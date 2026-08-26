@@ -80,6 +80,25 @@ pub struct RuleGuard {
     pub deny_path_glob: Option<String>,
     /// Block a `Bash` command matching this glob.
     pub deny_command_glob: Option<String>,
+    /// Exempt a command that [`deny_command_glob`] would otherwise block.
+    ///
+    /// Every other guard field is a positive match, which leaves the
+    /// vocabulary unable to express the shape most operational rules
+    /// actually have: *this family of commands is forbidden **except** in
+    /// its scoped form*. "No workspace-wide test compiles, but
+    /// `cargo test -p <crate>` is fine" is not writable as a single glob,
+    /// and approximating it with a list of deny globs only enumerates the
+    /// spellings someone thought of — the first unlisted variant walks
+    /// straight through, and the rule looks enforced while it is not.
+    ///
+    /// Hence a first-class exception rather than a cleverer deny pattern:
+    /// the safe direction is a guard that denies a broad family and names
+    /// the narrow permitted form, because a *missing* exception shows up
+    /// immediately as a false block, while a missing deny pattern is
+    /// silent. A guard with no exception behaves exactly as before.
+    ///
+    /// [`deny_command_glob`]: RuleGuard::deny_command_glob
+    pub allow_command_glob: Option<String>,
 }
 
 /// Which enforcement tier a rule sits at — computed from whether it carries
@@ -330,6 +349,11 @@ fn guard_from(data: &HashMap<String, String>) -> Option<RuleGuard> {
     let tool = field("guard_tool", "guard-tool");
     let deny_path_glob = field("guard_deny_path", "guard-deny-path");
     let deny_command_glob = field("guard_deny_command", "guard-deny-command");
+    let allow_command_glob = field("guard_allow_command", "guard-allow-command");
+    // An exception alone is not a guard. `guard-allow-command:` with nothing
+    // to except from denies nothing, and treating it as Tier 2 would advertise
+    // enforcement that structurally cannot fire — the same defect the blank
+    // check above exists to prevent, arriving by a different door.
     if tool.is_none() && deny_path_glob.is_none() && deny_command_glob.is_none() {
         return None;
     }
@@ -337,6 +361,7 @@ fn guard_from(data: &HashMap<String, String>) -> Option<RuleGuard> {
         tool,
         deny_path_glob,
         deny_command_glob,
+        allow_command_glob,
     })
 }
 
@@ -616,18 +641,41 @@ fn guard_matches(guard: &RuleGuard, action: &ProposedAction<'_>) -> bool {
     if tool != "*" && tool != action.tool {
         return false;
     }
+    // The exception narrows the COMMAND deny and nothing else.
+    //
+    // Scoping matters here. Suppressing the whole guard whenever the
+    // exception matched would let one permissive command glob quietly unlock
+    // a `deny-path` condition it was never written to reason about — and it
+    // would do so silently, since a guard that stops firing looks exactly
+    // like a guard that was never violated. Applied only to the command
+    // branch, an exception can do one thing: narrow the command guard beside
+    // it. A path deny is unreachable from here.
+    let command_denied = |glob: &str| {
+        action.command.is_some_and(|command| {
+            if !match_glob(glob, command) {
+                return false;
+            }
+            !guard
+                .allow_command_glob
+                .as_deref()
+                .is_some_and(|allow| match_glob(allow, command))
+        })
+    };
     match (&guard.deny_path_glob, &guard.deny_command_glob) {
         // A guard carrying BOTH globs denies when EITHER matches — a rule
         // author who wrote two deny conditions meant both of them, not
         // "path wins, command silently ignored".
         (Some(p), Some(c)) => {
-            action.path.is_some_and(|path| match_glob(p, path))
-                || action.command.is_some_and(|cmd| match_glob(c, cmd))
+            action.path.is_some_and(|path| match_glob(p, path)) || command_denied(c)
         }
         (Some(p), None) => action.path.is_some_and(|path| match_glob(p, path)),
-        (None, Some(c)) => action.command.is_some_and(|cmd| match_glob(c, cmd)),
+        (None, Some(c)) => command_denied(c),
         // A guard with no path/command glob blocks the whole tool (TS:
-        // `guardDenyEntry` emits the bare tool name in this case).
+        // `guardDenyEntry` emits the bare tool name in this case). An
+        // exception cannot soften this: there is no command deny to narrow,
+        // and letting one through would turn `guard-tool: Bash` plus an
+        // exception into a whole-tool allowlist, which is a different feature
+        // wearing this one's name.
         (None, None) => true,
     }
 }
@@ -800,6 +848,11 @@ fn infer_guard(cluster: &[RawObservation]) -> Option<RuleGuard> {
         tool: None,
         deny_path_glob: Some(format!("{prefix}/**")),
         deny_command_glob: None,
+        // Mining infers path guards only, so there is no command deny for an
+        // exception to narrow. Inferring one would also be the wrong
+        // direction: a guessed exception widens what is permitted, and a
+        // wrong guess there is silent, where a wrong guessed deny is loud.
+        allow_command_glob: None,
     })
 }
 

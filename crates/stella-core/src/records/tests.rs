@@ -90,6 +90,7 @@ pub(super) fn hard_guard(
         mode: EnforcementMode::Hard,
         guard_tool: tool.map(str::to_string),
         guard_deny_command: deny_command.map(str::to_string),
+        guard_allow_command: None,
         guard_deny_path: deny_path.map(str::to_string),
         severity: Some("error".to_string()),
         on_violation: None,
