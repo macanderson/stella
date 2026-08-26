@@ -232,7 +232,7 @@ toolchain-free plus cargo — so run it by hand when you touch a deck.
 | Appendix A3 (21) | "Base models are pinned to permissive-license weights (MIT / Apache-2.0 class); community-licensed weights are used only where their terms permit the customer's use" and its `[verification pending]` chip | Flag 3. The glm-5.2 base-weight licence matrix was never confirmed, so the sentence asserted a licensing posture nobody had checked. Replaced with the claim that is true today and is a process, not a matrix: every base model offered is licence-reviewed per engagement for three named rights — commercial fine-tuning, redistribution of derivatives to the customer, government deployment — and a base that does not grant all three is not offered for that engagement. |
 
 **No `.chip` element remains in the deck, and the class is deleted from the
-stylesheet** so the next one has to be added.
+stylesheet** so the next one cannot be added without writing the class back.
 
 ## Claims re-verified and kept
 
