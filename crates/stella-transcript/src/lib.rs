@@ -35,7 +35,7 @@
 //!
 //! **SPEC 6 is the frame this crate will draw** (settled 2026-08-22, owner's
 //! call, recorded here because #4271 asked for it in this charter). [`grid`]
-//! has not been changed yet and still draws the box; #4756 tracks the change.
+//! has not been changed yet and still draws the box; #4289 tracks the change.
 //! SPEC 6 wins because it is the authored product design, because the box
 //! cannot carry SPEC 2's two-metal rule ([`grid::Color`]'s `Cyan` for "tool
 //! identity" is the per-class hue SPEC 3.2's clamp rejects), and because
@@ -50,12 +50,17 @@
 //! role → `stella_tui_theme::token` RGB at its own encode step, where the hue
 //! clamp still guards every token the mapping can produce.
 //!
-//! One hole has to close first. `views::transcript`'s file-event fields are all
-//! `Option` because a head row renders before anything is measured, and a
-//! `+0 -0` beside a path is a louder claim than "not measured yet". [`model`]
-//! has no notion of an unmeasured row (the hole #4181 describes from the
-//! accessibility side). Close it *before* the deck renders through [`grid`],
-//! or the migration reintroduces the fabricated zero.
+//! The hole that had to close first is closed. `views::transcript`'s
+//! file-event fields are all `Option` because a head row renders before
+//! anything is measured, and a `+0 −0` beside a path is a louder claim than
+//! "not measured yet"; [`model`] had no equivalent, so a deck migrated onto
+//! [`grid`] would have reintroduced the fabricated zero. [`model::Extent`] is
+//! that notion, and it is the only carrier of a change's counts —
+//! [`model::Patch`] holds the rows and nothing else, because a producer can
+//! measure a change it cannot render. Standing it up found the fabrication
+//! already shipping on both live surfaces: a `FileChange` whose diff would not
+//! read drew `+0 −0` over its real counts, and a replayed `delete_file` drew
+//! `−0` over nothing at all. The accessibility side of the same hole is #4181.
 //!
 //! ## Which surfaces actually draw through this crate
 //!
@@ -106,6 +111,6 @@ mod tests;
 
 pub use fold::{Command, Cursor, FoldState, Zoom};
 pub use model::{
-    Accounting, ArgRow, Call, FileChange, FileStatus, NodeId, Note, NoteKind, Output, Prose, Run,
-    Status, Step, ToolKind, Turn,
+    Accounting, ArgRow, Call, Extent, FileChange, FileStatus, NodeId, Note, NoteKind, Output,
+    Patch, Prose, Run, Status, Step, ToolKind, Turn,
 };

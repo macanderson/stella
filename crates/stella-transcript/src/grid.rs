@@ -564,12 +564,14 @@ fn step_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, step: &Step, ti: usize, si: us
         Cell::new(pad(&dig.verb, TOOL_W), tool_color(dig.class)).bold(),
         Cell::new(&dig.object, Color::Ink),
     ];
-    if let Some(delta) = &dig.delta {
+    if let Some(delta) = &dig.delta
+        && let Some(label) = delta.label()
+    {
         let color = match delta.kind {
             FileStatus::Deleted => Color::Red,
             _ => Color::Green,
         };
-        line.push(Cell::new(format!("  {}", delta.label()), color));
+        line.push(Cell::new(format!("  {label}"), color));
     }
     if dig.status == Status::Error {
         line.push(Cell::new("  ✗ failed", Color::Red).bold());
@@ -736,13 +738,22 @@ fn diff_lines(
         FileStatus::New => ("◆", Color::Green),
         FileStatus::Deleted => ("✗", Color::Red),
     };
-    out.push(vec![
+    // A side nobody measured is left out of the header rather than drawn as a
+    // zero, which would claim the file gained or lost nothing
+    // ([`crate::model::Extent`]).
+    let mut header = vec![
         body_gutter(),
         Cell::new(format!("{marker} {} ", diff.path), color),
-        Cell::new(format!("+{} ", diff.added), Color::Green),
-        Cell::new(format!("−{}  ", diff.removed), Color::Red),
-        Cell::new(fold_mark(open), Color::Blue),
-    ]);
+    ];
+    if let Some(added) = diff.extent.added {
+        header.push(Cell::new(format!("+{added} "), Color::Green));
+    }
+    if let Some(removed) = diff.extent.removed {
+        header.push(Cell::new(format!("−{removed} "), Color::Red));
+    }
+    header.push(Cell::new(" ", Color::Faint));
+    header.push(Cell::new(fold_mark(open), Color::Blue));
+    out.push(header);
     if !open {
         return;
     }

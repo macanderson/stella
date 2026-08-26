@@ -25,8 +25,8 @@
 
 use stella_protocol::{AgentEvent, ToolOutput};
 use stella_transcript::model::{
-    Accounting, Call, FileChange, FileStatus, Note, NoteKind, Output, Patch, Prose, Run, Status,
-    Step, ToolKind, Turn,
+    Accounting, Call, Extent, FileChange, FileStatus, Note, NoteKind, Output, Patch, Prose, Run,
+    Status, Step, ToolKind, Turn,
 };
 
 use crate::textline;
@@ -372,6 +372,15 @@ impl RunBuilder {
             before: String::new(),
             after: String::new(),
             status,
+            // The event measured the tree; the patch is a separate rendering of
+            // the changed region, and `diff` is `None` whenever one could not be
+            // read (a binary file, a `git diff` that failed). Carrying the
+            // counts on the patch therefore threw a real measurement away in
+            // exactly that case and drew `+0 −0` in its place — the fabrication
+            // `Extent` refuses (#2290, #4289). They ride here instead, so the
+            // presence of patch text decides only whether there are rows to
+            // draw.
+            extent: Extent::delta(added as usize, removed as usize),
             // The event's own patch, file-absolute, handed over as-is. It used
             // to be unpicked into a synthetic before/after here, blank-padded
             // up to each hunk's start so that re-differing the two halves
@@ -380,8 +389,6 @@ impl RunBuilder {
             // (#3577). The renderer reads a patch now.
             patch: diff.map(|text| Patch {
                 text: text.to_string(),
-                added: added as usize,
-                removed: removed as usize,
                 minimal,
             }),
         };

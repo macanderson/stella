@@ -8,7 +8,7 @@
 //! that silently lacked hunks and word highlights, and one shared row builder is
 //! what stops that happening a third time.
 
-use crate::model::{FileChange, FileStatus};
+use crate::model::{Extent, FileChange, FileStatus};
 use crate::word::{self, Span};
 
 /// Lines of unchanged context kept around each change.
@@ -98,10 +98,8 @@ pub struct FileDiff {
     pub path: String,
     /// Status dot.
     pub status: FileStatus,
-    /// Lines added.
-    pub added: usize,
-    /// Lines removed.
-    pub removed: usize,
+    /// The change's size, as measured — unmeasured when nothing measured it.
+    pub extent: Extent,
     /// The hunks.
     pub hunks: Vec<RenderHunk>,
     /// Whether the underlying edit script is the minimal one. `false` means
@@ -118,18 +116,29 @@ pub struct FileDiff {
 impl FileDiff {
     /// Build the rendered diff for one file change.
     ///
-    /// Prefers [`FileChange::patch`] when the producer supplied one: it was
-    /// computed against the real file, so its line numbers are the file's.
-    /// Falls back to comparing `before`/`after`, which is exact whenever the
-    /// caller holds both whole sides and fragment-relative when it does not.
+    /// The rows and the counts are resolved independently, because a producer
+    /// can measure a change it cannot render.
+    ///
+    /// **Rows** prefer [`FileChange::patch`] when the producer supplied one: it
+    /// was computed against the real file, so its line numbers are the file's.
+    /// Otherwise they come from comparing `before`/`after`, which is exact
+    /// whenever the caller holds both whole sides and fragment-relative when it
+    /// does not.
+    ///
+    /// **Counts** are [`FileChange::extent`] whenever the producer measured
+    /// one. Comparing the two sides is itself a measurement, so a change that
+    /// arrived with content but no count is measured here — but a change with
+    /// neither a count nor a side to compare stays **unmeasured** rather than
+    /// becoming `+0 −0`, which is the whole point of [`Extent`]. A
+    /// `delete_file` reconstructed from a journal replay's arguments is exactly
+    /// that shape: the arguments name the path and carry neither side.
     #[must_use]
     pub fn build(change: &FileChange) -> Self {
         if let Some(patch) = &change.patch {
             return Self {
                 path: change.path.clone(),
                 status: change.status,
-                added: patch.added,
-                removed: patch.removed,
+                extent: change.extent,
                 hunks: stella_diff::parse::hunks(&patch.text)
                     .iter()
                     .map(render_hunk)
@@ -137,22 +146,28 @@ impl FileDiff {
                 minimal: patch.minimal,
             };
         }
+        if change.before.is_empty() && change.after.is_empty() {
+            return Self {
+                path: change.path.clone(),
+                status: change.status,
+                extent: change.extent,
+                hunks: Vec::new(),
+                minimal: true,
+            };
+        }
         let diff = stella_diff::unified_diff(&change.before, &change.after, CONTEXT);
         let hunks = diff.hunks.iter().map(render_hunk).collect();
         Self {
             path: change.path.clone(),
             status: change.status,
-            added: diff.added,
-            removed: diff.removed,
+            extent: if change.extent.is_measured() {
+                change.extent
+            } else {
+                Extent::delta(diff.added, diff.removed)
+            },
             hunks,
             minimal: diff.minimal,
         }
-    }
-
-    /// The `+N −M` counter string for the header bar.
-    #[must_use]
-    pub fn counts(&self) -> (usize, usize) {
-        (self.added, self.removed)
     }
 }
 
