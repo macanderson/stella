@@ -1052,6 +1052,56 @@ fn filesystem_isolation_closes_both_tiers() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A driver's program is reported by `list`, and reported as a *driver* — the
+/// `runs:` line is about `[runtime]` and says nothing about it, so a package
+/// whose only program is a driver would otherwise read as shipping none
+/// (#3783).
+#[test]
+fn list_names_a_drivers_program_and_the_credential_it_will_not_get() {
+    let root = temp_root("drives");
+    let plugins = stella_home::resolve_project_plugins_dir(&root);
+    std::fs::create_dir_all(plugins.join("selfdriving")).expect("tier");
+    std::fs::write(
+        plugins.join("selfdriving").join(roster::MANIFEST_FILE),
+        "name = \"selfdriving\"\n[loop]\nparticipation = \"none\"\n\n[driver]\n\
+         calls = [\"backlog_next\"]\n\n[driver.process]\n\
+         argv = [\"python3\", \"drive.py\"]\ntimeout_secs = 600\n\
+         env = [\"PATH\", \"ANTHROPIC_API_KEY\"]\n",
+    )
+    .expect("manifest");
+
+    let installed = read_project_tier(&root);
+    let plugin = installed.first().expect("it is on disk");
+    let lines = driver_lines(plugin);
+
+    assert!(
+        lines[0].contains("drives: python3 drive.py (600s, env: PATH, ANTHROPIC_API_KEY)")
+            && lines[0].contains("stella plugin drive selfdriving"),
+        "{lines:#?}"
+    );
+    assert!(
+        lines[1].contains("ANTHROPIC_API_KEY") && lines[1].contains("refused"),
+        "the credential the socket withholds is named: {lines:#?}"
+    );
+
+    // A plugin with no driver says nothing here rather than a line about an
+    // absence, which is what keeps the lines above meaning something.
+    std::fs::create_dir_all(plugins.join("plain")).expect("tier");
+    std::fs::write(
+        plugins.join("plain").join(roster::MANIFEST_FILE),
+        manifest_text("plain"),
+    )
+    .expect("manifest");
+    let installed = read_project_tier(&root);
+    let plain = installed
+        .iter()
+        .find(|p| p.manifest.name == "plain")
+        .expect("it is on disk");
+    assert!(driver_lines(plain).is_empty());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // A plugin is a package: the tools, skills and records it ships (#3380). Those
 // tests live in `contributions.rs`, split out when this file crossed the
 // 1500-line ceiling (#4440).

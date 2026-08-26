@@ -557,7 +557,10 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
                     runtime.env.join(", ")
                 }
             ),
-            None => println!("  runs: no [runtime] — this plugin ships no process"),
+            None => println!("  runs: no [runtime] — this plugin runs no process inside a turn"),
+        }
+        for line in driver_lines(plugin) {
+            println!("{line}");
         }
     }
 
@@ -629,6 +632,50 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
 /// clause rather than silence. It is a real and legitimate state (the user
 /// edited it by hand), and it changes what `remove` will do: the revert puts
 /// back the *prior* value, discarding the edit.
+/// What `stella plugin list` says about an installed `[driver.process]`, or
+/// nothing when the plugin declares none.
+///
+/// A driver's process is a second program, started outside every turn and
+/// never by the hook plane, so it gets its own line: the `runs:` line reports
+/// `[runtime]` and says nothing about this one, which would leave a package
+/// whose only program is a driver reading as though it shipped none (#3783).
+///
+/// A refused credential is named here for the reason the hook-route report
+/// names one — the author's fix is to stop asking, and they can only take it
+/// if they are told — and the two reports are separate because a driver has no
+/// route to be read off.
+fn driver_lines(plugin: &roster::InstalledPlugin) -> Vec<String> {
+    let Some(process) = plugin
+        .manifest
+        .driver
+        .as_ref()
+        .and_then(|grant| grant.process.as_ref())
+    else {
+        return Vec::new();
+    };
+    let mut lines = vec![format!(
+        "  drives: {} ({}s, env: {}) — `stella plugin drive {}`",
+        process.argv.join(" "),
+        process.timeout_secs,
+        if process.env.is_empty() {
+            "none".to_string()
+        } else {
+            process.env.join(", ")
+        },
+        plugin.manifest.name
+    )];
+    let refused = process::refused_credentials(&process.env);
+    if !refused.is_empty() {
+        lines.push(format!(
+            "  ! `{}` asks its driver to inherit {} — refused: a plugin never receives the \
+             credential that pays for the agent.",
+            plugin.manifest.name,
+            refused.join(", ")
+        ));
+    }
+    lines
+}
+
 fn configure_lines(workspace_root: &Path, plugin: &roster::InstalledPlugin) -> Vec<String> {
     let target = configure::ConfigTarget::resolve(workspace_root, plugin.scope).ok();
     configure::configured(
