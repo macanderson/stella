@@ -739,7 +739,7 @@ mod tests {
     fn openai_compatible_parses_bare_id_lists() {
         let body = r#"{"object": "list", "data": [
             {"id": "gpt-5.5", "object": "model", "owned_by": "openai"},
-            {"id": "grok-4"},
+            {"id": "grok-4.3"},
             {"id": ""}
         ]}"#;
         let models = parse_openai_compatible("OpenAI", body).expect("parses");

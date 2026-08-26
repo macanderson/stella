@@ -14,6 +14,36 @@ use crate::catalog::{CatalogEntry, Pricing, ToolDialect};
 /// [`Catalog::seed`](crate::catalog::Catalog::seed).
 pub(super) fn rows() -> Vec<CatalogEntry> {
     vec![
+        // The seeded `xai` default since #5004, because grok-4 retired on
+        // 2026-08-15. Prices and context from xAI's published model list
+        // (2026-08-26): 1M context, and a tier boundary at 200k input —
+        // $1.25/$2.50/$0.20 below it, double above. The catalog carries one
+        // price per row, so these are the below-200k figures: a turn that
+        // crosses the boundary is under-reported rather than over-reported,
+        // and the same direction of error as an unpriced row.
+        CatalogEntry::new(
+            "grok-4.3",
+            "xai",
+            "grok",
+            1_000_000,
+            ToolDialect::OpenaiJson,
+            Pricing {
+                input_usd_per_mtok: 1.25,
+                output_usd_per_mtok: 2.50,
+                cached_input_usd_per_mtok: 0.20,
+                cache_write_usd_per_mtok: 1.25,
+            },
+        )
+        .with_reasoning(Some(true))
+        // 30000, the figure models.dev reports for this row, and the same
+        // ceiling the grok-4 row below reasons its way to. The asymmetry
+        // argument there applies unchanged: guessing low costs headroom,
+        // guessing high costs a rejection on every request.
+        .with_max_output_tokens(Some(30_000)),
+        // Retired at the vendor on 2026-08-15, kept so an existing
+        // `providers.xai.default_model = "grok-4"` pin still resolves rather
+        // than hard-erroring in `build_provider`. Retiring the row is its own
+        // change (#5022) — it breaks a pin, which moving the default does not.
         CatalogEntry::new(
             "grok-4",
             "xai",

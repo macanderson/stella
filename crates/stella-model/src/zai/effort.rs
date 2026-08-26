@@ -23,12 +23,20 @@ use stella_protocol::ReasoningEffort;
 /// `grok-4-<date>`) reasons but rejects the param with a hard 400 ("does not
 /// support parameter reasoning_effort") — while grok-3-mini, the grok-4 point
 /// releases (`grok-4.1`/`.3`/`.5`), and the `grok-4-fast*` cases all accept
-/// it. Sending it to the original grok-4 (the currently-seeded xai default,
-/// deprecated and retiring 2026-08-15) would 400 every reasoning turn, so it is
-/// gated out here — grok-4 keeps the pre-wiring behavior (reasons at its own
+/// it. Sending it to the original grok-4 would 400 every reasoning turn, so it
+/// is gated out here — grok-4 keeps the pre-wiring behavior (reasons at its own
 /// fixed depth, effort dropped) instead of erroring. Fail-safe direction is to
-/// send: the fleet has trended toward universal support, and only the retiring
-/// original is denied.
+/// send: the fleet has trended toward universal support, and only the original
+/// is denied.
+///
+/// grok-4 retired on 2026-08-15 and the seeded xai default moved to grok-4.3
+/// (#5004), so this carve-out no longer covers the default path — it covers a
+/// pin, and only a pin. It stays because xAI's own migration note says the
+/// retired slugs *redirect* to the current family rather than 404, and whether
+/// a redirected `grok-4` would then accept the param is unverified on the wire.
+/// Denying it costs a dropped effort hint; sending it on the strength of a
+/// redirect nobody has watched costs a 400 on every reasoning turn. #5022
+/// carries the live request that would settle it.
 pub(super) fn xai_supports_reasoning_effort(model: &str) -> bool {
     if model == "grok-4" {
         return false;

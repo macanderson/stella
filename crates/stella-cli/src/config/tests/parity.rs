@@ -21,6 +21,34 @@ fn every_provider_default_model_resolves_against_the_catalog_seed() {
     }
 }
 
+/// **The retirement witness (#5004).** `grok-4` retired at xAI on 2026-08-15,
+/// and it was still the seeded `xai` default, so a bare `--model xai/…` or an
+/// auto-detected run that landed on xAI pointed at a model the vendor had
+/// announced it was removing.
+///
+/// The assertion is the retired slug, not the successor, because the two claims
+/// have different lifetimes. "The default is not `grok-4`" stays true through
+/// every future point release; "the default is `grok-4.3`" is a fact about
+/// today that a maintainer moving to `grok-4.6` would have to come here and
+/// edit, which turns a chosen upgrade into a red test. The catalog-seed
+/// test above already holds whatever the default *is* to something reachable.
+///
+/// A per-model retirement ledger would be the general answer and this is not
+/// it: nothing here knows a retirement date, so a successor that retires in
+/// turn will need this test edited again. #5022 is where that is tracked.
+#[test]
+fn the_seeded_xai_default_is_not_the_retired_grok_4() {
+    let xai = PROVIDERS
+        .iter()
+        .find(|p| p.id == "xai")
+        .expect("the xai provider is seeded");
+    assert_ne!(
+        xai.default_model, "grok-4",
+        "grok-4 retired at xAI on 2026-08-15; the seeded default must name a \
+         model the vendor still serves"
+    );
+}
+
 #[test]
 fn provider_ids_are_unique() {
     let mut ids: Vec<&str> = PROVIDERS.iter().map(|p| p.id).collect();

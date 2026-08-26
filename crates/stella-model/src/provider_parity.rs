@@ -407,7 +407,9 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
         ReasoningPosture::Controllable {
             mechanism: "chat-completions top-level reasoning_effort (low/medium/high), gated to \
                         the xai identity on the shared adapter — and, within xai, skipped for the \
-                        original grok-4, which reasons but 400s on the param (retiring 2026-08-15)",
+                        original grok-4, which reasons but 400s on the param. That carve-out no \
+                        longer touches the default: grok-4 retired 2026-08-15 and the seeded \
+                        default is grok-4.3, which accepts the param (#5004)",
             witness: "xai_identity_maps_effort_to_reasoning_effort",
             collapses: &[("xhigh", "high"), ("max", "high")],
         },

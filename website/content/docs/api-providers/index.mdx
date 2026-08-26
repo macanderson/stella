@@ -26,7 +26,7 @@ you get when you name none.
 | 2 | `zai` | `ZAI_API_KEY` | `glm-5.2` | OpenAI-compatible |
 | 3 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-fable-5` | Anthropic Messages |
 | 4 | `openai` | `OPENAI_API_KEY` | `gpt-5.5` | OpenAI Responses |
-| 5 | `xai` | `XAI_API_KEY` | `grok-4` | OpenAI-compatible |
+| 5 | `xai` | `XAI_API_KEY` | `grok-4.3` | OpenAI-compatible |
 | 6 | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | OpenAI-compatible |
 | 7 | `gemini` | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `gemini-3-pro` | Gemini generateContent |
 | 8 | `vertex` | `VERTEX_ACCESS_TOKEN` | `gemini-3-pro` | Gemini generateContent |
@@ -45,6 +45,7 @@ refresh` re-syncs from [models.dev](https://models.dev).
 | `anthropic/claude-opus-5` | 1M | 5.00 | 25.00 | 0.50 |
 | `anthropic/claude-sonnet-5` | 1M | 3.00 | 15.00 | 0.30 |
 | `openai/gpt-5.5` | 400k | 1.25 | 10.00 | 0.125 |
+| `xai/grok-4.3` | 1M | 1.25 | 2.50 | 0.20 |
 | `xai/grok-4` | 256k | 3.00 | 15.00 | 0.75 |
 | `deepseek/deepseek-chat` | 128k | 0.27 | 1.10 | 0.07 |
 | `gemini/gemini-3-pro` | 1M | 1.25 | 10.00 | 0.31 |
@@ -68,7 +69,7 @@ failed:
 | `openai` | `reasoning.effort` | `low`/`medium`/`high`; **`xhigh` and `max` collapse to `high`** | Also honours `verbosity` and `service_tier` |
 | `gemini` / `vertex` | `thinkingConfig.thinkingLevel` | `low`; **everything else maps to `high`** | `reasoning: "off"` gives the *minimum* level, not zero |
 | `zai` | `thinking: {type: enabled\|disabled}` | **dropped** | Differentiate a GLM verifier with `prompt`, not `effort` |
-| `xai` | `reasoning_effort` | `low`/`medium`/`high`; `xhigh`/`max` collapse | **Gated off entirely on `grok-4`** and its dated snapshots |
+| `xai` | `reasoning_effort` | `low`/`medium`/`high`; `xhigh`/`max` collapse | **Gated off entirely on `grok-4`** and its dated snapshots — not on the `grok-4.3` default |
 | `deepseek` | not sent | **dropped** | Shape it with `prompt` and `params.max_tokens` |
 | `openrouter` | `reasoning` object | all five tiers 1:1 | Gateway translates per routed vendor; an unadvertised tier is normalized, not rejected |
 | `bedrock` | legacy `budget_tokens` shape | **dropped** | Converse `inferenceConfig` has slots only for `max_tokens`, `temperature`, `top_p` |
@@ -262,11 +263,20 @@ region-scoped (`bedrock-runtime.<AWS_REGION>.amazonaws.com`) and built per reque
 
 ### xAI
 
+The seeded default is `grok-4.3`: xAI's flagship on its published model list, with the
+largest context of the current line and its lowest price. `grok-4` retired on
+2026-08-15 and was the default until then.
+
+`grok-4.3` prices in two tiers — the catalog carries the below-200k-input figures, so a
+turn that crosses that boundary is costed low rather than high. `grok-4.6` is the newer
+frontier model for coding and agentic work at roughly 1.6x input and 2.4x output; pin it
+under `providers.xai.default_model` if that trade is worth it to you.
+
 <Callout type="warn">
-  **`grok-4` retires 2026-08-15** and is still the seeded default, so a bare
-  `--model xai/…` or an unpinned auto-detected run lands on it. Pin a successor — a
-  `grok-4.x` point release or a `grok-4-fast` variant — under
-  `providers.xai.default_model`. Unlike `grok-4`, a successor also honours `effort`.
+  A `providers.xai.default_model` pinned to `grok-4` still resolves — the catalog keeps
+  the row so an existing config does not hard-error — but the model is retired at the
+  vendor and its seeded prices are stale. It is also the one xAI model stella never
+  sends `effort` to, because it answers the parameter with a 400. Repin it.
 </Callout>
 
 ### DeepSeek
