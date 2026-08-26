@@ -234,6 +234,22 @@ and it needs three properties to survive contact with a real repository:
 The first time you turn such a checker on you will find thousands of hits.
 That is the point. Record them, then take the count down.
 
+A count of banned phrases says nothing about **density**, which is the other
+half of the problem: a module header can be entirely within the ratchet and
+still be three times longer than it needs to be, because forty lines of
+unobjectionable sentences score zero. So record a second number per unit — the
+mean length of that unit's module headers — and ratchet it the same way, with
+the same refusal to raise. Mean header length rather than comment share: a
+well-documented pure-function module *should* be comment-heavy, and share
+cannot tell that apart from an essay.
+
+In this repository the two live in `scripts/prose-baseline.txt` and
+`scripts/prose-density-baseline.txt`, both written and checked by
+`scripts/check-prose.py`. It scans every tracked text file — prose, Rust doc
+comments, Python docstrings, shell headers — and a bare code identifier on a
+code line counts as prose, which is why a share of the remaining entries can
+only be cleared by renaming code rather than by editing text (#4940).
+
 ---
 
 ## A checklist for review

@@ -41,18 +41,30 @@ The ratchet is legitimate here for the one reason a ratchet ever is: the rule
 predates the guard. The baseline records debt that already existed; it grants
 no new permission.
 
+A second ratchet, `scripts/prose-density-baseline.txt`, asks the other
+question: not whether a sentence is content-free, but whether there are too
+many of them. It records the mean length of every crate's leading `//!`
+blocks, and a unit may lower that mean and never raise it. A file can be
+entirely within the count ratchet and still be three times longer than it
+needs to be.
+
 Usage:
 
     ./scripts/check-prose.py [--update] [--adopt=NAME] [--report] [ROOT]
 
-    --update      rewrite the baseline downward only (`make prose-update`)
+    --update      rewrite both baselines downward only (`make prose-update`)
     --adopt=NAME  record the pre-existing debt of a pattern added to PATTERNS
                   after the baseline was written, and nothing else. Once per
                   pattern: a pattern already in the baseline is refused
                   (`make prose-adopt PATTERN=NAME`)
-    --bootstrap   create the baseline from the current tree; one-time, and
-                  refuses to run when the baseline already exists
-    --report      print every offending line, grouped by file; changes nothing
+    --bootstrap   create both baselines from the current tree; one-time, and
+                  refuses to run when the count baseline already exists
+    --bootstrap-density
+                  create the density baseline alone; the same one-time door,
+                  for the tree that already had a count baseline when the
+                  density ratchet arrived
+    --report      print every offending line, grouped by file, then each
+                  unit's mean header length; changes nothing
 """
 
 from __future__ import annotations
@@ -185,6 +197,39 @@ HEADER = """\
 # the exact lines.
 """
 
+DENSITY_BASELINE = "scripts/prose-density-baseline.txt"
+
+# Which units the density ratchet measures. A unit is one crate directory.
+DENSITY_UNIT_ROOT = "crates/"
+
+# What a unit with no baseline entry -- a crate added after this file was
+# written -- is held to, in hundredths of a line. A two-to-four sentence header
+# wraps to four to eight `//!` lines, so 12.00 leaves room for a short table or
+# list without leaving room for an essay. The tightest unit in the tree when
+# this ratchet was written averaged 18.00, so nothing existing is held to this
+# number; it is the target a new crate starts at rather than one it inherits.
+NEW_UNIT_MEAN = 1200
+
+DENSITY_HEADER = """\
+# Down-only ratchet on module-header density, per crate (#4760).
+#
+# Each line is `<unit> <mean>` -- the mean length, in lines, of every leading
+# `//!` block in that crate's Rust files, recorded in hundredths so the
+# comparison is integer arithmetic. A unit may lower its mean; it may never
+# raise it, and a unit absent from this list is held to 12.00. Regenerate with
+# `make prose-update`, which refuses to raise a number.
+#
+# Mean header length rather than comment share, because share is a bad proxy on
+# its own: a well-documented pure-function crate should be comment-heavy, and
+# stella-diff scored 74/100 at 26% share. What #4392 measured and #4758 is
+# fixing is the forty-line header, which is what this counts.
+#
+# It answers a different question from scripts/prose-baseline.txt: that one
+# asks whether a sentence is content-free, this one asks whether there are too
+# many sentences. A file can be entirely within the first and three times
+# longer than it needs to be.
+"""
+
 
 def tracked_files(root: Path) -> list[str]:
     out = subprocess.run(
@@ -260,6 +305,67 @@ def counts(root: Path) -> tuple[dict[tuple[str, str], int], dict[str, list]]:
     return per_pair, detail
 
 
+def header_length(text: str) -> int:
+    """Lines in a Rust file's leading `//!` block, 0 when it has none.
+
+    The licence banner and any blank line above the block are skipped; the
+    first line that is neither `//!` nor part of that preamble ends it.
+    """
+    length = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("//!"):
+            length += 1
+            continue
+        if length:
+            break
+        if stripped.startswith("//") or not stripped:
+            continue
+        break
+    return length
+
+
+def density(root: Path, paths: list[str]) -> dict[str, int]:
+    """Per-unit mean module-header length, in hundredths of a line."""
+    total: dict[str, int] = {}
+    files: dict[str, int] = {}
+    for path in paths:
+        if not path.endswith(".rs") or not path.startswith(DENSITY_UNIT_ROOT):
+            continue
+        unit = "/".join(path.split("/")[:2])
+        try:
+            text = (root / path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        length = header_length(text)
+        if not length:
+            continue
+        total[unit] = total.get(unit, 0) + length
+        files[unit] = files.get(unit, 0) + 1
+    return {unit: round(total[unit] * 100 / files[unit]) for unit in total}
+
+
+def read_density_baseline(path: Path) -> dict[str, int]:
+    baseline: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) != 2:
+            raise SystemExit(
+                f"check-prose: {path} line {line!r} is not `<unit> <mean>`. "
+                "Regenerate it with `make prose-update`."
+            )
+        baseline[fields[0]] = int(round(float(fields[1]) * 100))
+    return baseline
+
+
+def write_density_baseline(path: Path, data: dict[str, int]) -> None:
+    body = "".join(f"{unit} {n / 100:.2f}\n" for unit, n in sorted(data.items()))
+    path.write_text(DENSITY_HEADER + body, encoding="utf-8")
+
+
 def read_baseline(path: Path) -> dict[tuple[str, str], int]:
     if not path.exists():
         return {}
@@ -296,9 +402,12 @@ def main() -> int:
     root = Path(argv[0]) if argv else Path(__file__).resolve().parent.parent
     root = root.resolve()
 
+    tracked = tracked_files(root)
     per_pair, detail = counts(root)
     files = {path for path, _ in per_pair}
     baseline_path = root / BASELINE
+    density_path = root / DENSITY_BASELINE
+    per_unit = density(root, tracked)
 
     if "--report" in flagset:
         total = sum(per_pair.values())
@@ -313,6 +422,12 @@ def main() -> int:
         print(f"\n{total} construction(s) in {len(files)} file(s)")
         for name, n in by_pattern.most_common():
             print(f"  {n:>5}  {name}")
+        allowed = read_density_baseline(density_path) if density_path.exists() else {}
+        print("\nmean module-header length, worst first")
+        for unit, mean in sorted(per_unit.items(), key=lambda kv: -kv[1]):
+            ceiling = allowed.get(unit, NEW_UNIT_MEAN)
+            mark = "  OVER" if mean > ceiling else ""
+            print(f"  {mean / 100:>7.2f}  (ceiling {ceiling / 100:.2f})  {unit}{mark}")
         return 0
 
     if "--bootstrap" in flagset:
@@ -326,13 +441,49 @@ def main() -> int:
             )
             return 1
         write_baseline(baseline_path, per_pair)
+        write_density_baseline(density_path, per_unit)
         print(
             f"check-prose: wrote {BASELINE} with "
-            f"{sum(per_pair.values())} construction(s) in {len(files)} file(s)."
+            f"{sum(per_pair.values())} construction(s) in {len(files)} file(s), "
+            f"and {DENSITY_BASELINE} with {len(per_unit)} unit(s)."
         )
         return 0
 
+    # The density ratchet arrived after the count ratchet, so `--bootstrap`
+    # (which refuses once scripts/prose-baseline.txt exists) could not
+    # introduce it. This is that one-time door, and it closes behind itself
+    # for the reason `--bootstrap` does: a regenerated baseline records
+    # today's tree as the ceiling.
+    if "--bootstrap-density" in flagset:
+        if density_path.exists():
+            print(
+                "check-prose: refusing to bootstrap -- "
+                f"{DENSITY_BASELINE} already exists. Use --update, which only "
+                "ever lowers a mean.",
+                file=sys.stderr,
+            )
+            return 1
+        write_density_baseline(density_path, per_unit)
+        print(
+            f"check-prose: wrote {DENSITY_BASELINE} with "
+            f"{len(per_unit)} unit(s)."
+        )
+        return 0
+
+    if not density_path.exists():
+        print(
+            f"check-prose: {DENSITY_BASELINE} is missing. It records what each "
+            "crate's module headers already average, and without it every unit "
+            f"is held to {NEW_UNIT_MEAN / 100:.2f}. Restore it from git rather "
+            "than regenerating it: a fresh one records today's tree as the "
+            "ceiling, which is the grandfathering this ratchet exists to "
+            "refuse.",
+            file=sys.stderr,
+        )
+        return 2
+
     baseline = read_baseline(baseline_path)
+    density_baseline = read_density_baseline(density_path)
 
     # `--adopt=<pattern>[,<pattern>]` records the debt of a pattern added to
     # PATTERNS after the baseline was written, and touches no other pattern's
@@ -408,13 +559,52 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        # A unit absent from the density baseline is held to NEW_UNIT_MEAN, so
+        # `.get(unit, NEW_UNIT_MEAN)` is what stops a new crate grandfathering
+        # its own headers the first time anyone runs --update.
+        loosened = {
+            unit: (density_baseline.get(unit, NEW_UNIT_MEAN), mean)
+            for unit, mean in per_unit.items()
+            if mean > density_baseline.get(unit, NEW_UNIT_MEAN)
+        }
+        if loosened:
+            print(
+                "check-prose: refusing to update -- these units' module "
+                "headers grew:",
+                file=sys.stderr,
+            )
+            for unit, (was, now) in sorted(loosened.items()):
+                print(
+                    f"  {unit}: {was / 100:.2f} -> {now / 100:.2f} mean lines",
+                    file=sys.stderr,
+                )
+            print(
+                "\nCut the headers instead. "
+                "`./scripts/check-prose.py --report` lists every unit's mean.",
+                file=sys.stderr,
+            )
+            return 1
         # Pairs that reached zero drop out entirely; the ratchet retightens.
         for pair in baseline:
             if pair not in per_pair:
                 merged.pop(pair, None)
         write_baseline(baseline_path, merged)
-        print(f"check-prose: {BASELINE} retightened to {sum(merged.values())}.")
+        tightened = {
+            unit: min(mean, density_baseline.get(unit, NEW_UNIT_MEAN))
+            for unit, mean in per_unit.items()
+        }
+        write_density_baseline(density_path, tightened)
+        print(
+            f"check-prose: {BASELINE} retightened to {sum(merged.values())}, "
+            f"{DENSITY_BASELINE} to {len(tightened)} unit(s)."
+        )
         return 0
+
+    over = [
+        (unit, density_baseline.get(unit, NEW_UNIT_MEAN), mean)
+        for unit, mean in sorted(per_unit.items())
+        if mean > density_baseline.get(unit, NEW_UNIT_MEAN)
+    ]
 
     failures = []
     for pair in sorted(set(per_pair) | set(baseline)):
@@ -443,10 +633,32 @@ def main() -> int:
         )
         return 1
 
+    if over:
+        print(
+            "check-prose: FAIL -- module headers got longer.\n",
+            file=sys.stderr,
+        )
+        for unit, ceiling, mean in over:
+            print(
+                f"  {unit}: {ceiling / 100:.2f} allowed, "
+                f"{mean / 100:.2f} mean header lines",
+                file=sys.stderr,
+            )
+        print(
+            "\nA header is what this file does and what a reader must not do "
+            "to it -- two to four sentences. History belongs in the pull "
+            "request, a design document, or the tracker.\n"
+            "Cut a header. Do not raise the number in "
+            f"{DENSITY_BASELINE}.",
+            file=sys.stderr,
+        )
+        return 1
+
     total = sum(per_pair.values())
     print(
         f"check-prose: OK -- {total} grandfathered construction(s) "
-        f"in {len(files)} file(s), none added."
+        f"in {len(files)} file(s), none added; "
+        f"{len(per_unit)} unit(s) within their header-length ceiling."
     )
     return 0
 

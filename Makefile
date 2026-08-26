@@ -452,7 +452,7 @@ tool-error-class-test: ## Test the #3167 ratchet's direction (hermetic; not part
 	./scripts/test-tool-error-class.sh
 
 .PHONY: prose
-prose: ## Assert no content-free prose or banned vocabulary was added (down-only ratchet)
+prose: ## Assert no content-free prose was added, and no crate's module headers got longer
 	@python3 ./scripts/check-prose.py
 
 .PHONY: prose-report
@@ -460,7 +460,7 @@ prose-report: ## Name every remaining content-free construction, with its remedy
 	@python3 ./scripts/check-prose.py --report
 
 .PHONY: prose-update
-prose-update: ## Retighten the prose ratchet (run after deleting some)
+prose-update: ## Retighten both prose ratchets — the counts and the header-length means
 	@python3 ./scripts/check-prose.py --update
 
 .PHONY: line-citations

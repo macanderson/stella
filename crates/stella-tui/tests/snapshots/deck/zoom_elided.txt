@@ -1,0 +1,45 @@
+# deck golden · zoom_elided
+# the task zoom with no contract, ledger or plan graph — every block names why
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
+task 3 · update 9 imports                                                                                                          ○ queued · glm-5.2 · esc back
+
+done means · the contract, checked not vibed
+  the board stated no contract for this task — nothing here says what done means
+
+evidence · every event tagged task:3
+  no event carries a task id yet, so this ledger is empty
+
+planned vs actual · [:NEXT] is the plan · [:THEN] is what happened
+  no plan graph yet — the planned and actual paths are not recorded
+
+spend · what this task has cost so far
+  cost is not attributed by task yet — the session's total is not this task's
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+r re-run checks · s split task · b hand to worker · i promote to issue · ⌥ diff plan
+a task closes when its checks pass, not when the model says so.
+
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

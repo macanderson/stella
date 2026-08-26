@@ -663,29 +663,17 @@ mod tests {
     /// silent half of "an undeclared hook is never invoked".
     #[test]
     fn event_order_is_exhaustive() {
-        for event in [
-            HookEvent::SessionStart,
-            HookEvent::PreToolUse,
-            HookEvent::PostToolUse,
-            HookEvent::Stop,
-            HookEvent::PreCompact,
-            HookEvent::PreIssueWork,
-            HookEvent::PostIssueWork,
-        ] {
-            // The match is the assertion: adding an in-turn variant to
-            // `HookEvent` stops this compiling until it is placed here too.
-            // The loop-lifecycle pair is routed by the self-driving loop
-            // rather than by this table, and is refused in a plugin manifest —
-            // so it is named here as excluded, not forgotten.
-            let named = match event {
-                HookEvent::SessionStart
-                | HookEvent::PreToolUse
-                | HookEvent::PostToolUse
-                | HookEvent::Stop
-                | HookEvent::PreCompact => EVENT_ORDER.contains(&event),
-                HookEvent::PreIssueWork | HookEvent::PostIssueWork => !EVENT_ORDER.contains(&event),
-            };
-            assert!(named, "{event} is declarable but unroutable");
+        // This table is the in-turn family and nothing else, so the
+        // assertion is that equality. It was a second hand-written list of
+        // the same five until `HookEvent::in_turn` made the split a value
+        // (#4017) — and that function is itself a total match, so a new event
+        // still cannot reach here without someone placing it.
+        for event in HookEvent::ALL {
+            assert_eq!(
+                EVENT_ORDER.contains(&event),
+                event.in_turn(),
+                "{event} is declarable but unroutable"
+            );
         }
     }
 

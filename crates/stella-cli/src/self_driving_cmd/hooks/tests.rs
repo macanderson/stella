@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use stella_core::hooks::{HookAction, HookMatcher, Hooks};
+use stella_core::hooks::{HookAction, HookMatcher, HookPayload, Hooks};
 
 use super::*;
 
@@ -41,12 +41,12 @@ fn settings_with(event: &str, command: &str) -> Settings {
         matcher: None,
         hooks: vec![HookAction::new(command)],
     }];
-    let mut hooks = Hooks::default();
-    match event {
-        "PreIssueWork" => hooks.pre_issue_work = Some(matchers),
-        "PostIssueWork" => hooks.post_issue_work = Some(matchers),
-        other => panic!("unhandled event {other}"),
-    }
+    // Through the same serde renames a real `settings.json` uses, rather than
+    // a `match` naming one field per event: that match was two arms long and
+    // would have needed nineteen, each of which is a place to write the wrong
+    // field and have a test pass against the wrong hook.
+    let hooks: Hooks = serde_json::from_value(serde_json::json!({ event: matchers }))
+        .expect("the event names a field of Hooks");
     // Built by mutation rather than by struct update: `Settings` has private
     // fields, and a test that could name them all would be a test coupled to
     // every future one.
@@ -222,4 +222,143 @@ fn a_failure_is_reported_as_its_own_outcome() {
         serde_json::from_str(&std::fs::read_to_string(&seen).expect("the hook was run")).unwrap();
     assert_eq!(payload["issueOutcome"]["status"], "failed");
     assert_eq!(payload["issueOutcome"]["reason"], "the turn exited 1");
+}
+
+/// **The witness for every reporting event** (#4017): each one reaches a
+/// registered hook, under its own name, carrying the identity a subscriber
+/// needs.
+///
+/// One test over the whole vocabulary rather than nineteen near-identical
+/// ones, and driven from `HookEvent::ALL` rather than a list written here — a
+/// list would be a third copy of the vocabulary, and the failure it would hide
+/// is a declared event nothing dispatches, which is the exact defect #4017
+/// exists to close.
+#[test]
+fn every_reporting_event_reaches_a_hook_under_its_own_name() {
+    let root = temp_root("reporting");
+    for event in HookEvent::ALL {
+        // `PreIssueWork` is the one gate and is covered above; the in-turn
+        // five are the engine's to dispatch and never come through here.
+        if event.in_turn() || event == HookEvent::PreIssueWork {
+            continue;
+        }
+        let seen = root.join(format!("{event}.json"));
+        let settings = settings_with(event.as_str(), &format!("cat > {}", seen.display()));
+        report(&settings, payload_for(event, &root));
+
+        let text = std::fs::read_to_string(&seen)
+            .unwrap_or_else(|error| panic!("{event} did not reach its hook: {error}"));
+        let payload: serde_json::Value = serde_json::from_str(&text).expect("the payload is JSON");
+        assert_eq!(payload["event"], event.as_str(), "{payload}");
+        assert_eq!(payload["cwd"], root.display().to_string(), "{payload}");
+    }
+}
+
+/// The identity each family carries, asserted against what a subscriber would
+/// actually read off the pipe.
+#[test]
+fn a_reporting_event_carries_the_identity_its_family_is_keyed_by() {
+    let root = temp_root("identity");
+
+    let cycle = fired(&root, HookEvent::DriveCycleEnd);
+    assert_eq!(cycle["run"]["runId"], "r-99");
+    assert_eq!(cycle["run"]["cycle"], 7);
+
+    // A run event brackets every cycle rather than sitting in one, so it
+    // carries no cycle number at all — absent, not zero.
+    let run = fired(&root, HookEvent::DriveRunStart);
+    assert_eq!(run["run"]["runId"], "r-99");
+    assert!(run["run"].get("cycle").is_none(), "{run}");
+
+    let escalated = fired(&root, HookEvent::IssueEscalated);
+    assert_eq!(escalated["issue"]["number"], "4310");
+    assert_eq!(escalated["reason"], "the fix ceiling was reached");
+
+    let broken = fired(&root, HookEvent::BaseBroken);
+    assert_eq!(broken["pullRequest"]["number"], "412");
+
+    // And the two check events are two names, which is the whole reason they
+    // are two events: a subscriber deciding whether to fix or to wait branches
+    // on this and nothing else.
+    let ours = fired(&root, HookEvent::ChecksFailed);
+    assert_ne!(ours["event"], broken["event"]);
+}
+
+/// A hook that cannot be run does not fail the verb that reported through it.
+///
+/// The half that matters for a loop: a broken notifier must not stop the
+/// delivery it was notifying about.
+#[test]
+fn a_reporting_hook_that_fails_does_not_stop_the_loop() {
+    let root = temp_root("tolerant");
+    report(
+        &settings_with("DriveRunEnd", "exit 9"),
+        payload_for(HookEvent::DriveRunEnd, &root),
+    );
+    report(
+        &settings_with("DriveRunEnd", "/nonexistent/hook"),
+        payload_for(HookEvent::DriveRunEnd, &root),
+    );
+}
+
+/// Fire one event into a hook that captures its payload, and read it back.
+fn fired(root: &std::path::Path, event: HookEvent) -> serde_json::Value {
+    let seen = root.join(format!("{event}.json"));
+    let settings = settings_with(event.as_str(), &format!("cat > {}", seen.display()));
+    report(&settings, payload_for(event, root));
+    serde_json::from_str(&std::fs::read_to_string(&seen).expect("the hook was run"))
+        .expect("the payload is JSON")
+}
+
+/// The widest payload each event carries, built through the same constructors
+/// the verbs use.
+fn payload_for(event: HookEvent, root: &std::path::Path) -> HookPayload {
+    let cwd = root.display().to_string();
+    let run = HookRunInfo::new("r-99");
+    match event {
+        HookEvent::DriveCycleStart | HookEvent::DriveCycleEnd | HookEvent::DriveIdle => {
+            HookPayload::drive(event, cwd, run.in_cycle(7), Some("a reason".into()))
+        }
+        HookEvent::DriveRunStart
+        | HookEvent::DriveRunEnd
+        | HookEvent::DriveBudgetExhausted
+        | HookEvent::DriveRefused => HookPayload::drive(event, cwd, run, Some("a reason".into())),
+        HookEvent::IssueCreated | HookEvent::IssueClosed => {
+            HookPayload::tracker(event, cwd, HookIssueInfo::new("4310"), None)
+        }
+        HookEvent::IssueEscalated => HookPayload::tracker(
+            event,
+            cwd,
+            HookIssueInfo::new("4310"),
+            Some("the fix ceiling was reached".into()),
+        ),
+        HookEvent::PullRequestOpened
+        | HookEvent::PullRequestReadyForReview
+        | HookEvent::PullRequestConflicted
+        | HookEvent::PullRequestMerged
+        | HookEvent::ChecksFailed
+        | HookEvent::BaseBroken
+        | HookEvent::ChecksGreen => HookPayload::pull_request(
+            event,
+            cwd,
+            HookPullRequestInfo::new("412").for_issue("4310"),
+            None,
+        ),
+        HookEvent::PostIssueWork => HookPayload::post_issue_work(
+            cwd,
+            HookIssueInfo::new("4310"),
+            HookIssueOutcome::NoChange,
+        ),
+        // The gate and the in-turn five never come through `report`, and a
+        // total match is what keeps a new event from silently landing in a
+        // default arm that reports nothing.
+        HookEvent::PreIssueWork
+        | HookEvent::SessionStart
+        | HookEvent::PreToolUse
+        | HookEvent::PostToolUse
+        | HookEvent::Stop
+        | HookEvent::PreCompact => {
+            panic!("{event} is not dispatched by the loop")
+        }
+    }
 }

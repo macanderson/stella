@@ -23,13 +23,9 @@ use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_arg_popup, render_slash_popup, scroll_window_start, slash_popup_area};
+use crate::views::frame::{PROMPT_PREFIX, PROMPT_PREFIX_W};
 use crate::{notice, splash, theme};
 
-/// The accent prompt prefix on every composer row. Chrome, not content — it
-/// is never part of the submitted string and the caret cannot enter it.
-const PROMPT_PREFIX: &str = ">>> ";
-/// Display width of [`PROMPT_PREFIX`].
-const PROMPT_PREFIX_W: usize = 4;
 /// One reserved column on the composer's right for the scroll indicator.
 const COMPOSER_GUTTER_W: usize = 1;
 
@@ -234,9 +230,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             render_inspect_overlay(ui, area, b)
         });
     }
-    // The floating cards (`/plan` · `/models` · `/budget`): at most one is up
-    // (`CardState::raise` lowers the rest); help and the startup notice still
-    // win the top of the stack below.
+    // The cards (`/plan` · `/models` · `/budget` · the task zoom): at most one
+    // is up (`CardState::raise` lowers the rest); help and the startup notice
+    // still win the top of the stack below.
     if let Some(card) = ui.cards.open {
         use crate::deck_ui::cards::Card;
         match card {
@@ -248,6 +244,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             }),
             Card::Budget => guarded_overlay(buf, area, "budget card", |b| {
                 crate::views::budget_card::render(model, ui, area, b)
+            }),
+            // The zoom is a full-screen view (SPEC 7.5), not a float: it takes
+            // the content band the tab was drawn into, so the composer and the
+            // status bar stay where the reader left them.
+            Card::TaskZoom => guarded_overlay(buf, content, "task zoom", |b| {
+                crate::views::task_zoom::render(model, ui, content, b)
             }),
         }
     }

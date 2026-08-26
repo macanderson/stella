@@ -6,12 +6,11 @@
  SESSION AGENTS TRACES GRAPH FILES   SKILLS   MCP ISSUES SETTINGS                                                                                       stella*
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ ⌕                                                                                                                                       installed + registry │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- i┌ help — SKILLS · esc close ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-╭─│                                                                                                                                                          │─╮
-│ │  SKILLS tab                                                                    everywhere                                                                │ │
-│▸│  ← →             installed ↔ registry search (→ past the search leaves th…     ⏎               queue the prompt — mid-turn it waits its turn (unless a … │ │
-│ │  space           enable / disable                                              ⌘⏎ / ⌃⏎ / ⌥⏎    insert a line break in the prompt                         │ │
+╰─┌ help — SKILLS · esc close ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐─╯
+ i│                                                                                                                                                          │
+╭─│  SKILLS tab                                                                    everywhere                                                                │─╮
+│ │  ← →             installed ↔ registry search (→ past the search leaves th…     ⏎               queue the prompt — mid-turn it waits its turn (unless a … │ │
+│▸│  space           enable / disable                                              ⌘⏎ / ⌃⏎ / ⌥⏎    insert a line break in the prompt                         │ │
 │ │  e               edit the selected skill                                       !cmd            run a shell command NOW (skips the queue)                 │ │
 │ │  p               pin / unpin                                                   /               slash commands — ↑↓ pick · tab completes · ⏎ runs         │ │
 │ │  n               new skill — drafted by the LLM                                ctrl-v          paste — a copied image is attached to the prompt          │ │
@@ -21,24 +20,25 @@
 │ │                                                                                ctrl-k          CONTEXT — active skills + MCP servers                     │ │
 │ │  moving around — every tab, every overlay                                      ctrl-g          INSPECT — the context sent on any recorded call           │ │
 │ │  ← →             the sibling: the pane beside this one, else the tab besi…     ctrl-s          PLAN — every step of the approved plan, in full           │ │
-│ │  ↑ ↓ · k j       the item above / below                                        >text           steer the running turn — lands at the next step boundary  │ │
-│ │  ⏎               open it — a diff, a lane, a message's full text               esc             steer: your draft + queue go INTO the running turn        │ │
-│ │  ⌫               back up one level; never reaches a running turn               esc esc         cancel NOW & hold — nothing runs until your next prompt   │ │
-│ │  ⇞ ⇟ · Home End  a page · the ends                                             ?               this sheet                                                │ │
-│ │  tab / ⇧tab      the next / previous tab                                       ctrl-c          quit stella                                               │ │
-│ │  q / esc         close any overlay                                                                                                                       │ │
+│ │  ↑ ↓ · k j       the item above / below                                        ⏎               on PLAN: zoom the step — contract, evidence, planned vs … │ │
+│ │  ⏎               open it — a diff, a lane, a message's full text               esc             on the zoom: back to PLAN, on the step you zoomed         │ │
+│ │  ⌫               back up one level; never reaches a running turn               r s b i ⌥       on the zoom: re-run checks · split · hand off · promote … │ │
+│ │  ⇞ ⇟ · Home End  a page · the ends                                             >text           steer the running turn — lands at the next step boundary  │ │
+│ │  tab / ⇧tab      the next / previous tab                                       esc             steer: your draft + queue go INTO the running turn        │ │
+│ │  q / esc         close any overlay                                             esc esc         cancel NOW & hold — nothing runs until your next prompt   │ │
+│ │                                                                                ?               this sheet                                                │ │
+│ │                                                                                ctrl-c          quit stella                                               │ │
 │ │                                                                                                                                                          │ │
 │ │  letter & arrow hotkeys apply while the prompt box is empty                                                                                              │ │
 │ │                                                                                                                                                          │ │
 │ │  model                                                                                                                                                   │ │
 │ │  worker          zai/glm-5.2-air · answering                                                                                                             │ │
 │ │                                                                                                                                                          │ │
-│ │  machine                                                                                                                                                 │ │
-╰─│  engine          3 active · 3 total                                                                                                                      │─╯
- r│  cpu             42%                                                                                                                                     │
-  │  mem             148M                                                                                                                                    │
- s└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- 4 installed · 1 learned · 3 enabled
+╰─│  machine                                                                                                                                                 │─╯
+ r│  engine          3 active · 3 total                                                                                                                      │
+  │  cpu             42%                                                                                                                                     │
+ s│  mem             148M                                                                                                                                    │
+ 4└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
  ⏎ queue · ↓ 2 sub-agents · ! shell · / commands

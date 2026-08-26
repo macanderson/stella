@@ -147,6 +147,14 @@
     pattern's pre-existing hits, once, and refuses to touch any other
     pattern's numbers. A backticked span or a fenced block is exempt: naming
     a banned construction in order to ban it is a citation.
+  - **The same command holds density**, over
+    `scripts/prose-density-baseline.txt`: the mean length of every crate's
+    leading `//!` blocks, ratcheted down only. A count of banned phrases
+    cannot see a forty-line header of unobjectionable sentences, which is
+    what #4392 actually measured. Mean header length rather than comment
+    share, because a pure-function crate should be comment-heavy and share
+    cannot tell that from an essay. A crate with no entry is held to 12.00
+    mean lines, so a new one cannot arrive carrying essays.
 - **AGENTS.md is the orientation document.** Commands, architectural
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —
@@ -183,6 +191,22 @@
   Search for an existing issue first; link, don't duplicate. The full policy
   is AGENTS.md § "Nothing left behind — every finding becomes a fix or a
   GitHub issue". Never end a turn with untracked half-finished work.
+- **Every issue is labelled, in this order.** First a priority (`P0`–`P4`),
+  then the `area:*` tag — several when the work genuinely spans areas — then
+  exactly one `use-model:*` tag (`cheap` / `balanced` / `pro` / `ultra`)
+  naming the cheapest model class that can do the work without sacrificing
+  quality, then the `pain:*` tags for the pains the issue relieves
+  (`pain:speed`, `pain:cost`, `pain:accuracy`, `pain:context`,
+  `pain:auditability`, `pain:over-engineering`, `pain:complex-prose`,
+  `pain:tech-debt`, `pain:infra-cost`, `pain:vendor-lock`,
+  `pain:user-experience`, `pain:brand-consistency`, `pain:maintainability`,
+  `pain:test-coverage`, `pain:ci-time`, `pain:system-compatibility`). The
+  order is a habit for the reader: the list scans as urgency → where → who
+  runs it → why it matters. Pick `use-model` by the hardest step in the
+  issue, not the average: templated or mechanical work is `cheap`, routine
+  implementation against a clear spec is `balanced`, cross-crate design or
+  subtle correctness rules are `pro`, and architecture-critical or genuinely
+  novel design is `ultra`.
 - **Every Sourcery ❌ gets a fix or an answer before the PR is mergeable.**
   Sourcery reviews every PR, and when the PR links issues it posts an
   "Assessment against linked issues" table as a `sourcery-ai` comment — one
