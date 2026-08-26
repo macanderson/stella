@@ -22,6 +22,8 @@ The system is **flat**. There are no 50→950 ramps: v5.0 deletes both the brand
 
 **Dark (the default theme).** CSS variable names are normative.
 
+<!-- BEGIN palette -->
+
 | token | hex | role |
 |---|---|---|
 | `--st-bg` | `#0A0A0C` | canvas — the near-black ground |
@@ -33,12 +35,15 @@ The system is **flat**. There are no 50→950 ramps: v5.0 deletes both the brand
 | `--st-gold-bright` | `#F7D96B` | tiny live indicators only — spinner, hot marker |
 | `--st-silver` | `#A9AAB5` | secondary emphasis, syntax strings |
 | `--st-silver-type` | `#BFC1CC` | syntax types, tertiary labels |
-| `--st-text` | `#E8E8EC` | primary text on dark |
+| `--st-text` | `#E8E8EC` | primary text on dark, in the deck |
+| `--st-paper-text` | `#F4F1EA` | primary text on dark, off the deck — the web surfaces and the cut assets, so this is the one you want for a page |
 | `--st-muted` | `#777782` | secondary text |
 | `--st-dim` | `#4B4B56` | hints, captions, line numbers |
 | `--st-green` | `#74C991` | pass, additive diff sign |
 | `--st-red` | `#E0687A` | fail, destructive, removal diff sign |
 | `--st-amber` | `#E78D54` | warning — the one status the core palette does not otherwise name |
+| `--st-diff-add` | `#10201A` | added diff row background |
+| `--st-diff-del` | `#241019` | removed diff row background |
 | `--st-void` | `#050507` | below the canvas: full-bleed backdrops |
 
 **Light.** Not a recolour of the dark set — its own stops, and the only theme where `ink` and the paper tints appear.
@@ -58,6 +63,8 @@ The system is **flat**. There are no 50→950 ramps: v5.0 deletes both the brand
 | `--st-green-ink` | `#006933` | pass, as text on light |
 | `--st-amber-ink` | `#8A3F00` | warning, as text on light |
 | `--st-red-ink` | `#96213C` | fail, as text on light |
+
+<!-- END palette -->
 
 Two clamps govern any colour work you do on top of this: gold must satisfy `g >= 0.78 r` or it is orange, and orange on a near-black ground reads brown on uncalibrated panels; grays must be neutral or blue-tipped (`r == g`, `b >= g`) or the scheme reads sepia. Both are enforced against the shipped table, so a hand-mixed value that misses them is a build failure, not a taste argument.
 
