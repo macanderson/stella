@@ -369,12 +369,14 @@ pub fn offsets(steps: &[Step]) -> Vec<String> {
 /// creation or a deletion: `+0 −2` on a `delete_file` makes a reader parse
 /// arithmetic to recover a fact the tool name already stated. So the label is
 /// chosen by status, and the counts ride along for the surfaces that want them.
+/// An unmeasured side is left out of the label rather than printed as a zero,
+/// and a modification nobody measured produces no label at all — see
+/// [`crate::model::Extent`], and [`step_digest`], which drops the whole column
+/// in that case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delta {
-    /// Lines added across the call's files.
-    pub added: usize,
-    /// Lines removed across the call's files.
-    pub removed: usize,
+    /// Lines added and removed across the call's files, as measured.
+    pub extent: crate::model::Extent,
     /// The dominant file status — what the call did.
     pub kind: crate::model::FileStatus,
     /// How many files the call touched.
@@ -382,20 +384,34 @@ pub struct Delta {
 }
 
 impl Delta {
-    /// The digest label.
+    /// The digest label, or `None` when nothing is known to say.
+    ///
+    /// A creation and a deletion keep their word — "new file", "deleted" —
+    /// because the tool named the act even when nothing measured its size. A
+    /// modification is only its counts, so an unmeasured one has no label.
     #[must_use]
-    pub fn label(&self) -> String {
+    pub fn label(&self) -> Option<String> {
         use crate::model::FileStatus;
+        let added = self.extent.added.map(|n| format!("+{n}"));
+        let removed = self.extent.removed.map(|n| format!("−{n}"));
+        let with = |word: String, count: Option<String>| match count {
+            Some(count) => format!("{word} · {count}"),
+            None => word,
+        };
         match self.kind {
-            FileStatus::Modified => format!("+{} −{}", self.added, self.removed),
+            FileStatus::Modified => match (added, removed) {
+                (Some(a), Some(r)) => Some(format!("{a} {r}")),
+                (Some(one), None) | (None, Some(one)) => Some(one),
+                (None, None) => None,
+            },
             FileStatus::New if self.files > 1 => {
-                format!("{} new files · +{}", self.files, self.added)
+                Some(with(format!("{} new files", self.files), added))
             }
-            FileStatus::New => format!("new file · +{}", self.added),
+            FileStatus::New => Some(with("new file".to_string(), added)),
             FileStatus::Deleted if self.files > 1 => {
-                format!("{} files deleted · −{}", self.files, self.removed)
+                Some(with(format!("{} files deleted", self.files), removed))
             }
-            FileStatus::Deleted => format!("deleted · −{}", self.removed),
+            FileStatus::Deleted => Some(with("deleted".to_string(), removed)),
         }
     }
 }
@@ -434,15 +450,16 @@ pub fn step_digest(step: &Step, object_width: usize) -> StepDigest {
         };
     };
     let delta = if call.tool.is_mutation() && !call.files.is_empty() {
-        let (added, removed) = call.line_delta();
         Some(Delta {
-            added,
-            removed,
+            extent: call.extent(),
             // The first file's status is the call's: a single-purpose tool
             // (AGENTS.md #9) cannot create one file and delete another.
             kind: call.files[0].status,
             files: call.files.len(),
         })
+        // A modification nobody measured has no label, and a size column with
+        // nothing in it is the `+0 −0` this all exists to refuse.
+        .filter(|delta| delta.label().is_some())
     } else {
         None
     };

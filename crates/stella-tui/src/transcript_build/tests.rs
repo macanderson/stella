@@ -239,14 +239,26 @@ fn a_file_change_renders_at_the_files_own_line_numbers() {
         ]
     );
     assert_eq!(
-        (diff.added, diff.removed),
-        (2, 1),
+        diff.extent,
+        stella_transcript::Extent::delta(2, 1),
         "git's numstat, not a recount"
     );
 }
 
+/// **Witness (#4289).** `AgentEvent::FileChange` measures the tree and renders
+/// the patch separately, so `diff` is `None` whenever one could not be read —
+/// a binary file, or a `git diff` that failed — while `added` and `removed`
+/// are still the truth about what changed.
+///
+/// The counts used to ride on `stella_transcript::Patch`, so a diffless event
+/// built no patch and the measurement went nowhere. The digest then read
+/// `Call::line_delta`, which folded `FileDiff::build` over a `FileChange` with
+/// no patch and two empty sides, got `(0, 0)`, and drew **`+0 −0`** over a
+/// change of twelve lines — on `stella run`'s own scrollback, on every such
+/// call. `+0 −0` asserts the edit changed nothing; that is the fabrication
+/// `Extent` exists to refuse (#2290).
 #[test]
-fn a_diffless_file_change_still_records_the_file() {
+fn a_diffless_file_change_keeps_the_counts_the_event_measured() {
     let mut b = RunBuilder::new("run", "m");
     b.start_turn("go");
     b.push(&call("c1", "edit_file", json!({"path": "a.txt"})));
@@ -254,16 +266,24 @@ fn a_diffless_file_change_still_records_the_file() {
     b.push(&AgentEvent::FileChange {
         path: "a.txt".to_string(),
         kind: stella_protocol::FileChangeKind::Modified,
-        added: 1,
-        removed: 1,
+        added: 12,
+        removed: 3,
         diff: None,
         minimal: true,
     });
     b.finish_turn(Status::Ok);
 
-    let call = b.snapshot().turns[0].steps[0].call.clone().expect("call");
+    let run = b.snapshot();
+    let call = run.turns[0].steps[0].call.clone().expect("call");
     assert_eq!(call.files.len(), 1);
     assert_eq!(call.files[0].path, "a.txt");
+    assert_eq!(call.extent(), stella_transcript::Extent::delta(12, 3));
+
+    let label = stella_transcript::digest::step_digest(&run.turns[0].steps[0], 40)
+        .delta
+        .expect("a mutation call has a size column")
+        .label();
+    assert_eq!(label.as_deref(), Some("+12 −3"));
 }
 
 // -------------------------------------------------- naming and wall clock

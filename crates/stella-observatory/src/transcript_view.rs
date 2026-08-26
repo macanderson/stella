@@ -31,9 +31,21 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 use stella_transcript::model::{
-    Accounting, ArgRow, Call, CallAnchor, FileChange, FileStatus, Note, NoteKind, Output, Patch,
-    Prose, Run, Status, Step, ToolKind, Turn,
+    Accounting, ArgRow, Call, CallAnchor, Extent, FileChange, FileStatus, Note, NoteKind, Output,
+    Patch, Prose, Run, Status, Step, ToolKind, Turn,
 };
+
+/// What a `file_change` row measured about one path, and how to draw it.
+///
+/// The two are separate because a row can measure a change it cannot render:
+/// `diff` is absent whenever the patch would not read, and the counts are still
+/// the truth about the tree.
+struct Measured {
+    /// The row's own counts.
+    extent: Extent,
+    /// The patch's rows, when the row carried readable text.
+    patch: Option<Patch>,
+}
 
 /// Fold an execution's head row and journal rows into a renderable run.
 ///
@@ -67,7 +79,7 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
     // They are what the work tree actually did, so they settle onto the call
     // when its result arrives; rows outside a call belong to the turn boundary
     // and have no call to settle onto.
-    let mut measured: HashMap<String, Patch> = HashMap::new();
+    let mut measured: HashMap<String, Measured> = HashMap::new();
     let mut metered = false;
     let base_ts = journal.first().and_then(|r| r["ts"].as_i64()).unwrap_or(0);
 
@@ -456,19 +468,32 @@ fn arg_rows(input: &Value) -> Vec<ArgRow> {
 /// patch text: the event's contract is that those are git's numstat and the
 /// patch is a bounded rendering of the changed region, so counting sigils
 /// reports the rendering's size as the change's.
-fn measured_patch(row: &Value) -> Option<(String, Patch)> {
+fn measured_patch(row: &Value) -> Option<(String, Measured)> {
     let path = row["path"].as_str()?.to_string();
-    let text = row["diff"].as_str().filter(|d| !d.trim().is_empty())?;
+    let count = |key: &str| {
+        row[key]
+            .as_u64()
+            .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
+    };
+    let text = row["diff"].as_str().filter(|d| !d.trim().is_empty());
     Some((
         path,
-        Patch {
-            text: text.to_string(),
-            added: usize::try_from(row["added"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX),
-            removed: usize::try_from(row["removed"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX),
-            // Absent on a row recorded before #4696 — the flag's own wire
-            // default, matching what every consumer already assumed of a
-            // patch back then.
-            minimal: row["minimal"].as_bool().unwrap_or(true),
+        Measured {
+            // The row measured the tree whether or not a patch could be read
+            // off it, so the counts do not depend on the text. A row carrying
+            // a count and no diff used to be dropped whole here, which drew a
+            // measured change as `+0 −0` (#4289).
+            extent: Extent {
+                added: count("added"),
+                removed: count("removed"),
+            },
+            patch: text.map(|text| Patch {
+                text: text.to_string(),
+                // Absent on a row recorded before #4696 — the flag's own wire
+                // default, matching what every consumer already assumed of a
+                // patch back then.
+                minimal: row["minimal"].as_bool().unwrap_or(true),
+            }),
         },
     ))
 }
@@ -484,20 +509,21 @@ fn measured_patch(row: &Value) -> Option<(String, Patch)> {
 /// files are the ones it asked for; a `bash` call that rewrote ten files does
 /// not become a ten-file diff block here, because that is a different change to
 /// the fold's shape and not this one (#3577).
-fn settle_measured(call: &mut Call, measured: &mut HashMap<String, Patch>) {
+fn settle_measured(call: &mut Call, measured: &mut HashMap<String, Measured>) {
     for file in &mut call.files {
-        if let Some(patch) = measured
+        if let Some(change) = measured
             .remove(&file.path)
             .or_else(|| take_same_file(measured, &file.path))
         {
-            file.patch = Some(patch);
+            file.extent = change.extent;
+            file.patch = change.patch;
         }
     }
     measured.clear();
 }
 
 /// The measured patch for a path one side of which is a suffix of the other.
-fn take_same_file(measured: &mut HashMap<String, Patch>, path: &str) -> Option<Patch> {
+fn take_same_file(measured: &mut HashMap<String, Measured>, path: &str) -> Option<Measured> {
     let key = measured
         .keys()
         .find(|measured_path| same_file(measured_path, path))?
@@ -540,11 +566,18 @@ fn files_from_input(tool: &ToolKind, input: &Value) -> Vec<FileChange> {
             .to_string()
     };
     match tool {
+        // `extent` is left unmeasured on all three: these are the call's
+        // arguments, not a reading of the tree. `write_file` and `edit_file`
+        // carry content, so comparing the two sides measures them; a
+        // `delete_file` carries neither side and stays unmeasured rather than
+        // reporting the `−0` that comparing nothing to nothing produces
+        // (#4289).
         ToolKind::WriteFile => vec![FileChange {
             path,
             before: String::new(),
             after: text("content"),
             status: FileStatus::New,
+            extent: Extent::default(),
             patch: None,
         }],
         ToolKind::EditFile => vec![FileChange {
@@ -552,6 +585,7 @@ fn files_from_input(tool: &ToolKind, input: &Value) -> Vec<FileChange> {
             before: text("old_string"),
             after: text("new_string"),
             status: FileStatus::Modified,
+            extent: Extent::default(),
             patch: None,
         }],
         ToolKind::DeleteFile => vec![FileChange {
@@ -559,6 +593,7 @@ fn files_from_input(tool: &ToolKind, input: &Value) -> Vec<FileChange> {
             before: String::new(),
             after: String::new(),
             status: FileStatus::Deleted,
+            extent: Extent::default(),
             patch: None,
         }],
         _ => Vec::new(),
@@ -643,7 +678,7 @@ mod tests {
             .map(|r| (r.old_no, r.new_no))
             .collect();
         assert_eq!(changed, vec![(Some(212), None), (None, Some(212))]);
-        assert_eq!((diff.added, diff.removed), (1, 1));
+        assert_eq!(diff.extent, Extent::delta(1, 1));
         assert_eq!(call.files[0].status, FileStatus::Modified);
     }
 
@@ -658,6 +693,61 @@ mod tests {
         assert_eq!(call.files[0].before, "{15pt}");
         assert_eq!(call.files[0].after, "{12pt}");
         assert!(call.files[0].patch.is_none());
+    }
+
+    /// **Witness (#4289).** A replayed `delete_file` carries neither side of
+    /// the file and no measurement, so nothing here knows how big it was.
+    ///
+    /// The header used to say `−0`, because rendering it ran the differ over
+    /// two empty strings and read the zero back as the answer. `−0` claims the
+    /// deletion removed no lines; the size is absent instead.
+    #[test]
+    fn a_replayed_deletion_states_no_size_rather_than_a_zero() {
+        let journal = vec![
+            json!({
+                "type": "tool_start", "ts": 0, "call_id": "c1", "name": "delete_file",
+                "body": "{\"path\":\"main.aux\"}",
+            }),
+            json!({
+                "type": "tool_result", "ts": 30, "call_id": "c1",
+                "ok": true, "duration_ms": 30, "body": "deleted main.aux",
+            }),
+        ];
+        let run = build_run(&execution(), &journal);
+        let call = run.turns[0].steps[0].call.as_ref().unwrap();
+        assert_eq!(call.files[0].status, FileStatus::Deleted);
+        // That nothing then *draws* a zero is asserted where the drawing
+        // lives — `stella-transcript`'s own
+        // `a_change_nothing_measured_renders_no_size_at_all`. Rendering here
+        // would make this file a declared transcript surface
+        // (`scripts/check-transcript-surfaces.py` reads the whole file, test
+        // module included), which is a claim about `stella observe`'s page,
+        // not about this fold.
+        assert_eq!(call.extent(), Extent::default());
+    }
+
+    /// A `file_change` row measures the tree whether or not a patch could be
+    /// read off it, so a row with counts and no diff still says how big the
+    /// change was — it just has no rows to draw.
+    #[test]
+    fn a_row_with_counts_and_no_diff_keeps_its_counts() {
+        let journal = vec![
+            json!({
+                "type": "tool_start", "ts": 0, "call_id": "c1", "name": "edit_file",
+                "body": "{\"path\":\"main.tex\",\"old_string\":\"a\",\"new_string\":\"b\"}",
+            }),
+            json!({
+                "type": "file_change", "ts": 20, "path": "main.tex", "kind": "modified",
+                "added": 12, "removed": 3,
+            }),
+            json!({
+                "type": "tool_result", "ts": 30, "call_id": "c1",
+                "ok": true, "duration_ms": 30, "body": "edited main.tex",
+            }),
+        ];
+        let run = build_run(&execution(), &journal);
+        let call = run.turns[0].steps[0].call.as_ref().unwrap();
+        assert_eq!(call.extent(), Extent::delta(12, 3));
     }
 
     /// The measurement is workspace-relative and the argument is whatever the

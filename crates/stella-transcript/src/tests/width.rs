@@ -233,6 +233,7 @@ fn a_call() -> impl Strategy<Value = Call> {
                     before: format!("{before}\ncommon\n"),
                     after: format!("{after}\ncommon\n"),
                     status: FileStatus::Modified,
+                    extent: Extent::default(),
                     patch: None,
                 })
                 .collect(),

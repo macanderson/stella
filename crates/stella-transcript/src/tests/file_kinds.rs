@@ -18,17 +18,17 @@ fn a_producers_patch_is_drawn_at_the_files_own_line_numbers() {
         before: "{15pt}\n".to_string(),
         after: "{12pt}\n".to_string(),
         status: FileStatus::Modified,
+        extent: Extent::default(),
         patch: None,
     };
     let from_fragment = FileDiff::build(&fragment);
     assert_eq!(from_fragment.hunks[0].header, "@@ -1,1 +1,1 @@");
 
     let measured = FileChange {
+        extent: Extent::delta(1, 1),
         patch: Some(Patch {
             text: "--- a/main.tex\n+++ b/main.tex\n@@ -212,1 +212,1 @@\n-{15pt}\n+{12pt}\n"
                 .to_string(),
-            added: 1,
-            removed: 1,
             minimal: true,
         }),
         ..fragment
@@ -43,7 +43,7 @@ fn a_producers_patch_is_drawn_at_the_files_own_line_numbers() {
             .collect::<Vec<_>>(),
         vec![(Some(212), None), (None, Some(212))]
     );
-    assert_eq!((diff.added, diff.removed), (1, 1));
+    assert_eq!(diff.extent, Extent::delta(1, 1));
     assert!(diff.minimal, "the producer reported an exact diff");
     // The pairing that gives a modified line its word spans survives the patch
     // path — it is the same row builder, reached with parsed hunks.
@@ -60,10 +60,9 @@ fn a_producers_blunt_fallback_patch_stays_marked_non_minimal() {
         before: String::new(),
         after: String::new(),
         status: FileStatus::Modified,
+        extent: Extent::delta(1, 1),
         patch: Some(Patch {
             text: "--- a/big.txt\n+++ b/big.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n".to_string(),
-            added: 1,
-            removed: 1,
             minimal: false,
         }),
     };
@@ -80,10 +79,10 @@ fn a_new_file_renders_as_an_all_green_diff() {
         before: String::new(),
         after: "$pdf_mode = 1;\n$clean_ext = 'aux log';\n".to_string(),
         status: FileStatus::New,
+        extent: Extent::default(),
         patch: None,
     });
-    assert_eq!(diff.added, 2);
-    assert_eq!(diff.removed, 0);
+    assert_eq!(diff.extent, Extent::delta(2, 0));
     assert!(
         diff.hunks
             .iter()
@@ -99,10 +98,10 @@ fn a_deleted_file_renders_as_an_all_red_diff() {
         before: "\\relax\n\\gdef\n".to_string(),
         after: String::new(),
         status: FileStatus::Deleted,
+        extent: Extent::default(),
         patch: None,
     });
-    assert_eq!(diff.removed, 2);
-    assert_eq!(diff.added, 0);
+    assert_eq!(diff.extent, Extent::delta(0, 2));
     assert_eq!(diff.status.token(), "gone");
 }
 
@@ -118,6 +117,7 @@ fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithm
             before: "a\nb\n".to_string(),
             after: String::new(),
             status: FileStatus::Deleted,
+            extent: Extent::default(),
             patch: None,
         }],
         status: Status::Ok,
@@ -126,7 +126,7 @@ fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithm
         sub_agent_id: None,
     };
     let dig = digest::step_digest(&step(delete, 0), 40);
-    assert_eq!(dig.delta.unwrap().label(), "deleted · −2");
+    assert_eq!(dig.delta.unwrap().label().as_deref(), Some("deleted · −2"));
 
     let create = Call {
         tool: ToolKind::WriteFile,
@@ -138,6 +138,7 @@ fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithm
             before: String::new(),
             after: "a\nb\nc\n".to_string(),
             status: FileStatus::New,
+            extent: Extent::default(),
             patch: None,
         }],
         status: Status::Ok,
@@ -146,8 +147,107 @@ fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithm
         sub_agent_id: None,
     };
     let dig = digest::step_digest(&step(create, 0), 40);
-    assert_eq!(dig.delta.unwrap().label(), "new file · +3");
+    assert_eq!(dig.delta.unwrap().label().as_deref(), Some("new file · +3"));
 
     let dig = digest::step_digest(&step(edit("main.tex", "a\n", "b\n"), 0), 40);
-    assert_eq!(dig.delta.unwrap().label(), "+1 −1");
+    assert_eq!(dig.delta.unwrap().label().as_deref(), Some("+1 −1"));
+}
+
+/// **Witness (#4289 piece 1).** A row can exist before anything measured it,
+/// and the model has to be able to say so.
+///
+/// A journal replay of a `delete_file` is that row: the call's arguments name
+/// the path and carry neither side of the file, so there is nothing to compare
+/// and no producer count. Rendering it used to run `unified_diff("", "")`,
+/// which measures nothing and returns `0`, and the header then read `−0` —
+/// a claim that the deletion removed no lines, over a file whose size nobody
+/// knew. The size column is absent instead, which is what
+/// [`crate::model::Extent`] is for.
+#[test]
+fn a_change_nothing_measured_renders_no_size_at_all() {
+    let unmeasured = FileChange {
+        path: "main.aux".to_string(),
+        before: String::new(),
+        after: String::new(),
+        status: FileStatus::Deleted,
+        extent: Extent::default(),
+        patch: None,
+    };
+    let diff = FileDiff::build(&unmeasured);
+    assert_eq!(
+        diff.extent,
+        Extent::default(),
+        "comparing nothing to nothing measures nothing"
+    );
+
+    let call = Call {
+        tool: ToolKind::DeleteFile,
+        header_object: "main.aux".to_string(),
+        args: Vec::new(),
+        output: Output::default(),
+        files: vec![unmeasured],
+        status: Status::Ok,
+        duration_ms: 4,
+        speculated: false,
+        sub_agent_id: None,
+    };
+    assert_eq!(call.extent(), Extent::default());
+
+    // The word survives — the tool named the act — and the count does not
+    // appear at all. Asserting the absence, not a zero.
+    let label = digest::step_digest(&step(call.clone(), 0), 40)
+        .delta
+        .expect("a deletion still says it deleted")
+        .label();
+    assert_eq!(label.as_deref(), Some("deleted"));
+
+    let run = run_with(vec![step(call, 0)]);
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Everything);
+    let text = grid::to_plain(&grid::render(&run, &state, 120));
+    assert!(
+        !text.contains("−0") && !text.contains("+0"),
+        "a zero was drawn for a size nobody measured:\n{text}"
+    );
+    assert!(
+        text.contains("deleted"),
+        "the act itself must still be stated:\n{text}"
+    );
+
+    // Both renderers, because the rule is the model's rather than either
+    // painter's: the web surface is where a replayed deletion is actually read.
+    let html = html::render_run(&run, &state);
+    assert!(
+        !html.contains("−0") && !html.contains("+0"),
+        "a zero was drawn for a size nobody measured:\n{html}"
+    );
+    assert!(
+        html.contains("deleted"),
+        "the act itself must still be stated"
+    );
+}
+
+/// A modification nobody measured has no word of its own, so it renders no
+/// size column at all rather than an empty one.
+#[test]
+fn an_unmeasured_modification_has_no_size_column() {
+    let call = Call {
+        tool: ToolKind::EditFile,
+        header_object: "main.tex".to_string(),
+        args: Vec::new(),
+        output: Output::default(),
+        files: vec![FileChange {
+            path: "main.tex".to_string(),
+            before: String::new(),
+            after: String::new(),
+            status: FileStatus::Modified,
+            extent: Extent::default(),
+            patch: None,
+        }],
+        status: Status::Ok,
+        duration_ms: 4,
+        speculated: false,
+        sub_agent_id: None,
+    };
+    assert!(digest::step_digest(&step(call, 0), 40).delta.is_none());
 }

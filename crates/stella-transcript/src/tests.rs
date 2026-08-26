@@ -79,6 +79,7 @@ fn edit(path: &str, before: &str, after: &str) -> Call {
             before: before.to_string(),
             after: after.to_string(),
             status: FileStatus::Modified,
+            extent: Extent::default(),
             patch: None,
         }],
         status: Status::Ok,
@@ -614,6 +615,7 @@ fn acceptance_word_diff_highlights_only_the_changed_token() {
         before: before.to_string(),
         after: after.to_string(),
         status: FileStatus::Modified,
+        extent: Extent::default(),
         patch: None,
     });
 
@@ -840,6 +842,7 @@ fn context_lines_are_never_marked_changed() {
         before: "a\nb\nc\nd\ne\n".to_string(),
         after: "a\nb\nCHANGED\nd\ne\n".to_string(),
         status: FileStatus::Modified,
+        extent: Extent::default(),
         patch: None,
     });
     for row in diff.hunks.iter().flat_map(|h| h.rows.iter()) {

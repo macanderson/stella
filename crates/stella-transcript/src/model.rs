@@ -331,6 +331,91 @@ impl Output {
     }
 }
 
+/// A file change's size, as **measured**.
+///
+/// Both sides are `Option` for one reason: a row can exist before anything has
+/// measured it. A zero is the wrong stand-in — `+0 −0` beside a path asserts
+/// that the edit changed nothing, which is a louder and entirely different
+/// claim than "nothing measured this", and the substitution has shipped as a
+/// defect twice (#2290, #4156). An unmeasured side renders as no count at all,
+/// and an [`Extent`] with neither side measured renders as no size column at
+/// all.
+///
+/// The two sides are independent rather than a pair: a creation measures only
+/// the added side and a deletion only the removed one, so `None` on the other
+/// is the absence of a measurement rather than a zero that happens to be true.
+///
+/// `stella-tui`'s `views::transcript::Extent` states the same rule for the
+/// deck's own painter. This is the shared model's copy of it, and it exists so
+/// that a surface moving onto [`crate::grid`] cannot lose the rule on the way
+/// (#4289).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Extent {
+    /// Lines added, or `None` when nothing measured the added side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<usize>,
+    /// Lines removed, or `None` when nothing measured the removed side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed: Option<usize>,
+}
+
+impl Extent {
+    /// A measured `(added, removed)` pair.
+    #[must_use]
+    pub fn delta(added: usize, removed: usize) -> Self {
+        Self {
+            added: Some(added),
+            removed: Some(removed),
+        }
+    }
+
+    /// A measured added-side count, with the removed side unmeasured.
+    #[must_use]
+    pub fn added(lines: usize) -> Self {
+        Self {
+            added: Some(lines),
+            removed: None,
+        }
+    }
+
+    /// A measured removed-side count, with the added side unmeasured.
+    #[must_use]
+    pub fn removed(lines: usize) -> Self {
+        Self {
+            added: None,
+            removed: Some(lines),
+        }
+    }
+
+    /// Whether either side carries a measurement.
+    #[must_use]
+    pub fn is_measured(self) -> bool {
+        self.added.is_some() || self.removed.is_some()
+    }
+
+    /// Sum two extents side by side.
+    ///
+    /// A measured side plus an unmeasured one is the measured one: summing over
+    /// a call's files must not let a file nobody measured pull the total down
+    /// to a number smaller than what was actually counted. Two unmeasured sides
+    /// stay unmeasured.
+    #[must_use]
+    pub fn merged(self, other: Self) -> Self {
+        Self {
+            added: sum(self.added, other.added),
+            removed: sum(self.removed, other.removed),
+        }
+    }
+}
+
+/// `a + b`, where `None` is "nothing to add" rather than zero.
+fn sum(a: Option<usize>, b: Option<usize>) -> Option<usize> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a + b),
+        (some, None) | (None, some) => some,
+    }
+}
+
 /// One file's before/after, from which a rendered diff is derived.
 ///
 /// The *inputs*, not the rendered hunks: computing the diff is
@@ -350,6 +435,19 @@ pub struct FileChange {
     pub after: String,
     /// What happened to the file as a whole.
     pub status: FileStatus,
+    /// The size of this change, as its producer measured it.
+    ///
+    /// The **only** carrier of the counts, and independent of `patch` on
+    /// purpose. `AgentEvent::FileChange` measures the tree and renders the
+    /// patch separately, so it can carry a count with no patch text at all —
+    /// a binary file, or a `git diff` that would not read. Hanging the counts
+    /// off `patch` therefore threw a real measurement away and drew `+0 −0` in
+    /// its place, which is the fabrication [`Extent`] exists to refuse.
+    ///
+    /// Left at [`Extent::default`] by a caller that holds only the two sides:
+    /// [`crate::file_diff::FileDiff::build`] measures those by comparing them.
+    #[serde(default)]
+    pub extent: Extent,
     /// The producer's own diff of this change, when it computed one against
     /// the real file. Preferred over `before`/`after` by
     /// [`crate::file_diff::FileDiff::build`].
@@ -367,18 +465,16 @@ pub struct FileChange {
 
 /// An exact unified diff of one file change, as its producer computed it.
 ///
-/// The counts ride along rather than being recovered by counting sigils in
-/// `text`: `AgentEvent::FileChange`'s contract is that `added`/`removed` are
-/// the measurement and the patch is a bounded rendering of the changed region,
-/// so a consumer that recounts is reading a summary as if it were the total.
+/// Rows only. The counts live on [`FileChange::extent`], because a producer
+/// can measure a change it cannot render — and because
+/// `AgentEvent::FileChange`'s contract is that the counts are the measurement
+/// while the patch is a bounded rendering of the changed region, so a consumer
+/// that recovers a total by counting sigils in `text` is reading a summary as
+/// if it were the whole.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Patch {
     /// `@@` hunks in git's format, with file-absolute line numbers.
     pub text: String,
-    /// Lines added, as the producer counted them.
-    pub added: usize,
-    /// Lines removed, as the producer counted them.
-    pub removed: usize,
     /// Whether `text` is the minimal edit script, or the producer's differ
     /// tripped its area cap and fell back to a blunt replace-everything
     /// rendering. `true` for a patch built before the producer carried this
@@ -478,12 +574,14 @@ impl Call {
             .collect()
     }
 
-    /// Net line counts across every file this call touched.
+    /// Net line counts across every file this call touched, as measured.
+    ///
+    /// Unmeasured when nothing measured any of them — never `(0, 0)`, which
+    /// would claim the call changed nothing (see [`Extent`]).
     #[must_use]
-    pub fn line_delta(&self) -> (usize, usize) {
-        self.files.iter().fold((0, 0), |(add, del), change| {
-            let diff = crate::file_diff::FileDiff::build(change);
-            (add + diff.added, del + diff.removed)
+    pub fn extent(&self) -> Extent {
+        self.files.iter().fold(Extent::default(), |total, change| {
+            total.merged(crate::file_diff::FileDiff::build(change).extent)
         })
     }
 }

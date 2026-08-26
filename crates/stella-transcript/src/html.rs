@@ -439,16 +439,14 @@ fn step_block(
         escape(&dig.verb),
         escape(&dig.object),
     );
-    if let Some(delta) = &dig.delta {
+    if let Some(delta) = &dig.delta
+        && let Some(label) = delta.label()
+    {
         let tone = match delta.kind {
             FileStatus::Deleted => "del",
             _ => "add",
         };
-        let _ = write!(
-            out,
-            "<span class=\"dm {tone}\">{}</span>",
-            escape(&delta.label())
-        );
+        let _ = write!(out, "<span class=\"dm {tone}\">{}</span>", escape(&label));
     }
     if dig.status == Status::Error {
         out.push_str("<span class=\"st err\">✗ failed</span>");
@@ -659,19 +657,33 @@ fn file_diff(
         diff.status.token(),
         escape(&diff.path)
     );
+    // Each side is written only when something measured it, and the two keep
+    // their own tint: `+` is the added colour and `−` the removed one, so they
+    // cannot share a span (see [`crate::model::Extent`] for why the absent side
+    // is absent rather than a zero).
     match diff.status {
         FileStatus::Deleted => {
-            let _ = write!(out, "<span class=\"d\">deleted · −{}</span>", diff.removed);
+            if let Some(removed) = diff.extent.removed {
+                let _ = write!(out, "<span class=\"d\">deleted · −{removed}</span>");
+            } else {
+                out.push_str("<span class=\"d\">deleted</span>");
+            }
         }
         FileStatus::New => {
-            let _ = write!(out, "<span class=\"a\">new file · +{}</span>", diff.added);
+            if let Some(added) = diff.extent.added {
+                let _ = write!(out, "<span class=\"a\">new file · +{added}</span>");
+            } else {
+                out.push_str("<span class=\"a\">new file</span>");
+            }
         }
         FileStatus::Modified => {
-            let _ = write!(
-                out,
-                "<span class=\"a\">+{}</span> <span class=\"d\">−{}</span>",
-                diff.added, diff.removed
-            );
+            if let Some(added) = diff.extent.added {
+                let _ = write!(out, "<span class=\"a\">+{added}</span>");
+            }
+            if let Some(removed) = diff.extent.removed {
+                let space = if diff.extent.added.is_some() { " " } else { "" };
+                let _ = write!(out, "{space}<span class=\"d\">−{removed}</span>");
+            }
         }
     }
     out.push_str("</span></summary>");
