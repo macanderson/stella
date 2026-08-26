@@ -9,9 +9,11 @@
 //! [`stella_transcript::file_diff`]'s change-block pairing decides which
 //! removal is compared with which addition. Every Rust surface consumes those
 //! two directly. A sixth surface, the arena transcript, reimplements them in
-//! TypeScript (`arenabench/ui/lib/word-highlight.ts`) because that page is a
-//! Next.js client with no way to call into the workspace — the same situation,
-//! and the same remedy, as `stella-diff`'s `view-plan-matrix` (#3558).
+//! TypeScript (`ui/lib/word-highlight.ts` in
+//! github.com/macanderson/arenabench, where that page went with the ejection)
+//! because it is a Next.js client with no way to call into the workspace — the
+//! same situation, and the same remedy, as `stella-diff`'s `view-plan-matrix`
+//! (#3558).
 //!
 //! Before this existed the TypeScript port had **no** word highlighting at all
 //! and no mechanism to notice: `transcript-page.tsx` was whole-line tint only,
@@ -24,9 +26,11 @@
 //! - this test regenerates the matrix and asserts it still matches
 //!   `tests/fixtures/word-highlight-matrix.txt`, so a Rust change to the rules
 //!   cannot land without consciously re-blessing the golden;
-//! - `arenabench/ui/scripts/check-word-highlight-parity.mjs` runs the
-//!   TypeScript over the same matrix and asserts it reproduces that same file,
-//!   so a re-blessed golden fails the TypeScript until it is ported.
+//! - the arenabench repo vendors it as `ui/golden/word-highlight-matrix.txt`,
+//!   and its `ui/scripts/check-word-highlight-parity.mjs` runs the TypeScript
+//!   over the same matrix and asserts it reproduces that same file, so a
+//!   re-blessed golden here fails the TypeScript there until it is synced and
+//!   ported.
 //!
 //! Re-bless with
 //! `BLESS=1 cargo test -p stella-transcript --test word_highlight_matrix`,
@@ -201,8 +205,10 @@ fn render_matrix() -> String {
         "# stella_transcript::word::highlight over a fixed matrix.\n\
          # Generated — re-bless with:\n\
          #   BLESS=1 cargo test -p stella-transcript --test word_highlight_matrix\n\
-         # The TypeScript port must reproduce this byte for byte:\n\
-         #   node arenabench/ui/scripts/check-word-highlight-parity.mjs\n\
+         # The TypeScript port must reproduce this byte for byte. It lives in\n\
+         # github.com/macanderson/arenabench, which vendors this file as\n\
+         # `ui/golden/word-highlight-matrix.txt`; from that repo's `ui/`:\n\
+         #   node scripts/check-word-highlight-parity.mjs\n\
          # Inputs are not echoed; `cases()`/`blocks()` are mirrored in the port.\n",
     );
     for (label, old, new) in cases() {

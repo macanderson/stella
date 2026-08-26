@@ -6,9 +6,10 @@
 //!
 //! [`stella_diff::view::plan`] decides how much of a diff every Stella surface
 //! draws and which part. Four surfaces consume it in Rust; a fifth, the arena
-//! transcript, reimplements it in TypeScript
-//! (`arenabench/ui/lib/diff-view.ts::selectDiffLines`) because that page is a
-//! Next.js client with no way to call into the workspace. Two implementations
+//! transcript, reimplements it in TypeScript (`ui/lib/diff-view.ts::selectDiffLines`
+//! in github.com/macanderson/arenabench, where that page went with the
+//! ejection) because it is a Next.js client with no way to call into the
+//! workspace. Two implementations
 //! of one policy, and an arena transcript is read *beside* the deck and the
 //! Observatory when someone is arguing about a run — so drift there means one
 //! edit looking like two.
@@ -18,9 +19,10 @@
 //! - this test regenerates the matrix and asserts it still matches
 //!   `tests/fixtures/view-plan-matrix.txt`, so a Rust change to the policy
 //!   cannot land without consciously re-blessing the golden;
-//! - `arenabench/ui/scripts/check-diff-view-parity.mjs` runs the TypeScript
-//!   over the same matrix and asserts it reproduces that same file, so a
-//!   re-blessed golden fails the TypeScript until it is ported.
+//! - the arenabench repo vendors it as `ui/golden/view-plan-matrix.txt`, and
+//!   its `ui/scripts/check-diff-view-parity.mjs` runs the TypeScript over the
+//!   same matrix and asserts it reproduces that same file, so a re-blessed
+//!   golden here fails the TypeScript there until it is synced and ported.
 //!
 //! Re-bless with `BLESS=1 cargo test -p stella-diff --test view_plan_matrix`,
 //! and then **read the diff**: a golden blessed without looking is a
@@ -65,8 +67,10 @@ fn render_matrix() -> String {
         "# stella_diff::view::plan over a fixed matrix.\n\
          # Generated — re-bless with:\n\
          #   BLESS=1 cargo test -p stella-diff --test view_plan_matrix\n\
-         # The TypeScript port must reproduce this byte for byte:\n\
-         #   node arenabench/ui/scripts/check-diff-view-parity.mjs\n\
+         # The TypeScript port must reproduce this byte for byte. It lives in\n\
+         # github.com/macanderson/arenabench, which vendors this file as\n\
+         # `ui/golden/view-plan-matrix.txt`; from that repo's `ui/`:\n\
+         #   node scripts/check-diff-view-parity.mjs\n\
          # `fold` is the index the elision marker precedes, or `-` for none.\n",
     );
     for &(total, step) in MATRIX {
