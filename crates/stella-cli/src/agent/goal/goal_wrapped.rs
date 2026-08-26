@@ -326,6 +326,10 @@ pub(crate) async fn run_goal_wrapped_turn(
         None => provider,
     };
 
+    // Agent whistle (#4769): one listener for the whole arc, held here so its
+    // `Drop` unbinds the socket when the run ends. See the raw arm's twin in
+    // `super::run_goal_turn` for why it is per-run rather than per-round.
+    let whistle = crate::whistle::SessionWhistle::open(session);
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let renderer = spawn_renderer(
         rx,
@@ -352,7 +356,11 @@ pub(crate) async fn run_goal_wrapped_turn(
     );
     let hook_runner = HostHookRunner;
     let mut engine = Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
-        .with_calibration(calibration);
+        .with_calibration(calibration)
+        // The arc's whistle (#4769), opened above and drained at every round's
+        // first step boundary — the wrapped arm drives its own rounds through
+        // this one engine, so one attachment covers all of them.
+        .with_steering(whistle.steering());
     if let Some(hooks) = &cfg.hooks {
         engine = engine.with_hooks(hooks, &hook_runner);
     }

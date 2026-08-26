@@ -12,6 +12,9 @@ use super::*;
 
 mod goal_wrapped;
 
+#[cfg(test)]
+mod tests;
+
 /// The session task board, tool by tool — everything the catalog files under
 /// the `task` group *except* `delegate`, the sub-agent delegation tool that
 /// shares the group.
@@ -278,12 +281,10 @@ pub(crate) async fn run_raw_one_shot(
     // carried for exactly this (its own doc comment named `run_raw_one_shot`
     // as the non-interactive door that would one day publish something
     // other than `none()` here).
-    // `_whistle_listener` is held for the run's duration — its `Drop` is
-    // what unbinds and removes the socket file.
-    let whistle_tap: std::sync::Arc<crate::whistle::tap::HeadlessSteerTap> =
-        std::sync::Arc::default();
-    let _whistle_listener = crate::whistle::spawn_for_session(presence.id(), whistle_tap.clone());
-    let controls = stella_core::ports::TurnControls::none().with_steering(whistle_tap);
+    // `whistle` is held for the run's duration — its `Drop` is what unbinds
+    // and removes the socket file.
+    let whistle = crate::whistle::SessionWhistle::open(Some(presence.id()));
+    let controls = whistle.controls();
     // This prompt's friction (#3946), read by the reflection further down.
     //
     // A `Vec` because the wrapped arm is genuinely several turns: an
@@ -873,6 +874,14 @@ pub(crate) async fn run_goal_turn(
         None => provider,
     };
 
+    // Agent whistle (#4769): ONE listener for the whole arc, not one per
+    // round. This function is called once by `run_goal_cmd`, and every round
+    // `Engine::run_goal` drives is a `with_turn_instance` clone of the engine
+    // built below — which carries `steering` forward — so a single tap
+    // attached here is drained at every round's first step boundary.
+    //
+    // Held for the arc's duration; its `Drop` unbinds and removes the socket.
+    let whistle = crate::whistle::SessionWhistle::open(session);
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let events = stella_core::EventSender::new(tx.clone());
     // The registry's own streams and this turn's per-call work-tree
@@ -911,7 +920,15 @@ pub(crate) async fn run_goal_turn(
         let hook_runner = HostHookRunner;
         let mut engine =
             Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
-                .with_calibration(calibration);
+                .with_calibration(calibration)
+                // Every round's worker turn drains this, and only those. The
+                // verifier runs as a sub-agent off `Engine::assess`, which
+                // sees a parent's steering through
+                // `stella_core::subagent::ChildSteering` — soft stop
+                // forwarded, `drain_steering` refused — so a whistle cannot
+                // be eaten by the judge, and the person who sent it does not
+                // have to know a judge exists.
+                .with_steering(whistle.steering());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
