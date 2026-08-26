@@ -34,6 +34,10 @@ Every screen exists to make these four claims visible without saying them:
 
 All values are `Color::Rgb`. Grays are neutral or one to two points blue above red. This is what keeps the scheme from reading warm or brown on cheap panels.
 
+The table is every token `design/tokens/stella-tokens.json` declares on the `tui` surface — the deck's own ramp. The palette is wider than this: the JSON carries a light ground, the four status inks and the site's below-canvas backdrop as well, and those are not the terminal's, so they are not here. `crates/stella-tui/tests/spec_palette.rs` holds both directions of that claim — every hex below is the value the token holds, and every `tui` token has a row.
+
+<!-- BEGIN palette -->
+
 | Token | Hex | Role |
 |---|---|---|
 | `bg` | `#0A0A0C` | canvas |
@@ -52,6 +56,8 @@ All values are `Color::Rgb`. Grays are neutral or one to two points blue above r
 | `red` | `#E0687A` | fail, `-` diff sign, delete events, destructive |
 | `diff_add_bg` | `#10201A` | added diff row background |
 | `diff_del_bg` | `#241019` | removed diff row background |
+
+<!-- END palette -->
 
 ### 3.2 Hue clamp (enforced in code)
 
@@ -75,7 +81,38 @@ JetBrains Mono is the brand terminal font (user-configurable, the TUI inherits t
 
 ### 3.5 Degradation
 
-Detect truecolor via `COLORTERM`. On non-truecolor terminals fall back to a 16-color mapping: gold to yellow, silver to white, muted and dim to bright black, red and green to their ANSI counterparts. Glyphs carry state, so the UI stays legible.
+Detect truecolor via `COLORTERM`. On non-truecolor terminals the palette narrows to the sixteen ANSI colors. Glyphs carry state (§4, §13), so the frame loses the metals' tone and not its meaning.
+
+The stand-in for every token, by the ANSI name rather than by ratatui's spelling of it. That distinction is the whole reason this is a table: ratatui calls ANSI 7 `Color::Gray` and ANSI 15 `Color::White`, so `token::SILVER => Color::Gray` reads at a glance as *silver to gray* and is in fact *silver to white*, with `text` lifting to bright white above it. #4976 was filed on that misreading. `crates/stella-tui/tests/spec_palette.rs` holds every row to `stella_tui_theme::fallback::ansi16`, and holds the table to `token::ALL` so a token cannot arrive without one.
+
+<!-- BEGIN degradation -->
+
+| Token | 16-color stand-in |
+|---|---|
+| `bg` | black |
+| `panel` | black |
+| `hl` | bright black |
+| `border` | bright black |
+| `rule` | bright black |
+| `gold` | yellow |
+| `gold_bright` | yellow |
+| `silver` | white |
+| `silver_type` | white |
+| `text` | bright white |
+| `muted` | bright black |
+| `dim` | bright black |
+| `green` | green |
+| `red` | red |
+| `diff_add_bg` | black |
+| `diff_del_bg` | black |
+| `ink` | black |
+| `paper` | bright white |
+| `paper_panel` | bright white |
+| `paper_border` | white |
+
+<!-- END degradation -->
+
+The two golds collapse to one yellow and the two silvers to one white: at sixteen colors there is no second stop to lift to. The diff tints go to black rather than to a green and a red ground — at sixteen colors a tint is not available, only a wash, and a wash on every changed row would spend the palette's whole red budget on a healthy diff. The mandatory sign column (§6.4) is what carries the diff here, which is the case the sign column exists for.
 
 ## 4. Glyph language
 
