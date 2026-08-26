@@ -1,104 +1,60 @@
 //! `stella dataset export` — a curated, redacted trajectory dataset from the
-//! local receipt store (#872, the first slice of #836's weight-space track).
+//! local receipt store.
 //!
 //! One JSONL record per **accepted** turn — the prompt, the tool calls with
 //! their arguments and outputs, the change that landed, and the verifier's
-//! verdict — beside a `manifest.json` that states exactly which filter
-//! produced it. That manifest is the point: a dataset nobody can re-derive
-//! the extraction rule for is not auditable, and #836 requires human sign-off
+//! verdict — beside a `manifest.json` stating exactly which filter produced
+//! it. The manifest is the point: a dataset nobody can re-derive the
+//! extraction rule for is not auditable, and #836 requires human sign-off
 //! before any of this reaches a training run.
 //!
-//! ## A fold over the store, not a second capture path
+//! The fold is over `store.db` directly — the `executions` header for
+//! provenance, the per-execution `events` journal for everything else. That
+//! journal is the only place tool *outputs* survive (`tool_calls` records
+//! `bytes_out` and deliberately never the content), so it is the only possible
+//! source.
 //!
-//! A separate `trace.rs` (#1042) once assembled a redacted trajectory record
-//! from a live pipeline run, but its one call site was the staged pipeline's
-//! one-shot driver — gone from this build (#3865) along with the crate that
-//! drove it — so `.stella/private/traces.jsonl` was already absent in
-//! essentially every real workspace before that removal and carries nothing
-//! historical either way. This module therefore folds `store.db` directly:
-//! the `executions` header for provenance and the
-//! per-execution `events` journal for everything else. That journal is the
-//! only place tool OUTPUTS survive (`tool_calls` records `bytes_out` and
-//! deliberately never the content), so it is the only possible source.
+//! **"Accepted" is a judgement, not a column.** The settled signals are
+//! `executions.outcome` and `AgentEvent::Verdict`, so the predicate is named
+//! ([`is_accepted`]), documented, and echoed verbatim into the manifest rather
+//! than left implicit in a `WHERE` clause. Each record is labelled by
+//! [`crate::reward`] under the workspace's resolved [`RewardPolicy`], which
+//! rides on every label so differently-weighted workspaces stay comparable,
+//! and the raw verdict is emitted beside it so a reader can re-derive a label
+//! under other weights.
 //!
-//! ## "Accepted" is a judgement, not a column
-//!
-//! The store has no accepted flag. The settled signals are
-//! `executions.outcome` — whose observed vocabulary is `completed`,
-//! `goal_met`, `goal_unmet`, `verification_failed`, `aborted`, `cancelled`,
-//! `failed`, `error`, `interrupted` — and `AgentEvent::Verdict`. So the
-//! predicate is named ([`is_accepted`]), documented, and echoed **verbatim**
-//! into the manifest, rather than left implicit in a `WHERE` clause.
-//!
-//! ## Rewards and transcripts (#2083)
-//!
-//! Two things #872 shipped without now exist in tree and are carried. The
-//! verdict → scalar mapping (#1043, [`crate::reward`]) labels each
-//! record from the journal's settled verdict under the workspace's resolved
-//! [`RewardPolicy`] — and the policy rides on every label, so records from
-//! differently-weighted workspaces stay comparable. And the receipts plane
-//! rebuilds any model call byte-exactly
-//! ([`stella_store::Store::reconstruct_call`] — the same source `trace.rs`
-//! reads, so SFT pairs need no other source), so each record carries every
-//! call's exact `prompt_messages`, admitted only when the reconstruction
-//! digest-verifies. An execution that cannot vouch for its own transcripts —
-//! no recorded call at all, or any call short of
-//! [`stella_store::Reconstruction::is_verified`] — is excluded under the
-//! default filter and **counted** in the manifest, the same named-predicate
-//! discipline as the rest of the acceptance rule. The raw verdict is still
-//! emitted beside the label, so a reader can re-derive a label under other
-//! weights without trusting this one.
-//!
-//! ## The unvouched turns are reachable, never silently (#2123)
-//!
-//! "Excluded under the default filter" implies a non-default path, and
-//! `--include-unverified-transcripts` is it: a store whose history predates
-//! the receipts plane holds no `step_receipt` row at all, so the default
-//! filter exports **zero** records from it even though the journal fold can
-//! still recover every one of those turns' prompt/tool-call/change
-//! trajectories. Under the flag those turns are exported with
-//! [`DatasetRecord::calls`] empty and
-//! [`DatasetRecord::transcript_verified`] false — the trajectory without the
-//! transcript, never unverified bytes wearing a verified transcript's shape.
-//! The gate itself stays era-blind, exactly as
-//! [`stella_store::Reconstruction::is_verified`] is: the benign
+//! **A record's transcripts either digest-verify or are absent.** Each record
+//! carries every call's exact `prompt_messages` from
+//! [`stella_store::Store::reconstruct_call`], admitted only when the
+//! reconstruction verifies; an execution that cannot vouch for its own — no
+//! recorded call, or any call short of
+//! [`stella_store::Reconstruction::is_verified`] — is excluded by default and
+//! counted in the manifest. `--include-unverified-transcripts` exports those
+//! turns' trajectories with [`DatasetRecord::calls`] empty and
+//! [`DatasetRecord::transcript_verified`] false, never unverified bytes
+//! wearing a verified transcript's shape. The gate stays era-blind: the benign
 //! compaction-era explanation for a mismatch is *reported* on the record
-//! ([`DatasetRecord::transcript_mismatch_severity`], read from
-//! [`stella_store::Reconstruction::mismatch_severity`] rather than
-//! re-derived), never used to admit one.
+//! ([`DatasetRecord::transcript_mismatch_severity`]), never used to admit one.
+//! Admitting compaction-era executions *with* their calls was declined in
+//! #3613 — a dataset whose records mean two things depending on a flag inside
+//! them is worth less than a smaller one whose records all mean the same
+//! thing — and re-opening it is a decision about what a default training
+//! dataset contains, not a predicate edit.
 //!
-//! A middle tier that admitted `compaction`-severity executions *with* their
-//! reconstructed [`DatasetRecord::calls`], marked compaction-era, was
-//! considered and declined (#3613). It would recover legacy transcript data
-//! for SFT and it would cost the one property every emitted `calls` array has
-//! today: that it digest-verified. A dataset whose records mean two different
-//! things depending on a flag inside them is worth less than a smaller one
-//! whose records all mean the same thing, and the trajectory of those turns
-//! is exported already under `--include-unverified-transcripts`. Re-opening
-//! this is a decision about what a default training dataset contains, not a
-//! predicate edit.
-//!
-//! ## What a "diff" can honestly be here
-//!
-//! There is no unified diff anywhere in `store.db`. `files_touched` holds
-//! path/ops/line-counts and no content; `AgentEvent::FileChange::diff` is one
-//! coarse changed-region hunk, bounded at 200 lines per side by the recorder.
-//! [`DatasetChange`] therefore carries the recorder's authoritative
-//! `added`/`removed` counts, that bounded hunk, and a `diff_truncated` flag —
-//! and the exact bytes the model produced are still recoverable from the
-//! edit/write tool arguments in `tool_calls`. A field promising a full diff
-//! would be lying.
-//!
-//! ## Privacy and determinism
+//! **A "diff" here is a bounded hunk, and says so.** No unified diff exists
+//! anywhere in `store.db`: `files_touched` holds paths, ops and line counts
+//! with no content, and `AgentEvent::FileChange::diff` is one coarse changed
+//! region bounded at 200 lines per side. [`DatasetChange`] carries the
+//! recorder's authoritative counts, that hunk, and a `diff_truncated` flag;
+//! the exact bytes the model produced stay recoverable from the edit/write
+//! tool arguments in `tool_calls`.
 //!
 //! Every string leaf of every record and of the manifest passes through
-//! [`stella_core::redact::redact_secrets`] AFTER assembly, so a field added
-//! later cannot route around it. Output is written 0600 into a 0700
-//! directory: redacted prompts plus full tool outputs are at least as
-//! sensitive as the session archive that was hardened for the same reason.
-//! Nothing here reads a clock — the manifest's watermark comes from the store
-//! — and every ordering is a stable key, so the same store and filter produce
-//! byte-identical files on every run.
+//! [`stella_core::redact::redact_secrets`] *after* assembly, so a field added
+//! later cannot route around it, and output is written 0600 into a 0700
+//! directory. Nothing here reads a clock — the manifest's watermark comes from
+//! the store — and every ordering is a stable key, so the same store and
+//! filter produce byte-identical files on every run.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

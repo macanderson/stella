@@ -2,128 +2,50 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! `stella daemon resume-all` and `stella daemon install --resume-all`:
-//! resume-at-boot (#1627).
+//! resume-at-boot.
 //!
-//! [`crate::daemon::service`] (#1587) registers one explicit invocation with launchd /
-//! `systemd --user`, and a service manager re-**starts** what it registered —
-//! a fresh turn and a fresh spend at every boot. That is the wrong verb for
-//! the machine that rebooted mid-turn: the killed run left a resume point at
-//! its last committed step, and [`crate::daemon::resume_supervised`] (#1586) continues
-//! from it. This module is the wire between the two, so a rebooted machine
-//! comes back **continuing** its work rather than repeating it.
+//! A service manager re-*starts* what [`crate::daemon::service`] registered,
+//! which is the wrong verb for a machine that rebooted mid-turn — the killed
+//! run left a resume point at its last committed step, and
+//! [`crate::daemon::resume_supervised`] continues from it. This module is the
+//! wire between the two, and it is a standing sweep rather than a one-shot
+//! `install --resume <id>`, because an id chosen at install time is an id
+//! chosen for the wrong run.
 //!
-//! # Which of the two shapes #1627 offered, and why
+//! It continues exactly the rows `stella daemon list` paints `Crashed ↩`: a
+//! **supervised** run whose stored status is still live (`SessionStatus::is_live`)
+//! or is `Error`, while its liveness lock is not held, whose workspace still
+//! exists, and which left a resume point this build can see. The stored status
+//! is the decisive half — every deliberate ending writes one on the way out
+//! (`Complete`, `Cancelled`, `Stopped`, `Paused`), so a live status with a dead
+//! lock is the signature of interruption, and `Error` means only "it fell
+//! over". A deliberate stop also retracts its resume point, so a row from a
+//! build old enough to have stored `Error` for a policy stop is filtered by
+//! [`crate::daemon::boot::SkipReason::NoResumePoint`] without this module
+//! trusting its status.
 //!
-//! The issue offered a one-shot `install --resume <id>` or a standing sweep.
-//! It is the **sweep**: nobody knows, before the crash, which run the crash
-//! will take, so an id chosen at install time is an id chosen for the wrong
-//! run. `stella daemon install --resume-all` registers exactly one thing —
-//! `stella daemon resume-all` — and that verb decides at load, from the
-//! registry, what this boot should continue.
+//! Two bounds keep a sweep from running forever:
 //!
-//! # Which runs it continues — the conservative rule
-//!
-//! Exactly the rows `stella daemon list` paints `Crashed ↩`: a **supervised**
-//! run whose stored status is still *live* (`SessionStatus::is_live`) — or is
-//! `Error`, a crash that lived just long enough to say so (#1696) — while its
-//! liveness lock is not held, whose workspace still exists, and which left a
-//! resume point this build can see.
-//!
-//! The decisive half is the stored status. Every deliberate end writes
-//! one on the way out — `Complete` when it finished, `Cancelled` when `stella
-//! daemon stop` or a Ctrl-C ended it, `Stopped` when the run ended itself by
-//! policy, `Paused` when a deck set it aside. A process the kernel took
-//! mid-turn writes nothing, so a live status with a dead lock is the
-//! signature of interruption.
-//!
-//! # Why an `Error` is continued too, and why that is safe (#1696)
-//!
-//! This rule used to skip *every* terminal status, `Error` included. That was
-//! a compromise forced by #1653: a deliberate policy stop (a stuck-loop
-//! escalation, the step cap, an enforced budget, an ended scope review) was
-//! recorded as `Error`, identical to a genuine crash, so continuing an
-//! `Error` could have restarted — unattended, at the operator's expense —
-//! work the operator ended on purpose. The cost was the honest one: a real
-//! crash that *did* manage to write `Error` before dying was left stranded.
-//!
-//! #1653 removed the ambiguity. A policy stop now records
-//! [`SessionStatus::Stopped`] with every other deliberate ending, which
-//! leaves `Error` meaning only "it fell over" — a run exactly as entitled to
-//! be continued as one the kernel took without warning. Two independent
-//! facts make the widening safe rather than merely intended:
-//!
-//! - **A deliberate stop has no resume point.** The engine driver discards
-//!   the checkpoint on every terminal path, abort included, so a policy stop
-//!   retracts its resume point on the way out. A row written by a build that
-//!   predates #1653 — where a policy stop really did store `Error` — is
-//!   therefore filtered by [`crate::daemon::boot::SkipReason::NoResumePoint`]
-//!   anyway, without this module having to trust its status.
-//! - **The attempt bound still applies.** An `Error` that resumes into
-//!   another `Error` is counted like any other continuation and retired
-//!   after `MAX_BOOT_ATTEMPTS`.
-//!
-//! # What stops a boot loop
-//!
-//! A run that wedges the machine on resume would otherwise resume on every
-//! boot forever. Two brakes, and the second is the decisive one:
-//!
-//! - The resume point is consumed by the turn that continues (#1586), so the
-//!   ordinary case self-terminates after one pass.
-//! - That is not enough when the *resumed* turn is itself killed, because it
-//!   writes a fresh resume point before it dies. So every continued run is
-//!   counted in a durable ledger at `~/.stella/services/resume-boot.json`
-//!   **before** it is spawned, and the `MAX_BOOT_ATTEMPTS`th failure retires
-//!   it: the row is still listed, still says why, and is still resumable by
-//!   hand with `stella daemon resume <id>` — a human deciding to try again is
-//!   exactly what the bound exists to require.
-//!
-//! # What stops a stalled *sweep* — the per-run ceiling (#1921)
-//!
-//! The brakes above bound how many boots one run can spend; nothing in them
-//! bounds how long one run can hold *this* boot. The sweep is sequential and
-//! streams each resumed turn to completion, so any turn that never ends — a
-//! wedged tool, a provider that never returns, a model call retrying forever
-//! — used to stall every id after it, silently. (#1920 fixed the one such
-//! state visible on disk before spawning, a parked approval; the ceiling
-//! covers every way a turn fails to end that only running it reveals.)
-//!
-//! So each resumed run gets a wall-clock ceiling (`--ceiling`, minutes).
-//! Expiry never kills the child outright — a `SIGKILL` at the ceiling would
-//! land mid-edit, which is worse than the stall it fixes. It goes through the
-//! same graceful discipline as Ctrl-C and `stella daemon stop`: `SIGTERM`,
-//! then `STOP_GRACE` for the engine to abort at a safe boundary (invariant 6)
-//! and write its own terminal status, escalation only then. The two ways that
-//! ends compose with the brakes above rather than needing new ones:
-//!
-//! - A child that **responds** to the stop ends deliberately — checkpoint
-//!   discarded, `Cancelled` recorded, exactly as if an operator had stopped
-//!   it — so the next sweep skips it as ended and returns its attempts.
-//! - A child so wedged it had to be **killed** wrote nothing, keeps its
-//!   resume point, and is swept again next boot — where the attempt already
-//!   charged for this resume counts against `MAX_BOOT_ATTEMPTS`.
-//!
-//! That is also the answer to whether a timed-out run is **charged a boot
-//! attempt: yes**. The attempt was recorded before the spawn (as every
-//! attempt is), and it stays spent, because the only run still resumable
-//! after a timeout is the wedged one — the exact recurring failure the
-//! three-attempt bound exists to stop. A run that was merely slower than the
-//! ceiling ended deliberately at a safe boundary, and slower-than-the-ceiling
-//! by hand is what `stella daemon resume <id>` — which has no ceiling — is
-//! for.
-//!
-//! # What the operator sees
+//! - **`MAX_BOOT_ATTEMPTS`.** Consuming the resume point self-terminates the
+//!   ordinary case after one pass, but a resumed turn that is itself killed
+//!   writes a fresh one — so every continued run is counted in
+//!   `~/.stella/services/resume-boot.json` *before* it is spawned, and the
+//!   last failure retires it. The row stays listed, still says why, and is
+//!   still resumable by hand with `stella daemon resume <id>`.
+//! - **A per-run wall-clock ceiling** (`--ceiling`, minutes), because the sweep
+//!   is sequential and one turn that never ends holds every id behind it.
+//!   Expiry never kills the child outright: `SIGTERM`, then `STOP_GRACE` for
+//!   the engine to abort at a safe boundary (invariant 6) and write its own
+//!   terminal status, escalation only then. A child that responds ends as
+//!   `Cancelled` and the next sweep skips it; a child that had to be killed
+//!   keeps its resume point and is swept again, having already spent the
+//!   attempt charged before the spawn.
 //!
 //! Every candidate, continued or skipped, prints one line with its reason —
 //! into `~/.stella/services/resume-boot.log` when a service is driving, into
-//! the terminal when a human is. A run silently resumed at boot would be as
-//! bad as one silently lost, so nothing here is quiet, and
-//! `stella daemon resume-all --dry-run` prints the same decisions while
-//! spawning and spending nothing.
-//!
-//! The resumed child is an ordinary `stella daemon resume <id> --foreground`,
-//! so it inherits that path's own honesty unchanged: #1615's resume frame
-//! still names the pipeline stages a resumed turn is not restoring, into the
-//! service console rather than a terminal.
+//! the terminal when a human is; `--dry-run` prints the same decisions and
+//! spends nothing. The resumed child is an ordinary `stella daemon resume <id>
+//! --foreground`, so it inherits that path's resume frame unchanged.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

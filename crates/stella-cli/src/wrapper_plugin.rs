@@ -1,138 +1,66 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `stella-cli` as a **driver** of the wrapper socket (#3494).
+//! `stella-cli` as a **driver** of the wrapper socket.
 //!
-//! `stella_runtime::wrapper` shipped four points, two transports and the two
-//! host functions, and nothing in the shipping binary called any of them — so
-//! `doc:wrapper-socket` §6's first driver was unmet and an installed wrapper
-//! plugin participated in nothing. This module is that driver: it resolves
-//! `--pipeline <variant>` against what is installed, builds the transport the
-//! manifest's `[runtime]` block declares, and implements
-//! [`TurnDriver`] over the raw engine turn.
+//! This module resolves `--pipeline <variant>` against what is installed,
+//! builds the transport the manifest's `[runtime]` block declares, and
+//! implements [`TurnDriver`] over the raw engine turn. The **sequence** —
+//! before_turn per stage, the turn, after_turn, judge, again — stays in
+//! `stella_runtime::WrapperDispatch`, because `doc:wrapper-socket` §6 requires
+//! the same plugin to run under `stella-serve` and an embedded `stella-engine`
+//! host, and a sequence living in this binary is one neither can reach. The
+//! engine never learns plugins exist: this module binds the grants and hands
+//! it plain messages.
 //!
-//! # What is here and what is deliberately one crate down
+//! It is a sibling of `crate::agent`, not a part of it, because `agent.rs`
+//! sits close to the 1500-line ratchet (AGENTS.md § "God files").
 //!
-//! The **sequence** — before_turn per stage, the turn, after_turn, judge,
-//! again — is `stella_runtime::WrapperDispatch` and stays there, because §6
-//! requires the same plugin to run under `stella-serve` and an embedded
-//! `stella-engine` host too, and a sequence living in this binary is one
-//! neither can reach. What is here is only the part that is genuinely the
-//! CLI's: which plugins are installed, how this process resolves an
-//! environment allowlist, and what one turn of *this* engine is.
+//! What a plugin is handed, and the limit on each:
 //!
-//! `stella-core` gains nothing from any of it. The engine never learns plugins
-//! exist; this module binds the grants and hands the engine plain messages.
+//! - **A candidate grant** naming the shared work tree the turn runs in, with
+//!   `--test-command` parsed into a [`stella_plugin::TestPlan`], so an
+//!   `[oracle]` declaring `flip = "required"` can observe red before and green
+//!   after. [`crate::wrapper_candidate`] holds the invocation shapes whose
+//!   tamper finding stays [`stella_plugin::TamperFinding::NotChecked`].
+//! - **Turn facts** folded from the turn's own event stream by
+//!   [`crate::turn_facts`]. `Some(vec![])` means the turn touched nothing;
+//!   `None` means this host does not report it.
+//! - **A host-call gate**, always — a host with no context plane attaches one
+//!   and answers with no frames, because an empty answer is something a plugin
+//!   can degrade on and an absent gate is not.
+//! - **A child-turn plane**, spent by this session's own `SubAgentDispatcher`,
+//!   so the plugin never holds a provider, an `Engine` or a credential
+//!   (invariant 3, `doc:turn-loop-wrappers` §9.3). The `verifier` tier binds to
+//!   `ModelCallRole::Verdict`; a point runs between the parent's turns where
+//!   the tool registry's event slot is empty, so its spend reaches the
+//!   session's guard and this run's report but not the store's receipt; and
+//!   [`dispatch_under_turn_controls`] publishes the turn's boundary controls
+//!   for the whole dispatch, so a plugin's child parks with a paused parent.
+//!   This door supplies [`TurnControls::none`], being headless.
 //!
-//! # It lives beside `agent.rs`, not inside it
+//! [`bind_installed`] and [`ResolvedWrapper::serving`] are separate moments
+//! rather than one function with an `Option` in it: a `--pipeline` naming
+//! nothing installed must fail as a typo before a paid call, a child-turn
+//! plane needs a dispatcher and therefore the provider, and [`HostPlanes`] is
+//! consumed by value at [`HostCallGate::declare`] so no plane can be added to
+//! a gate afterwards.
 //!
-//! `crates/stella-cli/src/agent.rs` sits close to the 1500-line ratchet
-//! (AGENTS.md § "God files"), so this is a sibling module — the same
-//! placement, for the same reason, as `crate::turn_files`.
+//! Two scope limits. A plugin's `Unmet` fails the process only under
+//! `--require-verdict` — see `verdict_gate` for what the default defends — and
+//! this is the only one of `doc:wrapper-socket` §6's three drivers that
+//! exists, though `--pipeline` itself reaches every door that takes it.
 //!
-//! # What a plugin is handed, and what it is told it cannot have
-//!
-//! The three holes this module shipped with are closed, and each closure names
-//! the limit that remains rather than implying there is none:
-//!
-//! 1. **A real candidate grant and a real tamper finding** (#3553). The grant
-//!    names the **shared work tree** — the tree the turn actually runs in — and
-//!    carries the parsed `--test-command` as a [`stella_plugin::TestPlan`], so a wrapper whose
-//!    `[oracle]` declares `flip = "required"` can observe red before and green
-//!    after and reach a *decided* verdict. The host pins the identity of the
-//!    artifacts that invocation names and vouches for them itself. See
-//!    [`crate::wrapper_candidate`] for why the grant is not an isolated
-//!    worktree, and for the invocation shapes whose tamper finding is still
-//!    [`stella_plugin::TamperFinding::NotChecked`].
-//! 2. **Real turn facts** (#3552). `TurnOutcome::tools` and `changed_files` are
-//!    folded from the turn's own event stream by [`crate::turn_facts`] and sent
-//!    as `Some(..)` — so `Some(vec![])` is "the turn touched nothing" and the
-//!    `None` the wire now also carries is "this host does not report it", which
-//!    is what a plugin could not tell apart before.
-//! 3. **A host-call gate** (#3561). Every wrapper is bound with one, so a
-//!    plugin's `recall` reaches this workspace's context plane
-//!    ([`crate::wrapper_recall`]) instead of finding no channel at all. A host
-//!    with no plane still attaches the gate and answers with no frames: an
-//!    empty answer is something a plugin can degrade on, and an absent gate is
-//!    the one thing it cannot be told about.
-//! 4. **A child-turn plane** (#3576). A plugin that declares
-//!    `[loop] calls = ["child_turn"]` and a `[roles.<name>]` gets a real model
-//!    call at that role intent — spent by **this session's own**
-//!    `SubAgentDispatcher`, the one `task_assign` runs on, so the plugin never
-//!    holds a provider, an `Engine` or a credential (invariant 3,
-//!    `doc:turn-loop-wrappers` §9.3). The seat it resolves to is the receipt's
-//!    attribution, the child is read-only, the allowance is the host's, and
-//!    what it spent is printed beside what it was refused. Two things stated
-//!    rather than implied: the `verifier` tier **is** bound here, to
-//!    `ModelCallRole::Verdict`, so an arbiter plugin's assessment turn runs
-//!    and is booked as what it is (#3838 — [`child_turn_plane`](planes::child_turn_plane) argues why,
-//!    including why the refusal that stood here before was right when it was
-//!    written and is not any more); and a point runs between the parent's
-//!    turns, where the tool registry's event slot is empty — so the spend
-//!    reaches the session's guard and this run's report, but not the store's
-//!    receipt (#3802). The turn's boundary controls **do** cross (#3803):
-//!    [`dispatch_under_turn_controls`] publishes them for the span of the
-//!    dispatch — every round and every point between them — so a plugin's
-//!    child parks with a paused parent and stops with a stopped one. What
-//!    this door supplies is [`TurnControls::none`], because it is headless
-//!    and has no pause gate or steering tap to publish; the seam is what
-//!    #3554 needs, and a controlled surface fills it by passing its own.
-//!
-//! The ordering that makes 4 possible is worth naming, because it is the shape
-//! of the split between [`bind_installed`] and [`ResolvedWrapper::serving`]: a
-//! `--pipeline` naming nothing installed must fail as a typo before a paid
-//! call, while a child-turn plane needs a dispatcher, which needs the provider.
-//! [`HostPlanes`] is consumed by value at [`HostCallGate::declare`], so a plane
-//! cannot be added to a gate afterwards — the two halves are therefore separate
-//! moments, not one function with an `Option` in it.
-//!
-//! And two scope limits. A plugin's `Unmet` fails the process only under
-//! `--require-verdict`, which every wrapper-driving door now offers (#3554
-//! shipped the gate on `stella run`; #4543 took it to `stella goal` — the
-//! LAST round's verdict decides — and to `stella fleet`, where an unmet
-//! verdict fails that ATTEMPT and a failed attempt fails the run; see
-//! `verdict_gate` for what the default is defending). And
-//! only this driver of `doc:wrapper-socket` §6's three exists
-//! (#3551). `--pipeline <variant>` itself now reaches every door that takes
-//! it — `stella run` here, `stella goal` per judged round
-//! (`crate::agent::goal::goal_wrapped`), and `stella fleet` per worker
-//! attempt (`crate::fleet_cmd::wrapped`, #3695) — so there is no door left
-//! refusing a named variant for want of a driver.
-//!
-//! # `stella goal`'s driver is a second call site, not a second sequence
-//!
-//! `crate::agent::goal::goal_wrapped::run_goal_wrapped_turn` binds a wrapper exactly as
-//! this module's [`resolve`]/[`ResolvedWrapper::serving`] do, then calls
-//! [`WrapperDispatch::run`] once per judged round — the goal loop's own
-//! round loop, not the wrapper's, decides how many rounds run, because the
-//! goal verifier (`stella_core::Engine::assess`) is untouched (#3695, goal
-//! half). That only stays true because [`reject_arbiter_wrapper_on_goal`]
-//! refuses an arbiter-grade wrapper on this door before any of the above ever
-//! runs (#3832): `WrapperDispatch`'s own hold loop only holds a round open
-//! for an arbiter-grade plugin, and a hold-open round dispatched *inside* one
-//! already-judged goal round is a second round-holder judging the same
-//! round, which the goal loop's own `Engine::assess` was already doing —
-//! `run_goal_wrapped_turn` used to only discover this after billing
-//! `1 + DEFAULT_HOST_MAX_HOLDS` worker turns for it, then discard the whole
-//! run (`DispatchReport::rounds != 1`, still checked as a defense-in-depth
-//! assertion — see that module's doc comment). So for the steering/observer
-//! wrappers this door does accept, a round's dispatch always drives exactly
-//! one internal turn, at the round's own `turn_instance`; and the goal
-//! round's own execution row (opened once, before the loop, exactly like
-//! [`RawTurnDriver`]'s door opens one) records the id `bound` resolved for the
-//! whole run, which is true of it because every round under that row really was
-//! dispatched through it.
-//!
-//! The goal door serves `child_turn` too, through [`round_driver_host`]
-//! (#3833). It could not while this module pinned the plane to a fixed
-//! `turn_instance`: `stella run`'s one-shot worker never uses more than slot 0,
-//! but a goal round's own worker/verifier pair claims a slot beside every
-//! round, so a fixed child slot collided with whichever round landed on it.
-//! [`stella_core::turn_slots`] is the allocation that settles it, and it is
-//! stated once there rather than per door — `turn_instance` is read as a lane
-//! plus a sequence within that lane, so a plane counting only its own calls
-//! can never land where a door's rounds will. `stella fleet` reaches
-//! `child_turn` through the same assembly and the same rule (#3882).
+//! `stella goal` is a second call site, not a second sequence:
+//! `crate::agent::goal::goal_wrapped` binds a wrapper the same way and calls
+//! [`WrapperDispatch::run`] once per judged round, the goal loop's own round
+//! loop deciding how many rounds run. [`reject_arbiter_wrapper_on_goal`]
+//! refuses an arbiter-grade wrapper there, because a hold-open round inside an
+//! already-judged goal round is a second round-holder judging the same round.
+//! Child slots come from [`stella_core::turn_slots`], which reads
+//! `turn_instance` as a lane plus a sequence within it, so a plane counting
+//! only its own calls can never land where a door's rounds will; `stella
+//! fleet` reaches `child_turn` through the same assembly.
 
 use std::sync::Arc;
 

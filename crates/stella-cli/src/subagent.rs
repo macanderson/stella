@@ -1,167 +1,49 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The session's sub-agent dispatcher — the host half of the `delegate` tool
-//! (#922).
+//! The session's sub-agent dispatcher — the host half of the `delegate` tool.
 //!
 //! `stella-tools`' [`SpawnSubAgent`](stella_tools::subagent::SpawnSubAgent)
-//! knows *what* to delegate; this knows *how* to run it. It owns the four
+//! knows *what* to delegate; this knows *how* to run it, and owns the four
 //! things a child turn needs that a tool cannot reach from inside
-//! `ToolExecutor::execute`: a provider, a sleeper, the workspace tool set,
-//! and a budget.
+//! `ToolExecutor::execute`: a provider, a sleeper, the workspace tool set, and
+//! a budget.
 //!
-//! # Breaking the ownership cycle
+//! - **The registry handle is [`Weak`].** The child's tool set is the
+//!   [`ToolRegistry`] that owns this dispatcher, so an `Arc` back would leak
+//!   both forever; a registry already dropped yields
+//!   [`SubAgentOutcome::Refused`] rather than a panic.
+//! - **Turn-scoped wiring is read at dispatch time, never attached per turn.**
+//!   The event sender and `stella_core::ports::TurnControls` live in registry
+//!   slots each driver publishes for the span of its turn, so a child inherits
+//!   the pause gate and the latched soft stop — but never `drain_steering`,
+//!   which is destructive by contract and addressed to the parent. A child
+//!   dispatched between turns emits into a sink instead of failing.
+//! - **The pool is not the ceiling.** [`SessionSubAgents::with_pool_limit`]
+//!   bounds what sub-agents may cost in total; `--spend-limit` is enforced by
+//!   the parent's guard, which folds each child's cost in at the next
+//!   step-boundary check. The pool lock is not held across a child's run, so
+//!   siblings in one dispatch group each carve against the same headroom — an
+//!   overshoot of one child's cap per concurrent sibling, caught at that
+//!   boundary regardless.
+//! - **The child's own thread settles both ledgers the moment its turn ends.**
+//!   Charging after `wait.await`, or from the `delegate` tool once
+//!   `dispatch()` returns, loses a child whose parent was cancelled
+//!   mid-`delegate`; the thread is also what keeps the charge exactly once.
+//! - **A child runs on a fresh OS thread with a current-thread runtime**,
+//!   because an engine turn's future is not `Send` and every tool-call path
+//!   above it requires one. `catch_unwind` around the child turn contains a
+//!   panic **only where builds unwind**: the workspace sets `panic = "abort"`,
+//!   so in release a child panic takes the process, and only a process
+//!   boundary could contain it.
 //!
-//! The child's tool set is the very [`ToolRegistry`] that owns this
-//! dispatcher, so holding an `Arc` back would leak both forever. The handle
-//! is therefore [`Weak`]: a dispatch upgrades it, and a registry that has
-//! already been dropped yields
-//! [`SubAgentOutcome::Refused`]
-//! rather than a panic on a torn-down session.
-//!
-//! # Session-scoped object, turn-scoped wiring
-//!
-//! One dispatcher serves the whole session, but a child's metering must land
-//! in the stream of the turn that asked for it — and every driver path in
-//! this crate already re-points that stream per turn via
-//! `ToolRegistry::attach_events`. So rather than re-attaching a dispatcher
-//! on every turn (five call sites, each easy to forget), this reads the
-//! registry's *current* sender at dispatch time. A child that somehow runs
-//! between turns emits into a sink instead of failing.
-//!
-//! The turn's boundary controls ride the same shape and are read in the same
-//! breath — see below.
-//!
-//! # Budget: a pool, and why it is not the ceiling
-//!
-//! Each child is carved from a session-scoped pool
-//! ([`SessionSubAgents::with_pool_limit`]), which bounds what sub-agents may
-//! cost in total. That pool is **not** what enforces `--spend-limit`: every child's
-//! cost is also pushed onto the registry's spend ledger, and the engine folds
-//! it into the *parent's* guard at the next step-boundary check
-//! (`ToolExecutor::drain_sub_agent_spend_usd`). The parent's guard stays the
-//! hard ceiling; the pool is a second, tighter bound on this one category of
-//! spend.
-//!
-//! The pool lock is deliberately not held across the child's run, so sibling
-//! `delegate` calls from one step execute concurrently — reachable since the
-//! engine's dispatch scheduler groups the spawn tool with read-only calls
-//! (`Tool::parallel_safe`; before that claim existed, every non-read-only
-//! call was its own barrier and this concurrency was dead code). Every
-//! sibling in one dispatch group can therefore carve against the same
-//! headroom before any settles — an overshoot bounded by one child's cap per
-//! concurrently-running sibling (up to the engine's dispatch cap of 8, so
-//! seven extra caps in the worst case, not one), and caught by the parent's
-//! guard at the next step boundary regardless.
-//!
-//! ## Settling is the child's job
-//!
-//! Both ledgers are charged from the child's own thread, the moment its turn
-//! ends — not after the `wait.await` below, and not by the `delegate` tool after
-//! `dispatch()` returns. Those were the original homes, and both share a
-//! defect: a parent hard cancelled mid-`delegate` never resumes either line, so a
-//! child that had really spent money landed in *no* ledger at all. Whatever is
-//! still running when the parent goes away has to be what settles, and that is
-//! the thread. Charging late to the session is this ledger's existing doctrine
-//! ("charging the same dollars twice is worse than charging them late");
-//! never charging is not.
-//!
-//! The thread being the sole writer is also what keeps it exactly once.
-//!
-//! # Why a child runs on its own thread
-//!
-//! An engine turn's future is deliberately **not** `Send` (the speculation
-//! pump boxes futures without the bound), while every tool-call path above
-//! it — `Tool::execute`, `ToolExecutor::execute` — is `#[async_trait]` and
-//! therefore requires one. A tool consequently cannot simply `.await` a
-//! turn. Adding `Send` to the engine's boxed futures does compile, but then
-//! proving the whole nested future `Send` trips a rustc higher-ranked
-//! lifetime limitation inside `execute_tool_calls` ("implementation of
-//! `FnOnce` is not general enough"), so the engine's own hot path is left
-//! alone.
-//!
-//! Instead each child gets a fresh OS thread with a current-thread runtime:
-//! `block_on` imposes no `Send` bound, everything handed across is owned
-//! (`Arc`s and `Copy` values), and this task only awaits a oneshot. It also
-//! buys isolation from a panicking child — **in builds that unwind**. The
-//! child turn runs under `catch_unwind`, so a panic settles the child's spend
-//! and reports as a refusal instead of tearing the parent's turn down.
-//!
-//! That claim used to be unqualified, and it was wrong for the builds users
-//! actually run: the workspace sets `panic = "abort"` (root `Cargo.toml`), so
-//! in release there is no unwind to catch and a child panic takes the whole
-//! process with it. A thread boundary cannot contain that; only a process
-//! boundary could. Stated rather than quietly implied, because the difference
-//! is invisible until it is a crash report (#1850).
-//!
-//! The cost is one thread per live `delegate` call, bounded by the engine's own
-//! tool-call concurrency cap.
-//!
-//! # Pause and stop reach these children too
-//!
-//! `TurnGate`/`TurnSteering` are turn-scoped: each driver builds them on the
-//! stack of the turn it is about to run, and `Engine` takes both as `&'a dyn`.
-//! A session-scoped dispatcher cannot name that lifetime, which is why the
-//! first cut of this module could not carry them at all — a paused session
-//! kept spending inside a tool-dispatched child, the direct analogue of the
-//! `goal.rs::assess` defect #922 named.
-//!
-//! So each driver now publishes its seams in owned form
-//! (`stella_core::ports::TurnControls`) into the registry slot this reads at
-//! dispatch time — the same "session-scoped object, turn-scoped wiring"
-//! treatment the event sender already gets, for the same reason and at the
-//! same call site. The controls come back down when the driver's guard drops,
-//! including on an unwind, so a latched soft stop cannot leak into the next
-//! turn's children.
-//!
-//! What a child actually inherits is asymmetric, and deliberately so:
-//!
-//! - **The pause gate, as-is.** A paused session parks its children at their
-//!   own step boundaries. Note that a parked child holds the parent's
-//!   `delegate` tool call open, which is exactly right — pause means pause — and
-//!   that both release together on resume.
-//! - **The soft stop, but not the steering messages.** The child engine is
-//!   built through `run_sub_agent`, which wraps whatever steering the parent
-//!   has in `stella_core::subagent::ChildSteering`: the stop flag is latched
-//!   and non-destructive so forwarding it is free, while `drain_steering` is
-//!   destructive by contract and a child that inherited it would eat a
-//!   message the user addressed to the parent.
-//!
-//! Every driver that runs turns installs a dispatcher and publishes what it
-//! has: the deck's lead and pipeline turns publish both a steering tap and a
-//! `WatchGate` (#1219 — `p` on the lead row parks the turn and, through this
-//! dispatcher, every child it dispatched), and deck worker lanes and fleet
-//! workers publish their own `WatchGate`, and the wrapped one-shot path
-//! publishes whatever its caller supplied for the span of the wrapper's whole
-//! dispatch rather than for one round, because a plugin spends its children
-//! from the points *between* the rounds (#3803,
-//! `crate::wrapper_plugin::dispatch_under_turn_controls`). A driver that
-//! publishes nothing is
-//! still not a failure state — a child then runs bounded by its step cap and
-//! its carve, exactly as before.
-//!
-//! # A cancelled parent: cascade the intent, not the mechanism
-//!
-//! A hard cancel is the *dropping of a future*. That is the entire mechanism,
-//! and it cannot propagate here: the child is an OS thread running `block_on`,
-//! deliberately off the parent's future graph (see above), and a thread cannot
-//! be killed safely in Rust. Nor should it be, even if it could — an abrupt
-//! kill can land mid-tool, which is exactly the half-finished write the
-//! step-boundary rule (L-E6) exists to prevent, and it would discard the
-//! salvaged text an aborted child is specifically designed to hand back.
-//!
-//! So the intent cascades instead of the mechanism. [`ParentGone`] is a drop
-//! guard living in the suspended `dispatch` body; when the parent's turn
-//! future is dropped, it is dropped too, and [`OrphanStop`] reports that to
-//! the child as a soft stop alongside the turn's own. The child ends at its
-//! next boundary with its work salvaged and its spend settled — an orphan
-//! bounded by the model call already in flight, rather than by its whole step
-//! cap.
-//!
-//! The one thing that genuinely cannot be recovered is the child's *report*:
-//! the oneshot receiver went with the cancelled future, so the finding is
-//! written to the event stream and nowhere else. Paying for it and stopping
-//! promptly beats paying for it and running on.
+//! A hard cancel is the dropping of a future, which cannot reach a thread, so
+//! the intent cascades instead of the mechanism. [`ParentGone`] drops with the
+//! parent's turn and [`OrphanStop`] reports that to the child as a soft stop;
+//! the child ends at its next boundary with its work salvaged and its spend
+//! settled. Its *report* is the one thing unrecoverable — the oneshot receiver
+//! went with the cancelled future, so the finding reaches the event stream and
+//! nowhere else.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};

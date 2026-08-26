@@ -1,104 +1,53 @@
-//! Reward extraction (#1043) — turning the verification ladder's verdict into
-//! the scalar a training loop can learn from, or into a stated refusal to
-//! label it at all.
+//! Reward extraction — turning the verification ladder's verdict into the
+//! scalar a training loop can learn from, or into a stated refusal to label it
+//! at all.
 //!
-//! The verify stage already computes a tiered, evidence-based verdict for
-//! every outcome: deterministic evidence when an instrument could observe the
-//! turn, an abstention when nothing could see. That verdict *is* the reward
-//! signal this project has been generating all along. This module is the
-//! (pure, I/O-free) mapping from it to a label, and the rules it encodes are
-//! all about **what not to claim**.
-//!
-//! # One tier of confidence, and every other rung refused
+//! A pure, I/O-free mapping, and every rule in it is about what not to claim.
 //!
 //! | Rung | Label | Why |
 //! |---|---|---|
-//! | [`LadderRung::SubmitFast`] | **+1.0** | A fail→pass flip of the tracked command. A hard label: a test observed it. |
+//! | [`LadderRung::SubmitFast`] | **+1.0** | A fail→pass flip of the tracked command: a test observed it. |
 //! | [`LadderRung::Revise`] | **−1.0** | Touched tests red. Equally hard, in the other direction. |
-//! | [`LadderRung::Unverified`] | **discarded** | Verification ran and did not settle it. There is no model opinion to fall back on — see below. |
-//! | everything else | **discarded** | See below. |
+//! | everything else | **discarded** | Nothing observed the work, so there is no scalar to state. |
 //!
-//! # One tier, because there is one kind of evidence left
+//! [`OutcomeWeights`] carries a single magnitude, because one kind of evidence
+//! is left: no rung's magnitude comes from a model (#2584 removed the verdict
+//! call), so a second, judged tier would be a claim that a tier exists.
+//! [`DiscardReason::VerifierDistrusted`] and
+//! [`DiscardReason::VerifierUnavailable`] are kept anyway — they name stored
+//! records, and a label already written must keep parsing.
 //!
-//! [`OutcomeWeights`] carries a single magnitude. It used to carry two: a
-//! *judged* weight priced a model verifier's opinion at half a test's
-//! observation, and a workspace could lower that half — never raise it past the
-//! deterministic weight, because above that line an opinion outranks an
-//! observation and the ladder inverts.
-//!
-//! That whole apparatus described a tier with no members once the verdict call
-//! was removed (#2584): no rung's magnitude comes from a model any more, so a
-//! judged weight priced nothing, and the ceiling it was checked against refused
-//! launches over a knob that could not change a single label (#2616). Both are
-//! gone rather than retained, because a weight is not decode-compatibility
-//! trivia — it is stamped onto every new label as the scale a reader
-//! renormalizes by, and a scale with no members on it is a claim that a tier
-//! exists.
-//!
-//! Labels written before the removal still carry `outcome.judged` in their
-//! stamped policy, which is exactly what makes their `±0.5` outcome terms
-//! readable; this type ignores the field on the way back in. The retired
-//! discard reasons ([`DiscardReason::VerifierDistrusted`],
-//! [`DiscardReason::VerifierUnavailable`]) are kept for the opposite reason —
-//! they name stored records, and a label already written must keep parsing.
-//!
-//! What survives of the argument is the posture: an unusable weight is
-//! **refused, not clamped** — deliberately the opposite of `stella_context`'s
-//! retrieval tuning, which sanitizes an out-of-range knob rather than failing.
-//! The postures differ because the failures do. A bad retrieval knob degrades
-//! one turn, visibly, and the next turn recovers; the worse answer there is
-//! failing a person's work over a typo. A bad reward weight writes permanently
-//! mislabelled training data that is perfectly well-formed — there is no turn
-//! to fail, and nothing downstream can tell that a substituted weight was ever
-//! applied. So this one fails at launch, naming the key, before any work
-//! starts.
-//!
-//! # The policy travels with the label
+//! An unusable weight is **refused, not clamped**, which is the opposite of
+//! `stella_context`'s retrieval tuning. A bad retrieval knob degrades one turn
+//! visibly and the next recovers; a bad reward weight writes permanently
+//! mislabelled training data that is perfectly well-formed, with no turn to
+//! fail and nothing downstream able to tell a substituted weight was applied.
+//! So this fails at launch, naming the key, before any work starts.
 //!
 //! Every [`RewardLabel`] carries the [`RewardPolicy`] it was computed under.
 //! Without it, two workspaces on different weights emit rows that are
-//! arithmetically indistinguishable and silently incomparable — pooling them
-//! would average a reward shaped at `per_usd = 0.5` against one shaped at
-//! `0.05` as though they were the same measurement, and would read an older
-//! row's `±0.5` judged outcome as a deterministic one. With it, a reader can
-//! renormalize, or select one policy and drop the rest.
-//! `stella_core::comparison::ComparisonReport` already stamps its own
-//! `RewardWeights` for the same reason; this is that rule applied to the
-//! per-turn label.
+//! arithmetically indistinguishable and silently incomparable; with it, a
+//! reader can renormalize or select one policy and drop the rest.
 //!
-//! # Why the abstain rungs are discarded rather than punished
+//! **The abstain rungs are discarded rather than punished**, and this is the
+//! rule the module exists to enforce. [`LadderRung::Unverifiable`] and
+//! [`LadderRung::NothingAttempted`] end a turn without a claim about the work,
+//! and "no pass, therefore a fail" is exactly the inference the ladder refuses
+//! — a Terminal-Bench trial that wrote its answer through shell redirects
+//! recorded no touch, abstained, and scored 1.0 against its own verifier.
+//! [`LadderRung::Unverified`] says the deterministic instruments ran and did
+//! not settle it; [`LadderRung::Waived`] says no proof was owed. A discard is
+//! not a dropped record: the rung and the [`DiscardReason`] always ride along,
+//! so a consumer wanting the no-op trajectories can select them. Only the
+//! scalar is withheld, which is the only part that would be a lie.
 //!
-//! This is the rule the whole module exists to enforce. [`LadderRung::Unverifiable`]
-//! and [`LadderRung::NothingAttempted`] both end a turn *without* a claim about
-//! the work, and the tempting shortcut — "no pass, therefore a fail" — is
-//! exactly the inference the ladder was built to refuse. A Terminal-Bench trial
-//! that wrote its answer through shell redirects recorded no touch, could not
-//! be diffed, abstained, and scored 1.0 against its own verifier. Training on
-//! that trajectory as a −1.0 would teach the model that a correct solution was
-//! wrong.
-//!
-//! [`LadderRung::Unverified`] is discarded for a different reason: it is not a
-//! statement about the work at all, it is a statement that the deterministic
-//! instruments ran and did not reach one. [`LadderRung::Waived`] likewise — no
-//! proof was owed, so nothing was determined either way.
-//!
-//! A discard is **not** a dropped record. [`RewardLabel`] always carries the
-//! rung and always carries the [`DiscardReason`], so a consumer that
-//! specifically wants the no-op trajectories (a curriculum, a failure-mode
-//! study) can select them by outcome. What is withheld is the *scalar*, which
-//! is the only part that would be a lie.
-//!
-//! # The airlock: labels carry no prose
-//!
-//! Verifier reasoning and distress-guidance text are **steering**, never training
-//! targets — the same discipline as the witness airlock
-//! (the deleted pipeline's witness airlock, #3865). Here that is enforced structurally rather
-//! than by review: [`RewardLabel`] and everything it contains hold no
-//! free-form `String` field, only enums and numbers, so there is no field a
-//! model-authored sentence could be assigned to. [`Settlement::from_evidence`]
-//! is deliberately the seam that proves it — it is handed the whole
-//! [`VerdictEvidence`], summary included, and returns a value with no strings in
-//! it. `tests::verifier_prose_never_reaches_a_label` is the property test.
+//! **Labels carry no prose.** Verifier reasoning and distress guidance are
+//! steering, never training targets, and that is structural here rather than a
+//! review question: [`RewardLabel`] and everything it contains hold no
+//! free-form `String` field. [`Settlement::from_evidence`] is the seam that
+//! proves it — handed the whole [`VerdictEvidence`], summary included, it
+//! returns a value with no strings in it, and
+//! `tests::verifier_prose_never_reaches_a_label` is the property test.
 
 use serde::{Deserialize, Serialize};
 use stella_protocol::{LadderRung, VerdictEvidence};
