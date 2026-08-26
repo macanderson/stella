@@ -115,7 +115,7 @@ pub(crate) enum LoopEscalation {
     /// End the turn. Carries the loop the most recent warning was about, so
     /// [`abort_reason`] can never be reached without it — the alternative is
     /// an `Option` the caller unwraps on a case that cannot happen, which is
-    /// exactly the panic invariant #5 forbids.
+    /// exactly the panic AGENTS.md #5 forbids.
     Abort { warned: LoopIdentity },
 }
 
@@ -129,7 +129,7 @@ pub(crate) enum LoopEscalation {
 /// marker* and never aborts. One shared count would let a looping turn spend
 /// the sleeping turn's warnings and the other way round.
 ///
-/// Pure decision state over owned data (invariant #2) — no I/O, no clock, no
+/// Pure decision state over owned data (AGENTS.md #2) — no I/O, no clock, no
 /// transcript. [`Self::escalate`] is the whole ladder in one total function,
 /// deliberately taking `&mut self` and answering in the same call: a
 /// `decide` + `spend` pair is a budget a caller can forget to charge.
@@ -138,10 +138,10 @@ pub(crate) struct LoopSteerBudget {
     /// The loop the most recent steering warning was about, or `None` while
     /// the turn has warned about nothing.
     warned: Option<LoopIdentity>,
-    /// Warnings spent. Invariant, established by construction and every
+    /// Warnings spent. Rule, established by construction and every
     /// mutation below: `spent == 0` exactly when `warned` is `None`.
     spent: u32,
-    /// Stalled-turn warnings spent, of [`MAX_STALL_STEERS`]. Deliberately not
+    /// Stalled-turn warnings spent, of [`MAX_STALL_STEERS`]. Not
     /// carried by [`Self::resumed`]: see that constant's doc comment.
     stall_spent: u32,
 }
@@ -159,7 +159,7 @@ impl LoopSteerBudget {
     /// exactly it.
     ///
     /// `warned == None` restores a whole budget whatever `recorded` says: the
-    /// struct's invariant is that `spent == 0` exactly when nothing is warned,
+    /// struct's rule is that `spent == 0` exactly when nothing is warned,
     /// and `to_checkpoint` cannot produce that pair. Honouring a count with no
     /// identity beside it would charge a turn for a warning no abort could
     /// ever name.
@@ -406,7 +406,7 @@ pub(super) fn check_loop_detection(
 /// the arguments / try another tool" is precisely wrong) or an action worth
 /// varying. Cycles keep the generic steer: several tools are involved and
 /// no single wait replaces them. Pure over the verdict plus the declared
-/// schemas (invariant #2) — `schemas()` returns owned declarations, no I/O.
+/// schemas (AGENTS.md #2) — `schemas()` returns owned declarations, no I/O.
 ///
 /// A monotonic sweep is excluded for the reason cycles are, arrived at from
 /// the other side: nothing about it is a status check, its arguments change on
@@ -437,7 +437,7 @@ fn polling_tool(verdict: &LoopVerdict, tools: &dyn ToolExecutor) -> Option<Strin
 /// tool error and voided the prompt cache, then blind `sleep` calls with no
 /// signal at all. The wait cites a duration prior when one is supplied
 /// (#1472's data, once a caller carries it) and is stated without a number
-/// otherwise. Volatile mid-turn context either way — invariant #7 safe by
+/// otherwise. Volatile mid-turn context either way — AGENTS.md #7 safe by
 /// construction.
 ///
 /// `remaining` is the warnings still buyable AFTER this one
@@ -508,7 +508,7 @@ pub(crate) const STALL_STEER_PREFIX: &str = "[stuck-loop warning] this turn is s
 /// call in the window.
 ///
 /// Reads the calls' own text, so it is *requested* seconds rather than
-/// measured ones — deliberately, and in both directions: a static text-shape
+/// measured ones —, and in both directions: a static text-shape
 /// check keeps the same transcript classifying the same way every step (a
 /// timing here would make this rung nondeterministic), and the request is the
 /// thing the model chose and can be steered about. It follows that a call
@@ -536,7 +536,7 @@ pub(crate) const STALL_STEER_PREFIX: &str = "[stuck-loop warning] this turn is s
 ///
 /// Saturating, never wrapping: the seconds come from model-authored text, and
 /// `sleep 99999999999999999999` must not be an arithmetic overflow panic
-/// (invariant 5).
+/// (AGENTS.md #5).
 ///
 /// The `contains` is a fast path, not a second classifier: this window is
 /// rebuilt on every step and a `bash` command can carry a whole heredoc, so

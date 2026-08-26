@@ -225,7 +225,7 @@ impl<'a> Engine<'a> {
         // A provider that stopped at the token limit with nothing visible to
         // show for it has stated that the budget ran out before the first
         // answer token — the #2128 signature. Retried once with real room,
-        // and deliberately BEFORE the give-up latch sees anything: the latch
+        // and BEFORE the give-up latch sees anything: the latch
         // exists for a summarizer that is broken, and a starved one is merely
         // short of room, which one retry fixes. A retry that also comes back
         // empty falls through to the empty-summary arm below, which is where
@@ -244,7 +244,7 @@ impl<'a> Engine<'a> {
             // The summary was generated and paid for before the budget
             // tripped. Splicing it in only shrinks the context the resumed
             // session reloads, so apply it rather than discard the spend.
-            // Deliberately no restoration on this arm — see the module docs.
+            // No restoration on this arm — see the module docs.
             Err(AccountedCallError::Budget { result, .. }) => {
                 let text = result.text.trim();
                 if !text.is_empty() {
@@ -487,7 +487,7 @@ impl<'a> Engine<'a> {
     /// compaction that triggered it.
     ///
     /// File content is re-read fresh through the ordinary dispatch path,
-    /// which deliberately picks up external edits; the replay is refused
+    /// which picks up external edits; the replay is refused
     /// wholesale unless the read tool's schema declares `read_only` in the
     /// same schema set the model's own calls are built from (the
     /// `maybe_park` guard, for the same reason: a call the model never sees
@@ -545,7 +545,7 @@ impl<'a> Engine<'a> {
             lifecycle::working_set_restored_payload(&restoration)
         });
         // The restoration rides the volatile tail — the same zone as a user
-        // steer or a parked-wait wake (invariant 7): the stable prefix and
+        // steer or a parked-wait wake (AGENTS.md #7): the stable prefix and
         // every cacheable block before it stay byte-identical.
         messages.push(CompletionMessage::user(restoration.message));
     }

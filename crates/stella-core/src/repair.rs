@@ -53,7 +53,7 @@ use std::time::Duration;
 /// into. It is a ceiling and not a target: the measured axes below routinely
 /// stop well short of it.
 ///
-/// Deliberately carries no `MEASURED:` marker (#4572), for the reason the
+/// Carries no `MEASURED:` marker (#4572), for the reason the
 /// paragraph above already gives: the distribution bounds this from below and
 /// the value sits above it with room to spare.
 pub const REPAIR_ATTEMPT_CAP: u32 = 4;
@@ -61,7 +61,7 @@ pub const REPAIR_ATTEMPT_CAP: u32 = 4;
 /// What one repair attempt is expected to cost, taken from the attempts
 /// already run.
 ///
-/// The estimate is deliberately backward-looking. A repair attempt re-runs
+/// The estimate is backward-looking. A repair attempt re-runs
 /// the same shape of work the refuted attempt just ran — one worker turn plus
 /// one verification round — so what it already cost is the best available
 /// statement of what the next one will cost. This mirrors
@@ -129,7 +129,7 @@ impl RepairHeadroom {
     }
 }
 
-/// Why a refuted verdict did not earn another attempt. Every variant is a
+/// Why a refuted verdict did not earn another attempt. Every case is a
 /// reportable reason — a refusal is stated, never silent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairRefusal {

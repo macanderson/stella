@@ -132,7 +132,7 @@ fn the_report_is_byte_identical_across_runs() {
     assert_eq!(first, second);
 }
 
-/// Invariant #4: the whole report round-trips through `serde_json`.
+/// AGENTS.md #4: the whole report round-trips through `serde_json`.
 #[test]
 fn the_report_round_trips() {
     let arms = vec![
@@ -612,7 +612,7 @@ fn the_feature_channel_is_additive_on_the_wire() {
     let record: TrialRecord = serde_json::from_value(older).expect("older shape still parses");
     assert!(record.features.is_empty());
 
-    // And the whole report round-trips byte-for-byte (invariant #4).
+    // And the whole report round-trips byte-for-byte (AGENTS.md #4).
     let text = serde_json::to_string(&report).expect("serialize");
     let back: ComparisonReport = serde_json::from_str(&text).expect("deserialize");
     assert_eq!(serde_json::to_string(&back).expect("re-serialize"), text);

@@ -58,7 +58,7 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
 /// same window `turn_start_index` gives loop detection, so the two planes
 /// cannot disagree about what "this turn" means.
 ///
-/// `turn_start_index` is deliberately not linked: it is `pub(super)`, and this
+/// `turn_start_index` is not linked: it is `pub(super)`, and this
 /// type is `pub` (#4258), so an intra-doc link from here would point a reader
 /// of the public API at an item they cannot reach — which is the error
 /// `cargo doc -D warnings` raises.
@@ -125,7 +125,7 @@ pub fn turn_evidence(messages: &[CompletionMessage]) -> TurnEvidence {
 /// the CLI's record selector applies to prompts. Only whole string values
 /// are considered, never substrings of prose: a tool input's `path`-like
 /// field IS the path, while free text inside a `command` string is noise
-/// this deliberately under-collects. (`bash -c "cat a.rs"` contributes
+/// this under-collects. (`bash -c "cat a.rs"` contributes
 /// nothing — signal, not evidence.)
 fn collect_path_tokens(
     input: &serde_json::Value,
@@ -335,7 +335,7 @@ pub(super) fn recent_call_records<'a>(
 /// only stops two UNRELATED calls that happened to share an ordinal from being
 /// treated as one.
 ///
-/// Deliberately not positional: [`Engine::apply_overflow_summary`](super::Engine::apply_overflow_summary) splices a
+/// Not positional: [`Engine::apply_overflow_summary`](super::Engine::apply_overflow_summary) splices a
 /// span of messages down to a single summary, so any index-derived key would
 /// silently re-point surviving results at another call's evidence after the
 /// first overflow — a WRONG identity, which is far worse than none.
@@ -378,7 +378,7 @@ pub(super) fn call_identity_key(call: &ToolCall) -> CallIdentityKey {
 /// memo are ones compaction did not touch, which makes a stale entry unobservable
 /// even with the clearing removed.
 ///
-/// That is a cross-module invariant, so it is pinned where it can break rather
+/// That is a cross-module rule, so it is pinned where it can break rather
 /// than assumed: `every_rewrite_compaction_performs_is_recognized_as_compacted`.
 /// A future pass that rewrote a result into something unrecognized would make this
 /// memo start serving pre-rewrite identities, and the clearing is what keeps that
@@ -438,13 +438,13 @@ impl ResultIdentities {
 ///   same arguments, different result, which IS progress — rather than
 ///   firing on two unrelated calls that shared a recycled ordinal.
 ///
-/// # The invariant that keeps a poisoned key from manufacturing a loop
+/// # The rule that keeps a poisoned key from manufacturing a loop
 ///
 /// A poisoned key degrades to comparing the live outputs, and compaction
 /// rewrites older results to ONE shared stub — so if every record in the
 /// detector's window could be a stub, three unrelated calls would compare
 /// byte-equal and abort a healthy turn. They cannot, and the reason is a
-/// cross-module invariant worth naming: `crate::compaction::compact` never
+/// cross-module rule worth naming: `crate::compaction::compact` never
 /// touches the LAST `MessageRole::Tool` message (its `last_tool_idx` guard),
 /// and `detect_loop` only ever reports a verdict anchored on the trailing
 /// record. The anchor therefore always carries its real, freshly-produced

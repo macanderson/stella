@@ -102,7 +102,7 @@ impl ToolExecutor for MixedTools {
             "read_file" => {
                 self.reads.fetch_add(1, Ordering::SeqCst);
                 ToolOutput::Ok {
-                    // Deliberately bulky: this is the content a parent would
+                    // Bulky: this is the content a parent would
                     // otherwise be carrying for the rest of the session. Keyed
                     // on the input so distinct reads produce distinct output —
                     // identical output from identical arguments is a stuck

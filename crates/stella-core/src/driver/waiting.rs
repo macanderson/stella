@@ -29,7 +29,7 @@ impl<'a> Engine<'a> {
     /// Park the turn on a deposited wait request, if the step's tools left
     /// one. Called once per step, after the tool results are committed and
     /// before the next model call — the same safe boundary as the budget
-    /// enforcer and the pause gate (invariant 6), which is what makes an
+    /// enforcer and the pause gate (AGENTS.md #6), which is what makes an
     /// arbitrarily long wait cost zero model steps and force no compaction.
     ///
     /// Returns `Some` only when the turn was cancelled while parked; every
@@ -68,7 +68,7 @@ impl<'a> Engine<'a> {
         }
 
         // The typed span-open (#1857): consumers distinguish a park from
-        // model narration by the variant, renderers word it themselves
+        // model narration by the case, renderers word it themselves
         // (`stella-tui::textline::parked`), and replay can attribute the
         // wall-clock gap. The prose ⏳ Text delta this replaced said the
         // same thing unparseably.
@@ -142,7 +142,7 @@ impl<'a> Engine<'a> {
             lifecycle::turn_woken_payload(reason.wire_token(), polls_used)
         });
         // The wake rides the conversation tail — the volatile cache zone —
-        // exactly where a user steer lands (invariant 7): the stable prefix
+        // exactly where a user steer lands (AGENTS.md #7): the stable prefix
         // and every cacheable block before it are byte-identical to the
         // pre-park request.
         state.messages.push(CompletionMessage::user(message));

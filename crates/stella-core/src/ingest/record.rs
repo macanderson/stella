@@ -715,7 +715,7 @@ impl Force {
     /// How strongly this force steers, as a rank: higher outranks lower.
     ///
     /// Spelled out rather than derived from the declaration order, even though
-    /// the variants happen to be declared strongest-first. A `derive(Ord)` here
+    /// the cases happen to be declared strongest-first. A `derive(Ord)` here
     /// would read *backwards* — `Must < Info` — and the one consumer that needs
     /// this is a budget deciding which record to drop, where an inverted
     /// comparison silently keeps the wrong one. The numbers are gaps, not
@@ -925,7 +925,7 @@ impl Verdict {
 /// The file-surface audience vocabulary (README `sharing_scope`).
 ///
 /// This is the surface spelling — `personal`/`repository`/`organization` — used
-/// in the TOML files. It is deliberately kept distinct from the ratified
+/// in the TOML files. It is kept distinct from the ratified
 /// audience enum [`super::super::context_record::SharingScope`]
 /// (`user`/`repository`/`workspace`/`organization`, ADR 0002): when a proposal
 /// is promoted into the ledger, `personal` maps to that enum's `user`. The

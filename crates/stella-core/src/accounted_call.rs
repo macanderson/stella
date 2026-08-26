@@ -106,7 +106,7 @@ pub enum AccountedCallError {
     /// fact about the run rather than about the provider. Distinct from
     /// [`Self::Budget`] for the reason `DeadlineOutcome` is distinct from
     /// `BudgetOutcome` — seconds are not dollars, and `Budget` carries a
-    /// committed result this variant by construction has none of.
+    /// committed result this case by construction has none of.
     #[error("the task deadline had already passed when this call was reached")]
     Deadline {
         /// How long ago the deadline passed.
@@ -161,7 +161,7 @@ pub async fn run_accounted_call(
     // The task's wall clock, checked BEFORE the dispatch (#2238). This seam is
     // between model calls by construction — an `AccountedCall` carries no
     // tools, so there is never anything in flight to interrupt — which makes
-    // it the one place invariant 6 permits the check for every non-engine
+    // it the one place AGENTS.md #6 permits the check for every non-engine
     // caller. The engine's own step loop has the equivalent rung in
     // `crate::driver::settlement::check_budget`; until this existed, the
     // engine stopped itself at its deadline and the pipeline plane above it

@@ -143,7 +143,7 @@ pub struct Candidate {
 impl Candidate {
     /// `true` when this document is named unprompted on first run.
     ///
-    /// Deliberately only [`Tier::Primary`]. A first-run dialog that opens with
+    /// Only [`Tier::Primary`]. A first-run dialog that opens with
     /// two familiar filenames is a question; one that opens with nine files and
     /// a ranking is a chore, and the honest answer to a chore is "not now".
     pub fn is_offered_by_default(&self) -> bool {
@@ -190,7 +190,7 @@ impl Plan {
 /// is not a prompt anybody reads — it is a wall people dismiss. The rest stay
 /// reachable by naming a path.
 ///
-/// Deliberately carries no `MEASURED:` marker (#4572). The 148 lines are what
+/// Carries no `MEASURED:` marker (#4572). The 148 lines are what
 /// made a cap necessary; they say nothing about where it belongs, and ten is a
 /// display choice.
 pub const MAX_SUGGESTIONS: usize = 10;

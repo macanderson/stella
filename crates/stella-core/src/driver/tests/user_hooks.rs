@@ -1164,7 +1164,7 @@ async fn a_stop_hooks_require_approval_resolves_both_ways() {
 /// With no route attached, a Stop hook's `require_approval` **fails open**:
 /// the completion stands and the ask is reported as a diagnostic.
 ///
-/// The opposite of `PreToolUse`'s posture and deliberately so — the module
+/// The opposite of `PreToolUse`'s posture and so — the module
 /// docs' § "The Stop gate" argues it: refusing to complete because nobody was
 /// there to answer is the compact→error→stop-hook→retry spiral, not safety.
 #[tokio::test]

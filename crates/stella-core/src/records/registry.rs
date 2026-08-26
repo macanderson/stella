@@ -16,7 +16,7 @@
 //! same identifier the prompt cites (`^handle` for a record, the rule id for
 //! markdown), so what overrides what is one rule with one answer.
 //!
-//! # Where the two formats deliberately differ
+//! # Where the two formats differ
 //!
 //! **Markdown guards are grandfathered.** A `.md` rule with `guard-deny-path:`
 //! blocks today with no approval ceremony, and it must keep doing so — silently
@@ -44,7 +44,7 @@
 //! can never remove it, and a project rule carrying a *different* guard is kept
 //! alongside so both constraints stay armed. [`load`] takes the two tiers as two
 //! arguments so the compiler asks which is which, and the tier fold applies that
-//! same invariant to records. What a project record may still do is exactly what it
+//! same rule to records. What a project record may still do is exactly what it
 //! could always do: override a user record that established no enforcement, and add
 //! enforcement of its own.
 
@@ -263,7 +263,7 @@ pub fn load(user_files: &[RuleFile], project_files: &[RuleFile], facts: &Facts<'
 
     // Pass 2: merge by `lineage_id`, BEFORE handles are assigned.
     //
-    // The order matters and is easy to get backwards. Handles are deliberately made
+    // The order matters and is easy to get backwards. Handles are made
     // *unique* — two records that would collide get lengthened — so merging by handle
     // could never merge anything: the two revisions of one rule would be handed
     // distinct handles and both would steer, with the older one silently outliving
@@ -397,7 +397,7 @@ fn merge_by_lineage(parsed: Vec<Parsed>) -> Vec<Parsed> {
 
 /// Fold the project tier into the user tier, monotonically.
 ///
-/// The invariant, matching `merge_rule_trust_tiers` on the markdown side: **a
+/// The rule, matching `merge_rule_trust_tiers` on the markdown side: **a
 /// project record may add enforcement and may never remove it.** Concretely, for a
 /// project record whose lineage a user record already holds:
 ///

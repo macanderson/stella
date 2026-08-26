@@ -481,7 +481,7 @@ fn the_spent_count_survives_a_checkpoint_round_trip() {
     assert_eq!(live.spent(), MAX_LOOP_STEERS);
 }
 
-/// A loop identity over a deliberately tiny alphabet, so an arbitrary
+/// A loop identity over a tiny alphabet, so an arbitrary
 /// sequence collides with itself often enough to exercise the
 /// same-loop rung rather than wandering through distinct loops.
 fn arb_identity() -> impl Strategy<Value = LoopIdentity> {
@@ -906,7 +906,7 @@ mod stall {
     }
 
     /// Model-authored seconds are runtime data: an absurd request
-    /// saturates rather than overflowing (invariant 5).
+    /// saturates rather than overflowing (AGENTS.md #5).
     #[test]
     fn an_absurd_sleep_request_saturates() {
         let absurd = records(&["sleep 99999999999999999999", "sleep 99999999999999999999"]);

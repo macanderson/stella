@@ -27,7 +27,7 @@
 //! the model knows which turn it just had. So the assertion states the fact
 //! and hands the decision back.
 //!
-//! # What it deliberately does not do
+//! # What it does not do
 //!
 //! **It never stops anything.** No built-in kills a started child on
 //! Stella's own initiative, because #2666's finding is precisely that a
@@ -80,7 +80,7 @@ fn roster(services: &[LiveService]) -> String {
         .join("\n")
 }
 
-/// The message itself. Deliberately two-sided: both answers are legitimate
+/// The message itself. Two-sided: both answers are legitimate
 /// endings, and a nudge that only offered one would train the model to stop
 /// services that were the point of the task.
 fn nudge(services: &[LiveService]) -> String {

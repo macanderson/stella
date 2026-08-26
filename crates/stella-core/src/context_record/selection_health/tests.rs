@@ -265,7 +265,7 @@ fn a_verdict_via(
 
 #[test]
 fn an_agent_self_report_informs_but_can_never_retire() {
-    // THE two-tier invariant. The agent judged its own context unhelpful five
+    // THE two-tier rule. The agent judged its own context unhelpful five
     // times out of five. That is real evidence and must be visible — but a
     // self-report that could retire its own subject is self-reinforcing, so it
     // may not drive the decision.

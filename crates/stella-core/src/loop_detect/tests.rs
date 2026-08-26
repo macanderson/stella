@@ -1086,7 +1086,7 @@ proptest! {
     /// rungs, whatever the inputs look like.
     ///
     /// The monotonic-sweep rung is disabled here rather than covered, because
-    /// this property is false of it by construction and deliberately so: a
+    /// this property is false of it by construction and so: a
     /// sweep produces a unique page every call, which is exactly why the four
     /// rungs this property is about cannot see one (#4042). Its own guarantee
     /// is the wrap, and `a_straight_through_paging_sweep_is_not_a_loop` is

@@ -180,7 +180,7 @@ pub struct ArtifactContract {
 }
 
 impl ArtifactContract {
-    /// Validate intra-record invariants: `requirement_id` is unique within the
+    /// Validate intra-record rules: `requirement_id` is unique within the
     /// contract, and a `command` requirement forces an `execution_approval_ref`.
     pub fn validate(&self) -> Result<(), RecordValidationError> {
         let mut seen = HashSet::new();

@@ -448,7 +448,7 @@ impl HookBus {
     /// Announce that this bus's session has begun (#1133).
     ///
     /// Called by whoever *mints* the bus, because that is the only place the
-    /// session boundary actually is. It deliberately does not live in
+    /// session boundary actually is. It does not live in
     /// [`HookBus::new`]: an observer registered after construction would miss
     /// an event emitted during it, and the whole point of this one is that it
     /// is the first thing a subscriber sees. Construct, subscribe, then call
@@ -862,7 +862,7 @@ fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
 
 // Payload hygiene — redaction + sensitivity helpers
 
-/// High-precision secret shapes the scanner recognizes. Deliberately a
+/// High-precision secret shapes the scanner recognizes. A
 /// short list of near-zero-false-positive patterns rather than an entropy
 /// heuristic — a `secret.detected` event must be actionable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

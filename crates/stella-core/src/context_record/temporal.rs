@@ -6,7 +6,7 @@
 //!
 //! Intervals are **half-open `[from, until)`**: `from` inclusive, `until`
 //! exclusive. This installment defines the value types and the ordering
-//! invariant; the prefix-safe historical *reconstruction* over these lives in the
+//! rule; the prefix-safe historical *reconstruction* over these lives in the
 //! Phase 3 repository, not here.
 //!
 //! Timestamps are RFC 3339 strings. The ordering check compares them
@@ -33,7 +33,7 @@ pub struct TemporalInterval {
 impl TemporalInterval {
     /// Construct a validated interval: when `until` is present it must be
     /// strictly after `from` (a non-empty forward interval). This is the
-    /// `valid_until` > `valid_from` invariant.
+    /// `valid_until` > `valid_from` rule.
     pub fn new(
         from: impl Into<String>,
         until: Option<String>,
@@ -54,7 +54,7 @@ impl TemporalInterval {
         }
     }
 
-    /// Re-check the ordering invariant (useful after deserialization, which
+    /// Re-check the ordering rule (useful after deserialization, which
     /// bypasses [`TemporalInterval::new`]).
     pub fn validate(&self) -> Result<(), RecordValidationError> {
         if let Some(until) = &self.until

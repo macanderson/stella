@@ -36,7 +36,7 @@
 //! engine's remaining turns — the swap is a routing decision, not a
 //! one-call patch — and the router's breaker (cooldown, then a half-open
 //! trial) is what eventually routes fresh engines back to a recovered
-//! primary. Like the overflow ladder, the latch is deliberately not
+//! primary. Like the overflow ladder, the latch is not
 //! checkpointed: a resumed turn starts the allowance over, which only
 //! re-permits a bounded amount of work.
 //!

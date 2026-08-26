@@ -15,7 +15,7 @@
 //! inside it," and narrows the file to `0600` in response. File permissions are
 //! a mitigation for a leak, not a substitute for not storing the secret — and
 //! they do nothing for the reflection log, which is plain JSONL, or for anything
-//! later exported. So this is a real unmet invariant on the reflection path, and
+//! later exported. So this is a real unmet rule on the reflection path, and
 //! this module closes it.
 //!
 //! ## Why no regex
@@ -144,7 +144,7 @@ fn is_jwt(token: &str) -> bool {
 /// A long, mixed-case, digit-bearing opaque blob — the shape of a base64 or
 /// hex-plus-case secret with no vendor prefix.
 ///
-/// Deliberately narrow to avoid eating things that are not secrets:
+/// Narrow to avoid eating things that are not secrets:
 /// * a git SHA is all-lowercase hex, so the mixed-case requirement excludes it;
 /// * a file path or URL contains `/` or `.`, so those are excluded outright;
 /// * ordinary prose words are far under the length floor.

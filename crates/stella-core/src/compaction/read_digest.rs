@@ -17,7 +17,7 @@
 //! This module is the pure decision half. It walks the transcript the engine
 //! already owns and answers one question — *which reads have lost their
 //! result, and are still worth naming* — then renders the single tail message
-//! that carries the answer. It stats nothing and opens nothing (invariant 2);
+//! that carries the answer. It stats nothing and opens nothing (AGENTS.md #2);
 //! every fact it states is read out of `messages`.
 //!
 //! # The sibling that solves the other half
@@ -25,7 +25,7 @@
 //! [`crate::restore`] (#2685) is the same problem on the *summarizer* path:
 //! when an overflow summary destroys a span, restoration re-reads those files
 //! through the [`crate::ports::ToolExecutor`] port and re-sends their
-//! **contents**. This module deliberately does not do that. Compaction runs
+//! **contents**. This module does not do that. Compaction runs
 //! before every model call and fires precisely because context is scarce, so
 //! re-sending content is the one thing it must not spend bytes on. A digest
 //! names paths; restoration carries bytes. The two are complementary and
@@ -65,7 +65,7 @@
 //!   something else and matches no writing shape at all (`make`, `cargo build`
 //!   over a `build.rs` that writes into the tree, `./scripts/regen.sh`), and
 //!   an editor or process outside the session entirely. That is why the
-//!   wording stays deliberately weaker than the invalidation rule.
+//!   wording stays weaker than the invalidation rule.
 //!
 //! Reading a shell command's text is a heuristic and is treated as one: it
 //! **over-invalidates by construction**. Any word of a writing segment that
@@ -75,7 +75,7 @@
 //! answer this module exists to prevent, so the doubt is spent in that
 //! direction every time.
 //!
-//! # Byte stability (invariant 7)
+//! # Byte stability (AGENTS.md #7)
 //!
 //! The digest is a `User`-role message in the **volatile tail**, never part of
 //! the stable prefix, and it carries [`READ_DIGEST_MARKER_PREFIX`] so both

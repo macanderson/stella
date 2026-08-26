@@ -114,17 +114,17 @@ pub struct GoalVerifierVerdict {
 
 /// Why an assessment round produced no verdict.
 ///
-/// A partial judgement is not a judgement: both variants end the loop rather
+/// A partial judgement is not a judgement: both cases end the loop rather
 /// than salvaging text, which is what keeps [`Engine::assess`] from ever
 /// fabricating a verdict. They stay apart because they are different facts
 /// about the run — `Incomplete` is a verifier that stopped before answering
 /// (budget, truncation, a dropped stream), `Refused` is one that declined to
 /// answer at all. A caller deciding whether to retry wants only the first, and
-/// invariant #5 is what says it may not learn that by grepping the reason.
+/// AGENTS.md #5 is what says it may not learn that by grepping the reason.
 ///
 /// `Display` is the bare reason, unchanged from the `String` this replaced:
 /// both callers wrap it in their own "verifier unavailable: {}" prefix, so
-/// giving the variants distinct wording here would only stutter in the message
+/// giving the cases distinct wording here would only stutter in the message
 /// a user actually reads.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GoalAssessError {
@@ -205,7 +205,7 @@ pub fn goal_round_turn_offset(round: usize) -> u32 {
 /// Public so the CLI's goal loop can pin its tool allowlist against this
 /// prompt (#1783): the prompt and the offered surface must not drift apart,
 /// and the test that enforces that lives beside the executor it guards. The
-/// prompt deliberately names no individual tools: the verifier judges with
+/// prompt names no individual tools: the verifier judges with
 /// whatever read-only tools the host actually offers it, so the offered
 /// surface can vary per host without the prompt drifting.
 pub const VERIFIER_SYSTEM_PROMPT: &str = "You are an impartial verifier assessing whether a coding agent \
@@ -445,7 +445,7 @@ impl Engine<'_> {
 const VERDICT_REPORT_CHARS: usize = 32_000;
 
 /// Chars-per-token upper bound used to turn an output-token cap into a
-/// character cap. Deliberately above any real tokenizer's ratio so the
+/// character cap. Above any real tokenizer's ratio so the
 /// derived cap can never be the thing that clips a verdict.
 const CHARS_PER_TOKEN_CEILING: usize = 8;
 

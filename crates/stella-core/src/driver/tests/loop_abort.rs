@@ -659,7 +659,7 @@ async fn a_terminated_short_answer_after_investigation_still_completes() {
 /// on English, which is exactly what `AgentEvent::LoopDetected` was introduced
 /// to end for this rung.
 ///
-/// The paired `LoopDetected` is asserted alongside deliberately: it is what
+/// The paired `LoopDetected` is asserted alongside: it is what
 /// establishes that the steer under inspection really came from the loop rung,
 /// so the cause assertion is about the emitter and not about this test's setup.
 #[tokio::test]

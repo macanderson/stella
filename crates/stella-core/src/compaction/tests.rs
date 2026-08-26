@@ -222,13 +222,13 @@ fn identical_stub_rewrites_collapse_to_one_journal_entry() {
 
 #[test]
 fn retention_waits_for_a_batch_before_touching_the_prefix() {
-    // Cache-prefix discipline (invariant 7): aging one result the moment
+    // Cache-prefix discipline (AGENTS.md #7): aging one result the moment
     // it crosses the horizon would rewrite the prefix on every step.
     // Below RETENTION_MIN_RECLAIM_CHARS of reclaimable bytes, nothing
     // moves.
     let mut messages = long_turn(5, 5_000);
     // Horizon leaves 3 stale results reclaiming ~10 KB: below the floor.
-    // The budget is deliberately one retention pressure would clear, so the
+    // The budget is one retention pressure would clear, so the
     // reclaim floor is the only thing that can be holding the pass back.
     let budget = retention_pressure_budget(&messages);
     let (_, report) = compact_measured(

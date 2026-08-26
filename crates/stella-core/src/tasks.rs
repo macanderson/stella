@@ -88,7 +88,7 @@ impl TaskBoard {
     /// The task holding the lead's single lane: in progress and unowned.
     ///
     /// "Unowned" is what makes it the *lead's* lane. [`Self::assign`] gives a
-    /// delegated task an owner and deliberately does not route through
+    /// delegated task an owner and does not route through
     /// [`Self::set_status`], so N sub-agent lanes plus the lead's own task is
     /// a legal board — a scan that counted them would report every delegating
     /// session as a violation.
@@ -218,7 +218,7 @@ impl TaskBoard {
     /// error names the open task and every way out, so the next call can be the
     /// `task_complete` that should have come first.
     ///
-    /// All three ways, deliberately. A refusal offering only "finish it" and
+    /// All three ways. A refusal offering only "finish it" and
     /// "drop it" is a trap for the agent that is merely re-ordering — it starts
     /// a step, learns a later one must land first, and finds that the only exit
     /// phrased as *keeping* the step is a `task_complete` that would be a lie.

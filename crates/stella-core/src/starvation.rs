@@ -38,7 +38,7 @@ use stella_protocol::{CompletionResult, FinishReason};
 ///
 /// The number is a heuristic bound, and this is the honest place to say so: no
 /// provider-parity posture axis reports a model's reasoning budget, and the
-/// real figure varies by model and prompt. It is deliberately generous next to
+/// real figure varies by model and prompt. It is generous next to
 /// the output contracts it pads (two to six lines, or a three-element JSON
 /// array) and still an order of magnitude under a 64k engine base, so a
 /// runaway call stays bounded. [`starved_retry_cap`] is the guarantee;
@@ -52,7 +52,7 @@ pub const REASONING_HEADROOM_TOKENS: u32 = 4_096;
 /// first visible token. Sized so one retry is enough for any reasoning budget
 /// observed in the wild, rather than sized to a model.
 ///
-/// Deliberately carries no `MEASURED:` marker (#4572). Like
+/// Carries no `MEASURED:` marker (#4572). Like
 /// [`REASONING_HEADROOM_TOKENS`] above it is a heuristic bound, chosen to sit
 /// over every reasoning budget anyone has seen; no measurement produced 32,768.
 pub const STARVED_RETRY_CAP: u32 = 32_768;

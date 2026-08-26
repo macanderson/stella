@@ -8,7 +8,7 @@
 //! changes, a workaround goes obsolete, a preference is superseded, and nothing
 //! notices (#1067, #1068).
 //!
-//! This module is the gate on both ends, and it is deliberately one gate rather
+//! This module is the gate on both ends, and it is one gate rather
 //! than two. Promotion and retirement are the same question asked with opposite
 //! signs — *does injecting this change outcomes?* — so they read the same
 //! evidence through the same engine ([`crate::comparison`]) and differ only in
@@ -104,7 +104,7 @@ pub struct AppraisalConfig {
     /// the workspace.
     pub selection: SelectionConfig,
     /// Trials required in **each** arm before [`SkillVerdict::Inert`] may be
-    /// reached. Deliberately far above `selection.min_samples_per_arm`: a
+    /// reached. Far above `selection.min_samples_per_arm`: a
     /// confident negative can be acted on early, but retiring a skill for
     /// having produced no measurement needs a window long enough that "no
     /// measurement" means something.

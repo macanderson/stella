@@ -81,7 +81,7 @@ const FRAGMENT_MAX_CHARS: usize = 160;
 /// that mark a line as narrating an action in progress rather than stating
 /// its result — the grammatical stance a model's stray, cut-off thought
 /// actually takes, and one a deliberate final answer essentially never does.
-/// Deliberately small and English-specific: a pragmatic heuristic, not a
+/// Small and English-specific: a pragmatic heuristic, not a
 /// language model. A phrase missing from this list is a false negative
 /// (an uncaught confident zero), which is the safe direction to be wrong in
 /// — never a false positive that gates a real answer.

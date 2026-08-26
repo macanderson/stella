@@ -44,7 +44,7 @@
 //! can span several turns, while every dollar limit above resets
 //! (`begin_turn`) or is sized per turn. Several turns that each honestly fit
 //! their own dollar budget can still blow the task's wall clock, and nothing
-//! above would ever notice. The deadline is deliberately an absolute
+//! above would ever notice. The deadline is an absolute
 //! [`std::time::Instant`] rather than a duration-since-turn-start: only an
 //! absolute point in time survives correctly across a `begin_turn` reset, so
 //! a caller computes it once (`Instant::now() + task_allowance`) and threads
@@ -107,7 +107,7 @@ pub enum BudgetOutcome {
 /// The result of comparing the current time against a configured
 /// [`BudgetGuard::task_deadline`].
 ///
-/// Deliberately its own type rather than a third [`BudgetAxis`]: dollars and
+/// Its own type rather than a third [`BudgetAxis`]: dollars and
 /// wall-clock seconds are different units, and every existing
 /// `BudgetOutcome::AbortTurn { spent_usd, limit_usd, .. }` match arm in this
 /// workspace assumes USD — folding a [`std::time::Duration`] into those same
@@ -253,7 +253,7 @@ impl BudgetGuard {
     /// configured `--spend-limit` always means "this session" — the one on
     /// screen — never "this process". Within one session spend stays
     /// monotone ([`record_spend`](Self::record_spend) only ever adds);
-    /// across sessions monotonicity is deliberately the caller's concern —
+    /// across sessions monotonicity is the caller's concern —
     /// switching to a cheaper session legitimately lowers the accumulator.
     pub fn reseed_session_spend(&mut self, spent_usd: f64) {
         self.session_spent_usd = spent_usd;
@@ -263,7 +263,7 @@ impl BudgetGuard {
     /// editor). Accounting is untouched — only the gate the next
     /// [`evaluate`](Self::evaluate) checks moves; `None` clears the cap so
     /// that axis never triggers again. Applied by the driver only at a safe
-    /// boundary (never mid-tool), per invariant #6.
+    /// boundary (never mid-tool), per AGENTS.md #6.
     pub fn set_session_limit_usd(&mut self, limit_usd: Option<f64>) {
         self.session_limit_usd = limit_usd;
     }
@@ -371,7 +371,7 @@ impl BudgetGuard {
     /// whether a killed trial had a deadline armed at all meant reading the
     /// adapter, the runner, the harness, and the trial's `config.json`.
     ///
-    /// Takes `now` rather than reading the clock (module docs, invariant 2):
+    /// Takes `now` rather than reading the clock (module docs, AGENTS.md #2):
     /// the caller is at a settled boundary and already holds one.
     #[must_use]
     pub fn tick_event(&self, now: Instant) -> AgentEvent {
@@ -426,7 +426,7 @@ impl BudgetGuard {
     /// left, which is what keeps `--spend-limit` a *hard* ceiling once nested
     /// turns exist. A caller who asks for `None` still inherits the parent's
     /// headroom as its ceiling — "unbounded child" is not expressible while
-    /// the parent is bounded, deliberately.
+    /// the parent is bounded.
     ///
     /// # Mode is inherited, never escalated
     ///
@@ -981,7 +981,7 @@ mod tests {
 
         // Landing exactly on the deadline counts as exceeded (matches
         // `BudgetGuard`'s own axis checks, which treat `spent == limit` as
-        // NOT a breach — deadlines are the opposite convention deliberately:
+        // NOT a breach — deadlines are the opposite convention:
         // a task must stop AT its ceiling, not float past it waiting for the
         // next tick to notice).
         guard.set_task_deadline(Some(now));

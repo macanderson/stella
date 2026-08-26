@@ -53,7 +53,7 @@
 //! ordinary `Compaction` event. Only when the ladder is spent do the terminal
 //! events fire, carrying every failed attempt's reason.
 //!
-//! Like `length_continuations`, the latch is deliberately not checkpointed: a
+//! Like `length_continuations`, the latch is not checkpointed: a
 //! resumed turn starts the allowance over, which only re-permits a bounded
 //! amount of work.
 
@@ -72,7 +72,7 @@ use crate::step::{AbortKind, StepOutcome, TurnState};
 pub(crate) const MAX_RECOVERY_RUNGS: u8 = 2;
 
 /// Per-turn latch and budget clamp for reactive overflow recovery. Pure data,
-/// no I/O (invariant 2); lives on [`TurnState`] and dies with the turn.
+/// no I/O (AGENTS.md #2); lives on [`TurnState`] and dies with the turn.
 #[derive(Debug, Default)]
 pub(crate) struct OverflowRecovery {
     /// Rungs fired this turn. Monotone — never reset, even by a committed
@@ -155,7 +155,7 @@ pub(crate) enum ModelCallFailure {
     },
     /// The user asked the turn to stop while it was parked on a
     /// park-eligible failure, and the park honored the latch (#2743). The
-    /// pending provider error is deliberately discarded: the turn ended
+    /// pending provider error is discarded: the turn ended
     /// because a person asked, so it settles as the step-boundary soft stop
     /// does — no `RetriesExhausted`, no `Error`, every completed step kept.
     /// The failed attempts that opened the park already reported themselves

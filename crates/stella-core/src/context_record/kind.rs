@@ -1,4 +1,4 @@
-//! The record-taxonomy enums. Every variant's canonical wire form is the
+//! The record-taxonomy enums. Every case's canonical wire form is the
 //! lowercase `snake_case` token asserted by the tests at the bottom of this
 //! file — those strings are required (they enter `record_hash` preimages),
 //! so `as_str()` and the serde form are pinned to each other.
@@ -50,7 +50,7 @@ impl ContextRecordKind {
 }
 
 /// `knowledge` sub-kind (lifecycle §6.3). "Do not create a new kind for every
-/// noun" — the set is deliberately tiny.
+/// noun" — the set is tiny.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KnowledgeKind {
@@ -348,8 +348,8 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
 
-    /// Assert that a variant's `as_str()` equals its serde wire form, and that
-    /// the wire form round-trips back to the same variant. This double-locks the
+    /// Assert that a case's `as_str()` equals its serde wire form, and that
+    /// the wire form round-trips back to the same case. This double-locks the
     /// canonical string used in `record_hash` preimages.
     fn assert_canonical<T>(variant: T, expected: &str)
     where
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn constraint_effect_cannot_represent_allow() {
-        // `allow` is not a variant, so it cannot even deserialize.
+        // `allow` is not a case, so it cannot even deserialize.
         let parsed: Result<ConstraintEffect, _> = serde_json::from_value(json!("allow"));
         assert!(
             parsed.is_err(),

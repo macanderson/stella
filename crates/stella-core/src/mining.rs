@@ -103,7 +103,7 @@ pub(crate) fn terms(text: &str) -> Vec<String> {
 /// hiragana, katakana) — scripts that put no spaces between words, so a
 /// word-accumulating tokenizer would collapse a whole sentence into one
 /// exact-match-only term. [`tokenize`] emits character bigrams for runs of
-/// these instead. Hangul is deliberately absent: Korean is space-separated,
+/// these instead. Hangul is absent: Korean is space-separated,
 /// so the ordinary word path handles it.
 fn is_unsegmented_cjk(ch: char) -> bool {
     matches!(u32::from(ch),
@@ -221,7 +221,7 @@ fn tokenize(text: &str, vocabulary: Vocabulary) -> Vec<String> {
 /// the question selection actually asks is "does this prompt cover what this
 /// skill is for?".
 ///
-/// Deliberately a second function rather than a change to [`jaccard`]: the
+/// A second function rather than a change to [`jaccard`]: the
 /// miners' near-duplicate clustering thresholds (`min_similarity`) are tuned
 /// against the symmetric measure, and re-pointing them at this one would
 /// silently re-cluster every observation.
@@ -461,7 +461,7 @@ mod tests {
     }
 
     /// The two spaces still agree on *tokenization* for ASCII text — the
-    /// property this has always pinned. The sample deliberately carries no
+    /// property this has always pinned. The sample carries no
     /// [`SCORING_STOPWORDS`] entry, so what it compares is the split, not the
     /// vocabulary; the vocabulary divergence is pinned by
     /// `score_terms_drops_generic_coding_words_the_clustering_space_keeps`

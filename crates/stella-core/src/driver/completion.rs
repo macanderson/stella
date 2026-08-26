@@ -123,7 +123,7 @@ impl<'a> Engine<'a> {
             // The end-of-turn service assertion (#2764), after the gates
             // above because a turn that is aborting has nothing to be asked
             // about. The executor answers what is still up — the engine holds
-            // no process table and must not (invariant 1) — and the nudge
+            // no process table and must not (AGENTS.md #1) — and the nudge
             // only names it: nothing here stops anything (#2666).
             if live_services::check(messages, &self.tools.live_services(), &result.text, events) {
                 return None;

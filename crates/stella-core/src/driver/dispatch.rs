@@ -60,7 +60,7 @@ impl<'a> Engine<'a> {
     /// therefore leaves an unpaired `tool_use` in the borrowed history — the
     /// same broken shape [`Self::handle_committed_result`] explicitly repairs
     /// on the budget-abort path, and the one the next provider call rejects
-    /// outright. It is deliberately not repaired here: the contract is that a
+    /// outright. It is not repaired here: the contract is that a
     /// hard cancel truncates the whole turn out of history caller-side (see
     /// [`crate::ports::TurnSteering`], which contrasts exactly this against the
     /// soft stop). A caller that KEEPS a hard-cancelled turn's messages must

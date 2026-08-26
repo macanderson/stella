@@ -36,7 +36,7 @@
 //! by name until it teaches the new marker, instead of silently narrowing the
 //! model's injection test.
 //!
-//! This module is deliberately a leaf: one `pub` table, no logic, declared
+//! This module is a leaf: one `pub` table, no logic, declared
 //! outside `driver.rs` because that file is closed to growth
 //! (`scripts/file-size-baseline.txt`).
 

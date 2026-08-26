@@ -471,7 +471,7 @@ pattern = "20"
 ///    situation. Must be selected, first.
 ///
 /// The tuning direction the assertions encode: **compact** (rendered bytes are
-/// invariant under injected noise), **sufficient-only** (exactly the relevant
+/// rule under injected noise), **sufficient-only** (exactly the relevant
 /// handles render, nothing else), **honest under budget** (a drop is ledgered
 /// as `dropped`, never silent), and **cheap** (the whole certification is pure
 /// and model-free, so it runs on every `cargo test`).

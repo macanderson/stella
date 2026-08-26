@@ -33,7 +33,7 @@
 //! mining — is plain synchronous logic over owned data, unit-tested below
 //! against a fake `RuleSource`, no real files required.
 //!
-//! # Deliberately out of scope
+//! # Out of scope
 //!
 //! `apps/cli/src/rules/promote.ts`'s interactive candidate-promotion
 //! *workflow* — mining lessons out of local traces/fleet-memory, then
@@ -654,7 +654,7 @@ pub fn evaluate_guards(rules: &[Rule], action: &ProposedAction<'_>) -> GuardChec
 /// Where one occurrence of a candidate lesson came from (TS:
 /// `RuleEvidence["source"]`). `TraceReasoning` is reserved for parity with
 /// the TS union — `observationsFromTrace` (not yet ported, see module
-/// docs) only ever produces `TraceFinding` today, deliberately: free-form
+/// docs) only ever produces `TraceFinding` today: free-form
 /// verifier reasoning is too verbose to cluster reliably on term overlap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceSource {

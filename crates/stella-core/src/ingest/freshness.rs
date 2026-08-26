@@ -7,7 +7,7 @@
 //! record's ungated probe catches that; this module decides what the verdict
 //! means.
 //!
-//! It is deliberately pure and I/O-free. Running the probe (filesystem) lives in
+//! It is pure and I/O-free. Running the probe (filesystem) lives in
 //! the CLI; the *policy* — refuted-plus-`on_expiry` → keep/drop/block — lives
 //! here so the selection path (once records are rendered) and the on-demand
 //! `stella context validate` command reach the same decision.

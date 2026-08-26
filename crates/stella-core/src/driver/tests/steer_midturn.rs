@@ -5,7 +5,7 @@
 //! round is in flight, so the steer lands on a transcript whose tail is a
 //! `Tool` message answering an assistant `tool_use`.
 //!
-//! Two invariants have to hold there. Every tool result must still be paired
+//! Two rules have to hold there. Every tool result must still be paired
 //! with the call that produced it (an orphaned `tool_use` is a hard provider
 //! 400 that fails the whole turn), and the steer must be positioned so the
 //! next model call actually observes it.
@@ -144,7 +144,7 @@ async fn a_steer_after_a_tool_round_keeps_every_call_paired_with_its_result() {
         "a steer arriving mid-tool-round must not fail the turn: {outcome:?}"
     );
 
-    // The invariant a provider enforces with a 400: no tool result may precede
+    // The rule a provider enforces with a 400: no tool result may precede
     // the call it answers, and no call may be left unanswered.
     assert_tool_pairing(&messages);
 

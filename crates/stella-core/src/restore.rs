@@ -14,14 +14,14 @@
 //! carries it; the engine half (`driver::restore`, the `waiting.rs` /
 //! `driver/waiting.rs` split) owns the fresh reads through the existing
 //! [`crate::ports::ToolExecutor`] port — zero model calls, no new I/O
-//! surface (invariant 2).
+//! surface (AGENTS.md #2).
 //!
-//! # What is restored, and what deliberately is not
+//! # What is restored, and what is not
 //!
 //! - **Files read inside the summarized span** ([`collect_working_set`]):
 //!   the most recent read per path, most-recent-first, capped at
 //!   [`RESTORE_MAX_FILES`]. Content is re-read fresh from disk at restore
-//!   time — deliberately, so an external edit between read and restore
+//!   time —, so an external edit between read and restore
 //!   surfaces the *current* bytes rather than resurrecting a stale copy.
 //! - **The full body of any active invoked skill**
 //!   ([`crate::skills::invoke::ActiveSkillInvocations`] is the tracking

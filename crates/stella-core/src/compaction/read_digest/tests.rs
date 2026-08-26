@@ -414,9 +414,9 @@ fn a_live_re_read_supersedes_an_earlier_evicted_read_of_the_same_path() {
     );
 }
 
-/// **Invariant 7.** The stable prefix must be byte-identical across a
+/// **AGENTS.md #7.** The stable prefix must be byte-identical across a
 /// compaction pass that emits a digest — the digest rides the volatile tail,
-/// never the cached prefix. (`docs`: `AGENTS.md` § Architecture, invariant 7.)
+/// never the cached prefix. (AGENTS.md #7.)
 #[test]
 fn the_digest_never_disturbs_the_byte_stable_prefix() {
     let mut messages = transcript(&[("c1", "src/alpha.rs"), ("c2", "src/beta.rs")]);
@@ -578,7 +578,7 @@ fn an_empty_digest_renders_nothing() {
 }
 
 /// Runtime data is never unwrapped: a call whose `path` is missing, empty, or
-/// not a string is skipped rather than panicking (invariant 5).
+/// not a string is skipped rather than panicking (AGENTS.md #5).
 #[test]
 fn a_malformed_call_input_is_skipped_not_unwrapped() {
     for input in [

@@ -43,7 +43,7 @@ a supervisor:
   is `after_turn` evidence rather than a judge. **The socket itself has
   landed**, defined **above** core, in [`stella-runtime`](../stella-runtime)
   (`src/wrapper/`, #3479): `before_turn` recalls and researches, `after_turn`
-  runs a test command or an oracle process, and invariant #2 forbids that I/O
+  runs a test command or an oracle process, and AGENTS.md #2 forbids that I/O
   here (`doc:turn-loop-wrappers` §9.1). What has not landed is `goal.rs`
   actually moving onto it — that is Track B's last slice
   (`doc:pipeline-as-plugins` §7), and until it ships this crate is not yet
@@ -53,7 +53,7 @@ a supervisor:
 aspirational.** `Principal::Plugin` carries an opaque string and nothing else
 — there is no manifest type, no capability type, no
 `stella-plugin` or `stella-runtime` dependency in this crate's `Cargo.toml` —
-only `stella-protocol` — and there cannot be one without breaking invariant 1:
+only `stella-protocol` — and there cannot be one without breaking AGENTS.md #1:
 a plugin host binds a plugin's declared grants to this crate's *existing*
 gates (`TurnGate`, `Hooks`, the Stop-hook feedback loop), it never teaches the
 engine a new concept for "plugin." **"Zero built-in wrappers" is the section
@@ -83,7 +83,7 @@ The decision rule: if the change is a *decision* — a policy, a ranking, a
 transition rule, arithmetic the engine consults — expressible as a synchronous
 function over owned data, it belongs here. If any part of it must touch the
 outside world, only the decision half comes here; the effectful half is a trait
-this crate defines and another crate implements (AGENTS.md invariants #1 and
+this crate defines and another crate implements (AGENTS.md #1 and
 #2). Provider wire code goes to [`stella-model`](../stella-model), tool
 execution and anything that spawns a process or reads a file to
 [`stella-tools`](../stella-tools), persistence to
@@ -104,7 +104,7 @@ should arrive pre-parsed through a port.
 
 A **new crate** instead of a new module here is justified in exactly three
 cases, seen from this crate's side: the functionality sits behind one of this
-crate's ports and would drag heavy dependencies into a deliberately light
+crate's ports and would drag heavy dependencies into a light
 build (that is the reason [`stella-model`](../stella-model) and
 [`stella-tools`](../stella-tools) are separate crates rather than modules
 here); it needs a dependency direction the current graph forbids — two crates
@@ -179,7 +179,7 @@ lib.rs), never as a planning assumption.
 | [`src/mcp_usage.rs`](src/mcp_usage.rs) | The MCP usage record/ledger types, homed here so `stella-mcp` and `stella-tools` need no edge between them. |
 | [`src/context_record.rs`](src/context_record.rs) + [`src/context_record/`](src/context_record) | The adaptive-context Phase 1 value layer: taxonomy enums, scope, temporal, canonical `record_hash`, context-use, contract, outcome, representation. Types and validators only. |
 | [`src/self_tuning.rs`](src/self_tuning.rs) | The eval-driven policy selector: reward samples per opaque arm → a confident-lift `Decision` plus a reversible `RollbackRecord`. The workspace's one significance test. |
-| [`src/comparison.rs`](src/comparison.rs) + [`src/comparison/`](src/comparison) | The A/B comparison report every measurement of "is this variant better?" emits: paired per-task trials → per-arm aggregates, a guard set, and a two-bar verdict. Consumed by `loop-bench --compare` offline and by the promotion gates. |
+| [`src/comparison.rs`](src/comparison.rs) + [`src/comparison/`](src/comparison) | The A/B comparison report every measurement of "is this arm better?" emits: paired per-task trials → per-arm aggregates, a guard set, and a two-bar verdict. Consumed by `loop-bench --compare` offline and by the promotion gates. |
 
 ## Key concepts
 
@@ -202,7 +202,7 @@ abort.
 pause gate, the soft stop and loop-detection aborts all fire between steps,
 never mid-tool — killing a tool in flight leaves the workspace and the model's
 view of it inconsistent, a defect this codebase already shipped once in its
-TypeScript era. [`src/budget.rs`](src/budget.rs) is deliberately unable to abort
+TypeScript era. [`src/budget.rs`](src/budget.rs) is unable to abort
 anything: `BudgetGuard::evaluate`/`record_spend` return a
 `BudgetOutcome::AbortTurn` *recommendation*, and `check_budget`
 ([`src/driver/settlement.rs`](src/driver/settlement.rs)) turns it into
@@ -355,7 +355,7 @@ built the mid-tool abort this crate exists to prevent.
 ## See also
 
 - [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies"
-  (invariants 1, 2 and 6 are this crate's contract) and "Testing approach".
+  (rules 1, 2 and 6 are this crate's contract) and "Testing approach".
 - [`../stella-protocol`](../stella-protocol) — `Provider`, `AgentEvent`,
   `CompletionMessage`, `ToolCall`/`ToolOutput`. [`../stella-tools`](../stella-tools)
   has `ToolRegistry`, the production `ToolExecutor`;

@@ -18,7 +18,7 @@
 //!
 //! # Why threshold notices and not a per-step clock
 //!
-//! Invariant 7: anything feeding the model must be byte-stable, because
+//! AGENTS.md #7: anything feeding the model must be byte-stable, because
 //! prompt-cache hits are a feature and nondeterminism there is a cost
 //! regression. A wall clock stamped into every step would change the
 //! transcript on every call, and no two calls in the turn would share a
@@ -40,7 +40,7 @@ pub(crate) const THRESHOLDS_MS: [u64; 3] = [600_000, 300_000, 120_000];
 
 /// Per-turn latch: which deadline notices have already been delivered.
 ///
-/// Pure data, no I/O (invariant 2); lives on [`crate::step::TurnState`] and
+/// Pure data, no I/O (AGENTS.md #2); lives on [`crate::step::TurnState`] and
 /// dies with the turn. Not checkpointed, for the same reason the recovery
 /// latches are not — a resumed turn re-warning once is cheap and being
 /// silent about a deadline is not.
@@ -123,7 +123,7 @@ mod tests {
         assert!(text.contains("10 minute"), "{text}");
     }
 
-    /// Byte-stability (invariant 7): a turn that keeps ticking inside one
+    /// Byte-stability (AGENTS.md #7): a turn that keeps ticking inside one
     /// band must add nothing to the transcript.
     #[test]
     fn the_same_band_never_fires_twice() {

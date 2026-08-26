@@ -57,7 +57,7 @@
 //! from inside a worktree would hand back exactly the tree the worktree exists
 //! to stay out of, and it would look like configuration rather than a bug.
 //!
-//! # No I/O (invariant #2)
+//! # No I/O (AGENTS.md #2)
 //!
 //! Every function here is a pure predicate over already-resolved, absolute,
 //! lexically-normalized paths — including [`origin_of`], which recovers the
@@ -84,7 +84,7 @@ pub const WORKTREES_SUBPATH: &str = ".stella/worktrees";
 /// A named enum rather than a `bool` because the refusals want different
 /// sentences: a caller outside the write scope should be told what the scope
 /// *is*, while a caller reaching into the origin project should be told that
-/// the tree is deliberately invisible and why.
+/// the tree is invisible and why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeDecision {
     /// The operation is allowed.

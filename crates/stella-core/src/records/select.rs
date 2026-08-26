@@ -8,7 +8,7 @@
 //! unscoped one. This is the missing consumer: given the facts of one turn, is
 //! this record worth its tokens right now?
 //!
-//! # What it gates, and what it deliberately does not
+//! # What it gates, and what it does not
 //!
 //! Selection applies to the **volatile channel only** — `may`/`info` records
 //! and anything the truth sweep demoted. Those are re-rendered per turn by

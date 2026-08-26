@@ -11,7 +11,7 @@
 //! polling itself never touches the transcript, so an arbitrarily long wait
 //! costs O(1) model steps and forces no compaction.
 //!
-//! This module is decision logic only (invariant 2): what counts as a change,
+//! This module is decision logic only (AGENTS.md #2): what counts as a change,
 //! how many polls a deadline affords, and what the wake message says are all
 //! pure functions over owned data. The actual sleeping and probing live in
 //! `driver::waiting`, driven through the engine's existing ports
@@ -62,9 +62,9 @@ pub struct WaitCall {
 /// ([`crate::ports::ToolExecutor::drain_wait_request`]) — the same
 /// "written by one object, drained by another" seam sub-agent spend uses,
 /// and for the same structural reason: the tool is finished by the time the
-/// engine is at a boundary where parking is safe (invariant 6).
+/// engine is at a boundary where parking is safe (AGENTS.md #6).
 ///
-/// Serde round-trips (invariant 4) because the value crosses the
+/// Serde round-trips (AGENTS.md #4) because the value crosses the
 /// `stella-tools` → `stella-core` boundary, and because a checkpointed turn
 /// may someday want to persist one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,7 +114,7 @@ impl WaitRequest {
 
     /// How many probes the deadline affords, always at least one.
     ///
-    /// The engine deliberately counts polls instead of reading a clock: the
+    /// The engine counts polls instead of reading a clock: the
     /// deadline arithmetic stays a pure function of the request (this
     /// crate holds no time source — the injected sleeper owns real time),
     /// and a test with a no-op sleeper walks the same bound production
@@ -300,7 +300,7 @@ mod tests {
         assert!(!timed_out.contains("Current state"), "{timed_out}");
     }
 
-    /// Invariant 4: the request crosses the `stella-tools` → `stella-core`
+    /// AGENTS.md #4: the request crosses the `stella-tools` → `stella-core`
     /// boundary, so it round-trips byte-for-byte.
     #[test]
     fn wait_request_round_trips_through_serde_json() {

@@ -1,5 +1,5 @@
 //! Self-tuning — the eval-driven policy selector: pure synchronous analysis of
-//! A/B outcomes that decides whether one variant of a decision knob is
+//! A/B outcomes that decides whether one case of a decision knob is
 //! *confidently* better than the current baseline, and only then recommends
 //! promoting it.
 //!
@@ -101,7 +101,7 @@ pub fn reward(outcome: &TaskOutcome, weights: &RewardWeights) -> f64 {
         - weights.per_retry * outcome.retries as f64
 }
 
-/// One arm of the experiment: a knob variant and the reward samples observed
+/// One arm of the experiment: a knob case and the reward samples observed
 /// for it (one per benchmark trial).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmSamples {
@@ -594,7 +594,7 @@ mod tests {
         assert_eq!(record.baseline_samples, 5);
         assert_eq!(record.winner_samples, 5);
 
-        // Invariant #4: serde round-trip is byte-stable.
+        // AGENTS.md #4: serde round-trip is byte-stable.
         let json = serde_json::to_string(&record).unwrap();
         let back: RollbackRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(record, back);

@@ -29,7 +29,7 @@
 //!   at all: it lands wherever the future happened to be awaiting. See
 //!   [`CancelToken`] for what that loses, and prefer cancelling.
 //!
-//! # What a [`Checkpoint`] carries, and what it deliberately does not
+//! # What a [`Checkpoint`] carries, and what it does not
 //!
 //! A checkpoint is the state a *resumed* turn must not lose: the transcript,
 //! the money, which model served last, whether the loop steer was already
@@ -313,7 +313,7 @@ pub struct TurnState {
     /// mutate for the prompt cache, and precisely what that hysteresis exists
     /// to prevent.
     ///
-    /// Deliberately NOT latched while [`Self::calibration_model`] is `None`.
+    /// NOT latched while [`Self::calibration_model`] is `None`.
     /// It is unset until the first result lands, and a value captured then is
     /// keyed on nothing: `CalibrationMap::effective_budget(None, …)` resolves
     /// through the single-entry fallback on a one-model session but returns
@@ -354,7 +354,7 @@ pub struct TurnState {
     pub(crate) transcript_rewrites: u64,
     /// The reactive context-overflow recovery latch and budget clamp
     /// (`crate::driver::overflow_recovery`, #2680). Like
-    /// [`Self::length_continuations`] it is deliberately not checkpointed: a
+    /// [`Self::length_continuations`] it is not checkpointed: a
     /// resumed turn starts the bounded allowance over.
     pub(crate) overflow_recovery: OverflowRecovery,
     /// The reactive output-ceiling recovery latch and clamp
@@ -372,7 +372,7 @@ pub struct TurnState {
     /// failed step's — so a terminal outcome leaves this naming the step
     /// that ended the turn.
     pub(crate) step: usize,
-    /// The per-turn memos a checkpoint deliberately drops (module docs).
+    /// The per-turn memos a checkpoint drops (module docs).
     pub(crate) memos: TurnMemos,
     /// In-turn continuations already spent on steps that ended at the
     /// output-token limit with no tool call (`Engine::dispatch_completion`).
@@ -389,7 +389,7 @@ pub struct TurnState {
     /// When this turn began, for deciding whether a length continuation is
     /// affordable against `EngineConfig::turn_budget`.
     ///
-    /// Deliberately NOT checkpointed, and set fresh by `from_checkpoint`: a
+    /// NOT checkpointed, and set fresh by `from_checkpoint`: a
     /// resumed turn is resumed by a caller with its own deadline, so carrying
     /// the original start would make the budget read as long spent before any
     /// work happened. Same reasoning as `length_continuations` starting over.
@@ -1227,7 +1227,7 @@ where
 /// work sitting uncommitted. The idle bound cannot see this either — the
 /// provider was never silent, it was a connection that never completed.
 ///
-/// Deliberately derived from [`BudgetGuard::task_deadline`] rather than a
+/// Derived from [`BudgetGuard::task_deadline`] rather than a
 /// standalone `EngineConfig` field: a static ceiling set independently of the
 /// task's own deadline is exactly the kind of number that can drift from it,
 /// which is the failure mode #2021's own "what to do" list warns against.

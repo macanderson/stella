@@ -366,7 +366,7 @@ async fn the_leads_own_tool_calls_name_no_sub_agent() {
 
 #[test]
 fn the_forward_filter_fails_toward_visible() {
-    // A new AgentEvent variant must default to *forwarded*: a redundant HUD
+    // A new AgentEvent case must default to *forwarded*: a redundant HUD
     // line is a cosmetic bug, a dropped metering row is a falsified invoice.
     assert!(forwards_to_parent(&AgentEvent::Error {
         message: "boom".into(),

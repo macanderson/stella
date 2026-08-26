@@ -69,7 +69,7 @@ fn skill_why(sel: &SelectedSkill) -> String {
 /// - **Section budget** — survived top-k and then did not fit
 ///   `render_skills_section`'s own token budget, per
 ///   [`skills::section_fit`]. These candidates are still *selected* on the
-///   plane, deliberately: the section renderer, not the plane, made this cut,
+///   plane: the section renderer, not the plane, made this cut,
 ///   and the plane re-enacting it would change the rendered bytes. The ledger
 ///   reports it; folding the section budget into the plane's shared budget is
 ///   Phase 4 behavior change (#3243), sequenced apart from this ledger slice.
