@@ -54,6 +54,9 @@ proven = "a witness test failed before the change and passes after it"
 [oracle]
 flip = "required"
 
+# The manifest requires an argv; nothing here spawns it. These tests drive
+# the wrapper through a transport they construct themselves, so the string
+# is parsed and never reached — which is why it stays portable on Windows.
 [runtime]
 argv = ["/bin/sh", "-c", "true"]
 timeout_secs = 60
