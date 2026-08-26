@@ -229,7 +229,7 @@ fn every_known_type_tag_resolves_to_a_typed_variant() {
     // The probe is a bare `{"type": tag}`, and today every case has at
     // least one required field, so it always errors. That is expected — the
     // assertion is on WHICH error. `missing field ...` proves serde routed
-    // the tag to a case; `unknown case ...` proves it did not, which
+    // the tag to a case; `unknown variant ...` proves it did not, which
     // is exactly the typo this test exists to catch. Asserting only on the
     // `Ok` arm would assert nothing at all.
     for tag in KNOWN_TYPE_TAGS {
