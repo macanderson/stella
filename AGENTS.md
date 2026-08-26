@@ -99,6 +99,12 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + tokens (hue clamp + no retired hex)
                          #   + hue-separation (30° OKLCH, web tokens)
                          #   + contrast (WCAG, down-only ratchet)
+                         #   + light-clamp (a shipped light SURFACE against
+                         #     the clamp its family declares — the other
+                         #     three colour rulers all read the token table,
+                         #     and so did both enforcers of `warm-paper`,
+                         #     which is why that clamp governed nothing that
+                         #     ships; down-only ratchet)
                          #   + transcript-surfaces
                          #   + prose (no content-free constructions added)
                          #   + line-citations (prose cites code by symbol

@@ -411,6 +411,15 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-contrast.py
 
+      # The fourth ruler, and the one the other three could not be. All three
+      # above read the token table, and so did both enforcers of the light
+      # ground's own `warm-paper` clamp — so a hand-picked light neutral was
+      # invisible to the rule written for it, which is precisely the value that
+      # rule exists to judge. This reads the surfaces (#4941).
+      - name: every shipped light surface satisfies its declared clamp
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-light-clamp.py
+
       # A sibling question the check above cannot answer: it reasons about hex
       # literals, and an unresolvable var() is not a parse error. A token sheet
       # can name a stop deleted two releases ago, every page still renders off

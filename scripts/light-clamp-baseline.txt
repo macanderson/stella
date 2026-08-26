@@ -1,0 +1,46 @@
+# Down-only ratchet for scripts/check-light-clamp.py.
+#
+# Each line is `<file> <role> <hex>` -- a light-scheme value that fails the
+# clamp its family declares, recorded at the value it shipped at. A repaint to
+# a *different* off-clamp value fails: the licence is for this hex, not for
+# this name.
+#
+# `make light-clamp-update` drops an entry that now satisfies its clamp and
+# refuses to add one. The only way past a red gate is to move the colour.
+#
+# This file records the debt #4941 found, which #4072 is deciding how to pay.
+# It is meant to reach empty.
+crates/stella-cli/src/export.rs --hairline #E9E9EE
+crates/stella-cli/src/export.rs --hairline-strong #D0D0D8
+crates/stella-cli/src/export.rs --sunken #F7F7FA
+crates/stella-cli/src/export.rs --surface #F7F7FA
+crates/stella-observatory/src/assets/index.html --hairline #E9E9EE
+crates/stella-observatory/src/assets/index.html --hairline-strong #D0D0D8
+crates/stella-observatory/src/assets/index.html --sunken #F7F7FA
+crates/stella-observatory/src/assets/index.html --surface #F7F7FA
+crates/stella-observatory/src/assets/index.html --text-emph #3C3C46
+crates/stella-transcript/src/html/transcript.css --code #2B323A
+crates/stella-transcript/src/html/transcript.css --hairline-soft #F1F4F8
+crates/stella-transcript/src/html/transcript.css --hover #F0F3F7
+crates/stella-transcript/src/html/transcript.css --hover-raised #EAEFF5
+crates/stella-transcript/src/html/transcript.css --hunk-bg #EEF3FB
+crates/stella-transcript/src/html/transcript.css --line #E9E9EE
+crates/stella-transcript/src/html/transcript.css --line2 #D0D0D8
+crates/stella-transcript/src/html/transcript.css --panel #F7F7FA
+crates/stella-transcript/src/html/transcript.css --selected #DFE6EE
+crates/stella-transcript/src/html/transcript.css --sunken #F2F5F9
+crates/stella-transcript/src/html/transcript.css --sunken-2 #EEF2F7
+crates/stella-tui/src/palette.rs INK_DIM #6C6C78
+crates/stella-tui/src/palette.rs INK_EMPHASIS #3C3C46
+crates/stella-tui/src/palette.rs MUTED #5E5E69
+crates/stella-tui/src/palette.rs PAPER #F4F4F6
+crates/stella-tui/src/palette.rs PAPER_HAIRLINE #DDDDE3
+crates/stella-tui/src/palette.rs PAPER_RAISED #E6E6EA
+crates/stella-tui/src/palette.rs SNOW #FAFAFC
+docs/benchmarks/index.html --rule #E9E9EE
+docs/benchmarks/index.html --rule-2 #D0D0D8
+docs/benchmarks/index.html --sub #F7F7FA
+docs/benchmarks/terminal-bench-2-1-glm-5-2.html --code #F7F7FA
+docs/benchmarks/terminal-bench-2-1-glm-5-2.html --rule #E9E9EE
+docs/benchmarks/terminal-bench-2-1-glm-5-2.html --rule-2 #D0D0D8
+docs/benchmarks/terminal-bench-2-1-glm-5-2.html --sub #F7F7FA

@@ -157,6 +157,7 @@ step_command() {
   tokens) echo 'check-tokens' ;;
   hue-separation) echo 'check-hue-separation' ;;
   contrast) echo 'check-contrast' ;;
+  light-clamp) echo 'check-light-clamp' ;;
   transcript-surfaces) echo 'check-transcript-surfaces' ;;
   prose) echo 'check-prose' ;;
   line-citations) echo 'check-line-citations' ;;
