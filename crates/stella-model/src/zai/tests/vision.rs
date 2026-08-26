@@ -47,7 +47,7 @@ fn a_text_only_glm_degrades_an_image_instead_of_killing_the_turn() {
 }
 
 /// The other half of the asymmetry: the deny is scoped to GLM text models.
-/// A GLM vision variant still sends the image, and so does every non-GLM slug
+/// A GLM vision case still sends the image, and so does every non-GLM slug
 /// this OpenAI-compatible dialect carries for OpenRouter — guessing "no" there
 /// would silently blind Opus/Gemini/GPT behind the gateway.
 #[test]

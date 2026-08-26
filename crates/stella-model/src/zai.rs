@@ -29,7 +29,7 @@ mod unary;
 use effort::{xai_reasoning_effort, xai_supports_reasoning_effort, zai_reasoning_effort};
 // `map_zai_effort` is asserted on directly by the wire tests, which reach it
 // through this module's namespace like every other helper here. Its xAI sibling
-// is deliberately absent: nothing outside `effort.rs` calls it, and re-exporting
+// is absent: nothing outside `effort.rs` calls it, and re-exporting
 // it unused fails clippy's `-D warnings`.
 #[cfg(test)]
 use effort::map_zai_effort;
@@ -130,7 +130,7 @@ fn new_session_id() -> String {
 /// agree: here, gating the request body, and `stella-cli`'s boot notice for a
 /// gateway running with routing unpinned. Answering it twice is how the cache
 /// opt-in came to be gated on the id alone and silently ran Claude routes
-/// uncached through a custom provider entry (invariant 8).
+/// uncached through a custom provider entry (AGENTS.md #8).
 pub fn is_openrouter_endpoint(base_url: &str) -> bool {
     let after_scheme = base_url
         .split_once("://")
@@ -226,7 +226,7 @@ impl ZaiProvider {
     /// than the identity string: the OpenRouter cache is explicit opt-in, so
     /// an id-only gate silently ran Claude-via-OpenRouter with ZERO caching
     /// whenever the user reached the gateway through a custom provider entry
-    /// — the exact defect the parity matrix (invariant 8) was born from. The
+    /// — the exact defect the parity matrix (AGENTS.md #8) was born from. The
     /// reasoning/attribution fields keep their identity gates: they are
     /// behavior preferences, not billing, and widening them is a separate
     /// decision.
@@ -529,7 +529,7 @@ struct ZaiUsageInclude {
 }
 
 /// OpenRouter's cache-control object, `{"type": "ephemeral"}` — the 5-minute
-/// default TTL. The 1-hour variant costs 2x input on writes (vs 1.25x) and
+/// default TTL. The 1-hour case costs 2x input on writes (vs 1.25x) and
 /// only pays off for sessions idle between turns, which an agent loop never
 /// is.
 #[derive(Serialize)]
@@ -587,7 +587,7 @@ struct ZaiImageUrl {
 /// GLM *vision* models ingest images via `image_url` parts; PDFs, audio, and
 /// video degrade to descriptive text notes in this dialect.
 ///
-/// `images` is deliberately NOT a constant. This dialect is OpenAI-compatible
+/// `images` is NOT a constant. This dialect is OpenAI-compatible
 /// and serves two very different populations — Z.ai's own GLM slugs and every
 /// free-form slug OpenRouter routes — and the image cap is a property of the
 /// *model*, not the wire format. Z.ai's text-only GLM endpoints reject a
@@ -612,7 +612,7 @@ fn caps_for(model: &str) -> crate::attachment::DialectCaps {
 /// model can still open it with a tool and the turn survives. So: deny where
 /// we positively know, permit everywhere else.
 ///
-/// "Positively know" is the GLM family, whose vision variants are marked in
+/// "Positively know" is the GLM family, whose vision cases are marked in
 /// the slug by a `v` in the version segment (`glm-4v`, `glm-4.1v`,
 /// `glm-4.5v`). A GLM slug without one is a text model — `glm-4.6`, `glm-5`,
 /// `glm-5.2` — and gets the deny. Every non-GLM slug on this dialect arrives
@@ -974,7 +974,7 @@ struct ZaiUsage {
     /// OpenAI-compatible cache detail: prompt tokens served from Z.ai's
     /// implicit (server-side, no opt-in) prompt cache. Unlike Anthropic's
     /// envelope these are already folded into `prompt_tokens`, so they map
-    /// straight onto the normalized subset invariant (cached ⊆ input) and
+    /// straight onto the normalized subset rule (cached ⊆ input) and
     /// bill at the catalog's cheaper cached rate instead of full input.
     #[serde(default)]
     prompt_tokens_details: Option<ZaiPromptTokensDetails>,

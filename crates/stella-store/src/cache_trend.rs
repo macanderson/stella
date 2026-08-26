@@ -10,7 +10,7 @@
 //! `stella-cli`'s `stats.rs` can render a hit-rate trend across a
 //! workspace's recent sessions, exactly the way [`crate::cache_gaps`] groups
 //! the same tables by call instead of by session. No TTL, pricing, or
-//! diagnosis policy lives here — `stella-store` deliberately does not depend
+//! diagnosis policy lives here — `stella-store` does not depend
 //! on `stella-model`; this module only surfaces the facts that policy needs.
 
 use crate::{Result, Store};

@@ -34,7 +34,7 @@ use zeroize::Zeroize;
 /// is why [`AuxCredentials::default`] is the useful default rather than an
 /// error.
 ///
-/// Deliberately NOT `Debug`-derived: the map holds plaintext secrets, so a
+/// NOT `Debug`-derived: the map holds plaintext secrets, so a
 /// derived impl would print every one of them. The hand-written impl below
 /// names the *keys* (which are not secret and are the useful diagnostic) and
 /// redacts every value — the same posture [`crate::credential::ApiKey`] and

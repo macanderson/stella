@@ -1,13 +1,13 @@
-//! The content-free egress guard — invariant #3, enforced instead of assumed.
+//! The content-free egress guard — AGENTS.md #3, enforced instead of assumed.
 //!
-//! `AGENTS.md` invariant #3 ("Zero telemetry egress by default") says prompts,
+//! `AGENTS.md` AGENTS.md #3 ("Zero telemetry egress by default") says prompts,
 //! paths, tool payloads/results, reasoning, errors, git state, memories, rules,
 //! and local identifiers are **never exportable**. Today that holds *by
 //! construction*: the hub `telemetry` schema (`~/.stella/usage.db`) has no
 //! content columns, and every egress encoder enumerates its fields by hand.
 //! Nothing **prevented** a future column, struct field, or OTLP attribute from
 //! quietly carrying content. A regression there is a privacy incident, not a
-//! bug — so this module makes the invariant a red gate (#466).
+//! bug — so this module makes the rule a red gate (#466).
 //!
 //! It is the direct analogue of `stella-model`'s provider-parity matrix: a
 //! declared table plus tests that enforce it from both sides.
@@ -51,7 +51,7 @@
 //!
 //! # Scope note on `project_id` / `repo_id`
 //!
-//! The drain contract (#404) deliberately ships `project_id` — an FNV-1a/64
+//! The drain contract (#404) ships `project_id` — an FNV-1a/64
 //! digest of the canonical workspace path, not the path itself. It is a
 //! **pseudonym, not an anonymization**: 64 bits of non-cryptographic hash over
 //! a guessable input is dictionary-attackable by a determined intake operator.
@@ -74,11 +74,11 @@ use crate::{DrainBatch, Result, StoreError, TelemetryRow};
 // ---------------------------------------------------------------------------
 
 /// One poisoned value the harness stamps into a source field that must never
-/// leave the machine. `label` names the invariant-#3 category so a failure
+/// leave the machine. `label` names the rule-#3 category so a failure
 /// reads as a privacy finding, not a diff mismatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sentinel {
-    /// The invariant-#3 category this value stands in for.
+    /// The AGENTS.md #3 category this value stands in for.
     pub label: &'static str,
     /// The literal (or literal prefix) searched for in the encoded bytes.
     pub value: &'static str,
@@ -89,7 +89,7 @@ pub struct Sentinel {
 /// the field name (see `content_sentinel`) so a failure names the leak.
 pub const CONTENT_SENTINEL: &str = "STELLA-SENTINEL-CONTENT";
 
-/// A local filesystem path — the literal thing invariant #3 calls out first.
+/// A local filesystem path — the literal thing AGENTS.md #3 calls out first.
 pub const PATH_SENTINEL: &str = "/stella-sentinel-path/must-never-egress";
 
 /// The local installation identity (`~/.stella/installation-id`). Must be a
@@ -232,7 +232,7 @@ pub fn suspicious_substring(key: &str) -> Option<&'static str> {
 
 /// One encoder's serialized output, in the two shapes the harness inspects.
 ///
-/// Deliberately format-agnostic: `bytes` is substring-searched for sentinels
+/// Format-agnostic: `bytes` is substring-searched for sentinels
 /// (works for JSON, protobuf, or anything else), and `keys` is the flattened
 /// name set compared against the allowlist. The OTLP encoder (#427,
 /// `OtelDrainGuard`) does exactly this — OTLP/HTTP JSON puts attribute names
@@ -341,7 +341,7 @@ impl std::fmt::Display for Violation {
             } => write!(
                 f,
                 "[{encoder}] CONTENT LEAK — a source field holding {label} reached the wire \
-                 (near: {excerpt}). AGENTS.md invariant #3 says prompts, paths, tool \
+                 (near: {excerpt}). AGENTS.md #3 says prompts, paths, tool \
                  payloads/results, reasoning, errors, git state, memories, rules, and local \
                  identifiers are never exportable. This is a privacy incident, not a test \
                  failure: remove the field from the encoding — do not widen the allowlist"
@@ -680,7 +680,7 @@ const OTEL_DRAIN_KEYS: &[&str] = &[
 ];
 
 /// The enterprise operational spool encoder: the *other* egress path in this
-/// crate, under the same invariant. It is the harness's strongest member —
+/// crate, under the same rule. It is the harness's strongest member —
 /// its source row (`ExecutionRollupRow`) genuinely carries a prompt preview
 /// and a filesystem path, so the sentinels prove real suppression rather than
 /// the absence of a field.
@@ -822,7 +822,7 @@ mod tests {
              This gate is deliberate (#466). The hub is the only table a cloud drain reads, \
              so every column here is a candidate for egress. Adding one means editing \
              HUB_TELEMETRY_COLUMNS in the SAME change — which is the point: a human has to \
-             look at the new name and answer \"is this content?\". AGENTS.md invariant #3: \
+             look at the new name and answer \"is this content?\". AGENTS.md #3: \
              prompts, paths, tool payloads/results, reasoning, errors, git state, memories, \
              rules, and local identifiers are never exportable."
         );
@@ -938,7 +938,7 @@ mod tests {
 
     // -- the harness itself bites -------------------------------------------
 
-    /// A deliberately leaky encoder: blanket-serializes the poisoned hub row.
+    /// A leaky encoder: blanket-serializes the poisoned hub row.
     /// This is the shape #427's OTLP encoder would take if someone reached for
     /// `derive(Serialize)` over the internal struct.
     struct LeakyEncoder;

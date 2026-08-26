@@ -69,7 +69,7 @@ impl WorkspaceIgnore {
     /// - `root` hosts the repository (`root/.git`) — the ordinary case.
     /// - `root` sits inside a repository's working tree, which owns it. See
     ///   `Self::from_the_owning_repository` for the two conditions and for
-    ///   what this deliberately does not fix.
+    ///   what this does not fix.
     /// - `root` is no repository but carries its own `root/.gitignore` — an
     ///   extracted tarball, a bench container's `/app`. Answered through a
     ///   temporary empty git dir with `root` as the work tree, which is what

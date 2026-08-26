@@ -43,7 +43,7 @@ pub enum EpisodeOutcome {
     Partial,
     /// The episode ran to completion and **nothing proved it** (#2569).
     ///
-    /// Deliberately not [`EpisodeOutcome::Success`]: episodes are recalled into
+    /// Not [`EpisodeOutcome::Success`]: episodes are recalled into
     /// later sessions as grounding, and labelling an unproven run a success
     /// hands a future turn a worked example that was never checked. Deliberately
     /// not [`EpisodeOutcome::Failure`] either — nothing found the work wrong,
@@ -379,7 +379,7 @@ impl MemoryInput {
 
     /// This revision's own identity: kind + content.
     ///
-    /// Still content-derived, and deliberately so. It is now the identity of a
+    /// Still content-derived, and so. It is now the identity of a
     /// *revision* rather than of the memory, which is exactly what a
     /// content hash is good for: re-writing identical text is the same revision
     /// and upserts, while changed text is a new one.
@@ -777,7 +777,7 @@ impl ContextStore {
 
     /// Every memory→file anchor still believed and still holding in the world.
     ///
-    /// This is deliberately a *reader*, not a scan. The store knows which
+    /// This is a *reader*, not a scan. The store knows which
     /// anchors are open; it does not know which files exist, and it must not
     /// learn — a workspace walk in here would put filesystem policy behind the
     /// database's back and make the store untestable without a real tree. The

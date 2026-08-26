@@ -9,7 +9,7 @@
 //! * **Z.ai** takes it as a depth control *alongside* GLM's `thinking` on/off
 //!   object, so the two fields divide the job rather than duplicate it.
 //!
-//! OpenRouter is deliberately absent: it carries both on/off and depth in a
+//! OpenRouter is absent: it carries both on/off and depth in a
 //! structured `reasoning` object instead, which lives with the request body in
 //! the parent module.
 //!
@@ -22,7 +22,7 @@ use stella_protocol::ReasoningEffort;
 /// against xAI docs (2026-07): the ORIGINAL `grok-4` (and its dated snapshots,
 /// `grok-4-<date>`) reasons but rejects the param with a hard 400 ("does not
 /// support parameter reasoning_effort") — while grok-3-mini, the grok-4 point
-/// releases (`grok-4.1`/`.3`/`.5`), and the `grok-4-fast*` variants all accept
+/// releases (`grok-4.1`/`.3`/`.5`), and the `grok-4-fast*` cases all accept
 /// it. Sending it to the original grok-4 (the currently-seeded xai default,
 /// deprecated and retiring 2026-08-15) would 400 every reasoning turn, so it is
 /// gated out here — grok-4 keeps the pre-wiring behavior (reasons at its own
@@ -34,7 +34,7 @@ pub(super) fn xai_supports_reasoning_effort(model: &str) -> bool {
         return false;
     }
     // A dated snapshot of the original (`grok-4-0709`) is digits after the
-    // `grok-4-` stem; named variants (`grok-4-fast-reasoning`) are not, and the
+    // `grok-4-` stem; named cases (`grok-4-fast-reasoning`) are not, and the
     // point releases (`grok-4.5`) don't match the `grok-4-` prefix at all.
     if let Some(rest) = model.strip_prefix("grok-4-") {
         let dated_snapshot_of_the_original =
@@ -47,7 +47,7 @@ pub(super) fn xai_supports_reasoning_effort(model: &str) -> bool {
 /// Map the engine's one `ReasoningEffort` enum to xAI's chat-completions
 /// `reasoning_effort`, which documents `low`/`medium`/`high`. Same collapse
 /// posture as `openai.rs::map_reasoning_effort`: never drop the hint, never
-/// panic on a variant Grok doesn't model — the finer `xhigh`/`max` tiers are
+/// panic on a case Grok doesn't model — the finer `xhigh`/`max` tiers are
 /// model-dependent on xAI, so they collapse to the universally-safe `high`.
 pub(crate) fn map_xai_effort(effort: ReasoningEffort) -> &'static str {
     match effort {
@@ -81,7 +81,7 @@ pub(super) fn xai_reasoning_effort(
 /// Map the engine's `ReasoningEffort` to Z.ai's chat-completions
 /// `reasoning_effort`. GLM accepts `minimal`/`low`/`medium`/`high`.
 ///
-/// **`minimal` is deliberately unreachable from an effort tier.** Measured live
+/// **`minimal` is unreachable from an effort tier.** Measured live
 /// against `glm-5.2` on the coding-plan endpoint (2026-08-04) it returns
 /// `reasoning_tokens: 0` — it is an OFF switch wearing a tier's name, not a
 /// cheap-but-still-thinking rung. Mapping `Low` there would silently stop a
@@ -110,7 +110,7 @@ pub(crate) fn map_zai_effort(effort: ReasoningEffort) -> &'static str {
 /// * a bare `Some(true)` with no effort stays absent — unlike xAI, `thinking`
 ///   already turned reasoning on, so inventing `medium` here would *change*
 ///   what every existing z.ai caller sends, silently re-pinning models that
-///   were deliberately left at their own default depth.
+///   were left at their own default depth.
 ///
 /// Only a pinned effort puts the field on the wire. That is precisely the case
 /// that was being dropped: before this, `effort` was accepted, hashed into the

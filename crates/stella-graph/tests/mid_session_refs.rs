@@ -45,7 +45,7 @@ fn repo() -> tempfile::TempDir {
 /// because the reconcile asked git what the range changed.
 ///
 /// The deletion is the sharp end. A working-tree event for the removed file
-/// is deliberately never injected — exactly the case where the OS watcher
+/// is never injected — exactly the case where the OS watcher
 /// misses a removal during churn — so the row can only disappear if the
 /// commit range was consulted.
 #[tokio::test]

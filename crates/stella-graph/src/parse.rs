@@ -1092,7 +1092,7 @@ class Order(Base):
 
     #[test]
     fn sqlalchemy_explicit_tablename_overrides_class_name_convention() {
-        // `__tablename__` deliberately does not match the naive
+        // `__tablename__` does not match the naive
         // CamelCase->snake_case->pluralize conversion of the class name, so
         // this only passes if the literal value is read rather than derived.
         let src = "\

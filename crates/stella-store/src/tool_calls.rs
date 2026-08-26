@@ -516,7 +516,7 @@ struct FoldedCall {
 /// Fold an execution's `(seq, ts, payload)` tool events into its calls, in
 /// announcement order.
 ///
-/// Pure, and deliberately the same rule as the live path
+/// Pure, and the same rule as the live path
 /// ([`project_tool_start`] / [`project_tool_result`]) rather than a second
 /// reading of it: a start is identified by its own `seq`, and a result settles
 /// the oldest call bearing its `call_id` that has not settled yet. The two
@@ -793,7 +793,7 @@ impl Store {
     ///    left `running` forever would keep counting as in-flight on every
     ///    future dashboard load.
     ///
-    /// What it deliberately does **not** do is stamp an outcome on the
+    /// What it does **not** do is stamp an outcome on the
     /// execution. This runs at store open, and a second session opening the
     /// same workspace must not declare a *live* turn dead — that needs a
     /// proof of death, which is

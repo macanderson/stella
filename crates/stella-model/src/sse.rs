@@ -93,7 +93,7 @@ impl Utf8Decoder {
 /// part on Gemini's `alt=sse` runs about 2 MB).
 const MAX_BUFFERED_EVENT_BYTES: usize = 8 * 1024 * 1024;
 
-/// A terminal decoding failure. Both variants are fatal for the stream: more
+/// A terminal decoding failure. Both cases are fatal for the stream: more
 /// bytes cannot repair either one.
 ///
 /// Every adapter maps this onto `ProviderError::Malformed`, which is

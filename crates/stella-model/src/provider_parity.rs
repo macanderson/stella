@@ -51,7 +51,7 @@
 //! every axis here in the same PR, and a `Controllable`/`OptIn`/`Implicit`
 //! row must name a witness test proving the posture on the wire — the opt-in
 //! marker is sent, the hit telemetry is parsed into `CompletionUsage`, or the
-//! reasoning control reaches the request body. The no-control variants
+//! reasoning control reaches the request body. The no-control cases
 //! (`NotApplicable`, `Unsupported`, `FixedOn`, `FixedOff`) are allowed only
 //! with a note a reviewer can check. The same pattern applies to any future
 //! per-provider feature divergence (attachment dialects, tool schemas): when
@@ -319,7 +319,7 @@ pub enum ReasoningPosture {
     ///
     /// [`FixedOn`]: ReasoningPosture::FixedOn
     FixedOff { note: &'static str },
-    /// The shared adapter deliberately drops `effort`/`reasoning` for this id:
+    /// The shared adapter drops `effort`/`reasoning` for this id:
     /// there is no portable Chat Completions reasoning field and an unknown
     /// key risks a hard 400. Honest degradation, not a silent one — a pinned
     /// effort against an `Unsupported` provider surfaces a one-line transcript
@@ -704,7 +704,7 @@ pub enum StreamFallbackPosture {
     /// The adapter is already unary — there is no stream to fall back from.
     ///
     /// Carries a witness like [`Self::UnaryFallback`], and for the reason that
-    /// variant does: "there is no stream to fall back from" is only a safe row
+    /// case does: "there is no stream to fall back from" is only a safe row
     /// while the single unary path classifies its own read-bound expiry as
     /// `Terminal` rather than retryable `Transport` (#547). Every streaming
     /// dialect proves that about its fallback leg with a
@@ -942,7 +942,7 @@ mod tests {
 
     /// The reasoning-axis sibling: every `Controllable` row must name a test
     /// that exists in the adapter sources, proving the reasoning control
-    /// reaches the wire. The no-control variants carry a note, not a witness.
+    /// reaches the wire. The no-control cases carry a note, not a witness.
     #[test]
     fn every_reasoning_witness_test_exists_in_the_adapter_sources() {
         let sources = adapter_sources();
@@ -1022,7 +1022,7 @@ mod tests {
     }
 
     /// The axes must cover the same providers: a provider declared on one
-    /// and missing from the other is the silent gap invariant 8 exists to
+    /// and missing from the other is the silent gap AGENTS.md #8 exists to
     /// prevent, and checking it here means neither table can drift alone.
     #[test]
     fn the_output_budget_axis_covers_every_provider_the_overflow_axis_does() {

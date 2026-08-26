@@ -35,7 +35,7 @@ use crate::Result;
 /// Every `'pipeline'` row becomes `kind='run', pipeline_variant='classic'`,
 /// and every `'deck-pipeline'` row becomes `kind='deck',
 /// pipeline_variant='classic'`. `'classic'` is the name the staged pipeline
-/// carries as a wrapper variant, and it is the only wrapper those rows could
+/// carries as a wrapper id, and it is the only wrapper those rows could
 /// have run under — there was no second one.
 ///
 /// The `WHERE` clauses name the exact legacy values rather than anything
@@ -131,7 +131,7 @@ mod tests {
     }
 
     /// A deck turn that ran a wrapper and one that did not now record the
-    /// SAME door and differ only in the variant — which is the whole point:
+    /// SAME door and differ only in the pipeline id — which is the whole point:
     /// before this, `GROUP BY kind` split one door into two.
     #[test]
     fn a_wrapped_and_an_unwrapped_deck_turn_share_one_door() {

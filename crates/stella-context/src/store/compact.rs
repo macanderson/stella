@@ -48,7 +48,7 @@
 //!    already inert; but re-embedding is real compute, so reclaiming them is
 //!    never the default. See [`ContextCompactPolicy::stale_fingerprints`].
 //!
-//! # The three classes deliberately NOT reclaimed
+//! # The three classes NOT reclaimed
 //!
 //! Named exclusions, in the manner of `stella_store::DEPENDENT_TABLES`'
 //! `reflections` and export-ledger carve-outs: an omission that is not written
@@ -68,7 +68,7 @@
 //!   not be.
 //! - **Superseded `node` rows.** These look like the obvious next win and are
 //!   not yet reclaimable. `stella memory restore` resolves its target *through*
-//!   the surviving row (`restore_node` deliberately queries without a liveness
+//!   the surviving row (`restore_node` queries without a liveness
 //!   filter, and `node_exists_any_state` exists only to see it), so dropping the
 //!   row turns a reversible forget into a permanent one. Reclaiming them
 //!   requires re-routing restore through the canonical tombstone in `store.db`,
@@ -91,7 +91,7 @@
 //!
 //! What it buys: `embedding` count minus live-node count is no longer readable
 //! as "the index is broken", because the watermark says how much was reclaimed
-//! and when. What it deliberately does *not* do is gate anything. Nothing
+//! and when. What it does *not* do is gate anything. Nothing
 //! consults it before deleting — unlike the export ledger's floor, a re-run is
 //! harmless here, because the second pass simply finds nothing.
 //!
@@ -139,7 +139,7 @@ const LIVE_MEMORY_HASHES: &str = "temp.context_compact_live_memory_hashes";
 /// The live-`memory` clause is belt-and-braces today: every live revision is
 /// mirrored to a node carrying the same content, so the first clause already
 /// covers it. It is stated anyway so the predicate means what it says
-/// independently of the mirror invariant — if mirroring ever changes, this must
+/// independently of the mirror rule — if mirroring ever changes, this must
 /// fail closed rather than start deleting live memories' vectors.
 const DELETE_ORPHANED_EMBEDDINGS: &str = "\
 DELETE FROM embedding
@@ -247,7 +247,7 @@ pub struct ContextCompactReport {
     /// vector — the re-embedding bill if this workspace ever reverts to that
     /// embedder.
     ///
-    /// Deliberately not called "rebuild cost": under the *active* fingerprint it
+    /// Not called "rebuild cost": under the *active* fingerprint it
     /// is zero, because `warm` never sees a stale vector and would have
     /// recomputed these nodes anyway. Reporting it as work this compaction
     /// created would be false. It is a conditional future cost, and it is the

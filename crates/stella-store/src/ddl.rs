@@ -16,7 +16,7 @@
 /// "Owns" means *versioned by `PRAGMA user_version`*, not "present in the
 /// file". `store.db` also carries the optional `enterprise_export_*` tables,
 /// which converge by column probing outside the migration chain
-/// ([`crate::enterprise_telemetry`]) — they are deliberately absent here, since
+/// ([`crate::enterprise_telemetry`]) — they are absent here, since
 /// the fresh-file probe must answer "has the versioned schema ever been
 /// created?" and those tables are created after it runs.
 pub(crate) const TABLES: [&str; 21] = [
@@ -71,7 +71,7 @@ pub(crate) const TABLES: [&str; 21] = [
 /// rather than inferred at read time, because the reader cannot tell "this
 /// build journaled no rewrites" from "this build could not" by looking at the
 /// events. The `DEFAULT 0` is what every row written before v22 backfills to,
-/// and it is deliberately the benign reading: a code this build does not know
+/// and it is the benign reading: a code this build does not know
 /// is treated as the oldest era, so an unfamiliar stamp can only ever
 /// under-alarm, never raise a false one.
 ///

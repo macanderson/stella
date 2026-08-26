@@ -3,7 +3,7 @@
 
 //! Single-flight leases over the expensive passes (#3650).
 //!
-//! # What this protects, and what it deliberately does not
+//! # What this protects, and what it does not
 //!
 //! Six things write `codegraph.db`: the mount reconcile, the mount catch-up
 //! walk, the live watcher's debounced batches, the full `index_all` that every
@@ -22,7 +22,7 @@
 //! - [`Purpose::Embed`] — an embedding pass. This one spends the user's API
 //!   budget, so a duplicate is worse than waste.
 //!
-//! **Scoped passes are deliberately unguarded.** The watcher's `apply_changes`
+//! **Scoped passes are unguarded.** The watcher's `apply_changes`
 //! batches and the reconcile's committed change set are bounded, cheap, and —
 //! this is the part that matters — *not covered by whatever else holds the
 //! lease*. A concurrent scoped pass indexes different files. Skipping one

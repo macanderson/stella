@@ -207,7 +207,7 @@ fn checkpoint_for_move(db: &std::path::Path) -> Checkpoint {
     // Don't open *through* a symlink — it could point anywhere. Renaming
     // the link itself is still safe, so this is `Movable`, not a failure.
     //
-    // Deliberately checked here rather than with `SQLITE_OPEN_NOFOLLOW`:
+    // Checked here rather than with `SQLITE_OPEN_NOFOLLOW`:
     // that flag also rejects a symlinked *ancestor*, which is ordinary
     // (`/var` → `/private/var` on macOS), and would defer every family
     // forever for anyone whose home sits behind a link.

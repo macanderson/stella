@@ -14,9 +14,9 @@ use std::path::PathBuf;
 
 /// Anything that can go wrong opening, indexing, or querying the code graph.
 ///
-/// Deliberately narrow: per-file I/O and parse faults are skipped-with-record
+/// Narrow: per-file I/O and parse faults are skipped-with-record
 /// inside the indexer (see the module doc), so there is no per-file I/O
-/// variant here — the only filesystem fault that aborts anything is the
+/// case here — the only filesystem fault that aborts anything is the
 /// root canonicalization ([`GraphError::Root`]).
 #[derive(Debug, thiserror::Error)]
 pub enum GraphError {

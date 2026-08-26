@@ -19,7 +19,7 @@ use wiremock::MockServer;
 /// benchmark arm pinned to `medium` actually ran at GLM's own deeper default
 /// and spent ~2x the tokens of an OpenRouter arm configured identically.
 ///
-/// The byte-stability half of the old contract is deliberately kept: a caller
+/// The byte-stability half of the old contract is kept: a caller
 /// who pinned no effort still sends no field, so this cannot silently re-pin
 /// anyone who was relying on the model's own default depth.
 #[tokio::test]

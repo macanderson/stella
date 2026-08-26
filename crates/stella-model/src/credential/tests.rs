@@ -113,7 +113,7 @@ fn removing_reports_true_for_a_provider_that_only_had_fields() {
 #[test]
 fn bedrock_prefers_host_resolved_values_over_the_environment() {
     // `resolve_with` is what lets a sealed process reach Bedrock at all:
-    // the AWS variables are deliberately absent there, so the aux set has
+    // the AWS variables are absent there, so the aux set has
     // to be able to answer on its own.
     let mut aux = AuxCredentials::new();
     aux.insert("AWS_SECRET_ACCESS_KEY", "secret-from-the-host-chain");

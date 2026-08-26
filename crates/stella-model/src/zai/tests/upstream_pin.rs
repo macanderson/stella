@@ -71,7 +71,7 @@ async fn a_pinned_gateway_sends_its_upstream_order_with_fallbacks_refused() {
 /// server speaks `provider`, so an unconditional field risks a hard 400 on
 /// endpoints the user never opted into experimenting with; and the request
 /// body is the prompt-cache key, so a field appearing for everyone would be a
-/// silent cost regression (invariant 7).
+/// silent cost regression (AGENTS.md #7).
 #[tokio::test]
 async fn an_unpinned_gateway_sends_no_provider_field() {
     let server = MockServer::start().await;

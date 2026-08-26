@@ -97,7 +97,7 @@ fn cache_points_are_gated_to_supporting_model_families() {
     assert!(supports_cache_points(
         "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
     ));
-    // Opaque application-inference-profile ARNs stay OFF, deliberately: the
+    // Opaque application-inference-profile ARNs stay OFF: the
     // family is unrecoverable from the string, and a wrongly-sent cachePoint
     // is a ValidationException on every request — the worse failure.
     assert!(!supports_cache_points(

@@ -660,7 +660,7 @@ async fn warm_now_embeds_only_content_missing_under_the_active_fingerprint() {
 // `edges_as_of` (the public `facts_as_of`) and `neighbors` (the only
 // consumer of `ContextQuery.as_of` inside `recall`). The characterized
 // contract, which any future bitemporal API must preserve or migrate
-// deliberately:
+//:
 //
 //   `as_of` filters on TRANSACTION / BELIEF time ONLY — the half-open
 //   interval `[recorded_at, superseded_at)`:
@@ -864,7 +864,7 @@ pub(crate) fn open_legacy(path: &std::path::Path, version: i64) -> Connection {
 /// column added after v1 (`recall_tier`, v9) made three "does a v1 db migrate"
 /// tests fail on the fixture rather than on the migration. A legacy row was
 /// never written by a current binary, so writing one that way was the mistake.
-/// Kept deliberately literal — this statement should not follow the schema.
+/// Kept literal — this statement should not follow the schema.
 pub(crate) fn insert_legacy_node(
     conn: &Connection,
     kind: NodeKind,

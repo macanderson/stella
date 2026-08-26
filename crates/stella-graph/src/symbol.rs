@@ -23,7 +23,7 @@ pub enum SymbolKind {
     /// One heading's section of a markdown document, produced by this crate's
     /// private `markdown` module.
     ///
-    /// Not a declaration, and deliberately in this enum anyway: a section has
+    /// Not a declaration, and in this enum anyway: a section has
     /// a name, a kind and a line span, which is the entire contract the index,
     /// the vector pass and the citation layer ask of a symbol. A parallel
     /// "document chunk" type would duplicate all three tables to express the
@@ -81,7 +81,7 @@ impl SymbolKind {
             "schema_enum" => SymbolKind::SchemaEnum,
             "view" => SymbolKind::View,
             // Markdown sections have no tree-sitter capture to arrive from,
-            // so `from_capture` above deliberately does not know this tag —
+            // so `from_capture` above does not know this tag —
             // only the store round-trip does.
             "section" => SymbolKind::Section,
             // "function" and any unknown/forward-compat tag read back as a

@@ -31,7 +31,7 @@ use crate::store::{NodeRow, blob_to_vector, map_node_row};
 /// Written branch-free, as one string with one repeated parameter, on purpose.
 /// The defect this replaces was a cutoff that reached `neighbors` and nothing
 /// else, so a point-in-time recall returned today's node content wearing
-/// yesterday's edges. Two SQL variants per reader is how that happens: each
+/// yesterday's edges. Two SQL forms per reader is how that happens: each
 /// reader becomes one more place the cutoff can be forgotten. One predicate,
 /// shared textually, cannot be honored by four readers out of five
 /// (#712 deliverable 7).

@@ -25,7 +25,7 @@ pub const WORKSPACE_PRIVATE_DIR: &str = "private";
 /// Terminal-Bench verifier failed a solved task because the agent's
 /// `git add -A && git commit` had captured `.stella/.gitignore` into the
 /// graded repository (run `fivetools2`, `sanitize-git-repo`,
-/// `test_no_other_files_changed`). Repositories that deliberately track the
+/// `test_no_other_files_changed`). Repositories that track the
 /// file (this one does) are unaffected: ignore rules never apply to paths
 /// already in the index.
 pub(crate) const WORKSPACE_GENERATED_IGNORE: &[u8] =
@@ -731,7 +731,7 @@ pub fn read_sensitive_file_to_string(path: &Path) -> Result<String> {
 /// [`crate::durable::write_atomic`]: replacing a symlink or a directory that
 /// turned up where private state belongs is a *security* refusal with its own
 /// wording, not a durability failure. There is no longer a "skip the fsync"
-/// variant — every caller passed `sync = true`, and the contract (#617) is
+/// option — every caller passed `sync = true`, and the contract (#617) is
 /// that a durable write is fsynced.
 pub(crate) fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Ok(metadata) = std::fs::symlink_metadata(path)

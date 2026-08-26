@@ -96,10 +96,10 @@ pub struct StorageManifest {
 
 /// Why a storage manifest could not be read.
 ///
-/// One variant today, and deliberately an enum rather than a struct: "absent"
+/// One case today, and an enum rather than a struct: "absent"
 /// is already modelled as `Ok(None)` by [`StorageManifest::load`], so anything
 /// that reaches this type is a file that exists and does not parse. A future
-/// second failure (an unreadable-but-present file, say) gets a variant here
+/// second failure (an unreadable-but-present file, say) gets a case here
 /// instead of being folded into the parse message.
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {

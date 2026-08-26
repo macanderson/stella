@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A monotonic-enough wall clock producing RFC-3339 UTC timestamps
-/// (`YYYY-MM-DDThh:mm:ssZ`). The string form is deliberately fixed-width and
+/// (`YYYY-MM-DDThh:mm:ssZ`). The string form is fixed-width and
 /// zero-padded so `recorded_at <= ?` string comparison equals time ordering.
 pub trait Clock: Send + Sync {
     /// Seconds since the Unix epoch. The only primitive an implementation

@@ -164,7 +164,7 @@ async fn one_hour_ttl_sends_the_ttl_field_and_the_beta_header() {
 
 /// **Witness (#1839).** The default window sends today's exact request: no
 /// `ttl` field anywhere and no `anthropic-beta` header. This is the
-/// byte-stability half of the contract (invariant 7) — a user who never
+/// byte-stability half of the contract (AGENTS.md #7) — a user who never
 /// touched the knob must keep their existing cached prefixes and request
 /// shape.
 #[tokio::test]

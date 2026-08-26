@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! [`StoreError`] — everything this crate can fail with, as named variants.
+//! [`StoreError`] — everything this crate can fail with, as named cases.
 //!
 //! Its own module rather than more lines in the already-oversized `lib.rs`,
 //! per the crate's working rule: new code goes in a new module instead of
@@ -9,13 +9,13 @@
 //!
 //! The type used to be `pub struct StoreError(pub String)`, which meant a
 //! caller could only tell a corrupt database from a stale binary from an
-//! ordinary `SQLITE_BUSY` by reading prose (#3735) — a breach of invariant #5
+//! ordinary `SQLITE_BUSY` by reading prose (#3735) — a breach of AGENTS.md #5
 //! ("typed errors, no panics"), and one the `typed-errors` gate cannot see
 //! because it only flags the literal `Result<_, String>` shape.
 //!
-//! # What earns a variant
+//! # What earns a case
 //!
-//! A failure gets its own variant when a caller can *act* differently on it —
+//! A failure gets its own case when a caller can *act* differently on it —
 //! the four the crate already distinguished internally do:
 //! [`StoreError::NegativeSchemaVersion`] and [`StoreError::SchemaTooNew`] tell
 //! "move the file aside" from "upgrade your binary", and
@@ -26,7 +26,7 @@
 //! [`std::error::Error::source`], so a caller can branch on
 //! [`std::io::ErrorKind`] rather than on the word "permission".
 //!
-//! Everything else is a one-off invariant check — a count that overflowed a
+//! Everything else is a one-off rule check — a count that overflowed a
 //! column, a spool row that failed validation — where no caller has a second
 //! branch to take. Those stay in [`StoreError::Other`], which is the deliberate
 //! narrow catch-all, not a place to put a failure someone will later want to
@@ -38,7 +38,7 @@
 /// every message with `store: `, which every caller then said again — the CLI
 /// printed `cannot open store: store: …` and the runtime
 /// `local store unavailable (store: …)`. Naming the subject is the caller's
-/// job; the four actionable variants carry their own full sentence, because
+/// job; the four actionable cases carry their own full sentence, because
 /// that sentence is the remedy the user has to follow.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -61,7 +61,7 @@ pub enum StoreError {
 
     /// The file was written by a newer build than this one. A downgrade guard,
     /// not a formality: older code writing into a newer shape would silently
-    /// violate whatever invariants the newer schema added.
+    /// violate whatever rules the newer schema added.
     #[error(
         "store.db is at schema version {file_version}, but this build only knows \
          {build_version} — your stella binary is out of date, not the workspace. Upgrade \
@@ -122,12 +122,12 @@ pub enum StoreError {
         source: serde_json::Error,
     },
 
-    /// A one-off invariant check with no second branch for a caller to take —
+    /// A one-off rule check with no second branch for a caller to take —
     /// a value that overflowed its column, a spool row that failed validation,
     /// a table name this build does not know.
     ///
-    /// Deliberately narrow: a failure a caller will want to *match* on belongs
-    /// in a variant of its own, not here.
+    /// Narrow: a failure a caller will want to *match* on belongs
+    /// in a case of its own, not here.
     #[error("{0}")]
     Other(String),
 }

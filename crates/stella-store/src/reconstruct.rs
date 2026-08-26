@@ -156,7 +156,7 @@ impl Reconstruction {
     /// Whether every block resolved and every journal-resolved digest matched —
     /// the step is a faithful, verified reconstruction of what the model saw.
     ///
-    /// Deliberately era-blind: a mismatch is a mismatch, and a reconstruction
+    /// Era-blind: a mismatch is a mismatch, and a reconstruction
     /// with one is not something to vouch for whoever wrote it. The era
     /// changes how loudly it is *reported*, never whether it happened.
     pub fn is_verified(&self) -> bool {

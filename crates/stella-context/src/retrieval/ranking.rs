@@ -218,7 +218,7 @@ pub(crate) fn mmr_select(items: &[MmrItem<'_>], lambda: f32) -> Vec<usize> {
 }
 
 /// Pack frames (already in priority order) into the token and count budgets,
-/// returning `(kept, dropped)`. **Invariants (property-tested):** kept token
+/// returning `(kept, dropped)`. **Rules (property-tested):** kept token
 /// sum ≤ `max_tokens`, `kept.len()` ≤ `max_frames`, and `kept + dropped` is a
 /// partition of the input (nothing vanishes silently — `L-C5`). A frame that
 /// individually exceeds the remaining budget is dropped, but packing continues

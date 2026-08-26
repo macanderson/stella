@@ -1689,7 +1689,7 @@ async fn xai_identity_maps_effort_to_reasoning_effort() {
 /// out for grok-4 while still sending it for the models that accept it —
 /// grok-4 keeps the pre-wiring behavior (reasons at its own depth, effort
 /// dropped) instead of erroring. A dated snapshot (`grok-4-0709`) is exempt the
-/// same way; the point releases and fast variants are not.
+/// same way; the point releases and fast cases are not.
 #[tokio::test]
 async fn xai_original_grok4_omits_reasoning_effort_it_would_reject() {
     let server = MockServer::start().await;

@@ -9,10 +9,10 @@
 //! It was not, and the omission was invisible: `code_graph_files` held zero
 //! rows whose path ended `.md`, so 165 markdown files in this workspace —
 //! `AGENTS.md`, `CLAUDE.md`, every crate README, all of `docs/spec/` — could
-//! not be reached by any search the agent had. The invariants that govern
+//! not be reached by any search the agent had. The rules that govern
 //! this repository were unsearchable *by the agent that has to obey them*.
 //!
-//! A question like "why must a new `AgentEvent` variant declare what consumes
+//! A question like "why must a new `AgentEvent` case declare what consumes
 //! it" has no answer in the code at all. It is answered by one section of one
 //! markdown file, and until that section is a row in the index the honest
 //! answer to the query is silence.
@@ -30,7 +30,7 @@
 //! # Why a line scan and not a tree-sitter grammar
 //!
 //! Every other language in this crate arrives through a native grammar
-//! ([`crate::lang`]), and markdown deliberately does not. The index needs two
+//! ([`crate::lang`]), and markdown does not. The index needs two
 //! facts from a markdown file — where each heading starts (ATX `#` runs and
 //! setext underlines), and which files its links name — and both are line
 //! scans with a fence flag. A grammar would add a build dependency and a
@@ -50,7 +50,7 @@
 //! body would embed a title with no content to disambiguate it. Sibling-
 //! scoped sections give every heading exactly the prose written under it.
 //!
-//! Content *before* the first heading is deliberately not a section. The
+//! Content *before* the first heading is not a section. The
 //! file-level vector already carries it (`render_file_text` leads with the
 //! head of the file), and inventing a `(preamble)` symbol would put a name in
 //! `code_graph_symbols.name` that names nothing a reader could cite.

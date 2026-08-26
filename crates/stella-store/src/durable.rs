@@ -119,7 +119,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
 ///   to repair, not a preference to respect.
 /// - **A file in the user's own tree** (`stella.storage.toml`, project
 ///   `.stella/settings.json`, the generated `.gitignore`) uses this one. The
-///   user may have chmod'd it deliberately, or it may be group-writable
+///   user may have chmod'd it, or it may be group-writable
 ///   because their repository is; silently resetting it to 0644 on the next
 ///   agent write is exactly the inode-replacement damage #617 ruled against.
 pub fn write_atomic_preserving_mode(path: &Path, bytes: &[u8], fallback: u32) -> Result<()> {
@@ -260,7 +260,7 @@ fn write_temp_then_rename(temp: &Path, path: &Path, bytes: &[u8], _mode: u32) ->
 ///
 /// - **`user_version` > `current`** — the file was written by a newer stella
 ///   than this binary. Fail closed with a message that says so. Opening it
-///   as-is would let old code write into a shape whose invariants it does not
+///   as-is would let old code write into a shape whose rules it does not
 ///   know, which is how a store gets silently downgraded.
 /// - **`user_version` < 0** — the header is not one of ours (or was
 ///   overwritten). Fail closed rather than treat it as version 0 and stamp
@@ -408,7 +408,7 @@ mod tests {
     }
 
     /// A rename swaps the inode, so the user's chosen mode is only preserved
-    /// if the writer deliberately carries it. A group-writable file in a
+    /// if the writer carries it. A group-writable file in a
     /// shared repository must not come back 0644 after an agent write.
     #[cfg(unix)]
     #[test]

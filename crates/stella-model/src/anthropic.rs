@@ -408,7 +408,7 @@ fn map_effort(effort: stella_protocol::ReasoningEffort) -> &'static str {
 /// an hour (writes bill 2x instead of 1.25x) and requires the
 /// [`EXTENDED_CACHE_TTL_BETA`] header on the request. `None` — the default —
 /// omits the field entirely, so a session on the 5-minute window serializes
-/// byte-identically to one built before the knob existed (invariant 7).
+/// byte-identically to one built before the knob existed (AGENTS.md #7).
 #[derive(Serialize, Clone, Copy, Debug)]
 struct AnthropicCacheControl {
     #[serde(rename = "type")]
@@ -468,7 +468,7 @@ type TailPosition = (usize, usize);
 /// keeps a rolling pair for exactly this reason; measured, Stella sat at ~76%
 /// cache-read against its ~93%.
 ///
-/// A remembered POSITION rather than a content digest, deliberately. The worst
+/// A remembered POSITION rather than a content digest. The worst
 /// case if history shifted under it — compaction rewriting or evicting a
 /// message — is that the breakpoint anchors somewhere less useful, which costs
 /// a cache write and nothing else. A `cache_control` marker is an anchor, not
@@ -813,7 +813,7 @@ struct AnthropicUsage {
     cache_read_input_tokens: u64,
     /// Tokens WRITTEN to the prompt cache by this call — also reported
     /// separately from `input_tokens`. Surfaced as the normalized
-    /// `cache_write_tokens` (telemetry, `stella stats`) but deliberately NOT
+    /// `cache_write_tokens` (telemetry, `stella stats`) but NOT
     /// folded into `input_tokens`: the catalog prices writes on their own
     /// line (`cache_write_usd_per_mtok`, 1.25x input on the Anthropic rows),
     /// so folding them in would misprice them as plain input (see

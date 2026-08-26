@@ -5,7 +5,7 @@ execution, the COMPLETE `AgentEvent` stream (reasoning deltas included), per-cal
 telemetry, context receipts, task boards, and cooperative file claims — all on
 the user's disk, no server and no account.
 
-The crate's hard boundary is **facts, not policy**. It deliberately does not
+The crate's hard boundary is **facts, not policy**. It does not
 depend on `stella-model`: no pricing table, no cache TTL, no diagnosis lives here
 — [`cache_gaps.rs`](src/cache_gaps.rs) and [`cache_trend.rs`](src/cache_trend.rs)
 surface the raw rows and the caller applies the policy. It does not parse the
@@ -42,7 +42,7 @@ now enforces (#3388) is the part to keep straight when adding a column:
 
 Before the split, `kind` carried both facts and a deck turn wrote a different
 *door* depending on whether a wrapper ran — one question answered by two columns
-that disagree, which silently double-counts. A variant id is written only when the
+that disagree, which silently double-counts. A pipeline id is written only when the
 manifest that names it actually ran; a default path writes the default's id, never
 a blank. And since verification is on its way out of the workspace into a plugin
 (#3246), this column is how anyone will answer "did the wrapper help?" once
@@ -71,13 +71,13 @@ natural reader is one of those crates is a table in the wrong crate.
 One surface carries extra review weight: anything that changes what telemetry
 can leave the machine. The hub-column allowlist and encoder sentinel harness in
 [`src/content_free.rs`](src/content_free.rs) are the enforcement of AGENTS.md
-invariant #3, so adding a hub column, a drain encoder, or a key to an existing
+AGENTS.md #3, so adding a hub column, a drain encoder, or a key to an existing
 encoder is a privacy decision, not a schema chore — plan for the allowlist
 edit in the same PR and expect review to interrogate it.
 
 Do not reach for a new crate to route around these rules. A new crate is
 justified only when functionality (a) sits behind a port/trait and would
-otherwise drag new heavy dependencies into a crate that is deliberately light,
+otherwise drag new heavy dependencies into a crate that is light,
 (b) needs a dependency direction the current graph forbids — which is exactly
 why [`stella-home`](../stella-home) exists: the observatory must share path
 resolution with this crate without linking it — or (c) is a genuinely separate
@@ -117,7 +117,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The `Store` handle, `open`/`in_memory`/`migrate`, the row types, and most of the query surface. Start here. |
-| [`src/error.rs`](src/error.rs) | `StoreError` — every failure this crate returns, as named variants. A caller tells a corrupt file from a stale binary from an ordinary SQLite error by matching, not by reading prose (#3735). Add a variant only when a caller can act differently on it; everything else is `StoreError::Other`. |
+| [`src/error.rs`](src/error.rs) | `StoreError` — every failure this crate returns, as named cases. A caller tells a corrupt file from a stale binary from an ordinary SQLite error by matching, not by reading prose (#3735). Add a case only when a caller can act differently on it; everything else is `StoreError::Other`. |
 | [`src/ddl.rs`](src/ddl.rs) | Every table and index as DDL at the **current** `SCHEMA_VERSION`, plus the `TABLES` allowlist. The one place today's shape is written down. |
 | [`src/migrations.rs`](src/migrations.rs) | The ordered `MIGRATIONS` list, the fresh-file bootstrap, and the transactional runner. Open it to add a version. |
 | [`src/content_free.rs`](src/content_free.rs) | The zero-egress guard: the reviewed hub-column allowlist and the sentinel harness every egress encoder registers with. |
@@ -167,7 +167,7 @@ exist because a §7 rebuild creates the new shape under a scratch name first.
 
 ### `content_free.rs` — the egress allowlist is a privacy review
 
-AGENTS.md invariant #3 says prompts, paths, tool payloads/results, reasoning,
+AGENTS.md #3 says prompts, paths, tool payloads/results, reasoning,
 errors, git state, memories, rules, and local identifiers are never exportable.
 That used to hold *by construction*; nothing prevented a future column or struct
 field from quietly carrying content. This module makes it a red gate, in two
@@ -281,7 +281,7 @@ durability bug; the fsync window is the tail risk that remains.
 - Failures in `harden_workspace_dir` are **not** swallowed: if `.stella/` cannot
   be made 0700, or given a `.gitignore` covering `private/`, `Store::open`
   refuses to open — such a directory is one commit away from publishing a
-  session's transcripts. That ignore is deliberately not `*`; `settings.json`,
+  session's transcripts. That ignore is not `*`; `settings.json`,
   `mcp.toml`, `tools/`, and `skills/` are meant to be committable.
 - `acquire_file_lock` never refreshes `acquired_at`, so the age-based
   `prune_stale_file_locks` sweep eventually sees a long healthy run's own live
@@ -332,7 +332,7 @@ from `NotYetBuilt` to `Guarded`. `every_registered_encoder_is_content_free` and
 ## See also
 
 - [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies"
-  (invariant #3), "The `.stella/` directory", and the glossary of look-alike
+  (AGENTS.md #3), "The `.stella/` directory", and the glossary of look-alike
   identifiers (session vs execution vs run vs task).
 - [`../../docs/spec/session-telemetry-receipts-spec.md`](../../docs/spec/session-telemetry-receipts-spec.md)
   — the spec behind `context_blocks` / `step_manifest` / `step_receipt`.

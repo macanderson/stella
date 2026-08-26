@@ -20,7 +20,7 @@
 //! contract — `callees` reads them within a definition's span, `callers` is a
 //! reverse name lookup labeled best-effort. Callee shapes a pattern does not
 //! name (function-pointer calls through parens, computed callees, macro
-//! invocations) are deliberately skipped rather than guessed at.
+//! invocations) are skipped rather than guessed at.
 //!
 //! Name fields are matched with the `(_)` wildcard rather than a concrete
 //! node type (`identifier` vs `type_identifier` vs `property_identifier`
@@ -278,7 +278,7 @@ pub const C_CALLS: &str = r#"
 ///   them either. What the DoD asks for, a *namespaced free function*, is the
 ///   plain `function_definition` pattern: the namespace is the node above it.
 ///
-/// Free-function prototypes are deliberately absent, matching C: a header's
+/// Free-function prototypes are absent, matching C: a header's
 /// `void f();` yields no symbol, while a class's `void f();` does, because
 /// that member declaration is the C++ API surface a search asks for.
 pub const CPP_SYMBOLS: &str = r#"

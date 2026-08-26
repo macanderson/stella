@@ -5,7 +5,7 @@
 
 use thiserror::Error;
 
-/// A failure inside the context plane — storage, embedding, or an invariant
+/// A failure inside the context plane — storage, embedding, or a rule
 /// the plane refuses to violate (a frame without a citation label, a
 /// cross-fingerprint retrieval).
 #[derive(Debug, Error)]

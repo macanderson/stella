@@ -28,7 +28,7 @@
 //!   batches durable and the remainder simply un-embedded — which is exactly
 //!   the state warming exists to catch up on, and the next mount will.
 //!
-//! What is deliberately NOT here is a `tokio::spawn` from `Drop`. During
+//! What is NOT here is a `tokio::spawn` from `Drop`. During
 //! runtime shutdown — the case a Ctrl-C'd session is in — that spawn silently
 //! does nothing, so it would look like teardown in review while leaking in
 //! production. Setting an `AtomicBool` and calling `JoinHandle::abort` are

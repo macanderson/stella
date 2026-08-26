@@ -8,7 +8,7 @@
 //! over it. The row is written by the session that owns the work journal, at
 //! the moment it marks the turn (`stella-cli`'s `turn_diff` module holds the
 //! computation and the boundary ruling); it is read back by the observatory's
-//! `/api/session-turn-diff` route, which deliberately reads this projection
+//! `/api/session-turn-diff` route, which reads this projection
 //! instead of the bare git repo the marks live in.
 //!
 //! `files` is opaque JSON here on purpose. Its shape (per-file entries

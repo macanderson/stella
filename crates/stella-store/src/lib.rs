@@ -56,7 +56,7 @@
 //! # Concurrency
 //!
 //! One embedded SQLite file (`rusqlite`, bundled — the workspace's "one
-//! storage engine" invariant; every other embedded store in this workspace
+//! storage engine" rule; every other embedded store in this workspace
 //! is SQLite too). WAL journaling is enabled at open, so a read-only caller
 //! (`stella stats`) is never blocked by a live session's writes. SQLite
 //! still serializes writers per file; one `Store` per session process is the
@@ -111,7 +111,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //               the closed operational event schema, its bounded at-least-once
 //               spool, and the per-store export ledger
 //   error       (crate-private module, `StoreError` re-exported) every
-//               failure this crate returns, as named variants
+//               failure this crate returns, as named cases
 //   export      the `/export` telemetry dump and `stella stats`' usage
 //               aggregate, plus the `ExportScope` that decides whether either
 //               covers one session or the whole workspace (#2558)
@@ -197,7 +197,7 @@ pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppress
 pub use foundry::{AdoptedTool, FoundryReuse};
 pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};
 pub use session_stats::{PROMPT_SAMPLE, SessionStats};
-// The sidecar journal's writer is deliberately NOT re-exported at the top
+// The sidecar journal's writer is NOT re-exported at the top
 // level: `SessionJournal` here names the DB read-model reassembled by
 // [`Store::session_events`] (read-only replay), while
 // [`journal::SessionJournal`] is the append-only sidecar writer behind
@@ -294,7 +294,7 @@ pub const PROMOTION_CITATIONS_REQUIRED: i64 = 10;
 
 /// A memory cited untruthful this many times (total, across its history) is
 /// quarantined: excluded from recall entirely until a human reviews it or it
-/// is re-cited as truthful. The threshold is deliberately low (2) because an
+/// is re-cited as truthful. The threshold is low (2) because an
 /// untruthful memory is active harm — it misleads future turns. Every
 /// untruthful citation counts regardless of score, and one fresh truthful
 /// citation does NOT clear quarantine — only `stella memory unquarantine`
@@ -351,7 +351,7 @@ pub struct MemoryCitationStats {
     pub eligible: bool,
     /// Whether this memory is quarantined from recall: at least
     /// [`QUARANTINE_NEGATIVES_THRESHOLD`] of its citations were UNTRUTHFUL.
-    /// Deliberately not driven by [`Self::negatives`], which also counts
+    /// Not driven by [`Self::negatives`], which also counts
     /// truthful-but-low-scoring citations: "this memory is still correct, it
     /// just did not help today" is a promotion signal, not a reason to hide it.
     /// A quarantined memory is excluded from recall entirely — it is active
@@ -486,7 +486,7 @@ pub struct SessionEventRecord {
 
 /// A session's full event journal, reassembled across every execution
 /// stamped with its session id. `skipped` counts rows whose stored JSON no
-/// longer parses as an [`AgentEvent`] (streams persisted before a variant
+/// longer parses as an [`AgentEvent`] (streams persisted before a case
 /// existed) — replay proceeds without them instead of failing the read.
 #[derive(Debug, Clone, Default)]
 pub struct SessionJournal {
@@ -570,7 +570,7 @@ impl UsageStatsRow {
 ///   call site asks one question.
 /// - a `.gitignore` covering the *generated* artifacts (databases, their WAL
 ///   siblings, the reflections mining log, and the whole `private/` subtree) is
-///   ensured. Deliberately NOT `*`: settings.json, mcp.toml, tools/, skills/
+///   ensured. NOT `*`: settings.json, mcp.toml, tools/, skills/
 ///   and memories/ are user-authored and meant to be committable. An ABSENT
 ///   file is written whole; an EXISTING one gets a single `private/` line
 ///   appended when it lacks one, preserving the user's entries and mode, and
@@ -743,7 +743,7 @@ impl Store {
         }
         if version > SCHEMA_VERSION {
             // A downgrade guard, not a formality: older code writing into a
-            // newer shape would silently violate whatever invariants the
+            // newer shape would silently violate whatever rules the
             // newer schema added.
             return Err(StoreError::SchemaTooNew {
                 file_version: version,
@@ -1412,7 +1412,7 @@ impl Store {
     /// ([`Store::set_execution_session`]), ordered by (execution_id, seq) —
     /// execution ids are AUTOINCREMENT, so this is turn order, and seq is
     /// stream order within a turn. A row whose stored payload no longer
-    /// parses as an [`AgentEvent`] (an old stream predating a variant) is
+    /// parses as an [`AgentEvent`] (an old stream predating a case) is
     /// SKIPPED and counted in [`SessionJournal::skipped`] rather than
     /// failing the whole read.
     pub fn session_events(&self, session_id: &str) -> Result<SessionJournal> {

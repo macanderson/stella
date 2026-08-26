@@ -524,7 +524,7 @@ impl ContextStore {
     ///
     /// Derived on every call from the immutable rows, never stored state, so it
     /// cannot drift from the data it describes. It says how many lineages exist
-    /// and how many revisions are live or superseded; it deliberately does not
+    /// and how many revisions are live or superseded; it does not
     /// claim to know which rows a *particular* migration touched, because that
     /// is not recoverable from the result and inventing it would be worse than
     /// leaving it out.

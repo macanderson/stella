@@ -529,7 +529,7 @@ impl CodeGraph {
     /// is I/O against a model, and this crate holds no transport and no key.
     /// A caller pairs this with [`store_file_vectors`] around whatever
     /// [`stella_embed::Embedder`] it resolved, which is what keeps the network
-    /// out of the indexer (invariant 1).
+    /// out of the indexer (AGENTS.md #1).
     ///
     /// [`store_file_vectors`]: CodeGraph::store_file_vectors
     /// [`files`]: vectors::PendingScan::files
@@ -585,7 +585,7 @@ impl CodeGraph {
     /// embedded under `fingerprint`, rendered and hashed ready to embed
     /// (#3089).
     ///
-    /// The embedding itself is deliberately not here, for the reason
+    /// The embedding itself is not here, for the reason
     /// [`files_pending_embedding`] gives: producing a vector is I/O against a
     /// model, and this crate holds no transport and no key.
     ///
@@ -723,7 +723,7 @@ impl CodeGraph {
         // lock, so install and shutdown serialize: a watcher installed
         // concurrently by the mount background task is either cleared here (if
         // it stored first) or dropped by `set_watcher` (if it runs after us).
-        // Invariant: after this returns, no watcher can be (re)installed.
+        // Rule: after this returns, no watcher can be (re)installed.
         {
             let mut watcher = self
                 .inner

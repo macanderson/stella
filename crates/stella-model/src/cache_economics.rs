@@ -50,7 +50,7 @@ const PER_MTOK: f64 = 1_000_000.0;
 ///
 /// The default is the provider default: five minutes, no `ttl` field on the
 /// wire at all, so a session that never touches the knob serializes
-/// byte-identically to one built before it existed (invariant 7). Only the
+/// byte-identically to one built before it existed (AGENTS.md #7). Only the
 /// providers [`provider_honors_cache_ttl`] names actually send the choice;
 /// everywhere else it is inert and the static tables below stand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -469,7 +469,7 @@ pub fn diagnose_cache_with_idle(
 /// bare form remains the default-window reading for callers with no
 /// configuration in hand (historical telemetry, other sessions' rows).
 ///
-/// Local const table, deliberately: the authoritative home is the
+/// Local const table: the authoritative home is the
 /// `provider_parity` matrix's not-yet-added TTL column. Merge this into that
 /// column when it lands — it pairs with [`cache_write_premium_multiplier`].
 #[must_use]
@@ -887,7 +887,7 @@ mod tests {
         // and not the other and every write is silently mis-priced —
         // `cache_savings_usd` keeps returning a number, just the wrong one,
         // and no surface can tell. The pairing now lives on `CacheTtl`
-        // (#1839), so pin both variants against the provider's published
+        // (#1839), so pin both cases against the provider's published
         // rates: 5 minutes at 1.25x input, 1 hour at 2x.
         assert_eq!(CacheTtl::FiveMinutes.secs(), 300);
         assert!((CacheTtl::FiveMinutes.write_premium_multiplier() - 1.25).abs() < 1e-12);
@@ -895,7 +895,7 @@ mod tests {
         assert!((CacheTtl::OneHour.write_premium_multiplier() - 2.0).abs() < 1e-12);
 
         // The static per-provider tables are the DEFAULT-window reading and
-        // must agree with the `FiveMinutes` variant — the catalog's write-rate
+        // must agree with the `FiveMinutes` case — the catalog's write-rate
         // column is seeded from this multiplier, so a drift here mis-prices
         // every write on a session that never touched the knob.
         for provider in ["anthropic", "bedrock", "openrouter"] {

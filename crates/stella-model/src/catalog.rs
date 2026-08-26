@@ -81,7 +81,7 @@ pub enum ToolDialect {
     /// despite the name overlap: item-based `input`/`output` arrays with
     /// `function_call`/`function_call_output` items, not a `messages` array
     /// with an accumulating `tool_calls` delta array. Real OpenAI models
-    /// (the `gpt-5.5` row in `catalog/seed/openai.rs`) get this variant now
+    /// (the `gpt-5.5` row in `catalog/seed/openai.rs`) get this case now
     /// that the real
     /// adapter exists; `OpenaiJson` stays the dialect name for everything
     /// that actually speaks the Chat Completions wire shape.
@@ -300,7 +300,7 @@ impl Catalog {
 
     /// Every row, in install order (seed rows first when `stella-cli`
     /// assembled the runtime catalog). For enumeration — the model picker,
-    /// `stella models list`, the seed's own invariant tests. Turning a
+    /// `stella models list`, the seed's own rule tests. Turning a
     /// user-supplied slug into a usable model still goes through
     /// [`Catalog::resolve`] / [`Catalog::resolve_for`], never a scan here.
     pub fn entries(&self) -> &[CatalogEntry] {
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn every_priced_provider_default_has_nonzero_input_and_output_pricing() {
-        // OpenRouter `auto` is deliberately zero (gateway-priced); every
+        // OpenRouter `auto` is zero (gateway-priced); every
         // other seeded model must carry a real, positive list price so
         // `cost_usd` is never a silent no-op on the real request path.
         let catalog = Catalog::seed();

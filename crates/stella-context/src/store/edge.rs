@@ -116,7 +116,7 @@ static EDGE_SEQ: AtomicU64 = AtomicU64::new(0);
 /// backing for.
 ///
 /// **Audited for the clock port (#2320): this is an identity nonce, not a time
-/// reading, and it deliberately stays off [`crate::Clock`].** The `SystemTime`
+/// reading, and it stays off [`crate::Clock`].** The `SystemTime`
 /// read below never reaches a comparable field — nothing orders, ranges over or
 /// compares `edge.public_id`; the row's *time* is the separate `recorded_at`
 /// column, which callers already pass in as `now` and which the clock port does
@@ -203,7 +203,7 @@ pub(crate) fn close_edge(
 /// simply stopped holding at the moment the file went away. Recording it as a
 /// supersession would erase a true past.
 ///
-/// `superseded_at` is deliberately left alone, so `as_of` — which reads belief
+/// `superseded_at` is left alone, so `as_of` — which reads belief
 /// time only (see `as_of_ignores_world_validity_valid_from_valid_to`) — still
 /// reports the edge as believed. `valid_at` is what hides it from the present.
 ///

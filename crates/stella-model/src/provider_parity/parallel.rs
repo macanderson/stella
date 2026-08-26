@@ -83,10 +83,10 @@
 /// message — the half of this axis that is a fact about a vendor's live API
 /// rather than about code in this tree.
 ///
-/// Deliberately not defaulted to an optimistic value. "Every OpenAI-compatible
+/// Not defaulted to an optimistic value. "Every OpenAI-compatible
 /// server defaults `parallel_tool_calls` to true" is a plausible sentence that
 /// would make eight rows green without a single observation behind them,
-/// which is the shape of claim invariant #8 exists to refuse.
+/// which is the shape of claim AGENTS.md #8 exists to refuse.
 #[derive(Debug)]
 pub enum ParallelAdmission {
     /// Several tool calls per assistant message are admitted with nothing
@@ -102,7 +102,7 @@ pub enum ParallelAdmission {
     /// most one tool call per assistant message.
     ///
     /// No id is classified here today, and the module doc explains why the
-    /// answer for the two settled ids was "nothing to send". The variant
+    /// answer for the two settled ids was "nothing to send". The case
     /// exists so the day one provider *does* need the field, the row can say
     /// so and name the wiremock test asserting it on the request body —
     /// rather than the field being added to the shared adapter for everyone
@@ -133,7 +133,7 @@ pub enum ParallelAdmission {
 /// calls, plus the test proving this dialect's adapter actually fans several
 /// of them in.
 ///
-/// `fan_in_witness` is a struct field rather than a per-variant one because
+/// `fan_in_witness` is a struct field rather than a per-case one because
 /// it is required on *every* row, including a gap. That is the whole point of
 /// splitting the axis: an [`ParallelAdmission::Undetermined`] provider still
 /// gets its fan-in proven, so an unknown row means "we have not watched this
@@ -374,7 +374,7 @@ mod tests {
         assert!(parallel_tool_call_posture("no-such-provider").is_none());
     }
 
-    /// A `DefaultOn` row's evidence must actually say something. The variant
+    /// A `DefaultOn` row's evidence must actually say something. The case
     /// is the only one on this axis that makes a positive claim about a
     /// vendor's live behavior, and the claim is unfalsifiable unless the row
     /// says what was counted — so an empty or hand-wavy string is the one

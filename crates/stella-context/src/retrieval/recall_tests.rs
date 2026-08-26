@@ -144,7 +144,7 @@ async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
 ///
 /// (Renamed from `recall_reads_only_the_candidates_bodies_not_the_whole_corpus`
 /// when the evidence gate landed: the old name claimed a zero-corpus-read
-/// property the gated default deliberately no longer has.)
+/// property the gated default no longer has.)
 #[tokio::test]
 async fn recall_reads_one_term_pass_plus_only_the_candidates_bodies() {
     let dir = TempDir::new().unwrap();
@@ -260,7 +260,7 @@ async fn the_drop_report_counts_candidates_considered_not_the_corpus() {
     q.max_frames = 5;
     let result = store.recall(&q).await.unwrap();
 
-    // The partition invariant, now over the shortlist.
+    // The partition rule, now over the shortlist.
     assert_eq!(
         result.frames.len() + result.dropped.len(),
         result.considered,

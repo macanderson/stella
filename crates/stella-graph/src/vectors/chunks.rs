@@ -155,7 +155,7 @@ pub struct ScoredChunk {
 /// Path and name first, for the reason [`super::render_file_text`] leads with
 /// the path: a model reading
 /// `crates/stella-model/src/anthropic.rs :: apply_cache_control (function)`
-/// has most of what it needs before a line of body. Deliberately plain — no
+/// has most of what it needs before a line of body. Plain — no
 /// headings a tokenizer spends budget on.
 ///
 /// Pure: no I/O, no clock, no environment. The same inputs render the same
@@ -449,7 +449,7 @@ fn write_chunks(
 ///
 /// The ranking itself is [`stella_embed::rank::top_k`] — pure, total and
 /// property-tested there — so this function only gets the vectors out of
-/// SQLite and hands them over, the invariant-2 split [`super::rank`] already
+/// SQLite and hands them over, the AGENTS.md #2 split [`super::rank`] already
 /// makes.
 ///
 /// # What the scan costs, measured

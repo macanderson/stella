@@ -36,7 +36,7 @@ pub enum SessionStatus {
     InProgress,
     /// The session is blocked on a human answer (ask-user, scope review).
     NeedsInput,
-    /// Deliberately set aside with its state intact — the deck exited (or
+    /// Set aside with its state intact — the deck exited (or
     /// switched away) with work still pending. Not live (no pid downgrade
     /// applies), and the first thing `resume` looks for.
     Paused,
@@ -177,7 +177,7 @@ pub struct SupervisorInfo {
     /// child `setsid`s before `exec`, so it leads its own session.
     ///
     /// Stored as a group rather than derived from [`SessionRecord::pid`] at
-    /// use because the two are only equal while that invariant holds, and the
+    /// use because the two are only equal while that rule holds, and the
     /// cost of being wrong is asymmetric — signalling a group that is not ours
     /// takes down a stranger's processes. A reader that wants to signal must
     /// still confirm the run is live through [`supervised::LOCK`]: a pid (and
@@ -546,7 +546,7 @@ impl SessionRegistry {
     ///
     /// Terminal is judged on the *presented* status ([`Self::list`]), not the
     /// stored one, so a record still stored `InProgress` whose owning process
-    /// died reads as crashed and is in scope — deliberately, since nothing
+    /// died reads as crashed and is in scope —, since nothing
     /// will ever move it to a terminal state otherwise. Note what that
     /// implies: sweeping it also deletes its sidecar, so a crashed session
     /// stops being resumable once it ages past the cutoff. Two shapes are
@@ -967,7 +967,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Invariant 4 for the field #1552 added: a supervised record survives the
+    /// AGENTS.md #4 for the field #1552 added: a supervised record survives the
     /// write/read the registry actually performs, not just `to_string`.
     #[test]
     fn a_supervised_record_round_trips_through_the_registry() {

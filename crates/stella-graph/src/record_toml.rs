@@ -42,7 +42,7 @@
 //! the key as written *is* the breadcrumb.
 //!
 //! Content before the first header — a record file's `schema` and `set_id` —
-//! is deliberately not a section, for [`crate::markdown`]'s reason: the
+//! is not a section, for [`crate::markdown`]'s reason: the
 //! file-level vector already carries the head of the file, and a `(preamble)`
 //! symbol would name nothing a reader could cite.
 //!

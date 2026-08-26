@@ -822,7 +822,7 @@ fn session_events_keeps_unknown_variants_and_skips_only_corrupt_payloads() {
     store
         .record_event(elsewhere, 0, &AgentEvent::Text { text: "z".into() })
         .unwrap();
-    // A payload whose variant this build does not know — inserted raw,
+    // A payload whose case this build does not know — inserted raw,
     // exactly as a NEWER stella would have left it on disk. This is a version
     // skew, not damage, so it must survive as `AgentEvent::Unknown` and stay
     // in the journal rather than being counted as a loss.

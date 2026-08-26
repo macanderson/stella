@@ -269,7 +269,7 @@ impl Store {
         Ok(())
     }
 
-    /// Record which wrapper variant ran this turn (#3388) — called right
+    /// Record which wrapper ran this turn (#3388) — called right
     /// after [`Store::begin_execution`] on a wrapped run, and not at all on
     /// an unwrapped one.
     ///
@@ -283,9 +283,9 @@ impl Store {
     ///
     /// # Why this lives beside the accounting updates
     ///
-    /// `kind` and this column are the two axes every per-variant comparison
+    /// `kind` and this column are the two axes every per-pipeline comparison
     /// groups by, and this module already owns the execution row's
-    /// column-level updates. It is deliberately not in `lib.rs`: that file is
+    /// column-level updates. It is not in `lib.rs`: that file is
     /// a grandfathered god file closed to growth.
     pub fn set_pipeline_variant(&self, execution_id: i64, variant: &str) -> Result<()> {
         self.lock().execute(

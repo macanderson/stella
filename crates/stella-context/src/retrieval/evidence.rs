@@ -11,7 +11,7 @@
 //! removed one injection mechanism, this module removes the other — admission
 //! without evidence.
 //!
-//! What counts as evidence is deliberately narrow, and each channel is
+//! What counts as evidence is narrow, and each channel is
 //! query-conditional (it can only fire because of what *this* query said):
 //!
 //! - an **anchor** — the goal named the file verbatim;

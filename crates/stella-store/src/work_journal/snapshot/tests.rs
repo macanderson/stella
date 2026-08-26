@@ -24,7 +24,7 @@ fn a_turn_that_named_no_paths_still_reports_what_it_changed_with_real_counts() {
     std::fs::write(ws.join("edited.rs"), "one\ntwo\nthree\n").unwrap();
     let journal = WorkJournal::open_in(&store, &ws, "ses-witness").unwrap();
 
-    // Turn 1 establishes the baseline and deliberately reports nothing:
+    // Turn 1 establishes the baseline and reports nothing:
     // "every file in the workspace" is not what a turn changed.
     assert_eq!(
         journal.snapshot_worktree().unwrap(),

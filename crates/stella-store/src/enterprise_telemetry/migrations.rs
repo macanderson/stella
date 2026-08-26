@@ -1,6 +1,6 @@
 //! In-place schema convergence for the two enterprise-telemetry databases.
 //!
-//! Deliberately NOT the versioned `PRAGMA user_version` machinery
+//! NOT the versioned `PRAGMA user_version` machinery
 //! `crate::migrations` drives for `store.db`'s own tables: these tables are
 //! owned by an optional, separately-enrolled feature, so their shape must
 //! converge whether or not the host store is at the current schema version, and

@@ -29,12 +29,12 @@ pub(super) fn rows() -> Vec<CatalogEntry> {
         )
         .with_reasoning(Some(true))
         // 30000 — the highest cap reported for ANY grok-4-generation
-        // model, and deliberately not the highest number in the wider
+        // model, and not the highest number in the wider
         // family (#1290).
         //
         // models.dev carries no bare `grok-4` row. Its generation
         // siblings agree at 30000 (`grok-4.3`, and all three
-        // `grok-4.20-*` variants); `grok-4.5` reports 500000, but that
+        // `grok-4.20-*` cases); `grok-4.5` reports 500000, but that
         // is a later generation and taking its number would be reading
         // a different model's ceiling.
         //

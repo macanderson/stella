@@ -85,13 +85,13 @@ pub const QUEUE_FILE: &str = "queue.json";
 const DELTA_FLUSH_BYTES: usize = 8 * 1024;
 
 /// One journaled record — the serializable mirror of the deck's fold-relevant
-/// inbound envelope (the TUI's `Inbound`). The deck crate deliberately never
+/// inbound envelope (the TUI's `Inbound`). The deck crate never
 /// links this store, so the driver maps one to the other; out-of-band view
 /// snapshots (graph, skills, MCP, sessions, notifications…) are regenerated
 /// at startup and are *not* journaled — only what the pure fold consumes.
 ///
 /// The wire is additive-only, exactly like `--output-format stream-json`:
-/// variants and fields may be added, never renamed, and readers skip lines
+/// cases and fields may be added, never renamed, and readers skip lines
 /// they cannot parse.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -525,7 +525,7 @@ mod tests {
     }
 
     /// Wire-form equality — the honest comparison for a wire type
-    /// (`AgentEvent` deliberately derives no `PartialEq`).
+    /// (`AgentEvent` derives no `PartialEq`).
     fn js(records: &[JournalRecord]) -> Vec<String> {
         records
             .iter()

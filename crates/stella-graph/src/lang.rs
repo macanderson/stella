@@ -170,7 +170,7 @@ impl Language {
     ///
     /// The arms are `cfg`-gated individually and a catch-all absorbs whatever
     /// is off, so a trimmed build still type-checks without the enum losing
-    /// variants — keeping the enum whole is what lets `tag()` round-trip a
+    /// cases — keeping the enum whole is what lets `tag()` round-trip a
     /// language tag stored by a *differently*-featured build that wrote the
     /// same `codegraph.db`.
     pub(crate) fn ts_language(self) -> Option<tree_sitter::Language> {
@@ -276,7 +276,7 @@ mod tests {
     /// compiled every grammar (#1268). A trimmed build correctly maps a
     /// disabled language's extension to `None`; that is the point, not a
     /// regression, and `detection_never_names_a_language_this_build_cannot_parse`
-    /// is the invariant that still holds everywhere.
+    /// is the rule that still holds everywhere.
     #[cfg(all(
         feature = "lang-rust",
         feature = "lang-python",

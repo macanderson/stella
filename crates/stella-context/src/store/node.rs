@@ -379,7 +379,7 @@ pub(crate) fn supersede_node(
 /// Lift a node's supersession, making it a candidate again. The exact inverse
 /// of [`supersede_node`]; returns whether anything was lifted.
 ///
-/// Deliberately resolves by `public_id` without a liveness filter — a
+/// Resolves by `public_id` without a liveness filter — a
 /// superseded node is invisible to every other reader, so a restore that went
 /// through one of them could never find the row it exists to bring back.
 pub(crate) fn restore_node(conn: &Connection, public_id: &str) -> Result<bool, ContextError> {
