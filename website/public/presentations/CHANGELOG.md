@@ -55,7 +55,7 @@ context. Details: `BENCHMARK_METHODOLOGY.md`.
   each with "why we win" and "what stops the copy".
 - **Witness-protocol limitations named** (appendix A2): shallow flips,
   regression blindness, oracle coverage, reward hacking — with the current
-  guards and the honest gaps.
+  guards and the gaps.
 - **Harness parity and contamination disclosure on the proof slide itself**,
   not only in a footnote.
 - Proof slide links to `BENCHMARK_METHODOLOGY.md`; appendix A1 summarizes it
@@ -87,7 +87,7 @@ context. Details: `BENCHMARK_METHODOLOGY.md`.
    rather than on-slide: 3–5 paid pilots, both design partnerships converted
    to paid, $1M ARR run-rate entering the seed, 18-month plan for four hires +
    training infrastructure. Ratify or edit before sending.
-7. **Oracle-coverage percentage** (appendix A2): deliberately unnumbered — no
+7. **Oracle-coverage percentage** (appendix A2): unnumbered — no
    measured figure exists. The slide says so and commits to per-pilot
    measurement. Do not add a number without a measurement behind it.
 
@@ -128,7 +128,7 @@ not**, for the reasons in the rebuild section above.
   outcome" (12):** the three-rung ladder (software → engine builders and
   optimizers → robotics), each rung named by the oracle it already has. The
   closing claim that the engine ports unchanged is backed by architecture
-  invariant #1, which `scripts/check-invariants.sh` enforces in `make gate` —
+  AGENTS.md #1, which `scripts/check-invariants.sh` enforces in `make gate` —
   a market claim with a CI gate behind it. Previously one sentence on the
   close slide.
 - **Problem slide (02):** broken cost attribution added as the setup, answered

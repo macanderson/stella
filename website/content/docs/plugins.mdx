@@ -301,7 +301,7 @@ The same plugin ships two more times in `stella-examples`, to prove the wire —
     [`plugins/verify-ts/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-ts). Zero runtime dependencies — not even `@types/node`. The Node surface it touches is hand-declared in a 14-line `.d.ts` file. `npm run build` compiles `src/main.ts` to `dist/main.js`, and `[runtime].argv` is `["node", "${plugin_dir}/dist/main.js"]` — build before you install; the host never invokes a compiler.
   </OptionCard>
   <OptionCard name="verify-rs">
-    [`plugins/verify-rs/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-rs). The reference implementation, and the one CI still exercises over the *wire* rather than in-process — its own rule for itself, so the wire path never rots for lack of use. Depends only on `serde` / `serde_json`, deliberately not on any crate from this workspace: a third-party Rust author could not link `stella-plugin` either. `cargo build --release` produces the binary `[runtime].argv` names directly — the cheapest thing a host can spawn.
+    [`plugins/verify-rs/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-rs). The reference implementation, and the one CI still exercises over the *wire* rather than in-process — its own rule for itself, so the wire path never rots for lack of use. Depends only on `serde` / `serde_json`, not on any crate from this workspace: a third-party Rust author could not link `stella-plugin` either. `cargo build --release` produces the binary `[runtime].argv` names directly — the cheapest thing a host can spawn.
   </OptionCard>
 </CardGrid>
 

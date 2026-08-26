@@ -2744,11 +2744,10 @@ website/content/docs/api-providers/index.mdx interface-jargon 2
 website/content/docs/api-providers/index.mdx rust-jargon 1
 website/content/docs/api-providers/models.mdx meta-writing 1
 website/content/docs/commands/auth.mdx filler-adverb 1
-website/content/docs/commands/calibration.mdx filler-adverb 2
+website/content/docs/commands/calibration.mdx filler-adverb 1
 website/content/docs/commands/chat.mdx interface-jargon 16
 website/content/docs/commands/commands.mdx filler-adverb 2
 website/content/docs/commands/config.mdx interface-jargon 3
-website/content/docs/commands/context.mdx filler-adverb 1
 website/content/docs/commands/daemon.mdx filler-adverb 1
 website/content/docs/commands/daemon.mdx interface-jargon 1
 website/content/docs/commands/doctor.mdx meta-writing 1
@@ -2780,11 +2779,9 @@ website/content/docs/configuration/settings.mdx interface-jargon 4
 website/content/docs/diagnostics.mdx filler-adverb 3
 website/content/docs/diagnostics.mdx meta-writing 1
 website/content/docs/diagnostics.mdx rust-jargon 1
-website/content/docs/event-stream-compatibility.mdx filler-adverb 1
 website/content/docs/examples.mdx enumerative-announcement 1
 website/content/docs/getting-started/index.mdx interface-jargon 3
 website/content/docs/guides/ci-engine-gate.mdx enumerative-announcement 1
-website/content/docs/guides/ci-engine-gate.mdx filler-adverb 1
 website/content/docs/guides/ci-engine-gate.mdx interface-jargon 2
 website/content/docs/guides/embed-the-engine.mdx interface-jargon 1
 website/content/docs/guides/parallel-fixes.mdx filler-adverb 3
@@ -2798,7 +2795,6 @@ website/content/docs/guides/unfamiliar-codebase.mdx ranking-flourish 1
 website/content/docs/guides/what-a-run-cost.mdx filler-adverb 1
 website/content/docs/index.mdx interface-jargon 1
 website/content/docs/multimodal-input.mdx rust-jargon 1
-website/content/docs/plugins.mdx filler-adverb 1
 website/content/docs/plugins.mdx interface-jargon 2
 website/content/docs/plugins.mdx rust-jargon 2
 website/content/docs/principles/no-clobber.mdx filler-adverb 1
@@ -2812,9 +2808,6 @@ website/content/docs/telemetry/dashboard.mdx interface-jargon 1
 website/content/docs/telemetry/index.mdx filler-adverb 1
 website/content/docs/telemetry/index.mdx honesty-declaration 1
 website/content/docs/telemetry/index.mdx interface-jargon 2
-website/public/presentations/CHANGELOG.md filler-adverb 1
-website/public/presentations/CHANGELOG.md honesty-declaration 1
-website/public/presentations/CHANGELOG.md rust-jargon 1
 website/src/app/engine/page.tsx filler-adverb 1
 website/src/app/engine/station.tsx honesty-declaration 1
 website/src/app/engine/stations-aft.tsx honesty-declaration 5
