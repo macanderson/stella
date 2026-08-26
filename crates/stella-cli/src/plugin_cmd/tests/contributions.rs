@@ -902,3 +902,56 @@ fn a_contributed_record_and_skill_each_name_their_plugin_as_a_field() {
     remove(&root, "vera").expect("remove must succeed");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// **The retraction-notice witness** (#4904). `stella plugin remove` names the
+/// MCP servers it just took away.
+///
+/// A tool, skill or record a package shipped is inert until something selects
+/// it, so its absence is never read as a fault. A server is a process the host
+/// connects to, and its tools were in the model's registry as
+/// `mcp__<server>__*` — a user who is not told the removal is what took them
+/// away goes looking for a broken connection instead. The removal already
+/// names every reverted `[[configure]]` key, which is the precedent.
+#[test]
+fn removing_a_package_names_the_mcp_servers_it_took_away() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-mcp-retraction-notice");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    ships_a_server(&source, "vera", "acme");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    let mut said: Vec<String> = Vec::new();
+    super::super::remove_reporting(&root, "vera", &mut |line| said.push(line))
+        .expect("remove must succeed");
+    let said = said.join("\n");
+    assert!(
+        said.contains("removed `vera`"),
+        "anti-vacuity — the removal reported at all:\n{said}"
+    );
+    assert!(
+        said.contains("acme"),
+        "the removal names the server it took away:\n{said}"
+    );
+
+    let mut notices = Vec::new();
+    assert!(
+        package::contributed_mcp_servers(&root, &mut notices).is_empty(),
+        "and it really is gone — the notice is not the only thing that changed"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
