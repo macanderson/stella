@@ -852,6 +852,11 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             AgentEvent::StepUsage {
                 upstream_provider: None,
                 step: 0,
+                // The all-present shape carries the join key (#4793), and an
+                // auxiliary `call_seq` rather than the worker's 0 — the value
+                // that only exists because a step can hold several calls.
+                turn_instance: Some(7),
+                call_seq: Some(2),
                 role,
                 provider: "anthropic".into(),
                 output_text: Some("a management call's output".into()),
@@ -893,6 +898,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             AgentEvent::StepUsage {
                 upstream_provider: None,
                 step: 1,
+                turn_instance: None,
+                call_seq: None,
                 role,
                 provider: String::new(),
                 output_text: None,
@@ -929,6 +936,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             .map(|finish_reason| AgentEvent::StepUsage {
                 upstream_provider: None,
                 step: 2,
+                turn_instance: Some(7),
+                call_seq: Some(0),
                 role: ModelCallRole::Worker,
                 provider: "zai".into(),
                 output_text: None,
@@ -962,6 +971,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             .map(|effort| AgentEvent::StepUsage {
                 upstream_provider: None,
                 step: 3,
+                turn_instance: Some(7),
+                call_seq: Some(0),
                 role: ModelCallRole::Worker,
                 provider: "openai".into(),
                 output_text: None,
@@ -996,6 +1007,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             .map(|(service_tier, verbosity)| AgentEvent::StepUsage {
                 upstream_provider: None,
                 step: 4,
+                turn_instance: Some(7),
+                call_seq: Some(0),
                 role: ModelCallRole::Worker,
                 provider: "openai".into(),
                 output_text: None,

@@ -596,6 +596,15 @@
               "minimum": 0,
               "type": "integer"
             },
+            "call_seq": {
+              "description": "Which of the calls sharing this (turn_instance, step) this one is: the engine's own worker call is 0, auxiliary calls riding the same step take 1, 2, ... Absent means the stream cannot say -- a row written before this field existed may have been an auxiliary call, so absence must not be read as the worker.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "complete": {
               "default": false,
               "description": "Whether the provider supplied a truthful usage envelope. Missing\nlegacy values fail closed to `false`.",
@@ -727,6 +736,15 @@
               "format": "uint",
               "minimum": 0,
               "type": "integer"
+            },
+            "turn_instance": {
+              "description": "The `run_turn` this call rides -- a `step_manifest` event's field of this name, carried here so a metering row can be joined to the receipt of the call that produced it. Absent when the emitter had no turn to name, or when the stream predates this field; absence is not turn 0, which is a real turn.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "type": {
               "const": "step_usage",

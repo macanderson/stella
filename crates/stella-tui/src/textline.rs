@@ -1196,6 +1196,8 @@ mod tests {
                 reason: "x".into(),
             },
             AgentEvent::StepUsage {
+                turn_instance: None,
+                call_seq: None,
                 upstream_provider: None,
                 output_text: None,
                 step: 0,

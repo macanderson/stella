@@ -266,6 +266,12 @@ pub(super) fn last_assistant_text(state: &crate::step::TurnState) -> Option<Stri
 /// them would compile and mis-meter every call.
 pub(super) struct SettledCall<'a> {
     pub(super) step: usize,
+    /// The ledger that stamped the receipt emitted immediately before this
+    /// call settled. The metering record reads its `(turn_instance, call_seq)`
+    /// from here rather than from bindings at the call site, so the cost row
+    /// and the receipt carry one identity rather than two that agree by
+    /// convention (#4793).
+    pub(super) receipts: &'a crate::receipts::ReceiptLedger,
     pub(super) role: stella_protocol::event::ModelCallRole,
     /// The provider that actually served the call, never the session default.
     pub(super) provider: &'a str,
@@ -343,6 +349,8 @@ pub(super) fn emit_step_usage(events: &EventSender, call: SettledCall<'_>) {
     let result = call.result;
     let _ = events.send(AgentEvent::StepUsage {
         step: call.step,
+        turn_instance: Some(call.receipts.turn_instance()),
+        call_seq: Some(call.receipts.call_seq()),
         role: call.role,
         provider: call.provider.to_string(),
         upstream_provider: result.upstream_provider.clone(),

@@ -631,6 +631,8 @@ fn journal() -> Vec<stella_protocol::AgentEvent> {
             reason: "429 rate limited".into(),
         },
         AgentEvent::StepUsage {
+            turn_instance: None,
+            call_seq: None,
             upstream_provider: None,
             step: 4,
             role: stella_protocol::ModelCallRole::Worker,
@@ -946,6 +948,8 @@ fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
 async fn the_prompt_names_where_the_turn_spent_itself() {
     let mut friction = super::digest::TurnFriction::default();
     friction.observe(&stella_protocol::AgentEvent::StepUsage {
+        turn_instance: None,
+        call_seq: None,
         upstream_provider: None,
         step: 9,
         role: stella_protocol::ModelCallRole::Worker,

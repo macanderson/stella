@@ -305,6 +305,13 @@ pub async fn run_accounted_call(
     // below: consumers pair the two by step, so they must agree. A
     // receipt-less call has no step loop to key against and stays at 0.
     let step = call.receipt.as_ref().map_or(0, |receipt| receipt.step);
+    // `(turn_instance, call_seq)` for the metering record below, taken before
+    // the receipt is consumed. `None` is a call with no step loop to key
+    // against, which is the same condition that leaves `step` at 0.
+    let receipt_identity = call
+        .receipt
+        .as_ref()
+        .map(|receipt| (receipt.turn_instance, receipt.call_seq));
     if let Some(receipt) = call.receipt {
         // One-shot context: no prior estimate exists for these messages, so the
         // ledger computes it. The step loop passes its own in instead.
@@ -324,6 +331,12 @@ pub async fn run_accounted_call(
     }
     let _ = events.send(AgentEvent::StepUsage {
         step,
+        // The receipt's identity, so this row joins to the manifest emitted
+        // just above (#4793). A receipt-less call has no turn or ordinal to
+        // name and says so rather than claiming the worker's 0 — which is the
+        // whole reason these two are `Option`.
+        turn_instance: receipt_identity.map(|receipt| receipt.0),
+        call_seq: receipt_identity.map(|receipt| receipt.1),
         role: call.role,
         provider: provider.to_string(),
         upstream_provider: result.upstream_provider.clone(),

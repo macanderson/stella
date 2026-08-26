@@ -886,6 +886,8 @@ fn stream_json_is_one_line_per_event() {
 fn step_usage_roundtrips_as_a_complete_metering_record() {
     let event = AgentEvent::StepUsage {
         step: 3,
+        turn_instance: Some(2),
+        call_seq: Some(1),
         role: ModelCallRole::Plan,
         provider: "openrouter".into(),
         // A gateway call: the pair must survive the round trip together, since
@@ -924,6 +926,8 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
     match back {
         AgentEvent::StepUsage {
             step,
+            turn_instance,
+            call_seq,
             role,
             upstream_provider,
             output_text,
@@ -939,6 +943,11 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
             ..
         } => {
             assert_eq!(step, 3);
+            // The join key (#4793): without both halves this row cannot be
+            // attributed to the call that produced it whenever a
+            // `(turn_instance, step)` holds more than one.
+            assert_eq!(turn_instance, Some(2));
+            assert_eq!(call_seq, Some(1));
             assert_eq!(role, ModelCallRole::Plan);
             assert_eq!(upstream_provider.as_deref(), Some("Amazon Bedrock"));
             assert_eq!(output_text.as_deref(), Some(r#"["inspect", "patch"]"#));
@@ -984,12 +993,19 @@ fn step_usage_from_a_pre_request_shape_stream_still_parses() {
             max_output_tokens,
             temperature,
             params,
+            turn_instance,
+            call_seq,
             ..
         } => {
             assert_eq!(effort, None);
             assert_eq!(max_output_tokens, None);
             assert_eq!(temperature, None);
             assert_eq!(params, None);
+            // And not a join key either (#4793). `None` rather than a
+            // defaulted `0`, because a legacy row may have been an auxiliary
+            // call and `0` would name it the worker.
+            assert_eq!(turn_instance, None);
+            assert_eq!(call_seq, None);
         }
         other => panic!("not a step_usage row: {other:?}"),
     }

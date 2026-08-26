@@ -252,6 +252,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::StepUsage {
                 output_text: None,
                 upstream_provider: None,
+                turn_instance: Some(0),
+                call_seq: Some(0),
                 step: 1,
                 role: ModelCallRole::Worker,
                 provider: "zai".into(),
@@ -375,6 +377,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::StepUsage {
                 output_text: None,
                 upstream_provider: None,
+                turn_instance: Some(0),
+                call_seq: Some(0),
                 step: 2,
                 role: ModelCallRole::Worker,
                 provider: "zai".into(),
@@ -502,6 +506,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::StepUsage {
                 output_text: None,
                 upstream_provider: None,
+                turn_instance: Some(0),
+                call_seq: Some(0),
                 step: 1,
                 role: ModelCallRole::Worker,
                 provider: "zai".into(),
@@ -585,6 +591,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::StepUsage {
                 output_text: None,
                 upstream_provider: None,
+                turn_instance: Some(0),
+                call_seq: Some(0),
                 step: 1,
                 role: ModelCallRole::Worker,
                 provider: "zai".into(),

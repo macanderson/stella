@@ -984,6 +984,24 @@ impl ReceiptLedger {
         }
     }
 
+    /// The turn this ledger stamps its receipts with.
+    ///
+    /// Read by the metering record so a `step_usage` row and the
+    /// `step_manifest` beside it carry one identity (#4793); the alternative
+    /// was the emitter re-deriving it from its own bindings, which is how the
+    /// two would come to disagree.
+    #[must_use]
+    pub fn turn_instance(&self) -> u32 {
+        self.turn_instance
+    }
+
+    /// Which of the calls at this step this ledger stamps — see
+    /// [`Self::turn_instance`] for why the metering record reads it here.
+    #[must_use]
+    pub fn call_seq(&self) -> u64 {
+        self.call_seq
+    }
+
     /// Turn the adaptive-context lifecycle on for this ledger — the session's
     /// `context.lifecycle.enabled` setting, threaded from the CLI through
     /// [`crate::EngineConfig`]. While it is off, no manifest carries a compiled

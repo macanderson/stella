@@ -142,6 +142,8 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
         .begin_execution("run", "prompt", "anthropic", "claude-fable-5")
         .expect("begin execution");
     let event = AgentEvent::StepUsage {
+        turn_instance: None,
+        call_seq: None,
         upstream_provider: None,
         reasoning_tokens: None,
         output_text: None,
@@ -900,6 +902,8 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
         model_error: None,
         cost_usd: 0.0042,
         events: vec![AgentEvent::StepUsage {
+            turn_instance: None,
+            call_seq: None,
             upstream_provider: None,
             reasoning_tokens: None,
             output_text: None,

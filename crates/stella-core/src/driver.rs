@@ -1351,6 +1351,7 @@ impl<'a> Engine<'a> {
             events,
             settlement::SettledCall {
                 step,
+                receipts,
                 role: self.call_role,
                 provider: self.active_provider().id(),
                 result: &result,

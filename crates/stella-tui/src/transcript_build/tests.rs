@@ -63,6 +63,8 @@ fn step_usage_bills_the_step_it_paid_for() {
     b.push(&call("c1", "bash", json!({"command": "ls"})));
     b.push(&ok_result("c1", "a\nb\n"));
     b.push(&AgentEvent::StepUsage {
+        turn_instance: None,
+        call_seq: None,
         step: 1,
         role: Default::default(),
         provider: "openrouter".to_string(),

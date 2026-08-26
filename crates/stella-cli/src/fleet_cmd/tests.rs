@@ -155,6 +155,8 @@ async fn fleet_attempt_persists_usage_before_complete_closeout() {
         None,
     );
     tx.send(AgentEvent::StepUsage {
+        turn_instance: None,
+        call_seq: None,
         upstream_provider: None,
         reasoning_tokens: None,
         output_text: None,

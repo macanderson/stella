@@ -418,6 +418,52 @@ pub enum AgentEvent {
     /// call; aggregate a turn by summing its `StepUsage` events.
     StepUsage {
         step: usize,
+        /// The `run_turn` this call rides — [`AgentEvent::StepManifest`]'s
+        /// field of this name, carried here so the two can be joined (#4793).
+        ///
+        /// `step` alone does not identify a call. Every `run_turn` restarts it
+        /// at 0, and several calls can share one `(turn_instance, step)`, so a
+        /// metering row without these two fields could not be attributed to
+        /// the receipt of the call that produced it — which is the exact case
+        /// `call_seq` exists to disambiguate, and it was readable on the
+        /// receipt and unreadable on the cost.
+        ///
+        /// `None` means the emitter had no turn to name (a one-shot call with
+        /// no receipt) or the stream predates this field — hence
+        /// `serde(default)`. Never read absent as turn 0: turn instances are
+        /// 0-based, so the two would be indistinguishable.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "The `run_turn` this call rides -- a `step_manifest` event's field of this name, carried here so a metering row can be joined to the receipt of the call that produced it. Absent when the emitter had no turn to name, or when the stream predates this field; absence is not turn 0, which is a real turn."
+            )
+        )]
+        turn_instance: Option<u32>,
+        /// Which of the calls sharing this `(turn_instance, step)` this one is
+        /// — [`AgentEvent::StepManifest`]'s field of this name, on the same
+        /// contract: the engine's own worker call is 0, and the auxiliary
+        /// calls riding the same step (the overflow summarizer, a plugin's
+        /// management roles) take 1, 2, … from a per-execution counter.
+        ///
+        /// `Option` rather than `StepManifest`'s bare `u64` defaulting to 0,
+        /// because the two fields decode different histories. A manifest
+        /// written before `call_seq` existed really was a worker manifest, so
+        /// 0 is the truth there. A `step_usage` row written before this field
+        /// existed may equally have been a summarizer's, so defaulting it to 0
+        /// would state that every legacy auxiliary call was the worker.
+        ///
+        /// `None` therefore means "this stream cannot say", and a consumer
+        /// joining on it has to treat that as unjoinable rather than as the
+        /// worker.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which of the calls sharing this (turn_instance, step) this one is: the engine's own worker call is 0, auxiliary calls riding the same step take 1, 2, ... Absent means the stream cannot say -- a row written before this field existed may have been an auxiliary call, so absence must not be read as the worker."
+            )
+        )]
+        call_seq: Option<u64>,
         /// Exact call purpose. Missing legacy values deserialize as
         /// [`ModelCallRole::Unknown`].
         #[serde(default)]

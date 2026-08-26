@@ -50,6 +50,8 @@ fn incomplete_because(
 /// true.
 fn settled_without_a_usage_frame() -> AgentEvent {
     AgentEvent::StepUsage {
+        turn_instance: None,
+        call_seq: None,
         upstream_provider: None,
         step: 0,
         role: stella_protocol::ModelCallRole::Worker,
