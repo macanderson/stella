@@ -121,6 +121,10 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     `schema`-gated wire-contract modules the
                          #     default-feature run never compiles)
                          #   + lint (clippy -D warnings)
+                         #   + lint-schema (the same, for those modules —
+                         #     an `#[expect]` there is policed by nothing
+                         #     else, because rustc does not evaluate a tool
+                         #     lint's expectation with the tool absent)
                          #   + test (test --workspace)
                          #   + tool-docs (docs/tools/ vs the declarations)
                          #   + self-driving-test (the shell harness)

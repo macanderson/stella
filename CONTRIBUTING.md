@@ -111,6 +111,7 @@ cargo fmt --check
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
 make doc-warnings-schema
 cargo clippy --workspace --all-targets -- -D warnings
+make lint-schema
 cargo test --workspace
 ./scripts/check-tool-docs.sh
 cargo build -p stella-cli --bin stella && \

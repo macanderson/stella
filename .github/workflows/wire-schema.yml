@@ -102,3 +102,22 @@ jobs:
       - name: rustdoc over the schema-gated wire-contract modules
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: make doc-warnings-schema
+
+      # The clippy half of the same hole, which #4584 left open. ci.yml's lint
+      # step is `cargo clippy --workspace --all-targets` with DEFAULT features,
+      # so no job anywhere linted these modules -- and
+      # `stella-protocol::schema_export` and `stella-plugin::wire_schema` carry
+      # the tree's only two `#![expect(clippy::expect_used)]` that nothing could
+      # police. An `#[expect]` that stops being true is an error only where
+      # clippy runs; rustc does not evaluate a tool lint's expectation when the
+      # tool is absent, so a `cargo build --features schema` reports nothing
+      # (#4949).
+      #
+      # Here for the step above's reasons -- the toolchain is installed, these
+      # three crates are already built under the feature, and this workflow's
+      # trigger paths are exactly the crates that own the modules. The crate
+      # list and the feature spellings are the Makefile recipe's, read through
+      # the target rather than restated.
+      - name: clippy over the schema-gated wire-contract modules
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: make lint-schema
