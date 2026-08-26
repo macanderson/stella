@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Guard the colour system: no retired hex anywhere, no stray hex where it matters.
 
-Four checks, different in strength, because "never use this colour
-again", "use only tokens here", "quote this token correctly" and "something
-renders this" are different promises and only one of them can be made about the
-whole tree today.
+The checks below differ in strength, because "never use this colour again",
+"use only tokens here", "quote this token correctly", "something renders this"
+and "somebody publishes this" are different promises and only one of them can
+be made about the whole tree today. The numbered list is the count; a total
+written here as well is a second copy nobody updates.
 
 1. **The ban.** Every hex in `banned.values` in the token JSON fails wherever it
    appears, in any tracked file. These are the anchor values of retired brand
