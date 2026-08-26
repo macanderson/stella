@@ -103,7 +103,7 @@ expensive part never changes:
    Tier-1 rules are concatenated into the system prompt — deterministically,
    byte-stable for the whole session. That stability is what lets the entire
    prefix ride the provider's prompt cache (~0.1× input cost on cached
-   reads). A memory saved mid-session deliberately takes effect **next**
+   reads). A memory saved mid-session takes effect **next**
    session: hot-injecting it would invalidate the cache on every save.
 2. **The recall block (volatile).** Each turn, a single `[auto-recalled
    context]` message is refreshed **in place** right after the stable prefix

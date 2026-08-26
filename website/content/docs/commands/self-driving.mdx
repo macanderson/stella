@@ -156,7 +156,7 @@ Asking a loop that is already stopping is not an error; the output says which ca
 
 It is written after **every step**, not at the end. A perpetual loop that only reported on exit would never report at all, and the point is a record readable while the loop is still running. Writes are atomic, so a dashboard sampling mid-write reads the previous complete document rather than a truncated one.
 
-**The ratios are printed beside the counts, deliberately.** A raw count answers *how busy was it*, which is the question that flatters. Three derived numbers answer *was it worth it*, and each can report badly:
+**The ratios are printed beside the counts.** A raw count answers *how busy was it*, which is the question that flatters. Three derived numbers answer *was it worth it*, and each can report badly:
 
 - **inflation** — issues created per issue closed. Above 1.00 sustained means the loop is **losing ground**: filing faster than it finishes. That is the failure mode the design names as the one none of its mitigations is proven to prevent, so it belongs on the dashboard rather than in a report somebody reads later.
 - **attempt yield** — the share of attempts that changed something.
@@ -168,7 +168,7 @@ A ratio with no denominator prints `--` rather than `0.00`: a ratio against zero
 
 `stella self-driving triage --issue KEY` brings an issue up to this workspace's convention.
 
-The loop owns the backlog it draws from, so an issue that arrived unclassified is one it may classify — but the authority is split, deliberately. It **removes what the convention reserves**, which is mechanical and needs no judgement. It **reports what needs deciding** rather than guessing: choosing between `bug` and `feature`, or between `P0` and `P2`, is a reading of what the issue says, and a loop that guessed would be manufacturing the very classification the queue is ranked by — the ranking would then be measuring the loop's own invention.
+The loop owns the backlog it draws from, so an issue that arrived unclassified is one it may classify — but the authority is split. It **removes what the convention reserves**, which is mechanical and needs no judgement. It **reports what needs deciding** rather than guessing: choosing between `bug` and `feature`, or between `P0` and `P2`, is a reading of what the issue says, and a loop that guessed would be manufacturing the very classification the queue is ranked by — the ranking would then be measuring the loop's own invention.
 
 The same rule drives both directions. `conform` decides whether a new filing may go out; `repair` decides what an existing issue is missing. One standard, so the loop's own filings and the backlog it inherited are held to it equally.
 

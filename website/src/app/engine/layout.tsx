@@ -6,7 +6,7 @@ import "./engine-stations.css";
 /**
  * Chrome for /engine: none.
  *
- * Every other route mounts the fumadocs shell; the tour deliberately does not.
+ * Every other route mounts the fumadocs shell; the tour does not.
  * It is a walk through the inside of the machine, and a persistent docs nav
  * would put the outside of the site in view the whole way — the same reasoning
  * that lets the home page hide its bar behind the hero, taken one step

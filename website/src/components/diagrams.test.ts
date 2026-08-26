@@ -30,7 +30,7 @@ import { DIAGRAM_DESCRIPTIONS } from "./diagram-descriptions.ts";
  * Mono ligates it into an arrow, so it draws as one and measures as two
  * ordinary characters.
  *
- * So the allowlist below is deliberately narrow — printable ASCII plus the
+ * So the allowlist below is narrow — printable ASCII plus the
  * punctuation these diagrams actually use, each verified present in both
  * shipped weights. It is not derived from the font at runtime because decoding
  * a woff2 needs a parser this repo has no other use for; if the subset is ever

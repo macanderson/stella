@@ -88,7 +88,7 @@ A skip is **not a failure**: the verb exits 0, because a driver working through 
   or exited non-zero **skips the issue**. The two outcomes are not symmetric: skipping an
   issue that was in fact free costs one cycle and corrects itself next run, while working an
   issue that was in fact held leaves a branch, a pull request, and a comment on something
-  somebody deliberately fenced off. `require_approval` also skips — an unattended loop has
+  somebody fenced off. `require_approval` also skips — an unattended loop has
   nobody at the keyboard to answer it.
 </Callout>
 
@@ -217,7 +217,7 @@ esac
 exit 0
 ```
 
-Blocking is **fail-closed** on `PreToolUse`: a hook that times out, fails to start, exits non-zero, or prints a malformed decision blocks the tool, with the failure message as the reason. A missing or broken guard script never silently waves a call through, and no enforcement-softening switch changes that. (`PostToolUse` and `SessionStart` never block on either failure mode, and `Stop`/`PreCompact` deliberately fail open — see their sections.)
+Blocking is **fail-closed** on `PreToolUse`: a hook that times out, fails to start, exits non-zero, or prints a malformed decision blocks the tool, with the failure message as the reason. A missing or broken guard script never silently waves a call through, and no enforcement-softening switch changes that. (`PostToolUse` and `SessionStart` never block on either failure mode, and `Stop`/`PreCompact` fail open — see their sections.)
 
 ## Decisions on stdout
 

@@ -115,7 +115,7 @@ Every block, in the shape the manifest parser accepts:
     Arbiter only, and it must declare `points = ["after_turn"]` alongside it — that is the one response its evidence rides on. `flip` is `"required"` (the plugin reports a fail→pass transition) or `"not-applicable"` (this oracle's evidence is a measurement, not a transition — every requirement must then be decided by a `[[oracle.checks]]` entry, or the manifest is refused). `measurements` names the numbers the plugin's process reports; `[[oracle.checks]]` states a rule over one of them (`<measurement> <op> <integer>`) that decides one named requirement. `command` is optional when `[runtime]` is declared — absent means "the oracle is this plugin's own process," which is the common case and keeps a manifest from writing the same argv out twice.
   </OptionCard>
   <OptionCard name="[runtime]">
-    Observer and above. `argv` — program and arguments, never a shell string, with `${plugin_dir}` interpolated by the host to the plugin's install directory. `timeout_secs` — at least 1. `env` — the **allowlist**, exact names and nothing else: the child process starts with an empty environment and receives only the variables named here. There is deliberately no `language` field; `["python3", "${plugin_dir}/main.py"]` already says everything the host needs to know.
+    Observer and above. `argv` — program and arguments, never a shell string, with `${plugin_dir}` interpolated by the host to the plugin's install directory. `timeout_secs` — at least 1. `env` — the **allowlist**, exact names and nothing else: the child process starts with an empty environment and receives only the variables named here. There is no `language` field; `["python3", "${plugin_dir}/main.py"]` already says everything the host needs to know.
   </OptionCard>
   <OptionCard name="[wrapper]">
     Steering and above, optional. Declares this plugin as a turn-loop wrapper: an `id` (the variant name recorded on the run, for A/B comparison) and an ordered `[[wrapper.stages]]` list, each naming a stage and carrying an optional `if` condition over a closed, published signal vocabulary (`questions > 0`, `no-conversational`, …). A condition naming a signal the host does not publish, or one only a later or conditionally-run stage produces, is a load error — a manifest that would quietly do nothing is refused instead.
@@ -155,7 +155,7 @@ RULESET = "${plugin_dir}/rules/strict.yaml"
 
 Ship `scripts/lint-fix.sh` executable — the host spawns it directly, never through a shell, and never invokes an interpreter you did not name in `command`.
 
-The placeholder is expanded **only** for a manifest read out of a package. Your own `.stella/tools/` and `~/.stella/tools/` manifests are left verbatim, deliberately: no package is in scope there, and quietly expanding `${plugin_dir}/x.sh` to `/x.sh` would run a different file rather than fail with a message naming what the manifest actually asked for.
+The placeholder is expanded **only** for a manifest read out of a package. Your own `.stella/tools/` and `~/.stella/tools/` manifests are left verbatim: no package is in scope there, and quietly expanding `${plugin_dir}/x.sh` to `/x.sh` would run a different file rather than fail with a message naming what the manifest actually asked for.
 
 ## Installing a plugin
 
@@ -301,7 +301,7 @@ The same plugin ships two more times in `stella-examples`, to prove the wire —
     [`plugins/verify-ts/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-ts). Zero runtime dependencies — not even `@types/node`. The Node surface it touches is hand-declared in a 14-line `.d.ts` file. `npm run build` compiles `src/main.ts` to `dist/main.js`, and `[runtime].argv` is `["node", "${plugin_dir}/dist/main.js"]` — build before you install; the host never invokes a compiler.
   </OptionCard>
   <OptionCard name="verify-rs">
-    [`plugins/verify-rs/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-rs). The reference implementation, and the one CI still exercises over the *wire* rather than in-process — its own rule for itself, so the wire path never rots for lack of use. Depends only on `serde` / `serde_json`, deliberately not on any crate from this workspace: a third-party Rust author could not link `stella-plugin` either. `cargo build --release` produces the binary `[runtime].argv` names directly — the cheapest thing a host can spawn.
+    [`plugins/verify-rs/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-rs). The reference implementation, and the one CI still exercises over the *wire* rather than in-process — its own rule for itself, so the wire path never rots for lack of use. Depends only on `serde` / `serde_json`, not on any crate from this workspace: a third-party Rust author could not link `stella-plugin` either. `cargo build --release` produces the binary `[runtime].argv` names directly — the cheapest thing a host can spawn.
   </OptionCard>
 </CardGrid>
 
@@ -336,6 +336,6 @@ Smaller, standing gaps in the wire contract itself, worth knowing before you rel
 ## See also
 
 - [`stella plugin`](/docs/commands/plugin) — the full command reference for `install` / `list` / `remove`, including scopes and shadowing.
-- [Hooks](/docs/agent-tools/hooks) — the config-driven, no-code lifecycle hooks a plugin's own hook grants are deliberately not merged into.
+- [Hooks](/docs/agent-tools/hooks) — the config-driven, no-code lifecycle hooks a plugin's own hook grants are not merged into.
 - [Permissions](/docs/agent-tools/permissions) — the authorization gate that sees a plugin as a caller of its own, distinct from you.
 - [`stella-examples`](https://github.com/macanderson/stella-examples/tree/main/plugins) — all three reference plugins, their shared conformance vectors, and the CI that runs them on every pull request.

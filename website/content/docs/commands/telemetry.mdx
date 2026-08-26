@@ -109,7 +109,7 @@ This is the one **destructive** subcommand. It deletes stranded rows outright an
 
 When the signed sink fingerprint changes, rows queued for the old sink are **not** re-pointed at the new one. Sending an org's rows to a sink it did not sign for would be a silent re-routing of its telemetry, so those rows become *stranded* instead. They stay stranded until either the old enrollment is restored — at which point they deliver normally — or an administrator runs this command.
 
-The discard is deliberately explicit and deliberately counted. Capacity eviction, corruption, and rollover loss each keep their own durable counter precisely so that none of them can be mistaken for successful delivery.
+The discard is explicit and counted. Capacity eviction, corruption, and rollover loss each keep their own durable counter precisely so that none of them can be mistaken for successful delivery.
 
 ## Exit behavior
 

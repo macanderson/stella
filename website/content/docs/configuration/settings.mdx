@@ -522,7 +522,7 @@ promoted, and measuring whether the context selected actually helped.
   vocabulary and defaults, not as a description of a running mechanism.
 </Callout>
 
-Two dimensions are kept deliberately separate: **learning mode** (how much of the loop
+Two dimensions are kept separate: **learning mode** (how much of the loop
 runs) and **governance mode** (who signs off on a promotion). Every mode enum is *loud* —
 an unrecognized value such as `"advisary"` is a hard parse error, never a silent fallback.
 Omitted fields fall back to the defaults below, so `"context": {}` and an absent block are
@@ -718,7 +718,7 @@ is today.
   </OptionCard>
 </CardGrid>
 
-Two properties are required, and deliberately not optional:
+Two properties are required, and not optional:
 
 - **Conformance is an admission gate, not a badge.** A provider is run through the
   protocol's own conformance suite *before* it is registered on the session host, so a
@@ -795,7 +795,7 @@ untrusted repo must not be able to run commands on your machine or route your AP
 a server it controls. stella therefore holds back the dangerous parts of a project-scope
 file until you opt in with **`STELLA_TRUST_PROJECT=1`** — or, to avoid typing that on every
 launch, `run.auto_trust_project = true` in **your own** `~/.stella/stella.toml` (or the
-org-managed file). That key is deliberately inert in a project's own `stella.toml`: a
+org-managed file). That key is inert in a project's own `stella.toml`: a
 project voting itself trusted is exactly the hole this boundary exists to close, so a
 project-scope `auto_trust_project` still parses and is then discarded, with a stderr
 notice saying so. An explicit `STELLA_TRUST_PROJECT` env var always overrides the config

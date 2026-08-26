@@ -36,7 +36,7 @@ function changelogPath(): string {
  * Every release in CHANGELOG.md, newest first (the file's own order, which the
  * roll maintains by inserting at the top).
  *
- * Deliberately uncached: this is evaluated once per build for a static route,
+ * Uncached: this is evaluated once per build for a static route,
  * so a cache would buy nothing and a stale-cache bug on the one page whose
  * whole point is freshness would cost more than the read.
  */

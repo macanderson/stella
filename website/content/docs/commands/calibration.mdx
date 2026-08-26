@@ -24,7 +24,7 @@ like a flawless verifier.
 
 ## What it reports
 
-Two cohorts, deliberately side by side — a false-positive rate means nothing without the cohort it should be compared against:
+Two cohorts, side by side — a false-positive rate means nothing without the cohort it should be compared against:
 
 - **unproven** — `Verdict` events with `passed: true` and `deterministic: false`: a pass the ladder could not settle. Three different outcomes land here — *unverified* (the probes looked and did not settle it), *unverifiable* (no probe could look), and a triage-*waived* pass — and no model judged any of them.
 - **deterministic** — passes the ladder credited itself (fail→pass flip, green tests, budget, and every pre-submit audit).

@@ -300,7 +300,7 @@ Open a tab or run an action:
     Re-read the settings scope chain from disk and apply it to the live
     session — engine posture, tool switches, authority. Saving from the
     SETTINGS tab does this automatically; `/reload` covers edits made outside
-    the deck. Provider, model, and credentials are deliberately untouched.
+    the deck. Provider, model, and credentials are untouched.
   </OptionCard>
   <OptionCard name="/donate">
     Support stella — become a GitHub Sponsor.
@@ -319,7 +319,7 @@ Press **Ctrl-C** to quit the deck.
 /info list              the same listing the bare /info prints
 ```
 
-Parsing is deliberately conservative: one recognized token (plus `refresh --force`). A single unrecognized token gets usage back rather than a wasted model call, and anything sentence-like after `/info` stays an ordinary prompt.
+Parsing is conservative: one recognized token (plus `refresh --force`). A single unrecognized token gets usage back rather than a wasted model call, and anything sentence-like after `/info` stays an ordinary prompt.
 
 #### `/profile` — one word for the whole harness
 
@@ -341,7 +341,7 @@ The roles are not tuned identically. Triage stays below the worker in every prof
 
 The verifier is the interesting one, because two goals pull against each other: a verifier from the worker's own family lets a shared blind spot pass review twice, but a verifier well below the worker's tier cannot follow the work it grades and rubber-stamps. stella resolves it in the order that gives up least. A model that is both independent and at least as capable wins outright. If nothing clears that bar but the strongest independent model is only one rung down the price list, independence is worth the single rung. Only when the best independent option is further down does capability take over — and then the confirmation tells you the review is correlated with the work.
 
-**What it writes, and what it leaves alone.** A profile owns the per-role model, effort, thinking switch, verbosity, and service tier, saved to your user settings. It deliberately turns `effort_auto`, `reasoning_auto`, and `auto_mode` **off**: those switches override per-agent effort, so leaving them on would let `/profile ultra` print `max` and run `medium`. Everything else survives untouched — custom per-agent prompts, pinned providers, temperatures, seeds, and your `allowed_models` list.
+**What it writes, and what it leaves alone.** A profile owns the per-role model, effort, thinking switch, verbosity, and service tier, saved to your user settings. It turns `effort_auto`, `reasoning_auto`, and `auto_mode` **off**: those switches override per-agent effort, so leaving them on would let `/profile ultra` print `max` and run `medium`. Everything else survives untouched — custom per-agent prompts, pinned providers, temperatures, seeds, and your `allowed_models` list.
 
 `/profile auto` is the way back out. It restores all three switches and drops the per-role effort, thinking, verbosity, and service-tier pins a profile wrote, handing those choices to the engine again. Model pins are left alone: one may well predate the profile, and `auto_mode` re-picks the verifier on its own.
 

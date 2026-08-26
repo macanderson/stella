@@ -43,7 +43,7 @@ Two of those are worth reading twice.
 
 **`[runtime] env` is an allowlist, not a filter.** The child starts from an empty environment and receives the variables named here and nothing else. Anything your shell was carrying — an API key, an agent socket, a token a script exported — is not there unless the manifest asked for it and you accepted.
 
-There is deliberately no `language` field. `argv` already distinguishes `["python3", …]` from `["node", …]` from a compiled binary, so a plugin can be written in any language without stella learning what a language is.
+There is no `language` field. `argv` already distinguishes `["python3", …]` from `["node", …]` from a compiled binary, so a plugin can be written in any language without stella learning what a language is.
 
 ## `stella plugin install`
 
@@ -148,10 +148,10 @@ To stop a plugin from running without deleting anything — including one instal
 `off` is sticky across scopes: a scope may retract a plugin, never restore one another scope switched off. That is what makes the key safe to honour from a repository you have not read — the only thing a cloned repo can do with it is stop something from running on your machine.
 
 <Callout type="info">
-This is deliberately unlike [lifecycle hooks](/docs/agent-tools/hooks), which *concatenate* across scopes so that no lower-precedence file can remove an operator's gate. A plugin is not an operator gate — it is a third party's process, it is owned, and "uninstalled" has to mean uninstalled.
+This is unlike [lifecycle hooks](/docs/agent-tools/hooks), which *concatenate* across scopes so that no lower-precedence file can remove an operator's gate. A plugin is not an operator gate — it is a third party's process, it is owned, and "uninstalled" has to mean uninstalled.
 </Callout>
 
 ## See also
 
 - [Permissions](/docs/agent-tools/permissions) — the authorization gate that sees a plugin as a caller of its own
-- [Hooks](/docs/agent-tools/hooks) — the operator-owned lifecycle hooks a plugin's grants are deliberately not merged into
+- [Hooks](/docs/agent-tools/hooks) — the operator-owned lifecycle hooks a plugin's grants are not merged into

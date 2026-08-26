@@ -62,7 +62,7 @@ stella run "…" --log-file ./run.jsonl                  # JSONL to a file, crea
 
 Resolution order, most specific first: **`--log-level`**, then **`-v`/`-vv`/`-vvv`**,
 then **`STELLA_LOG`** (or `STELLA_SERVE_LOG`), then the default, `warn`.
-`--log-level` deliberately does not also read from the environment — with it,
+`--log-level` does not also read from the environment — with it,
 `STELLA_LOG=warn stella -vv run "…"` would silently ignore the `-vv` you just
 typed, because a flag parser cannot tell an env-sourced value from a typed one.
 

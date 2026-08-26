@@ -111,7 +111,7 @@ Two different mechanisms, for two different situations, and choosing the wrong o
   </SpecCard>
 </CardGrid>
 
-### Three invariants
+### Three rules
 
 These hold across everything in this section. They are binding design constraints, not descriptions of current behavior that might drift:
 
@@ -134,7 +134,7 @@ These hold across everything in this section. They are binding design constraint
 </CardGrid>
 
 <Callout type="warn">
-The third invariant is the one most likely to be violated by a well-meaning change. A self-report
+The third rule is the one most likely to be violated by a well-meaning change. A self-report
 that can retire its own subject is self-reinforcing: a model that *misreads* a memory reports it
 unhelpful, which retires it, which destroys the evidence that the reading was wrong. The loop is
 closed on purpose.

@@ -127,7 +127,7 @@ function Wire({
 
 /**
  * Line-art glyphs, each drawn in a 20×20 box and placed by its top-left corner.
- * The set is deliberately small: a glyph is here to say what *kind* of thing a
+ * The set is small: a glyph is here to say what *kind* of thing a
  * node is when that distinction is the point of the diagram — a subprocess on
  * this machine versus an endpoint somewhere else, a lock versus a box.
  */
