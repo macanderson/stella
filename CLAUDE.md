@@ -197,8 +197,8 @@
   runs it → why it matters. Pick `use-model` by the hardest step in the
   issue, not the average: templated or mechanical work is `cheap`, routine
   implementation against a clear spec is `balanced`, cross-crate design or
-  tricky invariants are `pro`, and architecture-critical or genuinely novel
-  design is `ultra`.
+  subtle correctness rules are `pro`, and architecture-critical or genuinely
+  novel design is `ultra`.
 - **Every Sourcery ❌ gets a fix or an answer before the PR is mergeable.**
   Sourcery reviews every PR, and when the PR links issues it posts an
   "Assessment against linked issues" table as a `sourcery-ai` comment — one
