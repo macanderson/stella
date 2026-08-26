@@ -20,8 +20,11 @@
 //! note saying they are stills (`crate::keyframes`), because an image-capable
 //! model shown eight frames can answer most questions about a clip and a note
 //! naming the filename can answer none. The note remains the floor: no
-//! decoder, an unreadable container, or a `Data` payload with no file on disk
-//! all land back on it (#3340).
+//! decoder, an unreadable container, or bytes that cannot be staged all land
+//! back on it (#3340). Both sources reach the decoder — a path directly, an
+//! inline payload through a temp file that lives for one extraction (#4800) —
+//! so the model's answer does not depend on whether the clip was pasted or
+//! `@`-mentioned.
 //!
 //! [`DialectCaps`] is what normally keeps a part an adapter has no wire shape
 //! for from ever reaching that adapter. The two are edited independently
@@ -199,6 +202,24 @@ enum Form {
     Frames(usize),
 }
 
+/// What a cache entry is filed under.
+///
+/// Two key spaces, kept apart by the type rather than by a naming convention
+/// on one of them: a file has a path and an identity that changes when its
+/// bytes do, while an inline payload has neither and IS its bytes. Folding
+/// the second into the first — a synthetic `data:<digest>` path — would put a
+/// string nothing on disk answers to into a `PathBuf`, where the next reader
+/// has to be told it is not a path (#4800).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum CacheKey {
+    /// A file on disk, validated against its `(mtime, len)` fingerprint.
+    Path(PathBuf),
+    /// An inline payload, keyed by the SHA-256 of its base64. The digest is
+    /// the whole identity: identical bytes are the same entry, and there is
+    /// no fingerprint to re-check because nothing can edit them underneath us.
+    Inline(String),
+}
+
 /// One cached path payload, valid while the file's `(mtime, len)`
 /// fingerprint and the requested [`Form`] both hold. `last_used` is the
 /// cache's logical clock at the last hit, which is what makes eviction
@@ -227,20 +248,23 @@ struct CachedPayload {
 /// while capping the worst case at a fixed, nameable number.
 const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
-/// Bounded, least-recently-used cache of hydrated
-/// [`AttachmentSource::Path`] payloads. The conversation replays every turn,
-/// so without it every model call re-read and re-encoded every path
-/// attachment for the rest of the session — invisible for a screenshot,
-/// pathological for a large payload on a long session. Keyed by path and
-/// validated against the file's `(mtime, len)` on every lookup, so an edited
-/// file re-hydrates on its next turn.
+/// Bounded, least-recently-used cache of hydrated attachment payloads. The
+/// conversation replays every turn, so without it every model call re-read
+/// and re-encoded every attachment for the rest of the session — invisible
+/// for a screenshot, pathological for a large payload on a long session.
+///
+/// A [`AttachmentSource::Path`] entry is keyed by path and validated against
+/// the file's `(mtime, len)` on every lookup, so an edited file re-hydrates
+/// on its next turn. An inline entry is keyed by the digest of its own bytes
+/// and has no fingerprint to check, because nothing can edit a payload the
+/// message is carrying.
 ///
 /// A miss is a re-read, never a failure, so eviction is always safe: the
 /// cache is a latency optimization with no correctness role. That is what
 /// lets the budget be enforced bluntly.
 #[derive(Default)]
 struct PathCache {
-    entries: HashMap<PathBuf, CachedPayload>,
+    entries: HashMap<CacheKey, CachedPayload>,
     /// Sum of `entries`' `retained_bytes`, maintained incrementally so the
     /// budget check never walks the map.
     bytes: usize,
@@ -253,12 +277,12 @@ impl PathCache {
     /// miss OR on a stale fingerprint — the caller re-hydrates either way.
     fn get_fresh(
         &mut self,
-        path: &Path,
+        key: &CacheKey,
         modified: Option<SystemTime>,
         len: u64,
         form: Form,
     ) -> Option<HydratedBody> {
-        let entry = self.entries.get_mut(path)?;
+        let entry = self.entries.get_mut(key)?;
         // The stored form must also be the one this kind consumes — the same
         // path re-attached under a different media type recomputes.
         let fresh = entry.modified == modified && entry.len == len && entry.form == form;
@@ -270,13 +294,13 @@ impl PathCache {
         Some(entry.body.clone())
     }
 
-    /// Retain `body` for `path`, evicting least-recently-used entries until
+    /// Retain `body` under `key`, evicting least-recently-used entries until
     /// it fits. A payload larger than the whole budget is simply not
     /// retained — caching it could only be paid for by evicting everything
     /// else, and it would still be the next thing evicted.
     fn store(
         &mut self,
-        path: PathBuf,
+        key: CacheKey,
         modified: Option<SystemTime>,
         len: u64,
         form: Form,
@@ -284,7 +308,7 @@ impl PathCache {
     ) {
         // Replacing an entry frees its old bytes first, so a re-hydrated
         // file is never double-counted against the budget.
-        self.remove(&path);
+        self.remove(&key);
         let size = body.retained_bytes();
         if size > MAX_CACHE_BYTES {
             return;
@@ -309,7 +333,7 @@ impl PathCache {
         self.tick += 1;
         self.bytes += size;
         self.entries.insert(
-            path,
+            key,
             CachedPayload {
                 modified,
                 len,
@@ -320,8 +344,8 @@ impl PathCache {
         );
     }
 
-    fn remove(&mut self, path: &Path) {
-        if let Some(old) = self.entries.remove(path) {
+    fn remove(&mut self, key: &CacheKey) {
+        if let Some(old) = self.entries.remove(key) {
             self.bytes = self.bytes.saturating_sub(old.body.retained_bytes());
         }
     }
@@ -347,7 +371,8 @@ fn hydrate_path(path: &str, form: Form) -> std::io::Result<HydratedBody> {
     let meta = std::fs::metadata(path)?;
     let modified = meta.modified().ok();
     let len = meta.len();
-    if let Some(body) = path_cache().get_fresh(Path::new(path), modified, len, form) {
+    let key = CacheKey::Path(PathBuf::from(path));
+    if let Some(body) = path_cache().get_fresh(&key, modified, len, form) {
         return Ok(body);
     }
     let bytes = std::fs::read(path)?;
@@ -359,7 +384,7 @@ fn hydrate_path(path: &str, form: Form) -> std::io::Result<HydratedBody> {
         // it is not offered.
         Form::Base64 | Form::Frames(_) => HydratedBody::Base64(BASE64.encode(&bytes)),
     };
-    path_cache().store(PathBuf::from(path), modified, len, form, &body);
+    path_cache().store(key, modified, len, form, &body);
     Ok(body)
 }
 
@@ -377,16 +402,16 @@ fn sample_video(
     let form = Form::Frames(max_frames);
     let meta = std::fs::metadata(path).ok();
     let fingerprint = meta.as_ref().map(|m| (m.modified().ok(), m.len()));
+    let key = CacheKey::Path(PathBuf::from(path));
     if let Some((modified, len)) = fingerprint
-        && let Some(HydratedBody::Frames(video)) =
-            path_cache().get_fresh(Path::new(path), modified, len, form)
+        && let Some(HydratedBody::Frames(video)) = path_cache().get_fresh(&key, modified, len, form)
     {
         return Ok(video);
     }
     let video = sampler.sample(Path::new(path), max_frames)?;
     if let Some((modified, len)) = fingerprint {
         path_cache().store(
-            PathBuf::from(path),
+            key,
             modified,
             len,
             form,
@@ -394,6 +419,82 @@ fn sample_video(
         );
     }
     Ok(video)
+}
+
+/// Sample an inline video payload into stills by staging it as a file the
+/// decoder can seek in, memoized on the payload's own digest (#4800).
+///
+/// `ffmpeg` reads files, and a pasted attachment has bytes and no path, so
+/// the bytes are written to an owner-only temp file for the length of one
+/// extraction and deleted on the way out — including on every failure path,
+/// because [`tempfile::NamedTempFile`] deletes on drop.
+///
+/// The digest is what makes this affordable on a replayed conversation. The
+/// path cache validates a file against `(mtime, len)`, which an inline
+/// payload does not have; hashing its base64 gives the same guarantee from
+/// the bytes themselves, so identical payloads are one entry and `ffmpeg`
+/// runs once rather than once per turn. Hashing on every turn is the cost of
+/// that, and it is the right trade by a wide margin: it is a linear pass over
+/// bytes already resident in memory, against a decoder invocation measured in
+/// seconds.
+fn sample_inline_video(
+    base64: &str,
+    suffix: &str,
+    sampler: &dyn FrameSampler,
+    max_frames: usize,
+) -> Result<SampledVideo, SampleFailure> {
+    use sha2::{Digest, Sha256};
+
+    let form = Form::Frames(max_frames);
+    // Base64 rather than hex: this string is a map key, never shown to
+    // anyone, and the encoder is already in scope.
+    let key = CacheKey::Inline(BASE64.encode(Sha256::digest(base64.as_bytes())));
+    // No fingerprint: the digest IS the identity, so `(None, 0)` is not a
+    // missing check but the statement that there is nothing else to check.
+    if let Some(HydratedBody::Frames(video)) = path_cache().get_fresh(&key, None, 0, form) {
+        return Ok(video);
+    }
+
+    let bytes = BASE64
+        .decode(base64)
+        .map_err(|_| SampleFailure::Unstageable)?;
+    let staged = tempfile::Builder::new()
+        .prefix("stella-video-")
+        .suffix(suffix)
+        .tempfile()
+        .map_err(|_| SampleFailure::Unstageable)?;
+    std::fs::write(staged.path(), &bytes).map_err(|_| SampleFailure::Unstageable)?;
+
+    let video = sampler.sample(staged.path(), max_frames)?;
+    // Explicit rather than left to the drop at end of scope: the frames are
+    // in memory now and the payload can be large, so the file goes as soon as
+    // it has served its purpose. A failed close is not worth failing a turn
+    // over — the temp directory is the OS's to reap.
+    drop(staged);
+
+    path_cache().store(key, None, 0, form, &HydratedBody::Frames(video.clone()));
+    Ok(video)
+}
+
+/// The file extension to stage an inline payload under, taken from the
+/// attachment's own name. `ffmpeg` sniffs the container from content, so this
+/// is a hint rather than a requirement — but a demuxer given a matching
+/// extension has one less thing to guess, and a name with no extension is a
+/// perfectly good `""`.
+fn stage_suffix(name: &str) -> String {
+    match name.rsplit_once('.') {
+        // Bounded and charset-checked: the name arrives from the user and
+        // becomes part of a filename, so anything that is not a plain
+        // alphanumeric extension is dropped rather than sanitized.
+        Some((_, ext))
+            if !ext.is_empty()
+                && ext.len() <= 8
+                && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            format!(".{}", ext.to_ascii_lowercase())
+        }
+        _ => String::new(),
+    }
 }
 
 /// The wire parts one attachment resolves to.
@@ -508,21 +609,27 @@ fn resolve_one(
 /// read the images above it, and an instruction that arrives before its
 /// subject is one the model has to hold in mind rather than apply.
 ///
-/// The floor never moves: every failure below — no file on disk, no decoder,
-/// an unreadable container — returns exactly one text note, which is what a
-/// video attachment produced on these dialects before sampling existed.
+/// The floor never moves: every failure below — no decoder, an unreadable
+/// container, bytes that cannot be staged — returns exactly one text note,
+/// which is what a video attachment produced on these dialects before
+/// sampling existed.
+///
+/// Both sources reach the decoder, by different routes. A path is handed over
+/// as-is; an inline payload is staged as a temp file for the length of one
+/// extraction (#4800). A user who pastes a clip and a user who `@`-mentions
+/// one are asking the same question, and answering only the second would make
+/// the model's capability depend on which way the bytes arrived.
 fn sampled_video_parts(attachment: &Attachment, sampler: &dyn FrameSampler) -> Vec<WirePart> {
-    // Sampling needs a file for the decoder to seek in. An inline `Data`
-    // video has bytes but no path, and spilling a caller's payload to a temp
-    // file to hand it to a subprocess is a different decision (a write to
-    // disk the user did not ask for) than reading a file they pointed at, so
-    // it degrades to the note rather than being decided here silently.
-    let AttachmentSource::Path { path } = &attachment.source else {
-        return vec![WirePart::Text {
-            text: degrade_note(attachment, AttachmentKind::Video),
-        }];
+    let sampled = match &attachment.source {
+        AttachmentSource::Path { path } => sample_video(path, sampler, MAX_SAMPLED_FRAMES),
+        AttachmentSource::Data { base64 } => sample_inline_video(
+            base64,
+            &stage_suffix(&attachment.name),
+            sampler,
+            MAX_SAMPLED_FRAMES,
+        ),
     };
-    let video = match sample_video(path, sampler, MAX_SAMPLED_FRAMES) {
+    let video = match sampled {
         Ok(video) => video,
         Err(failure) => {
             return vec![WirePart::Text {
@@ -735,24 +842,29 @@ mod tests {
         let third = MAX_CACHE_BYTES / 3 + 1;
 
         let mut cache = PathCache::default();
-        cache.store(path(0), None, 0, Form::Base64, &body(third));
-        cache.store(path(1), None, 0, Form::Base64, &body(third));
+        cache.store(CacheKey::Path(path(0)), None, 0, Form::Base64, &body(third));
+        cache.store(CacheKey::Path(path(1)), None, 0, Form::Base64, &body(third));
         // Touch 0 so 1 — not insertion-order-oldest 0 — is the LRU victim.
         assert!(
-            cache.get_fresh(&path(0), None, 0, Form::Base64).is_some(),
+            cache
+                .get_fresh(&CacheKey::Path(path(0)), None, 0, Form::Base64)
+                .is_some(),
             "entry 0 is fresh and must hit"
         );
-        cache.store(path(2), None, 0, Form::Base64, &body(third));
+        cache.store(CacheKey::Path(path(2)), None, 0, Form::Base64, &body(third));
 
         assert!(
-            cache.entries.contains_key(&path(0)),
+            cache.entries.contains_key(&CacheKey::Path(path(0))),
             "the recently used entry must survive"
         );
         assert!(
-            !cache.entries.contains_key(&path(1)),
+            !cache.entries.contains_key(&CacheKey::Path(path(1))),
             "the least recently used entry is the one evicted"
         );
-        assert!(cache.entries.contains_key(&path(2)), "the new entry lands");
+        assert!(
+            cache.entries.contains_key(&CacheKey::Path(path(2))),
+            "the new entry lands"
+        );
         assert!(
             cache.bytes <= MAX_CACHE_BYTES,
             "the budget is a bound, not a suggestion: {} bytes",
@@ -768,7 +880,7 @@ mod tests {
         let mut cache = PathCache::default();
         let keeper = PathBuf::from("/tmp/keeper.png");
         cache.store(
-            keeper.clone(),
+            CacheKey::Path(keeper.clone()),
             None,
             0,
             Form::Base64,
@@ -776,7 +888,7 @@ mod tests {
         );
 
         cache.store(
-            PathBuf::from("/tmp/whale.mp4"),
+            CacheKey::Path(PathBuf::from("/tmp/whale.mp4")),
             None,
             0,
             Form::Base64,
@@ -784,11 +896,13 @@ mod tests {
         );
 
         assert!(
-            !cache.entries.contains_key(Path::new("/tmp/whale.mp4")),
+            !cache
+                .entries
+                .contains_key(&CacheKey::Path(PathBuf::from("/tmp/whale.mp4"))),
             "an over-budget payload must not be retained"
         );
         assert!(
-            cache.entries.contains_key(&keeper),
+            cache.entries.contains_key(&CacheKey::Path(keeper)),
             "and it must not have evicted anything on its way out"
         );
         assert_eq!(cache.bytes, 1);
@@ -804,7 +918,7 @@ mod tests {
         let path = PathBuf::from("/tmp/edited.txt");
         for len in [10usize, 20, 30, 40] {
             cache.store(
-                path.clone(),
+                CacheKey::Path(path.clone()),
                 None,
                 len as u64,
                 Form::Text,
@@ -957,21 +1071,155 @@ mod tests {
         }
     }
 
-    /// An inline `Data` video has no file for a decoder to seek in, so it
-    /// takes the note rather than a temp-file spill the user never asked for.
+    /// A sampler that records the path it was handed, so a test can check
+    /// what happened to the file after the call returned.
+    struct StagingSampler {
+        seen: std::cell::RefCell<Vec<PathBuf>>,
+        existed: std::cell::Cell<bool>,
+    }
+
+    impl StagingSampler {
+        fn new() -> Self {
+            Self {
+                seen: std::cell::RefCell::new(Vec::new()),
+                existed: std::cell::Cell::new(false),
+            }
+        }
+    }
+
+    impl FrameSampler for StagingSampler {
+        fn sample(&self, path: &Path, _max_frames: usize) -> Result<SampledVideo, SampleFailure> {
+            self.existed.set(path.exists());
+            self.seen.borrow_mut().push(path.to_path_buf());
+            Ok(SampledVideo {
+                duration_ms: 4_000,
+                frames: vec![crate::keyframes::SampledFrame {
+                    at_ms: 2_000,
+                    media_type: "image/jpeg".into(),
+                    base64: "inline".into(),
+                }],
+            })
+        }
+    }
+
+    fn inline_video(name: &str, payload: &[u8]) -> Attachment {
+        Attachment {
+            name: name.into(),
+            media_type: "video/mp4".into(),
+            byte_len: payload.len() as u64,
+            source: AttachmentSource::Data {
+                base64: BASE64.encode(payload),
+            },
+        }
+    }
+
+    /// **The witness (#4800).** A pasted video is staged as a temp file and
+    /// sampled, where before it took the text note. Pasting a clip and
+    /// `@`-mentioning one ask the same question, and the answer must not
+    /// depend on how the bytes arrived.
     #[test]
-    fn an_inline_video_payload_degrades_rather_than_spilling_to_disk() {
+    fn an_inline_video_is_staged_and_sampled_like_one_on_disk() {
+        let att = inline_video("pasted.mp4", b"\x00\x00\x00 ftypisom-inline-1");
+        let sampler = StagingSampler::new();
+        let parts = wire_parts_with(std::slice::from_ref(&att), IMAGES_ONLY, &sampler);
+
+        assert_eq!(parts.len(), 2, "one frame and the note: {parts:?}");
+        assert_eq!(
+            parts[0],
+            WirePart::Image {
+                media_type: "image/jpeg".into(),
+                base64: "inline".into(),
+            }
+        );
+        assert!(
+            matches!(&parts[1], WirePart::Text { text } if text.contains("NOT the video")),
+            "{parts:?}"
+        );
+        assert!(
+            sampler.existed.get(),
+            "the payload was on disk while the decoder ran"
+        );
+    }
+
+    /// The staged file lives for exactly one extraction. A payload the user
+    /// pasted is not left in the temp directory for anything else to read.
+    #[test]
+    fn the_staged_file_is_gone_once_sampling_returns() {
+        let att = inline_video("pasted.mp4", b"\x00\x00\x00 ftypisom-inline-2");
+        let sampler = StagingSampler::new();
+        wire_parts_with(std::slice::from_ref(&att), IMAGES_ONLY, &sampler);
+
+        let staged = sampler.seen.borrow().clone();
+        assert_eq!(staged.len(), 1, "one extraction, one staged file");
+        assert!(
+            !staged[0].exists(),
+            "the staged payload outlived the call: {}",
+            staged[0].display()
+        );
+    }
+
+    /// The staged name carries the attachment's own extension, so a demuxer
+    /// has one less thing to guess.
+    #[test]
+    fn the_staged_file_keeps_the_attachments_extension() {
+        for (name, want) in [
+            ("clip.mp4", ".mp4"),
+            ("CLIP.MOV", ".mov"),
+            ("no-extension", ""),
+            // A name that is not a plain extension contributes nothing rather
+            // than being sanitized into a filename.
+            ("odd.tar.gz~", ""),
+            ("weird.a/b", ""),
+        ] {
+            assert_eq!(stage_suffix(name), want, "{name}");
+        }
+    }
+
+    /// An inline payload has no `(mtime, len)` to validate, so the cache keys
+    /// it on the digest of its own bytes. Witness: the same payload twice is
+    /// one extraction, and a different payload is a second one.
+    #[test]
+    fn an_inline_video_is_sampled_once_per_distinct_payload() {
+        let first = inline_video("a.mp4", b"\x00\x00\x00 ftypisom-inline-3");
+        let same = inline_video("renamed.mp4", b"\x00\x00\x00 ftypisom-inline-3");
+        let other = inline_video("b.mp4", b"\x00\x00\x00 ftypisom-inline-4");
+        let sampler = StagingSampler::new();
+
+        wire_parts_with(std::slice::from_ref(&first), IMAGES_ONLY, &sampler);
+        wire_parts_with(std::slice::from_ref(&same), IMAGES_ONLY, &sampler);
+        assert_eq!(
+            sampler.seen.borrow().len(),
+            1,
+            "identical bytes are one entry, whatever the attachment is called"
+        );
+
+        wire_parts_with(std::slice::from_ref(&other), IMAGES_ONLY, &sampler);
+        assert_eq!(
+            sampler.seen.borrow().len(),
+            2,
+            "different bytes are a different entry"
+        );
+    }
+
+    /// A payload that is not valid base64 cannot be staged, and degradation
+    /// stays total: one note, naming the reason, never an error.
+    #[test]
+    fn an_unstageable_inline_payload_degrades_to_a_note() {
         let att = Attachment {
-            name: "clip.mp4".into(),
+            name: "broken.mp4".into(),
             media_type: "video/mp4".into(),
             byte_len: 4,
             source: AttachmentSource::Data {
-                base64: BASE64.encode(b"vvvv"),
+                base64: "not!valid!base64".into(),
             },
         };
         let sampler = FakeSampler::frames(3);
         let parts = wire_parts_with(&[att], IMAGES_ONLY, &sampler);
-        assert_eq!(parts.len(), 1, "{parts:?}");
+        let [WirePart::Text { text }] = parts.as_slice() else {
+            panic!("expected exactly one note, got {parts:?}");
+        };
+        assert!(text.contains("broken.mp4"), "{text}");
+        assert!(text.contains(SampleFailure::Unstageable.reason()), "{text}");
         assert_eq!(sampler.calls.get(), 0, "no decoder was invoked");
     }
 

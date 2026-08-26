@@ -99,6 +99,11 @@ pub(crate) enum SampleFailure {
     UnreadableDuration,
     /// Extraction ran and produced no usable frame.
     NoFrames,
+    /// The attachment's bytes could not be staged as a file for the decoder
+    /// to read — a corrupt inline payload, or a temp directory that cannot be
+    /// written. Distinct from the three above because nothing was decoded:
+    /// the failure is upstream of `ffmpeg` ever starting (#4800).
+    Unstageable,
 }
 
 impl SampleFailure {
@@ -113,6 +118,10 @@ impl SampleFailure {
                 "the video's duration could not be read, so no frames could be chosen"
             }
             SampleFailure::NoFrames => "no frame could be decoded from the video",
+            SampleFailure::Unstageable => {
+                "the attached bytes could not be written to a temporary file for the decoder \
+                 to read"
+            }
         }
     }
 }

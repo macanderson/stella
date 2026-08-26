@@ -32,8 +32,14 @@ rpassword.workspace = true
 zeroize.workspace = true
 hmac.workspace = true
 sha2.workspace = true
+# Staging an inline video payload for the frame sampler (#4800): `ffmpeg` can
+# only seek in a file, and a pasted attachment has bytes but no path. Promoted
+# from a dev-dependency rather than hand-rolling the write, because the parts
+# that are easy to get wrong — an owner-only mode, a name nothing else can
+# collide with, and deletion on every path including a panic — are exactly
+# what this crate already does correctly.
+tempfile.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 wiremock.workspace = true
-tempfile.workspace = true
