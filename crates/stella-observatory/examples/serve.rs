@@ -18,7 +18,7 @@ async fn main() {
     // No roster: resolving one means the project-tier trust gate and the rest
     // of `stella-cli`'s plugin machinery, which is the whole reason this
     // harness exists without it. The skills tab shows the workspace's own.
-    let plugins = std::sync::Arc::new(stella_observatory::NoPluginSkills);
+    let plugins = std::sync::Arc::new(stella_observatory::NoContributions);
     stella_observatory::serve(root, port, plugins, |addr| {
         println!("observatory: http://{addr}");
     })

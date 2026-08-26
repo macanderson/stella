@@ -30,7 +30,7 @@ fn serve(root: std::path::PathBuf) -> std::net::SocketAddr {
             stella_observatory::serve(
                 root,
                 0,
-                std::sync::Arc::new(stella_observatory::NoPluginSkills),
+                std::sync::Arc::new(stella_observatory::NoContributions),
                 |addr| {
                     let _ = tx.send(addr);
                 },
