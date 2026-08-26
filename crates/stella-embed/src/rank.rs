@@ -3,10 +3,10 @@
 
 //! Pure cosine ranking: vectors in, an ordered answer out.
 //!
-//! This module is the invariant-2 half of the crate. It performs no I/O, holds
+//! This module is the no-I/O half of the crate (AGENTS.md #2). It performs no I/O, holds
 //! no handle and knows nothing about SQLite, HTTP or the code graph, which is
 //! what makes it property-testable and what makes the tool output it feeds
-//! byte-stable (invariant 7). The ordering is **total**: score descending,
+//! byte-stable (AGENTS.md #7). The ordering is **total**: score descending,
 //! then key ascending, so two candidates that tie on a float still come back
 //! in one fixed order rather than whatever order the storage layer happened to
 //! yield them in.
@@ -37,7 +37,7 @@ pub struct Scored {
 ///
 /// Vectors of differing length score `0.0` rather than panicking or
 /// truncating: a mismatch means the two came from different embedders, and the
-/// honest answer to "how similar are these" across vector spaces is "this
+/// answer to "how similar are these" across vector spaces is "this
 /// comparison is meaningless". Callers that can distinguish the two cases
 /// filter by fingerprint *before* getting here; this is the backstop that
 /// makes a leak harmless instead of wrong.
@@ -182,7 +182,7 @@ pub const DEFAULT_MIN_BOUNDARY_GAP: f32 = 0.05;
 /// 0.015, and the correct answer was not in that list at all
 /// ([`DEFAULT_MIN_BOUNDARY_GAP`] carries the full argument).
 ///
-/// When no gap passes both, the honest report is that this ranking does not
+/// When no gap passes both, the report is that this ranking does not
 /// resolve: the whole list is returned, and something downstream — a context
 /// budget — has to be the one to say it could not show all of it.
 ///
@@ -273,7 +273,7 @@ mod tests {
     }
 
     /// The exact distribution #3089 measured — ten results spanning 0.05.
-    /// Nothing in it separates, and the honest answer is that this ranking
+    /// Nothing in it separates, and the answer is that this ranking
     /// does not resolve, not that the top three are the answer.
     #[test]
     fn the_file_level_ranking_that_motivated_this_does_not_resolve() {
@@ -442,7 +442,7 @@ mod top_k_tests {
 
     proptest! {
         /// Ranking is a pure function of the *set* of candidates: shuffling the
-        /// input can never change the answer. This is what invariant 7 needs
+        /// input can never change the answer. This is what AGENTS.md #7 needs
         /// from a ranker whose output reaches the prompt.
         #[test]
         fn ranking_is_independent_of_input_order(

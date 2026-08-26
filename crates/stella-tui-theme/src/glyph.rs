@@ -131,7 +131,7 @@ pub const TOOL_MUTATE: char = '◉';
 /// resolves through CoreText to the proportional Apple Symbols on macOS and
 /// has nothing to resolve to on a bare Linux terminal. A glyph whose entire
 /// job is to be recognised may not ship as a tofu box (SPEC 2, cell-grid
-/// honest). This character is present in JetBrains Mono itself.
+/// faithful). This character is present in JetBrains Mono itself.
 pub const TOOL_EXECUTE: char = '⊙';
 
 /// Tool class: handed to another agent.
@@ -163,7 +163,7 @@ pub const EVENT: char = '●';
 pub const COMPACTED: char = '↓';
 
 /// The eighth-block ramp, empty through full — the only sub-cell precision
-/// this design allows itself (SPEC 2: cell-grid honest).
+/// this design allows itself (SPEC 2: cell-grid faithful).
 ///
 /// Indexed by eighths, so `BLOCK_EIGHTHS[3]` is three eighths of a cell.
 pub const BLOCK_EIGHTHS: [char; 9] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];

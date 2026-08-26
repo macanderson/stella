@@ -1,7 +1,7 @@
 //! Git-worktree isolation: a dedicated checkout per divergent task.
 //!
 //! We shell out to the `git` binary through the [`GitCli`] port rather than
-//! linking libgit2/git2 — a deliberate design constraint: the native build is
+//! linking libgit2/git2 — a design constraint: the native build is
 //! heavy, and the TS fleet shelled out to `git` for the same reason and it
 //! was the right call. Every command runs behind [`GitCli`] so the scheduling
 //! and pathspec logic is exercised against fakes, while [`SystemGitCli`] is
@@ -104,7 +104,7 @@ impl GitCli for SystemGitCli {
         // command-injection family (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/
         // `GIT_CONFIG_VALUE_n`, `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM`,
         // `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`, `GIT_PROXY_COMMAND`,
-        // `GIT_ALTERNATE_OBJECT_DIRECTORIES`) is deliberately NOT duplicated
+        // `GIT_ALTERNATE_OBJECT_DIRECTORIES`) is NOT duplicated
         // here: it lives in the shared scrub below so `stella-tools`' and
         // `stella-cli`'s own git invocations get identical treatment from one
         // list, with one documented re-admission hatch
@@ -445,7 +445,7 @@ impl<G: GitCli> WorktreeManager<G> {
     /// Throw a worktree away whether or not it is dirty: `git worktree remove
     /// --force`, then `git branch -D` unconditionally.
     ///
-    /// **Deliberately not [`Self::remove`], and the difference is a judgement
+    /// **Not [`Self::remove`], and the difference is a judgement
     /// about whose work is at stake.** That method refuses a dirty worktree
     /// and preserves a branch carrying commits, because a fleet worker's
     /// output *is* its commits and cleanup must never discard them. A
@@ -456,10 +456,10 @@ impl<G: GitCli> WorktreeManager<G> {
     /// is *meant* to be thrown away — that is what makes the winner's
     /// adoption the only thing that survives.
     ///
-    /// Both halves run even when the first fails, and the first failure is
-    /// what is reported: a `worktree remove` that could not take the
-    /// directory still leaves a branch nobody will ever check out, and
-    /// leaking both is strictly worse than leaking one.
+    /// The worktree removal and the branch delete both run even when the first
+    /// fails, and the first failure is what is reported: a `worktree remove`
+    /// that could not take the directory still leaves a branch nobody will ever
+    /// check out, and leaking both is strictly worse than leaking one.
     pub async fn discard(&self, worktree: &Worktree) -> Result<(), WorktreeError> {
         let path_str = path_arg(&worktree.path)?;
         // No `?` on either arm — that is the whole point. A `?` on the first
@@ -634,7 +634,7 @@ mod tests {
     // discard
 
     /// A candidate's checkout goes whether or not it is dirty, and its branch
-    /// goes with it — the property `remove` deliberately does not have.
+    /// goes with it — the property `remove` does not have.
     #[tokio::test]
     async fn discard_forces_the_removal_and_deletes_the_branch() {
         let git = ScriptedGit::new(|_| GitOutput::ok(""));

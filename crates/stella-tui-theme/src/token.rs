@@ -11,7 +11,7 @@
 //!
 //! **Values and role tags only.** The predicates themselves live in
 //! [`crate::clamp`], which is hand-written, and the tests that walk this table
-//! live beside them. That split is deliberate: the gold clamp is not a
+//! live beside them. That split exists because the gold clamp is not a
 //! templatable expression but an argument with a geometric proof behind it
 //! (a lift is anchored to the gold it lifts, because the resting blue ceiling
 //! is unsatisfiable above lightness 0.6745), and a generator that emitted it
@@ -170,7 +170,7 @@ pub enum Clamp {
     /// `r >= g >= b`, `100 g >= PAPER_GREEN_PCT r`, `100 b >= PAPER_BLUE_PCT r`
     /// -- the light ground, warm or neutral, never blue.
     WarmPaper,
-    /// Pass and fail. Deliberately neither metal nor gray; no channel predicate.
+    /// Pass and fail. Neither metal nor gray; no channel predicate.
     Verdict,
     /// A tint carrying a sign column, not a hue in a role; no channel predicate.
     Surface,

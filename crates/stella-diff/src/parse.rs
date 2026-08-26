@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn a_headerless_pseudo_diff_parses_nothing_rather_than_guessing_positions() {
         // Bare `+`/`-` lines carry no coordinates at all. Inventing `1` would
-        // put a confident, wrong line number in a gutter; the honest answer is
+        // put a confident, wrong line number in a gutter; the answer is
         // that this text has no hunks and the caller renders it as text.
         assert!(hunks("+one\n-two").is_empty());
     }

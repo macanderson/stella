@@ -208,7 +208,7 @@ fn the_resting_blue_ceiling_is_unsatisfiable_above_this_lightness() {
 ///
 /// The pairing is generated from `design/tokens/stella-tokens.json`, so adding
 /// a colour means declaring in that file what kind of colour it is, and a warm
-/// hex has no honest declaration to pick. [`clamp::satisfies`] is the bridge:
+/// hex has no declaration to pick. [`clamp::satisfies`] is the bridge:
 /// the generator emits role *tags*, never predicates, because a lift is checked
 /// against another token's value and no per-row template can express that.
 #[test]

@@ -266,7 +266,7 @@ async fn a_task_timeout_stops_the_worker_and_keeps_its_observed_spend() {
 }
 
 /// A worker that ignores its stop line for the whole grace is given up
-/// on with an honest synthesized result — a handle, never a hang and
+/// on with a synthesized result — a handle, never a hang and
 /// never a dispatch error.
 #[tokio::test(start_paused = true)]
 async fn a_worker_deaf_to_its_stop_line_is_abandoned_after_the_grace() {
@@ -531,7 +531,7 @@ async fn a_foreign_claim_fails_dispatch_by_name_and_rolls_back() {
 }
 
 /// Claims are acquired in a canonical (sorted) order, not the order the
-/// task declared them — the lock-ordering invariant that keeps two
+/// task declared them — the lock-ordering rule that keeps two
 /// concurrent siblings from each winning one path of an overlapping set
 /// and then both failing on the other.
 ///

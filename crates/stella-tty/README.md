@@ -44,7 +44,7 @@ justified rather than folded into it: functionality that needs a dependency
 direction the current graph forbids. That is exactly this shape (#3036) —
 `stella-model`'s credential prompt needs the same derivation `stella-cli`'s
 approval prompts use, but `stella-model` must never depend on `stella-cli`
-(invariant 1) — and `stella-home`'s own boundary section is explicit that "what
+(AGENTS.md #1) — and `stella-home`'s own boundary section is explicit that "what
 path is the stella home" is the only decision it owns; a human-presence fact
 is a different question answered for a different reason, so bolting it on
 would violate that boundary rather than honour the same shape.

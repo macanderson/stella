@@ -4,7 +4,7 @@
 //! A real line-oriented unified diff — the shape a developer already knows how
 //! to read, because it is the shape `git diff` produces.
 //!
-//! A trim-prefix/suffix-and-print-both-spans renderer is honest and cheap
+//! A trim-prefix/suffix-and-print-both-spans renderer is cheap
 //! for a small file edit, where the changed region is tiny and the viewer
 //! already has the file open. It is useless for a system prompt, where the
 //! interesting change is one inserted paragraph inside four hundred stable
@@ -19,11 +19,11 @@
 //!
 //! Extracted from `stella-cli`'s `inspect::diff` (#1511) so the Observatory's
 //! prompt-diff route and `stella inspect --diff` share one differ instead of
-//! keeping acknowledged copies. Deliberately dependency-free — the
+//! keeping acknowledged copies. Dependency-free — the
 //! `stella-home` precedent (#1139) — so linking it costs no caller its
 //! isolation.
 
-//! Rendering is deliberately *not* here — a hunk becomes ratatui spans, HTML
+//! Rendering is *not* here — a hunk becomes ratatui spans, HTML
 //! or ANSI in the surface that draws it. What every surface does share is how
 //! much of a diff it may draw and which part: [`view`] holds that one policy,
 //! so a reader comparing the deck, the Observatory and an exported dashboard
@@ -137,7 +137,7 @@ pub struct Diff {
 }
 
 impl Diff {
-    /// Whether the two sides differ at all. An empty hunk list is the honest
+    /// Whether the two sides differ at all. An empty hunk list is the
     /// "byte-identical" answer, not an error.
     #[must_use]
     pub fn changed(&self) -> bool {

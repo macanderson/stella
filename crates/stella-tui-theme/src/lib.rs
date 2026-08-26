@@ -1,4 +1,4 @@
-//! The stella TUI v2 palette, glyph vocabulary, wordmark, and degradation map.
+//! The stella interactive-mode v2 palette, glyph vocabulary, wordmark, and degradation map.
 //!
 //! One crate, so there is one answer. Every v2 surface pulls its colour from
 //! [`token`] and its state glyphs from [`glyph`]; nothing above this crate
@@ -20,7 +20,7 @@
 //! - **Role totality.** [`token::ALL`] pairs every token with a
 //!   [`token::Clamp`], and the tag decides its predicate via
 //!   [`clamp::satisfies`]. A new token has to declare what kind of colour it is
-//!   before it can exist, and a warm hex has no honest declaration to pick.
+//!   before it can exist, and a warm hex has no declaration to pick.
 //!   The pairing is generated from `design/tokens/stella-tokens.json`, so that
 //!   declaration is made where the value is, and `make tokens` fails the gate
 //!   if the two fall out of step.

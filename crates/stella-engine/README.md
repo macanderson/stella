@@ -17,7 +17,7 @@ per-step code and emit the identical per-step `AgentEvent` sequence. What
 exit — a non-retryable `Error` carrying `step_cap_reason`.
 
 Consumed by [`stella-serve`](../stella-serve) and external hosts.
-`stella-cli` deliberately does **not** link it — the CLI drives turns through
+`stella-cli` does **not** link it — the CLI drives turns through
 `stella-core` directly.
 
 ## Direction — this is the in-process embedding door
@@ -30,7 +30,7 @@ two doors, and step mode is what makes it durable — a host that owns a queue, 
 deadline, and a crash-restart story drives `run_step`, persists the
 `Checkpoint`, and resumes in a different process.
 
-This door deliberately does not carry:
+This door does not carry:
 
 - **No verification.** The staged pipeline was a *wrapper* around the loop,
   never part of it, and it has left the workspace: #3865 deleted
@@ -58,14 +58,14 @@ surface and the checkpoint round-trip so a `stella-core` refactor cannot
 silently change what hosts see.
 
 Anything with logic, I/O, or state is wrong here by construction: the crate
-inherits `stella-core`'s I/O-free posture (its tokio dependency is `sync`-only,
-deliberately) and `#![forbid(unsafe_code)]`.
+inherits `stella-core`'s I/O-free posture (its tokio dependency is `sync`-only)
+and `#![forbid(unsafe_code)]`.
 
 ### What earns a re-export: the closure rule
 
 This section and the `# What earns a re-export` section of `src/lib.rs` state
-one rule in the same words, deliberately. They used to state two: this file
-said a re-export is earned only when a host "genuinely cannot drive a turn
+one rule in the same words. They used to state two: this file said a
+re-export is earned only when a host "genuinely cannot drive a turn
 without it", while `src/lib.rs` stated a strictly wider per-port closure. The
 gap between them was not theoretical — `Engine::with_requery` was reachable
 through the facade and callable by nobody, because neither the

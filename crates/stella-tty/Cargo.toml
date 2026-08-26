@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# Deliberately empty: the stella-home shape (#1139). stella-model needs this
-# predicate but must never depend on stella-cli (invariant 1 — the CLI is the
+# Empty: the stella-home shape (#1139). stella-model needs this
+# predicate but must never depend on stella-cli (AGENTS.md #1 — the CLI is the
 # binary, the model crate is a library below it), and stella-home's own
 # README draws its boundary at "what path is the stella home" and names
 # exactly this dependency-direction shape as when a new leaf is warranted

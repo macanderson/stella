@@ -5,7 +5,7 @@
 //! right of the tab bar on every screen, and the asterisk is the only brand
 //! ornament the design has.
 //!
-//! Two things this module exists to make impossible. The wordmark must never
+//! The wordmark must never
 //! render all-gold — gold is the *acting* metal, and a mark that is always on
 //! screen would spend it on nothing. And the retired `✦ stella` form must not
 //! come back; it used the skill glyph ([`crate::glyph::SKILL`]) as a brand

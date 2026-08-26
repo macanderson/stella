@@ -58,7 +58,7 @@ const CAP_MAX: usize = 40;
 
 /// Render the whole matrix as the text both languages must agree on.
 ///
-/// Deliberately a flat, greppable line per case rather than JSON: the file is
+/// A flat, greppable line per case rather than JSON: the file is
 /// read by a human deciding whether a re-bless is right, and a diff of
 /// `shown=[0-6,12-15]` says what changed at a glance.
 fn render_matrix() -> String {

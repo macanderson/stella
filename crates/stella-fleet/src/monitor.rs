@@ -762,8 +762,8 @@ fn parse_run_list(stdout: &str) -> Result<CiSnapshot, MonitorError> {
 // Emit-shape helpers (protocol event values)
 
 /// Build an [`AgentEvent::Commit`] from a ledger [`CommitRecord`] — the one
-/// place the fleet turns a recorded commit into the wire event the TUI/JSON
-/// serializer renders.
+/// place the fleet turns a recorded commit into the wire event that
+/// interactive mode and the JSON serializer both render.
 pub fn commit_event(commit: &CommitRecord) -> AgentEvent {
     AgentEvent::Commit {
         sha: commit.sha.clone(),

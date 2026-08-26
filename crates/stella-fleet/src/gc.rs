@@ -236,7 +236,7 @@ pub enum GcError {
 /// The garbage collector over a [`GitCli`], rooted at a repository.
 ///
 /// Constructed the same way [`WorktreeManager`](crate::git::WorktreeManager)
-/// is, and deliberately a separate type: creating a worktree is a run-scoped
+/// is, and a separate type: creating a worktree is a run-scoped
 /// operation (the scope is hashed into every slug), while a sweep is
 /// workspace-wide and belongs to no run.
 pub struct Gc<G: GitCli> {
@@ -544,7 +544,7 @@ impl<G: GitCli> Gc<G> {
     }
 
     /// Whether every commit on `branch` is already reachable from `base_ref`
-    /// (`git merge-base --is-ancestor`). Exit 1 is git's honest "no"; any
+    /// (`git merge-base --is-ancestor`). Exit 1 is git's real "no"; any
     /// other failure means git could not answer, and an unanswered question
     /// keeps the branch.
     async fn is_contained_in(&self, branch: &str, base_ref: &str) -> Result<bool, GcError> {
