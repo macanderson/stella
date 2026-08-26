@@ -312,20 +312,31 @@ impl Observatory {
         // call (`telemetry`, v33) and which ran it (`tool_calls`, v35) — so a
         // page can separate a turn's lead from its fan-out on either axis
         // without a second round trip. NULL is the lead's own, in both tables.
+        //
+        // The seq column is named per store, not hardcoded: an observer opens
+        // read-only and never migrates, so a workspace that has not run a turn
+        // since #4924 still spells it `step`. Probing keeps both readable; the
+        // JSON key is the new name either way, because the page's job is to
+        // say what the number is rather than what its column was called.
+        let seq_column = crate::store_shape::telemetry_seq_column(&conn);
         let steps = collect_rows_degrading(
             &conn,
             id,
-            "SELECT step, provider, model, input_tokens, output_tokens,
+            &format!(
+                "SELECT {seq_column}, provider, model, input_tokens, output_tokens,
                     cache_read_tokens, cache_miss_tokens, cache_write_tokens,
                     cost_usd, duration_ms, retries, tool_calls, sub_agent_id
-             FROM telemetry WHERE execution_id = ?1 ORDER BY step ASC",
-            "SELECT step, provider, model, input_tokens, output_tokens,
+             FROM telemetry WHERE execution_id = ?1 ORDER BY {seq_column} ASC"
+            ),
+            &format!(
+                "SELECT {seq_column}, provider, model, input_tokens, output_tokens,
                     cache_read_tokens, cache_miss_tokens, cache_write_tokens,
                     cost_usd, duration_ms, retries, tool_calls, NULL
-             FROM telemetry WHERE execution_id = ?1 ORDER BY step ASC",
+             FROM telemetry WHERE execution_id = ?1 ORDER BY {seq_column} ASC"
+            ),
             |r| {
                 Ok(json!({
-                    "step": r.get::<_, i64>(0)?,
+                    "stream_seq": r.get::<_, i64>(0)?,
                     "provider": r.get::<_, String>(1)?,
                     "model": r.get::<_, String>(2)?,
                     "input_tokens": r.get::<_, i64>(3)?,

@@ -19,7 +19,10 @@ fn sqlite_integer_writes_reject_u64_overflow() {
             .is_err()
     );
     let telemetry = TelemetryRow {
-        step: 0,
+        stream_seq: 0,
+        turn_instance: None,
+        engine_step: None,
+        call_seq: None,
         call_role: "worker".into(),
         provider: "zai".into(),
         model: "glm".into(),

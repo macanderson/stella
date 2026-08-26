@@ -2579,11 +2579,17 @@ function downloadTranscriptJson(execution, journal, calls, steps, tools, files, 
 }
 /* One metering row. `sub_agent_id` (telemetry, v33) badges the rows a
    delegate spent rather than the lead — without it a turn's fan-out is
-   indistinguishable from the lead making every call itself. */
+   indistinguishable from the lead making every call itself.
+
+   The leading number is `stream_seq`: the event-stream seq, which is the
+   execution-global call identity. It is NOT the engine's step, which restarts
+   on every turn and which several calls can share — the column was called
+   `step` and held this until #4924. The context dialog's `c.step` a few
+   functions down is the engine's, and they are different numbers. */
 function stepRowHtml(s, maxTok) {
   const t = num(s.input_tokens) + num(s.output_tokens);
   const inW = t ? 100 * num(s.input_tokens) / t : 0;
-  return `<div class="step-row"><span>${fmtInt(s.step)}</span>
+  return `<div class="step-row"><span>${fmtInt(s.stream_seq)}</span>
     <span class="tokbar" style="width:${(100 * t / maxTok).toFixed(1)}%">
       <i style="background:var(--c1);width:${inW.toFixed(1)}%"></i>
       <i style="background:var(--c2);flex:1"></i></span>

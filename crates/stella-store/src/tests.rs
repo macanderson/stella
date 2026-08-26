@@ -3,6 +3,7 @@ mod quarantine;
 mod usage_completeness;
 
 use super::*;
+use crate::telemetry::fixtures::metering_row;
 
 #[test]
 fn execution_lifecycle_events_and_telemetry_roundtrip() {
@@ -36,22 +37,16 @@ fn execution_lifecycle_events_and_telemetry_roundtrip() {
         .record_telemetry(
             id,
             &TelemetryRow {
-                step: 0,
-                provider: "zai".into(),
-                call_role: "worker".into(),
-                model: "glm-5.2".into(),
                 input_tokens: 12_000,
                 estimated_input_tokens: 11_000,
                 output_tokens: 400,
                 cache_read_tokens: 9_000,
                 cache_miss_tokens: 3_000,
-                cache_write_tokens: 0,
                 cost_usd: 0.0042,
                 duration_ms: 1_830,
                 retries: 1,
                 tool_calls: 3,
-                usage_complete: true,
-                sub_agent_id: None,
+                ..metering_row(0, "zai", "glm-5.2")
             },
         )
         .unwrap();
@@ -1055,8 +1050,10 @@ fn skill_usage_records_per_execution_version_rows() {
     //       `tool_calls.sub_agent_id` (#4624) — which delegate RAN one; the
     //       pair is what lets a turn page say both what a child cost and what
     //       it did. v36 `executions.parent_execution_id` (#4628) — which turn
-    //       dispatched a deck lane, NULL when nobody's turn did.
-    assert_eq!(SCHEMA_VERSION, 36);
+    //       dispatched a deck lane, NULL when nobody's turn did. v37
+    //       `telemetry.step` becomes `stream_seq` and gains the receipt join
+    //       key (#4924) — the column never held the engine's step.
+    assert_eq!(SCHEMA_VERSION, 37);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
@@ -1128,22 +1125,12 @@ fn v4_migration_adds_agent_uses_to_a_pre_v4_file() {
 /// fields vary.
 fn drift_row(step: u64, provider: &str, model: &str, estimated: u64, actual: u64) -> TelemetryRow {
     TelemetryRow {
-        step,
-        provider: provider.into(),
-        call_role: "worker".into(),
-        model: model.into(),
         input_tokens: actual,
         estimated_input_tokens: estimated,
-        output_tokens: 100,
         cache_read_tokens: 0,
         cache_miss_tokens: actual,
-        cache_write_tokens: 0,
-        cost_usd: 0.001,
         duration_ms: 500,
-        retries: 0,
-        tool_calls: 1,
-        usage_complete: true,
-        sub_agent_id: None,
+        ..metering_row(step, provider, model)
     }
 }
 
@@ -1499,7 +1486,7 @@ fn v1_migration_dedupes_a_v0_database_and_retrofits_the_unique_keys() {
         );
         let input: i64 = conn
             .query_row(
-                "SELECT input_tokens FROM telemetry WHERE execution_id = 1 AND step = 0",
+                "SELECT input_tokens FROM telemetry WHERE execution_id = 1 AND stream_seq = 0",
                 [],
                 |row| row.get(0),
             )
@@ -1545,8 +1532,8 @@ fn v1_migration_dedupes_a_v0_database_and_retrofits_the_unique_keys() {
         let conn = store.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT step, usage_complete FROM telemetry \
-                 WHERE execution_id = 1 ORDER BY step",
+                "SELECT stream_seq, usage_complete FROM telemetry \
+                 WHERE execution_id = 1 ORDER BY stream_seq",
             )
             .unwrap();
         stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -1790,10 +1777,6 @@ fn telemetry(
     duration_ms: u64,
 ) -> TelemetryRow {
     TelemetryRow {
-        step,
-        provider: provider.into(),
-        call_role: "worker".into(),
-        model: model.into(),
         input_tokens: input,
         // This fixture predates drift correction and exercises
         // usage_stats, which ignores the estimate; 0 = "no estimate
@@ -1805,10 +1788,8 @@ fn telemetry(
         cache_write_tokens: cache_write,
         cost_usd: cost,
         duration_ms,
-        retries: 0,
         tool_calls: 0,
-        usage_complete: true,
-        sub_agent_id: None,
+        ..metering_row(step, provider, model)
     }
 }
 
@@ -2047,26 +2028,7 @@ fn open_hardens_a_fresh_dot_stella_dir() {
 
 #[test]
 fn telemetry_replicates_to_the_hub_and_heals_missed_turns() {
-    fn call(step: u64) -> TelemetryRow {
-        TelemetryRow {
-            step,
-            provider: "zai".into(),
-            call_role: "worker".into(),
-            model: "glm-5.2".into(),
-            input_tokens: 1_000,
-            estimated_input_tokens: 900,
-            output_tokens: 100,
-            cache_read_tokens: 600,
-            cache_miss_tokens: 400,
-            cache_write_tokens: 0,
-            cost_usd: 0.001,
-            duration_ms: 800,
-            retries: 0,
-            tool_calls: 1,
-            usage_complete: true,
-            sub_agent_id: None,
-        }
-    }
+    let call = |step: u64| metering_row(step, "zai", "glm-5.2");
 
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(tmp.path()).unwrap();

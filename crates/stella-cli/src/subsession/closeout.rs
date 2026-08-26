@@ -223,7 +223,10 @@ mod tests {
                 .record_telemetry(
                     worker_exec,
                     &stella_store::TelemetryRow {
-                        step,
+                        stream_seq: step,
+                        turn_instance: None,
+                        engine_step: None,
+                        call_seq: None,
                         provider: "zai".into(),
                         call_role: "worker".into(),
                         model: "glm-5.2".into(),

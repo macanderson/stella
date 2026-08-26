@@ -132,11 +132,11 @@ impl ExportExclusions {
 const CHILD_TABLES: [(&str, &str, &str); 8] = [
     (
         "telemetry",
-        "SELECT execution_id, step, ts, provider, call_role, model, input_tokens, \
+        "SELECT execution_id, stream_seq, ts, provider, call_role, model, input_tokens, \
          estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
          cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete, \
          sub_agent_id FROM telemetry",
-        "ORDER BY execution_id ASC, step ASC",
+        "ORDER BY execution_id ASC, stream_seq ASC",
     ),
     (
         "tool_calls",
@@ -525,7 +525,10 @@ mod tests {
                 .record_telemetry(
                     id,
                     &TelemetryRow {
-                        step: 0,
+                        stream_seq: 0,
+                        turn_instance: None,
+                        engine_step: None,
+                        call_seq: None,
                         call_role: "worker".into(),
                         provider: provider.into(),
                         model: "m".into(),
@@ -708,7 +711,10 @@ mod tests {
                 .record_telemetry(
                     id,
                     &TelemetryRow {
-                        step: 0,
+                        stream_seq: 0,
+                        turn_instance: None,
+                        engine_step: None,
+                        call_seq: None,
                         call_role: "worker".into(),
                         provider: "anthropic".into(),
                         model: "m".into(),

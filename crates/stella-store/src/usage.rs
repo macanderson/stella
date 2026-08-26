@@ -313,7 +313,8 @@ impl UsageStore {
             let t = &row.telemetry;
             tx.execute(
                 "INSERT OR REPLACE INTO telemetry \
-                 (project_id, source_rowid, org_id, workspace_id, repo_id, execution_id, step, \
+                 (project_id, source_rowid, org_id, workspace_id, repo_id, execution_id, \
+                  stream_seq, \
                   recorded_at, provider, call_role, model, input_tokens, estimated_input_tokens, \
                   output_tokens, cache_read_tokens, cache_miss_tokens, cache_write_tokens, \
                   cost_usd, duration_ms, retries, tool_calls, usage_complete) \
@@ -325,7 +326,7 @@ impl UsageStore {
                     scope.workspace_id,
                     scope.repo_id,
                     row.execution_id,
-                    t.step as i64,
+                    t.stream_seq as i64,
                     row.recorded_at,
                     t.provider,
                     t.call_role,
@@ -362,7 +363,7 @@ impl UsageStore {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT t.rowid, t.org_id, t.workspace_id, t.repo_id, t.project_id, t.execution_id, \
-                    t.step, t.recorded_at, t.provider, t.call_role, t.model, t.input_tokens, \
+                    t.stream_seq, t.recorded_at, t.provider, t.call_role, t.model, t.input_tokens, \
                     t.estimated_input_tokens, t.output_tokens, t.cache_read_tokens, \
                     t.cache_miss_tokens, t.cache_write_tokens, t.cost_usd, t.duration_ms, \
                     t.retries, t.tool_calls, t.usage_complete, t.source_rowid \
@@ -383,7 +384,12 @@ impl UsageStore {
                 source_rowid: r.get(22)?,
                 recorded_at: r.get(7)?,
                 telemetry: crate::TelemetryRow {
-                    step: r.get::<_, i64>(6)? as u64,
+                    stream_seq: r.get::<_, i64>(6)? as u64,
+                    // No receipt identity crosses into the hub: #4924 renamed
+                    // a column on `content_free`'s allowlist, never added one.
+                    turn_instance: None,
+                    engine_step: None,
+                    call_seq: None,
                     provider: r.get(8)?,
                     call_role: r.get(9)?,
                     model: r.get(10)?,
@@ -995,6 +1001,7 @@ mod rekey;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::telemetry::fixtures;
 
     pub(super) fn rollup(execution_id: i64, tools: Vec<ToolBucket>) -> ExecutionRollupRow {
         ExecutionRollupRow {
@@ -1118,22 +1125,14 @@ mod tests {
             execution_id: 1,
             recorded_at: "2026-07-23T10:00:00Z".into(),
             telemetry: crate::TelemetryRow {
-                step: source_rowid as u64,
-                provider: "zai".into(),
                 call_role: "engine".into(),
-                model: "glm-5.2".into(),
-                input_tokens: 1000,
-                estimated_input_tokens: 900,
-                output_tokens: 100,
                 cache_read_tokens: 500,
                 cache_miss_tokens: 500,
                 cache_write_tokens: 40,
                 cost_usd: cost,
                 duration_ms: 1200,
-                retries: 0,
                 tool_calls: 2,
-                usage_complete: true,
-                sub_agent_id: None,
+                ..fixtures::metering_row(source_rowid as u64, "zai", "glm-5.2")
             },
         }
     }

@@ -51,13 +51,13 @@ impl Store {
                t.cache_write_tokens,
                CAST(
                  (julianday(t.ts) - julianday(
-                   LAG(t.ts) OVER (PARTITION BY e.session_id ORDER BY e.id, t.step)
+                   LAG(t.ts) OVER (PARTITION BY e.session_id ORDER BY e.id, t.stream_seq)
                  )) * 86400 AS INTEGER
                ) AS gap_secs
              FROM telemetry t
              JOIN executions e ON e.id = t.execution_id
              WHERE e.session_id IS NOT NULL
-             ORDER BY e.session_id, e.id, t.step",
+             ORDER BY e.session_id, e.id, t.stream_seq",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(CacheCallGap {
@@ -146,7 +146,10 @@ mod tests {
         cache_write: u64,
     ) -> crate::TelemetryRow {
         crate::TelemetryRow {
-            step: 0,
+            stream_seq: 0,
+            turn_instance: None,
+            engine_step: None,
+            call_seq: None,
             provider: provider.into(),
             call_role: "worker".into(),
             model: model.into(),

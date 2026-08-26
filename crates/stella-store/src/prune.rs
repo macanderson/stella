@@ -328,7 +328,7 @@ impl Store {
             if policy.telemetry_cursor > 0 && report.telemetry_pruned > 0 {
                 watermark_key = tx
                     .query_row(
-                        "SELECT execution_id, step FROM telemetry \
+                        "SELECT execution_id, stream_seq FROM telemetry \
                          WHERE rowid <= ?1 ORDER BY rowid DESC LIMIT 1",
                         params![policy.telemetry_cursor],
                         |r| Ok((r.get(0)?, r.get(1)?)),
@@ -356,11 +356,11 @@ impl Store {
         //    answer reflects whatever the reclaim did to the rowid space. A
         //    watermark row that did not survive resolves to 0, which re-ships
         //    the retained backlog instead of skipping anything.
-        if let Some((execution_id, step)) = watermark_key {
+        if let Some((execution_id, stream_seq)) = watermark_key {
             report.telemetry_cursor_after = Some(
                 conn.query_row(
-                    "SELECT rowid FROM telemetry WHERE execution_id = ?1 AND step = ?2",
-                    params![execution_id, step],
+                    "SELECT rowid FROM telemetry WHERE execution_id = ?1 AND stream_seq = ?2",
+                    params![execution_id, stream_seq],
                     |r| r.get(0),
                 )
                 .optional()?
@@ -487,7 +487,10 @@ mod tests {
 
     fn telemetry_row(step: u64) -> TelemetryRow {
         TelemetryRow {
-            step,
+            stream_seq: step,
+            turn_instance: None,
+            engine_step: None,
+            call_seq: None,
             provider: "zai".into(),
             call_role: "worker".into(),
             model: "glm-5.2".into(),

@@ -162,7 +162,10 @@ pub const HUB_TELEMETRY_COLUMNS: &[&str] = &[
     // --- addressing ---
     "source_rowid",
     "execution_id",
-    "step",
+    // The event-stream `seq`, called `step` here until #4924 renamed it on
+    // both sides. A rename, reviewed as one: the same integer, already
+    // admitted, under the name that says what it is.
+    "stream_seq",
     "recorded_at",
     // --- content-free telemetry ---
     "provider",
@@ -464,7 +467,10 @@ pub fn poisoned_cloud_event() -> CloudTelemetryEvent {
         source_rowid: 99,
         recorded_at: "2026-07-24T00:00:00Z".into(),
         telemetry: TelemetryRow {
-            step: 3,
+            stream_seq: 3,
+            turn_instance: None,
+            engine_step: None,
+            call_seq: None,
             provider: "zai".into(),
             // Excluded from the drain contract by design — poisoned so any
             // encoder that blanket-serializes the hub row is caught.
@@ -925,9 +931,12 @@ mod tests {
             .collect();
         assert_eq!(
             excluded,
+            // `stream_seq` is `step` renamed (#4924), not a new exclusion:
+            // the same column, still not shipped, under the name that says
+            // what it holds. Nothing was added to or removed from this set.
             vec![
                 &"execution_id",
-                &"step",
+                &"stream_seq",
                 &"call_role",
                 &"estimated_input_tokens"
             ],

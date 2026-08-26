@@ -762,6 +762,9 @@ pub(crate) fn persist_event_detailed(
     let mut recovered = None;
     let mut died = None;
     if let AgentEvent::StepUsage {
+        step,
+        turn_instance,
+        call_seq,
         role,
         provider,
         model,
@@ -789,8 +792,22 @@ pub(crate) fn persist_event_detailed(
                 execution_id,
                 &TelemetryRow {
                     // Event-stream seq is the execution-global call identity;
-                    // engine-local `step` restarts on each pipeline turn.
-                    step: seq,
+                    // engine-local `step` restarts on each pipeline turn. The
+                    // column is named for what it holds since #4924 — it was
+                    // called `step` and held this, and the comment saying so
+                    // was the only place a reader could learn it.
+                    stream_seq: seq,
+                    // The engine-side identity, so this cost can be joined to
+                    // the receipt of the call that produced it without going
+                    // back to `stella-events.jsonl`: with `execution_id` these
+                    // three are `step_receipt`'s primary key. Carried through
+                    // rather than derived — `turn_instance` and `call_seq`
+                    // ride the event itself since #4793, and re-deriving them
+                    // here would be this process guessing at what the emitter
+                    // already knew.
+                    turn_instance: *turn_instance,
+                    engine_step: Some(*step as u64),
+                    call_seq: *call_seq,
                     provider: actual_provider.to_string(),
                     call_role: serde_json::to_value(role)
                         .ok()
@@ -866,7 +883,16 @@ pub(crate) fn persist_event_detailed(
             .record_telemetry(
                 execution_id,
                 &TelemetryRow {
-                    step: seq,
+                    stream_seq: seq,
+                    // All three NULL, because `UsageIncomplete` carries none
+                    // of them: the call died before the engine named a turn
+                    // for it, so there is no receipt to join to and nothing
+                    // here to record. NULL says "this row cannot say", which
+                    // is the truth; 0 would say "the worker call of turn 0",
+                    // which is a claim (#4924).
+                    turn_instance: None,
+                    engine_step: None,
+                    call_seq: None,
                     provider: actual_provider.to_string(),
                     call_role: enum_tag(role),
                     model: model.clone(),

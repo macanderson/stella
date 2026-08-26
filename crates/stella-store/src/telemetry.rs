@@ -5,11 +5,47 @@ use rusqlite::params;
 
 use crate::{Result, Store, sqlite_i64};
 
+#[cfg(test)]
+pub(crate) mod fixtures;
+
 /// One StepUsage-shaped telemetry record (mirrors the event, plus the
 /// derived cache-miss column so analytics never re-derive it).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TelemetryRow {
-    pub step: u64,
+    /// The event-stream `seq` — the execution-global call identity, and this
+    /// row's half of `UNIQUE (execution_id, stream_seq)`.
+    ///
+    /// Called `step` until #4924, which is what it was never holding: the
+    /// engine's step restarts on every `run_turn` and several calls can share
+    /// one, so keying on it would collide, and a collision here double-counts
+    /// money. AGENTS.md § Glossary is the authority on how far apart `step`,
+    /// `turn_instance` and `call_seq` are. For the engine's own step, see
+    /// [`TelemetryRow::engine_step`].
+    pub stream_seq: u64,
+    /// The `run_turn` this call rode — `step_receipt.turn_instance`.
+    ///
+    /// `None` is "this row cannot say", never turn 0: a row written before
+    /// #4924, or a dead call the engine never got to name. Turn instances are
+    /// 0-based, so collapsing the two would claim every legacy row rode the
+    /// first turn. Same contract as the event's own field
+    /// (`AgentEvent::StepUsage::turn_instance`).
+    pub turn_instance: Option<u32>,
+    /// The engine's step within that turn — `step_receipt.step`.
+    ///
+    /// Spelled apart from `step` because this table's column of that name
+    /// held a seq for thirty-six schema versions, and reusing the word here
+    /// would rebuild the confusion the rename removed. `None` is "cannot
+    /// say".
+    pub engine_step: Option<u64>,
+    /// Which of the calls sharing `(turn_instance, engine_step)` this one was
+    /// — `step_receipt.call_seq`. The engine's worker call is 0; the
+    /// auxiliary calls riding the same step (the overflow summarizer, a
+    /// plugin's management roles) take 1, 2, …
+    ///
+    /// `None` is "cannot say" and must not be read as the worker, for the
+    /// reason `AgentEvent::StepUsage::call_seq` gives: a row written before
+    /// the field existed may equally have been an auxiliary call's.
+    pub call_seq: Option<u64>,
     pub provider: String,
     pub call_role: String,
     pub model: String,
@@ -83,7 +119,15 @@ impl Store {
     /// *after* close-out (the forwarder drain outruns the closeout on the
     /// cancel path) still repairs it.
     pub fn record_telemetry(&self, execution_id: i64, row: &TelemetryRow) -> Result<()> {
-        let step = sqlite_i64("telemetry step", row.step)?;
+        let stream_seq = sqlite_i64("telemetry stream seq", row.stream_seq)?;
+        let engine_step = row
+            .engine_step
+            .map(|step| sqlite_i64("telemetry engine step", step))
+            .transpose()?;
+        let call_seq = row
+            .call_seq
+            .map(|seq| sqlite_i64("telemetry call seq", seq))
+            .transpose()?;
         let input_tokens = sqlite_i64("telemetry input tokens", row.input_tokens)?;
         let estimated_input_tokens = sqlite_i64(
             "telemetry estimated input tokens",
@@ -102,14 +146,18 @@ impl Store {
         // now implies.
         let tx = conn.transaction()?;
         tx.execute(
-            "INSERT INTO telemetry (execution_id, step, provider, call_role, model, input_tokens, \
+            "INSERT INTO telemetry (execution_id, stream_seq, turn_instance, engine_step, \
+             call_seq, provider, call_role, model, input_tokens, \
              estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
              cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete, \
              sub_agent_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 execution_id,
-                step,
+                stream_seq,
+                row.turn_instance,
+                engine_step,
+                call_seq,
                 row.provider,
                 row.call_role,
                 row.model,
@@ -147,7 +195,8 @@ impl Store {
     ) -> Result<Vec<SourceTelemetryRow>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT t.rowid, t.execution_id, COALESCE(e.started_at, ''), t.step, t.provider, \
+            "SELECT t.rowid, t.execution_id, COALESCE(e.started_at, ''), t.stream_seq, \
+                    t.turn_instance, t.engine_step, t.call_seq, t.provider, \
                     t.call_role, t.model, t.input_tokens, t.estimated_input_tokens, \
                     t.output_tokens, t.cache_read_tokens, t.cache_miss_tokens, \
                     t.cache_write_tokens, t.cost_usd, t.duration_ms, t.retries, t.tool_calls, \
@@ -161,22 +210,25 @@ impl Store {
                 execution_id: r.get(1)?,
                 recorded_at: r.get(2)?,
                 telemetry: TelemetryRow {
-                    step: r.get::<_, i64>(3)? as u64,
-                    provider: r.get(4)?,
-                    call_role: r.get(5)?,
-                    model: r.get(6)?,
-                    input_tokens: r.get::<_, i64>(7)? as u64,
-                    estimated_input_tokens: r.get::<_, i64>(8)? as u64,
-                    output_tokens: r.get::<_, i64>(9)? as u64,
-                    cache_read_tokens: r.get::<_, i64>(10)? as u64,
-                    cache_miss_tokens: r.get::<_, i64>(11)? as u64,
-                    cache_write_tokens: r.get::<_, i64>(12)? as u64,
-                    cost_usd: r.get(13)?,
-                    duration_ms: r.get::<_, i64>(14)? as u64,
-                    retries: r.get(15)?,
-                    tool_calls: r.get::<_, i64>(16)? as u64,
-                    usage_complete: r.get(17)?,
-                    sub_agent_id: r.get(18)?,
+                    stream_seq: r.get::<_, i64>(3)? as u64,
+                    turn_instance: r.get::<_, Option<i64>>(4)?.map(|v| v as u32),
+                    engine_step: r.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+                    call_seq: r.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+                    provider: r.get(7)?,
+                    call_role: r.get(8)?,
+                    model: r.get(9)?,
+                    input_tokens: r.get::<_, i64>(10)? as u64,
+                    estimated_input_tokens: r.get::<_, i64>(11)? as u64,
+                    output_tokens: r.get::<_, i64>(12)? as u64,
+                    cache_read_tokens: r.get::<_, i64>(13)? as u64,
+                    cache_miss_tokens: r.get::<_, i64>(14)? as u64,
+                    cache_write_tokens: r.get::<_, i64>(15)? as u64,
+                    cost_usd: r.get(16)?,
+                    duration_ms: r.get::<_, i64>(17)? as u64,
+                    retries: r.get(18)?,
+                    tool_calls: r.get::<_, i64>(19)? as u64,
+                    usage_complete: r.get(20)?,
+                    sub_agent_id: r.get(21)?,
                 },
             })
         })?;
@@ -209,13 +261,13 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT estimated_input_tokens, input_tokens + cache_write_tokens FROM (
                SELECT estimated_input_tokens, input_tokens, cache_write_tokens,
-                      execution_id, step
+                      execution_id, stream_seq
                FROM telemetry
                WHERE provider = ? AND model = ? AND usage_complete = 1
                  AND estimated_input_tokens > 0 AND input_tokens + cache_write_tokens > 0
-               ORDER BY execution_id DESC, step DESC
+               ORDER BY execution_id DESC, stream_seq DESC
                LIMIT ?
-             ) ORDER BY execution_id ASC, step ASC",
+             ) ORDER BY execution_id ASC, stream_seq ASC",
         )?;
         let rows = stmt.query_map(params![provider, model, limit as i64], |row| {
             let estimated: i64 = row.get(0)?;
@@ -408,10 +460,14 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::StepManifestRow as ManifestRow;
 
-    fn row(step: u64, cost_usd: f64) -> TelemetryRow {
+    fn row(stream_seq: u64, cost_usd: f64) -> TelemetryRow {
         TelemetryRow {
-            step,
+            stream_seq,
+            turn_instance: None,
+            engine_step: None,
+            call_seq: None,
             provider: "zai".into(),
             call_role: "worker".into(),
             model: "glm-5.2".into(),
@@ -474,10 +530,10 @@ mod tests {
     }
 
     /// One receipt per role, priced and labelled as the run's stages settle.
-    fn role_receipt(step: u64, call_role: &str, cost_usd: f64) -> TelemetryRow {
+    fn role_receipt(stream_seq: u64, call_role: &str, cost_usd: f64) -> TelemetryRow {
         TelemetryRow {
             call_role: call_role.into(),
-            ..row(step, cost_usd)
+            ..row(stream_seq, cost_usd)
         }
     }
 
@@ -635,5 +691,162 @@ mod tests {
                 "execution {id} reports ${reported} against ${receipts} of receipts"
             );
         }
+    }
+
+    /// One receipt for a call at `(turn, step, call_seq)`, priced so the two
+    /// in the witness below cannot be confused for each other.
+    fn receipt_at(turn_instance: u32, step: u64, call_seq: u64, call_role: &str) -> ManifestRow {
+        ManifestRow {
+            turn_instance,
+            step,
+            call_seq,
+            provider: "zai".into(),
+            upstream_provider: None,
+            model: "glm-5.2".into(),
+            call_role: call_role.into(),
+            effective_budget_tokens: 100_000,
+            calibration_factor: 1.0,
+            estimated_input_tokens: 900,
+            stall_seconds_requested: None,
+            compiled_frame_id: None,
+            frame_hash: None,
+            blocks: Vec::new(),
+        }
+    }
+
+    /// The metering row for that same call, addressed by the stream seq and
+    /// carrying the engine-side identity beside it.
+    fn cost_of(stream_seq: u64, turn: u32, step: u64, call_seq: u64, usd: f64) -> TelemetryRow {
+        TelemetryRow {
+            turn_instance: Some(turn),
+            engine_step: Some(step),
+            call_seq: Some(call_seq),
+            ..row(stream_seq, usd)
+        }
+    }
+
+    /// **Witness (#4924).** A cost can be joined to the receipt of the call
+    /// that produced it, on `step_receipt`'s own primary key.
+    ///
+    /// The case that earns it is the one `call_seq` exists for: two calls
+    /// share one `(turn_instance, step)` — the engine's worker and the
+    /// overflow summarizer riding the same step — and they cost different
+    /// money. Before this change a telemetry row carried only
+    /// `execution_id` and the stream seq, so nothing in the store could say
+    /// which of the two receipts a given cost belonged to; a reader had to go
+    /// back to `stella-events.jsonl` and re-derive it from the event stream.
+    ///
+    /// Fails on the old schema for the plainest possible reason: the three
+    /// columns the join names do not exist, so the statement does not prepare.
+    #[test]
+    fn a_cost_joins_to_the_receipt_of_the_call_that_produced_it() {
+        let store = Store::in_memory().unwrap();
+        let id = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
+
+        // Two calls on step 4 of turn 2, and one on step 5, so the join has
+        // something to get wrong.
+        for receipt in [
+            receipt_at(2, 4, 0, "worker"),
+            receipt_at(2, 4, 1, "summarizer"),
+            receipt_at(2, 5, 0, "worker"),
+        ] {
+            store.record_step_manifest(id, &receipt).unwrap();
+        }
+        store
+            .record_telemetry(id, &cost_of(7, 2, 4, 0, 3.00))
+            .unwrap();
+        store
+            .record_telemetry(id, &cost_of(8, 2, 4, 1, 0.05))
+            .unwrap();
+        store
+            .record_telemetry(id, &cost_of(9, 2, 5, 0, 1.50))
+            .unwrap();
+
+        let conn = store.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT sr.call_role, t.cost_usd
+                 FROM telemetry t
+                 JOIN step_receipt sr
+                   ON sr.execution_id = t.execution_id
+                  AND sr.turn_instance = t.turn_instance
+                  AND sr.step = t.engine_step
+                  AND sr.call_seq = t.call_seq
+                 WHERE t.execution_id = ?1 AND t.turn_instance = 2 AND t.engine_step = 4
+                 ORDER BY sr.call_seq ASC",
+            )
+            .expect("the join key exists");
+        let paired: Vec<(String, f64)> = stmt
+            .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(
+            paired.len(),
+            2,
+            "both calls on this step must find their own receipt, got {paired:?}"
+        );
+        assert_eq!(paired[0].0, "worker");
+        assert!(
+            (paired[0].1 - 3.00).abs() < 1e-9,
+            "the expensive call is the worker's, got {paired:?}"
+        );
+        assert_eq!(paired[1].0, "summarizer");
+        assert!(
+            (paired[1].1 - 0.05).abs() < 1e-9,
+            "and the cheap one is the summarizer's, got {paired:?}"
+        );
+    }
+
+    /// The other direction: a row that cannot say which call it was stays
+    /// unjoined rather than being attributed to turn 0's worker.
+    ///
+    /// This is what makes NULL the right absent value. `usage_incomplete`
+    /// writes exactly this shape — the call died before the engine named a
+    /// turn — and so does every row written before v37. Defaulting the three
+    /// columns to 0 would have silently joined all of them to
+    /// `(turn 0, step 0, call_seq 0)`, which is a real receipt on almost
+    /// every execution.
+    #[test]
+    fn a_row_that_cannot_say_is_not_attributed_to_turn_zero() {
+        let store = Store::in_memory().unwrap();
+        let id = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
+        store
+            .record_step_manifest(id, &receipt_at(0, 0, 0, "worker"))
+            .unwrap();
+        // The dead call: recorded, priced, and unjoinable.
+        store.record_telemetry(id, &row(3, 0.0)).unwrap();
+
+        let conn = store.lock();
+        let joined: i64 = conn
+            .query_row(
+                "SELECT count(*)
+                 FROM telemetry t
+                 JOIN step_receipt sr
+                   ON sr.execution_id = t.execution_id
+                  AND sr.turn_instance = t.turn_instance
+                  AND sr.step = t.engine_step
+                  AND sr.call_seq = t.call_seq
+                 WHERE t.execution_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            joined, 0,
+            "a NULL identity must not match a receipt — `turn 0, step 0, call 0` is a real call"
+        );
+        let recorded: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM telemetry WHERE execution_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            recorded, 1,
+            "and the row is still there — unjoinable, not absent"
+        );
     }
 }

@@ -122,7 +122,10 @@ mod tests {
 
     fn telemetry(cache_read: u64, cache_write: u64) -> crate::TelemetryRow {
         crate::TelemetryRow {
-            step: 0,
+            stream_seq: 0,
+            turn_instance: None,
+            engine_step: None,
+            call_seq: None,
             provider: "anthropic".into(),
             call_role: "worker".into(),
             model: "claude".into(),
@@ -157,12 +160,12 @@ mod tests {
         // Three ordinary small calls: input 1_000 each (the helper's shape).
         for step in 0..3 {
             let mut call = telemetry(0, 0);
-            call.step = step;
+            call.stream_seq = step;
             store.record_telemetry(e1, &call).unwrap();
         }
         // One call whose prompt lives almost entirely in the write column.
         let mut mostly_written = telemetry(0, 4_541);
-        mostly_written.step = 3;
+        mostly_written.stream_seq = 3;
         mostly_written.input_tokens = 2;
         store.record_telemetry(e1, &mostly_written).unwrap();
 

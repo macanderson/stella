@@ -30,7 +30,10 @@ fn seed_session(root: &Path, session: &str, provider: &str, touched: &str) {
         .record_telemetry(
             id,
             &TelemetryRow {
-                step: 0,
+                stream_seq: 0,
+                turn_instance: None,
+                engine_step: None,
+                call_seq: None,
                 call_role: "worker".into(),
                 provider: provider.into(),
                 model: "claude-test".into(),
@@ -402,7 +405,10 @@ fn export_round_trips_through_a_real_store() {
         .record_telemetry(
             1,
             &TelemetryRow {
-                step: 0,
+                stream_seq: 0,
+                turn_instance: None,
+                engine_step: None,
+                call_seq: None,
                 call_role: "worker".into(),
                 provider: "test".into(),
                 model: "test-model".into(),

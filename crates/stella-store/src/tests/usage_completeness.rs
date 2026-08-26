@@ -277,7 +277,10 @@ fn a_pruned_rollup_row_reports_as_unknown_never_as_complete() {
 /// One paid call at `cost_usd`, with everything else the shape a row needs.
 fn telemetry_row(step: u64, cost_usd: f64) -> TelemetryRow {
     TelemetryRow {
-        step,
+        stream_seq: step,
+        turn_instance: None,
+        engine_step: None,
+        call_seq: None,
         provider: "openrouter".into(),
         call_role: "worker".into(),
         model: "kimi".into(),
