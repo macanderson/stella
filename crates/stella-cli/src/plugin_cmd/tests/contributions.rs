@@ -1131,18 +1131,16 @@ fn the_dashboards_plugin_records_honour_the_project_trust_gate() {
     }
 
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&[
-        "STELLA_TRUST_PROJECT",
-        "STELLA_PROJECT_HOOKS",
-        "STELLA_HOME",
-    ]);
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
     let root = temp_root("package-observatory-records-trust");
+    // The user tier of the roster is `paths::user_extension_root()` — the
+    // thread-local, which in a test build answers `None` until a test installs
+    // a home — so this one call is the whole isolation, and a package in the
+    // developer's real `~/.stella/plugins` cannot answer for the assertions
+    // below. It moves `stella_home::stella_home()` too since #4992, which is
+    // what the sibling skills test needs.
     let _paths = crate::paths::test_user_home(root.join("home"));
-    // The user-tier half of the roster is `stella_home::stella_home()`, which
-    // `test_user_home` does not move — without this the roster resolves the
-    // developer's real `~/.stella/plugins` (#4980).
-    // SAFETY: the env lock is held for the whole mutate-read-restore window.
-    unsafe { std::env::set_var("STELLA_HOME", root.join("home")) };
 
     let planted = stella_home::resolve_project_plugins_dir(&root).join("vera");
     plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
