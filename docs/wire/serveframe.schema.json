@@ -89,6 +89,17 @@
                 "null"
               ]
             },
+            "task_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which board task this call is evidence for. Absent means no task was running when it was dispatched, or the stream predates the field -- never task 0, because board ids start at 1."
+            },
             "type": {
               "const": "tool_start",
               "type": "string"
@@ -125,6 +136,17 @@
                 "string",
                 "null"
               ]
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which board task this result is evidence for -- the same tag its tool_start carries. Absent means no task was running, or the stream predates the field."
             },
             "type": {
               "const": "tool_result",
@@ -724,6 +746,17 @@
                 "null"
               ]
             },
+            "task_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which board task paid for this call. The per-task cost line is a fold over the metering rows carrying one tag; a turn can span several tasks, so no other field answers it. Absent means no task was running, or the stream predates the field."
+            },
             "temperature": {
               "description": "The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default.",
               "format": "float",
@@ -819,6 +852,17 @@
                 "string",
                 "null"
               ]
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which board task's spend this row cannot account for. A task carrying one of these has a cost that is a lower bound rather than a total. Absent means no task was running, or the stream predates the field."
             },
             "type": {
               "const": "usage_incomplete",
@@ -925,6 +969,17 @@
               "minimum": 0,
               "type": "integer"
             },
+            "task_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which board task this change is evidence for. Says which task was running when the change was measured -- no more an attribution of authorship than the rest of this event. Absent means no task was running, or the stream predates the field."
+            },
             "type": {
               "const": "file_change",
               "type": "string"
@@ -1005,6 +1060,17 @@
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which board task this write is evidence for. Absent means no task was running when it was dispatched, or the stream predates the field."
             },
             "type": {
               "const": "context_write",
@@ -3783,6 +3849,10 @@
           "type": "object"
         }
       ]
+    },
+    "TaskId": {
+      "description": "The id of one row on the session task board — the per-session ordinal\n(`\"1\"`, `\"2\"`, …) that a `task_update` snapshot's items carry.\n\nTransparent on the wire: a tagged event carries a plain JSON string, so a\nconsumer joins it against a board snapshot's `id` directly, with no wrapper\nobject to unpick. Board ids start at `\"1\"` and are never reused within a\nsession, so an absent tag can never be confused with a real one.",
+      "type": "string"
     },
     "TaskItem": {
       "description": "One entry on the turn's task board (the `task_*` tools). The board is\nsession-scoped working state — what the agent has planned, is doing,\nand has finished — mirrored to the store for cross-session findability.",

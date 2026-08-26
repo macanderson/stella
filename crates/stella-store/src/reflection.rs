@@ -348,6 +348,7 @@ mod tests {
                 input: serde_json::json!({"path": "src/engine.rs"}),
             },
             sub_agent_id: None,
+            task_id: None,
         }
     }
 
@@ -358,6 +359,7 @@ mod tests {
             duration_ms: 4,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         }
     }
 

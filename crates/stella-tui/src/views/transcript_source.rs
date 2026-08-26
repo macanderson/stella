@@ -715,6 +715,7 @@ mod tests {
                     input: serde_json::json!({ "path": path }),
                 },
                 sub_agent_id: None,
+                task_id: None,
             });
             model.apply(&AgentEvent::ToolResult {
                 call_id: (*call_id).into(),
@@ -725,6 +726,7 @@ mod tests {
                 duration_ms: 2,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             });
         }
         for (_, path, added, removed) in mutations {
@@ -735,6 +737,7 @@ mod tests {
                 removed: *removed,
                 diff: Some(format!("@@ -1,1 +1,1 @@\n+{path}")),
                 minimal: true,
+                task_id: None,
             });
         }
         model
@@ -804,6 +807,7 @@ mod tests {
                     input: serde_json::json!({ "path": "crates/stella-core/src/lifecycle.rs" }),
                 },
                 sub_agent_id: None,
+                task_id: None,
             });
             model.apply(&AgentEvent::ToolResult {
                 call_id: "c1".into(),
@@ -811,6 +815,7 @@ mod tests {
                 duration_ms: 3,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             });
             head_at(&model, 0)
         };
@@ -845,6 +850,7 @@ mod tests {
                 input: serde_json::json!({ "path": "src/x.rs" }),
             },
             sub_agent_id: None,
+            task_id: None,
         });
         let head = head_at(&model, 0);
         assert!(!head.contains("lines"), "{head}");
@@ -865,6 +871,7 @@ mod tests {
                 input: serde_json::json!({ "path": "src/x.rs" }),
             },
             sub_agent_id: None,
+            task_id: None,
         });
         let head = head_at(&model, 0);
         for zero in ["+0", "-0", "+", "-"] {

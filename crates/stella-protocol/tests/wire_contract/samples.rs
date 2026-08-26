@@ -9,6 +9,7 @@
 //! because the proofs are the only consumers.
 
 use serde_json::json;
+use stella_protocol::TaskId;
 use stella_protocol::completion::{
     FinishReason, GenerationParams, ReasoningEffort, ServiceTier, Verbosity,
 };
@@ -335,6 +336,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
         AgentEvent::ToolStart {
             call: tool_call(),
             sub_agent_id: None,
+            task_id: Some(TaskId::new("3")),
         },
         AgentEvent::SpeculationDiscarded {
             call_id: "call_2".into(),
@@ -478,6 +480,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             provider: "workspace-memory".into(),
             upserts: 2,
             superseded: 1,
+            task_id: Some(TaskId::new("3")),
         },
         AgentEvent::StepManifest {
             turn_instance: 1,
@@ -767,6 +770,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 speculated: true,
 
                 sub_agent_id: None,
+                task_id: Some(TaskId::new("3")),
             }),
     );
     events.extend(
@@ -779,6 +783,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 speculated: false,
 
                 sub_agent_id: None,
+                task_id: None,
             }),
     );
     events.extend(
@@ -894,6 +899,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                     service_tier: Some(ServiceTier::Priority),
                 }),
                 sub_agent_id: None,
+                task_id: Some(TaskId::new("3")),
             },
             AgentEvent::StepUsage {
                 upstream_provider: None,
@@ -923,6 +929,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             },
         ]
     }));
@@ -961,6 +968,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             }),
     );
     // Every effort a request can pin, on the field that records what the
@@ -994,6 +1002,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             }),
     );
     // Every service tier and every verbosity a request's generation shape can
@@ -1034,6 +1043,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                     ..GenerationParams::default()
                 }),
                 sub_agent_id: None,
+                task_id: None,
             }),
     );
     events.extend(
@@ -1063,6 +1073,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                             input_reported: true,
                         }),
                         sub_agent_id: None,
+                        task_id: Some(TaskId::new("3")),
                     },
                     // The shape that genuinely learned nothing — a failure
                     // before any usage frame. `partial` must stay absent from
@@ -1077,6 +1088,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                         retries: None,
                         partial: None,
                         sub_agent_id: None,
+                        task_id: None,
                     },
                 ]
             }),
@@ -1090,6 +1102,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 removed: 1,
                 diff: Some("+ a\n- b".into()),
                 minimal: true,
+                task_id: Some(TaskId::new("3")),
             },
             AgentEvent::FileChange {
                 path: "src/main.rs".into(),
@@ -1098,6 +1111,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 removed: 0,
                 diff: None,
                 minimal: false,
+                task_id: None,
             },
         ]
     }));

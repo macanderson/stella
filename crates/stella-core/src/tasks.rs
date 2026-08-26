@@ -14,7 +14,9 @@
 //! driver drains them (`stella-tools`' `ToolRegistry::take_spawn_requests`)
 //! and runs each on its own deck sub-session lane.
 
-use stella_protocol::{Closure, TaskContract, TaskItem, TaskStatus};
+use std::sync::Arc;
+
+use stella_protocol::{Closure, TaskContract, TaskId, TaskItem, TaskStatus};
 
 /// Why a board mutation was rejected. Named errors, never a bare string —
 /// the tools surface these verbatim to the model so it can self-correct.
@@ -67,6 +69,60 @@ pub struct SpawnRequest {
     pub briefing: String,
 }
 
+/// A live read of [`TaskBoard::running`], for a producer that must stamp an
+/// event without owning the board.
+///
+/// A closure over the board rather than a copy of its answer, and that is the
+/// whole design. A cached `Option<TaskId>` would be a second place the running
+/// task is written down, updated by whoever remembered to — and the board is
+/// mutated by six tools, a plan seeding, a `/clear` and every sub-agent
+/// assignment, so the copy would go stale on the path nobody thought about.
+/// Reading through means there is one authority and no refresh to forget.
+///
+/// The cost is a board lock per stamped event. It is paid only for the events
+/// that can carry a tag and have not already been stamped (see
+/// `EventSender::send`), which is a small fraction of a turn's stream and none
+/// of its per-token traffic.
+///
+/// # What a lane's source answers for its delegates
+///
+/// An in-process delegate ([`crate::subagent`]) forwards its events to the
+/// lane that dispatched it, so they are stamped with **that lane's** running
+/// task. That is the intended reading rather than a leak: work the lead
+/// delegated in service of task 4 is task 4's evidence and task 4's cost, and
+/// a ledger that dropped it would under-report every task that fanned out.
+///
+/// A `task_assign` worker is the other shape — its own session, its own board
+/// — and its board is empty, so its source answers `None` and its events go
+/// untagged. Untagged states no falsehood (the events are in no task's ledger)
+/// but it is not complete: that lane exists to work one named task, so its
+/// source should be a constant rather than a board read. Tracked in #5158.
+#[derive(Clone)]
+pub struct RunningTask(Arc<dyn Fn() -> Option<TaskId> + Send + Sync>);
+
+impl RunningTask {
+    /// Build a source from anything that can answer the question — in
+    /// practice a closure over the host's shared board handle.
+    #[must_use]
+    pub fn from_fn(read: impl Fn() -> Option<TaskId> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(read))
+    }
+
+    /// Which task is running at this instant, if any.
+    #[must_use]
+    pub fn current(&self) -> Option<TaskId> {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for RunningTask {
+    /// The closure has no useful representation, so this reports what a reader
+    /// of a log line actually wants: the answer it gives right now.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("RunningTask").field(&self.current()).finish()
+    }
+}
+
 /// The task board: an insertion-ordered list of [`TaskItem`]s with ordinal
 /// string ids ("1", "2", …). All mutation goes through the methods below so
 /// the transition rules hold by construction.
@@ -106,6 +162,25 @@ impl TaskBoard {
         self.items
             .iter()
             .find(|t| t.owner.is_none() && t.status == TaskStatus::InProgress)
+    }
+
+    /// The task this lane's work should be attributed to — the id every event
+    /// dispatched right now belongs in the ledger of (SPEC 7.1, #5039).
+    ///
+    /// The lead's own lane and no other: [`Self::unowned_in_progress`] is the
+    /// single-occupancy lane, so this is unambiguous by the same rule that
+    /// makes a second `task_start` a refusal. A delegated task is *not* the
+    /// answer here — it runs in its own lane, and its events are stamped by
+    /// that lane's own sender, which is why the tag is never overwritten once
+    /// set (`stella_protocol::TaskId`'s stamping contract).
+    ///
+    /// `None` — no task started — is a real and common answer: a session that
+    /// never opened a board, and every turn before the first `task_start`.
+    /// Those events are simply in no task's ledger, which is the truth.
+    #[must_use]
+    pub fn running(&self) -> Option<TaskId> {
+        self.unowned_in_progress()
+            .map(|task| TaskId::new(task.id.clone()))
     }
 
     /// A task's contract, mutably — how a check runner records an outcome.

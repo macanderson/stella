@@ -83,6 +83,7 @@ pub mod schema_export;
 pub mod stage;
 pub mod subagent_event;
 pub mod task_contract;
+pub mod task_id;
 pub mod tokens;
 pub mod tool;
 
@@ -125,6 +126,10 @@ pub use stage::StageName;
 pub use task_contract::{
     Check, CheckKind, CheckMechanism, CheckOutcome, Closure, DefinitionOfDone, Judge, TaskContract,
 };
+// The other two thirds of SPEC 7.1's task — the evidence ledger and the cost
+// — are both selections over this tag (#5039). Not `stella_fleet::TaskId`,
+// which names a unit of work inside a fleet run; see AGENTS.md's glossary.
+pub use task_id::TaskId;
 // The journal line is the event plus the wall-clock stamp its sink adds
 // (#2111). A separate type from `AgentEvent`: a stamp is a fact
 // about a write, and the engine that produces events owns no clock.

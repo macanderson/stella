@@ -157,6 +157,16 @@ pub(crate) const UNCHANGED_TABLES: &str = "CREATE TABLE IF NOT EXISTS file_locks
 /// into an error instead of a silently corrupted replay. Its implicit index
 /// is exactly the replay access path (superseding the pre-v1 non-unique
 /// `events_by_execution` index, which is why no separate index exists).
+///
+/// `task_id` (v39, #5039) is the board task this event is evidence for, `NULL`
+/// when it is in no task's ledger — either nothing was running when it was
+/// dispatched, or the case carries no tag at all. It is a projection of the
+/// payload's own field, lifted into a column because a task's evidence ledger
+/// and its cost are both `WHERE` clauses over it, and decoding every event of
+/// a session to answer them is not. The partial index it is read through
+/// (`events_by_task`) is created beside this DDL rather than inside it — see
+/// [`crate::migrations`]'s `task_events` step, which owns the one definition
+/// the fresh-file and migrated paths share.
 pub(crate) fn events_ddl(table: &str) -> String {
     format!(
         "CREATE TABLE {table} (
@@ -165,6 +175,7 @@ pub(crate) fn events_ddl(table: &str) -> String {
            ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
            event_type TEXT NOT NULL,
            payload TEXT NOT NULL,
+           task_id TEXT,
            UNIQUE (execution_id, seq)
          );"
     )

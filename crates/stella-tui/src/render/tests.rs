@@ -401,6 +401,7 @@ fn the_receipt_reports_what_the_turn_measured() {
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     });
     // files ← FileChange, distinct paths
     for path in ["src/a.rs", "src/b.rs", "src/a.rs"] {
@@ -411,6 +412,7 @@ fn the_receipt_reports_what_the_turn_measured() {
             removed: 0,
             diff: None,
             minimal: true,
+            task_id: None,
         });
     }
     // memories ← ContextWrite's upserts
@@ -418,6 +420,7 @@ fn the_receipt_reports_what_the_turn_measured() {
         provider: "memory".into(),
         upserts: 2,
         superseded: 0,
+        task_id: None,
     });
     send(AgentEvent::TurnComplete {
         model: "glm-5.2".into(),
@@ -505,6 +508,7 @@ fn counters_reset_at_the_turn_boundary() {
         provider: "memory".into(),
         upserts: 5,
         superseded: 0,
+        task_id: None,
     });
     assert_eq!(sm.turn_counters.memories, 5);
     sm.push_user_prompt("a new turn");
@@ -631,6 +635,7 @@ fn a_folded_turn_renders_its_whole_lifecycle_in_order() {
                 input: serde_json::json!({ "path": "src/lifecycle.rs" }),
             },
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::TurnComplete {
             model: "kimi-k3".into(),

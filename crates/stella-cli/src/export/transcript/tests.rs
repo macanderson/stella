@@ -159,6 +159,7 @@ fn a_tool_result_is_named_by_its_call_and_takes_its_verdict_from_the_tag() {
                     input: serde_json::json!({"command": "git status"}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "c1".into(),
@@ -166,6 +167,7 @@ fn a_tool_result_is_named_by_its_call_and_takes_its_verdict_from_the_tag() {
                 duration_ms: 40,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ]),
         &no_prompts(),
@@ -229,6 +231,7 @@ fn a_delegates_call_is_named_apart_from_the_leads() {
                     input: serde_json::json!({"command": "git status"}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "lead".into(),
@@ -239,6 +242,7 @@ fn a_delegates_call_is_named_apart_from_the_leads() {
                 duration_ms: 10,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
             AgentEvent::ToolStart {
                 call: ToolCall {
@@ -247,6 +251,7 @@ fn a_delegates_call_is_named_apart_from_the_leads() {
                     input: serde_json::json!({"query": "retry"}),
                 },
                 sub_agent_id: Some("d:1".into()),
+                task_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "child".into(),
@@ -257,6 +262,7 @@ fn a_delegates_call_is_named_apart_from_the_leads() {
                 duration_ms: 20,
                 speculated: false,
                 sub_agent_id: Some("d:1".into()),
+                task_id: None,
             },
         ]),
         &no_prompts(),
@@ -287,6 +293,7 @@ fn a_call_that_never_returned_says_so_rather_than_looking_successful() {
                 input: serde_json::json!({"command": "sleep 600"}),
             },
             sub_agent_id: None,
+            task_id: None,
         }]),
         &no_prompts(),
     );
@@ -316,6 +323,7 @@ fn a_credential_in_the_event_stream_never_reaches_the_transcript() {
                     input: serde_json::json!({"command": format!("curl -H 'token: {secret}'")}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "c1".into(),
@@ -326,6 +334,7 @@ fn a_credential_in_the_event_stream_never_reaches_the_transcript() {
                 duration_ms: 10,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
             text(&format!("I used {secret} to authenticate.")),
         ]),
@@ -506,6 +515,7 @@ fn an_oversized_payload_is_cut_and_says_that_it_was() {
                     input: serde_json::json!({"command": "cat build.log"}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "c1".into(),
@@ -516,6 +526,7 @@ fn an_oversized_payload_is_cut_and_says_that_it_was() {
                 duration_ms: 10,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ]),
         &no_prompts(),
@@ -596,6 +607,7 @@ fn a_rewrite(adds: usize) -> AgentEvent {
             "--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,{adds} @@\n{body}"
         )),
         minimal: true,
+        task_id: None,
     }
 }
 
@@ -643,6 +655,7 @@ fn a_modified_line_pair_highlights_only_the_changed_token() {
                 .to_string(),
         ),
         minimal: true,
+        task_id: None,
     };
     let out = render(&at(vec![event]), &no_prompts());
     assert!(
@@ -726,6 +739,7 @@ fn a_diff_that_parses_to_no_hunks_still_renders_as_readable_text() {
             removed: 0,
             diff: Some("+just a bare line".into()),
             minimal: true,
+            task_id: None,
         }]),
         &no_prompts(),
     );

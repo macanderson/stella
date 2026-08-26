@@ -40,6 +40,7 @@ fn deck_render_snapshots_pin_a_delegates_tool_call() {
                 input: serde_json::json!({ "key": "verify" }),
             },
             sub_agent_id: None,
+            task_id: None,
         }),
         ev(AgentEvent::ToolResult {
             call_id: "lead-call".into(),
@@ -50,6 +51,7 @@ fn deck_render_snapshots_pin_a_delegates_tool_call() {
             duration_ms: 4,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         }),
         ev(AgentEvent::ToolStart {
             call: ToolCall {
@@ -58,6 +60,7 @@ fn deck_render_snapshots_pin_a_delegates_tool_call() {
                 input: serde_json::json!({ "pattern": "sub_agent_id" }),
             },
             sub_agent_id: Some("d:1".into()),
+            task_id: None,
         }),
         ev(AgentEvent::ToolResult {
             call_id: "delegate-call".into(),
@@ -68,6 +71,7 @@ fn deck_render_snapshots_pin_a_delegates_tool_call() {
             duration_ms: 9,
             speculated: false,
             sub_agent_id: Some("d:1".into()),
+            task_id: None,
         }),
     ] {
         model.apply_inbound(&inbound);

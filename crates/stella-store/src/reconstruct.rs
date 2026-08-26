@@ -615,6 +615,7 @@ mod tests {
                 &AgentEvent::ToolStart {
                     call: call.clone(),
                     sub_agent_id: None,
+                    task_id: None,
                 },
             )
             .unwrap();
@@ -628,6 +629,7 @@ mod tests {
                     duration_ms: 5,
                     speculated: false,
                     sub_agent_id: None,
+                    task_id: None,
                 },
             )
             .unwrap();
@@ -722,6 +724,7 @@ mod tests {
                     duration_ms: 5,
                     speculated: false,
                     sub_agent_id: None,
+                    task_id: None,
                 },
             )
             .unwrap();
@@ -820,6 +823,7 @@ mod tests {
                     duration_ms: 5,
                     speculated: false,
                     sub_agent_id: None,
+                    task_id: None,
                 },
             )
             .unwrap();

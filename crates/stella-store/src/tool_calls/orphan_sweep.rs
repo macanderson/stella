@@ -131,6 +131,7 @@ mod tests {
                 input: serde_json::json!({ "command": "sleep 1000" }),
             },
             sub_agent_id: None,
+            task_id: None,
         }
     }
 

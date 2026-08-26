@@ -194,6 +194,7 @@ mod tests {
                     input: serde_json::json!({ "path": path }),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
         });
     }
@@ -207,6 +208,7 @@ mod tests {
                 duration_ms: 3,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         });
     }

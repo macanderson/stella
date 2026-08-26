@@ -169,6 +169,7 @@ mod tests {
             removed,
             diff: None,
             minimal: true,
+            task_id: None,
         }
     }
 

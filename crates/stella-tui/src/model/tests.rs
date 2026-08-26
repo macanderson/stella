@@ -557,6 +557,7 @@ fn file_change_keeps_latest_diff_and_counts_touches() {
         removed: 0,
         diff: Some("+first".into()),
         minimal: true,
+        task_id: None,
     });
     model.apply(&AgentEvent::FileChange {
         path: "src/a.rs".into(),
@@ -565,6 +566,7 @@ fn file_change_keeps_latest_diff_and_counts_touches() {
         removed: 0,
         diff: Some("+second".into()),
         minimal: true,
+        task_id: None,
     });
     assert_eq!(model.files.len(), 1);
     let f = &model.files[0];
@@ -584,6 +586,7 @@ fn reads_count_without_clobbering_mutation_state() {
         removed: 0,
         diff: None,
         minimal: true,
+        task_id: None,
     });
     assert_eq!(model.files.len(), 1, "reads appear in the files panel");
     let f = &model.files[0];
@@ -600,6 +603,7 @@ fn reads_count_without_clobbering_mutation_state() {
         removed: 0,
         diff: Some("+x".into()),
         minimal: true,
+        task_id: None,
     });
     model.apply(&AgentEvent::FileChange {
         path: "src/a.rs".into(),
@@ -608,6 +612,7 @@ fn reads_count_without_clobbering_mutation_state() {
         removed: 0,
         diff: None,
         minimal: true,
+        task_id: None,
     });
     let f = &model.files[0];
     assert_eq!(
@@ -630,6 +635,7 @@ fn files_are_kept_in_first_touched_order() {
             removed: 0,
             diff: None,
             minimal: true,
+            task_id: None,
         });
     }
     let order: Vec<&str> = model.files.iter().map(|f| f.path.as_str()).collect();
@@ -810,6 +816,7 @@ fn tool_result_summary_is_middle_out_truncated() {
         duration_ms: 5,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     match model.transcript.last() {
         Some(TranscriptEntry::ToolResult { summary, .. }) => {
@@ -835,6 +842,7 @@ fn a_delegates_call_carries_its_sub_agent_id_onto_start_and_result() {
             input: serde_json::json!({}),
         },
         sub_agent_id: Some("d:1".into()),
+        task_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
@@ -849,6 +857,7 @@ fn a_delegates_call_carries_its_sub_agent_id_onto_start_and_result() {
         // the announcement is authoritative, and a result from an older
         // producer must not blank what the start already recorded.
         sub_agent_id: None,
+        task_id: None,
     });
     match &model.transcript[..] {
         [
@@ -885,6 +894,7 @@ fn a_result_with_no_matching_start_still_attributes_from_its_own_field() {
         duration_ms: 3,
         speculated: false,
         sub_agent_id: Some("d:2".into()),
+        task_id: None,
     });
     match model.transcript.last() {
         Some(TranscriptEntry::ToolResult { sub_agent_id, .. }) => {
@@ -909,6 +919,7 @@ fn colourised_tool_output_folds_to_clean_text() {
         duration_ms: 5,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     match model.transcript.last() {
         Some(TranscriptEntry::ToolResult { summary, full, .. }) => {
@@ -932,6 +943,7 @@ fn oversized_tool_args_stay_valid_pretty_printable_json() {
             input: serde_json::json!({ "path": "a.rs", "content": big }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     match model.transcript.last() {
         Some(TranscriptEntry::ToolStart { raw, .. }) => {
@@ -1064,6 +1076,7 @@ fn ask_user_sets_pending_and_the_matching_tool_result_clears_it() {
         duration_ms: 1,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     assert!(model.pending_ask_user.is_some());
     // The answer arrives as the ask_user tool's own result (matched by id).
@@ -1076,6 +1089,7 @@ fn ask_user_sets_pending_and_the_matching_tool_result_clears_it() {
         duration_ms: 1,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     assert!(
         model.pending_ask_user.is_none(),
@@ -1135,6 +1149,7 @@ fn hunk_review_sets_pending_and_the_matching_tool_result_clears_it() {
         duration_ms: 1,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     assert!(model.pending_hunk_review.is_some());
     // The host echoes a result carrying the proposal's id — the event-pure
@@ -1148,6 +1163,7 @@ fn hunk_review_sets_pending_and_the_matching_tool_result_clears_it() {
         duration_ms: 1,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     assert!(model.pending_hunk_review.is_none());
 }
@@ -1272,6 +1288,7 @@ fn edit_call(model: &mut SessionModel, call_id: &str, path: &str) {
             input: serde_json::json!({ "path": path }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: call_id.into(),
@@ -1279,6 +1296,7 @@ fn edit_call(model: &mut SessionModel, call_id: &str, path: &str) {
         duration_ms: 7,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 }
 
@@ -1294,6 +1312,7 @@ fn turn_boundary(model: &mut SessionModel, path: &str, diff: Option<&str>, adds:
         removed: dels,
         diff: diff.map(Into::into),
         minimal: true,
+        task_id: None,
     });
 }
 
@@ -1436,6 +1455,7 @@ fn a_failed_mutation_keeps_no_inline_diff_ref() {
             input: serde_json::json!({ "path": "src/a.rs" }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
@@ -1443,6 +1463,7 @@ fn a_failed_mutation_keeps_no_inline_diff_ref() {
         duration_ms: 3,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     turn_boundary(&mut model, "src/a.rs", Some("@@ someone else @@\n"), 1, 0);
     assert!(inline_ref(&model, "c1").is_none());

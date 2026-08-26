@@ -353,7 +353,10 @@ pub(crate) fn spawn_renderer(
                 // frame restates every row, so a surface doing both prints the
                 // turn twice.
                 OutputFormat::Text if transcript.is_some() => {
-                    if let AgentEvent::ToolStart { call, sub_agent_id } = &event {
+                    if let AgentEvent::ToolStart {
+                        call, sub_agent_id, ..
+                    } = &event
+                    {
                         tool_names.insert(
                             call.call_id.clone(),
                             (call.name.clone(), sub_agent_id.clone()),
@@ -364,7 +367,9 @@ pub(crate) fn spawn_renderer(
                     }
                 }
                 OutputFormat::Text => match &event {
-                    AgentEvent::ToolStart { call, sub_agent_id } => {
+                    AgentEvent::ToolStart {
+                        call, sub_agent_id, ..
+                    } => {
                         tool_names.insert(
                             call.call_id.clone(),
                             (call.name.clone(), sub_agent_id.clone()),

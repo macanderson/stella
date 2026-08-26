@@ -762,6 +762,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             provider,
             upserts,
             superseded,
+            ..
         } => Some(context_write(provider, *upserts, *superseded)),
         AgentEvent::MediaProgress {
             artifact_id,
@@ -1224,6 +1225,7 @@ mod tests {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             },
             AgentEvent::GoalVerdict {
                 round: 1,
@@ -1238,6 +1240,7 @@ mod tests {
                 removed: 0,
                 diff: None,
                 minimal: true,
+                task_id: None,
             },
             AgentEvent::ContextRecall {
                 frames: vec![ContextFrameRef {
@@ -1262,6 +1265,7 @@ mod tests {
                 provider: "p".into(),
                 upserts: 1,
                 superseded: 0,
+                task_id: None,
             },
             AgentEvent::MediaProgress {
                 artifact_id: "a".into(),
@@ -1365,6 +1369,7 @@ mod tests {
                     input: serde_json::Value::Null,
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "c".into(),
@@ -1375,6 +1380,7 @@ mod tests {
                 duration_ms: 1,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ];
         for event in &structural {

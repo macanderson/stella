@@ -14,6 +14,7 @@ fn call(id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
             input,
         },
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -27,6 +28,7 @@ fn ok_result(id: &str, content: &str) -> AgentEvent {
         duration_ms: 9,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -88,6 +90,7 @@ fn step_usage_bills_the_step_it_paid_for() {
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     });
     b.finish_turn(Status::Ok);
 
@@ -134,6 +137,7 @@ fn a_failed_tool_marks_its_step_and_its_turn() {
         duration_ms: 3,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     b.finish_turn(Status::Ok);
 
@@ -218,6 +222,7 @@ fn a_file_change_renders_at_the_files_own_line_numbers() {
         removed: 1,
         diff: Some("@@ -3,2 +3,3 @@\n context\n-old line\n+new line\n+added line\n".to_string()),
         minimal: true,
+        task_id: None,
     });
     b.finish_turn(Status::Ok);
 
@@ -270,6 +275,7 @@ fn a_diffless_file_change_keeps_the_counts_the_event_measured() {
         removed: 3,
         diff: None,
         minimal: true,
+        task_id: None,
     });
     b.finish_turn(Status::Ok);
 
@@ -329,6 +335,7 @@ fn wall_clock_is_summed_from_the_events_not_read_from_a_clock() {
         duration_ms: 7_000,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     b.push(&call("c2", "bash", json!({"command": "two"})));
     b.push(&AgentEvent::ToolResult {
@@ -340,6 +347,7 @@ fn wall_clock_is_summed_from_the_events_not_read_from_a_clock() {
         duration_ms: 3_000,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     b.finish_turn(Status::Ok);
 
@@ -367,6 +375,7 @@ fn each_turn_starts_its_own_clock() {
         duration_ms: 5_000,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     b.start_turn("second");
     b.push(&call("c2", "bash", json!({"command": "y"})));
@@ -379,6 +388,7 @@ fn each_turn_starts_its_own_clock() {
         duration_ms: 2_000,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     b.finish_turn(Status::Ok);
 

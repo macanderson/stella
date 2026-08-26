@@ -645,6 +645,7 @@ fn deck_render_snapshots_pin_a_multiline_successful_tool_result() {
                 input: serde_json::json!({ "pattern": "fold_output" }),
             },
             sub_agent_id: None,
+            task_id: None,
         }),
         ev(AgentEvent::ToolResult {
             call_id: "fold-plain".into(),
@@ -663,6 +664,7 @@ fn deck_render_snapshots_pin_a_multiline_successful_tool_result() {
             duration_ms: 61,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         }),
         ev(AgentEvent::ToolStart {
             call: ToolCall {
@@ -671,6 +673,7 @@ fn deck_render_snapshots_pin_a_multiline_successful_tool_result() {
                 input: serde_json::json!({ "key": "verify" }),
             },
             sub_agent_id: None,
+            task_id: None,
         }),
         ev(AgentEvent::ToolResult {
             call_id: "fold-json".into(),
@@ -689,6 +692,7 @@ fn deck_render_snapshots_pin_a_multiline_successful_tool_result() {
             duration_ms: 8,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         }),
     ] {
         model.apply_inbound(&inbound);

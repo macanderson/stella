@@ -115,6 +115,19 @@ pub enum AgentEvent {
             )
         )]
         sub_agent_id: Option<String>,
+        /// Which board task this call is evidence for (SPEC 7.1).
+        ///
+        /// See [`crate::TaskId`] for the stamping contract and for why absence
+        /// is never task `"0"`, and [`super::task_tag`] for why this case
+        /// carries a tag and most do not.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which board task this call is evidence for. Absent means no task was running when it was dispatched, or the stream predates the field -- never task 0, because board ids start at 1."
+            )
+        )]
+        task_id: Option<crate::TaskId>,
     },
     /// A tool call finished, successfully or not — `output` is the typed
     /// [`ToolOutput`], never a bare string, so a failure is inspectable
@@ -147,6 +160,21 @@ pub enum AgentEvent {
             )
         )]
         sub_agent_id: Option<String>,
+        /// Which board task this result is evidence for — the same tag its
+        /// [`AgentEvent::ToolStart`] carries, on the same contract.
+        ///
+        /// Carried on both halves rather than only on the announcement, for
+        /// the reason `sub_agent_id` above is: a consumer folding a live
+        /// stream sees results whose starts it never received, and
+        /// correlating back is exactly what such a consumer cannot do.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which board task this result is evidence for -- the same tag its tool_start carries. Absent means no task was running, or the stream predates the field."
+            )
+        )]
+        task_id: Option<crate::TaskId>,
     },
     /// A speculatively-executed read-only call (`stella-core::speculation`)
     /// whose result never reached the transcript: its stream attempt failed
@@ -672,6 +700,22 @@ pub enum AgentEvent {
             )
         )]
         sub_agent_id: Option<String>,
+        /// Which board task paid for this call — the whole of SPEC 7.1's cost
+        /// line (`$ · tok · cache rd% · model calls`) is a fold over the rows
+        /// carrying one tag.
+        ///
+        /// Per-task attribution is not derivable from anything else on the
+        /// stream: `turn_instance` is a turn, and a turn can span several
+        /// tasks, so a cost question about task 3 has no answer without this.
+        /// See [`crate::TaskId`] for the stamping contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which board task paid for this call. The per-task cost line is a fold over the metering rows carrying one tag; a turn can span several tasks, so no other field answers it. Absent means no task was running, or the stream predates the field."
+            )
+        )]
+        task_id: Option<crate::TaskId>,
     },
     /// A provider call failed or timed out after dispatch, so local accounting
     /// cannot prove that no billable work occurred. Content-free by design.
@@ -729,6 +773,21 @@ pub enum AgentEvent {
             )
         )]
         sub_agent_id: Option<String>,
+        /// Which board task's spend this row cannot account for.
+        ///
+        /// The reason a per-task total can state its own confidence: this
+        /// call may have cost money that no
+        /// [`AgentEvent::StepUsage`] will ever report, so a task carrying one
+        /// of these has a cost that is a **lower bound**, and the ledger can
+        /// say so instead of quietly under-reporting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which board task's spend this row cannot account for. A task carrying one of these has a cost that is a lower bound rather than a total. Absent means no task was running, or the stream predates the field."
+            )
+        )]
+        task_id: Option<crate::TaskId>,
     },
     /// A verifier model's assessment of a goal-driven loop after one working
     /// round. `met == true` ends the loop; `met == false` feeds `reasoning`
@@ -830,6 +889,21 @@ pub enum AgentEvent {
         /// git's own diff never takes this fallback.
         #[serde(default = "file_change_minimal_default")]
         minimal: bool,
+        /// Which board task this change is evidence for (SPEC 7.1's "edits").
+        ///
+        /// It inherits this event's own contract exactly: the tag says which
+        /// task was running when the change was *measured*, which for the
+        /// shared-tree producer is no more an attribution of authorship than
+        /// the rest of the row is. See this case's doc above, and
+        /// [`crate::TaskId`] for the stamping contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which board task this change is evidence for. Says which task was running when the change was measured -- no more an attribution of authorship than the rest of this event. Absent means no task was running, or the stream predates the field."
+            )
+        )]
+        task_id: Option<crate::TaskId>,
     },
     /// Context recall completed: which frames reached the prompt, from which
     /// providers, at what token cost. Every frame carries a human
@@ -877,6 +951,18 @@ pub enum AgentEvent {
         provider: String,
         upserts: u32,
         superseded: u32,
+        /// Which board task this write is evidence for — SPEC 7.1's "graph
+        /// writes", the third of the three things a task's ledger lists.
+        ///
+        /// See [`crate::TaskId`] for the stamping contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which board task this write is evidence for. Absent means no task was running when it was dispatched, or the stream predates the field."
+            )
+        )]
+        task_id: Option<crate::TaskId>,
     },
     /// A context block first became eligible to enter the prompt (spec §4).
     /// The birth record that makes the per-step manifest an index over the fold.

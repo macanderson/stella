@@ -154,6 +154,7 @@ mod tests {
             temperature: None,
             params: None,
             sub_agent_id: None,
+            task_id: None,
         }
     }
 

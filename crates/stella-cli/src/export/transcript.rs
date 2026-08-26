@@ -301,7 +301,9 @@ impl<'a> Fold<'a> {
                 ));
             }
 
-            AgentEvent::ToolStart { call, sub_agent_id } => {
+            AgentEvent::ToolStart {
+                call, sub_agent_id, ..
+            } => {
                 let args = self.clean(&pretty(&call.input));
                 let name = self.clean(&call.name);
                 self.tool_names
@@ -327,6 +329,7 @@ impl<'a> Fold<'a> {
                 duration_ms,
                 speculated,
                 sub_agent_id,
+                ..
             } => self.close_tool(
                 call_id,
                 output,

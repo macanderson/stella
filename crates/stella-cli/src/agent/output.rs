@@ -636,6 +636,7 @@ mod durable_stream_tests {
             temperature: None,
             params: None,
             sub_agent_id: None,
+            task_id: None,
         };
 
         sender.send(stage.clone()).unwrap();

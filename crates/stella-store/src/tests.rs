@@ -413,6 +413,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
                     input: serde_json::json!({"pattern": "foo"}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -429,6 +430,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
                 duration_ms: 12,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -443,6 +445,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
                     input: serde_json::json!({"path": "x"}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -456,6 +459,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
                 duration_ms: 3,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -1055,8 +1059,10 @@ fn skill_usage_records_per_execution_version_rows() {
     //       key (#4924) — the column never held the engine's step. v38
     //       `executions.delivery` (#2808) — whether the run SHIPPED, apart
     //       from how it ended; NULL is "nobody looked", not "shipped
-    //       nothing".
-    assert_eq!(SCHEMA_VERSION, 38);
+    //       nothing". v39 `events.task_id` (#5039) — which board task an
+    //       event is evidence for, so a task's ledger and its cost are one
+    //       `WHERE` clause instead of a decode of the whole session.
+    assert_eq!(SCHEMA_VERSION, 39);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

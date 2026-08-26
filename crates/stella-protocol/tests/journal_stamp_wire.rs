@@ -34,6 +34,7 @@ fn tool_result() -> AgentEvent {
         speculated: false,
 
         sub_agent_id: None,
+        task_id: None,
     }
 }
 

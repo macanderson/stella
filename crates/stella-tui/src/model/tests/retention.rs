@@ -125,6 +125,7 @@ fn replay_of_the_same_log_yields_identical_models() {
                 input: serde_json::json!({"path": "src/lib.rs"}),
             },
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::FileChange {
             path: "src/lib.rs".into(),
@@ -133,6 +134,7 @@ fn replay_of_the_same_log_yields_identical_models() {
             removed: 1,
             diff: Some("@@\n-a\n+b".into()),
             minimal: true,
+            task_id: None,
         },
         AgentEvent::RunComplete {
             model: "glm".into(),

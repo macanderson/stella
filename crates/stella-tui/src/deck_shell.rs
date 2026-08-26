@@ -200,6 +200,7 @@ fn spawn_shell_command(
                 input: serde_json::json!({ "cmd": cmd }),
             },
             sub_agent_id: None,
+            task_id: None,
         },
     ));
 
@@ -271,6 +272,7 @@ fn spawn_shell_command(
                 duration_ms: started.elapsed().as_millis() as u64,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ));
         // Park the lane so it never reads as still-working (a lingering

@@ -187,6 +187,7 @@ fn the_whole_rendering_reads_like_this() {
             input: serde_json::json!({}),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     friction.observe(&AgentEvent::ToolResult {
         call_id: "c2".into(),
@@ -194,6 +195,7 @@ fn the_whole_rendering_reads_like_this() {
         duration_ms: 12_800,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 
     let transcript = vec![
@@ -469,6 +471,7 @@ fn step_usage(step: usize, role: ModelCallRole, cost_usd: f64, duration_ms: u64)
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -501,6 +504,7 @@ fn the_friction_section_names_every_failed_tool_and_the_loop_detector() {
             input: serde_json::json!({}),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     friction.observe(&AgentEvent::ToolResult {
         call_id: "c1".into(),
@@ -508,6 +512,7 @@ fn the_friction_section_names_every_failed_tool_and_the_loop_detector() {
         duration_ms: 96_000,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     friction.observe(&AgentEvent::Retry {
         attempt: 1,
@@ -546,6 +551,7 @@ fn a_result_without_its_start_is_recorded_under_its_call_id() {
         duration_ms: 5,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     assert!(
         friction.section(1).contains("orphan: no such file"),
@@ -599,6 +605,7 @@ fn the_digest_is_a_function_of_the_turn() {
                     input: serde_json::json!({}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             });
             friction.observe(&AgentEvent::ToolResult {
                 call_id: id,
@@ -607,6 +614,7 @@ fn the_digest_is_a_function_of_the_turn() {
                 duration_ms: 1_000,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             });
             friction.observe(&step_usage(step, ModelCallRole::Worker, 0.01, 1_000));
         }

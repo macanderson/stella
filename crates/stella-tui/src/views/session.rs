@@ -731,6 +731,7 @@ mod tests {
                 input: serde_json::json!({"path": "src/x.rs"}),
             },
             sub_agent_id: None,
+            task_id: None,
         });
         model.apply(&AgentEvent::ToolResult {
             call_id: "c1".into(),
@@ -741,6 +742,7 @@ mod tests {
             duration_ms: 3,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
         model.apply(&AgentEvent::FileChange {
             path: "src/x.rs".into(),
@@ -749,6 +751,7 @@ mod tests {
             removed: 0,
             diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
             minimal: true,
+            task_id: None,
         });
         let expanded = HashSet::new();
         let mut fold = SessionFold::default();
@@ -785,6 +788,7 @@ mod tests {
             removed: 0,
             diff: Some("@@ -1,1 +1,1 @@\n+second_diff_line".into()),
             minimal: true,
+            task_id: None,
         });
         assert_eq!(model.transcript.len(), len_before, "no transcript append");
         fold.refresh(
@@ -827,6 +831,7 @@ mod tests {
                 removed: 0,
                 diff: Some(format!("@@ -1,1 +1,1 @@\n+evicting_edit_{i}")),
                 minimal: true,
+                task_id: None,
             });
         }
         assert_eq!(model.transcript.len(), len_before, "still no append");
@@ -979,6 +984,7 @@ mod tests {
                     input: serde_json::json!({ "path": "src/main.rs" }),
                 },
                 sub_agent_id: None,
+                task_id: None,
             });
             m.apply(&AgentEvent::ToolResult {
                 call_id: id,
@@ -993,6 +999,7 @@ mod tests {
                 duration_ms: 20,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             });
         }
         m.apply(&AgentEvent::TurnComplete {

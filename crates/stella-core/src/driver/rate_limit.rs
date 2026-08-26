@@ -238,6 +238,7 @@ impl<'a> Engine<'a> {
                     // attempt's accounting reaches the wire here or nowhere.
                     partial: error.partial_usage().copied(),
                     sub_agent_id: None,
+                    task_id: None,
                 });
             },
             &mut park,

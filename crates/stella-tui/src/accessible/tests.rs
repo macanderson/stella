@@ -82,6 +82,7 @@ fn tool_start(agent: &str, call_id: &str, name: &str, path: &str) -> Inbound {
                 input: serde_json::json!({ "path": path }),
             },
             sub_agent_id: None,
+            task_id: None,
         },
     }
 }
@@ -96,6 +97,7 @@ fn measured(agent: &str, path: &str, added: u32, removed: u32) -> Inbound {
             removed,
             diff: None,
             minimal: true,
+            task_id: None,
         },
     }
 }
@@ -112,6 +114,7 @@ fn tool_result(agent: &str, call_id: &str) -> Inbound {
             duration_ms: 8,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
     }
 }

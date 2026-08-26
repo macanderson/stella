@@ -16,6 +16,7 @@ fn agent_event_roundtrips_with_type_tag() {
         },
 
         sub_agent_id: None,
+        task_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"type\":\"tool_start\""), "{json}");
@@ -42,6 +43,7 @@ fn tool_result_roundtrips_and_streams_without_speculated_still_parse() {
         speculated: true,
 
         sub_agent_id: None,
+        task_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
@@ -274,6 +276,7 @@ fn file_change_carries_the_delta_and_the_diff_on_the_single_event_path() {
         removed: 3,
         diff: Some("@@ -1 +1 @@\n-old\n+new".into()),
         minimal: false,
+        task_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"type\":\"file_change\""), "{json}");
@@ -917,6 +920,7 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
             ..Default::default()
         }),
         sub_agent_id: None,
+        task_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"type\":\"step_usage\""), "{json}");
@@ -1398,6 +1402,78 @@ fn a_steer_recorded_before_the_cause_existed_is_not_called_the_user() {
         }
         other => panic!("old stream must parse: {other:?}"),
     }
+}
+
+// ── SPEC 7.1: a task is an evidence ledger and a cost (#5039) ───────────────
+
+/// The witness for the tagging half. Before the field existed nothing on the
+/// stream named a task, so a store had no column to select on and "what did
+/// task 3 edit?" was answerable only by guessing from timestamps — which two
+/// concurrent lanes make unguessable.
+#[test]
+fn a_work_event_carries_its_task_id_and_round_trips_with_it() {
+    let event = AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "call_1".into(),
+            name: "edit_file".into(),
+            input: serde_json::json!({ "path": "src/auth.rs" }),
+        },
+        sub_agent_id: None,
+        task_id: Some(crate::TaskId::new("3")),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains(r#""task_id":"3""#), "{json}");
+    let back: AgentEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.task_id().map(crate::TaskId::as_str), Some("3"));
+    assert_eq!(json, serde_json::to_string(&back).unwrap());
+}
+
+/// The additive half, on the field's own terms: a stream recorded before the
+/// tag existed parses, and reads as *untagged* rather than as any task. There
+/// is no id it could safely default to — board ids start at "1" — so the only
+/// correct decode is absence, and a ledger built from such a stream is empty
+/// rather than wrong.
+#[test]
+fn a_stream_recorded_before_the_task_tag_parses_as_untagged() {
+    let old =
+        r#"{"type":"context_write","provider":"workspace-memory","upserts":2,"superseded":0}"#;
+    let event: AgentEvent = serde_json::from_str(old).unwrap();
+    assert_eq!(event.task_id(), None);
+    assert!(
+        event.carries_task_tag(),
+        "the case has a slot; this stream simply never filled it"
+    );
+    // And it re-serializes to exactly the bytes it arrived as: the tag is
+    // skipped when absent, so replaying an old journal never starts writing a
+    // key its readers have never seen.
+    assert_eq!(serde_json::to_string(&event).unwrap(), old);
+}
+
+/// The stamping contract's third clause, where it is enforced: a tag already
+/// present outranks the ambient one. A sub-agent lane knows its own task, and
+/// the lead's running task must never relabel that lane's work as its own.
+#[test]
+fn stamping_fills_an_empty_tag_and_never_overwrites_one() {
+    let mut untagged = AgentEvent::ContextWrite {
+        provider: "workspace-memory".into(),
+        upserts: 1,
+        superseded: 0,
+        task_id: None,
+    };
+    assert!(untagged.stamp_task(&crate::TaskId::new("3")));
+    assert_eq!(untagged.task_id().map(crate::TaskId::as_str), Some("3"));
+    // A second stamp from a different authority changes nothing.
+    assert!(untagged.stamp_task(&crate::TaskId::new("9")));
+    assert_eq!(untagged.task_id().map(crate::TaskId::as_str), Some("3"));
+
+    // A case with no slot reports that it has none rather than silently
+    // accepting a stamp it cannot keep.
+    let mut narration = AgentEvent::Text {
+        text: "the answer".into(),
+    };
+    assert!(!narration.carries_task_tag());
+    assert!(!narration.stamp_task(&crate::TaskId::new("3")));
+    assert_eq!(narration.task_id(), None);
 }
 
 mod tag_table;

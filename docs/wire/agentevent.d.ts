@@ -1236,6 +1236,17 @@ export type TaskContract = {
 };
 
 /**
+ * The id of one row on the session task board — the per-session ordinal
+ * (`"1"`, `"2"`, …) that a `task_update` snapshot's items carry.
+ *
+ * Transparent on the wire: a tagged event carries a plain JSON string, so a
+ * consumer joins it against a board snapshot's `id` directly, with no wrapper
+ * object to unpick. Board ids start at `"1"` and are never reused within a
+ * session, so an absent tag can never be confused with a real one.
+ */
+export type TaskId = string;
+
+/**
  * One entry on the turn's task board (the `task_*` tools). The board is
  * session-scoped working state — what the agent has planned, is doing,
  * and has finished — mirrored to the store for cross-session findability.
@@ -1463,6 +1474,10 @@ export type AgentEvent = {
    */
   sub_agent_id?: string | null;
   /**
+   * Which board task this call is evidence for. Absent means no task was running when it was dispatched, or the stream predates the field -- never task 0, because board ids start at 1.
+   */
+  task_id?: TaskId | null;
+  /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
   ts?: number;
@@ -1483,6 +1498,10 @@ export type AgentEvent = {
    * Which sub-agent's call this answers. Absent means the lead's own call. Carried on the result as well as the announcement so a consumer that never saw the start can still attribute it.
    */
   sub_agent_id?: string | null;
+  /**
+   * Which board task this result is evidence for -- the same tag its tool_start carries. Absent means no task was running, or the stream predates the field.
+   */
+  task_id?: TaskId | null;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
@@ -1874,6 +1893,10 @@ export type AgentEvent = {
    */
   sub_agent_id?: string | null;
   /**
+   * Which board task paid for this call. The per-task cost line is a fold over the metering rows carrying one tag; a turn can span several tasks, so no other field answers it. Absent means no task was running, or the stream predates the field.
+   */
+  task_id?: TaskId | null;
+  /**
    * The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default.
    */
   temperature?: number | null;
@@ -1930,6 +1953,10 @@ export type AgentEvent = {
    */
   sub_agent_id?: string | null;
   /**
+   * Which board task's spend this row cannot account for. A task carrying one of these has a cost that is a lower bound rather than a total. Absent means no task was running, or the stream predates the field.
+   */
+  task_id?: TaskId | null;
+  /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
   ts?: number;
@@ -1972,6 +1999,10 @@ export type AgentEvent = {
   minimal?: boolean;
   path: string;
   removed?: number;
+  /**
+   * Which board task this change is evidence for. Says which task was running when the change was measured -- no more an attribution of authorship than the rest of this event. Absent means no task was running, or the stream predates the field.
+   */
+  task_id?: TaskId | null;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
@@ -2024,6 +2055,10 @@ export type AgentEvent = {
 } | {
   provider: string;
   superseded: number;
+  /**
+   * Which board task this write is evidence for. Absent means no task was running when it was dispatched, or the stream predates the field.
+   */
+  task_id?: TaskId | null;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */

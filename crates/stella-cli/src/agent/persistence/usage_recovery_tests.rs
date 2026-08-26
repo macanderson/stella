@@ -41,6 +41,7 @@ fn incomplete_because(
         retries: Some(1),
         partial,
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -75,6 +76,7 @@ fn settled_without_a_usage_frame() -> AgentEvent {
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     }
 }
 

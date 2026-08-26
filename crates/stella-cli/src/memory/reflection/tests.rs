@@ -615,6 +615,7 @@ fn journal() -> Vec<stella_protocol::AgentEvent> {
                 input: serde_json::json!({ "command": "cargo test" }),
             },
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::ToolResult {
             call_id: "c1".into(),
@@ -625,6 +626,7 @@ fn journal() -> Vec<stella_protocol::AgentEvent> {
             duration_ms: 91_000,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::Retry {
             attempt: 1,
@@ -656,6 +658,7 @@ fn journal() -> Vec<stella_protocol::AgentEvent> {
             temperature: None,
             params: None,
             sub_agent_id: None,
+            task_id: None,
         },
     ]
 }
@@ -728,6 +731,7 @@ fn round_tool(
                 input: serde_json::json!({ "command": command }),
             },
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::ToolResult {
             call_id: call_id.into(),
@@ -744,6 +748,7 @@ fn round_tool(
             duration_ms: 4_000,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
     ]
 }
@@ -973,6 +978,7 @@ async fn the_prompt_names_where_the_turn_spent_itself() {
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     });
     friction.observe(&stella_protocol::AgentEvent::LoopDetected {
         turn_instance: 0,

@@ -266,6 +266,7 @@ mod tests {
                     input: serde_json::json!({ "command": "cargo test -p stella-tui" }),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
         });
         m.now_ms = 4_000;

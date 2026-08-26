@@ -72,6 +72,7 @@ fn fold_one_call(model: &mut SessionModel, name: &str, path: &str) {
             input: serde_json::json!({ "path": path }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     // The per-call work-tree measurement, before the result — see the module
     // doc. Reordering these two is itself the #4155 defect.
@@ -82,6 +83,7 @@ fn fold_one_call(model: &mut SessionModel, name: &str, path: &str) {
         removed: 1,
         diff: Some(REAL_PATCH.into()),
         minimal: true,
+        task_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
@@ -92,6 +94,7 @@ fn fold_one_call(model: &mut SessionModel, name: &str, path: &str) {
         duration_ms: 8,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 }
 
@@ -111,6 +114,7 @@ fn fold_batch(model: &mut SessionModel, paths: &[(&str, &str)]) {
             }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     for (path, marker) in paths {
         model.apply(&AgentEvent::FileChange {
@@ -120,6 +124,7 @@ fn fold_batch(model: &mut SessionModel, paths: &[(&str, &str)]) {
             removed: 1,
             diff: Some(patch_for("alpha", marker)),
             minimal: true,
+            task_id: None,
         });
     }
     model.apply(&AgentEvent::ToolResult {
@@ -131,6 +136,7 @@ fn fold_batch(model: &mut SessionModel, paths: &[(&str, &str)]) {
         duration_ms: 840,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 }
 
@@ -148,6 +154,7 @@ fn fold_shell(model: &mut SessionModel, command: &str, paths: &[(&str, &str)]) {
             input: serde_json::json!({ "command": command }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     for (path, marker) in paths {
         model.apply(&AgentEvent::FileChange {
@@ -157,6 +164,7 @@ fn fold_shell(model: &mut SessionModel, command: &str, paths: &[(&str, &str)]) {
             removed: 1,
             diff: Some(patch_for("alpha", marker)),
             minimal: true,
+            task_id: None,
         });
     }
     model.apply(&AgentEvent::ToolResult {
@@ -168,6 +176,7 @@ fn fold_shell(model: &mut SessionModel, command: &str, paths: &[(&str, &str)]) {
         duration_ms: 120,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 }
 
@@ -484,6 +493,7 @@ fn an_unmeasured_head_states_no_size() {
             input: serde_json::json!({ "command": "cargo test -p stella-core" }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     let head = render_head(&model);
 

@@ -249,6 +249,7 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     };
 
     assert!(persist_event(&store, execution_id, 0, &event, "anthropic"));
@@ -1009,6 +1010,7 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
             temperature: None,
             params: None,
             sub_agent_id: None,
+            task_id: None,
         }],
     };
 

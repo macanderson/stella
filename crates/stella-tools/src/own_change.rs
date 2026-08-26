@@ -211,6 +211,7 @@ pub fn file_change(change: OwnChange) -> stella_protocol::AgentEvent {
         removed: change.removed,
         diff: Some(change.diff),
         minimal: change.minimal,
+        task_id: None,
     }
 }
 

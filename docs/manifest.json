@@ -80,6 +80,11 @@
       "status": "proposed",
       "title": "ADR 0014: Memories join the context-record control plane"
     },
+    "adr/0015-the-task-tag-rides-the-event": {
+      "path": "docs/adr/0015-the-task-tag-rides-the-event.md",
+      "status": "implemented",
+      "title": "ADR 0015: The task tag rides the event"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

@@ -620,6 +620,7 @@ mod tests {
                 input: serde_json::json!({}),
             },
             sub_agent_id: None,
+            task_id: None,
         });
         recorder.observe(&AgentEvent::FileChange {
             path: "src/main.rs".into(),
@@ -628,6 +629,7 @@ mod tests {
             removed: 0,
             diff: Some("+hello".into()),
             minimal: true,
+            task_id: None,
         });
         recorder.observe(&AgentEvent::ToolResult {
             call_id: "call_1".into(),
@@ -638,6 +640,7 @@ mod tests {
             duration_ms: 3,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
         recorder.observe(&AgentEvent::TurnComplete {
             model: "test-model".into(),
@@ -677,6 +680,7 @@ mod tests {
                     input: serde_json::json!({}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             });
             recorder.observe(&AgentEvent::FileChange {
                 path: "src/main.rs".into(),
@@ -685,6 +689,7 @@ mod tests {
                 removed: 0,
                 diff: Some("+hello".into()),
                 minimal: true,
+                task_id: None,
             });
         }
         {
@@ -703,6 +708,7 @@ mod tests {
                     input: serde_json::json!({}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             });
             recorder.observe(&AgentEvent::FileChange {
                 path: "src/main.rs".into(),
@@ -711,6 +717,7 @@ mod tests {
                 removed: 0,
                 diff: Some("+hello world".into()),
                 minimal: true,
+                task_id: None,
             });
             recorder.observe(&AgentEvent::ToolResult {
                 call_id: "call_2".into(),
@@ -721,6 +728,7 @@ mod tests {
                 duration_ms: 3,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             });
             recorder.observe(&AgentEvent::TurnComplete {
                 model: "test-model".into(),
@@ -771,6 +779,7 @@ mod tests {
                 input: serde_json::json!({}),
             },
             sub_agent_id: None,
+            task_id: None,
         });
         recorder.observe(&AgentEvent::SpeculationDiscarded {
             call_id: "call_spec".into(),
