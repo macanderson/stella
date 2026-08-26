@@ -171,8 +171,20 @@ with open(path, "w") as handle:
 PY
 want "U1 an off-kit value under an undeclared role is unclassifiable" \
   expect-fail "$r" "not a kit token and names no family"
-want "U2 --update refuses to retighten around it" \
-  expect-fail "$r" "refusing to retighten while" "--update"
+want "U2 --update refuses to write the ratchet around it" \
+  expect-fail "$r" "refusing to write the ratchet while" "--update"
+# `--bootstrap` needs its own case: it is reachable only on a tree with no
+# ratchet yet, which is exactly the tree with nobody to notice what it wrote.
+# Removing the ratchet is what gets past the "already exists" refusal, so this
+# case reaches the check it is about rather than stopping one door earlier.
+rm -f "$r/$BASELINE_REL"
+want "U3 --bootstrap refuses to write the ratchet around it either" \
+  expect-fail "$r" "refusing to write the ratchet while" "--bootstrap"
+if [ -f "$r/$BASELINE_REL" ]; then
+  fail=$((fail + 1)); echo "FAIL U4 the refused --bootstrap wrote a ratchet anyway"
+else
+  pass=$((pass + 1)); echo "ok   U4 the refused --bootstrap wrote no ratchet"
+fi
 
 # ── M: a baselined role repainted to a DIFFERENT off-clamp value ─────────────
 # The ratchet records a measured value, not a name. Sliding a licensed role to

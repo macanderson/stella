@@ -365,6 +365,23 @@ def main(argv: list[str]) -> int:
     held = read_baseline(root)
     measured = {(file, role): hexv for file, role, hexv, _ in violations}
 
+    # Neither writing mode may run while a role is unclassifiable. Which colour
+    # family is this? is a question for a person, and a writer cannot answer it
+    # -- so without this the ratchet is written cleanly around a role nobody has
+    # judged and the run reports success. `test-light-clamp.sh`'s U2 found it in
+    # `--update`; `--bootstrap` had it too, reachable only on a tree with no
+    # ratchet yet, which is exactly the tree with nobody to notice.
+    if unclassifiable and flags & {"--bootstrap", "--update"}:
+        print(
+            f"check-light-clamp: refusing to write the ratchet while "
+            f"{len(unclassifiable)} role(s) are unclassifiable. Classify them "
+            "first — a ratchet cannot stand in for a decision:\n",
+            file=sys.stderr,
+        )
+        for line in unclassifiable:
+            print(f"  {line}", file=sys.stderr)
+        return 1
+
     if "--bootstrap" in flags:
         if (root / BASELINE_REL).exists():
             print(
@@ -378,20 +395,6 @@ def main(argv: list[str]) -> int:
         return 0
 
     if "--update" in flags:
-        # An unclassifiable role is a question for a person -- which colour
-        # family is this? -- and a writer cannot answer it. Without this the
-        # ratchet retightens cleanly around a role nobody has judged, and the
-        # run reports success. `test-light-clamp.sh`'s U2 is what found it.
-        if unclassifiable:
-            print(
-                "check-light-clamp: refusing to retighten while "
-                f"{len(unclassifiable)} role(s) are unclassifiable. Classify "
-                "them first — a ratchet cannot stand in for a decision:\n",
-                file=sys.stderr,
-            )
-            for line in unclassifiable:
-                print(f"  {line}", file=sys.stderr)
-            return 1
         added = sorted(k for k in measured if k not in held)
         if added:
             print(
