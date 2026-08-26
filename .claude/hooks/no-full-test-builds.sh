@@ -5,7 +5,7 @@
 # JSON on stdin; exit 2 blocks the call and shows stderr to the agent.
 # This is a teaching guard, not a security boundary — it catches the common
 # full-suite invocations across the org's stacks (the same script ships in
-# every macanderson repo); a deliberate CI reproduction can be phrased
+# every macanderson repo); a stated CI reproduction can be phrased
 # around it, and SCR-001 says to do exactly that out loud.
 set -euo pipefail
 

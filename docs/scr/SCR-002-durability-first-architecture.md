@@ -1,7 +1,7 @@
 ---
-id: SCR-002
+id: scr/002-durability-first-architecture
 title: "Architecture: durability-first, decide-and-record, never ask"
-status: active
+status: living
 origin: 100%-deterministic answer to every architecture question, 2025–2026
 trigger: any architectural or design decision arising mid-task
 autonomy: L1
