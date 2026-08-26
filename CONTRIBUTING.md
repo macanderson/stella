@@ -97,6 +97,7 @@ python3 ./scripts/gen-tokens.py --check
 python3 ./scripts/check-tokens.py
 python3 ./scripts/check-hue-separation.py
 python3 ./scripts/check-contrast.py
+python3 ./scripts/check-light-clamp.py
 python3 ./scripts/check-transcript-surfaces.py
 python3 ./scripts/check-line-citations.py
 python3 ./scripts/check-prose.py

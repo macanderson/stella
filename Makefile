@@ -42,7 +42,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
                     bench-suites wire-paths \
-                    tokens hue-separation contrast transcript-surfaces prose \
+                    tokens hue-separation contrast light-clamp transcript-surfaces prose \
                     line-citations \
                     deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
@@ -404,6 +404,28 @@ contrast-update: ## Retighten the contrast ratchet (run after lightening a colou
 .PHONY: contrast-test
 contrast-test: ## Test the contrast ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-contrast.sh
+
+# The fourth colour question, and the one the other three could not ask. All
+# three above read the TOKEN TABLE; so did the two enforcers of the `warm-paper`
+# clamp (gen-tokens.py::validate and clamp.rs::satisfies). So the light ground's
+# own law applied to nothing that ships, and a hand-picked light neutral was
+# invisible to it precisely because being a non-token is what makes such a value
+# the problem. This reads SURFACES (#4941).
+.PHONY: light-clamp
+light-clamp: ## Assert every shipped light surface satisfies the clamp its family declares (#4941)
+	@python3 ./scripts/check-light-clamp.py
+
+.PHONY: light-clamp-report
+light-clamp-report: ## Name every light-scheme declaration, its family and its verdict
+	@python3 ./scripts/check-light-clamp.py --report
+
+.PHONY: light-clamp-update
+light-clamp-update: ## Retighten the light-clamp ratchet (run after warming a neutral)
+	@python3 ./scripts/check-light-clamp.py --update
+
+.PHONY: light-clamp-test
+light-clamp-test: ## Test the light-clamp guard's directions (hermetic; not part of `gate`)
+	./scripts/test-light-clamp.sh
 
 .PHONY: typed-errors
 typed-errors: ## Assert no library crate's public API returns Result<_, String> (invariant #5)

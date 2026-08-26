@@ -68,11 +68,15 @@ name: docs-guards
 #     docs/brand/README.md ever invoked it. `--check` returns before it reaches
 #     rsvg-convert, so it needs no renderer and no desktop font.
 #
-# 10. the four colour rulers (scripts/check-tokens.py with gen-tokens.py
-#     --check, check-hue-separation.py, check-contrast.py, check-css-vars.py):
-#     what kind of colour a value is, whether two of them can be told apart,
-#     whether one can be read on its ground, and whether a token sheet's every
-#     var() resolves. They ran only in ci.yml, whose `check` job is skipped
+# 10. the five colour rulers (scripts/check-tokens.py with gen-tokens.py
+#     --check, check-hue-separation.py, check-contrast.py, check-css-vars.py,
+#     check-light-clamp.py): what kind of colour a value is, whether two of
+#     them can be told apart, whether one can be read on its ground, whether a
+#     token sheet's every var() resolves, and whether a shipped light SURFACE
+#     satisfies the clamp its family declares -- the fifth being the only one
+#     that reads anything but the token table, which is why the light ground's
+#     own clamp governed nothing that ships until #4941.
+#     They ran only in ci.yml, whose `check` job is skipped
 #     whole for a diff confined to `docs/**` and `website/**` -- the diff whose
 #     subject is the brand kit, the standalone HTML documents, the two
 #     hand-maintained token mirrors and the decks (#3653).
@@ -103,7 +107,9 @@ on:
       - "scripts/check-hue-separation.py"
       - "scripts/check-contrast.py"
       - "scripts/check-css-vars.py"
+      - "scripts/check-light-clamp.py"
       - "scripts/contrast-baseline.txt"
+      - "scripts/light-clamp-baseline.txt"
       - "design/tokens/**"
       - ".github/workflows/docs-guards.yml"
   push:
@@ -129,7 +135,9 @@ on:
       - "scripts/check-hue-separation.py"
       - "scripts/check-contrast.py"
       - "scripts/check-css-vars.py"
+      - "scripts/check-light-clamp.py"
       - "scripts/contrast-baseline.txt"
+      - "scripts/light-clamp-baseline.txt"
       - "design/tokens/**"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
@@ -205,6 +213,13 @@ jobs:
       - name: every var() in a token sheet resolves
         if: ${{ !cancelled() }}
         run: python3 scripts/check-css-vars.py
+
+      # The four above read the token table. So did both enforcers of the
+      # light ground's own `warm-paper` clamp, which is why that clamp
+      # governed nothing that ships. This one reads the surfaces (#4941).
+      - name: every shipped light surface satisfies its declared clamp
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-light-clamp.py
 
       # Both directions matter here, which is why it runs in ci.yml too. A new
       # guard is a Makefile change (ci.yml sees it); an edit that quietly drops

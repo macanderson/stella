@@ -134,6 +134,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-contrast.sh
 
+      - name: light-clamp guard directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-light-clamp.sh
+
       - name: dead-code ratchet direction
         if: ${{ !cancelled() }}
         run: ./scripts/test-dead-code-allows.sh
