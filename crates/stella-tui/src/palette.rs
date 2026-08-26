@@ -26,7 +26,7 @@
 //! has no home for yet rather than an oversight (#4058):
 //!
 //! - **The light theme.** `PAPER`, `SNOW`, `PAPER_RAISED`, `PAPER_HAIRLINE`,
-//!   `MUTED`, `INK_DIM`, `INK_EMPHASIS`, and the three ink golds
+//!   `INK_MUTED`, `INK_DIM`, `INK_EMPHASIS`, and the three ink golds
 //!   (`BRAND_INK`, `BRAND_INK_DEEP`, `GOLD_INK`). The JSON declares four
 //!   `web-light` stops and they disagree with these: its `paper` is pure
 //!   white where the deck paints `#F4F4F6`, and its `ink` is `#141416`
@@ -298,7 +298,14 @@ pub const INK: Color = token::BG;
 
 /// Secondary text on paper -- 5.83:1, the paper counterpart of
 /// [`TEXT_SECONDARY`].
-pub const MUTED: Color = Color::Rgb(0x5E, 0x5E, 0x69);
+///
+/// Named for its ground, like [`INK_DIM`] and [`INK_EMPHASIS`]. It was
+/// `MUTED` until #5001, which put it one word away from
+/// `stella_tui_theme::token::MUTED` `#777782` -- the dark ramp's tier below
+/// silver, a different colour on a different ground, with nothing at a call
+/// site to say which one a line had reached. #4966 removed the third
+/// constant of that name; this is the last of them.
+pub const INK_MUTED: Color = Color::Rgb(0x5E, 0x5E, 0x69);
 
 /// Tertiary text on paper -- 4.72:1 on [`PAPER`], the counterpart of
 /// [`TEXT_TERTIARY`]. On [`PAPER_RAISED`] it drops to 4.16:1 and is a
@@ -384,7 +391,7 @@ pub const ALL: [(&str, Color); 37] = [
     ("paper-raised", PAPER_RAISED),
     ("paper-hairline", PAPER_HAIRLINE),
     ("ink", INK),
-    ("muted", MUTED),
+    ("ink-muted", INK_MUTED),
     ("ink-dim", INK_DIM),
     ("ink-emphasis", INK_EMPHASIS),
     ("data-1", DATA_1),

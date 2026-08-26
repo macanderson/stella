@@ -227,7 +227,7 @@ SURFACES = (
             "SNOW": "warm-paper",
             "PAPER_RAISED": "warm-paper",
             "PAPER_HAIRLINE": "warm-paper",
-            "MUTED": "warm-paper",
+            "INK_MUTED": "warm-paper",
             "INK_DIM": "warm-paper",
             "INK_EMPHASIS": "warm-paper",
         },

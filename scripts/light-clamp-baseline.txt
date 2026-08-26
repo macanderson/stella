@@ -32,7 +32,7 @@ crates/stella-transcript/src/html/transcript.css --sunken #F2F5F9
 crates/stella-transcript/src/html/transcript.css --sunken-2 #EEF2F7
 crates/stella-tui/src/palette.rs INK_DIM #6C6C78
 crates/stella-tui/src/palette.rs INK_EMPHASIS #3C3C46
-crates/stella-tui/src/palette.rs MUTED #5E5E69
+crates/stella-tui/src/palette.rs INK_MUTED #5E5E69
 crates/stella-tui/src/palette.rs PAPER #F4F4F6
 crates/stella-tui/src/palette.rs PAPER_HAIRLINE #DDDDE3
 crates/stella-tui/src/palette.rs PAPER_RAISED #E6E6EA

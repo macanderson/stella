@@ -84,8 +84,10 @@ pub const TEXT_PRIMARY: Color = palette::TEXT_PRIMARY;
 /// This tier is `silver`, and it used to answer to a second name — `MUTED`,
 /// with [`text_secondary`] spelled `muted()`. That name was one tier off its
 /// own value: it resolved here, to `stella_tui_theme::token::SILVER` `#A9AAB5`,
-/// while `token::MUTED` `#777782` is the tier below and `crate::palette::MUTED`
-/// `#5E5E69` is a third colour again — three constants, one word. A call site
+/// while `token::MUTED` `#777782` is the tier below and the paper theme's
+/// secondary ink `#5E5E69` was a third colour again — three constants, one
+/// word, until #4966 removed this one and #5001 renamed the paper stop to
+/// [`crate::palette::INK_MUTED`]. A call site
 /// reaching for "the muted tier" and writing `muted()` got silver, and
 /// `crate::diff`'s `gutter` is where that happened: `design/tui-v2/SPEC.md`
 /// §6.4 recorded the result as *"Line number gutter in `dim`"*, wrong by two
@@ -632,7 +634,7 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     // SYNTAX_KEYWORD the emphasis one).
     (TEXT_PRIMARY, palette::INK),
     (palette::TEXT_EMPHASIS, palette::INK_EMPHASIS),
-    (TEXT_SECONDARY, palette::MUTED),
+    (TEXT_SECONDARY, palette::INK_MUTED),
     (TEXT_TERTIARY, palette::INK_DIM),
     // The dim tier is chrome, and on paper the groove has to darken rather
     // than lighten to stay visible; the tertiary ink is the quietest tone
