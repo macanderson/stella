@@ -31,17 +31,10 @@
 //!
 //! `run_turn` spawns `std::env::current_exe()`, which under `cargo test` is
 //! the test binary rather than `stella`, so a turn cannot be driven
-//! in-process at all. Cargo's binary-path macro against a `wiremock` provider
-//! is the only shape that reaches the writer through the real gate;
+//! in-process at all. `CARGO_BIN_EXE_stella` against a `wiremock` provider is
+//! the only shape that reaches the writer through the real gate;
 //! `goal_wrapped_dispatch_cli.rs` is the worked example this copies its
 //! hermeticity and its mock routing from.
-//!
-//! The macro is named once, in [`run_one_shot`], and never spelled in prose:
-//! `embedder_backend_sealed_cli.rs`'s guard counts occurrences of that literal
-//! as spawn sites and requires a seal for each, so a doc comment mentioning it
-//! reads as an unsealed spawn. That guard is right to count conservatively —
-//! an unsealed child inherits `VOYAGE_API_KEY` and bills whoever runs the
-//! suite (#4542) — so the prose moves, not the count.
 //!
 //! # Both directions, or neither is evidence
 //!
