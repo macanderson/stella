@@ -110,6 +110,7 @@ mod slash_pump;
 mod steering;
 mod task_tap;
 mod theme_cmd;
+mod whistle;
 mod worker_control;
 use driver_support::{
     handle_supervisor_msg, service_registry_action, spawn_mcp_connect, spawn_notification_poller,
@@ -641,6 +642,7 @@ pub async fn run_deck_session(
         let _ = deck_tx.send(system_notice(notice));
     }
     steering::announce_withheld(cfg, &in_tx);
+    let whistle = whistle::DeckWhistle::spawn(&session_record.id);
     // An idle lead is waiting on the human, not queued behind a supervisor —
     // asserted outright, since the startup chrome above no longer folds it to
     // `Running` (see `system_notice`).
@@ -1258,6 +1260,7 @@ pub async fn run_deck_session(
                                 let _ = session_registry.upsert(&session_record);
                                 sidecar_dir = session_registry.sidecar_dir(&session_record.id);
                                 lead_holder = format!("{}/lead", session_record.id);
+                                whistle.rebind(&session_record.id);
                                 *pr_session_id.lock().unwrap_or_else(|p| p.into_inner()) =
                                     session_record.id.clone();
                                 {
@@ -1699,13 +1702,9 @@ pub async fn run_deck_session(
         let dispatch_spend_usd = budget.session_spent_usd();
 
         // Shared with the live input arms below: `>` steers, Esc soft-stops.
-        // Per-turn by construction — a stop latched here can't leak into
-        // the next turn.
-        //
-        // `Arc` because the turn runner also publishes a clone to the
-        // registry, so sub-agents this turn dispatches stop when it does
-        // (`crate::subagent`). The engine still takes it by reference.
-        let steering: Arc<subsession::SteeringTap> = Arc::default();
+        // Minted through the session's whistle relay, which is what carries a
+        // steer that arrived between turns into this one (`whistle`).
+        let steering = whistle.mint_turn_tap();
         // The lead lane's pause seam — `p` on the lead row (#1219).
         let lead_pause = lead_control::LeadPause::new();
         let mut friction = TurnFriction::default(); // #3962

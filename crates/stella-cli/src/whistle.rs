@@ -18,20 +18,33 @@
 //! Windows section). `stella whistle` on a non-Unix build reports the gap
 //! rather than silently doing nothing.
 //!
-//! Not reachable yet: interactive mode. Its
-//! steering tap is minted fresh per turn inside `command_deck.rs`, a file
-//! closed to growth under the file-size ratchet (AGENTS.md "God files"), so
-//! wiring a listener into it needs either a small `file-size-update` or the
-//! per-turn tap construction moved into a sibling module first — tracked as
-//! a follow-up rather than done here under time pressure. `stella-serve`
-//! turns are also out of scope: that surface already has its own reach
-//! (`POST /v1/turns/{id}/steer`) over a different transport (HTTP).
+//! Interactive mode reaches it too, through a relay rather than a tap
+//! (`crate::command_deck::whistle`, #4768): the deck mints a fresh
+//! `SteeringTap` per turn and has none at all between turns, so its socket is
+//! bound to a session-scoped publication point that forwards to whichever tap
+//! can currently drain one.
+//!
+//! `stella-serve` turns are out of scope: that surface is a separate binary
+//! with its own reach (`POST /v1/turns/{id}/steer`) over a different
+//! transport, and a served session registers in no registry `stella whistle`
+//! can enumerate — #4770 is where reaching it is being decided.
 
 pub(crate) mod cmd;
 #[cfg(unix)]
 pub(crate) mod listener;
 pub(crate) mod tap;
 pub(crate) mod wire;
+
+/// What [`spawn_for_session`] hands back, named once so a caller storing the
+/// guard in a struct field does not have to name whichever type its build
+/// has. Dropping it unbinds and removes the socket.
+#[cfg(unix)]
+pub(crate) type SessionListener = listener::WhistleListener;
+
+/// As the `#[cfg(unix)]` twin above — there is no socket to release, so there
+/// is nothing to hold.
+#[cfg(not(unix))]
+pub(crate) type SessionListener = ();
 
 /// Start `session_id`'s whistle listener, if this platform has one, and
 /// keep it alive for as long as the returned guard is held. Best-effort and
