@@ -201,14 +201,17 @@ export default function HomePage() {
           <h2 className="lp-eyebrow mb-5">One run, start to finish</h2>
           <HeroTerminal />
           <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
-            The stages, the metering, and the verification step are
+            A plain <code>stella run</code> is the raw step loop: it reports
+            what it changed and what the turn cost, and claims nothing about
+            proof. The rows and the metering are
             <span className="lp-brand-face"> stella</span>&apos;s own; the
-            figures illustrate a run rather than a benchmark.{" "}
+            figures illustrate a run rather than a benchmark. Verification is
+            opt-in —{" "}
             <Link
-              href="/docs/agent-modes#outcome-driven-goal-mode"
+              href="/docs/agent-modes"
               className="underline underline-offset-4 hover:text-fd-foreground"
             >
-              How goal mode decides it is done
+              a wrapper plugin gathers the evidence, or goal mode judges rounds
             </Link>
             .
           </p>
