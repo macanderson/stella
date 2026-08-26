@@ -34,38 +34,61 @@ use super::transcript::{
 };
 use crate::model::{FileState, ReadSize, TranscriptEntry};
 
-/// The metal-bearing head of a dispatched call (SPEC 6.2).
+/// What is known about one call at the moment its head renders — each field
+/// filled by its own resolver, or its `None`/default while nothing has
+/// answered.
 ///
-/// `scope` is what the emitter measured for this call — the paths it claimed
-/// and the delta summed across them — or `None` while it is still in flight.
-/// [`measured_scope`] is what resolves it, and a head row is never asked to
-/// guess. `read` is the line coverage the tool reported for itself, resolved by
-/// [`read_size`] — a separate channel, because a read's number is a coverage
-/// the producer states, never a delta a mutation stamps.
+/// Bundled the way `render::EntryView` bundles the draw-side pair (named
+/// rather than linked: that type is crate-private, and this item is public):
+/// the facts travel together into every head, and a positional list this long
+/// is a call site that can pair one call's scope with another call's timing
+/// by ordering its arguments wrongly.
+#[derive(Default)]
+pub struct CallFacts {
+    /// What the emitter measured for this call — the paths it claimed and the
+    /// delta summed across them ([`measured_scope`]).
+    pub scope: Option<Touched>,
+    /// The line coverage a read reported for itself ([`read_size`]) — a
+    /// separate channel, because a read's number is a coverage the producer
+    /// states, never a delta a mutation stamps.
+    pub read: Option<ReadSize>,
+    /// Wall time from the call's paired result ([`call_duration`]), rendered
+    /// `⚡3ms`. `None` — still in flight, failed, or never answered — renders
+    /// no metric at all.
+    pub duration_ms: Option<u64>,
+    /// The delegate that made the call, `None` for the lead's own — carried
+    /// straight from `TranscriptEntry::ToolStart` so a fan-out call renders
+    /// visibly apart from the lead's (#4699).
+    pub sub_agent_id: Option<String>,
+    /// Whether the reader has expanded this entry (`ctrl+o`). A read head is
+    /// folded until they do; every other kind ignores it here (its reveal is
+    /// the argument body the caller hangs beneath).
+    pub expanded: bool,
+}
+
+/// The metal-bearing head of a dispatched call (SPEC 6.2).
 ///
 /// Always at least one row: a tool with no recognised verb still names itself,
 /// because a call that rendered nothing would be a call the reader cannot see
 /// happened.
-///
-/// `sub_agent_id` is the delegate that made the call, `None` for the lead's
-/// own — carried straight from `TranscriptEntry::ToolStart` so a fan-out call
-/// renders visibly apart from the lead's (#4699).
 #[must_use]
 pub fn head_rows(
     name: &str,
     path: Option<&str>,
     input: &str,
-    scope: Option<Touched>,
-    read: Option<ReadSize>,
-    sub_agent_id: Option<&str>,
+    facts: CallFacts,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let kind = kind_for(name, scope, read);
+    let kind = kind_for(name, facts.scope, facts.read);
     let mut event = Event::new(kind, subject_for(name, path, input));
-    // The head is drawn the moment the call dispatches, so it is never
-    // "collapsed" in the fold sense — there is no body under it yet.
-    event.collapsed = Some(false);
-    event.sub_agent_id = sub_agent_id.map(str::to_string);
+    // A read folds by default (SPEC 6.3): `▸ read … · ↵ open` until the
+    // reader opens it. Every other head draws its kind glyph — its body is
+    // the result row beneath, so the head itself has no fold state. This
+    // used to be `Some(false)` across the board, which made the live path
+    // the one place a read never folded (#5030).
+    event.collapsed = Some(matches!(event.kind, EventKind::Read { .. }) && !facts.expanded);
+    event.duration_ms = facts.duration_ms.unwrap_or(0);
+    event.sub_agent_id = facts.sub_agent_id;
     event_rows(&event, width)
 }
 
@@ -170,6 +193,30 @@ pub fn read_size(call_id: &str, following: &[TranscriptEntry]) -> Option<ReadSiz
             _ => None,
         })
         .flatten()
+}
+
+/// Wall time of the call `call_id`, from its paired result — or `None` while
+/// nothing has answered it.
+///
+/// The same bounded scan as [`measured_scope`] and [`read_size`], read off the
+/// result entry's own `duration_ms`. A zero reading maps to `None` rather than
+/// to a `⚡0ms` metric: the emitters stamp zero for a synthetic echo (a gate
+/// answer, a demo reply), and "answered instantly" and "not a timed call" are
+/// not worth a column that cannot tell them apart.
+#[must_use]
+pub fn call_duration(call_id: &str, following: &[TranscriptEntry]) -> Option<u64> {
+    following
+        .iter()
+        .take_while(|e| !matches!(e, TranscriptEntry::Complete { .. }))
+        .find_map(|e| match e {
+            TranscriptEntry::ToolResult {
+                call_id: cid,
+                duration_ms,
+                ..
+            } if cid == call_id => Some(*duration_ms),
+            _ => None,
+        })
+        .filter(|ms| *ms > 0)
 }
 
 /// One dim line, no rail (SPEC 6.3).
@@ -405,6 +452,90 @@ mod tests {
         }
     }
 
+    /// The witness for #5030's fold half: a read head folds by default
+    /// (SPEC 6.3) — `▸` with `↵ open` — and the reader's expand opens it.
+    /// The live path used to force `collapsed = Some(false)` on every head,
+    /// so no live read ever folded and `↵ open` was reachable only from
+    /// fixtures.
+    #[test]
+    fn a_read_head_folds_by_default_and_opens_on_expand() {
+        let folded = text_of_rows(&head_rows(
+            "read_file",
+            Some("src/lib.rs"),
+            "{}",
+            CallFacts::default(),
+            120,
+        ));
+        assert!(folded.contains('▸'), "{folded}");
+        assert!(folded.contains("↵ open"), "{folded}");
+        let opened = text_of_rows(&head_rows(
+            "read_file",
+            Some("src/lib.rs"),
+            "{}",
+            CallFacts {
+                expanded: true,
+                ..Default::default()
+            },
+            120,
+        ));
+        assert!(!opened.contains('▸'), "{opened}");
+        assert!(!opened.contains("↵ open"), "{opened}");
+        // Every other kind keeps its own glyph either way — an edit head does
+        // not fold, because its body is the result row beneath it.
+        let edit = text_of_rows(&head_rows(
+            "edit_file",
+            Some("src/lib.rs"),
+            "{}",
+            CallFacts::default(),
+            120,
+        ));
+        assert!(!edit.contains('▸'), "{edit}");
+    }
+
+    /// The witness for #5030's timing half: a settled call's head states the
+    /// wall time its paired result measured, `⚡7ms`; an unanswered call and a
+    /// zero-stamped synthetic echo render no metric at all.
+    #[test]
+    fn a_settled_call_head_carries_its_wall_time() {
+        let timed = text_of_rows(&head_rows(
+            "edit_file",
+            Some("src/lib.rs"),
+            "{}",
+            CallFacts {
+                duration_ms: Some(7),
+                ..Default::default()
+            },
+            120,
+        ));
+        assert!(timed.contains("⚡7ms"), "{timed}");
+        let unanswered = text_of_rows(&head_rows(
+            "edit_file",
+            Some("src/lib.rs"),
+            "{}",
+            CallFacts::default(),
+            120,
+        ));
+        assert!(!unanswered.contains('⚡'), "{unanswered}");
+        // And the resolver itself: the paired result's stamp, zero mapped to
+        // `None`, the scan bounded at the turn's close.
+        let result = |id: &str, ms: u64| TranscriptEntry::ToolResult {
+            call_id: id.into(),
+            name: "edit_file".into(),
+            path: None,
+            ok: true,
+            summary: String::new(),
+            full: String::new(),
+            duration_ms: ms,
+            speculated: false,
+            diff: Vec::new(),
+            read_size: None,
+            sub_agent_id: None,
+        };
+        assert_eq!(call_duration("c1", &[result("c1", 7)]), Some(7));
+        assert_eq!(call_duration("c1", &[result("c1", 0)]), None);
+        assert_eq!(call_duration("c1", &[result("c2", 7)]), None);
+    }
+
     /// An unknown tool still renders — the vocabulary is open (MCP, custom
     /// tools), and a missing row is the failure this guards against.
     #[test]
@@ -413,9 +544,7 @@ mod tests {
             "mcp__fs__read_file",
             None,
             "apps/page.tsx",
-            None,
-            None,
-            None,
+            CallFacts::default(),
             80,
         );
         assert_eq!(rows.len(), 1);
@@ -435,12 +564,21 @@ mod tests {
     /// the lead's, and the lead's own renders no tag at all.
     #[test]
     fn a_delegates_head_names_the_delegate() {
-        let delegated = text_of_rows(&head_rows("bash", None, "ls", None, None, Some("d:1"), 80));
+        let delegated = text_of_rows(&head_rows(
+            "bash",
+            None,
+            "ls",
+            CallFacts {
+                sub_agent_id: Some("d:1".into()),
+                ..Default::default()
+            },
+            80,
+        ));
         assert!(
             delegated.contains("d:1"),
             "the delegate's own call did not name it: {delegated}"
         );
-        let lead = text_of_rows(&head_rows("bash", None, "ls", None, None, None, 80));
+        let lead = text_of_rows(&head_rows("bash", None, "ls", CallFacts::default(), 80));
         assert!(
             !lead.contains("d:1"),
             "the lead's own call must carry no delegate tag: {lead}"
@@ -454,9 +592,7 @@ mod tests {
             "read_file",
             Some("src/main.rs"),
             "{\"path\":\"…\"}",
-            None,
-            None,
-            None,
+            CallFacts::default(),
             80,
         );
         let text = text_of(&rows[0]);
@@ -484,7 +620,13 @@ mod tests {
             ("write_file", "src/new.rs"),
             ("delete_file", "src/old.rs"),
         ] {
-            let text = text_of_rows(&head_rows(tool, Some(path), "{}", None, None, None, 120));
+            let text = text_of_rows(&head_rows(
+                tool,
+                Some(path),
+                "{}",
+                CallFacts::default(),
+                120,
+            ));
             for zero in ["+0", "-0", "0 lines"] {
                 assert!(
                     !text.contains(zero),
@@ -504,9 +646,11 @@ mod tests {
             "write_file",
             Some("src/new.rs"),
             "{}",
-            Some(one_file(42, 0)),
-            None,
-            None,
+            CallFacts {
+                scope: Some(one_file(42, 0)),
+
+                ..Default::default()
+            },
             120,
         ));
         assert!(write.contains("new file"), "{write}");
@@ -515,9 +659,11 @@ mod tests {
             "delete_file",
             Some("src/old.rs"),
             "{}",
-            Some(one_file(0, 17)),
-            None,
-            None,
+            CallFacts {
+                scope: Some(one_file(0, 17)),
+
+                ..Default::default()
+            },
             120,
         ));
         assert!(delete.contains("-17 lines"), "{delete}");
@@ -533,9 +679,7 @@ mod tests {
             "write_file",
             Some("src/new.rs"),
             "{}",
-            None,
-            None,
-            None,
+            CallFacts::default(),
             120,
         ));
         assert!(write.contains("new file"), "{write}");
@@ -543,9 +687,7 @@ mod tests {
             "delete_file",
             Some("src/old.rs"),
             "{}",
-            None,
-            None,
-            None,
+            CallFacts::default(),
             120,
         ));
         assert!(delete.contains("git-backed"), "{delete}");
@@ -617,9 +759,11 @@ mod tests {
             name,
             path.as_deref(),
             input,
-            scope,
-            read,
-            None,
+            CallFacts {
+                scope,
+                read,
+                ..Default::default()
+            },
             120,
         ))
     }
@@ -774,9 +918,7 @@ mod tests {
             "read_file",
             Some("a/b/c.rs"),
             "{}",
-            None,
-            None,
-            None,
+            CallFacts::default(),
             120,
         ));
         let cut = spans
@@ -805,9 +947,7 @@ mod tests {
             "bash",
             None,
             "grep -r foo/ .",
-            None,
-            None,
-            None,
+            CallFacts::default(),
             120,
         ));
         let subject: Vec<_> = spans
@@ -869,15 +1009,22 @@ mod tests {
             ("delete_file", "src/old.rs"),
         ] {
             let declares_a_size = format!("{:?}", kind_for(tool, None, None)).contains("Extent");
-            let unmeasured =
-                text_of_rows(&head_rows(tool, Some(path), "{}", None, None, None, 120));
+            let unmeasured = text_of_rows(&head_rows(
+                tool,
+                Some(path),
+                "{}",
+                CallFacts::default(),
+                120,
+            ));
             let measured = text_of_rows(&head_rows(
                 tool,
                 Some(path),
                 "{}",
-                Some(one_file(7, 3)),
-                None,
-                None,
+                CallFacts {
+                    scope: Some(one_file(7, 3)),
+
+                    ..Default::default()
+                },
                 120,
             ));
             assert_eq!(
@@ -909,7 +1056,7 @@ mod tests {
     /// The glyph cell of a head row: the rail is span 0, the glyph span 1
     /// (`" x "`), which `head_row` composes in that order.
     fn head_glyph_of(name: &str) -> char {
-        let rows = head_rows(name, None, "{}", None, None, None, 120);
+        let rows = head_rows(name, None, "{}", CallFacts::default(), 120);
         let row = rows
             .first()
             .expect("a head always renders at least one row");
@@ -968,7 +1115,7 @@ mod tests {
             ("orchid", crate::theme::ORCHID),
         ];
         for (name, _) in CLASS_CASES {
-            let rows = head_rows(name, None, "{}", None, None, None, 120);
+            let rows = head_rows(name, None, "{}", CallFacts::default(), 120);
             let row = rows
                 .first()
                 .expect("a head always renders at least one row");

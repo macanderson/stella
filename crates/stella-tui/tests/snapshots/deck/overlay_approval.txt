@@ -19,10 +19,10 @@
 
 ── EXECUTE ───────────────────────────────╭ ◇ approval · the turn is stopped ────────────────────────────────────────╮──────────────────────────────────────────
                                           │ bash  mutating                                                           │
- │ ⊙ apps/app/automations/page.tsx        │   rm -rf build/                                                          │
+ │ ⊙ apps/app/automations/page.tsx        │   rm -rf build/                                                          │                                    ⚡ 42ms
  │ ⎿ 312 lines                            │                                                                          │                       42ms
                                           │ gate command.started                                                     │
- │ ● edit apps/app/automations/page.tsx +4│ reason matched rule no-destructive-shell                                 │
+ │ ● edit apps/app/automations/page.tsx +4│ reason matched rule no-destructive-shell                                 │                                    ⚡ 18ms
  │ ⎿                                      │                                                                          │               +4 −1 · 18ms
  │     10 -  const items = []             │   Allow this call, once                                                  │
  │     10 +  const items = useAutomations(│ ▸ Deny                                                                   │
