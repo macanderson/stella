@@ -6,6 +6,8 @@
 //! (These started as two byte-identical private copies; the divergence risk
 //! is why they were merged.)
 
+mod translit;
+
 use std::collections::{HashMap, HashSet};
 
 const STOPWORDS: &[&str] = &[
@@ -250,6 +252,32 @@ pub(crate) fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
 /// Filesystem/id-safe slug: lowercase, alnum + dashes, capped short.
 /// `fallback` names the artifact kind when the text slugs to nothing
 /// (`"lesson"` for rules, `"skill"` for skills) (TS: `slugify`).
+///
+/// # Non-Latin text gets a name, and every path stays ASCII (#4913)
+///
+/// A letter outside ASCII is folded to the ASCII letters that stand for it
+/// ([`translit::ascii_fold`]) before it is dropped as a separator. Without
+/// that, a lesson mined from Russian or Czech text slugged to nothing and the
+/// whole id was `skill-<hash8>` — unique, stable, and unreadable in `ls`, in
+/// the SKILLS tab, and in a `git diff`. #3298's clustering half is what made
+/// that reachable: before it, non-Latin observations never clustered, so no
+/// such candidate was ever minted.
+///
+/// **Folding, not widening.** The output alphabet is unchanged, so this
+/// decides nothing about whether `.stella/skills/` may hold non-ASCII paths —
+/// the filesystem question the module header of [`translit`] lays out, and the
+/// reason widening is not the fix. A script with no single-codepoint
+/// romanization (Han, kana, Arabic, Hebrew) still slugs to `fallback`; #4968
+/// tracks it.
+///
+/// **No id already on disk moves.** An id is minted once and never recomputed
+/// against an existing file: the miners' [`already_captured`] guard compares
+/// *text* against the name/description/body of what is already there, so an
+/// artifact minted under the old alphabet keeps its filename and is still
+/// recognised as the duplicate it is. What moves is the id the *same text*
+/// would mint from here on — `café serveur` becomes `cafe-serveur` rather than
+/// `caf-serveur` — and an ASCII-only text mints the byte-identical id it
+/// always did, which `slugify_is_unchanged_on_ascii` holds.
 pub(crate) fn slugify(text: &str, fallback: &str) -> String {
     let mut collapsed = String::new();
     let mut prev_dash = false;
@@ -257,6 +285,11 @@ pub(crate) fn slugify(text: &str, fallback: &str) -> String {
         if ch.is_ascii_alphanumeric() {
             collapsed.push(ch);
             prev_dash = false;
+        } else if let Some(folded) = translit::ascii_fold(ch) {
+            // May be empty — a Cyrillic hard or soft sign stands for no letter
+            // of its own — and an empty folding is not a separator either.
+            collapsed.push_str(folded);
+            prev_dash = prev_dash && folded.is_empty();
         } else if !prev_dash {
             collapsed.push('-');
             prev_dash = true;
@@ -458,6 +491,87 @@ mod tests {
             ["終了時にプロセスを停止"],
             0.4
         ));
+    }
+
+    /// **Witness (#4913).** A lesson mined from non-Latin text gets a name.
+    ///
+    /// On base every one of these slugs to the bare artifact kind or to its
+    /// surviving ASCII fragments, so the whole id is `lesson-<hash8>` and a
+    /// Russian workspace's `.stella/skills/` fills with directories that are
+    /// indistinguishable from one another in `ls`.
+    #[test]
+    fn non_latin_text_slugs_to_a_readable_name() {
+        assert_eq!(
+            slugify("форматировать запросы", "lesson"),
+            "formatirovat-zaprosy"
+        );
+        assert_eq!(slugify("Ještě jednou", "lesson"), "jeste-jednou");
+        assert_eq!(slugify("straße für alle", "lesson"), "strasse-fur-alle");
+        assert_eq!(slugify("γράψε τεστ", "lesson"), "grapse-test");
+        // A hard or soft sign stands for no letter of its own, so it joins the
+        // word rather than splitting it.
+        assert_eq!(slugify("объект", "lesson"), "obekt");
+    }
+
+    /// The other half of that witness, and the reason this is a fold rather
+    /// than a widening: the slug alphabet did not move, so nothing here can
+    /// put a non-ASCII byte into a directory name.
+    #[test]
+    fn a_slug_is_still_ascii_whatever_the_text_was() {
+        for text in [
+            "форматировать запросы",
+            "café serveur",
+            "数据库查询格式化",
+            "γράψε τεστ",
+            "אבג",
+        ] {
+            let slug = slugify(text, "lesson");
+            assert!(
+                slug.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                "{text:?} slugged to {slug:?}"
+            );
+        }
+        // The scripts with no single-codepoint romanization are unchanged:
+        // there is nothing to fold them to — see `translit`'s header and #4968.
+        assert_eq!(slugify("数据库查询格式化", "skill"), "skill");
+    }
+
+    proptest::proptest! {
+        /// **No id already on disk moves.** Every artifact minted before this
+        /// change came from text whose slug was decided by the ASCII rule, and
+        /// folding only ever fires on a character that rule rejected — so on
+        /// ASCII text the two are the same function. `migration_contract`'s
+        /// `candidate_identity_is_pinned_to_a_literal` pins one shipped id;
+        /// this pins the class, the same pairing #3298 used for `terms`.
+        #[test]
+        fn slugify_is_unchanged_on_ascii(text in "[ -~]{0,200}") {
+            proptest::prop_assert_eq!(slugify(&text, "lesson"), ascii_slugify(&text, "lesson"));
+        }
+    }
+
+    /// The slug rule this change replaced, verbatim, so the property above
+    /// compares against the shipped behavior rather than a description of it.
+    fn ascii_slugify(text: &str, fallback: &str) -> String {
+        let mut collapsed = String::new();
+        let mut prev_dash = false;
+        for ch in text.to_lowercase().chars() {
+            if ch.is_ascii_alphanumeric() {
+                collapsed.push(ch);
+                prev_dash = false;
+            } else if !prev_dash {
+                collapsed.push('-');
+                prev_dash = true;
+            }
+        }
+        let trimmed = collapsed.trim_matches('-');
+        let truncated: String = trimmed.chars().take(40).collect();
+        let truncated = truncated.trim_end_matches('-');
+        if truncated.is_empty() {
+            fallback.to_string()
+        } else {
+            truncated.to_string()
+        }
     }
 
     /// The two spaces still agree on *tokenization* for ASCII text — the
