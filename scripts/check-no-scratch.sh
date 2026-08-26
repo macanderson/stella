@@ -24,6 +24,16 @@
 # invisible; here `--cached` is the subject. An untracked scratch file is the
 # correct outcome, not a miss, and adding `--others` would fail the gate on
 # every session's own working directory. Do not "fix" it to match the others.
+# #4996 re-asked it and settled the same way; `scripts/test-no-scratch.sh`'s
+# case F pins the answer so the next reader finds it as a test rather than as
+# an argument.
+#
+# The consequence is that this guard's reach is exactly .gitignore's, so a
+# scratch name nothing ignores is invisible here. That is not a hole to patch
+# with a name list — the whole point of the rule above is that there is no
+# pattern list here to drift — it is a reason to keep .gitignore covering the
+# shapes sessions actually write. `.tmp-*` is there because `.tmp-msg.txt`
+# matched neither `*.tmp` nor `tmp/` and rode a `git add -A` onto PR #4994.
 #
 # Uses portable POSIX tools so it runs on a bare CI runner.
 set -euo pipefail

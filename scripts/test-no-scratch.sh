@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for the session-scratch boundary (#448, #2888).
+# Tests for the session-scratch boundary (#448, #2888, #4996).
 #
 #   ./scripts/test-no-scratch.sh
 #
@@ -17,7 +17,8 @@
 # .scratch/ was that path. On 2026-08-11 a session wrote a commit message to
 # .scratch/msg.txt, amended with `git add -A`, and pushed; `git check-ignore`
 # exited 1, the guard printed OK, `make gate` and CI were green, and the file
-# reached the remote. Nothing in the toolchain said so.
+# reached the remote. Nothing in the toolchain said so. `.tmp-msg.txt` was the
+# same story two weeks later at a different name shape (#4996, cases E).
 #
 # The fix was one .gitignore line, which is why the subject here is the PAIR:
 # the ignore rule and the guard together. Testing the script alone would pass
@@ -121,6 +122,80 @@ if git -C "$D" ls-files --error-unmatch crates/stella-core/.scratch/plan.md >/de
     "     The .gitignore entry is anchored and only covers the repository root."
 else
   ok "D1 a nested .scratch/ is ignored too"
+fi
+
+# ── E: the same hazard one file-name shape over ──────────────────────────────
+#
+# .scratch/ was a directory, and the rule that covers it is a directory entry.
+# A loose scratch *file* at the root is the same motion with nothing to anchor
+# on: on 2026-08-25 a session wrote its commit message to `.tmp-msg.txt` and
+# `git add -A` swept it into PR #4994. `*.tmp` did not match — the name starts
+# with `.tmp` and ends with `.txt` — so the guard printed OK while the file sat
+# in the diff, and what found it was an unrelated colour sweep reading its text
+# (#4996).
+#
+# The `.tmp-*`/`tmp-*` entries are what close it, and E1/E2 fail on a tree
+# without them.
+
+E="$(fixture tmp-prefix-sweep)"
+echo scratch >"$E/.tmp-msg.txt"
+echo scratch >"$E/tmp-msg.txt"
+git -C "$E" add -A >/dev/null 2>&1
+if git -C "$E" ls-files --error-unmatch .tmp-msg.txt >/dev/null 2>&1; then
+  no "E1 \`git add -A\` leaves .tmp-msg.txt alone" \
+    "     No .gitignore entry matches a .tmp- prefix, so #4996's sweep still works."
+else
+  ok "E1 \`git add -A\` leaves .tmp-msg.txt alone"
+fi
+if git -C "$E" ls-files --error-unmatch tmp-msg.txt >/dev/null 2>&1; then
+  no "E2 the dotless spelling is covered too" \
+    "     Only .tmp-* is entered; a session writing tmp-msg.txt still commits it."
+else
+  ok "E2 the dotless spelling is covered too"
+fi
+
+E2="$(fixture tmp-prefix-forced)"
+echo scratch >"$E2/.tmp-msg.txt"
+git -C "$E2" add -f .tmp-msg.txt >/dev/null 2>&1
+out="$(cd "$E2" && bash scripts/check-no-scratch.sh 2>&1)"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  no "E3 a tracked .tmp-msg.txt fails the guard" "$out"
+else
+  ok "E3 a tracked .tmp-msg.txt fails the guard"
+fi
+case "$out" in
+*".tmp-msg.txt"*) ok "E4 the guard names it" ;;
+*) no "E4 the guard names it" "$out" ;;
+esac
+
+E3="$(fixture tmp-prefix-nested)"
+mkdir -p "$E3/crates/stella-core"
+echo scratch >"$E3/crates/stella-core/.tmp-plan.md"
+git -C "$E3" add -A >/dev/null 2>&1
+if git -C "$E3" ls-files --error-unmatch crates/stella-core/.tmp-plan.md >/dev/null 2>&1; then
+  no "E5 a nested .tmp-* is ignored too" \
+    "     The entry is anchored and only covers the repository root."
+else
+  ok "E5 a nested .tmp-* is ignored too"
+fi
+
+# ── F: untracked scratch is not the subject ──────────────────────────────────
+#
+# check-no-scratch.sh's header names this as the one guard #4952 left on
+# `--cached` rather than widening, and #4996 re-asked whether it should flag untracked
+# scratch names. This pins the answer so nobody "fixes" it into the others'
+# shape: with an ignored file present but never added, the guard passes. Its
+# reach starts at the index, and an ignored-but-untracked file is the working
+# tree behaving correctly — failing on one would fail every session's own
+# directory.
+
+F="$(fixture untracked-scratch)"
+echo scratch >"$F/.tmp-msg.txt"
+if out="$(cd "$F" && bash scripts/check-no-scratch.sh 2>&1)"; then
+  ok "F1 an ignored file that was never added passes"
+else
+  no "F1 an ignored file that was never added passes" "$out"
 fi
 
 echo

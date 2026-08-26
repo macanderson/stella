@@ -24,7 +24,6 @@ build/
 
 # Editors
 *.bak
-*.tmp
 .*.sw?
 .*.pw?
 
@@ -110,6 +109,15 @@ Thumbs.db
 # Unanchored, like .agent/ above: a session writing scratch inside a worktree
 # subdirectory is the same hazard at a different path.
 .scratch/
+# A loose scratch file at the root, which no suffix pattern reaches:
+# `.tmp-msg.txt` starts with `.tmp` and ends with `.txt`, so `*.tmp` and `tmp/`
+# both missed it and it rode a `git add -A` into PR #4994 (#4996). What found
+# it was an unrelated colour sweep reading its text, which is not a guard.
+# Both spellings, because sessions write both. A real file wanting one of these
+# names fails `no-scratch` loudly the moment it is tracked, and the remedy
+# there is a `!` negation beside it.
+.tmp-*
+tmp-*
 
 # Testing
 *.profraw
