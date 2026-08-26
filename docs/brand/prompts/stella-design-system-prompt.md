@@ -46,15 +46,15 @@ The system is **flat**. There are no 50→950 ramps: v5.0 deletes both the brand
 
 | token | hex | role |
 |---|---|---|
-| `--st-paper` | `#FFFFFF` | light canvas |
-| `--st-paper-ground` | `#F4F4F6` | the cool page ground, one step under the panel |
-| `--st-paper-panel` | `#F6F6F8` | light panel |
-| `--st-paper-raised` | `#FAFAFC` | surface raised above the page ground |
-| `--st-paper-row` | `#E6E6EA` | light hover and selected rows |
-| `--st-paper-border` | `#E3E3E8` | light border |
-| `--st-paper-seam` | `#DDDDE3` | the hairline under a border |
-| `--st-ink` | `#141416` | primary text on light |
-| `--st-ink-muted` | `#5E5E69` | secondary text on light |
+| `--st-paper` | `#FFFCF5` | light canvas |
+| `--st-paper-ground` | `#F7F4ED` | the warm paper page ground, one step under the panel |
+| `--st-paper-panel` | `#F9F6EF` | light panel |
+| `--st-paper-raised` | `#FDFAF3` | surface raised above the page ground |
+| `--st-paper-row` | `#E9E6E0` | light hover and selected rows |
+| `--st-paper-border` | `#E6E3DD` | light border |
+| `--st-paper-seam` | `#E0DDD7` | the hairline under a border |
+| `--st-ink` | `#141413` | primary text on light |
+| `--st-ink-muted` | `#605F5C` | secondary text on light |
 | `--st-gold-ink` | `#725A00` | gold as *text* on the light ground, where the metal cannot clear AA |
 | `--st-green-ink` | `#006933` | pass, as text on light |
 | `--st-amber-ink` | `#8A3F00` | warning, as text on light |

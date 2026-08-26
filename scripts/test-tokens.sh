@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Tests for check-tokens.py's BAN CHECK, over every notation it claims to
-# watch (#4910).
+# watch (#4910), and for its CITATION CHECK, whose subject is a pair (#3653).
 #
 #   ./scripts/test-tokens.sh    (or: make tokens-test)
 #
@@ -33,6 +33,17 @@
 # site holds retired values *in order to ban them*, so the guard finding them
 # there is the failure, not the catch. #4066 is the merge where getting this
 # wrong reported nineteen offenders that were all correct.
+#
+# The citation cases earn their own section because that check's subject is a
+# *pair* rather than a value. Neither older check can see a name quoted at a
+# value that is some other token's: that value is live, so it passes a
+# membership test while saying something false. A name quoted at a value the
+# palette has moved past is the other failure mode, and looks nothing like it.
+#
+# Every fixture below reads its colours out of the real token file at run time,
+# citation fixtures included — which is why this file is in neither `SELF` nor
+# any other exemption, and must not become one. A suite that needed a blanket
+# pass would be handing every file that calls itself a test the same pass.
 #
 # bash 3.2 compatible.
 set -uo pipefail
@@ -80,6 +91,46 @@ print(', '.join(str(int(h[i:i+2], 16)) for i in (0, 2, 4)))
 " "$1"
 }
 
+# The citation fixtures' raw material, all of it derived rather than typed:
+# three (css name, hex) pairs with distinct values, one hex that is neither a
+# token nor banned, and one `--st-` name the palette does not declare. Emitted
+# in one call because the alternative is six interpreter starts to learn what
+# one file already says.
+eval "$(python3 -c "
+import json, sys
+doc = json.loads(open(sys.argv[1]).read())
+live = {t['hex'].upper() for t in doc['tokens']}
+banned = {e['hex'].upper() for e in doc['banned']['values']}
+names = {t['css'] for t in doc['tokens']}
+picked, seen = [], set()
+for t in doc['tokens']:
+    h = t['hex'].upper()
+    if h not in seen:
+        seen.add(h)
+        picked.append((t['css'], h))
+    if len(picked) == 3:
+        break
+for i, (css, hexv) in enumerate(picked, 1):
+    print('C%d_CSS=%s' % (i, css))
+    print('C%d_HEX=%s' % (i, hexv))
+# A value the palette neither holds nor bans: a misquote rather than a ban hit,
+# which is the whole point of the pair these cases test.
+base = picked[0][1]
+for d in range(1, 256):
+    cand = '#%s%02X' % (base[1:5], (int(base[5:7], 16) + d) % 256)
+    if cand not in live and cand not in banned:
+        print('WRONG_HEX=%s' % cand)
+        break
+else:
+    raise SystemExit('no free hex adjacent to %s' % base)
+for cand in ('--st-taupe', '--st-puce', '--st-mauve'):
+    if cand not in names:
+        print('UNKNOWN_CSS=%s' % cand)
+        break
+else:
+    raise SystemExit('every candidate name is a real token')
+" "$repo_root/$TOKENS_REL")"
+
 # A throwaway git repository holding the real token file plus one source file.
 # Real git, because the script discovers its inputs with `git ls-files` and a
 # fixture that stubbed that would be testing a path nothing runs.
@@ -94,30 +145,48 @@ new_root() {
   echo "$dir"
 }
 
-# want <name> <expect-pass|expect-ban> <file> <contents>
+# want <name> <expect-pass|expect-ban|expect-fail> <file> <contents> [substring]
+#
+# `expect-ban` and `expect-fail` are the same assertion — a non-zero exit — and
+# both spellings exist because a misquote is not a ban and calling it one at the
+# call site would read as a mistake.
+#
+# The optional substring is checked on BOTH verdicts. On a failure it pins which
+# value was named and in what words; on a pass it pins what the run reported,
+# without which a guard that passed by scanning nothing satisfies the case.
 want() {
-  local name="$1" expect="$2" file="$3" contents="$4"
+  local name="$1" expect="$2" file="$3" contents="$4" sub="${5:-}"
   local root out rc
   root="$(new_root "$(echo "$name" | tr ' /' '__')" "$file" "$contents")"
   out="$(python3 "$SCRIPT" "$root" 2>&1)"
   rc=$?
   if [ "$expect" = "expect-pass" ]; then
-    if [ "$rc" -eq 0 ]; then
-      ok "$name"
-    else
+    if [ "$rc" -ne 0 ]; then
       bad "$name — expected a pass, got exit $rc: $out"
+      return
     fi
+    case "$out" in
+    *"$sub"*) ok "$name" ;;
+    *) bad "$name — passed but did not report '$sub': $out" ;;
+    esac
     return
   fi
   if [ "$rc" -eq 0 ]; then
-    bad "$name — the banned value was NOT caught: $out"
+    bad "$name — the offending value was NOT caught: $out"
     return
   fi
   # Naming the file is half the guard: an exit code alone sends a reader
   # hunting through the tree for a colour the script already located.
   case "$out" in
-  *"$file"*) ok "$name" ;;
-  *) bad "$name — caught it but did not name $file: $out" ;;
+  *"$file"*) ;;
+  *)
+    bad "$name — caught it but did not name $file: $out"
+    return
+    ;;
+  esac
+  case "$out" in
+  *"$sub"*) ok "$name" ;;
+  *) bad "$name — named $file but not '$sub': $out" ;;
   esac
 }
 
@@ -179,6 +248,99 @@ if [ "$hits" -eq 1 ]; then
 else
   bad "one literal was reported $hits time(s): $out"
 fi
+
+# A palette that was never a kit is banned on the same list and for the same
+# reason: nobody specified it, so it has no legitimate use. This is #3653's own
+# Verify step 2, and until the deck's four invented values joined
+# `banned.values` nothing in the tree rejected them — not retired, not a token,
+# so both older checks passed them. The hex is read out of the list rather than
+# typed, like every other fixture here.
+DECK_HEX="$(python3 -c "
+import json, sys
+doc = json.loads(open(sys.argv[1]).read())
+for e in doc['banned']['values']:
+    if 'never a kit value' in e['was']:
+        print(e['hex'].upper())
+        break
+else:
+    raise SystemExit('no never-a-kit entry in banned.values')
+" "$repo_root/$TOKENS_REL")"
+want "the deck's invented palette is rejected as one the kit never defined" expect-ban \
+  "website/public/presentations/investor-deck.html" "  --gold: $DECK_HEX;" \
+  "never a kit value"
+
+echo ""
+echo "check-tokens citation check:"
+
+# A token quoted at a value the palette has moved past. This is the shape the
+# kit page and the design brief shipped, nine rows apiece (#3653).
+want "a superseded value is named with both hexes" expect-fail \
+  "docs/kit.md" "| $C1_CSS | $WRONG_HEX | the canvas |" \
+  "$C1_CSS is quoted as $WRONG_HEX but holds $C1_HEX"
+
+# The failure neither older check can see: the value is a LIVE token, so it
+# passes the ban and passes a membership test, and is still the wrong colour for
+# the name it is written beside. Two shipped stylesheets did exactly this.
+want "a live token bound to the wrong name is flagged" expect-fail \
+  "docs/kit.css" "  $C1_CSS: $C2_HEX;" \
+  "$C1_CSS is quoted as $C2_HEX but holds $C1_HEX"
+
+# A hex under an `--st-` name the palette does not declare. Every reader
+# resolves it off their own fallback and the document goes on stating a rule
+# nothing applies — the css-vars failure one notation over.
+want "a hex under a name no token declares is flagged" expect-fail \
+  "docs/kit.css" "  $UNKNOWN_CSS: $WRONG_HEX;" \
+  "no token declares that name"
+
+# The correct value passes, and the report says how many pairs it read — without
+# which every case above is satisfiable by a guard that fails on everything.
+want "a correct citation passes and is counted" expect-pass \
+  "docs/kit.md" "| $C1_CSS | $C1_HEX | the canvas |" \
+  "1 token citation(s) quote the palette"
+
+# Lower case is the same colour. `website/src/app/tokens.css` writes its whole
+# ramp that way, so a case-sensitive compare would have failed the tree this was
+# written against.
+want "a lower-case citation is read as the same value" expect-pass \
+  "docs/kit.css" "  $C1_CSS: $(echo "$C1_HEX" | tr 'A-F' 'a-f');" \
+  "1 token citation(s) quote the palette"
+
+# Several tokens on one line: the hex after each name belongs to that name. A
+# window reaching past the next `--st-` would report all three as wrong while
+# all three are right, which is the shape a minified stylesheet ships in.
+want "a minified line pairs each name with its own value" expect-pass \
+  "docs/kit.css" ":root{$C1_CSS:$C1_HEX;$C2_CSS:$C2_HEX;$C3_CSS:$C3_HEX}" \
+  "3 token citation(s) quote the palette"
+
+# The other direction of the same rule: one wrong value among several on a line
+# is named, and named as itself rather than as a neighbour.
+want "the wrong value on a shared line is named as itself" expect-fail \
+  "docs/kit.css" ":root{$C1_CSS:$C1_HEX;$C2_CSS:$WRONG_HEX;$C3_CSS:$C3_HEX}" \
+  "$C2_CSS is quoted as $WRONG_HEX but holds $C2_HEX"
+
+# A token named with no value beside it is prose, not a citation. Both brand
+# documents discuss tokens by name in running text far more often than they
+# tabulate them, and a guard reading those as claims would be unusable.
+want "a token named in prose with no value is not a citation" expect-pass \
+  "docs/kit.md" "Cards sit on $C2_CSS and hairlines on $C3_CSS." \
+  "0 token citation(s) quote the palette"
+
+# What SELF must NOT buy. A ban site quotes a retired value on purpose; that is
+# no licence to misquote a live token, and an exemption suppressing all three
+# checks would have hidden this.
+want "SELF suppresses the ban and not the citation check" expect-fail \
+  "crates/stella-tui/src/theme/tests.rs" "// $C1_CSS is $WRONG_HEX" \
+  "$C1_CSS is quoted as $WRONG_HEX but holds $C1_HEX"
+
+# Inside TOKEN_ONLY every hex must be a live token, whatever it is written next
+# to. This is the check the citation one does not replace: an unnamed stray,
+# under a variable the palette knows nothing about.
+want "a stray hex in a token-only path is flagged" expect-fail \
+  "docs/brand/css/tokens.css" "  --custom: $WRONG_HEX;" \
+  "is not a token in"
+
+echo ""
+echo "check-tokens, the real tree:"
 
 # The real tree, read-only, with no argument at all — the path every caller
 # takes. A suite whose cases all pass a root would not notice the default

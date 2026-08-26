@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Guard the colour system: no retired hex anywhere, no stray hex where it matters.
 
-Two checks, deliberately different in strength, because "never use this colour
-again" and "use only tokens here" are different promises and only one of them
-can be made about the whole tree today.
+Three checks, deliberately different in strength, because "never use this colour
+again", "use only tokens here" and "quote this token correctly" are different
+promises and only one of them can be made about the whole tree today.
 
 1. **The ban.** Every hex in `banned.values` in the token JSON fails wherever it
    appears, in any tracked file. These are the anchor values of retired brand
@@ -19,6 +19,29 @@ can be made about the whole tree today.
    literals, only tokens" is a promise the tree can actually keep. Raster and
    vector assets are out of scope by construction; they are checked by the ban
    instead.
+
+3. **Citations.** Wherever a document writes a token's CSS name with a hex beside
+   it — a kit table row, a stylesheet declaration, a design brief — that hex must
+   be the value the token holds today. Checks 1 and 2 are both *membership*
+   questions and neither can see a mis-quote: a superseded value is not banned
+   (nothing retired it, the palette simply moved past it), and a value bound to
+   the wrong name is still a live token, so it satisfies TOKEN_ONLY while saying
+   something false.
+
+   Both failures were in the tree when this check was written (#3653). The kit
+   page and the design brief each published the whole paper family plus
+   `--st-ink`/`--st-ink-muted` at the pre-#4282 cool values, nine rows apiece, so
+   the two documents a designer reads to learn the palette stated nine colours
+   the palette does not have. And `docs/brand/css/tokens.css` and
+   `website/src/app/tokens.css` both bound the deck's `--st-text` to the value
+   `--st-paper-text` carries — the on-deck primary text collapsed onto the
+   off-deck one, on the live marketing site, under a guard that reported clean
+   because both values are live tokens.
+
+   A page's own chrome is out of scope by construction: this fires only where a
+   document names an `--st-*` token, so a marketing surface keeping its own
+   accent and status hues under its own variable names is untouched. That is the
+   line #2594 drew, and this check does not cross it.
 
 `MIGRATING` is the one escape, and it is a ledger, not an allowlist: a path
 listed there is a surface this system has not reached yet, each entry carrying
@@ -62,9 +85,16 @@ TOKEN_ONLY = (
 # exemption for the same reason the four above do, and they need it more,
 # because they are the only files here a sweep would happily "fix".
 #
-# The exemption is narrow by construction: it suppresses the *ban* check, and
-# neither file is a TOKEN_ONLY path, so nothing here lets a live surface carry
-# a retired hex.
+# The exemption is narrow by construction, and check 3 is what the narrowness
+# now buys: it suppresses the *ban* only. A ban site names a retired value on
+# purpose; that is no licence to misquote a live one, so its citations are still
+# checked. Neither file is a TOKEN_ONLY path either, so nothing here lets a live
+# surface carry a retired hex.
+#
+# Nothing is exempt from all three. The suite needs no entry here because every
+# fixture reads its colours out of the token file at run time — see the note in
+# scripts/test-tokens.sh, which is the discipline that keeps this tuple from
+# growing.
 SELF = (
     "design/tokens/stella-tokens.json",
     "scripts/check-tokens.py",
@@ -139,6 +169,18 @@ def channel(text: str) -> int:
     return int(text, 16) if text[:2].lower() == "0x" else int(text)
 
 
+# A token's CSS name with a hex beside it: `--st-bg: #0A0A0C`, `<td>--st-bg</td>
+# <td>#0A0A0C</td>`, `` `--st-bg` | `#0A0A0C` ``. One line, because every one of
+# the citations in the tree writes the name and the value together and the widest
+# gap between them is twelve characters -- so the window below is four times what
+# any real citation needs and still cannot reach across a table row.
+#
+# A second `--st-` inside the gap ends the match: on a minified line declaring
+# several tokens in a row, the hex after the gap belongs to that later name, and
+# pairing it with the earlier one would report both as wrong.
+CITATION = re.compile(r"(--st-[a-z0-9-]+)\b((?:(?!--st-)[^\n]){0,48}?)(#[0-9A-Fa-f]{6})\b")
+
+
 # Text extensions only. A hex "found" inside a PNG is a coincidence.
 TEXT_SUFFIXES = {
     ".css",
@@ -185,9 +227,12 @@ def main(argv: list[str]) -> int:
     doc = json.loads((root / TOKENS_REL).read_text())
     live = {t["hex"].upper() for t in doc["tokens"]}
     banned = {e["hex"].upper(): e["was"] for e in doc["banned"]["values"]}
+    by_css = {t["css"]: t["hex"].upper() for t in doc["tokens"]}
 
     ban_hits: list[str] = []
     stray_hits: list[str] = []
+    citation_hits: list[str] = []
+    citations_ok = 0
     # One line, one report. The notations overlap — RGB_FUNC's IGNORECASE and
     # RUST_RGB both match `Rgb(11, 11, 12)` — so without this a single literal
     # is named twice and the count above the list says two places when there is
@@ -203,8 +248,6 @@ def main(argv: list[str]) -> int:
 
     for rel in tracked_files(root):
         posix = rel.as_posix()
-        if posix in SELF:
-            continue
         if rel.suffix not in TEXT_SUFFIXES:
             continue
         if any(posix.startswith(p) or posix == p for p in MIGRATING):
@@ -215,18 +258,37 @@ def main(argv: list[str]) -> int:
         except OSError:
             continue
 
+        # SELF suppresses the *ban* and nothing else, which is what the comment
+        # above that tuple promises.
+        is_self = posix in SELF
         token_only = any(posix.startswith(p) or posix == p for p in TOKEN_ONLY)
 
         for lineno, line in enumerate(text.splitlines(), 1):
+            for match in CITATION.finditer(line):
+                name, hexv = match.group(1), match.group(3).upper()
+                want = by_css.get(name)
+                if want is None:
+                    citation_hits.append(
+                        f"{posix}:{lineno}: {name} is given the value "
+                        f"{match.group(3)}, but no token declares that name"
+                    )
+                elif want != hexv:
+                    citation_hits.append(
+                        f"{posix}:{lineno}: {name} is quoted as {match.group(3)} "
+                        f"but holds {want}"
+                    )
+                else:
+                    citations_ok += 1
             for match in HEX.finditer(line):
                 hexv = match.group(0).upper()
                 if hexv in banned:
-                    record(
-                        posix,
-                        lineno,
-                        hexv,
-                        f"{posix}:{lineno}: {match.group(0)} — {banned[hexv]}",
-                    )
+                    if not is_self:
+                        record(
+                            posix,
+                            lineno,
+                            hexv,
+                            f"{posix}:{lineno}: {match.group(0)} — {banned[hexv]}",
+                        )
                 elif token_only and hexv not in live:
                     stray_hits.append(
                         f"{posix}:{lineno}: {match.group(0)} is not a token in "
@@ -237,7 +299,7 @@ def main(argv: list[str]) -> int:
                 if any(c > 255 for c in channels):
                     continue
                 hexv = "#%02X%02X%02X" % channels
-                if hexv in banned:
+                if hexv in banned and not is_self:
                     record(
                         posix,
                         lineno,
@@ -249,7 +311,7 @@ def main(argv: list[str]) -> int:
                 if any(c > 255 for c in channels):
                     continue
                 hexv = "#%02X%02X%02X" % channels
-                if hexv in banned:
+                if hexv in banned and not is_self:
                     record(
                         posix,
                         lineno,
@@ -280,6 +342,20 @@ def main(argv: list[str]) -> int:
         )
         for hit in stray_hits:
             print(f"  {hit}", file=sys.stderr)
+    if citation_hits:
+        failed = True
+        print(
+            f"\ntoken values misquoted in {len(citation_hits)} place(s). A document "
+            "that publishes a token's value is read as the palette:\n",
+            file=sys.stderr,
+        )
+        for hit in citation_hits:
+            print(f"  {hit}", file=sys.stderr)
+        print(
+            "\nquote the value design/tokens/stella-tokens.json holds, or stop "
+            "naming the token.",
+            file=sys.stderr,
+        )
 
     if failed:
         return 1
@@ -287,7 +363,8 @@ def main(argv: list[str]) -> int:
     scope = len(TOKEN_ONLY)
     pending = f", {len(MIGRATING)} path(s) still migrating" if MIGRATING else ""
     print(
-        f"tokens: no retired hex in the tree; {scope} token-only path(s) clean{pending}"
+        f"tokens: no retired hex in the tree; {scope} token-only path(s) clean; "
+        f"{citations_ok} token citation(s) quote the palette{pending}"
     )
     return 0
 
