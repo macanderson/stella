@@ -65,6 +65,34 @@ whole tree today.
    is `scripts/gen-tokens.py`'s `check_paint`, which refuses a token with no
    posture; this is the half that refuses a posture that is not true.
 
+5. **Publication.** The two documents a designer is handed to learn the palette
+   -- the brand kit page and the design brief -- carry a hand-written table of
+   tokens and hexes each, and inside a marker pair every token must have a row.
+
+   Check 3 already holds the rows they *do* carry to the palette's values, and
+   that is a membership question about a **pair**, so it cannot see a token
+   with no row at all. Both documents were already short when this was written
+   (#5007): the kit page tabulated 31 of 32 and the brief 29, and the token
+   missing from both was `--st-paper-text`, the primary text stop off the deck
+   -- the value the wordmark SVGs and the OG card are cut in. A designer
+   reading either document would have reached for `--st-text`, which declares
+   only the `tui` surface.
+
+   Same blind spot as `website/src/lib/brand-parity.test.ts`'s
+   `ramp.length >= 20` floor over the kit's CSS sheet, where twelve tokens had
+   never been mirrored (#4978), and the shape is
+   `crates/stella-tui/tests/spec_palette.rs` (#4991): markers, parse the rows,
+   assert both directions.
+
+   Equality, not a declared subset. #4978's argument for the kit's sheet -- *"a
+   published subset is a defensible thing for the marketing site to be, and is
+   not what the kit is"* -- settles the kit page, and the brief is held to it
+   too: the two rows a shorter prompt would drop (`--st-diff-add`,
+   `--st-diff-del`) cost a line each, and the exclusion mechanism that would
+   let a maintainer drop them is the same mechanism that let
+   `--st-paper-text` go missing. If a subset is wanted later it has to be
+   *declared*, as #4978 required.
+
 `MIGRATING` is the one escape, and it is a ledger, not an allowlist: a path
 listed there is a surface this system has not reached yet, each entry carrying
 the issue that finishes it. The guard **refuses to add entries** -- there is no
@@ -344,6 +372,75 @@ def paint_report(root: Path, doc: dict, files: list[Path]) -> list[str]:
     return failures
 
 
+# ── Check 5: publication ────────────────────────────────────────────────────
+#
+# The documents that publish the palette, each as `(path, begin, end)` around
+# the table(s) that do it. Markers rather than a whole-file sweep, because both
+# documents name tokens in running prose outside their tables -- the kit page
+# spells `--st-gold-ink` in a paragraph about the mark -- and a prose mention
+# is not a published row.
+PUBLICATION = (
+    (
+        "docs/brand/brand-guidelines.html",
+        "<!-- BEGIN palette -->",
+        "<!-- END palette -->",
+    ),
+    (
+        "docs/brand/prompts/stella-design-system-prompt.md",
+        "<!-- BEGIN palette -->",
+        "<!-- END palette -->",
+    ),
+)
+
+PUBLISHED_NAME = re.compile(r"--st-[a-z0-9-]+")
+
+
+def publication_report(root: Path, doc: dict) -> tuple[list[str], int]:
+    """Hold each publishing document to the palette. Returns `(failures, rows)`.
+
+    Both directions, because they fail differently: a token with no row is a
+    colour the document's reader never learns about, and a row naming nothing
+    is a colour they will reach for and not find.
+
+    A listed document that is missing, or that carries no marker pair, fails.
+    A guard that skips its own subject when the subject disappears is a guard
+    satisfied by deleting the file.
+    """
+    declared = {t["css"] for t in doc["tokens"] if "css" in t}
+    failures: list[str] = []
+    rows = 0
+
+    for rel, begin, end in PUBLICATION:
+        path = root / rel
+        if not path.is_file():
+            failures.append(f"{rel}: publishes the palette and is not in the tree")
+            continue
+        text = path.read_text(errors="ignore")
+        head = text.find(begin)
+        if head < 0:
+            failures.append(f"{rel}: carries no `{begin}` marker")
+            continue
+        head += len(begin)
+        tail = text[head:].find(end)
+        if tail < 0:
+            failures.append(f"{rel}: carries no `{end}` after `{begin}`")
+            continue
+
+        published = set(PUBLISHED_NAME.findall(text[head : head + tail]))
+        rows += len(published)
+        for name in sorted(declared - published):
+            failures.append(
+                f"{rel}: publishes no row for {name}, which "
+                f"{TOKENS_REL} declares"
+            )
+        for name in sorted(published - declared):
+            failures.append(
+                f"{rel}: publishes a row for {name}, which no token declares"
+            )
+
+    return failures, rows
+
+
 def tracked_files(root: Path) -> list[Path]:
     out = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -385,6 +482,7 @@ def main(argv: list[str]) -> int:
 
     files = tracked_files(root)
     paint_hits = paint_report(root, doc, files)
+    publication_hits, published_rows = publication_report(root, doc)
 
     for rel in files:
         posix = rel.as_posix()
@@ -512,6 +610,22 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
 
+    if publication_hits:
+        failed = True
+        print(
+            f"\n{len(publication_hits)} gap(s) between the palette and the "
+            "documents that publish it:\n",
+            file=sys.stderr,
+        )
+        for hit in publication_hits:
+            print(f"  {hit}", file=sys.stderr)
+        print(
+            "\nthese two documents are what a designer is handed to learn the "
+            "palette, so a token with no row is a colour nobody reaches for "
+            "(#5007).",
+            file=sys.stderr,
+        )
+
     if failed:
         return 1
 
@@ -522,7 +636,8 @@ def main(argv: list[str]) -> int:
     print(
         f"tokens: no retired hex in the tree; {scope} token-only path(s) clean; "
         f"{citations_ok} token citation(s) quote the palette; {painted} token(s) "
-        f"painted, {gaps} declared gap(s){pending}"
+        f"painted, {gaps} declared gap(s); {len(PUBLICATION)} document(s) "
+        f"publish the palette in {published_rows} row(s){pending}"
     )
     return 0
 

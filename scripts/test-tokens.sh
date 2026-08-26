@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Tests for check-tokens.py's BAN CHECK, over every notation it claims to
-# watch (#4910), for its CITATION CHECK, whose subject is a pair (#3653), and
-# for its PAINT CHECK, whose subject is an absence (#4975).
+# watch (#4910), for its CITATION CHECK, whose subject is a pair (#3653), for
+# its PAINT CHECK, whose subject is an absence (#4975), and for its
+# PUBLICATION CHECK, whose subject is a different absence (#5007).
 #
 #   ./scripts/test-tokens.sh    (or: make tokens-test)
 #
@@ -48,6 +49,11 @@
 # (#4946, #4975). Both directions get a case: a `painted` declaration with no
 # site must fail, and a `gap` declaration that has since acquired one must fail
 # too, or the ledger records a hole somebody already filled.
+#
+# The publication cases are about the absence one layer out: not a token
+# nothing paints, a token no document tells a designer about. `--st-paper-text`
+# was missing from both published tables at once, and every check above passed
+# it, because a value that is nowhere is correctly quoted everywhere.
 #
 # Every fixture below reads its colours out of the real token file at run time,
 # citation fixtures included — which is why this file is in neither `SELF` nor
@@ -171,6 +177,25 @@ for tok in doc['tokens']:
         tok['paint'] = {'gap': '#4975'}
 open(sys.argv[2], 'w').write(json.dumps(doc, indent=2))
 " "$repo_root/$TOKENS_REL" "$dir/$TOKENS_REL" "${4:-}"
+  # Check 5 reads the two documents that publish the palette, and a missing one
+  # is a failure rather than a skip -- a guard satisfied by deleting its subject
+  # is not a guard. So every tree gets both, complete, generated from the token
+  # file it was given. The paths and markers are read out of check-tokens.py
+  # rather than typed here, so the fixtures cannot name a document the guard has
+  # stopped reading. A case that is *about* one of them writes it after this and
+  # wins.
+  python3 -c "
+import importlib.util, json, pathlib, sys
+spec = importlib.util.spec_from_file_location('stella_check_tokens', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+doc = json.loads(open(sys.argv[2]).read())
+names = [t['css'] for t in doc['tokens'] if 'css' in t]
+for rel, begin, end in module.PUBLICATION:
+    path = pathlib.Path(sys.argv[3]) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('%s\n%s\n%s\n' % (begin, '\n'.join(names), end))
+" "$SCRIPT" "$dir/$TOKENS_REL" "$dir"
   printf '%s\n' "$3" >"$dir/$2"
   git -C "$dir" init -q 2>/dev/null
   git -C "$dir" add -A 2>/dev/null
@@ -476,6 +501,64 @@ case "$rc:$out" in
 *"must cite an issue"*) ok "a gap that cites no issue is refused at the door" ;;
 *) bad "refused with the wrong message: $out" ;;
 esac
+
+echo ""
+echo "check-tokens publication check:"
+
+# Check 5's subject is an absence too, but a different one from check 4's: not
+# a token nothing paints, a token no document tells a designer about. Every
+# other check here is about a value that is present somewhere and wrong; this
+# one is about a row that is not there, which is how `--st-paper-text` went
+# unpublished by both documents at once (#5007).
+#
+# The fixtures write the publishing document itself, so `$3` replaces the
+# complete table `new_root` generated. `PUB_FILE` and the names come out of
+# check-tokens.py and the token file, never typed.
+eval "$(python3 -c "
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location('stella_check_tokens', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+rel, begin, end = module.PUBLICATION[0]
+doc = json.loads(open(sys.argv[2]).read())
+names = [t['css'] for t in doc['tokens'] if 'css' in t]
+import shlex
+def emit(key, value):
+    print('%s=%s' % (key, shlex.quote(value)))
+emit('PUB_FILE', rel)
+emit('PUB_BEGIN', begin)
+emit('PUB_END', end)
+emit('PUB_DROPPED', names[-1])
+emit('PUB_KEPT_ROWS', '\n'.join(names[:-1]))
+emit('PUB_ALL_ROWS', '\n'.join(names))
+" "$SCRIPT" "$repo_root/$TOKENS_REL")"
+
+want "a published table missing one token is caught" expect-fail \
+  "$PUB_FILE" \
+  "$PUB_BEGIN
+$PUB_KEPT_ROWS
+$PUB_END" \
+  "publishes no row for $PUB_DROPPED"
+
+want "a published table naming no token is caught" expect-fail \
+  "$PUB_FILE" \
+  "$PUB_BEGIN
+$PUB_ALL_ROWS
+$UNKNOWN_CSS
+$PUB_END" \
+  "publishes a row for $UNKNOWN_CSS"
+
+want "a document with no marker pair is caught" expect-fail \
+  "$PUB_FILE" \
+  "$PUB_ALL_ROWS" \
+  "carries no \`$PUB_BEGIN\` marker"
+
+want "a complete published table passes" expect-pass \
+  "$PUB_FILE" \
+  "$PUB_BEGIN
+$PUB_ALL_ROWS
+$PUB_END" \
+  "document(s) publish the palette"
 
 echo ""
 echo "check-tokens, the real tree:"
