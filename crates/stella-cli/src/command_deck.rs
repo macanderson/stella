@@ -1714,6 +1714,8 @@ pub async fn run_deck_session(
         // The lead lane's pause seam — `p` on the lead row (#1219).
         let lead_pause = lead_control::LeadPause::new();
         let mut friction = TurnFriction::default(); // #3962
+        // Outlives the turn future, so a cancel can still drain it (#4853).
+        let drain = forwarder::forwarder_slot();
         let end = {
             // Both arms return `Result<(), CliFailure>`, so one pinned future
             // drives either path through the same select loop.
@@ -1735,6 +1737,7 @@ pub async fn run_deck_session(
                 recall,
                 memory.as_ref(),
                 &mut friction,
+                &drain,
             );
             tokio::pin!(turn);
             loop {
@@ -2362,14 +2365,16 @@ pub async fn run_deck_session(
                     // requeue and park on (see [`HoldState`]).
                     dispatch.cancelled(&submitted);
                 }
-                dropped_turn::close_dropped_execution(
+                dropped_turn::close_dropped_turn(
+                    &drain,
                     execution.as_ref(),
                     registry.as_ref(),
                     "cancelled",
                     dispatch_spend_usd,
                     &mut budget,
                     &in_tx,
-                );
+                )
+                .await;
                 // Must stay AFTER the store warning above: the warning is
                 // retryable (folds to Running) while this one is not (folds
                 // to Failed), so this event is what leaves the lead in a
@@ -2400,14 +2405,16 @@ pub async fn run_deck_session(
                 }
                 dispatch.reset();
                 queue.clear();
-                dropped_turn::close_dropped_execution(
+                dropped_turn::close_dropped_turn(
+                    &drain,
                     execution.as_ref(),
                     registry.as_ref(),
                     "cleared",
                     dispatch_spend_usd,
                     &mut budget,
                     &in_tx,
-                );
+                )
+                .await;
                 session_clear::reset_lead(
                     &mut messages,
                     &system_prompt,

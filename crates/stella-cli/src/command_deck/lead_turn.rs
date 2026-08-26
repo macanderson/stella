@@ -60,6 +60,9 @@ pub(super) async fn run_lead_turn(
     recall: crate::memory::OpeningRecall,
     session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
     friction: &mut TurnFriction,            // #3962: filled from the lane's own stream
+    // Owned by the driver loop so a cancel — which drops this whole future —
+    // can still wait the forwarder out (#4853).
+    drain: &forwarder::ForwarderSlot,
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -77,6 +80,10 @@ pub(super) async fn run_lead_turn(
         LEAD.to_string(),
         Some(registry.task_board()),
     );
+    // Park it where the driver's cancel arm can reach it, and take it back on
+    // the path that ends normally — whichever of the two runs, exactly one
+    // holds the handle, because the future either completes or is dropped.
+    *drain.lock().unwrap_or_else(|p| p.into_inner()) = Some(forwarder);
     // First event of the turn: what recall put in front of the model.
     if let Some(event) = recall.event {
         let _ = tx.send(event);
@@ -140,7 +147,17 @@ pub(super) async fn run_lead_turn(
     // requires gone; otherwise the forwarder's `recv()` stays pending forever
     // and the turn future wedges after the deck painted the turn done (#2290).
     drop(requery);
-    let ended = close_turn_stream(registry, tx, forwarder).await;
+    // Taken out of the slot before the await, never held across it: the lock is
+    // a plain `std::sync::Mutex` and a guard alive over a yield point would be
+    // one held by a task the runtime may park.
+    let parked = drain.lock().unwrap_or_else(|p| p.into_inner()).take();
+    let ended = match parked {
+        Some(forwarder) => close_turn_stream(registry, tx, forwarder).await,
+        // Unreachable while this function is the only writer of the slot; a
+        // drained slot means the driver already closed the stream, and the
+        // right answer then is the one a cancelled forwarder owes.
+        None => forwarder::LaneStreamEnd::default(),
+    };
     let persistence_complete = ended.persistence_complete;
     *friction = ended.friction; // this turn's reflection evidence (#3962)
     claims.release_all();
