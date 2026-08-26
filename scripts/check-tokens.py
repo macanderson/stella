@@ -287,11 +287,21 @@ def paint_report(root: Path, doc: dict, files: list[Path]) -> list[str]:
       this tree is named only by tests, so no verdict here turns on that; if one
       ever is, this is the sentence that has to change rather than a number.
     - **Prose counts.** A doc comment writing `token::DIFF_ADD_BG` is a site as
-      far as this is concerned. That makes `painted` fractionally easier to
-      satisfy and can make a real `gap` read as stale -- the loud direction,
-      which names the file and line and is fixed by moving the sentence or
-      declaring the token painted. A structural fix means parsing Rust and CSS,
-      which is a language server rather than a guard.
+      far as this is concerned. A scanner that reads source cannot tell a
+      mention from a use without being taught to, and #4986 is the same hazard
+      on another guard: `embedder_backend_sealed_cli.rs` counted a module doc
+      naming `CARGO_BIN_EXE_stella` as a spawn site and failed a correctly
+      sealed file with a billing-leak message. Read that issue before
+      "fixing" this line -- it is the shape, and the reasoning there applies
+      here unchanged.
+
+      The asymmetry is what makes it tolerable rather than a defect to fix
+      now. A stray mention makes `painted` fractionally easier to satisfy,
+      which is quiet; it makes a real `gap` read as stale, which is loud, names
+      the file and line, and is cleared by moving the sentence or declaring the
+      token painted. That direction is how this guard found a scratch file on
+      its own PR (#4996). A structural fix means parsing Rust and CSS, which is
+      a language server rather than a guard.
 
     **Which files.** `tracked_files` -- `git ls-files --cached --others
     --exclude-standard` -- so an un-ignored file in a working tree counts even
