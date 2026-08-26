@@ -209,7 +209,7 @@ TEXT_SUFFIXES = {
 
 def tracked_files(root: Path) -> list[Path]:
     out = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         cwd=root,
         capture_output=True,
         text=True,

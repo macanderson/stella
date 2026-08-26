@@ -222,7 +222,8 @@ RATCHET_PATHSPECS=('*.rs' '*.py' '*.sh' '.githooks/*' '*.ts' '*.tsx' '*.mjs' '*.
 # while the guard watched only *.rs. Shell counts (#1563) and TypeScript and
 # JavaScript count (#3811) for the same reason, each after the same incident.
 current_sizes() {
-  git ls-files -z "${RATCHET_PATHSPECS[@]}" | while IFS= read -r -d '' f; do
+  git ls-files -z --cached --others --exclude-standard "${RATCHET_PATHSPECS[@]}" |
+    while IFS= read -r -d '' f; do
     # A tracked file deleted from the working tree but not yet staged is a
     # legitimate transient state on a working branch (#3268); judge the files
     # that exist rather than erroring on the ones that do not. Once the
@@ -617,7 +618,7 @@ if [ -n "$report" ]; then
   exit 1
 fi
 
-tracked=$(git ls-files "${RATCHET_PATHSPECS[@]}" | wc -l | tr -d ' ')
+tracked=$(git ls-files --cached --others --exclude-standard "${RATCHET_PATHSPECS[@]}" | wc -l | tr -d ' ')
 # The verdict is already decided; the write is best-effort. SIGPIPE is ignored
 # and the write's failure discarded, so a reader that closed the pipe
 # (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).

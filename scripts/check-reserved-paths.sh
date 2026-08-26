@@ -38,7 +38,7 @@ reserved='con|prn|aux|nul|com[1-9]|lpt[1-9]'
 # first dot) — `aux.rs`, `aux.tar.gz` and a bare `aux` directory are all
 # refused, which is what Windows does.
 offenders=$(
-  git ls-files -z \
+  git ls-files -z --cached --others --exclude-standard \
     | tr '\0' '\n' \
     | awk -v re="^($reserved)$" '
         {

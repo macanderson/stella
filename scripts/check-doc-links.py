@@ -212,7 +212,13 @@ def run(*args):
 
 
 def tracked(*globs):
-    return [p for p in run("git", "ls-files", *globs).splitlines() if p]
+    return [
+        p
+        for p in run(
+            "git", "ls-files", "--cached", "--others", "--exclude-standard", *globs
+        ).splitlines()
+        if p
+    ]
 
 
 def read(path):
