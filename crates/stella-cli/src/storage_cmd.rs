@@ -98,45 +98,71 @@ pub(crate) fn preflight_observatory_stores(
     })
 }
 
-/// The dashboard's answer for "which plugin-contributed skills would a session
-/// started in this workspace load?", read off the one roster the session's own
-/// skill load reads (#4917).
+/// The dashboard's answer for "what would a session started in this workspace
+/// load out of its installed plugins?", read off the one roster the session's
+/// own skill load and context-record registry read (#4917, #4974).
 ///
 /// A plugin's skills are contributed by derivation from `<plugin_dir>/skills`
-/// and are never copied into `.stella/skills`, so the observatory — which
-/// derives what it shows from the filesystem and may not link this crate —
-/// could not see them at all. It resolves them here instead of there because
-/// reaching them means answering the project-tier trust gate (#3509), the
-/// `plugins.<name> = "off"` retraction, the install receipt and the
-/// reconcile-on-every-load check, and a second implementation of those is a
-/// second answer.
+/// and its context records from `<plugin_dir>/rules`; neither is ever copied
+/// into `.stella/`, so the observatory — which derives what it shows from the
+/// filesystem and may not link this crate — could not see them at all. It
+/// resolves them here instead of there because reaching them means answering
+/// the project-tier trust gate (#3509), the `plugins.<name> = "off"`
+/// retraction, the install receipt and the reconcile-on-every-load check, and
+/// a second implementation of those is a second answer.
 ///
-/// [`package::contributed_skill_dirs`](crate::plugin_cmd::package) is that one
-/// answer, called per request rather than once at startup so a package
+/// [`package::contributed_skill_dirs`](crate::plugin_cmd::package) and
+/// [`package::contributed_record_dirs`](crate::plugin_cmd::package) are that
+/// one answer, called per request rather than once at startup so a package
 /// installed while the dashboard is open appears on the next refresh — and
 /// answering an empty roster in a workspace nobody has trusted, which is the
-/// property `the_dashboards_plugin_skills_honour_the_project_trust_gate` pins.
-pub(crate) struct RosterSkills;
+/// property `the_dashboards_plugin_skills_honour_the_project_trust_gate` and
+/// `the_dashboards_plugin_records_honour_the_project_trust_gate` pin.
+///
+/// Both methods go through `package`'s own resolver rather than one shared
+/// list, because a plugin ships the two kinds in two directories and only that
+/// module knows which is which.
+pub(crate) struct RosterContributions;
 
-impl stella_observatory::PluginSkills for RosterSkills {
+impl RosterContributions {
+    /// Restate one `ContributedDir` in the observatory's own vocabulary, which
+    /// is the whole of what crossing this port costs.
+    fn as_port_dir(
+        contributed: crate::plugin_cmd::package::ContributedDir,
+    ) -> stella_observatory::ContributedDir {
+        stella_observatory::ContributedDir {
+            plugin: contributed.plugin,
+            tier: match contributed.scope {
+                crate::plugin_cmd::roster::PluginScope::Project => {
+                    stella_observatory::PluginTier::Project
+                }
+                crate::plugin_cmd::roster::PluginScope::User => {
+                    stella_observatory::PluginTier::User
+                }
+            },
+            dir: contributed.dir,
+        }
+    }
+}
+
+impl stella_observatory::PluginContributions for RosterContributions {
     fn contributed_skill_dirs(
         &self,
         workspace_root: &std::path::Path,
-    ) -> Vec<stella_observatory::ContributedSkills> {
+    ) -> Vec<stella_observatory::ContributedDir> {
         crate::plugin_cmd::package::contributed_skill_dirs(workspace_root)
             .into_iter()
-            .map(|contributed| stella_observatory::ContributedSkills {
-                plugin: contributed.plugin,
-                tier: match contributed.scope {
-                    crate::plugin_cmd::roster::PluginScope::Project => {
-                        stella_observatory::PluginTier::Project
-                    }
-                    crate::plugin_cmd::roster::PluginScope::User => {
-                        stella_observatory::PluginTier::User
-                    }
-                },
-                dir: contributed.dir,
-            })
+            .map(Self::as_port_dir)
+            .collect()
+    }
+
+    fn contributed_record_dirs(
+        &self,
+        workspace_root: &std::path::Path,
+    ) -> Vec<stella_observatory::ContributedDir> {
+        crate::plugin_cmd::package::contributed_record_dirs(workspace_root)
+            .into_iter()
+            .map(Self::as_port_dir)
             .collect()
     }
 }
@@ -152,8 +178,8 @@ pub fn run_observe(port: u16, open: bool) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|e| format!("failed to start runtime: {e}"))?;
-    let plugins: std::sync::Arc<dyn stella_observatory::PluginSkills> =
-        std::sync::Arc::new(RosterSkills);
+    let plugins: std::sync::Arc<dyn stella_observatory::PluginContributions> =
+        std::sync::Arc::new(RosterContributions);
     rt.block_on(stella_observatory::serve(
         root,
         port,

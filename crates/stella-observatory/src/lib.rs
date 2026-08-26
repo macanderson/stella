@@ -71,9 +71,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 pub use db::{DbError, Observatory};
-/// The port a host implements to report a workspace's plugin-contributed
-/// skills, and the shapes it answers with (#4917).
-pub use fsview::{ContributedSkills, NoPluginSkills, PluginSkills, PluginTier};
+/// The port a host implements to report what a workspace's installed plugins
+/// contribute — skills and context records — and the shapes it answers with
+/// (#4917, #4974).
+pub use fsview::{ContributedDir, NoContributions, PluginContributions, PluginTier};
 
 /// The dashboard page, embedded so the binary is self-contained.
 const INDEX_HTML: &str = include_str!("assets/index.html");
@@ -261,18 +262,23 @@ fn route_of(path: &str) -> &str {
 /// mean buffering an endless one.
 #[must_use]
 pub fn respond(workspace_root: &Path, path: &str) -> Response {
-    respond_with(workspace_root, path, &NoPluginSkills)
+    respond_with(workspace_root, path, &NoContributions)
 }
 
-/// [`respond`], with the host's answer for which plugin-contributed skills a
-/// session started here would load ([`PluginSkills`], #4917).
+/// [`respond`], with the host's answer for what a session started here would
+/// load out of its installed plugins ([`PluginContributions`], #4917, #4974).
 ///
-/// Split from [`respond`] rather than added to it because only the one route
-/// that lists skills consults it: every other route is still a pure function
-/// of (workspace, path), and the dozens of unit tests that drive [`respond`]
-/// should not have to name a roster to ask about executions.
+/// Split from [`respond`] rather than added to it because only the two routes
+/// that list a contributed surface consult it — `/api/skills` and
+/// `/api/rules`: every other route is still a pure function of (workspace,
+/// path), and the dozens of unit tests that drive [`respond`] should not have
+/// to name a roster to ask about executions.
 #[must_use]
-pub fn respond_with(workspace_root: &Path, path: &str, plugins: &dyn PluginSkills) -> Response {
+pub fn respond_with(
+    workspace_root: &Path,
+    path: &str,
+    plugins: &dyn PluginContributions,
+) -> Response {
     let (route, query) = match path.split_once('?') {
         Some((r, q)) => (r, Some(q)),
         None => (path, None),
@@ -557,7 +563,7 @@ pub fn respond_with(workspace_root: &Path, path: &str, plugins: &dyn PluginSkill
         "/api/rules" => obs.rules().map(|db| {
             serde_json::json!({
                 "db": db,
-                "files": fsview::rules_files(root),
+                "files": fsview::rules_files(root, plugins),
                 "promotions": fsview::promotions(root),
                 "governance_mode": fsview::governance_mode(root),
             })
@@ -666,14 +672,14 @@ fn percent_decode(value: &str) -> String {
 /// exits. `port` 0 picks a free port. Calls `on_ready` once with the bound
 /// address (the CLI prints the URL from it).
 ///
-/// `plugins` answers which plugin-contributed skills a session started in this
-/// workspace would load — see [`PluginSkills`] for why the host is
-/// asked rather than the filesystem walked. [`NoPluginSkills`] is the
+/// `plugins` answers what a session started in this workspace would load out
+/// of its installed plugins — see [`PluginContributions`] for why the host is
+/// asked rather than the filesystem walked. [`NoContributions`] is the
 /// answer for a host with no roster.
 pub async fn serve(
     workspace_root: PathBuf,
     port: u16,
-    plugins: Arc<dyn PluginSkills>,
+    plugins: Arc<dyn PluginContributions>,
     on_ready: impl FnOnce(SocketAddr),
 ) -> Result<(), ServeError> {
     let listener = TcpListener::bind(("127.0.0.1", port))
@@ -773,7 +779,7 @@ fn host_is_local(head: &str) -> bool {
 async fn handle(
     mut stream: TcpStream,
     workspace_root: &Path,
-    plugins: Arc<dyn PluginSkills>,
+    plugins: Arc<dyn PluginContributions>,
 ) -> std::io::Result<()> {
     let head = match tokio::time::timeout(READ_TIMEOUT, read_head(&mut stream)).await {
         Ok(result) => result?,
@@ -825,7 +831,7 @@ async fn respond_to_head(
     mut stream: TcpStream,
     workspace_root: &Path,
     head: RequestHead,
-    plugins: Arc<dyn PluginSkills>,
+    plugins: Arc<dyn PluginContributions>,
 ) -> std::io::Result<()> {
     let RequestHead {
         text: head,

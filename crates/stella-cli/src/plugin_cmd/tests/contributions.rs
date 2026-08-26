@@ -1031,7 +1031,7 @@ fn a_contributed_skills_tier_is_read_off_contributed_by_not_off_its_path() {
 }
 
 /// **The dashboard's trust witness** (#4917). The Observatory lists a
-/// package's skills through `storage_cmd::RosterSkills`, and an untrusted
+/// package's skills through `storage_cmd::RosterContributions`, and an untrusted
 /// checkout's package contributes nothing there either.
 ///
 /// The untrusted half is the point. A dashboard that resolved the roster
@@ -1046,11 +1046,11 @@ fn a_contributed_skills_tier_is_read_off_contributed_by_not_off_its_path() {
 /// `an_untrusted_projects_contributed_tool_never_loads`.
 #[test]
 fn the_dashboards_plugin_skills_honour_the_project_trust_gate() {
-    use stella_observatory::PluginSkills as _;
+    use stella_observatory::PluginContributions as _;
 
     /// The dashboard's `/api/skills` body, through the route the page fetches
     /// rather than through an inner function only this test would call.
-    fn skills_json(root: &Path, source: &crate::storage_cmd::RosterSkills) -> String {
+    fn skills_json(root: &Path, source: &crate::storage_cmd::RosterContributions) -> String {
         let response = stella_observatory::respond_with(root, "/api/skills", source);
         String::from_utf8_lossy(&response.body).into_owned()
     }
@@ -1074,7 +1074,7 @@ fn the_dashboards_plugin_skills_honour_the_project_trust_gate() {
     plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
     ships_a_package(&planted, "vera");
 
-    let source = crate::storage_cmd::RosterSkills;
+    let source = crate::storage_cmd::RosterContributions;
 
     // SAFETY: the env lock is held for the whole mutate-read-restore window.
     unsafe {
@@ -1111,6 +1111,88 @@ fn the_dashboards_plugin_skills_honour_the_project_trust_gate() {
     assert!(
         source.contributed_skill_dirs(&root).is_empty(),
         "and it leaves with the package — nothing was ever copied into .stella/skills"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The dashboard's trust witness for records** (#4974), the sibling of the
+/// skills one above and gating the same answer.
+///
+/// A record is the surface that steers *quietly*: it shapes every matching
+/// turn and appears in no transcript as something the agent did. So a rules
+/// panel that reads as the complete list of what steers this workspace and
+/// omits a third party's records is worse than absent — and a panel that
+/// listed them out of a checkout nobody has trusted would be worse still,
+/// which is why the untrusted half is asserted first.
+#[test]
+fn the_dashboards_plugin_records_honour_the_project_trust_gate() {
+    use stella_observatory::PluginContributions as _;
+
+    /// The dashboard's `/api/rules` body, through the route the page fetches.
+    fn rules_json(root: &Path, source: &crate::storage_cmd::RosterContributions) -> String {
+        let response = stella_observatory::respond_with(root, "/api/rules", source);
+        String::from_utf8_lossy(&response.body).into_owned()
+    }
+
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+        "STELLA_HOME",
+    ]);
+    let root = temp_root("package-observatory-records-trust");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // The user-tier half of the roster is `stella_home::stella_home()`, which
+    // `test_user_home` does not move — without this the roster resolves the
+    // developer's real `~/.stella/plugins` (#4980).
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_HOME", root.join("home")) };
+
+    let planted = stella_home::resolve_project_plugins_dir(&root).join("vera");
+    plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
+    ships_a_package(&planted, "vera");
+
+    let source = crate::storage_cmd::RosterContributions;
+
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe {
+        std::env::remove_var("STELLA_TRUST_PROJECT");
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+    }
+    assert!(
+        source.contributed_record_dirs(&root).is_empty(),
+        "an untrusted checkout contributes no records to the dashboard"
+    );
+    let listed = rules_json(&root, &source);
+    assert!(
+        !listed.contains("PACKAGE_RECORD_MARKER"),
+        "and nothing of the package's reaches the rules panel: {listed}"
+    );
+
+    // SAFETY: as above.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+    let dirs = source.contributed_record_dirs(&root);
+    assert_eq!(dirs.len(), 1, "the same bytes contribute once trusted");
+    assert_eq!(dirs[0].plugin, "vera");
+    let listed = rules_json(&root, &source);
+    assert!(
+        listed.contains("PACKAGE_RECORD_MARKER"),
+        "and the rules panel lists it: {listed}"
+    );
+    assert!(
+        listed.contains("\"contributed_by\":\"vera\""),
+        "naming the package that shipped it: {listed}"
+    );
+
+    remove(&root, "vera").expect("remove must succeed");
+    assert!(
+        source.contributed_record_dirs(&root).is_empty(),
+        "and it leaves with the package — nothing was ever copied into .stella/rules"
+    );
+    assert!(
+        !rules_json(&root, &source).contains("PACKAGE_RECORD_MARKER"),
+        "which the panel reports too"
     );
 
     let _ = std::fs::remove_dir_all(&root);

@@ -149,7 +149,7 @@ async fn serves_over_a_real_socket() {
         let _ = serve(
             root,
             0,
-            std::sync::Arc::new(crate::NoPluginSkills),
+            std::sync::Arc::new(crate::NoContributions),
             move |addr| {
                 let _ = tx.send(addr);
             },
@@ -246,7 +246,7 @@ async fn unterminated_request_head_is_refused_not_routed() {
         let _ = serve(
             root,
             0,
-            std::sync::Arc::new(crate::NoPluginSkills),
+            std::sync::Arc::new(crate::NoContributions),
             move |addr| {
                 let _ = tx.send(addr);
             },

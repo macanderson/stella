@@ -3264,8 +3264,14 @@ function renderMemoryTab(files, rules) {
         .map(c => `<span class="chip">${esc(c)}</span>`).join("");
       const tags = Array.isArray(f.tags) && f.tags.length
         ? `<div class="when">${esc(f.tags.join(" · "))}</div>` : "";
+      // A record shipped by an installed package steers this workspace and
+      // lives in the package, never in .stella/rules — so the panel says which
+      // package, the way the skills table's `via` column does.
+      const via = f.contributed_by
+        ? `<span class="badge dim" title="shipped by an installed plugin — read from its package, never copied into your .stella/">via ${esc(f.contributed_by)}</span>`
+        : "";
       return `<div class="feed-item">
-      <b>${record ? "^" : "§"} ${esc(f.name)}</b>${chips}
+      <b>${record ? "^" : "§"} ${esc(f.name)}</b>${chips}${via}
       <span class="when">${agoUnix(f.modified_unix)}</span>
       <div>${esc(f.snippet)}</div>${tags}</div>`;
     }).join("");
