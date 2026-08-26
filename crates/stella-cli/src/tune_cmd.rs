@@ -108,7 +108,13 @@ pub fn run_tune(cmd: &TuneCmd) -> Result<(), String> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the two arms being compared, stated symmetrically: a path and an effort label \
+              each, plus where a promotion would be written and how many samples make the \
+              comparison. Pairing them into a struct would let a caller pass the baseline's path \
+              with the candidate's effort, which the flat list cannot express"
+)]
 fn run_effort(
     workspace_root: &Path,
     baseline_path: &Path,

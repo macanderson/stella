@@ -227,8 +227,12 @@ pub(super) fn refresh_prompts(
 /// the provider handle, the prompt plane, the deck's header meta and the
 /// statline pin all move together; on refusal one chrome note says why and
 /// nothing moves.
-#[allow(clippy::too_many_arguments)] // the driver loop's owned state, threaded — a struct of nine
-// borrows would outline the same list with lifetimes on top
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the driver loop's own state, threaded: `cfg`, `provider` and `lead_meta` are three \
+              separate `&mut` borrows taken at the call site, so a struct would have to hold all \
+              three at once and could not be built there"
+)]
 pub(super) fn apply_model_override(
     id: &str,
     cfg: &mut Config,
@@ -305,7 +309,12 @@ pub(super) fn agent_scope_policy(
 /// declared) runs the same session-only switch `/model` does. A model that
 /// cannot be applied degrades softly — the persona and toolbelt still land,
 /// and the note says what did not.
-#[allow(clippy::too_many_arguments)] // same driver-loop state bundle as `apply_model_override`
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the same three simultaneous `&mut` borrows as `apply_model_override` above, plus \
+              the assumed-persona slot this verb writes and the base tool policy it restores \
+              from"
+)]
 pub(super) fn assume_agent(
     name: &str,
     scope: AgentScope,

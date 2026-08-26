@@ -31,7 +31,14 @@ use crate::subsession::{self, SupervisorMsg};
 /// One engine turn for the lead agent: the deck-mode analogue of
 /// `agent::run_turn` — same engine, same tool stack, same persistence —
 /// with the stdout renderer replaced by [`spawn_forwarder`].
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one of the crate's four turn entry points, which share their first eight \
+              parameters; `messages`, `budget` and `friction` are three `&mut` borrows of \
+              separate driver-loop locals held for the turn, so the bundle is a struct of \
+              disjoint mutable borrows and is worth doing across all four at once rather than \
+              here alone (#4916)"
+)]
 pub(super) async fn run_lead_turn(
     provider: &dyn Provider,
     base_tools: &dyn ToolExecutor,

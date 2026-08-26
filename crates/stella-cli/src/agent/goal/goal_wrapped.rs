@@ -254,7 +254,13 @@ impl PointStream for GoalPointStream<'_> {
 /// See the module doc for what stays untouched (the goal verifier) and what
 /// is refused rather than silently mishandled (a round a plugin's own
 /// `[oracle]` holds open past one internal turn).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one of the crate's four turn entry points, which share their first eight \
+              parameters; `messages` and `budget` are `&mut` borrows of separate caller locals \
+              held for the turn, so the bundle is a struct of disjoint mutable borrows and is \
+              worth doing across all four at once rather than here alone (#4916)"
+)]
 pub(crate) async fn run_goal_wrapped_turn(
     provider: &dyn Provider,
     base_tools: &dyn ToolExecutor,

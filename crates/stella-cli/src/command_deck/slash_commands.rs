@@ -137,7 +137,13 @@ pub(super) fn handle_agents_input(
 /// not a silent reindex that discards the rest. Custom commands/skills (⚡)
 /// DO take arguments: `/fix-bug issue-42` expands the `fix-bug` template
 /// with `issue-42`.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the deck's slash dispatcher reaches most of the session: `cfg` arrives as `&mut` \
+              because `/model` rewrites it while `provider` and `registry` are borrowed \
+              immutably beside it, so the three cannot share a struct the driver loop is able to \
+              construct"
+)]
 pub(super) async fn run_deck_command(
     prompt: &str,
     in_tx: &UnboundedSender<Inbound>,

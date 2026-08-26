@@ -77,7 +77,13 @@ pub(super) fn forward_reflection_events(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the driver loop's own end-of-turn state at its single call site, including two \
+              simultaneous `&mut` borrows (`memory`, `budget`) of separate locals — a params \
+              struct would hold those two borrows, be constructed once, and move the same eleven \
+              fields into `command_deck.rs`, which is a god file"
+)]
 pub(super) async fn record_and_reflect_turn(
     memory: &mut Option<SessionMemory>,
     prompt: &str,

@@ -914,7 +914,13 @@ impl Config {
         Err(no_api_key_error())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "credential resolution's inputs are four independent overrides plus the two \
+                  files it may write and the terminal it may prompt on; every one is read on \
+                  some path and none travels with another, so a bundle would carry seven fields \
+                  that no caller fills together"
+    )]
     fn resolve(
         provider: &ProviderConfig,
         model_id: String,

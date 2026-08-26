@@ -12,8 +12,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::config::Config;
-use crate::subsession::{self, SubSessions, SupervisorMsg};
+use crate::subsession::{self, SubSessions};
 use stella_tui::{AgentStatus, Inbound};
 
 /// Verbs accepted while a lane's worker was live, finished when its `Ended`
@@ -33,19 +32,14 @@ pub(super) struct Pending {
 /// retained spec, stopping the live worker first when necessary; Delete
 /// takes the lane's row off the deck for good — stopping a live worker
 /// first, spec dropped either way so a later Restart cannot revive it.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn service(
     lane: &str,
     control: stella_tui::AgentControl,
     subs: &mut SubSessions,
     pending: &mut Pending,
-    cfg: &Config,
-    budget_limit: Option<f64>,
-    session_id: &str,
-    workspace_name: &str,
-    in_tx: &UnboundedSender<Inbound>,
-    sup_tx: &UnboundedSender<SupervisorMsg>,
+    ctx: subsession::LaneCtx<'_>,
 ) {
+    let in_tx = ctx.in_tx;
     match control {
         stella_tui::AgentControl::Stop => {
             subs.stop(lane);
@@ -71,16 +65,7 @@ pub(super) fn service(
                 pending.restarts.insert(lane.to_string());
                 subs.stop(lane);
             } else {
-                let _ = subsession::respawn(
-                    lane,
-                    subs,
-                    cfg,
-                    budget_limit,
-                    session_id,
-                    workspace_name,
-                    in_tx,
-                    sup_tx,
-                );
+                let _ = subsession::respawn(lane, subs, ctx);
             }
         }
         stella_tui::AgentControl::Delete => delete(lane, subs, pending, in_tx),
