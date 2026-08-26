@@ -1,0 +1,20 @@
+name: Task
+description: A unit of work with an explicit definition of done
+labels: ["triage"]
+body:
+  - type: textarea
+    id: context
+    attributes: { label: Context, description: Why this exists; link the origin task. }
+    validations: { required: true }
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of done
+      description: Checklist the closer must verify line-by-line.
+      value: |
+        - [ ] Implementation complete
+        - [ ] Scoped tests added/updated and passing
+        - [ ] Full CI green
+        - [ ] Code comments and docs updated
+        - [ ] Residue filed as new issues (triage label only)
+    validations: { required: true }
