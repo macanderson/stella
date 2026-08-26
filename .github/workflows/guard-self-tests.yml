@@ -218,6 +218,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-releases-published.sh
 
+      - name: rebase-replay guard directions, and the hazard itself
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-rebase-replay.sh
+
       - name: the shellcheck step's presence guard
         if: ${{ !cancelled() }}
         run: ./scripts/test-shellcheck-guard.sh

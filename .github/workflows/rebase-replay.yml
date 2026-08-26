@@ -1,0 +1,51 @@
+name: rebase-replay
+
+# The one question about a branch's HISTORY rather than its tree (#4979).
+#
+# A branch that edits a file and later undoes the edit has an empty diff for
+# that path, so it reads as never having touched it. Rebase it onto a base that
+# already carries the same edit — which a mechanical sweep split across several
+# pull requests produces by construction — and git drops the branch's copy
+# ("skipped previously applied commit") while keeping the undo. The inert pair
+# becomes a live revert of whatever landed upstream, and it merges cleanly.
+#
+# Its own workflow rather than a step in ci.yml, for the reason wire-schema.yml
+# has one: ci.yml's guards job checks out at `fetch-depth: 2`, which is exactly
+# right for check-deleted-tests.sh (a two-TREE question) and useless here — this
+# reads every commit on the branch. Widening that checkout would make every
+# other guard in that job pay for a full clone it has no use for.
+#
+# `pull_request` only, and no path filter: any diff can carry this shape, and
+# the guard is a few `git log` invocations over a range with no toolchain
+# behind it.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rebase-replay-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: no edit is undone inside the branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full depth: the guard reads the branch's commits, and a shallow clone
+      # makes it report a missing base rather than a clean branch — loudly, but
+      # it still has not answered the question.
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      # On a `pull_request` event the checkout is `refs/pull/N/merge`, so HEAD
+      # is the merge commit: the guard reads HEAD^1 and HEAD^2 itself and needs
+      # no ref name from the event payload.
+      - name: no path is edited and then undone inside this branch
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-rebase-replay.sh

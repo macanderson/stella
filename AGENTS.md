@@ -272,6 +272,44 @@ existed. `reserved-paths` (`scripts/check-reserved-paths.sh`) is the fast
 half of that finding, because a failed checkout reports one bad path per run
 and there were two.
 
+A ninth, `rebase-replay.yml`, is the only check here that reads a branch's
+**history** rather than its tree, and it exists for a composition hazard the
+shared-cell paragraph above does not cover: **rebasing a stale branch can
+silently revert somebody else's change** (#4979).
+
+Two branches make the same edit to one file — which a mechanical sweep split
+across several pull requests does by construction. Branch B then undoes its
+copy, so B's tree matches base and `git diff base -- <file>` is empty: B reads
+as never having touched the file. Once A lands, rebasing B onto the new base
+deduplicates B's edit (`warning: skipped previously applied commit`) and keeps
+B's undo. The inert pair becomes a bare revert of A's change, B's diff for that
+path goes from empty to a live revert, and it squash-merges cleanly. Merging B
+*without* rebasing is safe, which is what makes this a rebase hazard rather
+than a merge one — and this repository rebases constantly, because branches go
+stale behind required checks. It happened to #4954 against #4951, and
+`check-rebase-replay.sh` fires on #4939's merged head today.
+
+**The remedy is to flatten**, so the path is absent from the branch's history
+rather than present as an edit and an undo. The branch's tree is identical
+either way, so flattening costs nothing and the guard offers no
+acknowledgement. `make rebase-replay` asks by hand;
+`make rebase-replay-test` covers it, and reproduces the rebase itself so the
+hazard is demonstrated rather than asserted. Its own workflow because ci.yml's
+guards job checks out at `fetch-depth: 2` — right for `check-deleted-tests.sh`,
+which compares two trees, and useless for a question about every commit on a
+branch.
+
+**A partition can also split something atomic**, which per-pull-request CI does
+catch — each branch fails on its own — but only after the plan is already
+wrong. `crates/stella-serve/src/accept.rs` and
+`crates/stella-observatory/src/accept.rs` are byte-identical duplicates whose
+`the_two_copies_of_this_policy_have_not_drifted` compares them with
+`include_str!` from **both** crates, so a per-crate split of a repo-wide sweep
+put one copy in #4951 and the other in #4954 and reddened both. Before
+partitioning by crate, directory or owner, ask whether anything in the set has
+to change atomically. `rg -l 'INTENTIONALLY DUPLICATED'` names today's only
+such twin.
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
