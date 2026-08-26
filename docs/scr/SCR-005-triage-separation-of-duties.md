@@ -16,14 +16,14 @@ agent, sizes the work, assigns exactly one priority label, optionally a
 size, removes `triage`, and comments a one-line rationale.
 
 Priority scheme: `P0` drop everything · `P1` this cycle · `P2` next cycle ·
-`P3` backlog. Invariant: every open issue carries either a priority label or
+`P3` backlog. The rule: every open issue carries either a priority label or
 `triage` — never neither, never both.
 
 ## Rationale
 
 Whoever creates an issue is the worst-placed party to rank it — creators
 systematically over-weight their own findings. Separating creation from
-prioritization keeps the backlog ordering honest and gives the maintainer
+prioritization keeps the backlog ordering true to the work and gives the maintainer
 one place (the triage agent's rationale comments) to audit it.
 
 ## How an agent complies

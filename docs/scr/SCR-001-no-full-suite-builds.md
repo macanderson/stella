@@ -32,10 +32,10 @@ Scope every test command to the touched unit, using the repo's stack:
 | Python / uv (arenabench) | `uv run pytest tests/test_x.py -q` | bare `pytest`, `make test` |
 | Next.js (cgp-website) | scope any future suite to the touched module | any bare full-suite `test` script |
 
-Reproduce full CI locally only when deliberately debugging a CI-only
+Reproduce full CI locally only when debugging a CI-only
 failure, and say so out loud in the session.
 
 ## Exceptions
 
-Release verification; explicit maintainer request; deliberate, stated
+Release verification; explicit maintainer request; a stated
 reproduction of a CI-only failure.
