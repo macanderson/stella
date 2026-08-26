@@ -456,6 +456,33 @@ fn turn_command(exe: &Path, dir: &Path, state_root: &Path, flags: &TurnFlags) ->
         // Pointing the state root at the repository is what makes a session's
         // record of what it learned outlast the unit of work that produced it.
         .env(stella_home::WORKSPACE_STATE_ROOT_ENV, state_root)
+        // And the learning is not optional either.
+        //
+        // `Command` inherits the parent's environment wholesale, and
+        // `STELLA_DISABLE_REFLECTION` is the benchmark adapter's switch for "do
+        // not spend the extra provider call on a container that is about to be
+        // destroyed" (`bench/harbor_adapter`, `bench/evidence/run/env.sh`). A
+        // shell that had exported it for a bench run, and then started a drive,
+        // handed it to every turn — so the loop went on writing an episode per
+        // turn (`record_episode` reads no switch) while
+        // `should_reflect_after_one_shot` skipped the reflection call, and
+        // `reflections_logged` reported 0 with nothing anywhere saying why.
+        //
+        // That is the shape of #4362: on 2026-08-23 five drive turns against
+        // oxagen-platform produced five `episode` rows, 143 `role=worker`
+        // model calls and **zero** `role=reflection` calls, on a binary
+        // (0.9.143) that already carried #4130's fix for the earlier
+        // format-clause cause. Episodes fired, so `memory.is_some()` and
+        // `turn_warrants_reflection` were both true and the opt-out is the only
+        // remaining term in that gate.
+        //
+        // Removed rather than reported: a drive's whole premise is that a
+        // turn's learning outlives the turn (see `super::learning`), so an
+        // ambient switch nobody aimed at this loop must not decide it.
+        // Unconditional, which leaves no hidden branch for a report to be
+        // about. A bench trial is unaffected — the adapter sets the variable on
+        // its own `stella run` child, never by having a drive inherit it.
+        .env_remove(crate::agent::DISABLE_REFLECTION_ENV)
         .arg("run")
         .arg("--output-format")
         .arg("json");
@@ -792,17 +819,79 @@ mod tests {
     use super::*;
     use stella_protocol::issue::{IssueClass, IssueKey, IssueState};
 
-    /// The child turn's argv, as strings.
-    fn turn_args(flags: &TurnFlags) -> Vec<String> {
-        let cmd = turn_command(
+    /// The child turn as built, ready to be asked about argv or environment.
+    fn turn_cmd(flags: &TurnFlags) -> Command {
+        turn_command(
             Path::new("/usr/local/bin/stella"),
             Path::new("/tmp/worktree"),
             Path::new("/tmp/repo"),
             flags,
-        );
-        cmd.get_args()
+        )
+    }
+
+    /// The child turn's argv, as strings.
+    fn turn_args(flags: &TurnFlags) -> Vec<String> {
+        turn_cmd(flags)
+            .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect()
+    }
+
+    /// **Witness (#4362).** The turn the loop spawns does not inherit the
+    /// reflection opt-out.
+    ///
+    /// `Command` passes the parent's whole environment through, so a shell that
+    /// had exported `STELLA_DISABLE_REFLECTION` for a benchmark run silently
+    /// switched off every drive turn's reflection call — while the episode
+    /// writer, which reads no switch, kept recording. The loop then reported
+    /// `reflections_logged: 0` with nothing to distinguish "learned nothing"
+    /// from "learning was off".
+    ///
+    /// Asserted as a removal on the built command rather than by setting the
+    /// variable and reading it back: `std::env` is process-global and this test
+    /// suite runs in parallel, so mutating it here would be a race against every
+    /// other test in the binary.
+    #[test]
+    fn the_turn_does_not_inherit_the_reflection_opt_out() {
+        let removed: Vec<String> = turn_cmd(&TurnFlags::default())
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(
+            removed.contains(&crate::agent::DISABLE_REFLECTION_ENV.to_owned()),
+            "the child must not inherit {}: {removed:?}",
+            crate::agent::DISABLE_REFLECTION_ENV
+        );
+    }
+
+    /// The state root is still *set*, not removed — the two environment edits
+    /// this command makes point in opposite directions and a fix that
+    /// confused them would take the reflection log's own home with it.
+    #[test]
+    fn the_workspace_state_root_still_reaches_the_turn() {
+        let cmd = turn_cmd(&TurnFlags::default());
+        let set: Vec<(String, String)> = cmd
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|v| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect();
+
+        assert_eq!(
+            set,
+            vec![(
+                stella_home::WORKSPACE_STATE_ROOT_ENV.to_owned(),
+                "/tmp/repo".to_owned()
+            )],
+            "the state root is the one variable this command sets"
+        );
     }
 
     /// **Witness (#4352).** Every session flag the parent parsed reaches the

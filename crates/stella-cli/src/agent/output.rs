@@ -339,7 +339,11 @@ pub(super) fn emit_pre_persisted_stream_json_line_or_terminate(line: &str) {
     }
 }
 
-pub(super) const DISABLE_REFLECTION_ENV: &str = "STELLA_DISABLE_REFLECTION";
+/// `pub(crate)` because a door that *spawns* a turn owes the same switch an
+/// answer as a door that runs one: the self-driving loop names it to keep an
+/// ambient opt-out out of the child it builds
+/// (`crate::self_driving_cmd::work::turn_command`, #4362).
+pub(crate) const DISABLE_REFLECTION_ENV: &str = "STELLA_DISABLE_REFLECTION";
 
 /// Whether a one-shot run may make the post-turn reflection model call.
 ///
