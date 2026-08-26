@@ -21,7 +21,7 @@
 //!
 //! Stella branches on exactly three — *completed*, *not planned*, *duplicate* —
 //! which are GitHub's own close reasons. That is not a simplification of
-//! trackers, it is the honest size of what the loop **decides** with: a
+//! trackers, it is the real size of what the loop **decides** with: a
 //! regression sweep re-checks what was completed, and re-running a witness for
 //! something declined as stale or folded into another issue would measure
 //! nothing.

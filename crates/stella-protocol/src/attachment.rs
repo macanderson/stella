@@ -211,7 +211,7 @@ pub fn media_type_for_path(path: &str) -> Option<&'static str> {
         "3gp" => "video/3gpp",
         "wmv" => "video/x-ms-wmv",
         "flv" => "video/x-flv",
-        // Text-like (a deliberate, non-exhaustive set: unknown text formats
+        // Text-like (a non-exhaustive set: unknown text formats
         // still work via the octet-stream → degrade-note path)
         "txt" | "text" | "log" => "text/plain",
         "md" | "markdown" => "text/markdown",

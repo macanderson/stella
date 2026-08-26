@@ -44,7 +44,7 @@
 //!
 //! # What this is not
 //!
-//! A heuristic, deliberately biased high — not a tokenizer. Callers that need
+//! A heuristic, biased high — not a tokenizer. Callers that need
 //! the provider's real count read it back from `StepUsage`;
 //! `stella_core::estimator::Calibration` closes the remaining gap by learning
 //! the observed actual/estimated ratio per model. This function is the shared
@@ -75,7 +75,7 @@ pub fn estimate_tokens_for_bytes(bytes: u64) -> u64 {
 /// The rule, over a string's UTF-8 bytes.
 ///
 /// `str::len` is the UTF-8 byte length — the quantity the module docs argue
-/// for, and deliberately not `chars().count()`.
+/// for, and not `chars().count()`.
 pub fn estimate_tokens(content: &str) -> u64 {
     estimate_tokens_for_bytes(content.len() as u64)
 }

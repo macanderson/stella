@@ -4,7 +4,7 @@
 //! Split out of `wire_contract.rs` when it reached the file-size ceiling
 //! (`scripts/check-file-size.sh`). The guard's rule is that new code goes in
 //! its own module rather than onto the end of an already-full file, and this
-//! is the coherent half: the fixtures grow with every new variant, while the
+//! is the coherent half: the fixtures grow with every new case, while the
 //! validator and the proofs above them do not. Everything here is `pub(crate)`
 //! because the proofs are the only consumers.
 
@@ -647,7 +647,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                                 "no inbound refs to the removed handler",
                                 CheckMechanism::new("vera:flip-oracle", Judge::Deterministic),
                             ),
-                            // The irreducible one. Deliberately a *contributed*
+                            // The irreducible one. A *contributed*
                             // mechanism rather than `CheckKind::Review`,
                             // because `Judge::Model` only ever reaches the wire
                             // this way: a known kind implies its judge and
@@ -671,7 +671,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                     owner: None,
                     contract: Some(TaskContract::ReadOnly),
                 },
-                // Undeclared — nobody has said yet, which is deliberately not
+                // Undeclared — nobody has said yet, which is not
                 // the same fact as `ReadOnly`.
                 TaskItem {
                     id: "3".into(),
@@ -724,7 +724,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             cost_usd: 1.37,
         },
         // Counts and an authority, and nothing a repository authored — the
-        // whole point of the variant (#3616).
+        // whole point of the case (#3616).
         AgentEvent::SteeringWithheld {
             withheld_by: stella_protocol::Withholder::ProjectUntrusted,
             memories: 3,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The small closed-set enums several [`super::AgentEvent`] variants carry as
+//! The small closed-set enums several [`super::AgentEvent`] cases carry as
 //! fields, moved out of `event.rs` because that file sits close to the
 //! 1500-line ratchet (AGENTS.md § "God files"). A pure move: re-exported from
 //! `event` so `crate::event::StageKind` and friends keep resolving, and every
@@ -19,7 +19,7 @@ use super::AgentEvent;
 
 /// Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
 ///
-/// Deliberately **not** `#[serde(default)]`. A default would silently claim
+/// **Not** `#[serde(default)]`. A default would silently claim
 /// one scope for every historical recording, and half of them are the other
 /// one — a decode ambiguity that would live in the fixtures forever. A
 /// recording written before this field existed decodes through
@@ -40,7 +40,7 @@ pub enum StageScope {
 /// duplicated per-crate (the TS-era `StageKind` duplication this structurally
 /// forbids, L-E1).
 ///
-/// This is deliberately no longer the same thing as "every stage a turn can
+/// This is no longer the same thing as "every stage a turn can
 /// have". [`crate::StageName`] is what [`AgentEvent::Stage`] carries, and it is
 /// open: a stage a plugin contributed has a name here that this enum does not
 /// and should not know (`doc:roleless-core`). Staying closed is what keeps this
@@ -152,7 +152,7 @@ pub enum PolicyKind {
 /// Which authority held a workspace's steering back
 /// ([`AgentEvent::SteeringWithheld`], #2302/#3616).
 ///
-/// Two causes resolve one refusal, and they are not interchangeable: they have
+/// The two causes that resolve one refusal are not interchangeable: they have
 /// different remedies, and one of them the user cannot lift at all. A harness
 /// that folded them together would tell an operator to set a flag they have
 /// already set.
@@ -170,7 +170,7 @@ pub enum Withholder {
 }
 
 /// Content-free reason a provider attempt cannot contribute a truthful usage
-/// envelope. Error bodies and prompts are deliberately unrepresentable.
+/// envelope. Error bodies and prompts are unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]

@@ -9,14 +9,14 @@
 //! event stream is the ONLY place a consumer can see that a child ran, what
 //! it cost, and how it ended.
 //!
-//! # Why one variant with a nested phase, not two variants
+//! # Why one case with a nested phase, not two cases
 //!
 //! Mirrors [`ProofStep`](crate::ProofStep): every downstream exhaustive
-//! matcher (`replay::event_signature`, the TUI's `Model::apply`,
+//! matcher (`replay::event_signature`, interactive mode's `Model::apply`,
 //! `event_line`, `trace_of`) gets ONE arm to write instead of two, and the
 //! start/finish pair can never drift out of sync because they share a type.
 //!
-//! # What is deliberately NOT here
+//! # What is NOT here
 //!
 //! The child's own `Stage`, `Complete`, `Text`, `TextDelta`, `Reasoning`
 //! and `BudgetTick` events are dropped at the child/parent boundary rather
@@ -147,7 +147,7 @@ pub enum SubAgentPhase {
 
 impl SubAgentPhase {
     /// The child this phase belongs to, for folding a stream into per-agent
-    /// state without matching the variant.
+    /// state without matching the case.
     #[must_use]
     pub fn agent_id(&self) -> &str {
         match self {

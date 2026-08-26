@@ -11,10 +11,10 @@
 //!
 //! This module is the seam. A tracker becomes an implementation of
 //! [`IssueProvider`], the loop reads [`Issue`] values, and GitHub stops being
-//! the only answer without becoming a special one — invariant 1, for the
+//! the only answer without becoming a special one — AGENTS.md #1, for the
 //! backlog plane.
 //!
-//! # The model is deliberately tiny
+//! # The model is tiny
 //!
 //! Four states, four classes, a key, a title, a body, labels, a created stamp
 //! and a parent edge. That is the whole kernel, and it is
@@ -24,7 +24,7 @@
 //! one tracker's data model and then fail to hold the next one. What crosses
 //! this boundary is what the loop actually decides on.
 //!
-//! Two consequences worth stating, because both were tempting:
+//! Both of these were tempting and neither is done:
 //!
 //! - **There is no `assignee`.** A tracker's assignee field is not a lock — it
 //!   has no compare-and-swap and no lease — and treating it as one is how two
@@ -114,7 +114,7 @@ pub enum IssueState {
 /// be called done.
 ///
 /// Four, matching `doc:agent-native-delivery` §3. [`IssueClass::Other`] is the
-/// honest bucket for a type a provider's manifest does not map, and it exists
+/// bucket for a type a provider's manifest does not map, and it exists
 /// so that an unmapped type is *visible* rather than silently filed as a
 /// feature and given the wrong policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -132,7 +132,7 @@ pub enum IssueClass {
 
 /// One label, as the tracker spells it.
 ///
-/// Deliberately a struct with a single `name` rather than a bare `String`:
+/// A struct with a single `name` rather than a bare `String`:
 /// every tracker this must span carries more per label (a colour, a
 /// description, an id), and a caller that wants one later should find a field
 /// added here rather than a `Vec<String>` widened everywhere it is passed.
@@ -152,7 +152,7 @@ impl From<&str> for IssueLabel {
 
 /// One issue, in the only shape that crosses this boundary.
 ///
-/// Round-trips through `serde_json` byte-for-byte (invariant 4); the test is
+/// Round-trips through `serde_json` byte-for-byte (AGENTS.md #4); the test is
 /// beside the type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Issue {
@@ -198,7 +198,7 @@ pub struct Issue {
 
 /// Why a tracker read or write did not happen.
 ///
-/// Typed rather than a `String` (invariant 5), and the variants are chosen by
+/// Typed rather than a `String` (AGENTS.md #5), and the cases are chosen by
 /// what a **caller has to do differently**, which is the test that rule states:
 /// an unavailable tracker is retried or degraded, an unauthenticated one needs
 /// a human, a missing issue is a permanent answer, and a malformed payload is
@@ -284,7 +284,7 @@ pub struct IssueDraft {
     pub assignee: Option<String>,
 }
 
-/// The port every tracker is reached through — invariant 1 for the backlog
+/// The port every tracker is reached through — AGENTS.md #1 for the backlog
 /// plane.
 ///
 /// A new tracker is an adapter, never a change to the loop. Nothing above this
@@ -295,7 +295,7 @@ pub struct IssueDraft {
 /// # The write half
 ///
 /// [`Self::file`] and [`Self::close`] landed with the `backlog` verbs that call
-/// them (#3599 B1b) — until then they were deliberately absent, because a write
+/// them (#3599 B1b) — until then they were absent, because a write
 /// path with nothing calling it is the unwired code AGENTS.md's "nothing left
 /// behind" rule exists to prevent.
 ///
@@ -399,7 +399,7 @@ pub trait IssueProvider: Send + Sync {
 
     /// Re-open a closed issue.
     ///
-    /// The inverse of [`IssueProvider::close`] and deliberately a separate
+    /// The inverse of [`IssueProvider::close`] and a separate
     /// method rather than a `SetStatus("open")`: re-opening is how a human
     /// (or a regression sweep) says the closure's receipt did not hold, which
     /// is a different event in the issue's history than any other status move.
@@ -446,7 +446,7 @@ pub trait IssueProvider: Send + Sync {
     /// match a two-character prefix. `limit` bounds the read the way
     /// [`IssueProvider::list_open`]'s does.
     ///
-    /// Read-only, and deliberately not the inverse of
+    /// Read-only, and not the inverse of
     /// [`IssueProvider::relabel`]: this reads what a tracker *has*, never
     /// creates one. Applying a label the tracker does not carry is the
     /// provider's problem to report, not this method's to pre-empt.
@@ -479,7 +479,7 @@ mod tests {
         }
     }
 
-    /// Invariant 4: every type crossing a crate boundary round-trips through
+    /// AGENTS.md #4: every type crossing a crate boundary round-trips through
     /// `serde_json` byte-for-byte.
     #[test]
     fn an_issue_round_trips_byte_for_byte() {
@@ -504,7 +504,7 @@ mod tests {
         assert_eq!(back, issue);
     }
 
-    /// Invariant 4 for the write side. An unassigned draft must not serialize
+    /// AGENTS.md #4 for the write side. An unassigned draft must not serialize
     /// a null `assignee` either: the field was added after providers were
     /// already reading this shape, so an omitted one has to stay omitted.
     #[test]

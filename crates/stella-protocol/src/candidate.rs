@@ -46,7 +46,7 @@
 //!    validated out of borrowed text at load time. A handle is the opposite
 //!    lifetime and the opposite author — a value the *host* mints per
 //!    candidate at run time, meaningless outside the registry that minted it.
-//! 2. Invariant #4 is this crate's stated contract, and a handle exists for no
+//! 2. AGENTS.md #4 is this crate's stated contract, and a handle exists for no
 //!    other purpose than to round-trip: see the tests below.
 //! 3. `stella-plugin` already depends on `stella-protocol`, so the
 //!    plugin-facing request/response envelope can name these types without
@@ -63,7 +63,7 @@
 //! {"path": {"path": "../etc/passwd", "reason": "traversal"}}
 //! ```
 //!
-//! Per invariant #4 every type here round-trips through `serde_json`
+//! Per AGENTS.md #4 every type here round-trips through `serde_json`
 //! byte-for-byte.
 
 use serde::{Deserialize, Serialize};
@@ -93,8 +93,8 @@ pub struct CandidateHandle(String);
 impl CandidateHandle {
     /// Wrap an id a host minted.
     ///
-    /// There is no validation here and that is deliberate: this crate carries
-    /// zero logic by invariant, and the only meaningful check — "does this
+    /// There is no validation here, because this crate carries
+    /// zero logic by contract, and the only meaningful check — "does this
     /// name a live workspace?" — is a lookup only the minting host can do.
     #[must_use]
     pub fn new(id: impl Into<String>) -> Self {
@@ -139,7 +139,7 @@ pub enum CandidateOp {
 
 impl CandidateOp {
     /// Every operation, in lifecycle order. Exhaustively matched in this
-    /// module's tests, so a new variant fails to compile until it is listed.
+    /// module's tests, so a new case fails to compile until it is listed.
     pub const ALL: [CandidateOp; 6] = [
         CandidateOp::Create,
         CandidateOp::Root,
@@ -187,7 +187,7 @@ pub enum PathDenial {
     /// addresses the machine rather than the candidate.
     #[error("the path is absolute")]
     Absolute,
-    /// The path contained a `..` component. Refused as written rather than
+    /// The path contained a `..` component. Refused rather than
     /// normalised away: a caller that meant a path inside the root never
     /// needs one, and normalising first is how a fence is talked past.
     #[error("the path contains a `..` component")]
@@ -206,7 +206,7 @@ pub enum PathDenial {
 ///
 /// Serializable because the refusal has to reach the plugin that asked, in
 /// whatever language it is written in — a denial a consumer cannot branch on
-/// is invariant #5's objection restated one process out.
+/// is AGENTS.md #5's objection restated one process out.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
@@ -243,7 +243,7 @@ pub enum CandidateDenial {
         /// The parser's own reason, as prose. The vocabulary it comes from is
         /// the host's — the staged pipeline's `witness::TestInvocationError`
         /// when this was written (`crates/stella-pipeline`, deleted in #3865),
-        /// a wrapper plugin's own oracle now — and is deliberately not mirrored
+        /// a wrapper plugin's own oracle now — and is not mirrored
         /// here: a second copy of a closed enum in this crate is a rule in two
         /// places.
         reason: String,
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn every_op_round_trips_and_the_set_is_exhaustive() {
         for op in CandidateOp::ALL {
-            // Exhaustive match: a new variant fails to compile here until it
+            // Exhaustive match: a new case fails to compile here until it
             // is added to `ALL` as well.
             match op {
                 CandidateOp::Create

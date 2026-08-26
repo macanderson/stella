@@ -7,8 +7,8 @@
 //! These are the types the `ask_question` tool, its broker
 //! (`stella_tools::registry::question`), and every surface that renders the
 //! question card share. They cross a crate boundary in both directions — the
-//! CLI and the Command Deck implement the responder port over them — so they
-//! round-trip through `serde_json` byte-for-byte (invariant #4).
+//! CLI and interactive mode implement the responder port over them — so they
+//! round-trip through `serde_json` byte-for-byte (AGENTS.md #4).
 //!
 //! # Who answers is not encoded here
 //!
@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// It lives here rather than in one surface because **more than one surface
 /// renders it** — the plain-TTY card numbers it after the asker's options,
-/// and the Command Deck's overlay draws it as the last selectable row — and
+/// and interactive mode's overlay draws it as the last selectable row — and
 /// the two must name the same affordance. A second copy is a string that
 /// drifts: the deck would offer "Something else" while the TTY offered this,
 /// and the same question would read as two different questions depending on
@@ -185,7 +185,7 @@ mod tests {
         }
     }
 
-    /// Invariant #4: every type crossing a crate boundary round-trips
+    /// AGENTS.md #4: every type crossing a crate boundary round-trips
     /// byte-for-byte.
     #[test]
     fn a_request_round_trips_byte_for_byte() {

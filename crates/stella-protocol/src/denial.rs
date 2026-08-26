@@ -13,7 +13,7 @@
 //! knows *which witness* it ran, *which command* produced the observation,
 //! whether the fail→pass flip was achieved, and the digest of the artifact it
 //! decided over. Flattened into prose, every one of those facts is
-//! unrecoverable by anything but a regex — which is invariant #5's objection
+//! unrecoverable by anything but a regex — which is AGENTS.md #5's objection
 //! to `Result<_, String>` restated one layer out: a consumer that has to
 //! branch cannot branch on a sentence.
 //!
@@ -22,12 +22,12 @@
 //! `stella-core` owns the decision enum, `stella-cli`'s trace fold and a
 //! future host both read it, and `crates/stella-core/src/bus.rs` is a
 //! grandfathered god file closed to growth. A type crossing a crate boundary
-//! belongs in this crate by invariant #1, and by invariant #4 it round-trips
+//! belongs in this crate by AGENTS.md #1, and by AGENTS.md #4 it round-trips
 //! through `serde_json` byte-for-byte — see this module's tests.
 //!
 //! # Wire shape
 //!
-//! [`Denial`] is the newtype payload of an internally-tagged variant, so its
+//! [`Denial`] is the newtype payload of an internally-tagged case, so its
 //! fields sit beside the tag:
 //!
 //! ```json
@@ -100,7 +100,7 @@ impl From<&str> for Denial {
 
 impl std::fmt::Display for Denial {
     /// The prose alone. The evidence is structured precisely so that a
-    /// consumer renders it deliberately (or branches on it) rather than
+    /// consumer chooses how to render it (or branches on it) rather than
     /// inheriting some default English from this crate, which has no view.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.reason)
@@ -147,7 +147,7 @@ pub struct DenialEvidence {
 mod tests {
     use super::*;
 
-    /// Invariant #4: every type crossing a crate boundary round-trips through
+    /// AGENTS.md #4: every type crossing a crate boundary round-trips through
     /// `serde_json` byte-for-byte.
     #[test]
     fn a_denial_round_trips_through_serde_json() {

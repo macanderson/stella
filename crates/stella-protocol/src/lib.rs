@@ -12,23 +12,23 @@
 //!
 //! Wire compatibility is additive, and it now holds in **both** directions.
 //! New *fields* ride `serde(default)`, so a newer binary parses every older
-//! stream. New [`AgentEvent`] *variants* travel backwards via
+//! stream. New [`AgentEvent`] *cases* travel backwards via
 //! [`AgentEvent::Unknown`]: an older binary meets an unrecognized `"type"` by
 //! preserving the event whole and moving on, instead of failing the stream.
 //!
-//! What travels backwards is the *variant*, not the field. An unrecognized key
+//! What travels backwards is the *case*, not the field. An unrecognized key
 //! on a tag this build already knows parses (serde ignores it) and is then
 //! dropped on re-serialization — so relaying a newer stream keeps its new
 //! events whole while quietly narrowing its new fields. See the `event`
 //! module docs.
 //!
 //! The tolerance is scoped to the tag alone. A `"type"` this build *does*
-//! know, carrying a body that does not fit its variant, is still a hard
+//! know, carrying a body that does not fit its case, is still a hard
 //! error — that is corruption or an encoder bug, not a version skew, and it
 //! must not be laundered into [`AgentEvent::Unknown`]. [`KNOWN_TYPE_TAGS`] is
 //! the exact boundary between the two cases.
 //!
-//! Read "tag alone" literally: the *nested* enums a variant carries
+//! Read "tag alone" literally: the *nested* enums a case carries
 //! ([`ModelCallRole`], [`StageKind`], [`PolicyKind`], [`CiStatus`], and
 //! their peers) are closed, so a value from a newer vocabulary lands on the
 //! hard-error side and costs the reader the whole event. [`BlockKind`] and
@@ -123,7 +123,7 @@ pub use task_contract::{
     Check, CheckKind, CheckMechanism, CheckOutcome, Closure, DefinitionOfDone, Judge, TaskContract,
 };
 // The journal line is the event plus the wall-clock stamp its sink adds
-// (#2111). Deliberately a separate type from `AgentEvent`: a stamp is a fact
+// (#2111). A separate type from `AgentEvent`: a stamp is a fact
 // about a write, and the engine that produces events owns no clock.
 // The lifecycle-hook vocabulary lives here so `stella-core` (which dispatches
 // the hooks) and `stella-plugin` (which grants them) can share one enum

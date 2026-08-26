@@ -1,7 +1,7 @@
 //! The signal-consumer ledger — the "every emitted signal names its
-//! consumer" invariant, declared instead of assumed.
+//! consumer" rule, declared instead of assumed.
 //!
-//! Every [`AgentEvent`](super::AgentEvent) variant names what consumes it.
+//! Every [`AgentEvent`](super::AgentEvent) case names what consumes it.
 //! A signal with no consumer is legal, but only as a **declared, issue-cited
 //! gap** — never as a silence nobody noticed.
 //!
@@ -13,10 +13,10 @@
 //! the flip transition itself still emitting nothing durable. Each was fixed
 //! as whack-a-mole. The ledger makes the class structural (#2701).
 //!
-//! AGENTS.md holds the invariant's normative text and its number. The number
-//! is deliberately **not** cited from this crate: it is a shared cell two PRs
+//! AGENTS.md holds the rule's normative text and its number. The number
+//! is **not** cited from this crate: it is a shared cell two PRs
 //! can write at once, and a citation that silently resolves to the wrong
-//! invariant is worse than none. Cite it by name.
+//! rule is worse than none. Cite it by name.
 //!
 //! It is the direct analogue of [`content_free`] in `stella-store`, which
 //! ended the same shape for telemetry egress: a reviewed table, plus tests
@@ -48,12 +48,12 @@
 //!
 //! The rows are generated from the same table as [`KNOWN_TYPE_TAGS`] and
 //! `type_tag()` (`event/tags.rs`, #2730), so **totality is compile-enforced**:
-//! adding an [`AgentEvent`](super::AgentEvent) variant without declaring a
+//! adding an [`AgentEvent`](super::AgentEvent) case without declaring a
 //! consumer is an `E0004`, not a failing test. Three of [`LedgerViolation`]'s
 //! kinds — `MissingRow`, `UnknownTag`, `DuplicateRow` — are therefore
 //! unrepresentable for the real ledger.
 //!
-//! They are deliberately kept. [`audit_ledger`] takes its ledger and tag list
+//! They are kept. [`audit_ledger`] takes its ledger and tag list
 //! as parameters precisely so the negative controls can hand it broken input,
 //! and a check that cannot be shown to fail is a claim rather than a check.
 //! Deleting the structural rules because one call site can no longer trip them
@@ -65,7 +65,7 @@
 //! posture agrees with `surfaces`. Those are judgements about the row's
 //! content, and no macro can hold an author to them.
 //!
-//! # Adding a variant
+//! # Adding a case
 //!
 //! Add the row here. [`audit_ledger`] is walked by
 //! `the_ledger_is_total_over_known_type_tags`, and there is no posture that
@@ -76,20 +76,20 @@ use super::KNOWN_TYPE_TAGS;
 
 /// A surface that renders some signals and not others.
 ///
-/// Deliberately narrow. Two plausible surfaces are **absent** because
-/// membership in them is not a per-variant fact:
+/// Narrow. Two plausible surfaces are **absent** because
+/// membership in them is not a per-case fact:
 ///
-/// - The **TUI** matches `AgentEvent` exhaustively
+/// - **Interactive mode** matches `AgentEvent` exhaustively
 ///   (`stella-tui`'s `model::Model::apply`, `textline::event_line`,
-///   `deck::trace_of`), so every variant reaches it by construction.
-/// - **Replay** likewise tagged every variant, in the then-existing
+///   `deck::trace_of`), so every case reaches it by construction.
+/// - **Replay** likewise tagged every case, in the then-existing
 ///   `stella-pipeline`'s `replay::event_signature`; that crate was deleted in
 ///   #3865 and no replay tagger has replaced it yet.
 ///
 /// `stella-serve` mostly forwards the stream opaquely, which is why it was
 /// listed here as absent until the #4501 census read its `observe/tally.rs`:
-/// `TallyFold::observe` names ten variants by hand and folds them into the
-/// `TurnTally` that rides each settle record. That fold is the per-variant
+/// `TallyFold::observe` names ten cases by hand and folds them into the
+/// `TurnTally` that rides each settle record. That fold is the per-case
 /// fact [`Surface::Serve`] records, and a row claiming it is checkable against
 /// that match.
 ///
@@ -102,8 +102,8 @@ pub enum Surface {
     /// The `stella observe` dashboard, whose journal query names an explicit
     /// subset of `event_type` values.
     Observatory,
-    /// The headless engine server, for the arms where it does something
-    /// variant-specific rather than forwarding.
+    /// The non-interactive engine server, for the arms where it does something
+    /// case-specific rather than forwarding.
     Serve,
 }
 
@@ -127,7 +127,7 @@ pub enum ConsumerPosture {
         site: &'static str,
     },
 
-    /// Rendering is the realized value, deliberately. Requires a non-empty
+    /// Rendering is the realized value. Requires a non-empty
     /// `surfaces` list: a signal claimed as surfaced that reaches no
     /// selecting surface is [`ConsumerPosture::RecordedOnly`] wearing a
     /// friendlier name.
@@ -138,7 +138,7 @@ pub enum ConsumerPosture {
     ///
     /// Legal, and sometimes correct — some signals genuinely exist for the
     /// record. But it must cite the issue where "wire a consumer or annotate
-    /// this as deliberate" is being decided, so the gap is reviewable rather
+    /// this as intended" is being decided, so the gap is reviewable rather
     /// than merely old.
     RecordedOnly {
         /// The tracking issue, as `#1234`. Empty fails the audit.
@@ -147,7 +147,7 @@ pub enum ConsumerPosture {
 
     /// Nobody has audited this signal's consumers yet.
     ///
-    /// The honest posture for a row that exists only to keep the ledger
+    /// The posture for a row that exists only to keep the ledger
     /// total. It is **not** a synonym for [`ConsumerPosture::RecordedOnly`] —
     /// claiming "nothing consumes this" without looking would put a false
     /// statement in the ledger, and a ledger that lies is worse than no
@@ -172,26 +172,26 @@ pub struct SignalConsumers {
     pub surfaces: &'static [Surface],
 }
 
-/// The ledger: one row per [`AgentEvent`](super::AgentEvent) variant.
+/// The ledger: one row per [`AgentEvent`](super::AgentEvent) case.
 ///
 /// **Generated**, not hand-maintained (#2730). The rows live in the same table
 /// as [`KNOWN_TYPE_TAGS`] and `type_tag()` (`event/tags.rs`), so totality is
-/// `E0004` — a variant with no declared consumer fails `cargo build`, not just
+/// `E0004` — a case with no declared consumer fails `cargo build`, not just
 /// `cargo test`. See that module for how to add one.
 pub use super::tags::SIGNAL_CONSUMERS;
 
 /// How many rows may still be [`ConsumerPosture::Unclassified`].
 ///
 /// **Zero since #4501**, which censused the last 32 rows one at a time. A new
-/// variant therefore cannot reach `Unclassified` at all: the equality test
+/// case therefore cannot reach `Unclassified` at all: the equality test
 /// below goes red the moment one does, and the way past it is to name what
 /// reads the signal.
 ///
 /// It stays a **down-only** ratchet rather than an assertion so the shape is
 /// still available to a future protocol import that arrives with genuinely
-/// unaudited variants — and so that raising it remains a visible diff a
+/// unaudited cases — and so that raising it remains a visible diff a
 /// reviewer has to accept. The test asserts equality, not `<=`: raising the
-/// number means a variant was filed away unread, which is the exact move the
+/// number means a case was filed away unread, which is the exact move the
 /// ledger exists to prevent.
 pub const MAX_UNCLASSIFIED: usize = 0;
 
@@ -242,7 +242,7 @@ impl std::fmt::Display for LedgerViolation {
                 f,
                 "`{type_tag}` is an AgentEvent wire tag with no row in \
                  SIGNAL_CONSUMERS — every emitted signal names its consumer. \
-                 Add a row saying what reads it; if the honest answer is \
+                 Add a row saying what reads it; if the answer is \
                  \"nobody has looked\", that is ConsumerPosture::Unclassified \
                  with a tracking issue, not an omission"
             ),
@@ -270,8 +270,8 @@ impl std::fmt::Display for LedgerViolation {
             Self::SurfacedNowhere { type_tag } => write!(
                 f,
                 "`{type_tag}` is Surfaced but lists no selecting surface. Note \
-                 that Surface deliberately omits the TUI and replay, which render \
-                 every variant: if those are the only consumers, the honest \
+                 that Surface omits interactive mode and replay, which render \
+                 every case: if those are the only consumers, the correct \
                  posture is RecordedOnly with a tracking issue"
             ),
             Self::RecordedYetSurfaced { type_tag } => write!(
@@ -293,7 +293,7 @@ fn is_issue_reference(issue: &str) -> bool {
 /// Audit a ledger against a set of wire tags, reporting every problem found.
 ///
 /// Takes both as parameters rather than reading the consts directly so the
-/// negative-control tests can feed it deliberately broken input — the same
+/// negative-control tests can feed it broken input — the same
 /// reason `content_free::audit_encoder` takes its encoder by reference.
 #[must_use]
 pub fn audit_ledger(ledger: &[SignalConsumers], known_tags: &[&str]) -> Vec<LedgerViolation> {

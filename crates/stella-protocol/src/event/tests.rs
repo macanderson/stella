@@ -22,7 +22,7 @@ fn agent_event_roundtrips_with_type_tag() {
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
     match back {
         AgentEvent::ToolStart { call, .. } => assert_eq!(call.name, "read_file"),
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -47,7 +47,7 @@ fn tool_result_roundtrips_and_streams_without_speculated_still_parse() {
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
     match back {
         AgentEvent::ToolResult { speculated, .. } => assert!(speculated),
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 
     // A stream recorded BEFORE the field existed must still parse, with
@@ -85,11 +85,11 @@ fn speculation_discarded_roundtrips_and_names_the_reason() {
             assert_eq!(name, "read_file");
             assert_eq!(reason, "attempt_failed");
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
-/// Invariant 4 witness for the parked-wait span (#1857): both events
+/// AGENTS.md #4 witness for the parked-wait span (#1857): both events
 /// round-trip byte-faithfully, under the tags a consumer keys on.
 #[test]
 fn parked_wait_events_roundtrip_under_their_own_tags() {
@@ -110,7 +110,7 @@ fn parked_wait_events_roundtrip_under_their_own_tags() {
             assert_eq!(poll_interval_secs, 5);
             assert_eq!(deadline_secs, 600);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 
     let woken = AgentEvent::TurnWoken {
@@ -124,7 +124,7 @@ fn parked_wait_events_roundtrip_under_their_own_tags() {
             assert_eq!(reason, "deadline_expired");
             assert_eq!(polls_used, 4);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -154,11 +154,11 @@ fn budget_tick_roundtrips_with_session_and_deadline_axes() {
             assert_eq!(mode, BudgetMode::Enforced);
             assert_eq!(session_spent_usd, Some(1.75));
             assert_eq!(session_limit_usd, Some(10.0));
-            // Byte-for-byte (invariant 4) — the reason the axis is a
+            // Byte-for-byte (AGENTS.md #4) — the reason the axis is a
             // whole-millisecond integer and not a float of seconds.
             assert_eq!(deadline_remaining_ms, Some(842_137));
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -177,7 +177,7 @@ fn budget_tick_without_session_or_deadline_fields_parses_with_none() {
         }) => {
             assert_eq!(session_spent_usd, None);
             assert_eq!(session_limit_usd, None);
-            // `None` is the honest decode for a pre-#2240 journal: it could
+            // `None` is the correct decode for a pre-#2240 journal: it could
             // not say whether a deadline was armed, and `Some(0)` would be
             // this parser inventing "already out of time".
             assert_eq!(deadline_remaining_ms, None);
@@ -229,7 +229,7 @@ fn compaction_event_carries_counts_and_block_identities() {
             assert!(summarized_blocks.len() < summarized);
             assert_eq!(effective_budget_tokens, 136_363);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -297,12 +297,12 @@ fn file_change_carries_the_delta_and_the_diff_on_the_single_event_path() {
             assert!(diff.is_some());
             assert!(!minimal, "the blunt-fallback flag survives the wire");
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
 /// Journals written before the counts existed must still replay. They
-/// recorded no delta, so they come back as `0/0` — the honest answer for a
+/// recorded no delta, so they come back as `0/0` — the right answer for a
 /// stream that never measured one. `minimal` predates neither field and is
 /// absent too; it comes back `true` — #4696's own wire default, matching
 /// what a consumer already assumed of a patch-carrying event back then.
@@ -321,7 +321,7 @@ fn a_file_change_without_counts_still_parses() {
             assert_eq!((added, removed), (0, 0));
             assert!(minimal);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -386,12 +386,12 @@ fn context_recall_frames_always_carry_a_citation_label() {
             );
             assert_eq!(frame.method.as_deref(), Some("tree-sitter/symbol-extract"));
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
 /// WITNESS (#452): the usage-report envelope rides the recall event and
-/// round-trips byte-for-byte (AGENTS.md invariant 4), so context cost is a
+/// round-trips byte-for-byte (AGENTS.md #4), so context cost is a
 /// meterable record rather than a number that dies with the turn.
 #[test]
 fn context_usage_report_round_trips_and_stays_content_free() {
@@ -434,7 +434,7 @@ fn context_usage_report_round_trips_and_stays_content_free() {
         AgentEvent::ContextRecall { usage: round, .. } => {
             assert_eq!(round.as_ref(), Some(&usage), "byte-for-byte round trip")
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
     assert_eq!(
         json,
@@ -444,7 +444,7 @@ fn context_usage_report_round_trips_and_stays_content_free() {
 
     // Content-free by construction: the envelope carries provider ids,
     // counts, costs, and a timestamp — never frame text, titles, URIs, or
-    // query text (AGENTS.md invariant 3, #466).
+    // query text (AGENTS.md #3, #466).
     let value = serde_json::to_value(&usage).unwrap();
     let mut fields: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
     fields.sort();
@@ -484,7 +484,7 @@ fn as_of_wellformedness_is_checkable_on_the_receipt() {
         providers: vec![],
     };
 
-    // The shape every host in this workspace stamps, plus the variants
+    // The shape every host in this workspace stamps, plus the cases
     // RFC 3339 also permits — rejecting these would make the predicate a
     // false-alarm generator on valid receipts.
     for good in [
@@ -519,7 +519,7 @@ fn a_recall_event_without_a_usage_report_still_parses() {
     let legacy = r#"{"type":"context_recall","frames":[],"provider_mix":[],"tokens":0}"#;
     match serde_json::from_str::<AgentEvent>(legacy).unwrap() {
         AgentEvent::ContextRecall { usage, .. } => assert!(usage.is_none()),
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -568,7 +568,7 @@ fn verdict_distinguishes_deterministic_from_model_evidence() {
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
     match back {
         AgentEvent::Verdict { evidence, .. } => assert!(evidence.deterministic),
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -582,7 +582,7 @@ fn ladder_snapshot_is_additive_and_roundtrips() {
     let back: AgentEvent = serde_json::from_str(legacy).unwrap();
     match back {
         AgentEvent::Verdict { evidence, .. } => assert!(evidence.ladder.is_none()),
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 
     let event = AgentEvent::Verdict {
@@ -635,7 +635,7 @@ fn ladder_snapshot_is_additive_and_roundtrips() {
             assert_eq!(snapshot.tracked_command.as_deref(), Some("cargo test -p x"));
             assert_eq!(snapshot.rung, Some(crate::LadderRung::SubmitFast));
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -651,7 +651,7 @@ fn ask_user_roundtrips_and_carries_structured_options() {
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
     match back {
         AgentEvent::AskUser { options, .. } => assert_eq!(options.len(), 2),
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -683,7 +683,7 @@ fn scope_review_and_pr_events_roundtrip() {
     }
 }
 
-/// Invariant #4: the scope-card facts (repo/branch, globs, shell policy)
+/// AGENTS.md #4: the scope-card facts (repo/branch, globs, shell policy)
 /// round-trip byte-for-byte, and a proposal recorded before they existed
 /// still parses with every one absent.
 #[test]
@@ -716,7 +716,7 @@ fn scope_proposal_roundtrips_its_scope_card_facts_and_stays_additive() {
     assert!(!json.contains("repo"), "{json}");
 }
 
-/// Invariant #4: the oracle observation's replay facts (`run`,
+/// AGENTS.md #4: the oracle observation's replay facts (`run`,
 /// `runs_required`, `seed`) round-trip byte-for-byte, and an observation
 /// recorded before they existed still parses with each absent.
 #[test]
@@ -734,7 +734,7 @@ fn proof_oracle_roundtrips_replay_facts_and_stays_additive() {
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
     match back {
         AgentEvent::Proof { step: parsed } => assert_eq!(parsed, step),
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 
     let legacy = r#"{"type":"proof","step":{"kind":"oracle","command":"cargo test","passed":false,"tree":"baseline"}}"#;
@@ -753,7 +753,7 @@ fn proof_oracle_roundtrips_replay_facts_and_stays_additive() {
             assert_eq!(runs_required, None);
             assert_eq!(seed, None);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
     // A single-run oracle serializes without the replay keys.
     let single = AgentEvent::Proof {
@@ -827,7 +827,7 @@ fn task_update_roundtrips_a_full_board_snapshot() {
             assert_eq!(tasks[1].status, TaskStatus::InProgress);
             assert_eq!(tasks[1].owner.as_deref(), Some("sub:2"));
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -840,7 +840,7 @@ fn task_status_open_vs_terminal() {
 }
 
 /// The research stage's two wire tokens (#1778), pinned in both directions
-/// (invariant 4): the snake_case token is what a recorded stream carries, and
+/// (AGENTS.md #4): the snake_case token is what a recorded stream carries, and
 /// a role addition is one-directional (`ModelCallRole` has no catch-all), so
 /// what this build writes is exactly what a future build must read.
 #[test]
@@ -971,7 +971,7 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
             assert_eq!(params.top_k, None);
             assert_eq!(params.frequency_penalty, None);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -1034,7 +1034,7 @@ fn step_usage_from_a_pre_drift_stream_still_parses() {
             assert_eq!(output_text, None);
             assert_eq!(input_tokens, 12_000);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -1059,7 +1059,7 @@ fn step_usage_from_a_pre_cache_write_stream_still_parses() {
             assert_eq!(cached_input_tokens, 9_000);
             assert_eq!(estimated_input_tokens, 11_200);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -1080,7 +1080,7 @@ fn goal_verdict_roundtrips_both_outcomes() {
                 assert_eq!(b, met);
                 assert_eq!(round, 2);
             }
-            other => panic!("unexpected variant: {other:?}"),
+            other => panic!("unexpected case: {other:?}"),
         }
     }
 }
@@ -1170,7 +1170,7 @@ fn block_registered_carries_bytes_only_for_gap_kinds() {
             assert_eq!(kind, BlockKind::SystemPrefix);
             assert_eq!(content.as_deref(), Some("you are a careful engineer"));
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -1232,7 +1232,7 @@ fn step_manifest_preserves_block_order_and_the_effective_budget() {
             assert_eq!(blocks[0].cache_zone, CacheZone::StablePrefix);
             assert_eq!(upstream_provider.as_deref(), Some("Amazon Bedrock"));
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -1261,7 +1261,7 @@ fn a_manifest_from_a_pre_frame_stream_still_parses() {
             // and must decode as "no upstream was named".
             assert_eq!(upstream_provider, None);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -1293,7 +1293,7 @@ fn a_manifest_carrying_a_compiled_frame_round_trips() {
         AgentEvent::StepManifest { compiled_frame, .. } => {
             assert_eq!(compiled_frame.unwrap().compiled_frame_id, "cf_abc");
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }
 
@@ -1338,7 +1338,7 @@ fn unknown_block_kind_degrades_to_other_not_a_parse_error() {
 }
 
 /// #3622: the three rungs that emit `Steered` are now separable on the wire,
-/// and the field round-trips (invariant #4).
+/// and the field round-trips (AGENTS.md #4).
 ///
 /// The failing half before this field existed is not subtle — there was
 /// nothing to read but `text`, and `stall_steer_text`'s prefix *extends*
@@ -1359,7 +1359,7 @@ fn a_steer_names_its_cause_on_the_wire() {
         assert!(json.contains("\"type\":\"steered\""), "{json}");
         match serde_json::from_str::<AgentEvent>(&json).unwrap() {
             AgentEvent::Steered { cause: back, .. } => assert_eq!(back, cause),
-            other => panic!("unexpected variant: {other:?}"),
+            other => panic!("unexpected case: {other:?}"),
         }
     }
     // The two automatic rungs are distinguishable without reading the prose,

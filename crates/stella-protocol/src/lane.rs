@@ -1,7 +1,7 @@
 //! Which lane ran this turn — #3274 slice 1, #3386.
 //!
 //! A **lane** is one place a turn runs. There is exactly one step loop
-//! (`stella-core`'s `driver::drive`); what differs between a REPL turn, a
+//! (`stella-core`'s `driver::drive`); what differs between an interactive turn, a
 //! fleet worker and a pipeline stage is not the loop but *which of the loop's
 //! optional capabilities that run was assembled with*. Today there are seven
 //! such assembly sites and, before this module, none of them had a name —
@@ -14,11 +14,11 @@
 //!
 //! - **[`BuiltinLane`] is closed** over the seven in-tree sites. That is what
 //!   lets a later slice make "adding a capability without deciding it for
-//!   every lane" a compile error: the compiler can see every variant, so an
+//!   every lane" a compile error: the compiler can see every case, so an
 //!   exhaustive `match` or destructuring covers the whole set.
 //! - **[`TurnLane`] is open** — it carries a [`LaneId`] arm for a lane
 //!   contributed by a plugin manifest, which by construction is not known at
-//!   compile time. Adding that arm today costs one enum variant; retrofitting
+//!   compile time. Adding that arm today costs one enum case; retrofitting
 //!   it after seven lanes and a parity matrix are written against a closed
 //!   enum is a matrix rewrite.
 //!
@@ -39,7 +39,7 @@
 //! {"plugin": "acme.replay"}
 //! ```
 //!
-//! Per invariant #4 this round-trips through `serde_json` byte-for-byte.
+//! Per AGENTS.md #4 this round-trips through `serde_json` byte-for-byte.
 
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +59,7 @@ impl LaneId {
     ///
     /// Validation of what a manifest may name is the plugin loader's job
     /// (`stella-plugin`), not this crate's: `stella-protocol` carries zero
-    /// logic by invariant, and a second validator here would be a rule in two
+    /// logic by rule, and a second validator here would be a rule in two
     /// places.
     #[must_use]
     pub fn new(id: impl Into<String>) -> Self {
@@ -81,14 +81,14 @@ impl std::fmt::Display for LaneId {
 
 /// The seven in-tree turn-assembly sites, named.
 ///
-/// Closed on purpose — see the module doc. The assembly site each variant
+/// Closed on purpose — see the module doc. The assembly site each case
 /// refers to is named in its own doc comment so the mapping survives a file
 /// move, which a line number would not.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BuiltinLane {
-    /// The interactive Command Deck / REPL turn (`stella-cli`'s
+    /// The interactive-mode turn (`stella-cli`'s
     /// `command_deck`).
     Lead,
     /// A turn replayed from a checkpoint (`stella-cli`'s `agent::resume`).
@@ -109,8 +109,8 @@ pub enum BuiltinLane {
     /// structural rather than a deferral. A verification plugin's stage turn is
     /// a *plugin* lane: it arrives as [`TurnLane::Plugin`] carrying the
     /// [`LaneId`] the manifest declared, which is the arm that exists precisely
-    /// because an out-of-tree lane cannot be a compile-time variant. So there
-    /// is no producer to re-home onto this variant; a wrapper plugin that
+    /// because an out-of-tree lane cannot be a compile-time case. So there
+    /// is no producer to re-home onto this case; a wrapper plugin that
     /// stages its turns names its own lane.
     ///
     /// Deleting it instead would be worse than the usual wire retirement.
@@ -128,7 +128,7 @@ pub enum BuiltinLane {
 impl BuiltinLane {
     /// Every builtin lane, in declaration order.
     ///
-    /// Written as an exhaustive array so a new variant that is not added here
+    /// Written as an exhaustive array so a new case that is not added here
     /// is caught by [`Self::ALL`]'s own test rather than silently narrowing
     /// every caller that enumerates lanes.
     pub const ALL: [Self; 7] = [
@@ -212,9 +212,9 @@ impl std::fmt::Display for TurnLane {
 mod tests {
     use super::*;
 
-    /// The witness (#3386): a lane round-trips byte-for-byte, per invariant #4.
+    /// The witness (#3386): a lane round-trips byte-for-byte, per AGENTS.md #4.
     ///
-    /// Both arms, and every builtin variant — a lane that serialised but did
+    /// Both arms, and every builtin case — a lane that serialised but did
     /// not parse back would make the stamped field unreadable by exactly the
     /// surfaces it exists for.
     #[test]
@@ -256,11 +256,11 @@ mod tests {
         );
     }
 
-    /// `ALL` is the enumeration every caller uses; a variant missing from it
+    /// `ALL` is the enumeration every caller uses; a case missing from it
     /// would narrow them all silently.
     #[test]
     fn all_names_every_builtin_variant() {
-        // Exhaustive match: a new variant fails to compile here until it is
+        // Exhaustive match: a new case fails to compile here until it is
         // added to `ALL` below as well.
         for lane in BuiltinLane::ALL {
             match lane {
@@ -283,7 +283,7 @@ mod tests {
     /// kept so a lane recorded before `stella-pipeline` was deleted (#3865)
     /// still reads back. This is what that decision costs if it is reversed:
     /// [`BuiltinLane`] is closed with no `serde(other)`, so removing the
-    /// variant does not demote the tag — it fails the record outright.
+    /// case does not demote the tag — it fails the record outright.
     #[test]
     fn a_lane_recorded_before_the_pipeline_was_deleted_still_deserializes() {
         let recorded: TurnLane =

@@ -1,10 +1,10 @@
-//! [`AgentEvent`] itself — the tagged enum every variant of the wire
+//! [`AgentEvent`] itself — the tagged enum every case of the wire
 //! vocabulary lives on.
 //!
 //! Split out of `event.rs` when the enum's own bulk (roughly a thousand
-//! lines of variants and their doc comments) crowded that file past the
+//! lines of cases and their doc comments) crowded that file past the
 //! 1500-line ratchet (#3776) — a pure move, `use super::*` carrying over
-//! every type the variants reference. The module doc comment, the
+//! every type the cases reference. The module doc comment, the
 //! hand-written [`serde::Serialize`]/[`serde::Deserialize`] impls that route
 //! [`AgentEvent::Unknown`] around the derived codec, and the sibling `tests`
 //! module all stay in `event.rs`; the smaller peer enums
@@ -21,7 +21,7 @@ use super::*;
 /// associated functions instead of the trait impls, so the hand-written
 /// [`Serialize`]/[`Deserialize`] impls in `event.rs` can delegate to it after
 /// routing [`AgentEvent::Unknown`] around it. Without that indirection the
-/// forward-compat fallback would mean hand-writing a visitor for every variant.
+/// forward-compat fallback would mean hand-writing a visitor for every case.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", remote = "Self")]
@@ -67,7 +67,7 @@ pub enum AgentEvent {
     /// preview with this value, never append it to one.
     ///
     /// Wire history (#1886): this field was spelled `delta` (and
-    /// `text_delta`'s payload was spelled `text` — each variant carried the
+    /// `text_delta`'s payload was spelled `text` — each case carried the
     /// other's natural name). Serialization writes the self-describing name;
     /// the alias keeps every recorded stream replaying. Raw-JSONL readers
     /// must stay bilingual the same way: `text` first, legacy `delta` back.
@@ -215,7 +215,7 @@ pub enum AgentEvent {
         /// `stella-protocol` never depends on `stella-core`).
         reason: String,
         /// Engine-side probes spent while parked — the poll history the
-        /// transcript deliberately never carries.
+        /// transcript never carries.
         polls_used: u64,
     },
     /// Loop detection fired (receipts spec §6.3, #364 gap 3): the typed
@@ -291,7 +291,7 @@ pub enum AgentEvent {
     /// event stream (receipts spec §6.4, #364 gap 6). The `HookBus` audit
     /// events (`policy.evaluated`/`policy.blocked`, `approval.requested`,
     /// `secret.detected`) were process-ephemeral — hosts map them onto this
-    /// variant so the journal carries the policy plane too. Content-free by
+    /// case so the journal carries the policy plane too. Content-free by
     /// design: `subject` names the tool/capability/path, NEVER a secret
     /// value or file contents.
     PolicyDecision {
@@ -373,7 +373,7 @@ pub enum AgentEvent {
         #[serde(default)]
         calibration_factor: f64,
     },
-    /// Emitted after every provider/media call that spends money. The TUI HUD
+    /// Emitted after every provider/media call that spends money. The interactive-mode HUD
     /// renders spend live from this stream; nothing user-visible about spend
     /// is derived from state that isn't also in this event.
     BudgetTick {
@@ -403,11 +403,11 @@ pub enum AgentEvent {
         /// deadline is armed and has already passed.
         ///
         /// Milliseconds rather than a `Duration` because this is a wire type
-        /// (invariant 4): a whole-millisecond integer round-trips through JSON
+        /// (AGENTS.md #4): a whole-millisecond integer round-trips through JSON
         /// byte-for-byte, where a float of seconds would not.
         ///
         /// `serde(default)` — absent on every journal written before this
-        /// field existed, where it reads as "unarmed". That is the honest
+        /// field existed, where it reads as "unarmed". That is the right
         /// decode: those journals genuinely could not say otherwise.
         #[serde(default)]
         deadline_remaining_ms: Option<u64>,
@@ -472,7 +472,7 @@ pub enum AgentEvent {
         /// configured default. Empty only on legacy events.
         ///
         /// For a *gateway* this names the gateway (`openrouter`), which is as
-        /// far as this field can honestly go — the silicon behind it rides in
+        /// far as this field can go — the silicon behind it rides in
         /// `upstream_provider`.
         #[serde(default)]
         provider: String,
@@ -523,8 +523,8 @@ pub enum AgentEvent {
         /// consumers rebuild the correction from these pairs, and a
         /// corrected estimate here would compound the correction on every
         /// round trip. Attachment weight is excluded — the media estimate is
-        /// a deliberate ~80× over-estimate of billed tokens, right for
-        /// context pressure and poison as a drift sample. `0` means no
+        /// a ~80× over-estimate of billed tokens, right for context pressure
+        /// and poison as a drift sample. `0` means no
         /// estimate was taken (pre-drift emitters — hence `serde(default)`,
         /// so old streams still parse).
         #[serde(default)]
@@ -628,7 +628,7 @@ pub enum AgentEvent {
         ///
         /// Content-free like the rest of this event — every field is a number
         /// or a closed enum, and none of them can hold prompt text. Tool
-        /// schemas are the ask-side fact deliberately still absent: they are
+        /// schemas are the ask-side fact still absent: they are
         /// content-bearing, so they stay off the event and in the wire log.
         ///
         /// The value that went on the wire, so a run's sampling posture is
@@ -708,7 +708,7 @@ pub enum AgentEvent {
         /// difference. A stream cut mid-answer has usually already been told
         /// what the prompt cost, so `Some` here turns a bare warning into a
         /// number: how much of this attempt we can actually account for.
-        /// `None` is the honest answer for a failure that learned nothing —
+        /// `None` is the answer for a failure that learned nothing —
         /// a connect timeout, a cancelled call, a 5xx with no stream.
         ///
         /// Token counts are content-free, so carrying them keeps this event
@@ -777,7 +777,7 @@ pub enum AgentEvent {
     /// 2. **The shared-tree turn boundary** — `stella-cli`'s `turn_files`, over
     ///    `WorkJournal::snapshot_worktree` (#3413). This one is **not**
     ///    attribution. It answers *what changed in the tree during this turn*,
-    ///    which is the honest question a whole-tree measurement can answer: a
+    ///    which is the question a whole-tree measurement can answer: a
     ///    user editing a file in another window mid-turn lands here
     ///    indistinguishably from the agent's own writes.
     ///
@@ -809,7 +809,7 @@ pub enum AgentEvent {
     /// `added`/`removed` are what the producer measured — git's `--numstat`
     /// against the two trees, or, for adoption, numstat plus the patch it
     /// applied. Consumers **must** use them rather than counting `+`/`-` lines
-    /// in `diff`: the diff is a bounded, deliberately coarse rendering of the
+    /// in `diff`: the diff is a bounded, coarse rendering of the
     /// changed region, and re-deriving from it is what made the two disagree.
     /// A binary file carries `0/0` and its kind.
     FileChange {
@@ -971,7 +971,7 @@ pub enum AgentEvent {
         ///
         /// Requested, never executed: it is read off the calls' own text so
         /// the same transcript classifies the same way every step, which is
-        /// what keeps the rung deterministic (invariant #2). A call killed by
+        /// what keeps the rung deterministic (AGENTS.md #2). A call killed by
         /// the shell's own timeout still contributes its full request, so
         /// this is an upper bound on wall clock. Executed seconds are already
         /// derivable from `ToolResult.duration_ms`, and the gap between the
@@ -990,7 +990,7 @@ pub enum AgentEvent {
         ///
         /// `Some` only when `context.lifecycle.enabled` is on; `None`
         /// otherwise and on every manifest recorded before the frame existed.
-        /// The hash covers what entered the prompt and deliberately excludes
+        /// The hash covers what entered the prompt and excludes
         /// the accounting around it — `provider`, `model`, `call_seq`, the two
         /// budget numbers, and each entry's `resident_since_step` — so two runs
         /// of identical work agree even when served by different models. See
@@ -1017,7 +1017,7 @@ pub enum AgentEvent {
     ///
     /// Aliased: this event shipped on the wire as `judge_verdict`. Without the
     /// alias a stored stream's verdict line does not fail loudly — serde skips
-    /// to the next variant and the event simply *disappears*, which is how the
+    /// to the next case and the event simply *disappears*, which is how the
     /// golden trajectories came to be one event short rather than unparseable.
     #[serde(alias = "judge_verdict")]
     Verdict {
@@ -1026,7 +1026,7 @@ pub enum AgentEvent {
     },
     /// Interactive gate before large plans execute (L-E5): the pipeline
     /// pauses on this event and waits for approval above configured
-    /// thresholds; headless requires a flag to bypass.
+    /// thresholds; a non-interactive run requires a flag to bypass.
     ScopeReview { proposal: ScopeProposal },
     /// Interactive gate before a mutating tool call writes (#1265): the host
     /// pauses on this event and waits for the reviewer to choose which of the
@@ -1048,7 +1048,7 @@ pub enum AgentEvent {
     /// always answer in their own words, on every question, without the
     /// model having to list that affordance itself. The answer returns as
     /// the tool call's ordinary `ToolResult`; there is no separate answer
-    /// event. Headless runs fail this tool with a named error instead of
+    /// event. Non-interactive runs fail this tool with a named error instead of
     /// hanging on input that will never arrive.
     AskUser {
         /// Correlates the eventual answer (the ToolResult's `call_id`)
@@ -1058,13 +1058,13 @@ pub enum AgentEvent {
         options: Vec<String>,
     },
     /// A media generation job changed state. Video jobs are async and
-    /// long-lived; this event is how the TUI shows progress without polling
+    /// long-lived; this event is how interactive mode shows progress without polling
     /// shared state (L-T1).
     ///
     /// **No producer in this workspace, and kept anyway** (#4454, which
     /// decided it): #4448 removed `crates/stella-media`, and CLAUDE.md's
     /// tool-surface rule forbids the media built-in that would have been its
-    /// caller (#3236, #3845). This variant and [`AgentEvent::MediaComplete`]
+    /// caller (#3236, #3845). This case and [`AgentEvent::MediaComplete`]
     /// stay as the wire contract an out-of-tree media MCP surface speaks.
     ///
     /// The alternative was to retire them at the next version bump, and there
@@ -1117,11 +1117,11 @@ pub enum AgentEvent {
     /// A bounded child turn started or finished — the `Started`/`Finished`
     /// bracket IS the attribution for every event emitted between them.
     /// See [`crate::subagent_event`] for what the child forwards and what it
-    /// deliberately drops at that boundary.
+    /// drops at that boundary.
     #[cfg_attr(
         feature = "schema",
         schemars(
-            description = "A bounded child turn started or finished -- the started/finished bracket IS the attribution for every event emitted between them. The child forwards a deliberately narrowed set of events across that boundary; see the sub-agent payload for what it carries and what it drops."
+            description = "A bounded child turn started or finished -- the started/finished bracket IS the attribution for every event emitted between them. The child forwards a narrowed set of events across that boundary; see the sub-agent payload for what it carries and what it drops."
         )
     )]
     SubAgent { phase: SubAgentPhase },
@@ -1162,7 +1162,7 @@ absence of a sibling key."
     CandidateDelivery {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         root: Option<String>,
-        /// Deliberately **not** `serde(flatten)`: `AgentEvent` is internally
+        /// **Not** `serde(flatten)`: `AgentEvent` is internally
         /// tagged through a `remote = "Self"` codec and carries a `schemars`
         /// derive, and flattening a second internally-tagged enum into that is
         /// where both the wire schema and the forward-compat fallback stop
@@ -1248,7 +1248,7 @@ absence of a sibling key."
     /// recorder, or replay tool can pass a future event through without
     /// understanding it. Object keys may come back sorted; no value is lost.
     ///
-    /// This is the variant that makes the vocabulary safe to extend. Consumers
+    /// This is the case that makes the vocabulary safe to extend. Consumers
     /// should treat it as inert: count it, log it, pass it on — never fail on
     /// it, and never try to guess its semantics from `event_type`.
     ///
@@ -1258,16 +1258,16 @@ absence of a sibling key."
     /// `{"type":"unknown"}` — that input is an unknown tag like any other and
     /// round-trips as `event_type: "unknown"`.
     ///
-    /// Producer contract for anyone *constructing* this variant by hand
+    /// Producer contract for anyone *constructing* this case by hand
     /// (synthesizing a passthrough event, rewriting a recorded stream):
     /// `payload` must be a JSON **object** carrying a `"type"` key equal to
     /// `event_type`, and `event_type` must not be one of [`KNOWN_TYPE_TAGS`].
     /// Serialization emits `payload` verbatim, so a non-object payload, or one
     /// whose tag disagrees, produces a stream-json line this crate cannot read
-    /// back; a known tag here makes [`AgentEvent::type_tag`] name a variant
+    /// back; a known tag here makes [`AgentEvent::type_tag`] name a case
     /// this value is not, so a consumer dispatching on the tag rather than the
-    /// variant is misrouted. The decode side is only ever fed objects with an
-    /// unrecognized tag, so nothing checks either invariant for you.
+    /// case is misrouted. The decode side is only ever fed objects with an
+    /// unrecognized tag, so nothing checks either rule for you.
     #[serde(skip)]
     Unknown {
         /// The unrecognized `"type"` value, lifted out for cheap matching.

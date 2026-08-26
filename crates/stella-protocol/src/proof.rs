@@ -36,7 +36,7 @@ pub enum ProofStep {
     /// What assurance this turn is going to buy, stated by triage **before**
     /// any of it happens.
     ///
-    /// Emitted first, and the reason the rail can be honest at all. Every
+    /// Emitted first, and the reason the rail can be complete at all. Every
     /// other step reports something that *did* happen, so a turn where the
     /// answer is "we decided not to" produced no steps and left the surface
     /// with nothing to say — which is exactly the case that dominates in
@@ -94,7 +94,7 @@ pub enum ProofStep {
     /// The evidence channels worked, and what they returned did not amount to
     /// a proof ([`crate::LadderRung::Unverified`]).
     ///
-    /// The near-twin of [`Self::VerificationUnavailable`] and deliberately not
+    /// The near-twin of [`Self::VerificationUnavailable`] and not
     /// the same step, for the reason that one exists at all: a reader has to be
     /// able to tell "the instruments were blind" from "the instruments worked
     /// and the answer was not enough". They imply opposite repairs — fix the
@@ -108,7 +108,7 @@ pub enum ProofStep {
     #[cfg_attr(
         feature = "schema",
         schemars(
-            description = "The evidence channels worked, and what they returned did not amount to a proof; the verdict rests on the `unverified` rung. Deliberately distinct from `verification_unavailable`: a reader has to be able to tell \"the instruments were blind\" from \"the instruments worked and the answer was not enough\", because they imply opposite repairs -- fix the probe, versus produce the missing observation."
+            description = "The evidence channels worked, and what they returned did not amount to a proof; the verdict rests on the `unverified` rung. Distinct from `verification_unavailable`: a reader has to be able to tell \"the instruments were blind\" from \"the instruments worked and the answer was not enough\", because they imply opposite repairs -- fix the probe, versus produce the missing observation."
         )
     )]
     VerificationUnproven { reason: String },
@@ -188,7 +188,7 @@ pub enum ProofStep {
 mod tests {
     use super::*;
 
-    /// Invariant 4: the new step round-trips byte-for-byte, and its wire
+    /// AGENTS.md #4: the new step round-trips byte-for-byte, and its wire
     /// spelling is pinned — a rename of the tag or a field breaks every
     /// recorded stream that carries it.
     #[test]
@@ -206,7 +206,7 @@ mod tests {
         assert_eq!(parsed, step);
     }
 
-    /// Invariant 4 again, for #2414's step. The wire spelling is pinned here
+    /// AGENTS.md #4 again, for #2414's step. The wire spelling is pinned here
     /// because the whole value of the record is that something outside this
     /// process can census it — a bench harness reading `stella-events.jsonl`
     /// to tell a real classification from a keyword-floor default.

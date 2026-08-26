@@ -113,7 +113,7 @@ pub struct ContextFrameRef {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub provider: String,
     /// The original source named by the frame's provenance chain. This is
-    /// deliberately distinct from [`Self::provider`]: a host adapter may be
+    /// distinct from [`Self::provider`]: a host adapter may be
     /// `workspace-memory` while the record source remains `stella-context`.
     pub source: String,
     /// The protocol frame kind (`symbol`, `memory`, `graph`, ...).
@@ -229,7 +229,7 @@ pub struct ContextProviderUsage {
     /// The host's routing/consent key for the serving provider.
     pub provider_id: String,
     /// Frames accepted — they passed consent, the timeout, and the
-    /// budget-honesty audit.
+    /// budget audit.
     pub frames_served: u32,
     /// Frames the host dropped whole, e.g. a provider that misdeclared cost.
     pub frames_rejected: u32,
@@ -242,7 +242,7 @@ pub struct ContextProviderUsage {
 /// pipeline bills from, and the answer to "what did this turn's context cost,
 /// and which sources drove it?".
 ///
-/// Deliberately **content-free**: budget scalars, an accounting timestamp, and
+/// **Content-free**: budget scalars, an accounting timestamp, and
 /// per-provider counts and costs. The spec's `served_frames` drill-down is
 /// *not* duplicated here — the sibling `frames: Vec<ContextFrameRef>` on the
 /// same [`crate::event::AgentEvent::ContextRecall`] already records the frame-granular
@@ -320,7 +320,7 @@ impl ContextUsage {
 /// `full-date "T" full-time` per RFC 3339 §5.6: `YYYY-MM-DDThh:mm:ss`, an
 /// optional `.`-led fraction, then `Z` or a `±hh:mm` offset.
 ///
-/// Deliberately accepting of everything the grammar allows — a lowercase
+/// Accepting of everything the grammar allows — a lowercase
 /// `t`/`z`, fractional seconds, and a numeric offset are all legal, and a
 /// predicate that flagged them would be a false-alarm generator on valid
 /// receipts rather than a check anyone would keep running.

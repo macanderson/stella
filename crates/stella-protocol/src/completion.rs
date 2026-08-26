@@ -247,7 +247,7 @@ pub struct CompletionRequest {
 /// than merely observed: the adapter serializes directly off the caller's
 /// slice, so there is no intermediate copy in which drift *could* occur.
 ///
-/// Deliberately **not** `Serialize`. A second derive would be a second
+/// **Not** `Serialize`. A second derive would be a second
 /// authority on the wire shape, and the two could silently diverge on a
 /// `skip_serializing_if` — precisely the drift the byte-stability contract
 /// exists to forbid. Anything that needs bytes goes through
@@ -280,7 +280,7 @@ impl CompletionRequest {
     /// it as a botched impl of one).
     #[must_use]
     pub fn as_borrowed(&self) -> CompletionRequestRef<'_> {
-        // Exhaustive destructure, deliberately without `..`: a field added to
+        // Exhaustive destructure, without `..`: a field added to
         // `CompletionRequest` but not threaded through the view is a compile
         // error right here, rather than a parameter that silently stops
         // reaching the wire on the hot path while the owned path still carries

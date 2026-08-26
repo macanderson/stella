@@ -53,9 +53,9 @@ Already visible in the tree:
   "the whole job is over" is a *different*, separately named signal, and the
   journal carries both. A consumer that assumed one completion per run was
   reading a wrapper's edit of the engine's words.
-- **Every emitted signal names its consumer** (invariant #10). The ledger is
+- **Every emitted signal names its consumer** (AGENTS.md #10). The ledger is
   [`src/event/consumers.rs`](src/event/consumers.rs), generated from the same
-  table as `KNOWN_TYPE_TAGS`, so a new variant without a declared consumer is a
+  table as `KNOWN_TYPE_TAGS`, so a new case without a declared consumer is a
   build error rather than a silence — which matters more, not less, once wrappers
   are out-of-tree plugins whose only view of the loop is this event stream.
 
@@ -69,7 +69,7 @@ needs an `await`, a clock, a filesystem or network touch, a dependency beyond
 `serde`/`serde_json`/`thiserror`/`async-trait`, or a `match` that decides what
 the program *does* next, it does not belong here. Every type added pays its way
 with a byte-for-byte serde round-trip test in its own module (AGENTS.md
-invariant #4).
+AGENTS.md #4).
 
 The behavior over these types always has a home elsewhere: decision logic over
 events, budgets, and compaction in `stella-core`; wire transport implementing
@@ -111,8 +111,8 @@ supporting vocabulary goes in a new module re-exported from
 [`src/lib.rs`](src/lib.rs) — the crate's precedent is
 [`src/ladder.rs`](src/ladder.rs), split out of `event.rs` when the ladder rung
 joined it (#1043), with the re-export keeping `stella_protocol::LadderSnapshot`
-at its old path — and a genuinely new `AgentEvent` variant offsets its lines
-by extracting the variant's supporting types, taking their inline round-trip
+at its old path — and a genuinely new `AgentEvent` case offsets its lines
+by extracting the case's supporting types, taking their inline round-trip
 tests with them.
 
 ## Layout
@@ -120,13 +120,13 @@ tests with them.
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate's flat re-export surface, and the statement of the one-directional wire-compatibility rule. Read it first. |
-| [`src/event.rs`](src/event.rs) | `AgentEvent` and its supporting types — the stream-json vocabulary: every wire variant plus the tagless `Unknown` fallback. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
-| [`src/journal.rs`](src/journal.rs) | `StampedEvent` / `stamped_line` — one *line* of the event stream: an `AgentEvent` plus the optional wall-clock `ts` its sink stamps at the write boundary (#2111). Deliberately not a field of the enum: a stamp is a fact about a write, the same event reaches more than one sink, and this crate owns no clock. |
+| [`src/event.rs`](src/event.rs) | `AgentEvent` and its supporting types — the stream-json vocabulary: every wire case plus the tagless `Unknown` fallback. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
+| [`src/journal.rs`](src/journal.rs) | `StampedEvent` / `stamped_line` — one *line* of the event stream: an `AgentEvent` plus the optional wall-clock `ts` its sink stamps at the write boundary (#2111). Not a field of the enum: a stamp is a fact about a write, the same event reaches more than one sink, and this crate owns no clock. |
 | [`src/context_event.rs`](src/context_event.rs) | `CompiledContextFrameBuilt` — the compiled-frame identity the step manifest carries, and its golden JCS vector. The `LifecycleEventEnvelope` channel that used to live here was deleted unwired (#3135). |
 | [`src/completion.rs`](src/completion.rs) | `CompletionRequest` / `CompletionResult` / `CompletionUsage`, `GenerationParams`, `FinishReason`. The one envelope every provider adapter translates to and from. |
 | [`src/provider.rs`](src/provider.rs) | The `Provider` port and `ToolCallObserver`, the seam speculative tool execution hangs on. |
 | [`src/tool.rs`](src/tool.rs) | `ToolSchema`, `ToolCall`, `ToolOutput`, `ToolResult` — the engine's single internal tool dialect. |
-| [`src/contract.rs`](src/contract.rs) | `ToolContract`, `RiskLevel`, `Provenance` — the governance half of a tool's declaration (#2716): what a call costs the world, and whether the claim saying so was reviewed. It **contains** `ToolSchema` rather than restating its fields, so the bytes advertised to the model stay exactly what they were and a governance field can never perturb the prompt-cache prefix (invariant #7). |
+| [`src/contract.rs`](src/contract.rs) | `ToolContract`, `RiskLevel`, `Provenance` — the governance half of a tool's declaration (#2716): what a call costs the world, and whether the claim saying so was reviewed. It **contains** `ToolSchema` rather than restating its fields, so the bytes advertised to the model stay exactly what they were and a governance field can never perturb the prompt-cache prefix (AGENTS.md #7). |
 | [`src/attachment.rs`](src/attachment.rs) | Multimodal *input* attachments, plus `classify_media_type`, `media_type_for_path`, `human_bytes`. |
 | [`src/role.rs`](src/role.rs) | `Role` (worker/triage/plan/research/verifier/embed/vision/image/video) and `ModelRef`. |
 | [`src/error.rs`](src/error.rs) | `ProviderError` and its retry classification. |
@@ -136,12 +136,12 @@ tests with them.
 
 **Additivity holds in both directions, and the boundary between "newer" and
 "broken" is the whole design.** New *fields* ride `#[serde(default)]`, so a
-newer binary parses every older stream. New `AgentEvent` *variants* travel
+newer binary parses every older stream. New `AgentEvent` *cases* travel
 backwards via `AgentEvent::Unknown { event_type, payload }`: an older binary
 meets an unrecognized `"type"` by preserving the event whole and moving on, and
 the JSONL replay reader keeps the line.
 
-What travels backwards is a **variant**, not a field. An unrecognized key on a
+What travels backwards is a **case**, not a field. An unrecognized key on a
 tag this build already knows parses (serde ignores it) and is then dropped when
 the event is re-serialized, because nothing captured it — so a proxy or
 `replay::to_jsonl` relaying a newer stream passes new *events* through whole
@@ -149,24 +149,24 @@ while quietly narrowing new *fields* on old ones. Only `AgentEvent::Unknown`
 preserves an object verbatim.
 
 The tolerance is scoped to the **tag alone**. A `"type"` this build knows,
-carrying a body that does not fit its variant, is still a hard error — that is
+carrying a body that does not fit its case, is still a hard error — that is
 corruption or an encoder bug, not a version skew, and laundering it into
 `Unknown` would convert a loud failure into silent data loss. `KNOWN_TYPE_TAGS`
 is the exact boundary, and it is generated from the same macro list as
 `type_tag()` so the two cannot drift.
 
 **The tolerance covers the tag, not the vocabularies underneath it.** The
-enums nested inside a variant — `ModelCallRole`, `StageKind`, `PolicyKind`,
+enums nested inside a case — `ModelCallRole`, `StageKind`, `PolicyKind`,
 `CiStatus`, `FinishReason`, and their peers — are closed, so a token from a
 newer build is a body that does not fit a known tag, i.e. a hard error that
 costs the reader the whole event. `ModelCallRole` is the one to watch: it has
-grown from four values to fourteen, and its `Unknown` variant is the
+grown from four values to fourteen, and its `Unknown` case is the
 `serde(default)` for an *absent* `role`, not a `serde(other)` catch-all for an
 unrecognized one. `BlockKind` and `CacheZone` are the only two vocabularies
 that do degrade — and they degrade lossily, re-serializing a future token as
 `"other"` rather than preserving it the way `AgentEvent::Unknown` preserves an
 event. Adding a value to a nested vocabulary is therefore still a
-one-directional change; only `AgentEvent` variants travel backwards.
+one-directional change; only `AgentEvent` cases travel backwards.
 
 There is no second, internal event channel: the `LifecycleEventEnvelope` that
 used to offer one — a versioned envelope with its own `schema_version` — was
@@ -174,24 +174,24 @@ deleted unwired (#3135). An event that must stay readable by an older binary
 rides `AgentEvent` and its `Unknown` fallback.
 
 **The `agent_event_tags!` list is a compile-time guard, not a convenience.**
-It generates both `type_tag()` and `KNOWN_TYPE_TAGS` from one variant→tag
-mapping, and the generated match has no wildcard arm — so adding a variant
+It generates both `type_tag()` and `KNOWN_TYPE_TAGS` from one case→tag
+mapping, and the generated match has no wildcard arm — so adding a case
 fails `cargo build -p stella-protocol` with `E0004` right at the invocation.
 The comment directly below it carries the full downstream checklist: which
 matchers the compiler will also stop you at (`stella-tui`
 `model::Model::apply`, `textline::event_line`, `deck::trace_of`) and — the
 dangerous half — which ones it cannot (the replay differ's volatile keep-set,
 `deck::event_intensity`, `deck::status_from_event`). Read that list before you
-add a variant; it is maintained there, not here.
+add a case; it is maintained there, not here.
 
 Note the guard is now about *this workspace's* renderers staying complete, not
-about wire safety: external readers survive a new variant on their own.
+about wire safety: external readers survive a new case on their own.
 
 **Content-freedom is a type-level property.** `UsageIncompleteReason` is a
 closed enum precisely so an error body cannot be represented;
 `AgentEvent::PolicyDecision` carries a `subject` and a short `outcome` token,
 never a secret value; `ContextUsage` / `ContextProviderUsage` are a provider id
-and three numbers. `AgentEvent::BlockRegistered::content` is the one deliberate
+and three numbers. `AgentEvent::BlockRegistered::content` is the one
 exception — bytes for the two block kinds the journal cannot otherwise resolve
 (the system prefix, the assembled user/recall message). The export projection
 strips it, so content-freedom holds *on export*; it does not hold on the live
@@ -240,12 +240,12 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
   that perturbs the stable prefix breaks cache hits (AGENTS.md, "Byte-stable
   prompts").
 - **There is no `"auto"` model slug.** Selection is `Option<ModelRef>`; `None`
-  *is* auto. `ModelRef` deliberately has no auto variant — the TS-era bug where
+  *is* auto. `ModelRef` has no auto case — the TS-era bug where
   a pseudo-slug leaked into resolver paths is structurally excluded (L-M3).
 - **`ProviderError::RateLimited` and `::Overloaded` interpolate their hint by
   hand.** The obvious `{retry_after_ms:?}` renders "retry after Some(500)ms",
   or the nonsense "retry after Nonems", into a message the user reads on the
-  TUI.
+  interactive mode.
 - **`ProviderError::is_park_eligible` is narrower than `is_retryable`, on
   purpose.** Every retryable failure gets the inline backoff ladder, but only a
   failure whose recovery is a function of *waiting* (a 429, a 529) may be
@@ -311,18 +311,18 @@ golden-bytes test in `context_event.rs`, which needs the
 that deserializes a hand-written pre-field JSON literal and asserts the
 default. Every `serde(default)` in this crate has one; match the neighborhood.
 
-**Adding an `AgentEvent` variant** — an older binary reading the stream lands
-the new variant on `AgentEvent::Unknown`, so backwards readability is not a
+**Adding an `AgentEvent` case** — an older binary reading the stream lands
+the new case on `AgentEvent::Unknown`, so backwards readability is not a
 reason to invent a side channel. Then:
 
-1. Add the variant to `AgentEvent` in [`src/event.rs`](src/event.rs).
+1. Add the case to `AgentEvent` in [`src/event.rs`](src/event.rs).
 2. Add its arm to `type_tag` — `cargo build -p stella-protocol` fails with
    `E0004` until you do.
 3. Add a round-trip test asserting the `"type"` tag serializes as you expect.
 4. Work the checklist in `type_tag`'s doc comment: the compile-enforced
    matchers in `stella-tui` will stop you one crate at a time, then hand-audit
    the wildcard matchers the compiler cannot catch. This step is not optional
-   bookkeeping — a variant landed on `main` past the compile-enforced half and
+   bookkeeping — a case landed on `main` past the compile-enforced half and
    broke two downstream crates on separate days (#421, then #422; the first of
    those was the staged pipeline, deleted since in #3865).
 
@@ -336,7 +336,7 @@ knob, it also needs a row in `crates/stella-model/src/provider_parity.rs`.
 ## See also
 
 - [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies"
-  (invariants 1 and 4), and the "Glossary" table, which disambiguates
+  (AGENTS.md #1 and #4), and the "Glossary" table, which disambiguates
   `turn_instance` / `(step, call_seq)` from the store's `execution_id` and the
   fleet's `run_id`.
 - [`../../docs/spec/session-telemetry-receipts-spec.md`](../../docs/spec/session-telemetry-receipts-spec.md)

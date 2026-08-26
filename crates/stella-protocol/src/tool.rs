@@ -67,13 +67,13 @@ pub struct ToolCall {
 /// [`ToolOutput::Error`]'s `message` is prose written for the model to retry
 /// against; this is the axis a *measurement* needs, because a per-tool error
 /// rate cannot mean anything while a tool defect, model misuse, and a policy
-/// refusal all count as the same failure. The variants partition failures by
+/// refusal all count as the same failure. The cases partition failures by
 /// **whose problem they are**: the model's ([`Self::InvalidInput`],
 /// [`Self::NotFound`]), the policy plane's ([`Self::PermissionDenied`],
 /// [`Self::RefusedByPolicy`]), the world's ([`Self::Timeout`],
 /// [`Self::Environment`]), or ours ([`Self::Internal`]).
 ///
-/// Deliberately **not** here: an `abandoned` class. A call whose turn ended
+/// **Not** here: an `abandoned` class. A call whose turn ended
 /// before it returned never produced a `ToolOutput` at all — abandonment is a
 /// store-side lifecycle fact, not an error a tool can report.
 ///
@@ -87,7 +87,7 @@ pub struct ToolCall {
 #[cfg_attr(
     feature = "schema",
     schemars(
-        description = "Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original."
+        description = "Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original."
     )
 )]
 pub enum ErrorClass {
@@ -176,7 +176,7 @@ pub enum ToolOutput {
         /// the tool produces no structured output, which is every tool
         /// written before this field existed. Optional and absent-when-`None`
         /// so every payload written before the field round-trips
-        /// byte-identically (invariant #4), and so the content bytes the
+        /// byte-identically (AGENTS.md #4), and so the content bytes the
         /// model sees are never perturbed by structure.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         data: Option<serde_json::Value>,
@@ -191,7 +191,7 @@ pub enum ToolOutput {
         /// this error has not been audited into a class yet, which is
         /// distinct from any class it could be assigned. Optional and
         /// absent-when-`None` so every payload written before the field
-        /// existed round-trips byte-identically (invariant #4), and so the
+        /// existed round-trips byte-identically (AGENTS.md #4), and so the
         /// message bytes the model sees are never perturbed by
         /// classification.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn unclassified_error_serializes_byte_identically_to_the_pre_class_shape() {
-        // Invariant #4 for #3145: `class: None` must be absent on the wire,
+        // AGENTS.md #4 for #3145: `class: None` must be absent on the wire,
         // so every payload written before the field existed — and every
         // unclassified one written after — is the same bytes.
         let json = serde_json::to_string(&ToolOutput::error("boom")).unwrap();
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn dataless_ok_serializes_byte_identically_to_the_pre_data_shape() {
-        // Invariant #4 for #3285: `data: None` must be absent on the wire,
+        // AGENTS.md #4 for #3285: `data: None` must be absent on the wire,
         // so every payload written before the field existed — and every
         // prose-only one written after — is the same bytes.
         let json = serde_json::to_string(&ToolOutput::ok("hi")).unwrap();

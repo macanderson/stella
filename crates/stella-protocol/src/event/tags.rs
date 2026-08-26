@@ -1,4 +1,4 @@
-//! The one list every per-variant fact about [`AgentEvent`] expands from.
+//! The one list every per-case fact about [`AgentEvent`] expands from.
 //!
 //! [`AgentEvent::type_tag`], [`KNOWN_TYPE_TAGS`] and [`SIGNAL_CONSUMERS`] are
 //! all generated here from a single table. Keeping them in one place is
@@ -7,11 +7,11 @@
 //!
 //! - A tag missing from [`KNOWN_TYPE_TAGS`] would silently demote every event
 //!   carrying it to [`AgentEvent::Unknown`] — data loss with no error.
-//! - A variant with no declared consumer would be a signal nobody reads, the
+//! - A case with no declared consumer would be a signal nobody reads, the
 //!   shape that cost four `solved_then_timeout` runs before #2661 (#2701).
 //!
 //! Both are now `E0004`: the generated `match` is exhaustive, so adding a
-//! variant without adding a row here fails `cargo build -p stella-protocol`.
+//! case without adding a row here fails `cargo build -p stella-protocol`.
 //!
 //! # Why this is its own module (#2730)
 //!
@@ -25,7 +25,7 @@
 //!
 //! [`consumers`]: super::consumers
 //!
-//! # Adding a variant
+//! # Adding a case
 //!
 //! Add a row below. The compiler will not let you skip it, and it will not let
 //! you skip the posture either — but a posture is a **claim**, so read
@@ -33,12 +33,12 @@
 //! problem": [`ConsumerPosture::Unclassified`] is a debt under a down-only
 //! ratchet ([`super::consumers::MAX_UNCLASSIFIED`]), and it will refuse to grow.
 //!
-//! Then propagate the variant to every downstream matcher — the table alone is
+//! Then propagate the case to every downstream matcher — the table alone is
 //! not enough:
 //!
 //! **Compile-enforced** — also exhaustive, so they will not build until you add
 //! an arm; but each break surfaces one crate at a time (CI stops at the first
-//! failing crate), which is exactly how #415's variant reached `main` before
+//! failing crate), which is exactly how #415's case reached `main` before
 //! breaking two crates on separate days — the then-existing `stella-pipeline`
 //! (#421; that crate was deleted from the workspace in #3865, and its
 //! `replay::event_signature` matcher went with it) then `stella-tui` (#422):
@@ -46,27 +46,27 @@
 //!   - `stella-tui` `textline::event_line`
 //!   - `stella-tui` `deck::trace_of`
 //!   - `stella-cli` `diag_bridge::DomainBridge::observe` — a record, a tally,
-//!     or deliberately nothing. Listed since #3616, which found it by being
+//!     or nothing. Listed since #3616, which found it by being
 //!     stopped by the compiler rather than by reading this list.
 //!
 //! **Silent** — wildcard / `matches!` arms the compiler CANNOT catch, so a new
-//! variant falls through to a default and is wrong only at runtime. These are
+//! case falls through to a default and is wrong only at runtime. These are
 //! the real trap; audit them by hand:
 //!   - `stella-tui` `deck::event_intensity` and `deck::status_from_event`: give
-//!     the variant an intensity / agent status if it should register on the
+//!     the case an intensity / agent status if it should register on the
 //!     fleet deck.
 //!
 //! The same duty applies to the other exhaustively-matched cross-crate enums
 //! this pattern warns about (`ToolOutput`, `BudgetOutcome`).
 //!
 //! Note that none of this is about *wire* safety any more — an older reader
-//! survives your new variant via [`AgentEvent::Unknown`]. It is about this
+//! survives your new case via [`AgentEvent::Unknown`]. It is about this
 //! workspace's own renderers staying complete.
 
 use super::AgentEvent;
 use super::consumers::{ConsumerPosture, SignalConsumers, Surface};
 
-/// Expands the variant table into the tag mapping, the known-tag list, and the
+/// Expands the case table into the tag mapping, the known-tag list, and the
 /// signal-consumer ledger.
 ///
 /// Each row is `Variant => "wire_tag", <posture>, <surfaces>;`. The `expr`
@@ -100,10 +100,10 @@ macro_rules! agent_event_tags {
             }
         }
 
-        /// Every `"type"` tag this build decodes into a typed variant.
+        /// Every `"type"` tag this build decodes into a typed case.
         ///
         /// The deserializer's forward-compat fallback keys off exactly this
-        /// list: a tag present here must parse into its variant or fail loudly;
+        /// list: a tag present here must parse into its case or fail loudly;
         /// a tag absent from it becomes [`AgentEvent::Unknown`]. Consumers can
         /// also use it to detect that a stream came from a newer stella.
         pub const KNOWN_TYPE_TAGS: &[&str] = &[$($tag,)*];
@@ -111,7 +111,7 @@ macro_rules! agent_event_tags {
         /// The signal-consumer ledger: what reads each event.
         ///
         /// Generated from the same table as [`KNOWN_TYPE_TAGS`], so it is total
-        /// over the variants by construction. Re-exported as
+        /// over the cases by construction. Re-exported as
         /// [`super::consumers::SIGNAL_CONSUMERS`], which is where its types and
         /// the remaining semantic checks live.
         pub const SIGNAL_CONSUMERS: &[SignalConsumers] = &[
@@ -135,12 +135,12 @@ macro_rules! agent_event_tags {
 //   `TENDENCY_EVENT_TYPES` (the behavioural fold), `db.rs::recall_timings`,
 //   and `sent_context.rs::journal_payloads`.
 // - **`stella-serve`**'s `observe/tally.rs::TallyFold::observe` folds ten
-//   variants into the `TurnTally` on each settle record — the counts a host
+//   cases into the `TurnTally` on each settle record — the counts a host
 //   reads to tell a wedged turn from a waiting one. That is the arm
 //   `Surface::Serve` names.
 // - **`stella-cli/src/diag_bridge.rs`** writes a diagnostic record for nearly
-//   every variant. Recording is not deciding, so it earns no posture on its
-//   own; a row whose only readers are the bridge and the exhaustive TUI
+//   every case. Recording is not deciding, so it earns no posture on its
+//   own; a row whose only readers are the bridge and exhaustive interactive mode
 //   renderers is `RecordedOnly`.
 agent_event_tags! {
     // The run owner's stage boundaries. `Surfaced` on both axes: the
@@ -229,8 +229,8 @@ agent_event_tags! {
         &[Surface::Observatory];
     // The park pair (#1471, #1857). `Surfaced`: serve's tally counts spans,
     // wakes, polls and licensed seconds, which is what keeps its `stages`
-    // progress axis honest — a host reading a stalled turn can tell a
-    // deliberate wait from a hang. Both tags sit in the Observatory's journal
+    // progress axis correct — a host reading a stalled turn can tell a
+    // wait it asked for from a hang. Both tags sit in the Observatory's journal
     // query. The park loop itself runs on `stella-core::driver::waiting`, so
     // these events report it and never drive it.
     TurnParked => "turn_parked",
@@ -313,10 +313,10 @@ agent_event_tags! {
     // evidence, not in what a human sees. The engine's own halt is decided by
     // the typed `GoalVerifierVerdict` (`stella-core/src/goal.rs`), never by
     // this event, so `site` names the reflection consumer rather than the loop.
-    // `surfaces` stays empty and that is not a weaker claim: the TUI renders
-    // every variant by construction (see `Surface`'s doc), the offline HTML
+    // `surfaces` stays empty and that is not a weaker claim: interactive mode renders
+    // every case by construction (see `Surface`'s doc), the offline HTML
     // export in `stella-cli/src/export/transcript.rs` reads the recorded
-    // stream rather than selecting variants, and no `Surface` chooses this tag
+    // stream rather than selecting cases, and no `Surface` chooses this tag
     // — the Observatory's journal query (`journal.rs`) and its
     // `TENDENCY_EVENT_TYPES` (`sessions.rs`) both name explicit `event_type`
     // lists that omit `goal_verdict`. `stella-cli/src/diag_bridge.rs` emits a
@@ -360,7 +360,7 @@ agent_event_tags! {
         },
         &[Surface::Observatory];
     // `RecordedOnly`: a memory write announces itself and nothing reads the
-    // announcement — the diagnostic bridge records one, the TUI's textline
+    // announcement — the diagnostic bridge records one, interactive mode's textline
     // renders a line by exhaustive match, and no Observatory query names the
     // tag. Wiring a real consumer (a memory-pressure view, or a reflection
     // input) is what #4501 leaves open here.
@@ -387,7 +387,7 @@ agent_event_tags! {
         &[];
     // The verification pair, post-rail (#3790). Neither row is `Unclassified`
     // debt: the consumers are known and named below; what remains undecided —
-    // whether a verification plugin re-emits these variants — is a producer
+    // whether a verification plugin re-emits these cases — is a producer
     // question the plugin wire contract (#3511) settles, not an audit gap.
     //
     // `Proof`'s only production emitter was `stella-pipeline`, and that crate
@@ -398,8 +398,8 @@ agent_event_tags! {
     // (`stella-tui/src/deck/classify.rs::proof_trace`), the offline transcript
     // export (`stella-cli/src/export/transcript.rs`), and a debug-level diag
     // record — all readers of the recorded stream, none of them a selecting
-    // surface in [`Surface`]'s sense (the TUI renders every variant by
-    // construction, so it is deliberately not listable).
+    // surface in [`Surface`]'s sense (interactive mode renders every case by
+    // construction, so it is not listable).
     Proof => "proof",
         ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];
@@ -431,13 +431,13 @@ agent_event_tags! {
         },
         &[];
     // `RecordedOnly`: the hunk gate's decision is already made when this
-    // reports it, and the readers are the diagnostic bridge and the TUI's
+    // reports it, and the readers are the diagnostic bridge and interactive mode's
     // exhaustive textline. No Observatory query names the tag. Whether a
     // review surface should select it is what #4501 leaves open here.
     HunkReview => "hunk_review",
         ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
-    // `Behavioral`, and the one row where the TUI is the consumer rather than
+    // `Behavioral`, and the one row where interactive mode is the consumer rather than
     // a renderer. `Model::apply` latches `pending_ask_user`, and
     // `stella-tui/src/deck_ui/gates.rs::handle_focused_gates` reads that latch
     // to claim the next digit or `⏎` for the answer card. Sever the arm and
@@ -454,7 +454,7 @@ agent_event_tags! {
     // `stella-media` and left these with zero producers in this tree: they are
     // kept as the wire contract an out-of-tree media MCP surface would speak,
     // and removing them is a protocol break for anyone replaying a recording
-    // that carries the tag. The TUI's textline still renders both by
+    // that carries the tag. Interactive mode's textline still renders both by
     // exhaustive match. #4454 settled keep over retire, and
     // `AgentEvent::MediaProgress`'s doc comment carries the argument: this
     // stream has no version number to retire them at, so a dropped tag reads
@@ -495,7 +495,7 @@ agent_event_tags! {
     // `stella-core::subagent`'s dispatcher and this reports its phases. The
     // deck stamps a start/finish bracket from them (`deck.rs`), which is the
     // elapsed a human reads; nothing else consumes them. The controllable
-    // sub-session lanes are a separate mechanism and do not ride this variant.
+    // sub-session lanes are a separate mechanism and do not ride this case.
     SubAgent => "sub_agent",
         ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
@@ -505,7 +505,7 @@ agent_event_tags! {
     // answer in the transcript instead of joining `verdict` timestamps against
     // a `file_change` burst by hand.
     //
-    // Deliberately NOT `Behavioral`. Nothing branches on it, and claiming
+    // NOT `Behavioral`. Nothing branches on it, and claiming
     // otherwise would put a false statement in the ledger: the pipeline's own
     // decision is the typed `pipeline::delivery::Delivery` value this event is
     // a projection of, so severing the event changes what a reader sees and
@@ -513,10 +513,10 @@ agent_event_tags! {
     //
     // The posture is about consumption and stays true; the *producer* is gone.
     // `Pipeline::deliver_winner` left with `stella-pipeline` (#3865), so no run
-    // in this workspace emits this variant. #3881 decided to keep it rather
+    // in this workspace emits this case. #3881 decided to keep it rather
     // than retire it — recorded journals carry the tag, and a best-of-N wrapper
     // plugin reporting a delivery over the socket is what a re-homed producer
-    // would look like. The variant's own doc carries the argument.
+    // would look like. The case's own doc carries the argument.
     CandidateDelivery => "candidate_delivery",
         ConsumerPosture::Surfaced,
         &[Surface::Observatory];
@@ -541,7 +541,7 @@ agent_event_tags! {
     // as a transition, which is what makes it flush durably instead of
     // buffering — the signal decides persistence timing, not just content.
     //
-    // Deliberately not claiming the run owners as a third behavioral site:
+    // Not claiming the run owners as a third behavioral site:
     // `RunEnding` observes this event to author `RunComplete`, but it branches on
     // nothing — severing the signal would change what it reports, not what it
     // does.
@@ -564,7 +564,7 @@ agent_event_tags! {
     // steering was already withheld by the time this says so — and rendering
     // is exactly the realized value. The observatory journal names it in its
     // own whitelist, so the claim below is checkable rather than decorative,
-    // and the TUI renders it the way it renders every variant.
+    // and interactive mode renders it the way it renders every case.
     SteeringWithheld => "steering_withheld",
         ConsumerPosture::Surfaced,
         &[Surface::Observatory];
