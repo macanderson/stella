@@ -178,7 +178,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-red-claim.sh
 
-      - name: the retired-hex ban, in every notation it watches
+      - name: the retired-hex ban in every notation, and the citation check
         if: ${{ !cancelled() }}
         run: ./scripts/test-tokens.sh
 

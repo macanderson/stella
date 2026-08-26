@@ -367,7 +367,7 @@ tokens: ## Validate the colour system: hue clamp, generated-file sync, no retire
 	@python3 ./scripts/check-tokens.py
 
 .PHONY: tokens-test
-tokens-test: ## Test the retired-hex ban across every notation it watches (hermetic; not part of `gate`)
+tokens-test: ## Test the colour guard: the ban in every notation, and the citation check (hermetic; not part of `gate`)
 	./scripts/test-tokens.sh
 
 .PHONY: tokens-update

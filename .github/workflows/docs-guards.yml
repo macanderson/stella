@@ -1,8 +1,8 @@
 name: docs-guards
 
-# The guards over prose, listed below and enumerated by the job's own steps.
-# None needs a Rust toolchain, which is why they live here rather than in ci.yml
-# -- that workflow deliberately skips its Rust jobs for a diff confined to
+# The guards over prose and colour, listed below and enumerated by the job's own
+# steps. None needs a Rust toolchain, which is why they live here rather than in
+# ci.yml -- that workflow deliberately skips its Rust jobs for a diff confined to
 # `docs/**`, `website/**` and `*.md` (a job-level prose filter since #1892), and
 # this one triggers on exactly those paths.
 #
@@ -68,6 +68,15 @@ name: docs-guards
 #     docs/brand/README.md ever invoked it. `--check` returns before it reaches
 #     rsvg-convert, so it needs no renderer and no desktop font.
 #
+# 10. the four colour rulers (scripts/check-tokens.py with gen-tokens.py
+#     --check, check-hue-separation.py, check-contrast.py, check-css-vars.py):
+#     what kind of colour a value is, whether two of them can be told apart,
+#     whether one can be read on its ground, and whether a token sheet's every
+#     var() resolves. They ran only in ci.yml, whose `check` job is skipped
+#     whole for a diff confined to `docs/**` and `website/**` -- the diff whose
+#     subject is the brand kit, the standalone HTML documents, the two
+#     hand-maintained token mirrors and the decks (#3653).
+#
 # Rust sources are in the path filter because the first three read them: a
 # citation added to a .rs comment is exactly how one goes stale, and the
 # subcommand list the third guard checks is itself a Rust enum.
@@ -89,6 +98,13 @@ on:
       - "scripts/website-rust-inputs.txt"
       - "scripts/file-size-baseline.txt"
       - "README.md"
+      - "scripts/check-tokens.py"
+      - "scripts/gen-tokens.py"
+      - "scripts/check-hue-separation.py"
+      - "scripts/check-contrast.py"
+      - "scripts/check-css-vars.py"
+      - "scripts/contrast-baseline.txt"
+      - "design/tokens/**"
       - ".github/workflows/docs-guards.yml"
   push:
     branches: [main]
@@ -108,6 +124,13 @@ on:
       - "scripts/website-rust-inputs.txt"
       - "scripts/file-size-baseline.txt"
       - "README.md"
+      - "scripts/check-tokens.py"
+      - "scripts/gen-tokens.py"
+      - "scripts/check-hue-separation.py"
+      - "scripts/check-contrast.py"
+      - "scripts/check-css-vars.py"
+      - "scripts/contrast-baseline.txt"
+      - "design/tokens/**"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
 
@@ -152,6 +175,36 @@ jobs:
       - name: docs prose spells the wordmark lowercase
         if: ${{ !cancelled() }}
         run: bash scripts/check-brand-case.sh
+
+      # The four colour rulers. They run in ci.yml, and ci.yml's `check` job is
+      # skipped whole for a diff confined to `docs/**` and `website/**` — which
+      # is the diff every one of them exists to judge. `docs/brand/`, the six
+      # standalone HTML documents, the two hand-maintained token mirrors and the
+      # decks are all inside the skipped paths, so a PR reintroducing a retired
+      # hex into the brand kit, or darkening a licensed pairing, could land with
+      # every reported check green (#3653). Same shape as #3888 and #4632 above,
+      # one subject over.
+      #
+      # `--check` on the generator rides with them because it answers the
+      # question the others assume: that the artifacts they read off the
+      # authority are the ones the authority would produce.
+      - name: the colour system is the one in the tree
+        if: ${{ !cancelled() }}
+        run: |
+          python3 scripts/gen-tokens.py --check
+          python3 scripts/check-tokens.py
+
+      - name: no two web semantic roles sit within 30° of each other
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-hue-separation.py
+
+      - name: every licensed colour pairing is readable on its ground
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-contrast.py
+
+      - name: every var() in a token sheet resolves
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-css-vars.py
 
       # Both directions matter here, which is why it runs in ci.yml too. A new
       # guard is a Makefile change (ci.yml sees it); an edit that quietly drops

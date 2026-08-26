@@ -61,7 +61,7 @@
   --st-gold-bright: #f7d96b; /* tiny live indicators only */
   --st-silver: #a9aab5; /* secondary emphasis, incoming context */
   --st-silver-type: #bfc1cc; /* syntax types, tertiary labels */
-  --st-text: #f4f1ea; /* primary text on dark */
+  --st-text: #e8e8ec; /* primary text on dark, in the deck */
   --st-muted: #777782; /* secondary text */
   --st-dim: #4b4b56; /* hints, captions, line numbers */
   --st-comment: #565660; /* code comments */

@@ -417,7 +417,17 @@
       "Hexes that may not appear anywhere outside this file and the generated",
       "artifacts that carry the supersession note. Each entry names where it came",
       "from, so a reader hitting the guard learns which retired system they are",
-      "looking at rather than only that they are wrong."
+      "looking at rather than only that they are wrong.",
+      "",
+      "Most entries are a superseded kit. The last four are not: they were never",
+      "a kit at all. website/public/presentations/investor-deck.html carried its",
+      "own warm palette, matching neither v1.0 nor v2.0, and it shipped on a",
+      "public URL beside two other brand generations (#3653). A value nobody",
+      "specified has exactly the same standing here as one that was retired --",
+      "no legitimate use -- so it is banned on the same list rather than a",
+      "second one. The tree carries none of the four; they are listed so",
+      "reintroducing one fails, which is what #3653's own Verify step asks for",
+      "and what nothing did until this entry existed."
     ],
     "values": [
       { "hex": "#FFB224", "was": "phosphor-era amber accent" },
@@ -438,7 +448,12 @@
       { "hex": "#A97227", "was": "brand v4.0 gold shade" },
       { "hex": "#674415", "was": "brand v4.0 gold shade" },
       { "hex": "#462E10", "was": "brand v4.0 gold shade" },
-      { "hex": "#291B0D", "was": "brand v4.0 gold shade" }
+      { "hex": "#291B0D", "was": "brand v4.0 gold shade" },
+
+      { "hex": "#D6A526", "was": "investor-deck's invented warm gold -- never a kit value (#3653)" },
+      { "hex": "#8B6720", "was": "investor-deck's invented warm gold -- never a kit value (#3653)" },
+      { "hex": "#865D08", "was": "investor-deck's invented warm gold -- never a kit value (#3653)" },
+      { "hex": "#F4EFE4", "was": "investor-deck's invented warm paper -- never a kit value (#3653)" }
     ]
   }
 }
