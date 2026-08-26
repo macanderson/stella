@@ -230,7 +230,7 @@ uv run --with fonttools --with pyobjc-framework-CoreText \
 Top to bottom:
 
 1. **Tab bar** (1 row): `SESSION AGENTS TRACES GRAPH FILES SKILLS MCP ISSUES SETTINGS`, active tab gold, wordmark right-aligned.
-2. **Plan breadcrumb strip** (1 row, SESSION only): `▸ plan r3 · task 3 wire dedup digest · 2/6`. `^S` expands to the full plan panel. The transcript gets full width by default; the old permanent side panel is gone.
+2. **Plan breadcrumb strip** (1 row, SESSION only): `▸ plan r3 · task 3 wire dedup digest · 2/6`. `^S` expands to the full plan panel. The transcript gets full width by default; the old permanent side panel is gone. On SESSION the strip and the tab bar share one row: the breadcrumb takes it while a plan or an opened lane gives it something to say, and the tab list takes it back when neither does — a default screen whose only chrome said `no plan yet` was also the only screen that never named the other eight tabs.
 3. **Body**: tab content.
 4. **Prompt block**: pipeline line (`✓ plan ▸ execute [bar] 50% · verify`), input line `>>>`, keybinding hint row.
 5. **Status bar** (1 row, replaces the old two-row wall): `worker · stage · ctx [bar] 35% · $spend · saved $x · ✉ n · ? help`. MODEL detail, CPU, MEM, WARMTH, and ENGINE move behind `?` and the AGENTS tab. Money renders gold. Meters render gold fill on `border` gray. No pink, no green meters.

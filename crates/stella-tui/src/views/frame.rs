@@ -22,10 +22,17 @@
 //!
 //! ## The tab row
 //!
-//! One row, no border. On the SESSION tab it is the breadcrumb strip: the tab
-//! name, then the plan's position. Everywhere else it is the tab list with the
-//! active tab in gold. `stella*` holds the right edge on every screen
-//! (SPEC 3.3).
+//! One row, no border. On the SESSION tab it is the breadcrumb strip — the tab
+//! name, then the plan's position, or the agent path inside a lane — and the
+//! tab list everywhere else, with the active tab in gold. `stella*` holds the
+//! right edge on every screen (SPEC 3.3).
+//!
+//! A SESSION with **no plan and no opened lane** shows the tab list too: the
+//! breadcrumb had nothing to say there (`▸ no plan yet`, dead chrome on the
+//! default screen), and that row was the only place a new reader could have
+//! learned the other eight tabs exist (#5049). The moment a plan or a lane
+//! gives the breadcrumb something to say, it takes the row back — which is
+//! also the form the renderings draw.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -52,7 +59,9 @@ pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut
     let width = row.width as usize;
 
     let left = match ui.tab {
-        DeckTab::Session => breadcrumb_spans(model, ui),
+        DeckTab::Session => {
+            breadcrumb_spans(model, ui).unwrap_or_else(|| tab_list_spans(DeckTab::Session))
+        }
         tab => tab_list_spans(tab),
     };
 
@@ -104,7 +113,8 @@ fn tab_list_spans(active: DeckTab) -> Vec<Span<'static>> {
 }
 
 /// The SESSION tab's breadcrumb: `SESSION  ▸ plan · task 3 wire dedup digest
-/// · 2/6`, or `SESSION  ▸ no plan yet` (SPEC 5 item 2).
+/// · 2/6` (SPEC 5 item 2), or `None` when it has nothing to say — no plan and
+/// no opened lane — which hands the row back to the tab list (#5049).
 ///
 /// At an opened lane it is the **agent path** instead — `SESSION  ▸ lead ▸
 /// sub:2 · running · ⌫ back` — because the plan is the lead's and a reader
@@ -115,7 +125,7 @@ fn tab_list_spans(active: DeckTab) -> Vec<Span<'static>> {
 /// The plan carries no revision number yet — the `r3` of the renderings is a
 /// plan-graph fact this deck does not fold (#4333) — so the strip names the
 /// plan by its state word when it is not simply running.
-fn breadcrumb_spans(model: &WorkspaceModel, ui: &DeckUi) -> Vec<Span<'static>> {
+fn breadcrumb_spans(model: &WorkspaceModel, ui: &DeckUi) -> Option<Vec<Span<'static>>> {
     let lit = Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD);
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
@@ -143,12 +153,9 @@ fn breadcrumb_spans(model: &WorkspaceModel, ui: &DeckUi) -> Vec<Span<'static>> {
         spans.push(Span::styled(" · ", dim));
         spans.push(Span::styled("⌫", muted));
         spans.push(Span::styled(" back", dim));
-        return spans;
+        return Some(spans);
     }
-    let Some(plan) = plan_of(model, ui).filter(|p| !p.is_empty()) else {
-        spans.push(Span::styled("no plan yet", dim));
-        return spans;
-    };
+    let plan = plan_of(model, ui).filter(|p| !p.is_empty())?;
     spans.push(Span::styled("plan", muted));
     if plan.state != PlanState::Started {
         spans.push(Span::styled(format!(" {}", plan.state.label()), muted));
@@ -161,7 +168,7 @@ fn breadcrumb_spans(model: &WorkspaceModel, ui: &DeckUi) -> Vec<Span<'static>> {
     let (done, total) = plan.progress();
     spans.push(Span::styled(" · ", dim));
     spans.push(Span::styled(format!("{done}/{total}"), muted));
-    spans
+    Some(spans)
 }
 
 /// The focused agent's plan, if there is a focused agent.
@@ -311,6 +318,39 @@ mod tests {
             ],
         }));
         m
+    }
+
+    /// With no plan and no opened lane, SESSION's tab row is the tab list —
+    /// the breadcrumb had nothing to say, and the default screen must not be
+    /// the one place the other eight tabs are invisible (#5049).
+    #[test]
+    fn with_no_plan_the_session_row_is_the_tab_list() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        let ui = DeckUi {
+            tab: DeckTab::Session,
+            ..Default::default()
+        };
+        let area = Rect::new(0, 0, 100, 1);
+        let mut buf = Buffer::empty(area);
+        render_tab_row(&model, &ui, area, &mut buf);
+        let row = text(&buf);
+        for tab in DeckTab::ALL {
+            assert!(
+                row.contains(tab.title()),
+                "{} missing from {row}",
+                tab.title()
+            );
+        }
+        assert!(!row.contains("no plan yet"), "{row}");
+        assert!(row.trim_end().ends_with("stella*"), "{row}");
+        // SESSION is the lit tab: gold and bold, like every active tab.
+        let x = row.find("SESSION").expect("SESSION on the row") as u16;
+        assert_eq!(
+            buf.cell((x, 0)).expect("cell").fg,
+            token::GOLD,
+            "the active tab is lit"
+        );
     }
 
     /// SPEC 5 item 2: on SESSION the tab row is the breadcrumb, naming the
