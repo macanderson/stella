@@ -5,13 +5,13 @@
 // Guarded by:       scripts/check-wire-schema.sh (`make wire-schema`)
 //
 // The event stream emitted by `stella --output-format stream-json` (one JSON
-// object per line), by `stella-serve` over SSE, and folded by the TUI.
+// object per line), by `stella-serve` over SSE, and folded by interactive mode.
 //
 // A `"type"` value not listed here is NOT an error: it is an event from a
 // newer stella. Forward-compatible consumers keep such a line intact and move
 // on, exactly as `AgentEvent::Unknown` does on the Rust side.
 //
-// Every variant carries an optional `ts`: the wall-clock instant its sink wrote
+// Every case carries an optional `ts`: the wall-clock instant its sink wrote
 // the line, in milliseconds since the Unix epoch. It is stamped by the sink, not
 // by the event, so it is absent on any line recorded before the field existed —
 // treat it as optional forever, and clamp a negative delta, because a system
@@ -279,7 +279,7 @@ export interface ContextFrameRef {
   provider?: string;
   /**
    * The original source named by the frame's provenance chain. This is
-   * deliberately distinct from [`Self::provider`]: a host adapter may be
+   * distinct from [`Self::provider`]: a host adapter may be
    * `workspace-memory` while the record source remains `stella-context`.
    */
   source: string;
@@ -313,7 +313,7 @@ export interface ContextProviderUsage {
   frames_rejected: number;
   /**
    * Frames accepted — they passed consent, the timeout, and the
-   * budget-honesty audit.
+   * budget audit.
    */
   frames_served: number;
   /**
@@ -393,7 +393,7 @@ export type DeliveryOutcome = {
    * Whether a **passing verdict** stood behind the work.
    *
    * `false` is the ordinary case for a run that ran out of clock or came
-   * to rest on the revise rung, and it is deliberately not a reason to
+   * to rest on the revise rung, and it is not a reason to
    * withhold: a verdict is a claim about the work, not what decides
    * whether the work exists (#2927/#2943). Delivery never implies proof,
    * and this field is what keeps the write from reading as a pass.
@@ -409,7 +409,7 @@ export type DeliveryOutcome = {
 };
 
 /**
- * Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.
+ * Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.
  */
 export type ErrorClass = "invalid_input" | "not_found" | "permission_denied" | "refused_by_policy" | "timeout" | "environment" | "internal" | "other";
 
@@ -821,8 +821,8 @@ export type MediaKind = "image" | "svg" | "video";
  * catch-all for an unrecognized one. A role token this build has never seen
  * fails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —
  * because a known `"type"` with a body that does not fit stays a hard error by
- * design (see the module docs). Adding a variant here is therefore a
- * one-directional change in a way adding an [`AgentEvent`] variant no longer
+ * design (see the module docs). Adding a case here is therefore a
+ * one-directional change in a way adding an [`AgentEvent`] case no longer
  * is.
  */
 export type ModelCallRole = "unknown" | "triage" | "research" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "verdict" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
@@ -1113,7 +1113,7 @@ export type StageName = string;
 /**
  * Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
  *
- * Deliberately **not** `#[serde(default)]`. A default would silently claim
+ * **Not** `#[serde(default)]`. A default would silently claim
  * one scope for every historical recording, and half of them are the other
  * one — a decode ambiguity that would live in the fixtures forever. A
  * recording written before this field existed decodes through
@@ -1244,7 +1244,7 @@ export interface TaskItem {
   /**
    * What this task means by done (SPEC 7.1).
    *
-   * `None` is *nobody has said yet*, and is deliberately not the same fact
+   * `None` is *nobody has said yet*, and is not the same fact
    * as [`TaskContract::ReadOnly`], which is *somebody looked and there is
    * nothing to prove*. A board that collapsed the two would let an
    * undeclared task close on the same terms as one declared harmless —
@@ -1331,7 +1331,7 @@ export type ToolOutput = {
      * the tool produces no structured output, which is every tool
      * written before this field existed. Optional and absent-when-`None`
      * so every payload written before the field round-trips
-     * byte-identically (invariant #4), and so the content bytes the
+     * byte-identically (AGENTS.md #4), and so the content bytes the
      * model sees are never perturbed by structure.
      */
     data?: unknown;
@@ -1344,7 +1344,7 @@ export type ToolOutput = {
      * this error has not been audited into a class yet, which is
      * distinct from any class it could be assigned. Optional and
      * absent-when-`None` so every payload written before the field
-     * existed round-trips byte-identically (invariant #4), and so the
+     * existed round-trips byte-identically (AGENTS.md #4), and so the
      * message bytes the model sees are never perturbed by
      * classification.
      */
@@ -1359,7 +1359,7 @@ export type ToolOutput = {
 
 /**
  * Content-free reason a provider attempt cannot contribute a truthful usage
- * envelope. Error bodies and prompts are deliberately unrepresentable.
+ * envelope. Error bodies and prompts are unrepresentable.
  */
 export type UsageIncompleteReason = "provider_error" | "timeout" | "cancelled";
 
@@ -1406,7 +1406,7 @@ export interface VerdictEvidence {
  * Which authority held a workspace's steering back
  * ([`AgentEvent::SteeringWithheld`], #2302/#3616).
  *
- * Two causes resolve one refusal, and they are not interchangeable: they have
+ * The two causes that resolve one refusal are not interchangeable: they have
  * different remedies, and one of them the user cannot lift at all. A harness
  * that folded them together would tell an operator to set a flag they have
  * already set.
@@ -1422,7 +1422,7 @@ export type Withholder = "project_untrusted" | "managed_ceiling";
  * associated functions instead of the trait impls, so the hand-written
  * [`Serialize`]/[`Deserialize`] impls in `event.rs` can delegate to it after
  * routing [`AgentEvent::Unknown`] around it. Without that indirection the
- * forward-compat fallback would mean hand-writing a visitor for every variant.
+ * forward-compat fallback would mean hand-writing a visitor for every case.
  */
 export type AgentEvent = {
   /**
@@ -1546,7 +1546,7 @@ export type AgentEvent = {
 } | {
   /**
    * Engine-side probes spent while parked — the poll history the
-   * transcript deliberately never carries.
+   * transcript never carries.
    */
   polls_used: number;
   /**
@@ -1748,11 +1748,11 @@ export type AgentEvent = {
    * deadline is armed and has already passed.
    *
    * Milliseconds rather than a `Duration` because this is a wire type
-   * (invariant 4): a whole-millisecond integer round-trips through JSON
+   * (AGENTS.md #4): a whole-millisecond integer round-trips through JSON
    * byte-for-byte, where a float of seconds would not.
    *
    * `serde(default)` — absent on every journal written before this
-   * field existed, where it reads as "unarmed". That is the honest
+   * field existed, where it reads as "unarmed". That is the right
    * decode: those journals genuinely could not say otherwise.
    */
   deadline_remaining_ms?: number | null;
@@ -1813,8 +1813,8 @@ export type AgentEvent = {
    * consumers rebuild the correction from these pairs, and a
    * corrected estimate here would compound the correction on every
    * round trip. Attachment weight is excluded — the media estimate is
-   * a deliberate ~80× over-estimate of billed tokens, right for
-   * context pressure and poison as a drift sample. `0` means no
+   * a ~80× over-estimate of billed tokens, right for context pressure
+   * and poison as a drift sample. `0` means no
    * estimate was taken (pre-drift emitters — hence `serde(default)`,
    * so old streams still parse).
    */
@@ -1846,7 +1846,7 @@ export type AgentEvent = {
    * configured default. Empty only on legacy events.
    *
    * For a *gateway* this names the gateway (`openrouter`), which is as
-   * far as this field can honestly go — the silicon behind it rides in
+   * far as this field can go — the silicon behind it rides in
    * `upstream_provider`.
    */
   provider?: string;
@@ -1911,7 +1911,7 @@ export type AgentEvent = {
    * difference. A stream cut mid-answer has usually already been told
    * what the prompt cost, so `Some` here turns a bare warning into a
    * number: how much of this attempt we can actually account for.
-   * `None` is the honest answer for a failure that learned nothing —
+   * `None` is the answer for a failure that learned nothing —
    * a connect timeout, a cancelled call, a 5xx with no stream.
    *
    * Token counts are content-free, so carrying them keeps this event
@@ -2094,7 +2094,7 @@ export type AgentEvent = {
    *
    * `Some` only when `context.lifecycle.enabled` is on; `None`
    * otherwise and on every manifest recorded before the frame existed.
-   * The hash covers what entered the prompt and deliberately excludes
+   * The hash covers what entered the prompt and excludes
    * the accounting around it — `provider`, `model`, `call_seq`, the two
    * budget numbers, and each entry's `resident_since_step` — so two runs
    * of identical work agree even when served by different models. See
@@ -2123,7 +2123,7 @@ export type AgentEvent = {
    *
    * Requested, never executed: it is read off the calls' own text so
    * the same transcript classifies the same way every step, which is
-   * what keeps the rung deterministic (invariant #2). A call killed by
+   * what keeps the rung deterministic (AGENTS.md #2). A call killed by
    * the shell's own timeout still contributes its full request, so
    * this is an upper bound on wall clock. Executed seconds are already
    * derivable from `ToolResult.duration_ms`, and the gap between the
@@ -2258,7 +2258,7 @@ export type AgentEvent = {
   type: "sub_agent";
 } | {
   /**
-   * Deliberately **not** `serde(flatten)`: `AgentEvent` is internally
+   * **Not** `serde(flatten)`: `AgentEvent` is internally
    * tagged through a `remote = "Self"` codec and carries a `schemars`
    * derive, and flattening a second internally-tagged enum into that is
    * where both the wire schema and the forward-compat fallback stop
