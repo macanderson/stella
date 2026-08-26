@@ -15,7 +15,7 @@
 //! non-carrying cases separately so both `match`es are exhaustive, which makes
 //! the classification `E0004`; a `_ => None` arm would let a new case fall
 //! through to *untagged* and be wrong only at runtime, as a task whose ledger
-//! misses a whole class of its own work. That is the shape [`super::tags`]
+//! misses a whole class of its own work. That is the shape `event/tags.rs`
 //! warns about under "Silent — wildcard arms the compiler CANNOT catch".
 
 use super::AgentEvent;

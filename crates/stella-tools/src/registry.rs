@@ -699,7 +699,7 @@ impl ToolRegistry {
     /// authority and no copy to keep fresh — see [`stella_core::RunningTask`]
     /// for why that matters when six tools, a plan seeding and every `/clear`
     /// can move the board underneath it. The board is read through a poisoned
-    /// lock for the reason [`Self::board_snapshot`] gives one method down.
+    /// lock for the reason `board_snapshot` gives one method down.
     pub fn running_task(&self) -> stella_core::RunningTask {
         let board = self.task_board.clone();
         stella_core::RunningTask::from_fn(move || {
