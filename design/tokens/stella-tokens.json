@@ -41,10 +41,12 @@
     "",
     "What the sweep can and cannot see is stated at check 4 in",
     "scripts/check-tokens.py. The short version: it is a NAME sweep, not a render",
-    "trace. It cannot follow a value copied under another name, which is why the",
-    "eleven web stops below sit at `gap` while the site ships every one of their",
-    "values -- as literals under --stella-* rather than through var(--st-*). That",
-    "is #4978's subject and completing those sheets is what would paint them."
+    "trace, so it cannot follow a value copied under another name. Eleven of the",
+    "web stops below sat at `gap` for exactly that reason -- the site shipped",
+    "their values as literals under --stella-* rather than through var(--st-*).",
+    "#4978 completed the two hand-mirrored sheets and repointed those roles, so",
+    "they are `painted` now: the fix the posture asked for, rather than a posture",
+    "written to match the code."
   ],
   "version": "5.1.0",
   "name": "stella black and gold",
@@ -373,7 +375,7 @@
       "css": "--st-void",
       "role": "below the canvas: full-bleed backdrops",
       "surfaces": ["web-dark"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "gold-ink",
@@ -382,7 +384,7 @@
       "css": "--st-gold-ink",
       "role": "gold as TEXT on the light ground, where the metal cannot clear AA",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "paper-ground",
@@ -391,7 +393,7 @@
       "css": "--st-paper-ground",
       "role": "the warm paper page ground, one step under the panel",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "paper-raised",
@@ -400,7 +402,7 @@
       "css": "--st-paper-raised",
       "role": "light surface raised above the page ground",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "paper-row",
@@ -409,7 +411,7 @@
       "css": "--st-paper-row",
       "role": "light hover and selected rows",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "paper-seam",
@@ -418,7 +420,7 @@
       "css": "--st-paper-seam",
       "role": "light seam: the hairline under a border",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "ink-muted",
@@ -427,7 +429,7 @@
       "css": "--st-ink-muted",
       "role": "secondary text on light surfaces",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "green-ink",
@@ -436,7 +438,7 @@
       "css": "--st-green-ink",
       "role": "pass, as text on the light ground",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "amber",
@@ -445,7 +447,7 @@
       "css": "--st-amber",
       "role": "warning: the one status the core palette does not name",
       "surfaces": ["web-dark"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "amber-ink",
@@ -454,7 +456,7 @@
       "css": "--st-amber-ink",
       "role": "warning, as text on the light ground",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     },
     {
       "name": "red-ink",
@@ -463,7 +465,7 @@
       "css": "--st-red-ink",
       "role": "fail, as text on the light ground",
       "surfaces": ["web-light"],
-      "paint": { "gap": "#4978" }
+      "paint": "painted"
     }
   ],
   "banned": {
