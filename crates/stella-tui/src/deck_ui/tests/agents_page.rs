@@ -286,3 +286,52 @@ fn the_model_menu_offers_this_providers_allowed_models_only() {
         vec!["zai/glm-5.2".to_string()]
     );
 }
+
+/// **The witness for #5051, the AGENTS-page half.** The page replaces the
+/// deck's bands with a frame of its own and drew none of their chrome: no
+/// wordmark anywhere on it, and a third prompt glyph (`" ❯ "`) where the deck
+/// and `views::frame` both say `">>> "`.
+///
+/// Asserted over the render buffer because painting is the whole defect —
+/// there is no key, no state and no event that observes a missing wordmark.
+/// The header row is read as a row so the mark's *place* is pinned too: SPEC
+/// 3.3 puts it in the upper right, and a `stella*` anywhere else on the frame
+/// would satisfy a `contains` and not the spec.
+#[test]
+fn the_agents_page_wears_the_decks_wordmark_and_prompt_prefix() {
+    let model = model_with(&["lead"]);
+    let ui = page_ui();
+    let area = ratatui::layout::Rect::new(0, 0, 100, 20);
+    let mut buf = ratatui::buffer::Buffer::empty(area);
+    crate::views::agents_page::render(&model, &ui, area, &mut buf);
+    let frame = page_text(&buf);
+
+    let head = frame.lines().next().expect("the page draws a header row");
+    assert!(head.contains(" AGENTS"), "the page names itself:\n{frame}");
+    assert!(
+        head.trim_end().ends_with("stella*"),
+        "the wordmark holds the upper right on every screen (SPEC 3.3):\n{frame}"
+    );
+    assert!(
+        frame.contains(">>> describe a task for a new session"),
+        "the page's composer takes the shared prompt prefix:\n{frame}"
+    );
+    assert!(
+        !frame.contains('❯'),
+        "…and no longer invents a third one:\n{frame}"
+    );
+}
+
+/// Flatten a render buffer to one `String` per row, styling stripped — the
+/// buffer-not-ANSI form the rest of this crate's paint tests assert in.
+fn page_text(buf: &ratatui::buffer::Buffer) -> String {
+    let area = *buf.area();
+    (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}

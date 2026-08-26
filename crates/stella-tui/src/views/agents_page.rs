@@ -5,7 +5,7 @@
 //! **full-frame** surface — not a centered dialog — for running the fleet.
 //!
 //! ```text
-//! AGENTS · 1 waiting · 2 working · 3 completed                r refresh
+//! AGENTS · 1 waiting · 2 working · 3 completed                         stella*
 //!
 //! WORKING
 //! ▸ ◆ req:1  running · 0:24 · zai/glm-5.2 · $0.03
@@ -17,7 +17,7 @@
 //!   ● stella: wire the dedup digest              this session · 3h ago
 //!   ○ stella: fix the parser                          ↩ resume · 2d ago
 //!
-//! ❯ describe a task for a new session
+//! >>> describe a task for a new session
 //!   ⏎ start a new agent · ↑↓ select · ⏎ open · n new session · esc back
 //! ```
 //!
@@ -75,6 +75,7 @@ use crate::deck_ui::sessions::{is_live, visible_session_rows};
 use crate::deck_ui::{DeckAction, DeckUi};
 use crate::envelope::{AgentControl, AgentStatus, SessionInfo, WorkspaceInput};
 use crate::views::cards;
+use crate::views::frame::{PROMPT_PREFIX, PROMPT_PREFIX_W, render_chrome_row};
 
 /// The second `←` must land inside this window to open the page.
 pub const LEFT_DOUBLE_WINDOW: Duration = Duration::from_millis(1500);
@@ -85,12 +86,6 @@ pub const LEFT_DOUBLE_WINDOW: Duration = Duration::from_millis(1500);
 /// `/inspect`), and `/export` is the named example of one that must not run
 /// from here at all.
 pub const PAGE_COMMANDS: &[&str] = &["/model", "/info", "/models", "/theme", "/help"];
-
-/// The composer's prompt prefix, and its display width — chrome, never part of
-/// the submitted string, and the offset the caret sits past.
-const PROMPT_PREFIX: &str = " ❯ ";
-/// Display width of [`PROMPT_PREFIX`].
-const PROMPT_PREFIX_W: usize = 3;
 
 /// Rows of a command's reply the page shows: enough for a `/model` summary or
 /// a short refusal, and bounded because the page's subject is the fleet — a
@@ -606,15 +601,21 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
     let selected = ui.agents_page.sel.min(list.len().saturating_sub(1));
     let (waiting, working, completed) = counts(model, ui);
 
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::from(vec![
+    // The header is this page's tab row: its own name and counts on the left,
+    // the wordmark on the right, placed by the deck's own chrome row so the
+    // mark sits in the cell it sits in on every other screen (SPEC 3.3).
+    let header = vec![
         Span::styled(" AGENTS", gold.add_modifier(Modifier::BOLD)),
         Span::styled(
             format!(" · {waiting} waiting · {working} working · {completed} completed"),
             muted,
         ),
-    ]));
-    lines.push(Line::default());
+    ];
+
+    // The blank row under the header stays part of the body, so the body's
+    // height and the foot's are the numbers `composer_cursor` already agrees
+    // with — the header simply moved out of the same `Paragraph`.
+    let mut lines: Vec<Line<'static>> = vec![Line::default()];
 
     let mut section = None;
     for (i, row) in list.iter().enumerate() {
@@ -665,11 +666,21 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
     // pinned to the frame's foot by the one geometry `composer_cursor` reads.
     let foot_geom = foot(model, ui, area);
     let body_h = area.height.saturating_sub(foot_geom.height);
-    let body = Rect {
-        height: body_h,
-        ..area
-    };
-    Paragraph::new(lines.into_iter().take(body_h as usize).collect::<Vec<_>>()).render(body, buf);
+    if body_h > 0 {
+        render_chrome_row(header, Vec::new(), area, buf);
+        let body = Rect {
+            y: area.y + 1,
+            height: body_h - 1,
+            ..area
+        };
+        Paragraph::new(
+            lines
+                .into_iter()
+                .take(body.height as usize)
+                .collect::<Vec<_>>(),
+        )
+        .render(body, buf);
+    }
 
     let reply_h = foot_geom.reply.len() as u16;
     let mut foot_lines: Vec<Line<'static>> = foot_geom.reply;
@@ -693,21 +704,27 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         .skip(first)
         .take(foot_geom.composer_h as usize)
     {
-        let prefix = if r == 0 { PROMPT_PREFIX } else { "   " };
+        // Continuation rows are blanked to the prefix's own width, so a
+        // wrapped task stays in one column with the first row.
+        let prefix = if r == 0 {
+            PROMPT_PREFIX.to_string()
+        } else {
+            " ".repeat(PROMPT_PREFIX_W)
+        };
         if r == 0 && row.is_empty() && ui.agents_page.composer.is_blank() {
             foot_lines.push(Line::from(vec![
-                Span::styled(prefix.to_string(), gold),
+                Span::styled(prefix, gold),
                 Span::styled("describe a task for a new session".to_string(), dim),
             ]));
         } else {
             foot_lines.push(Line::from(vec![
-                Span::styled(prefix.to_string(), gold),
+                Span::styled(prefix, gold),
                 Span::styled(row.clone(), text),
             ]));
         }
     }
     foot_lines.push(Line::from(Span::styled(
-        "   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back",
+        "    ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back",
         dim,
     )));
     let foot_area = Rect {

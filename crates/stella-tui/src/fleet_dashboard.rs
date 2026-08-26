@@ -7,7 +7,7 @@
 //! task, the last thing each worker did, and two clocks that answer "is
 //! anything actually happening" at a glance. The deeper per-agent counters
 //! (graph queries, per-file CRUD, cache economics, …) live in `stella observe`
-//! — the footer says so.
+//! — the footer says so. Its header row is the deck's own chrome row (#5051).
 //!
 //! ## Purity + clocks
 //!
@@ -967,7 +967,7 @@ fn render_header(board: &FleetBoard, now: Instant, area: Rect, buf: &mut Buffer)
     } else {
         theme::TEXT_TERTIARY
     };
-    let line = Line::from(vec![
+    let left = vec![
         Span::styled(
             " FLEET ",
             Style::default()
@@ -988,8 +988,13 @@ fn render_header(board: &FleetBoard, now: Instant, area: Rect, buf: &mut Buffer)
         Span::raw("     "),
         Span::styled("FLEET-IDLE ", theme::text_secondary()),
         Span::styled(fmt_clock(idle), Style::default().fg(idle_color)),
-    ]);
-    Paragraph::new(line).render(area, buf);
+    ];
+    // This row is the dashboard's tab bar, so the wordmark holds its right edge
+    // as it does on every deck screen (SPEC 3.3). Drawn through the deck's own
+    // chrome row rather than re-aligned here: the dashboard is a separate frame
+    // but it is not a separate product, and it had shipped unbranded because
+    // nothing shared placed the mark for it (#5051).
+    crate::views::frame::render_chrome_row(left, Vec::new(), area, buf);
 }
 
 fn render_counts(board: &FleetBoard, view: &FleetView, area: Rect, buf: &mut Buffer) {

@@ -25,7 +25,7 @@
 //! One row, no border. On the SESSION tab it is the breadcrumb strip — the tab
 //! name, then the plan's position, or the agent path inside a lane — and the
 //! tab list everywhere else, with the active tab in gold. `stella*` holds the
-//! right edge on every screen (SPEC 3.3).
+//! right edge on every screen — deck or not ([`render_chrome_row`], SPEC 3.3).
 //!
 //! A SESSION with **no plan and no opened lane** shows the tab list too: the
 //! breadcrumb had nothing to say there (`▸ no plan yet`, dead chrome on the
@@ -45,41 +45,43 @@ use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::plan::{Plan, PlanState};
 
-/// The accent prompt prefix on every composer row. Chrome, never content.
+/// The accent prompt prefix on every composer row. Chrome, never content — it
+/// is never part of the submitted string and the caret cannot enter it.
+///
+/// One definition, because a prompt prefix is a thing a reader learns once.
+/// The deck's composer, the AGENTS page's composer and this module had each
+/// carried their own copy, and the page's had drifted to a third form (`" ❯ "`,
+/// three columns wide) that named the same act with a different glyph (#5051).
 pub const PROMPT_PREFIX: &str = ">>> ";
 /// Display width of [`PROMPT_PREFIX`].
 pub const PROMPT_PREFIX_W: usize = 4;
 
-/// Draw the tab row into the top row of `area`.
-pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+/// Draw one row of top chrome: `left` from the left edge, the `stella*`
+/// wordmark hard against the right with a cell of air after it, and `trailing`
+/// — whatever rides just inside the mark — between them (SPEC 3.3).
+///
+/// Every full-frame surface places the mark through this function rather than
+/// aligning it itself. That is the whole point: the deck, the AGENTS page and
+/// the fleet dashboard are three different frames, and three copies of "pad to
+/// the right edge, less one" is exactly how two of them came to draw no mark at
+/// all (#5051).
+///
+/// On a frame too narrow to hold both, `left` wins and the mark is dropped
+/// whole: a reader can always tell which surface they are on, and the brand is
+/// on every wider screen.
+pub fn render_chrome_row(
+    left: Vec<Span<'static>>,
+    trailing: Vec<Span<'static>>,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let row = Rect { height: 1, ..area };
     let width = row.width as usize;
 
-    let left = match ui.tab {
-        DeckTab::Session => {
-            breadcrumb_spans(model, ui).unwrap_or_else(|| tab_list_spans(DeckTab::Session))
-        }
-        tab => tab_list_spans(tab),
-    };
-
-    // The wordmark holds the right edge, with one cell of air after it. On a
-    // frame too narrow to hold both the tabs and the mark, the tabs win: a
-    // reader can always tell which tab is lit, and the brand is on every
-    // other screen.
-    let mut right: Vec<Span<'static>> = Vec::new();
-    if ui.tab == DeckTab::Session && plan_of(model, ui).is_some_and(|p| !p.is_empty()) {
-        // The chord comes from the keymap, never from a literal here: this
-        // hint is one of three surfaces printing it, and the other two had
-        // already drifted apart (#4341).
-        right.push(Span::styled(
-            format!("{} plan", crate::keymap::plan_card_chord()),
-            Style::new().fg(token::DIM),
-        ));
-        right.push(Span::raw("   "));
-    }
+    let mut right = trailing;
     right.extend(stella_tui_theme::wordmark::spans());
     right.push(Span::raw(" "));
 
@@ -91,6 +93,29 @@ pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut
         spans.extend(right);
     }
     Paragraph::new(Line::from(spans)).render(row, buf);
+}
+
+/// Draw the tab row into the top row of `area`.
+pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+    let left = match ui.tab {
+        DeckTab::Session => {
+            breadcrumb_spans(model, ui).unwrap_or_else(|| tab_list_spans(DeckTab::Session))
+        }
+        tab => tab_list_spans(tab),
+    };
+
+    let mut trailing: Vec<Span<'static>> = Vec::new();
+    if ui.tab == DeckTab::Session && plan_of(model, ui).is_some_and(|p| !p.is_empty()) {
+        // The chord comes from the keymap, never from a literal here: this
+        // hint is one of three surfaces printing it, and the other two had
+        // already drifted apart (#4341).
+        trailing.push(Span::styled(
+            format!("{} plan", crate::keymap::plan_card_chord()),
+            Style::new().fg(token::DIM),
+        ));
+        trailing.push(Span::raw("   "));
+    }
+    render_chrome_row(left, trailing, area, buf);
 }
 
 /// `SESSION AGENTS TRACES   GRAPH   FILES SKILLS MCP ISSUES SETTINGS` — the
