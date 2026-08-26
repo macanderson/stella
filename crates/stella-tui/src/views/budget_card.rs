@@ -45,15 +45,18 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
             primary,
         )));
     } else {
+        // Money renders gold, and its meter is gold on the border gray —
+        // SPEC 5's rule for every spend figure. Green is verdict ink here,
+        // and spend is a fact, not a pass.
         let mut spend_row = vec![
             Span::styled("run     ", dim),
-            Span::styled(format!("${spent:.2}"), Style::new().fg(token::GREEN)),
+            Span::styled(format!("${spent:.2}"), Style::new().fg(token::GOLD)),
         ];
         match model.budget_cap_usd {
             Some(cap) if cap > 0.0 => {
                 spend_row.push(Span::styled(format!(" of ${cap:.2} "), dim));
                 let pct = ((spent / cap).clamp(0.0, 1.0) * 100.0).round() as usize;
-                spend_row.extend(cards::mini_fraction_bar(pct, 100, 9, token::GREEN));
+                spend_row.extend(cards::mini_fraction_bar(pct, 100, 9, token::GOLD));
             }
             _ => spend_row.push(Span::styled(" · no cap set", dim)),
         }
@@ -79,4 +82,43 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
         buf,
     );
     cards::render_body(rows, None, inner, buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::envelope::{AgentMeta, Inbound};
+
+    /// SPEC 5: money renders gold and its meter is gold on the border gray.
+    /// Green is verdict ink; a spend figure is a fact, not a pass, so the
+    /// card may not paint a single green cell.
+    #[test]
+    fn money_and_its_meter_are_gold_never_green() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.agents[0].cost_usd = 0.42;
+        model.budget_cap_usd = Some(1.0);
+        let ui = DeckUi::default();
+        let frame = Rect::new(0, 0, 80, 12);
+        let mut buf = Buffer::empty(frame);
+        render(&model, &ui, frame, &mut buf);
+
+        let mut golds = 0usize;
+        for y in 0..frame.height {
+            for x in 0..frame.width {
+                let cell = buf.cell((x, y)).expect("cell in area");
+                assert_ne!(
+                    cell.fg,
+                    token::GREEN,
+                    "green cell at ({x},{y}): {:?}",
+                    cell.symbol()
+                );
+                if cell.fg == token::GOLD && cell.symbol().trim() != "" {
+                    golds += 1;
+                }
+            }
+        }
+        // The spend figure and the filled meter cells are gold.
+        assert!(golds > 0, "no gold cell rendered for money or meter");
+    }
 }
