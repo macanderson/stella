@@ -628,6 +628,31 @@ fn mines_a_recurring_preference_at_the_threshold() {
     assert!(candidates[0].body.contains("prefers tables"));
 }
 
+/// **Witness (#4913), end to end.** Three Russian restatements of one lesson
+/// cluster (#3298) and mint a candidate — and on base that candidate's whole
+/// name is `skill-<hash8>`, because `slugify` kept only ASCII and the text has
+/// none. A workspace whose lessons are written in Russian filled
+/// `.stella/skills/` with directories nobody could tell apart in `ls`.
+#[test]
+fn a_non_latin_lesson_mints_a_name_a_human_can_read() {
+    let obs = vec![
+        observation("всегда форматировать запросы перед отправкой", 1),
+        observation("форматировать запросы перед отправкой, всегда", 2),
+        observation("запросы перед отправкой форматировать", 3),
+    ];
+    let candidates = mine_skill_candidates(obs, &[], &SkillMineConfig::default());
+    assert_eq!(candidates.len(), 1, "one cluster: {candidates:#?}");
+    let name = &candidates[0].name;
+    assert!(
+        name.starts_with("formatirovat-zaprosy-pered-otpravkoy"),
+        "the id carries the lesson's words, not just a hash: {name}"
+    );
+    assert!(
+        name.is_ascii(),
+        "and it is still a directory name this repository will commit: {name}"
+    );
+}
+
 #[test]
 fn does_not_mine_a_one_off_below_the_threshold() {
     let obs = vec![observation("a one-time thing nobody repeated", 1)];
