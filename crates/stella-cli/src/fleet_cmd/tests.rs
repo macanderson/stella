@@ -472,7 +472,7 @@ fn an_unfinished_worker_turn_claims_no_closing_boundary() {
 /// `~/.stella/skills` as well as from the workspace, so without it whoever runs
 /// this suite would have their own real skills join the block and the
 /// assertions would be reading someone's disk instead of this fixture.
-fn steered_workspace() -> (tempfile::TempDir, crate::paths::TestPathsGuard, PathBuf) {
+fn steered_workspace() -> (tempfile::TempDir, crate::paths::TestHomeGuard, PathBuf) {
     let td = tempfile::tempdir().unwrap();
     let home = td.path().join("home");
     std::fs::create_dir_all(&home).unwrap();

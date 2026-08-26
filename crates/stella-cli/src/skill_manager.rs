@@ -682,7 +682,7 @@ mod tests {
     /// races are UB and the harness runs these on parallel threads. The
     /// redirect is per-thread now (#1139), so there is nothing to serialize
     /// and no window in which another test could see an unrestored `HOME`.
-    fn scratch() -> (tempfile::TempDir, PathBuf, crate::paths::TestPathsGuard) {
+    fn scratch() -> (tempfile::TempDir, PathBuf, crate::paths::TestHomeGuard) {
         let td = tempfile::tempdir().unwrap();
         let home = td.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
