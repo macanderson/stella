@@ -4,16 +4,11 @@
 //! Turning an accepted `[[capabilities]]` list into a gate that refuses
 //! everything else (#3482, `doc:pipeline-as-plugins` §A4).
 //!
-//! # The defect this closes
-//!
 //! `Capability` carries `tool`, `risk`, `purpose` and `scope`, and
 //! `stella_plugin::consent_text` renders all four to a human before install.
-//! **Nothing turned an accepted consent into an authorization rule.** The
-//! consent text was honest about the half a user could otherwise be misled by
-//! — it labels `scope` as the plugin's own claim — but "the gate enforces the
-//! tool and the grade" was true only in the sense that
-//! `agent::tool_stack::session_gate` returned `NoAuthz` and no plugin could be
-//! refused anything.
+//! This module is what turns that accepted consent into an authorization
+//! rule. Note `scope` is the plugin's own claim, which the consent text says;
+//! the tool and the grade are what this gate enforces.
 //!
 //! `doc:pipeline-as-plugins` §A1 states the stake without hedging: *"a
 //! marketplace shipped on top of a system that cannot distinguish an installed

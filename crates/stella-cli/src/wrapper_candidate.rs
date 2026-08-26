@@ -4,28 +4,17 @@
 //! The candidate grant and the tamper snapshot the CLI's wrapper driver owes a
 //! plugin (#3553).
 //!
-//! # What was broken
-//!
-//! `crate::wrapper_plugin` sent `RoundInput { candidate: None, .. }` and
-//! reported [`TamperFinding::NotChecked`], and both were honest — the host had
-//! neither. The consequence was not honest at all: `judge` reads the flip first
-//! and `FlipObservation::Unobservable` under `flip = "required"` is
-//! `UndecidedReason::FlipUnobservable`, so **every witness-flavoured wrapper
-//! reported `Undecided` on every run, forever**. Only a measurement oracle
-//! (`flip = "not-applicable"`) worked. A plugin with no root to read and no
-//! test to run cannot observe a flip, and a flip nobody vouched for cannot be
-//! credited.
+//! Both are required, not decorative: a plugin with no root to read and no
+//! test to run cannot observe a flip, and `judge` turns an unobservable flip
+//! under `flip = "required"` into `Undecided`. Withhold either and every
+//! witness-flavoured wrapper is undecided on every run.
 //!
 //! # The grant names the tree the turn actually ran in
 //!
 //! `stella run --pipeline <variant>` drives the raw step loop **in the shared
 //! work tree** (#3494). So the grant this module mints is over that tree, via
-//! [`stella_plugin::host_tree_grant`] — the minting logic moved here (rather
-//! than staying duplicated) before the staged pipeline's own
-//! `CandidateHandles::grant` (formerly `stella-pipeline`'s `ports/handle.rs`)
-//! was deleted along with that crate (#3865), so there was one fence, not
-//! two, for as long as both callers coexisted, and this module is now the
-//! only one.
+//! [`stella_plugin::host_tree_grant`]. This module is the only place that
+//! mints it.
 //!
 //! Minting a *worktree* instead would be worse than the gap it closes: the turn
 //! would still run in the shared tree, the plugin would read and test an
