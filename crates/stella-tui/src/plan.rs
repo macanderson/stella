@@ -35,7 +35,9 @@
 //! Pure: this module folds and formats, and returns rows for a renderer to
 //! style. No ratatui types, so the fold is unit-testable without a terminal.
 
-use stella_protocol::{ScopeProposal, TaskItem, TaskStatus};
+use std::collections::BTreeMap;
+
+use stella_protocol::{ScopeProposal, TaskContract, TaskItem, TaskStatus};
 
 /// Where one plan step is in its lifecycle.
 ///
@@ -120,6 +122,121 @@ pub struct PlanStep {
     /// Why a terminal step ended the way it did, when that is not obvious from
     /// the state alone (a cancelled step says so here).
     pub note: Option<String>,
+    /// What this step means by done, when the board carried a contract
+    /// (SPEC 7.1). `None` is *no contract stated*, which is a different fact
+    /// from [`TaskContract::ReadOnly`] — a step that produces no diff — and
+    /// the zoom prints the two differently rather than collapsing them.
+    pub contract: Option<TaskContract>,
+}
+
+/// What kind of work one evidence row records.
+///
+/// Three, because SPEC 7.1 names three: *edits, runs, graph writes*. A
+/// mechanism outside those is not silently retyped as one of them — it does
+/// not reach this fold at all until the vocabulary grows to hold it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvidenceKind {
+    /// A file the step changed.
+    Edit,
+    /// A command the step ran.
+    Run,
+    /// A write the step made to the code graph.
+    GraphWrite,
+}
+
+impl EvidenceKind {
+    /// The word the evidence block prints in its left column.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            EvidenceKind::Edit => "edit",
+            EvidenceKind::Run => "run",
+            EvidenceKind::GraphWrite => "graph",
+        }
+    }
+}
+
+/// One line of a step's evidence ledger: an event tagged with that step's id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvidenceRow {
+    /// Which of the three kinds of work this was.
+    pub kind: EvidenceKind,
+    /// What it acted on — a path, a command, a node count.
+    pub subject: String,
+    /// The measured outcome beside it: `+41 -6`, `2/4`, `wr`.
+    pub outcome: String,
+}
+
+/// What one step spent (SPEC 7.1's third part).
+///
+/// `PartialEq` but not `Eq` — the dollar figures are `f64`, the same reason
+/// [`Plan`] is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StepSpend {
+    /// Dollars this step has cost so far.
+    pub usd: f64,
+    /// Tokens it has spent.
+    pub tokens: u64,
+    /// What share of its input tokens were served from cache, 0–100.
+    pub cache_read_pct: u8,
+    /// How many model calls it made. A step with none cost `$0.00`, and the
+    /// strip says so without needing the dollar figure to prove it.
+    pub model_calls: u32,
+    /// Projected remaining spend, when there is a basis for one.
+    pub est_remaining_usd: Option<f64>,
+}
+
+/// A step's evidence and spend together — everything the ledger knows about
+/// one step, keyed by [`PlanStep::id`] in [`Plan::ledger`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StepLedger {
+    /// Every event tagged with this step's id, in the order they happened.
+    pub evidence: Vec<EvidenceRow>,
+    /// What the step spent, when spend has been attributed to it.
+    pub spend: Option<StepSpend>,
+}
+
+/// One node of the actual path: what ran, and whether it was in the plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActualStep {
+    /// The step's title as it ran.
+    pub title: String,
+    /// Why the plan changed here, for a step the plan did not contain. `None`
+    /// for a step that was planned — SPEC 7.4 requires a cause on every
+    /// divergence, so an unexplained insertion has no representation.
+    pub cause: Option<String>,
+}
+
+impl ActualStep {
+    /// Whether this step diverges from the plan.
+    #[must_use]
+    pub const fn is_drift(&self) -> bool {
+        self.cause.is_some()
+    }
+}
+
+/// The two paths through a plan (SPEC 7.4): what was planned, and what
+/// happened.
+///
+/// Planned comes from the plan graph's `[:NEXT]` edges and actual from
+/// `[:THEN]`. Neither is derivable from the board — the board holds only the
+/// path that survived — so a plan with no graph behind it has `None` here and
+/// the zoom says the lanes are not recorded rather than drawing the board
+/// twice under two headings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanLanes {
+    /// The planned path, in `[:NEXT]` order.
+    pub planned: Vec<String>,
+    /// The path actually taken, in `[:THEN]` order.
+    pub actual: Vec<ActualStep>,
+}
+
+impl PlanLanes {
+    /// How many steps of the actual path the plan did not contain.
+    #[must_use]
+    pub fn divergences(&self) -> usize {
+        self.actual.iter().filter(|s| s.is_drift()).count()
+    }
 }
 
 /// The whole plan for one turn: the fold of `ScopeReview` (the steps and their
@@ -149,6 +266,18 @@ pub struct Plan {
     /// before `ScopeProposal::revision` existed — the rail then says nothing
     /// rather than claiming a first revision it cannot see.
     pub revision: Option<u32>,
+    /// The plan graph's two lanes, once something has recorded them (SPEC
+    /// 7.4). `None` until #5037 authors `[:NEXT]` and `[:THEN]` edges; the
+    /// task zoom elides its lane block on `None` rather than drawing the
+    /// board twice and calling one copy the plan.
+    pub lanes: Option<PlanLanes>,
+    /// Per-step evidence and spend, keyed by [`PlanStep::id`] (SPEC 7.1).
+    ///
+    /// Empty until #5039 stamps a step id on the events that carry work. The
+    /// session's untagged edits and runs are **not** borrowed to fill it: an
+    /// edit this step did not make is not this step's evidence, and a ledger
+    /// that cannot tell the difference is worse than an absent one.
+    pub ledger: BTreeMap<String, StepLedger>,
 }
 
 impl Plan {
@@ -172,6 +301,12 @@ impl Plan {
         // as `pending approval 5/7` — five steps of a plan nobody has agreed
         // to yet, already done.
         self.board.clear();
+        // The lanes and the ledger belong to the plan that was replaced. A
+        // revision's actual path starts empty, and carrying the previous
+        // one's evidence forward would attribute work to steps that have not
+        // run.
+        self.lanes = None;
+        self.ledger.clear();
     }
 
     /// The user approved the plan at the gate.
@@ -279,6 +414,9 @@ impl Plan {
                 state: PlanStepState::Planned,
                 owner: None,
                 note: None,
+                // A proposal states titles, never contracts: the board is the
+                // only source for what a step means by done.
+                contract: None,
             })
             .collect();
         for item in &self.board {
@@ -300,6 +438,7 @@ impl Plan {
                     if item.description.is_some() {
                         step.detail.clone_from(&item.description);
                     }
+                    step.contract.clone_from(&item.contract);
                 }
                 None => steps.push(PlanStep {
                     id: item.id.clone(),
@@ -308,6 +447,7 @@ impl Plan {
                     state,
                     owner: item.owner.clone(),
                     note,
+                    contract: item.contract.clone(),
                 }),
             }
         }
@@ -499,6 +639,82 @@ mod tests {
         ]);
         assert_eq!(plan.state, PlanState::Completed);
         assert_eq!(plan.progress(), (2, 2));
+    }
+
+    /// The board is the only source for what a step means by done, so the
+    /// fold has to carry its contract — the task zoom's contract block reads
+    /// this and nothing else (SPEC 7.1, #5041).
+    #[test]
+    fn the_board_carries_each_steps_contract_onto_its_step() {
+        use stella_protocol::{Check, CheckKind, CheckMechanism, DefinitionOfDone};
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one", "two"]));
+        plan.approve();
+        assert!(
+            plan.steps().iter().all(|s| s.contract.is_none()),
+            "a proposal states titles, never contracts"
+        );
+
+        let mut second = item("2", "two", TaskStatus::InProgress);
+        second.contract = Some(TaskContract::DefinitionOfDone(DefinitionOfDone::new(
+            Check::new("the suite is green", CheckMechanism::Known(CheckKind::Unit)),
+            Vec::new(),
+        )));
+        plan.apply_board(&[item("1", "one", TaskStatus::Completed), second]);
+
+        let steps = plan.steps();
+        assert!(steps[0].contract.is_none(), "no contract stated");
+        let contract = steps[1].contract.as_ref().expect("the board stated one");
+        assert_eq!(contract.checks().count(), 1);
+    }
+
+    /// A proposal at the gate is a *new* plan, so the previous one's lanes and
+    /// evidence do not carry over — they would attribute work to steps that
+    /// have not run.
+    #[test]
+    fn a_new_proposal_drops_the_previous_plans_lanes_and_ledger() {
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one"]));
+        plan.approve();
+        plan.lanes = Some(PlanLanes {
+            planned: vec!["one".into()],
+            actual: vec![ActualStep {
+                title: "one".into(),
+                cause: None,
+            }],
+        });
+        plan.ledger.insert("1".to_string(), StepLedger::default());
+
+        plan.propose(&proposal(&["one", "two"]));
+        assert!(plan.lanes.is_none(), "the lanes belonged to the old plan");
+        assert!(plan.ledger.is_empty(), "so did the evidence");
+    }
+
+    /// SPEC 7.4 requires a cause on every divergence, so an actual step with
+    /// one is drift and a step without is not — there is no third state to
+    /// get wrong.
+    #[test]
+    fn only_an_actual_step_with_a_cause_counts_as_drift() {
+        let lanes = PlanLanes {
+            planned: vec!["a".into(), "b".into()],
+            actual: vec![
+                ActualStep {
+                    title: "a".into(),
+                    cause: None,
+                },
+                ActualStep {
+                    title: "fix borrow err".into(),
+                    cause: Some("E0502 borrow".into()),
+                },
+                ActualStep {
+                    title: "b".into(),
+                    cause: None,
+                },
+            ],
+        };
+        assert_eq!(lanes.divergences(), 1);
+        assert!(lanes.actual[1].is_drift());
+        assert!(!lanes.actual[0].is_drift());
     }
 
     /// The `finish` half of the resolve-on-every-path invariant: a step still

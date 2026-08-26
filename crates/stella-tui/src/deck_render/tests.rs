@@ -413,7 +413,7 @@ fn render_deck_positions_the_hardware_cursor_on_the_agents_page_composer() {
     let text = buffer_text(term.backend().buffer());
     let row = text
         .lines()
-        .position(|l| l.contains("❯ fix the parser"))
+        .position(|l| l.contains(">>> fix the parser"))
         .unwrap_or_else(|| panic!("the typed page composer row is on screen:\n{text}"));
     let pos = term.backend().cursor_position();
     assert_eq!(
@@ -422,9 +422,9 @@ fn render_deck_positions_the_hardware_cursor_on_the_agents_page_composer() {
     );
     assert_eq!(
         pos.x as usize,
-        3 + "fix the parser".len(),
-        "…and just past the text, one cell per typed character (3-column \
-         ` ❯ ` prefix)"
+        crate::views::frame::PROMPT_PREFIX_W + "fix the parser".len(),
+        "…and just past the text, one cell per typed character, clear of the \
+         shared `>>> ` prefix (#5051)"
     );
 }
 

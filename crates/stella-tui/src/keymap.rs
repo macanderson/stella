@@ -599,6 +599,27 @@ pub const BINDINGS: &[Binding] = &[
         Everywhere,
         &["ctrl_s_opens_and_closes_the_plan_card"],
     ),
+    // The task zoom (SPEC 7.5). Scoped `Everywhere` like the plan card it
+    // opens from: the card is raised by a deck-wide chord, so its keys are
+    // reachable from every tab and the `?` sheet must say so on every tab too.
+    row(
+        "⏎",
+        "on PLAN: zoom the step — contract, evidence, planned vs actual, spend",
+        Everywhere,
+        &["enter_on_the_plan_card_zooms_the_selected_step"],
+    ),
+    row(
+        "esc",
+        "on the zoom: back to PLAN, on the step you zoomed",
+        Everywhere,
+        &["esc_leaves_the_zoom_for_the_plan_card_on_the_same_step"],
+    ),
+    row(
+        "r s b i ⌥",
+        "on the zoom: re-run checks · split · hand off · promote · diff plan",
+        Everywhere,
+        &["the_zoom_action_verbs_are_drawn_and_inert_and_never_reach_the_composer"],
+    ),
     row(
         ">text",
         "steer the running turn — lands at the next step boundary",
@@ -684,7 +705,7 @@ mod tests {
     /// their modal editor), `views/subagents.rs` (the overlay's own verbs), and
     /// `deck_shell.rs` (`⌃V`, claimed by the run loop above the pure key
     /// layer because the capture is blocking I/O).
-    fn witness_sources() -> [&'static str; 29] {
+    fn witness_sources() -> [&'static str; 30] {
         [
             include_str!("deck_ui/tests/agents.rs"),
             include_str!("deck_ui/tests/composer.rs"),
@@ -706,6 +727,7 @@ mod tests {
             include_str!("deck_ui/tests/skills.rs"),
             include_str!("deck_ui/tests/splash.rs"),
             include_str!("deck_ui/tests/tabs.rs"),
+            include_str!("deck_ui/tests/task_zoom.rs"),
             include_str!("deck_ui/tests/traces.rs"),
             include_str!("deck_ui/tests/transcript_nav.rs"),
             include_str!("deck_ui/dispatch.rs"),

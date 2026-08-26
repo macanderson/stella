@@ -548,3 +548,29 @@ fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
         "the card was answered, so the lane is working again"
     );
 }
+
+/// **The witness for #5051, the fleet half.** The dashboard is its own frame
+/// and drew its own header, so it carried no `stella*` at all — SPEC 3.3 puts
+/// the wordmark in the upper right of every screen, deck or not.
+///
+/// Read off the top row rather than the whole frame: the mark's place is the
+/// claim, and a `contains` would pass on a `stella*` painted anywhere.
+#[test]
+fn the_header_row_carries_the_wordmark_on_its_right_edge() {
+    let board = FleetBoard::new("stella", &seed(), Instant::now());
+    let view = FleetView::new(&board.rows);
+    let frame = draw(&board, &view, 100, 20);
+
+    let head = frame
+        .lines()
+        .next()
+        .expect("the dashboard draws a header row");
+    assert!(
+        head.contains("FLEET ▸ stella"),
+        "the run still names itself on the left:\n{frame}"
+    );
+    assert!(
+        head.trim_end().ends_with("stella*"),
+        "the wordmark holds the upper right (SPEC 3.3):\n{frame}"
+    );
+}

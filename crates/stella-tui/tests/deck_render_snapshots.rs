@@ -84,6 +84,10 @@ mod graph;
 #[path = "deck_render_snapshots/attribution.rs"]
 mod attribution;
 
+/// See [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/task_zoom.rs"]
+mod task_zoom;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.
@@ -1313,13 +1317,14 @@ fn deck_render_snapshots_state_a_failing_pr_on_the_issues_tab() {
     );
 }
 
-/// Golden frame for the SUB-AGENTS overlay (`ctrl-a`, `/subagents`): one
-/// block per dispatched lane — status, clock, model, the effort its calls
-/// are pinned to, spend; then what the lane is for; then where it is in the
-/// task, read off its own fold. Every one of those is a word, so the
-/// style-stripped golden pins them; the bottom rule pins the verbs
-/// (stop · pause/resume · restart · focus) that #4334 lost with the AGENTS
-/// dashboard.
+/// Golden frame for the full-frame AGENTS page (`←` twice on SESSION): its
+/// header row, the working lanes with status, clock, model and spend, the
+/// resumable sessions under COMPLETED, and the page's own new-task prompt.
+///
+/// The header row is the reason this golden reaches to column 160: the
+/// `stella*` wordmark holds the right edge here as it does on every deck
+/// screen (SPEC 3.3), and a style-stripped golden is what pins the *column*
+/// it holds — the half of #5051 no `contains` assertion can state.
 #[test]
 fn deck_render_snapshots_pin_the_agents_page() {
     let mut model = fixture_model();
@@ -1352,7 +1357,7 @@ fn deck_render_snapshots_pin_the_agents_page() {
     );
     assert_golden(
         "page_agents",
-        "the full-frame AGENTS page: counts, working lanes, resumable sessions, and the new-task prompt",
+        "the full-frame AGENTS page: wordmark, counts, working lanes, resumable sessions, and the new-task prompt",
         W,
         H,
         &frame,

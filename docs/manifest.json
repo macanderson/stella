@@ -589,6 +589,36 @@
       "status": "implemented",
       "title": "Design: Schema-Aware Code Graph for Zero Schema Drift"
     },
+    "scr/001-no-full-suite-builds": {
+      "path": "docs/scr/SCR-001-no-full-suite-builds.md",
+      "status": "living",
+      "title": "Never compile the full test suite in the inner loop"
+    },
+    "scr/002-durability-first-architecture": {
+      "path": "docs/scr/SCR-002-durability-first-architecture.md",
+      "status": "living",
+      "title": "Architecture: durability-first, decide-and-record, never ask"
+    },
+    "scr/003-dod-verified-close": {
+      "path": "docs/scr/SCR-003-dod-verified-close.md",
+      "status": "living",
+      "title": "Close issues only against a verified definition of done"
+    },
+    "scr/004-residue-becomes-issues": {
+      "path": "docs/scr/SCR-004-residue-becomes-issues.md",
+      "status": "living",
+      "title": "File all residue as issues before declaring done"
+    },
+    "scr/005-triage-separation-of-duties": {
+      "path": "docs/scr/SCR-005-triage-separation-of-duties.md",
+      "status": "living",
+      "title": "Creators label triage only; the triage agent owns priority"
+    },
+    "scr/readme": {
+      "path": "docs/scr/README.md",
+      "status": "living",
+      "title": "Steering Context Records"
+    },
     "self-driving-foundry": {
       "path": "docs/spec/self-driving-foundry.md",
       "sections": [
