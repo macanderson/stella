@@ -149,7 +149,12 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         env_var: "XAI_API_KEY",
         env_var_aliases: &[],
         display_name: "xAI (Grok)",
-        default_model: "grok-4",
+        // grok-4 retired on 2026-08-15 (#5004). xAI's published model list
+        // carries grok-4.3 as the flagship — 1M context, the cheapest tier of
+        // the current line, and the family the retired grok-4 slugs redirect
+        // to — so it is the successor that changes least about what a bare
+        // `--model xai/…` already resolves to on the wire.
+        default_model: "grok-4.3",
         base_url: "https://api.x.ai/v1",
         dialect: Dialect::OpenaiCompatible,
         seeded: true,

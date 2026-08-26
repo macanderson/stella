@@ -93,7 +93,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
     href: "/docs/api-providers#xai",
     blurb: "Grok, over the OpenAI-compatible dialect.",
     env: "XAI_API_KEY",
-    defaultModel: "grok-4",
+    defaultModel: "grok-4.3",
     dialect: "OpenAI-compatible",
   },
   {

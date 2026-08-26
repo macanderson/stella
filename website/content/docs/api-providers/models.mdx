@@ -27,7 +27,7 @@ your provider before budgeting — prices and lineups drift.
 | <ProviderMark id="anthropic" /> `claude-sonnet-5` | `anthropic` | 1M | 3.00 | 15.00 | 0.30 | 2026 | Sonnet pricing with a 1M window. A strong default worker where the budget rules out the tiers above. |
 | <ProviderMark id="openai" /> `gpt-5.5` | `openai` | 400k | 1.25 | 10.00 | 0.125 | late 2025 | Top-tier reasoning with a 400k window at a mid price. Excellent cross-family verifier over a Claude or GLM worker; strong worker. |
 | <ProviderMark id="gemini" /> `gemini-3-pro` | `gemini` (also `vertex`) | 1M | 1.25 | 10.00 | 0.31 | Q4 2025 | The 1M-token window: whole-repo comprehension, long-log analysis. Solid worker, good verifier. |
-| <ProviderMark id="xai" /> `grok-4` | `xai` | 256k | 3.00 | 15.00 | 0.75 | Q3 2025 | Strong reasoning; a distinct model family, useful as an alternate verifier. |
+| <ProviderMark id="xai" /> `grok-4.3` | `xai` | 1M | 1.25 | 2.50 | 0.20 | 2026 | Strong reasoning at a low price, with a 1M window; a distinct model family, useful as an alternate verifier. Prices above are the below-200k-input tier — double them past it. |
 | <ProviderMark id="deepseek" /> `deepseek-chat` | `deepseek` | 128k | 0.27 | 1.10 | 0.07 | Q4 2024 (V3 line, revised through 2025) | The price/performance outlier. Ideal triage model; a very capable budget worker. |
 | <ProviderMark id="zai" /> `glm-5.2` | `zai` | 200k | 0.60 | 2.20 | 0.11 | 2026 | Excellent coding at a fraction of flagship price — stella's default worker tier. The coding-plan endpoint makes it a subscription workhorse. |
 | <ProviderMark id="bedrock" /> `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | `bedrock` | 200k | 3.00 | 15.00 | 0.30 | Sep 2025 | Claude under AWS governance — for orgs that must keep inference inside their cloud account. |
@@ -154,7 +154,7 @@ shop on — it is the cost of entry you amortize:
 | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | `bedrock` | 3.00 | 3.75 | 1.25x |
 | `gpt-5.5` | `openai` | 1.25 | 1.25 | 1x |
 | `gemini-3-pro` | `gemini`, `vertex` | 1.25 | 1.25 | 1x |
-| `grok-4` | `xai` | 3.00 | 3.00 | 1x |
+| `grok-4.3` | `xai` | 1.25 | 1.25 | 1x |
 | `glm-5.2` | `zai` | 0.60 | 0.60 | 1x |
 | `deepseek-chat` | `deepseek` | 0.27 | 0.27 | 1x |
 | `moonshotai/kimi-k3` | `openrouter` | 3.00 | 3.00 | 1x |

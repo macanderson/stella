@@ -119,7 +119,7 @@ Stella is BYOK and detects the provider from whichever keys you have set.
 | **Z.ai** (GLM)         | `ZAI_API_KEY`                                 | `glm-5.2`                                                                        |
 | **Anthropic** (Claude) | `ANTHROPIC_API_KEY`                           | `claude-fable-5`                                                                 |
 | **OpenAI** (GPT)       | `OPENAI_API_KEY`                              | `gpt-5.5`                                                                        |
-| **xAI** (Grok)         | `XAI_API_KEY`                                 | `grok-4` — [past its announced retirement; pin a successor](https://stella.oxagen.sh/docs/api-providers#xai) |
+| **xAI** (Grok)         | `XAI_API_KEY`                                 | `grok-4.3`                                                                       |
 | **DeepSeek**           | `DEEPSEEK_API_KEY`                            | `deepseek-chat`                                                                  |
 | **Google Gemini**      | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`)     | `gemini-3-pro`                                                                   |
 | **Google Vertex AI**   | `VERTEX_ACCESS_TOKEN` + `VERTEX_PROJECT_ID`   | `gemini-3-pro`                                                                   |
