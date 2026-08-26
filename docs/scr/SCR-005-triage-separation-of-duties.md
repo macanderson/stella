@@ -1,7 +1,7 @@
 ---
-id: SCR-005
+id: scr-005
 title: Creators label triage only; the triage agent owns priority
-status: active
+status: living
 origin: separation-of-duties rule on the backlog, 2025–2026
 trigger: creating or labeling any GitHub issue
 autonomy: L2

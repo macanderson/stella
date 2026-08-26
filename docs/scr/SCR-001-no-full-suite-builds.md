@@ -1,7 +1,7 @@
 ---
-id: SCR-001
+id: scr-001
 title: Never compile the full test suite in the inner loop
-status: active
+status: living
 origin: repeated manual prompt, ~daily, 2025–2026
 trigger: any build/test invocation during development
 autonomy: L2

@@ -1,3 +1,9 @@
+---
+id: scr-index
+title: Steering Context Records
+status: living
+---
+
 # Steering Context Records
 
 An SCR is to steering what an ADR is to architecture: a numbered, versioned
