@@ -35,8 +35,24 @@ const EXIT_BUDGET: Duration = Duration::from_secs(120);
 /// How often to check. Cheap: `try_wait` does not block.
 const POLL: Duration = Duration::from_millis(100);
 
+/// clap's exit code for a usage error. The one status that must never satisfy
+/// these tests: a process that died in the argument parser reached no
+/// shutdown path at all, and "it exited" is then a fact about clap.
+const USAGE_ERROR: i32 = 2;
+
 /// Run `stella run` to completion, or give up at [`EXIT_BUDGET`]. Returns how
-/// long it took; panics (after killing the child) if it never exited.
+/// long it took; panics (after killing the child) if it never exited, or if
+/// it exited without ever starting.
+///
+/// The exit *code* is checked as well as the fact of exiting, because these
+/// tests were vacuous for as long as the argument order was wrong.
+/// `--output-format` used to be a root-position flag and became a `run` flag
+/// (`crates/stella-cli/src/tests.rs`'s `run_and_fleet_declare_output_format`,
+/// and its sibling asserting the root spelling is now a parse error); this
+/// file kept the old order and was never updated. Every run therefore exited
+/// in milliseconds with `error: unexpected argument '--output-format' found`,
+/// which satisfies "it exited" perfectly and says nothing whatever about
+/// #960's shutdown path.
 fn time_to_exit(workspace: &Path, data: &Path, format: &str) -> Duration {
     let started = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_stella"))
@@ -51,9 +67,9 @@ fn time_to_exit(workspace: &Path, data: &Path, format: &str) -> Duration {
             "http://127.0.0.1:1",
             "--spend-limit",
             "0.05",
+            "run",
             "--output-format",
             format,
-            "run",
             "say hi and stop",
         ])
         .current_dir(workspace)
@@ -68,13 +84,25 @@ fn time_to_exit(workspace: &Path, data: &Path, format: &str) -> Duration {
         // held open; closed is the one a CI step actually has.
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        // Piped rather than discarded so a usage error can be quoted back
+        // when the assertion below fires.
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn stella");
 
     loop {
         match child.try_wait().expect("wait on stella") {
-            Some(_) => return started.elapsed(),
+            Some(status) => {
+                assert_ne!(
+                    status.code(),
+                    Some(USAGE_ERROR),
+                    "`stella run --output-format {format}` died in the argument \
+                     parser, so it never reached the shutdown path this test is \
+                     about — stderr: {}",
+                    read_stderr(&mut child),
+                );
+                return started.elapsed();
+            }
             None if started.elapsed() >= EXIT_BUDGET => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -86,6 +114,16 @@ fn time_to_exit(workspace: &Path, data: &Path, format: &str) -> Duration {
             None => std::thread::sleep(POLL),
         }
     }
+}
+
+/// Drain the child's piped stderr, for the failure message above.
+fn read_stderr(child: &mut std::process::Child) -> String {
+    use std::io::Read;
+    let mut buffer = String::new();
+    if let Some(stderr) = child.stderr.as_mut() {
+        let _ = stderr.read_to_string(&mut buffer);
+    }
+    buffer
 }
 
 fn assert_exits(format: &str) {
