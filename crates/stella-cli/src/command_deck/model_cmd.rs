@@ -241,7 +241,7 @@ mod tests {
     /// unrestored `HOME`. The redirect is per-thread now (#1139): nothing to
     /// serialize, nothing to restore, and the returned guard only has to
     /// outlive the caller's test.
-    fn scratch() -> (tempfile::TempDir, crate::paths::TestPathsGuard) {
+    fn scratch() -> (tempfile::TempDir, crate::paths::TestHomeGuard) {
         let td = tempfile::tempdir().unwrap();
         let home = td.path().join("home");
         std::fs::create_dir_all(&home).unwrap();

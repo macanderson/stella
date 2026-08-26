@@ -811,7 +811,7 @@ mod tests {
     /// every assertion here quietly depended on the developer's own user-scope
     /// settings, and passed in CI only because the runner has none (#1139).
     /// One seam now, and the redirect is real.
-    fn workspace(settings: &str) -> (tempfile::TempDir, crate::paths::TestPathsGuard) {
+    fn workspace(settings: &str) -> (tempfile::TempDir, crate::paths::TestHomeGuard) {
         let dir = tempfile::tempdir().expect("workspace");
         std::fs::create_dir_all(dir.path().join(".stella")).expect("dot dir");
         std::fs::write(dir.path().join(".stella/settings.json"), settings).expect("settings");

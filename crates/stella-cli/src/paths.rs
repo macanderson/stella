@@ -29,18 +29,26 @@
 //!
 //! # Redirecting without touching the process environment
 //!
-//! Tests install a **per-thread** override — `test_paths` and its two
-//! narrower spellings, all `#[cfg(test)]`, which is why nothing here links to
-//! them. No `unsafe`, no process mutation, no lock, nothing another test
-//! running in parallel can observe — so a test that redirects home or
-//! data-dir resolution needs neither `test_env::lock` nor `EnvRestore`. Those
-//! remain for genuinely env-shaped fixtures, such as provider credential
-//! variables.
+//! Tests install a **per-thread** override — `test_paths` and its narrower
+//! spellings, all `#[cfg(test)]`, which is why nothing here links to them. No
+//! `unsafe`, no process mutation, no lock, nothing another test running in
+//! parallel can observe — so a test that redirects home or data-dir
+//! resolution needs neither `test_env::lock` nor `EnvRestore`. Those remain
+//! for genuinely env-shaped fixtures, such as provider credential variables.
 //!
 //! The redirect is what needs no lock. A test that *also reads the ambient
 //! environment and asserts on what it read* still does, because two reads
 //! either side of a window are not thread-safe just because neither of them
 //! writes — see `a_redirect_needs_no_process_environment_mutation` (#4516).
+//!
+//! # The one spelling that does mutate the environment
+//!
+//! A thread-local reaches `stella-cli` and stops there, and the user tier is
+//! resolved by more crates than this one. `test_user_home` is therefore the
+//! exception: it moves the thread-local *and* `HOME`, so a test calling into
+//! `stella-observatory` or `stella-store` gets the redirect it asked for
+//! rather than the developer's real `~/.stella` (#4980). It takes the env lock
+//! itself; its own doc comment carries the argument.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -276,15 +284,64 @@ pub(crate) fn test_paths(paths: UserPaths) -> TestPathsGuard {
     amend(|current| *current = paths)
 }
 
-/// Redirect the home directory alone — user scope, extensions included.
+/// Redirect the home directory — user scope, extensions included — for every
+/// crate this test calls into, not just `stella-cli`.
+///
+/// # Why this one spelling leaves the thread
+///
+/// Two resolvers answer "where is the user's stella home", and only one of
+/// them is the thread-local above. `stella-cli` reads it; `stella-observatory`,
+/// `stella-store` and everything else read [`stella_home::stella_home`], which
+/// resolves `STELLA_HOME` — or `$HOME/.stella` — out of the process
+/// environment and cannot see another crate's thread-local. So the moment a
+/// test redirecting the user tier calls out of this crate, a thread-local-only
+/// redirect stops isolating: `stella_observatory::respond_with` served ~45 rows
+/// out of the developer's real `~/.stella/skills` in a test whose whole subject
+/// was a temp directory, and passed, because nothing in that directory happened
+/// to collide (#4980). A test that *writes* through the other resolver writes
+/// into the real home, which is the same hole pointed the other way.
+///
+/// Moving both is what makes the call site's promise true, and it is why this
+/// takes the process-wide env lock itself rather than asking the caller to:
+/// `setenv` racing a concurrent `getenv` is UB on POSIX, and roughly half the
+/// call sites hold the lock already for their own mutations. [`crate::test_env::lock`]
+/// nests for exactly this reason. [`test_paths`] and the other narrow spellings
+/// stay thread-local and lock-free — they redirect only what `stella-cli`
+/// resolves and claim nothing more.
 #[cfg(test)]
-pub(crate) fn test_user_home(home: PathBuf) -> TestPathsGuard {
-    amend(move |current| {
+pub(crate) fn test_user_home(home: PathBuf) -> TestHomeGuard {
+    let lock = crate::test_env::lock();
+    // SAFETY: `lock` is held for the whole lifetime of the returned guard, and
+    // `restore` puts the process environment back even on an unwinding panic.
+    let restore = crate::test_env::home_sandbox(&home);
+    let paths = amend(move |current| {
         current.state_home = Some(home.join(".local/state"));
         current.stella_root = Some(home.join(".stella"));
         current.home = Some(home);
         current.extensions_visible = true;
-    })
+    });
+    TestHomeGuard {
+        _paths: paths,
+        _restore: restore,
+        _lock: lock,
+    }
+}
+
+/// What [`test_user_home`] hands back: both redirects and the lock that makes
+/// the process-global half sound.
+///
+/// The fields drop in declaration order, which is the order the restore has to
+/// happen in — the thread-local first, then the environment, and the lock last
+/// so that no other thread observes a half-restored environment.
+#[cfg(test)]
+#[must_use]
+pub(crate) struct TestHomeGuard {
+    /// Restores `stella-cli`'s own thread-local redirect.
+    _paths: TestPathsGuard,
+    /// Restores `HOME` and every [`stella_home::OVERRIDE_ENV_VARS`] entry.
+    _restore: crate::test_env::EnvRestore,
+    /// Held for the whole mutate-read-restore window.
+    _lock: crate::test_env::EnvLock,
 }
 
 /// Close (or reopen) the filesystem-isolation boundary alone.
@@ -418,6 +475,50 @@ mod tests {
             Some(PathBuf::from("/tmp/stella-paths-extensions/.stella")),
             "installing a home is the opt-in"
         );
+    }
+
+    /// Witness for #4980: the home a test installs is the home **every other
+    /// crate** resolves, not only `stella-cli`'s thread-local.
+    ///
+    /// The two assertions are the same question asked of the two resolvers,
+    /// and only the second one used to be able to fail: `stella-observatory`,
+    /// `stella-store` and every other crate reach the user tier through
+    /// `stella_home::stella_home`, which reads the process environment. A test
+    /// that redirected the thread-local alone read the developer's real
+    /// `~/.stella` from that side and said nothing about it.
+    ///
+    /// The ambient `STELLA_HOME` set first is what makes the case real rather
+    /// than accidental: a developer with the variable exported is the machine
+    /// this was found on, and clearing `HOME` alone would leave it answering.
+    #[test]
+    fn an_installed_home_is_the_one_every_other_crate_resolves() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let outer = crate::test_env::EnvRestore::capture(&stella_home::OVERRIDE_ENV_VARS);
+        // SAFETY: serialized behind the env lock, and `outer` outlives the body.
+        unsafe { std::env::set_var(stella_home::STELLA_HOME_ENV, dir.path().join("elsewhere")) };
+
+        let home = dir.path().join("home");
+        let guard = test_user_home(home.clone());
+
+        assert_eq!(
+            stella_root(),
+            Some(home.join(".stella")),
+            "stella-cli's own resolver"
+        );
+        assert_eq!(
+            stella_home::stella_home(),
+            Some(home.join(".stella")),
+            "and the one every crate outside stella-cli reads"
+        );
+
+        drop(guard);
+        assert_eq!(
+            std::env::var_os(stella_home::STELLA_HOME_ENV),
+            Some(dir.path().join("elsewhere").into_os_string()),
+            "the guard puts the ambient override back"
+        );
+        drop(outer);
     }
 
     /// Witness for #2178: `STELLA_HOME` moves the **whole** home, not just the

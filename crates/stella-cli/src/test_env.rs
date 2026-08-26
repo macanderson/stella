@@ -14,11 +14,58 @@
 //! is exactly the kind of thing AGENTS.md says lands in a sibling rather than
 //! in the file that is running out of room.
 
+/// A held env lock. Releases on drop, including on an unwinding panic.
+///
+/// Neither `Send` nor `Sync`, which is what the `PhantomData` is for: the
+/// nesting depth below is per-thread, so a handle that reached another thread
+/// would decrement a count it never incremented.
+#[must_use]
+pub(crate) struct EnvLock(std::marker::PhantomData<*const ()>);
+
+std::thread_local! {
+    /// How many [`EnvLock`]s this thread holds. The mutex itself is taken on
+    /// the way from 0 to 1 and released on the way back.
+    static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The guard, parked here rather than inside the outermost [`EnvLock`], so
+    /// that releasing depends on the count reaching zero and not on which
+    /// handle happens to drop first.
+    static HELD: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Acquire the env lock, recovering from a poisoned mutex (a prior
 /// env-mutating test that panicked mid-hold must not cascade).
-pub(crate) fn lock() -> std::sync::MutexGuard<'static, ()> {
+///
+/// # Re-entrant, on purpose
+///
+/// A nested acquisition on a thread that already holds the lock returns a
+/// handle that releases nothing, so a helper needing the lock can take it
+/// without knowing whether its caller already did. That is what lets
+/// [`crate::paths::test_user_home`] acquire the lock itself (#4980): it
+/// mutates the process environment, so it needs one, and half its call sites
+/// already hold one for their own `set_var`. The alternative — a token
+/// threaded through every call site and every fixture helper that returns a
+/// guard — puts the requirement in ~90 signatures and still lets a caller
+/// hand the token to something that outlives it.
+pub(crate) fn lock() -> EnvLock {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    let depth = DEPTH.with(std::cell::Cell::get);
+    if depth == 0 {
+        let guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        HELD.with(|held| *held.borrow_mut() = Some(guard));
+    }
+    DEPTH.with(|d| d.set(depth + 1));
+    EnvLock(std::marker::PhantomData)
+}
+
+impl Drop for EnvLock {
+    fn drop(&mut self) {
+        let depth = DEPTH.with(std::cell::Cell::get);
+        DEPTH.with(|d| d.set(depth - 1));
+        if depth == 1 {
+            HELD.with(|held| held.borrow_mut().take());
+        }
+    }
 }
 
 /// Captures the current value of each named env var and restores it on
@@ -150,6 +197,40 @@ fn a_home_sandbox_moves_the_stella_home_not_just_the_unix_home() {
         "the guard must put the outer STELLA_HOME back"
     );
     drop(outer);
+}
+
+/// Witness for #4980: the lock nests. A second acquisition on a thread that
+/// already holds it must return rather than block, and the mutex must still be
+/// released once the outermost handle is gone — otherwise
+/// [`crate::paths::test_user_home`] could not take the lock itself, which is
+/// what stops a call site forgetting it.
+///
+/// A regression here shows up as a hang rather than a failure, which is the
+/// price of witnessing a deadlock; the depth and guard assertions below fail
+/// fast on the accounting bugs that do not deadlock.
+#[test]
+fn a_nested_acquisition_does_not_deadlock_and_still_releases() {
+    let outer = lock();
+    assert_eq!(DEPTH.with(std::cell::Cell::get), 1);
+    let inner = lock();
+    assert_eq!(DEPTH.with(std::cell::Cell::get), 2);
+    assert!(
+        HELD.with(|held| held.borrow().is_some()),
+        "the mutex is held for the whole nest, taken once"
+    );
+
+    drop(inner);
+    assert!(
+        HELD.with(|held| held.borrow().is_some()),
+        "a nested handle releases nothing"
+    );
+
+    drop(outer);
+    assert_eq!(DEPTH.with(std::cell::Cell::get), 0);
+    assert!(
+        HELD.with(|held| held.borrow().is_none()),
+        "the outermost handle releases the mutex, or every later test blocks"
+    );
 }
 
 /// Witness for #911: the hand-rolled "capture previous, mutate, restore

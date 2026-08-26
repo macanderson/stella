@@ -80,7 +80,7 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
 /// real home mid-test.
 pub(in crate::config) fn reload_fixture(
     tag: &str,
-) -> (std::path::PathBuf, crate::paths::TestPathsGuard, Config) {
+) -> (std::path::PathBuf, crate::paths::TestHomeGuard, Config) {
     let home = std::env::temp_dir().join(format!("stella-test-{tag}-{}", std::process::id()));
     let workspace = home.join("ws");
     std::fs::create_dir_all(home.join(".stella")).unwrap();

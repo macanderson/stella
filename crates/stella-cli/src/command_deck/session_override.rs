@@ -379,7 +379,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn scratch() -> (tempfile::TempDir, crate::paths::TestPathsGuard) {
+    fn scratch() -> (tempfile::TempDir, crate::paths::TestHomeGuard) {
         let td = tempfile::tempdir().unwrap();
         let home = td.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
