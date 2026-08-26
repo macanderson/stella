@@ -103,7 +103,11 @@ mod tests {
         let mut buf = Buffer::empty(frame);
         render(&model, &ui, frame, &mut buf);
 
-        let mut golds = 0usize;
+        // A metal map of the card: every visible cell's symbol with the token
+        // it wears, so each half of the rule is pinned by the cells that
+        // carry it — the `▰` fill gold, the `▱` groove gray, the `$` money
+        // gold, and no green anywhere.
+        let (mut fills, mut grooves, mut money) = (0usize, 0usize, 0usize);
         for y in 0..frame.height {
             for x in 0..frame.width {
                 let cell = buf.cell((x, y)).expect("cell in area");
@@ -113,12 +117,26 @@ mod tests {
                     "green cell at ({x},{y}): {:?}",
                     cell.symbol()
                 );
-                if cell.fg == token::GOLD && cell.symbol().trim() != "" {
-                    golds += 1;
+                match cell.symbol() {
+                    "▰" => {
+                        assert_eq!(cell.fg, token::GOLD, "meter fill at ({x},{y}) is not gold");
+                        fills += 1;
+                    }
+                    "▱" => {
+                        assert_eq!(
+                            cell.fg,
+                            token::MUTED,
+                            "meter groove at ({x},{y}) is not the gray groove"
+                        );
+                        grooves += 1;
+                    }
+                    "$" if cell.fg == token::GOLD => money += 1,
+                    _ => {}
                 }
             }
         }
-        // The spend figure and the filled meter cells are gold.
-        assert!(golds > 0, "no gold cell rendered for money or meter");
+        assert!(fills > 0, "no gold meter fill rendered");
+        assert!(grooves > 0, "no meter groove rendered");
+        assert!(money > 0, "no gold money cell rendered");
     }
 }
