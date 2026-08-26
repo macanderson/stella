@@ -23,12 +23,15 @@
 //! the deck's own running total stops under-reporting the turn the user just
 //! stopped.
 //!
-//! Not fixed here, and tracked as #4853: nothing awaits the forwarder drain
-//! before the row closes, so a `StepUsage` can still be priced after
-//! `record_execution_end` has run. The read-back heals whatever landed by the
-//! time it runs and no more. Draining first must not reintroduce the #2290
-//! wedge `detach_event_stream` exists to fix, which is why it is a separate
-//! change.
+//! That read-back heals whatever the forwarder had already persisted and no
+//! more, which left #4853: a `StepUsage` still sitting in the turn's channel at
+//! the instant of the cancel is priced *after* `record_execution_end` closed
+//! the row, so there is nothing to read back yet. [`close_dropped_turn`] waits
+//! the forwarder out first, through
+//! [`super::forwarder::drain_dropped_stream`], and only then closes. The two
+//! halves are ordered rather than merged because each answers a different
+//! question: the drain decides what the row *contains*, the read-back decides
+//! what the guard *reports*.
 //!
 //! Lives here rather than inline in the driver's `TurnEnd` arms: those are in
 //! a god file closed to growth.
@@ -36,6 +39,27 @@
 use stella_core::BudgetGuard;
 
 use super::*;
+
+/// Wait out the dropped turn's forwarder, then close its execution.
+///
+/// The order is the fix (#4853). `close_dropped_execution` alone reports what
+/// the store already knew at the instant the future was dropped; the events
+/// still in the turn's channel are exactly the ones the driver's own running
+/// total is missing, and they are priced by the forwarder rather than by
+/// anything the driver holds. Draining first is what makes the row — and so
+/// the read-back below — include them.
+pub(super) async fn close_dropped_turn(
+    drain: &forwarder::ForwarderSlot,
+    execution: Option<&(Arc<Store>, i64)>,
+    registry: &ToolRegistry,
+    noun: &str,
+    dispatch_spend_usd: f64,
+    budget: &mut BudgetGuard,
+    in_tx: &UnboundedSender<Inbound>,
+) {
+    forwarder::drain_dropped_stream(registry, drain).await;
+    close_dropped_execution(execution, registry, noun, dispatch_spend_usd, budget, in_tx);
+}
 
 /// Close the execution a dropped turn left open, correct the guard from the
 /// closed row, and surface a failed store write.
@@ -195,6 +219,129 @@ mod tests {
             (budget.session_spent_usd() - 14.5).abs() < 1e-9,
             "the guard must report the $4.50 the receipts prove, not the $0.25 \
              prefix it accumulated: {}",
+            budget.session_spent_usd()
+        );
+    }
+
+    /// One priced `StepUsage`, as the engine would emit it.
+    fn priced_step_usage(cost_usd: f64) -> AgentEvent {
+        AgentEvent::StepUsage {
+            step: 0,
+            turn_instance: Some(0),
+            call_seq: Some(0),
+            role: stella_protocol::ModelCallRole::Worker,
+            provider: "zai".into(),
+            upstream_provider: None,
+            output_text: None,
+            model: "glm-5.2".into(),
+            input_tokens: 12_000,
+            output_tokens: 450,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: None,
+            estimated_input_tokens: 12_000,
+            cost_usd,
+            duration_ms: 1_830,
+            retries: 0,
+            tool_calls: 0,
+            complete: true,
+            finish_reason: None,
+            effort: None,
+            max_output_tokens: None,
+            temperature: None,
+            params: None,
+            sub_agent_id: None,
+        }
+    }
+
+    /// A cancelled turn's live lane: a forwarder parked in the slot with one
+    /// priced `StepUsage` still unread in its channel, and the turn's own `tx`
+    /// already gone the way the dropped future takes it.
+    ///
+    /// The registry keeps an `EventSender` clone, which is what makes the
+    /// channel outlive `drop(tx)` — the #2290 condition, and the reason the
+    /// drain has to detach before it awaits.
+    fn cancelled_lane(
+        registry: &ToolRegistry,
+        store: &Arc<Store>,
+        id: i64,
+        cost_usd: f64,
+    ) -> (
+        forwarder::ForwarderSlot,
+        tokio::sync::mpsc::UnboundedReceiver<Inbound>,
+    ) {
+        let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel::<Inbound>();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+        let forwarder = spawn_forwarder(
+            rx,
+            Some((Arc::clone(store), id)),
+            crate::cache_insight::InsightScope {
+                provider_id: "zai".into(),
+                cache_ttl: stella_model::CacheTtl::default(),
+                opens_execute_stage: true,
+            },
+            in_tx,
+            LEAD.to_string(),
+            None,
+        );
+        registry.attach_events(stella_core::EventSender::new(tx.clone()));
+        tx.send(priced_step_usage(cost_usd)).expect("in flight");
+        // The turn future is dropped: its own sender goes with it, the
+        // registry's clone does not, and the event is still in the channel.
+        drop(tx);
+        let slot = forwarder::forwarder_slot();
+        *slot.lock().expect("slot") = Some(forwarder);
+        (slot, in_rx)
+    }
+
+    /// **Witness (#4853).** A `StepUsage` still in flight when the user
+    /// cancels is priced before the row closes, not after it.
+    ///
+    /// Nothing awaits between the send and the close-out, so on a
+    /// current-thread runtime the forwarder cannot have run: the receipt is
+    /// unwritten unless something drains the stream first. #2807's read-back
+    /// heals only what the store already holds, so without the drain it reads
+    /// back a row that knows nothing about this call and the deck reports the
+    /// pre-cancel prefix — the same one-directional under-report as #2570, on
+    /// exactly the turn the user is looking at.
+    #[tokio::test]
+    async fn a_usage_event_still_in_flight_at_the_cancel_is_priced_into_the_closed_row() {
+        let root = tempfile::tempdir().expect("workspace");
+        let store = Arc::new(Store::open(root.path()).expect("store"));
+        let id = store
+            .begin_execution("chat", "a prompt", "zai", "glm-5.2")
+            .expect("execution");
+        let registry = ToolRegistry::new(std::env::temp_dir());
+        let (drain, _in_rx) = cancelled_lane(&registry, &store, id, 3.75);
+
+        let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
+        budget.reseed_session_spend(10.0);
+        let (in_tx, _tx_rx) = tokio::sync::mpsc::unbounded_channel::<Inbound>();
+
+        close_dropped_turn(
+            &drain,
+            Some(&(Arc::clone(&store), id)),
+            &registry,
+            "cancelled",
+            10.0,
+            &mut budget,
+            &in_tx,
+        )
+        .await;
+
+        let summary = store
+            .execution_summary(id)
+            .expect("readable")
+            .expect("a closed row");
+        assert!(
+            (summary.cost_usd - 3.75).abs() < 1e-9,
+            "the row must carry the receipt the drain settled, not $0: {}",
+            summary.cost_usd
+        );
+        assert!(
+            (budget.session_spent_usd() - 13.75).abs() < 1e-9,
+            "the deck must report the $3.75 this turn actually cost, not the \
+             $0 prefix the guard held when the future was dropped: {}",
             budget.session_spent_usd()
         );
     }

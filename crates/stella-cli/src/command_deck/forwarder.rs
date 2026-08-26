@@ -349,6 +349,53 @@ pub(crate) async fn close_turn_stream(
     forwarder.await.unwrap_or_default()
 }
 
+/// Where a lane parks its live forwarder so that a turn future dropped from
+/// outside can still be waited out (#4853).
+///
+/// [`close_turn_stream`] is the only thing that awaits the drain, and it lives
+/// inside the turn future — so a cancel, which drops that future, never reaches
+/// it. The handle is parked here at spawn instead, in a cell the driver loop
+/// owns and the turn only borrows, which is what gives the cancel arm something
+/// to await.
+pub(crate) type ForwarderSlot = std::sync::Mutex<Option<tokio::task::JoinHandle<LaneStreamEnd>>>;
+
+/// An empty slot for one lane's forwarders, reused across that lane's turns.
+pub(crate) fn forwarder_slot() -> ForwarderSlot {
+    std::sync::Mutex::new(None)
+}
+
+/// Wait out the forwarder of a turn whose future was dropped mid-flight.
+///
+/// This is [`close_turn_stream`] minus its `drop(tx)`, and the difference is
+/// the whole point: the dropped future took every sender it owned with it —
+/// the turn's own `tx`, the re-query adapter's clone (#3366), the task tap's —
+/// so the only clones left are the ones the registry holds, and detaching
+/// releases exactly those. The channel then closes, `recv()` returns `None`,
+/// and the forwarder finishes persisting what was still in flight.
+///
+/// Awaiting is what #4853 is: a `StepUsage` sitting unread in the channel at
+/// the instant of the cancel is priced *after* `record_execution_end` closed
+/// the row, so the read-back #2807 added has nothing to read back yet and the
+/// deck shows the pre-cancel prefix. It is the same one-directional
+/// under-report as #2570, at the moment the user is looking at the number.
+///
+/// The wait is unbounded for the reason [`close_turn_stream`]'s is: the sender
+/// set is identical on both paths, so a wedge here would be a wedge there, and
+/// `the_turn_tail_completes_with_the_registry_still_attached` is the guard on
+/// both. Returns [`LaneStreamEnd::default`] when the slot is empty (no turn
+/// ever spawned a forwarder) or the forwarder panicked.
+pub(crate) async fn drain_dropped_stream(
+    registry: &stella_tools::ToolRegistry,
+    slot: &ForwarderSlot,
+) -> LaneStreamEnd {
+    let parked = slot.lock().unwrap_or_else(|p| p.into_inner()).take();
+    let Some(forwarder) = parked else {
+        return LaneStreamEnd::default();
+    };
+    registry.detach_event_stream();
+    forwarder.await.unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
