@@ -53,9 +53,10 @@ zeroize.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true
-# v2 golden frames only (`tests/v2_*.rs`). The v1 deck's own golden harness
-# stays hand-rolled and style-stripping; see that suite's module doc for why,
-# and `tests/v2_status_bar.rs` for why v2 cannot accept the same blindness.
+# `tests/status_bar_goldens.rs` only. The deck's own golden harness
+# (`tests/deck_render_snapshots.rs`) stays hand-rolled and style-stripping;
+# see each suite's module doc for why the status bar cannot accept the same
+# blindness.
 insta.workspace = true
 # tests/deck_pty_smoke.rs hand-rolls its pty harness on openpty — already a
 # direct dependency above; integration tests only see dev-dependencies.
