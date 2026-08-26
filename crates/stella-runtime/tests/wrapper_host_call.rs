@@ -18,8 +18,6 @@
 //! `cfg(unix)` is the same declared gap the rest of this suite carries, tracked
 //! in #3497.
 
-#![cfg(unix)]
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -91,15 +89,32 @@ fn gate(grant: LoopGrant, ceiling: u32) -> Arc<HostCallGate> {
     ))
 }
 
-fn plugin(script: &str, gate: Arc<HostCallGate>, timeout: Duration) -> SubprocessWrapper {
+/// The ask `a_plugin_that_asks_and_never_reads` makes before walking away.
+const RECALL_CALL: &str = "{\"call\":\"recall\",\"id\":7,\"args\":{\"goal\":\"retry_budget is not honoured\",\"limit\":2}}";
+
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
+
+/// The one plugin in this file that must be a shell script: see
+/// `a_dead_writer_mid_conversation_is_not_reported_as_a_missing_gate`.
+#[cfg(unix)]
+fn sh_plugin(script: &str, gate: Arc<HostCallGate>) -> SubprocessWrapper {
     SubprocessWrapper::declare(
         vec!["/bin/sh".into(), "-c".into(), script.into()],
         Vec::new(),
-        timeout,
+        Duration::from_secs(30),
     )
     .expect("the transport is declared with a program and a budget")
     .wrapper
     .serving(gate)
+}
+
+fn plugin(mode: &[&str], gate: Arc<HostCallGate>, timeout: Duration) -> SubprocessWrapper {
+    let mut argv = vec![FIXTURE.to_string()];
+    argv.extend(mode.iter().map(|part| (*part).to_string()));
+    SubprocessWrapper::declare(argv, Vec::new(), timeout)
+        .expect("the transport is declared with a program and a budget")
+        .wrapper
+        .serving(gate)
 }
 
 fn before() -> BeforeTurnRequest {
@@ -126,28 +141,14 @@ async fn a_plugin_asks_for_recall_mid_point_and_contributes_what_it_was_given() 
     let gate = gate(manifest.loop_grant.clone(), DEFAULT_HOST_MAX_CALLS);
     // The goal is read back out of the request, so the frames the host returns
     // are genuinely a function of what the plugin asked about.
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"recall","id":7,"args":{"goal":"retry_budget is not honoured","limit":2}}'
-read -r answer
-case "$answer" in
-  *'"result":7'*) ;;
-  *) printf 'the answer did not carry the id this plugin chose\n' >&2 ; exit 1 ;;
-esac
-case "$answer" in
-  *'the retry budget is 3'*) known="the retry budget is 3 (recalled)" ;;
-  *) known="nothing was recalled" ;;
-esac
-case "$answer" in
-  *'RETRY_BUDGET'*) known="$known, and src/retry.rs defines it" ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"recall","text":"%s"}]}}\n' "$known"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
-        .before_turn(before())
-        .await
-        .expect("the plugin asked, was answered, and answered the point");
+    let response = plugin(
+        &["recall-probe"],
+        Arc::clone(&gate),
+        Duration::from_secs(10),
+    )
+    .before_turn(before())
+    .await
+    .expect("the plugin asked, was answered, and answered the point");
 
     let messages = admissible(&manifest, response)
         .expect("the contribution is within what the manifest declared")
@@ -181,15 +182,14 @@ async fn a_plugin_that_asks_and_then_ends_without_answering_names_what_it_abando
     let gate = gate(manifest.loop_grant.clone(), DEFAULT_HOST_MAX_CALLS);
     // Asks, and exits without ever reading the answer. Its stdout closes with
     // the call as the last thing it said.
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"recall","id":7,"args":{"goal":"retry_budget is not honoured","limit":2}}'
-"#;
-
-    let failed = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
-        .before_turn(before())
-        .await
-        .expect_err("an abandoned point is not a contribution");
+    let failed = plugin(
+        &["call-once", RECALL_CALL],
+        Arc::clone(&gate),
+        Duration::from_secs(10),
+    )
+    .before_turn(before())
+    .await
+    .expect_err("an abandoned point is not a contribution");
 
     match &failed {
         WrapperError::UnansweredCall { call, .. } => {
@@ -216,21 +216,14 @@ async fn an_undeclared_call_is_refused_to_the_plugin_and_reported_to_the_host() 
         "this manifest declares recall and nothing else"
     );
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"child_turn","id":1,"args":{"role":"verifier","instruction":"grade it"}}'
-read -r answer
-case "$answer" in
-  *'"refusal":"undeclared"'*) note="the host refused child_turn; degrading" ;;
-  *) note="unexpected answer" ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"note","text":"%s"}]}}\n' "$note"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
-        .before_turn(before())
-        .await
-        .expect("a refused call is a value the plugin reads, never a death");
+    let response = plugin(
+        &["child-turn-probe"],
+        Arc::clone(&gate),
+        Duration::from_secs(10),
+    )
+    .before_turn(before())
+    .await
+    .expect("a refused call is a value the plugin reads, never a death");
 
     let messages = admissible(&manifest, response)
         .expect("the contribution is admissible")
@@ -259,20 +252,7 @@ async fn the_call_allowance_is_the_hosts_and_a_spent_one_is_answered() {
     let gate = gate(generous, 1);
     assert_eq!(gate.max_calls(), 1, "the ask is clamped to the ceiling");
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"recall","id":1,"args":{"goal":"first"}}'
-read -r first
-printf '%s\n' '{"call":"recall","id":2,"args":{"goal":"second"}}'
-read -r second
-case "$second" in
-  *'"refusal":"allowance-spent"'*) note="the second ask was refused" ;;
-  *) note="the allowance was not enforced" ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"note","text":"%s"}]}}\n' "$note"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
+    let response = plugin(&["two-recalls"], Arc::clone(&gate), Duration::from_secs(10))
         .before_turn(before())
         .await
         .expect("a spent allowance is answered, not fatal");
@@ -298,18 +278,8 @@ async fn the_conversation_cannot_outlive_the_point_timeout() {
     let budget = Duration::from_millis(700);
 
     // Never answers the point; just keeps asking.
-    let script = r#"
-read -r request
-n=0
-while : ; do
-  n=$((n+1))
-  printf '%s\n' "{\"call\":\"recall\",\"id\":$n,\"args\":{\"goal\":\"again\"}}"
-  read -r answer || exit 0
-done
-"#;
-
     let started = Instant::now();
-    let error = plugin(script, Arc::clone(&gate), budget)
+    let error = plugin(&["ask-forever"], Arc::clone(&gate), budget)
         .before_turn(before())
         .await
         .expect_err("a conversation that never ends is killed at the deadline");
@@ -374,6 +344,14 @@ async fn a_grant_below_steering_leaks_no_capability() {
 /// transport fault (a broken pipe) is silently dropped by `writer.abort()`
 /// never being joined. This asserts the distinct, correctly-named error and
 /// that it carries the real I/O error rather than nothing.
+///
+/// **Unix only, and not an oversight.** This needs a plugin whose stdin is
+/// genuinely closed (`exec 0<&-`). `std` cannot close fd 0 without `libc`,
+/// and `wrapper-plugin-fixture` links `std` alone on purpose — reaching for
+/// a platform crate to make a fixture more capable is the slope
+/// `doc:pipeline-as-plugins` §5 commitment 2 warns about. `wrapper_socket.rs`
+/// keeps one shell-shaped test for the same reason (#4697).
+#[cfg(unix)]
 #[tokio::test]
 async fn a_dead_writer_mid_conversation_is_not_reported_as_a_missing_gate() {
     let manifest = manifest(RECALLING_MANIFEST);
@@ -406,18 +384,14 @@ async fn a_dead_writer_mid_conversation_is_not_reported_as_a_missing_gate() {
     // the child is reaped by `kill_on_drop` and the group-kill guard on the
     // error path. The point timeout below is the backstop if the host ever
     // stops ending the conversation at all.
-    let script = r#"
-read -r request
-exec 0<&-
-while :; do
-  printf '%s\n' '{"call":"recall","id":1,"args":{"goal":"ask"}}'
-done
-"#;
-
-    let error = plugin(script, Arc::clone(&gate), Duration::from_secs(30))
-        .before_turn(before())
-        .await
-        .expect_err("a channel that died mid-conversation cannot answer a further ask");
+    let error = sh_plugin(
+        "read -r request\nexec 0<&-\nwhile :; do\n  printf '%s\\n' \
+         '{\"call\":\"recall\",\"id\":1,\"args\":{\"goal\":\"ask\"}}'\ndone\n",
+        Arc::clone(&gate),
+    )
+    .before_turn(before())
+    .await
+    .expect_err("a channel that died mid-conversation cannot answer a further ask");
 
     let WrapperError::AnswerChannelFailed { call, source, .. } = &error else {
         panic!(
