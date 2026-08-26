@@ -852,6 +852,17 @@ website-inputs-test: ## Test the website-inputs guard's three failure directions
 diagnostic-codes-test: ## Test the diagnostic-code registry's failure directions (#4948; hermetic; not part of `gate`)
 	./scripts/test-diagnostic-codes.sh
 
+# Not a gate step: `make gate` judges a working tree, and this asks about a
+# range of commits — a question a pull request has and a dirty checkout does
+# not. It runs in .github/workflows/rebase-replay.yml on every pull request.
+.PHONY: rebase-replay
+rebase-replay: ## Assert no path is edited and then undone inside this branch (#4979; against origin/main)
+	./scripts/check-rebase-replay.sh
+
+.PHONY: rebase-replay-test
+rebase-replay-test: ## Test the rebase-replay guard, and the rebase hazard it is about (#4979; hermetic; not part of `gate`)
+	./scripts/test-rebase-replay.sh
+
 .PHONY: ci-rust-scope-test
 ci-rust-scope-test: ## Test which diffs run the Rust gate, prose skips and fail-open included (hermetic; not part of `gate`)
 	./scripts/test-ci-rust-scope.sh
