@@ -2585,7 +2585,6 @@ scripts/experiments/exp3_growth_ratchet.py filler-adverb 2
 scripts/export-agentevent-schema.sh interface-jargon 2
 scripts/fmt-file.sh filler-adverb 2
 scripts/gen-glyph-coverage.py filler-adverb 1
-scripts/gen-tokens.py filler-adverb 2
 scripts/gen-tokens.py interface-jargon 2
 scripts/gen-tokens.py rust-jargon 2
 scripts/impacted-crates.sh filler-adverb 1
