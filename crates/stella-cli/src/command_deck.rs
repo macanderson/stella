@@ -113,8 +113,8 @@ mod theme_cmd;
 mod whistle;
 mod worker_control;
 use driver_support::{
-    handle_supervisor_msg, service_registry_action, spawn_mcp_connect, spawn_notification_poller,
-    spawn_pr_monitor,
+    handle_supervisor_msg, service_registry_action, service_undo_delete, spawn_mcp_connect,
+    spawn_notification_poller, spawn_pr_monitor,
 };
 use lead_turn::run_lead_turn;
 use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
@@ -1454,6 +1454,7 @@ pub async fn run_deck_session(
                                 },
                                 &in_tx,
                             )
+                            && !service_undo_delete(&other, &workspace_path, &in_tx)
                             && !inspect_service::service_inspect_action(
                                 &other,
                                 &store,
@@ -2109,6 +2110,13 @@ pub async fn run_deck_session(
                                 },
                                 &in_tx,
                             );
+                        }
+                        // `u undo` on a delete row is serviced mid-turn too:
+                        // restoring a file git already holds is the same
+                        // cheap local op idle or busy, and the reader pressing
+                        // it is looking at a deletion that just happened.
+                        Some(input @ WorkspaceInput::UndoDelete { .. }) => {
+                            service_undo_delete(&input, &workspace_path, &in_tx);
                         }
                         // INSPECT is answered mid-turn too: the receipts of
                         // earlier steps are already durable, and watching the

@@ -4,6 +4,83 @@
 
 use super::*;
 
+/// A settled `delete_file` exchange on `agent` — the event whose head carries
+/// the `· git-backed · u undo` affordance.
+fn with_delete_exchange(m: &mut WorkspaceModel, agent: &str) {
+    use stella_protocol::{ToolCall, ToolOutput};
+    m.apply_inbound(&Inbound::Event {
+        agent: agent.into(),
+        event: AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "d1".into(),
+                name: "delete_file".into(),
+                input: serde_json::json!({ "path": "src/old.rs" }),
+            },
+            sub_agent_id: None,
+        },
+    });
+    m.apply_inbound(&Inbound::Event {
+        agent: agent.into(),
+        event: AgentEvent::ToolResult {
+            call_id: "d1".into(),
+            output: ToolOutput::Ok {
+                content: "deleted src/old.rs".into(),
+                data: None,
+            },
+            duration_ms: 3,
+            speculated: false,
+            sub_agent_id: None,
+        },
+    });
+}
+
+/// The `u` binding (SPEC 11): with a delete event highlighted — its result
+/// row or its head — `u` sends [`WorkspaceInput::UndoDelete`] naming the
+/// deleted path; with anything else highlighted the same key stays typing and
+/// lands in the composer. The row has rendered `· u undo` since the head
+/// landed; this is the half that makes the label true (#5036).
+#[test]
+fn u_on_a_highlighted_delete_sends_the_undo_and_otherwise_types() {
+    let mut model = model_with(&["lead"]);
+    with_delete_exchange(&mut model, "lead");
+    let mut ui = ready_ui();
+
+    // ↑ lands on the newest entry — the delete's *result* — and `u` still
+    // resolves it back to the call it settles.
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Char('u')), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::UndoDelete {
+            paths: vec!["src/old.rs".into()]
+        }),
+        "u on the delete's result row sends the undo"
+    );
+
+    // On the head itself, the same.
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Char('u')), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::UndoDelete {
+            paths: vec!["src/old.rs".into()]
+        }),
+        "u on the delete's head sends the undo"
+    );
+
+    // A non-delete highlight leaves `u` to the composer: it types.
+    let mut model = model_with(&["lead"]);
+    with_tool_exchange(&mut model, "lead"); // read_file, not delete_file
+    let mut ui = ready_ui();
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char('u')), &model, &mut ui);
+    assert_eq!(
+        ui.composer.buffer(),
+        "u",
+        "u with a non-delete highlight falls through to typing"
+    );
+}
+
 #[test]
 fn up_selects_the_last_message_and_ctrl_o_toggles_it() {
     let mut model = model_with(&["lead"]);

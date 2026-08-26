@@ -1092,6 +1092,13 @@ pub enum WorkspaceInput {
     /// the driver's next `TaskUpdate` snapshot folds back, so the card can
     /// never show a skip the engine refused.
     TaskSkip { agent: AgentId, id: String },
+    /// `u` on a highlighted delete event: restore what that one `delete_file`
+    /// call removed, from git — the row's `· git-backed · u undo` affordance
+    /// (SPEC 6.3, SPEC 11). `paths` carries the call's targets, several for a
+    /// batch delete, so the input scopes exactly one event. The driver answers
+    /// with [`Inbound::Notice`] naming what was restored or why it could not
+    /// be — an untracked file has no git reading to restore from.
+    UndoDelete { paths: Vec<String> },
     /// Plan card (`/plan`), post-approval `e`: ask the driver to open a
     /// scope-change proposal for `agent`'s locked scope. The deck never edits
     /// scope locally — a granted change arrives back as a fresh

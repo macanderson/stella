@@ -1614,6 +1614,7 @@ mod steer;
 pub use gates::HunkMarks;
 mod nav;
 mod queue_editor;
+mod undo;
 pub use dispatch::{DispatchRoute, MidTurnPrompt, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
@@ -3445,6 +3446,22 @@ fn handle_session_key(
         KeyCode::Esc if ui.session_selected.is_some() => {
             ui.session_selected = None;
             Some(DeckAction::Handled)
+        }
+        // `u` with a delete event highlighted is that row's own affordance
+        // (`· git-backed · u undo`). Guarded on a blank composer like every
+        // bare-letter hotkey, so a prompt containing a `u` never loses its
+        // keystroke — and on the highlight actually being a delete, so any
+        // other `u` still falls through to typing.
+        KeyCode::Char('u')
+            if !key.modifiers.intersects(
+                KeyModifiers::CONTROL
+                    | KeyModifiers::SUPER
+                    | KeyModifiers::META
+                    | KeyModifiers::ALT,
+            ) && ui.composer.is_blank() =>
+        {
+            undo::selected_delete_paths(model, ui)
+                .map(|paths| DeckAction::Send(WorkspaceInput::UndoDelete { paths }))
         }
         // The expand-ALL overlay's Esc way out (precedence rule 8): claimed
         // here, ahead of the turn-stop Esc, so closing the overlay can never
