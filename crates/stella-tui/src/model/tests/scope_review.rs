@@ -202,6 +202,68 @@ fn a_refused_plan_stops_claiming_a_decision_is_pending() {
     assert_eq!(model.plan.state, crate::plan::PlanState::PendingApproval);
 }
 
+/// The window between a refusal and the re-proposal, driven through the event
+/// path (#4667).
+///
+/// `Plan::cancel` freezes the state word, and the worry was that it froze the
+/// rail with it. It does not: `TaskUpdate` folds into the board through
+/// `apply_board`, and the fraction and the active step read the board rather
+/// than the state — so the deck names what is running while the model revises,
+/// under a word that still says the user sent this plan back.
+#[test]
+fn the_board_reaches_the_rail_while_a_refused_plan_is_being_revised() {
+    let mut model = SessionModel::new();
+    start_a_plan(&mut model, "1", &["migrate", "backfill", "cut over"]);
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "1".into(),
+        output: ToolOutput::error("the plan was not approved — they said: smaller"),
+        duration_ms: 400,
+        speculated: false,
+        sub_agent_id: None,
+    });
+    assert_eq!(model.plan.state, crate::plan::PlanState::Cancelled);
+
+    model.apply(&AgentEvent::TaskUpdate {
+        tasks: vec![
+            task("1", "migrate", TaskStatus::Completed),
+            task("2", "backfill", TaskStatus::InProgress),
+            task("3", "cut over", TaskStatus::Pending),
+        ],
+    });
+    assert_eq!(
+        model.plan.state,
+        crate::plan::PlanState::Cancelled,
+        "a board snapshot is not a decision and may not overturn one"
+    );
+    assert_eq!(
+        model.plan.progress(),
+        (1, 3),
+        "the rail counts what the board says, refusal or not"
+    );
+    assert_eq!(
+        model.plan.active().map(|s| s.title).as_deref(),
+        Some("backfill"),
+        "the running step is named while the model revises"
+    );
+
+    // The revised plan is what clears the verdict, and it clears the board with
+    // it — the new proposal's steps are the ones being decided on.
+    start_a_plan(&mut model, "2", &["cut over"]);
+    assert_eq!(model.plan.state, crate::plan::PlanState::PendingApproval);
+    assert_eq!(model.plan.progress(), (0, 1));
+}
+
+fn task(id: &str, subject: &str, status: TaskStatus) -> stella_protocol::TaskItem {
+    stella_protocol::TaskItem {
+        id: id.into(),
+        subject: subject.into(),
+        description: None,
+        status,
+        owner: None,
+        contract: None,
+    }
+}
+
 /// A `task_start` that fails for its own reasons — after the driver approved,
 /// so no gate is open — is an ordinary tool error and must not be read as a
 /// refusal of a plan nobody re-proposed.
