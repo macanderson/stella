@@ -4,7 +4,7 @@
 //! over the wire, and what comes back is well-formed against the real
 //! `stella_plugin::wire` types.
 //!
-//! # What this file grades, and what it deliberately does not
+//! # What this file grades, and what it does not
 //!
 //! `plugins/stella-goal` contributes at `before_turn` only when
 //! `stage == "execute"`, and doing so needs no host call — unlike
@@ -172,7 +172,7 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
             response.scope.is_empty(),
             "{name}: no candidate grant, nothing structural to scope"
         );
-        // Invariant 7, checked on the value rather than trusted.
+        // AGENTS.md #7, checked on the value rather than trusted.
         for context in response.context {
             assert_eq!(context.into_message().role, MessageRole::User, "{name}");
         }
@@ -182,7 +182,7 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
 }
 
 /// The other half of the contract: neither point's response has an error
-/// variant, so a plugin that cannot answer **fails** — non-zero exit, one
+/// case, so a plugin that cannot answer **fails** — non-zero exit, one
 /// line on stderr, nothing on stdout — and the host proceeds without it.
 ///
 /// Spawned directly rather than through [`SubprocessWrapper`], because the

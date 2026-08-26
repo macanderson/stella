@@ -62,7 +62,7 @@ use crate::wrapper::CompareOp;
 /// One `[[oracle.checks]]` entry — the rule that decides one requirement.
 ///
 /// Kept as the author's own text so the manifest round-trips byte-for-byte
-/// (invariant 4), while [`OracleCheck::rule`] hands back the parsed form —
+/// (AGENTS.md #4), while [`OracleCheck::rule`] hands back the parsed form —
 /// the [`crate::WrapperStage::condition`] shape.
 ///
 /// Several checks may name the same requirement, and they conjoin: the
@@ -281,7 +281,7 @@ impl OracleCheck {
     pub fn outcome(&self, reported: &BTreeMap<String, u64>) -> CheckOutcome {
         let rule = match self.rule() {
             Ok(rule) => rule,
-            // `rule()` returns exactly this variant; the second arm renders
+            // `rule()` returns exactly this case; the second arm renders
             // whatever a future one would say rather than claiming totality it
             // does not have.
             Err(ManifestError::UnparsableCheck { reason, .. }) => {

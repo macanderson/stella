@@ -17,7 +17,7 @@
 //!
 //! # It follows `child_turn`'s precedent exactly, and inverts one rule
 //!
-//! The shape is [`child_turn`]'s and deliberately so: **the plugin names an
+//! The shape is [`child_turn`]'s and so: **the plugin names an
 //! intent, the host resolves it against machinery it already owns, the host
 //! spends the money and does the I/O, and the plugin only steers and reports.**
 //! No path, no branch, no base revision, no credential and no subprocess
@@ -181,7 +181,7 @@ pub struct CandidateWork {
 /// What one candidate turn produced.
 ///
 /// The two size numbers are the substrate's because only it can see the
-/// workspace's diff, and they are deliberately crude: this is the evidence a
+/// workspace's diff, and they are crude: this is the evidence a
 /// plugin *scores*, and a host that shipped the score would be the thing the
 /// plugin was extracted to replace.
 #[derive(Debug, Clone, PartialEq)]
@@ -201,7 +201,7 @@ pub struct CandidateReport {
 
 /// Why a candidate workspace operation did not happen.
 ///
-/// Typed and named rather than a `String` (invariant 5), because the four are
+/// Typed and named rather than a `String` (AGENTS.md #5), because the four are
 /// different events with different remedies: a workspace that could not be
 /// created is an isolation substrate problem, a turn that could not be run is
 /// an engine problem, an adoption that could not be applied has left the user's
@@ -296,7 +296,7 @@ pub trait CandidateWorkspaces: Send + Sync {
 /// What one performed fan-out cost, and what it was booked against.
 ///
 /// The host's half of "the spend is visible", at the capability where the
-/// number is largest. **Consumer** (invariant 10's discipline, pointed at a
+/// number is largest. **Consumer** (AGENTS.md #10's discipline, pointed at a
 /// host report): the same place [`ChildTurnSpend`](super::ChildTurnSpend) is
 /// read — a driver prints it beside the refusals so a user learns what a plugin
 /// did on their money. A fan-out that is not reported is N worker turns nobody

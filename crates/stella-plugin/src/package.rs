@@ -46,7 +46,7 @@
 //! path genuinely does (a tool's argv), it stays in the tool manifest the host
 //! reads, which is the one file that can be checked against what runs.
 //!
-//! That is also why a `[[tools]]` entry deliberately does **not** restate the
+//! That is also why a `[[tools]]` entry does **not** restate the
 //! argv. Author prose is labelled as the author's throughout this crate
 //! ([`Capability::purpose`](crate::Capability)), but an argv reads as a *fact
 //! about what will run*, and this crate cannot check it against the file that
@@ -148,7 +148,7 @@ pub struct RecordContribution {
     pub statement: String,
     /// What the record asks to be able to do. Defaults to
     /// [`RecordEnforcement::Advisory`], and see that type for why the other
-    /// variant is declarable but never loadable.
+    /// case is declarable but never loadable.
     #[serde(default)]
     pub enforcement: RecordEnforcement,
 }
@@ -169,8 +169,8 @@ pub struct RecordContribution {
 /// *steer*, and may never ship one that *denies* —
 /// [`ManifestError::PluginRecordCannotEnforce`] is that rule.
 ///
-/// The variant exists so the refusal can be a named error explaining the
-/// governance rule, rather than a deserializer's "unknown variant". A manifest
+/// The case exists so the refusal can be a named error explaining the
+/// governance rule, rather than a deserializer's "unknown case". A manifest
 /// that asks for it is not making a typo; it is asking for something the
 /// governance model does not grant, and it deserves to be told which.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,7 +303,7 @@ pub struct KindMismatch {
 
 /// A package whose declaration and directories disagree.
 ///
-/// Its own error type rather than a [`ManifestError`] variant, because it
+/// Its own error type rather than a [`ManifestError`] case, because it
 /// answers a different question: `ManifestError` is "this manifest is not
 /// well-formed", which a plugin author fixes by reading the manifest alone,
 /// while this is "this manifest does not describe this directory", which needs
@@ -730,7 +730,7 @@ mod tests {
 
     /// The enforcement vocabulary's wire strings, pinned on both sides — the
     /// [`crate::FlipPolicy`] discipline. `blocking` must stay *spellable*, or
-    /// its refusal degrades into an unknown-variant parse error that explains
+    /// its refusal degrades into an unknown-case parse error that explains
     /// nothing about governance.
     #[test]
     fn the_enforcement_vocabulary_is_pinned() {

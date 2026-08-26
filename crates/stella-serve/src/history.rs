@@ -95,7 +95,7 @@ pub(crate) enum Replay {
 ///
 /// Holds pre-encoded JSON rather than `ServerFrame`s. Every retained frame has
 /// already been serialized once to be written to the socket, and `ServerFrame`
-/// is deliberately not `Clone` (each is produced once and moved onto the
+/// is not `Clone` (each is produced once and moved onto the
 /// channel). Keeping the string is therefore both cheaper and the only option
 /// that does not force a `Clone` bound onto the wire type to serve a feature
 /// the wire type has no opinion about.
@@ -155,7 +155,7 @@ impl FrameHistory {
     /// What is retained is the exact JSON that goes on the socket, so a
     /// replayed frame is byte-identical to the one first delivered.
     /// Re-serializing on replay would risk a client seeing two spellings of
-    /// one frame — and `ServerFrame` is deliberately not `Clone`, so retaining
+    /// one frame — and `ServerFrame` is not `Clone`, so retaining
     /// the frame itself is not on the table.
     pub(crate) fn record(&self, encode: impl FnOnce(u64) -> String) -> (u64, String) {
         let mut ring = self.lock();

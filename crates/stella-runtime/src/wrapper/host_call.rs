@@ -83,7 +83,7 @@ pub const DEFAULT_RECALL_FRAMES: u32 = 8;
 
 /// The host's context plane, as the socket needs it.
 ///
-/// Deliberately shaped like [`stella_protocol::ContextRecallPort::recall`] —
+/// Shaped like [`stella_protocol::ContextRecallPort::recall`] —
 /// which is where that port lives since #3865 retargeted it out of
 /// `stella-pipeline` ahead of deleting that crate — one
 /// goal in, the frames out, never an error the caller has to special-case
@@ -120,7 +120,7 @@ pub trait RecallHost: Send + Sync {
 /// for it — [`HostCallRefusal::Unavailable`] when the capability exists and
 /// this host has nothing behind it, [`HostCallRefusal::Unsupported`] when the
 /// implementor does not perform it at all — a declared gap, delivered to the
-/// plugin, which is invariant 10's discipline pointed at capabilities.
+/// plugin, which is AGENTS.md #10's discipline pointed at capabilities.
 /// [`HostPlanes`] answers `Unavailable` for every one of the five, because it
 /// performs all five and what a caller withholds is a plane (#3580).
 ///
@@ -145,7 +145,7 @@ pub trait HostCapabilities: Send + Sync {
 /// was the obvious shape and it is the wrong one: the trait's whole argument is
 /// that an implementor answers for *every* capability, and in a chain
 /// "unsupported" stops meaning "this host declares it cannot" and starts
-/// meaning "nobody claimed it", which is the silence invariant 10 refuses.
+/// meaning "nobody claimed it", which is the silence AGENTS.md #10 refuses.
 /// Here the `match` below is exhaustive and every arm is a sentence someone
 /// wrote.
 ///
@@ -465,7 +465,7 @@ impl HostCallGate {
         // A poisoned lock means some other call panicked mid-record; the
         // recorded refusals are still exactly what they were, and losing the
         // report because of an unrelated panic would be the silence this whole
-        // apparatus refuses. `unwrap` on runtime state is also invariant 5's
+        // apparatus refuses. `unwrap` on runtime state is also AGENTS.md #5's
         // line.
         self.refusals
             .lock()

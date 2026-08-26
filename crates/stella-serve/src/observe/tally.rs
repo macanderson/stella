@@ -28,7 +28,7 @@
 //! mistake: `AgentEvent::Text`, `TextDelta` and `Reasoning` carry model output
 //! verbatim, so such a record would put prompt-adjacent content in a log file —
 //! and would make the crate's no-content property conditional on a verbosity
-//! flag, which is exactly the kind of "safe unless you turn the knob" invariant
+//! flag, which is exactly the kind of "safe unless you turn the knob" rule
 //! that fails in production. The tally supersedes it: aggregates answer the
 //! diagnostic questions (is this turn progressing? how many retries?) without
 //! any payload reaching a record.
@@ -93,7 +93,7 @@ impl TallyFold {
             // purpose, so a host that cannot see the park reads a deliberate
             // wait as a hang; the events were on this stream and this fold
             // was dropping them (#2006). `description` is tool-authored free
-            // text and is deliberately NOT read here: this is a counter, and
+            // text and is NOT read here: this is a counter, and
             // the crate's no-content property does not get an exception.
             AgentEvent::TurnParked { deadline_secs, .. } => {
                 tally.parked_spans = tally.parked_spans.saturating_add(1);
@@ -110,9 +110,9 @@ impl TallyFold {
                 tally.parked_polls = tally.parked_polls.saturating_add(*polls_used);
             }
             // Everything else — text, deltas, reasoning, budget ticks — is
-            // either payload we deliberately never record or a signal with no
+            // either payload we never record or a signal with no
             // counterpart here. `AgentEvent` is forward-compatible, so an
-            // unknown variant must be inert rather than a compile error.
+            // unknown case must be inert rather than a compile error.
             _ => {}
         }
     }

@@ -46,7 +46,7 @@
 //!   than trusted from the host, because a test suite's output is not this
 //!   crate's to size and the wire carries it into a plugin's memory.
 //!
-//! There is deliberately no `[loop] max_test_runs` key. `max_calls` is the ask
+//! There is no `[loop] max_test_runs` key. `max_calls` is the ask
 //! a human already consented to at install, and a manifest key exists to say
 //! something the existing ones cannot — this one would only restate a number,
 //! and the split `max_child_turns` needed was about *money*, which this is not.
@@ -96,7 +96,7 @@ pub struct TestObservation {
 /// Why a host did not run a candidate's tests.
 ///
 /// Three, because each one sends a plugin author somewhere different and
-/// collapsing any two would lose that (invariant 5's rule at the value level).
+/// collapsing any two would lose that (AGENTS.md #5's rule at the value level).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TestRunDenial {
     /// No workspace this host holds answers to that handle — including a
@@ -117,7 +117,7 @@ pub enum TestRunDenial {
     ///
     /// The `String` is a leaf explanation for a human, not something a caller
     /// branches on — the branch a caller needs is which of these three it is,
-    /// which the variant already answers.
+    /// which the case already answers.
     #[error("{0}")]
     Failed(String),
 }

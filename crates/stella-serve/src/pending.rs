@@ -192,7 +192,7 @@ impl Pending {
             let fault = match err {
                 ServeError::UnknownRequest(_) => MisrouteFault::UnknownRequest,
                 ServeError::RequestKindMismatch(..) => MisrouteFault::KindMismatch,
-                // The other variants are session-lifecycle failures and never
+                // The other cases are session-lifecycle failures and never
                 // reach a resolve; recording them as unknown is the honest
                 // fallback rather than inventing a class.
                 _ => MisrouteFault::UnknownRequest,

@@ -775,7 +775,7 @@ async fn dropping_the_event_stream_cancels_the_turn() {
     // hold an engine thread forever. The suite's window is short, so the
     // reclaim lands well inside the deadline below.
     //
-    // Probed with a deliberately malformed `tool-result` POST rather than a
+    // Probed with a malformed `tool-result` POST rather than a
     // second `/events` GET. The GET used to be the non-destructive probe —
     // 409 while registered, 404 once reclaimed — but parking made it
     // *resumptive*: it now takes the parked session and starts streaming,

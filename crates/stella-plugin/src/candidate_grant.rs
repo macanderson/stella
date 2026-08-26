@@ -24,7 +24,7 @@
 //! rather than two; that crate is gone now (#3865) and this module's own
 //! caller is the only one left. Two callers outside the crate that first
 //! needed a thing was the textbook boundary-type signal (AGENTS.md
-//! invariant 1), and `stella-plugin` is where it now sits: already near-leaf
+//! AGENTS.md #1), and `stella-plugin` is where it now sits: already near-leaf
 //! (only `stella-protocol` as a workspace dependency), already hosting the
 //! wire types ([`CandidateGrant`], [`crate::TamperFinding`]) these functions
 //! build against, and upstream of both `stella-cli` and `stella-runtime` in
@@ -108,7 +108,7 @@ pub enum CmdKind {
     /// kernel's OOM killer, or a runtime that noticed its own allocation
     /// failure first.
     ///
-    /// Its own variant rather than a shade of [`Self::Infra`] because the two
+    /// Its own case rather than a shade of [`Self::Infra`] because the two
     /// call for opposite handling. An unspawnable toolchain will be
     /// unspawnable on every retry, so re-running it is spend with no
     /// information; a memory kill is exactly the outcome a human would simply
@@ -197,7 +197,7 @@ impl CmdOutcome {
     ///
     /// Kept beside [`Self::infra_label`] rather than open-coded at the call
     /// sites so "which outcomes are retryable" stays one answer: a future
-    /// variant that is also worth a retry joins it here, not at every caller.
+    /// case that is also worth a retry joins it here, not at every caller.
     #[must_use]
     pub fn is_out_of_memory(&self) -> bool {
         self.kind == CmdKind::OutOfMemory
@@ -219,7 +219,7 @@ pub enum TestInvocationError {
     Unsupported(String),
 }
 
-/// Parse a deliberately small test-command vocabulary into an enumerable
+/// Parse a small test-command vocabulary into an enumerable
 /// program plus argv. This is quote-aware only to preserve arguments with
 /// spaces; it is not a shell parser and rejects every shell control surface.
 pub fn parse_test_invocation(command: &str) -> Result<TestInvocation, TestInvocationError> {
@@ -272,7 +272,7 @@ pub fn parse_test_invocation(command: &str) -> Result<TestInvocation, TestInvoca
         // already rejected pipelines, redirects, substitution, and
         // backgrounding anywhere in the line, and the script path gets the
         // same escape checks as every other runner's arguments. `sh -c
-        // '<inline>'` is deliberately NOT accepted, although the issue
+        // '<inline>'` is NOT accepted, although the issue
         // sketched it: the inline program rides as one opaque argv word, so
         // the per-argument confinement checks cannot see a path inside it —
         // and an invocation that names no artifact could never be

@@ -2,7 +2,7 @@
 //!
 //! Slice of #3381. The conditional stage order the staged pipeline ran was
 //! hardcoded branches inside its own `pipeline.rs` — a file on the god-file
-//! list and closed to growth, so that design could not absorb another variant
+//! list and closed to growth, so that design could not absorb another case
 //! even if we had wanted one. A wrapper plugin declares the order instead, and
 //! the conditions become a line you can read and change. The crate those
 //! branches lived in (`crates/stella-pipeline`) was deleted in #3865, which
@@ -26,7 +26,7 @@
 //! *later* stage publishes is rejected at load, and so is one reading a signal
 //! whose publisher is declared earlier but **conditional** — that stage
 //! produces nothing on the turns it is skipped. So the failure mode of a
-//! hand-written variant is a rejection with a reason instead of a wedged run at
+//! hand-written case is a rejection with a reason instead of a wedged run at
 //! round three. [`crate::program`] is what makes the second rule necessary and
 //! what proves the pair sufficient: a manifest that loads resolves for every
 //! possible set of signal values.
@@ -46,7 +46,7 @@
 //! host facts and publishes none, because a signal is a fact the host produces
 //! and a contributed signal vocabulary is #3907's decision, not this one's.
 //!
-//! # Scope — what this module deliberately does not do
+//! # Scope — what this module does not do
 //!
 //! Nothing here binds a stage to a *point*. The four wrapper interception
 //! points (`before_turn` / `after_turn` / `judge` / `again?`) live in
@@ -64,12 +64,12 @@ use crate::error::ManifestError;
 ///
 /// The id is what the store's `pipeline_variant` column records (#3388), so
 /// it is the join key of the whole A/B setup: cost, outcome, and
-/// verified-versus-unverified rate per variant is one `GROUP BY` once the
+/// verified-versus-unverified rate per case is one `GROUP BY` once the
 /// wrapper that ran wrote its id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Wrapper {
-    /// The variant id — `"staged-v1"` in #3381's sketch, `"classic"` for the
+    /// The pipeline id — `"staged-v1"` in #3381's sketch, `"classic"` for the
     /// built-in staged order, which no longer ships: #3865 deleted it and
     /// `stella run --pipeline classic` is refused. Non-empty, and written to
     /// the execution row **only when this manifest was the thing that ran**:
@@ -104,7 +104,7 @@ pub struct WrapperStage {
     /// unconditional.
     ///
     /// Kept as the author's own text so the manifest round-trips
-    /// byte-for-byte (invariant 4) while [`WrapperStage::condition`] hands
+    /// byte-for-byte (AGENTS.md #4) while [`WrapperStage::condition`] hands
     /// back the parsed form. A value that came from
     /// [`PluginManifest::from_toml_str`] has already had this parsed and
     /// graph-checked, so that accessor cannot fail for such a value.
@@ -135,7 +135,7 @@ impl WrapperStage {
 
 /// A stage boundary **this host itself** emits.
 ///
-/// Closed by design, and the claim it makes is deliberately smaller than it
+/// Closed by design, and the claim it makes is smaller than it
 /// used to be: this is not the stage vocabulary any more (that is
 /// [`StageName`], which is open), it is the set of boundaries the host knows
 /// how to name on its own. The names and their order were taken from
@@ -148,7 +148,7 @@ impl WrapperStage {
 /// **A name here is not a promise that every host runs it.** The vocabulary
 /// mirrors [`StageKind`] because a wrapper that cannot spell a boundary
 /// cannot describe the run it wraps; which hosts emit which boundary today
-/// differs per stage, and each variant below says so rather than leaving a
+/// differs per stage, and each case below says so rather than leaving a
 /// manifest author to discover it from a run that quietly did nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -301,7 +301,7 @@ impl HostStage {
     /// what a host needs at dispatch time: a declared host stage becomes the
     /// boundary it emits.
     ///
-    /// The manifest spelling and the wire spelling deliberately differ where
+    /// The manifest spelling and the wire spelling differ where
     /// the shorter word is the one people say — `recall` for
     /// [`StageKind::ContextRecall`], `scope` for [`StageKind::ScopeReview`].
     #[must_use]
@@ -384,7 +384,7 @@ pub const MAX_CONTRIBUTED_STAGE_LEN: usize = 32;
 /// [`StageName::Host`], so [`StageName::Contributed`] never holds a word the
 /// host already answers to — the same discipline, and the same reason, as
 /// `stella_protocol::StageName`: a value that does not survive its own round
-/// trip is what invariant 4 forbids.
+/// trip is what AGENTS.md #4 forbids.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 // A plain string on the wire, both arms alike — see the `Serialize` impl
 // below. `schemars` derives from the *shape*, so a plain derive here published

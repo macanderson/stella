@@ -20,7 +20,7 @@ pub(crate) const UNAUTHORIZED_REFILL_PER_SEC: f64 = 2.0;
 
 /// Delay applied to a 401 that arrives with the bucket empty.
 ///
-/// This is deliberately a *delay*, not a rejection: a 429 or a dropped
+/// This is a *delay*, not a rejection: a 429 or a dropped
 /// connection would tell an attacker they had been noticed and would break a
 /// legitimate client that is merely misconfigured. Holding the response instead
 /// costs the guesser wall-clock time per attempt — which is the entire point,
@@ -28,7 +28,7 @@ pub(crate) const UNAUTHORIZED_REFILL_PER_SEC: f64 = 2.0;
 /// correctly-configured host never reaches this path at all.
 pub(crate) const UNAUTHORIZED_PENALTY: Duration = Duration::from_millis(500);
 
-/// A dependency-free token bucket. Deliberately per-process and not per-peer:
+/// A dependency-free token bucket. Per-process and not per-peer:
 /// tracking source addresses would mean unbounded state keyed by something the
 /// caller chooses, which is its own denial-of-service surface, and this is a
 /// sidecar for exactly one trusted host — a legitimate deployment produces no

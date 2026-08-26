@@ -45,7 +45,7 @@ use stella_runtime::wrapper::{
 /// ask for `child_turn`, and declares two role intents — one that resolves to a
 /// research seat, one that points straight at the worker.
 ///
-/// `grader` is declared deliberately. The independence rule has to be tested
+/// `grader` is declared. The independence rule has to be tested
 /// against a role the *manifest permits*, or it proves only that the manifest
 /// check works.
 const GRADING_MANIFEST: &str = r#"

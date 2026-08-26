@@ -82,13 +82,13 @@ use crate::host_call::HostCallFailure;
 /// - **`curate`** (§3.5) — proposals for tools, context records and skills,
 ///   which the loop may *propose* and never grant itself (§7).
 ///
-/// Two things are deliberately absent, and both are `doc:backlog-self-driving`
+/// Two things are absent, and both are `doc:backlog-self-driving`
 /// §3.6's own rules rather than an oversight: there is **no `release` verb** at
 /// B0–B6, and there is **no verb that edits a driver's own grant** — a
 /// capability that could widen `calls` would make the grant advisory.
 ///
-/// Every verb is its own variant rather than a family with a mode parameter,
-/// because invariant 9 governs a capability the same way it governs a tool: a
+/// Every verb is its own case rather than a family with a mode parameter,
+/// because AGENTS.md #9 governs a capability the same way it governs a tool: a
 /// parameter may scope an operation, never select one. `curate accept` and
 /// `curate reject` would be two calls, not one with a boolean — which is why
 /// the latter is simply not here yet.
@@ -184,7 +184,7 @@ impl DriverCall {
     /// Every verb, in declaration order.
     ///
     /// Exhaustive by construction rather than by discipline: the `match` in
-    /// [`DriverCall::as_str`] fails to compile if a variant is added and this
+    /// [`DriverCall::as_str`] fails to compile if a case is added and this
     /// list is generated from the same source of truth as the consent
     /// rendering and the wire corpus, so a new capability cannot ship
     /// undocumented.
@@ -293,7 +293,7 @@ impl std::fmt::Display for DriverFamily {
 /// no driver session, so there is nothing for a call list to be consulted
 /// against. The inner half is [`DriverGrant::permits_call`].
 ///
-/// Deliberately carries **no participation grade**. There is no grade to carry:
+/// Carries **no participation grade**. There is no grade to carry:
 /// [`Participation`](crate::Participation) is a ladder of in-turn influence and
 /// a driver is not on it (§3.0). A plugin may hold both a `[loop]` grant and a
 /// `[driver]` grant — a wrapper that also drives is coherent — and neither one
@@ -444,7 +444,7 @@ impl DriverEnvelope {
 
 /// The one point a driver session dispatches.
 ///
-/// A closed single-variant enum rather than a bare string, so `"point":
+/// A closed single-case enum rather than a bare string, so `"point":
 /// "before_turn"` written into a driver session is a decode error rather than
 /// something a reader shrugs at. A second driver point would be a reviewable
 /// addition here.

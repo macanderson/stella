@@ -8,7 +8,7 @@
 //! Three properties, each of which is why this lives here rather than in the
 //! host:
 //!
-//! - **Pure and synchronous, over owned data** (invariant 2). Nothing here
+//! - **Pure and synchronous, over owned data** (AGENTS.md #2). Nothing here
 //!   reads a file, a clock, or an environment variable: the *host* gathers the
 //!   facts and hands them in as [`SignalValues`]. That is what makes the
 //!   resolution property-testable and identical between a real run, a replay,
@@ -16,7 +16,7 @@
 //! - **The published set is total, by the compiler.** [`SignalValues`] carries
 //!   one field per [`Signal`] and derives no `Default`, so a host cannot leave
 //!   a signal unfilled and it is not *representable* for the evaluator to read
-//!   an unpublished signal as `false`. Adding a `Signal` variant is an `E0004`
+//!   an unpublished signal as `false`. Adding a `Signal` case is an `E0004`
 //!   here — the same "declare the consumer or fail the build" discipline
 //!   `stella-protocol`'s event-consumer ledger applies to emitted signals,
 //!   pointed at published ones.
@@ -40,7 +40,7 @@ use crate::wrapper::{Condition, Signal, SignalKind, StageName, Wrapper};
 /// Every published signal's value for one turn — the host's half of the
 /// contract.
 ///
-/// One field per [`Signal`], deliberately: the manifest's rule is that a
+/// One field per [`Signal`]: the manifest's rule is that a
 /// condition naming a signal the host does not publish is a **load error**, and
 /// the evaluator must not be able to weaken that into "an unpublished signal
 /// reads false". A struct whose fields are the published set makes the weaker
@@ -51,7 +51,7 @@ use crate::wrapper::{Condition, Signal, SignalKind, StageName, Wrapper};
 /// rather than silently reading `false` at one of them.
 ///
 /// The two accessors below are exhaustive `match`es over [`Signal`], so a new
-/// variant is a compile error in this file — the totality the [`Signal`] set
+/// case is a compile error in this file — the totality the [`Signal`] set
 /// needs to stay honest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignalValues {
@@ -181,7 +181,7 @@ impl Condition {
     }
 }
 
-/// The stages one turn will run, in order, under one variant id.
+/// The stages one turn will run, in order, under one pipeline id.
 ///
 /// The resolved form of a [`Wrapper`]: conditions are gone, because they have
 /// been answered. A host consults this instead of re-deciding a stage's
@@ -204,9 +204,9 @@ impl StageProgram {
         Self { variant, stages }
     }
 
-    /// The variant id this program resolved from — what the store's
+    /// The pipeline id this program resolved from — what the store's
     /// `pipeline_variant` column records (#3388), and the join key of every
-    /// per-variant comparison.
+    /// per-pipeline comparison.
     #[must_use]
     pub fn variant(&self) -> &str {
         &self.variant
@@ -492,7 +492,7 @@ mod tests {
     }
 
     /// Every published signal must be answerable at exactly one type. This is
-    /// the runtime half of the compile-time totality: if a `Signal` variant is
+    /// the runtime half of the compile-time totality: if a `Signal` case is
     /// added and given a field but forgotten in one accessor, both answers
     /// come back `None` and this fails.
     #[test]

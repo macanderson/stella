@@ -11,9 +11,9 @@
 //! `stella-serve`, an embedded `stella-engine` host, the two acceptance
 //! criteria beside the CLI in `doc:wrapper-socket` §6 — reached the socket's
 //! own constructor and handed the plugin the key that pays for the agent.
-//! Invariant 3 was CLI policy, not a property of the socket.
+//! AGENTS.md #3 was CLI policy, not a property of the socket.
 //!
-//! **There is deliberately no `stella-cli` in this file.** That is the whole
+//! **There is no `stella-cli` in this file.** That is the whole
 //! claim: a host that never links the CLI still cannot leak the credential.
 //! `stella-runtime`'s manifest cannot depend on `stella-cli` (the edge would
 //! be a cycle), so the absence is enforced by the build and not by discipline.

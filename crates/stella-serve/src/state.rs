@@ -16,7 +16,7 @@
 //! shared state, and the turn registry inside it is the part with rules:
 //! admission under [`MAX_LIVE_TURNS`], reclamation of a finished turn nobody
 //! ever streamed, and the unguessable id a registration mints. Those three
-//! move together because they are one invariant — the cap is only a queue
+//! move together because they are one rule — the cap is only a queue
 //! rather than a one-way latch because reclamation runs inside the same lock
 //! hold that admits.
 //!
@@ -68,7 +68,7 @@ const MAX_LIVE_TURNS: usize = 32;
 pub(crate) struct Entry {
     /// Registration order, so reclamation can name the *oldest* abandoned turn.
     ///
-    /// Deliberately not derived from the turn id: ids are 128 random bits (see
+    /// Not derived from the turn id: ids are 128 random bits (see
     /// [`new_turn_id`]) precisely so that nothing can be inferred from one, and
     /// that includes age. This counter is internal and never leaves the process.
     seq: u64,

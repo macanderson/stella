@@ -200,7 +200,7 @@ impl SubprocessDriver {
     /// grades as a model credential is dropped here and named in
     /// [`AdmittedDriver::refused`]. A driver is the plugin with the *most*
     /// reason to want one — it is trying to get work done — and the least
-    /// business holding one: invariant 3's "every model call is made by the
+    /// business holding one: AGENTS.md #3's "every model call is made by the
     /// host" is what `work_start` will be for.
     ///
     /// The filter here is what a caller can be *told* about; the same
@@ -292,7 +292,7 @@ impl SubprocessDriver {
     ///
     /// # Errors
     ///
-    /// Every variant of [`DriverError`]. The one worth naming here is
+    /// Every case of [`DriverError`]. The one worth naming here is
     /// [`DriverError::NoResponse`]: a driver that exits without a `next` has
     /// decided nothing, and a caller must not read that as either terminal
     /// answer.
@@ -588,7 +588,7 @@ impl SubprocessDriver {
                                     },
                                     // Unreachable in practice: nothing else takes
                                     // `writer` before this arm can run. Named
-                                    // rather than unwrapped, per invariant 5.
+                                    // rather than unwrapped, per AGENTS.md #5.
                                     None => std::io::Error::other(
                                         "the writer task's outcome was already taken",
                                     ),
@@ -613,7 +613,7 @@ impl SubprocessDriver {
                             Some(session) => session.call(ask.call).await,
                             // Unreachable: `frames` is `Some` only when a session
                             // was opened. Written as a value rather than an
-                            // `expect`, because invariant 5 makes no exception
+                            // `expect`, because AGENTS.md #5 makes no exception
                             // for "I checked earlier".
                             None => super::driver_call::unserved(ask.call),
                         };

@@ -42,7 +42,7 @@
 //!
 //! Both share every property that makes resolution safe to trust:
 //!
-//! - **Pure and synchronous, over owned data** (invariant 2). Neither reads
+//! - **Pure and synchronous, over owned data** (AGENTS.md #2). Neither reads
 //!   a file, a clock, or an environment variable — the host gathers the
 //!   facts, once per boundary here rather than once per turn, and hands them
 //!   in.

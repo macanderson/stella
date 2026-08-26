@@ -12,7 +12,7 @@
 //! Two things did not fit and were widened in the same change:
 //! `flip = "not-applicable"` (this oracle observes no red-to-green transition)
 //! and `[[oracle.checks]]` (the budget had nowhere to live but inside the
-//! oracle binary). What is deliberately still absent is a fractional
+//! oracle binary). What is still absent is a fractional
 //! measurement — see the fixture's header and #3488.
 
 use std::collections::BTreeMap;
@@ -153,7 +153,7 @@ fn the_witness_definition_of_done_is_unchanged() {
     assert!(oracle.measurements.is_empty());
 }
 
-/// Invariant 4: both new blocks cross a crate boundary byte-for-byte, in the
+/// AGENTS.md #4: both new blocks cross a crate boundary byte-for-byte, in the
 /// manifest's own format and in the JSON an install prompt will render from.
 #[test]
 fn the_falsifier_fixture_round_trips_through_both_wire_shapes() {

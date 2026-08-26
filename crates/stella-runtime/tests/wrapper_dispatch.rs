@@ -235,7 +235,7 @@ async fn a_wrapper_plugins_verdict_decides_whether_another_turn_runs() {
     assert!(report.met());
 
     // The contribution reached the turn — as volatile messages, never the
-    // stable prefix (invariant 7). One per stage the program ran.
+    // stable prefix (AGENTS.md #7). One per stage the program ran.
     let first = &host.turns[0];
     assert_eq!(first.round, 0);
     assert_eq!(
@@ -493,7 +493,7 @@ async fn an_undeclared_point_is_never_dispatched() {
     );
 }
 
-/// A manifest with no `[wrapper]` has no stage order and no variant id, so it
+/// A manifest with no `[wrapper]` has no stage order and no pipeline id, so it
 /// is refused by name rather than driven with an invented default.
 #[test]
 fn a_manifest_without_a_wrapper_block_is_refused_by_name() {

@@ -240,7 +240,7 @@ fn the_same_tool_cannot_be_requested_twice() {
     );
 }
 
-/// Invariant 4, for the type that will cross the host boundary as JSON when a
+/// AGENTS.md #4, for the type that will cross the host boundary as JSON when a
 /// host renders install consent over the serve wire.
 #[test]
 fn the_widest_grant_round_trips_through_toml_and_json() {
@@ -372,7 +372,7 @@ fn a_package_may_not_ship_a_record_that_denies_a_tool_call() {
     );
 }
 
-/// Invariant 4 for the package tables too: what a host renders consent from
+/// AGENTS.md #4 for the package tables too: what a host renders consent from
 /// must survive the wire a `stella-serve` host reads it over.
 #[test]
 fn a_package_declaration_round_trips_through_toml_and_json() {

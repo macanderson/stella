@@ -1,4 +1,4 @@
-//! The crate's central invariant, enforced executably.
+//! The crate's central rule, enforced executably.
 //!
 //! `stella-runtime` exists so that N sessions with N workspace roots and N
 //! trust postures can be assembled in one process. That property survives
@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 /// Runtime reads of ambient process state. `env!` (compile-time, cargo's own
-/// vars) is deliberately absent: it is resolved by the compiler and cannot
+/// vars) is absent: it is resolved by the compiler and cannot
 /// differ between two sessions in one process, which is the property under
 /// test.
 const FORBIDDEN: &[&str] = &[

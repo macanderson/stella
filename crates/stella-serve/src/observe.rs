@@ -26,7 +26,7 @@
 //!
 //! # Nothing here egresses
 //!
-//! AGENTS.md invariant 3. Records go to stderr; counters are exposed at
+//! AGENTS.md #3. Records go to stderr; counters are exposed at
 //! `GET /v1/metrics` behind the same bearer token as every other route — pull,
 //! never push. No sink opens a connection. And no record carries prompt text,
 //! tool payloads, model output, paths, raw request paths, or a whole turn id;
@@ -49,10 +49,10 @@ pub use sink::{Capture, Fanout, JsonlSink, LOG_LEVEL_ENV, NullSink};
 
 /// Where [`ServeEvent`]s go.
 ///
-/// Deliberately one method taking a reference: an observer must be cheap enough
+/// One method taking a reference: an observer must be cheap enough
 /// to call from the turn's hot path and from every request, must never block the
 /// caller on anything it cannot control, and must never fail *upwards* — losing
-/// a record is not a reason to lose a turn (invariant 5). Implementations
+/// a record is not a reason to lose a turn (AGENTS.md #5). Implementations
 /// swallow their own I/O errors.
 pub trait Observer: Send + Sync + 'static {
     fn emit(&self, event: &ServeEvent);

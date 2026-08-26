@@ -30,7 +30,7 @@ pub(crate) fn route_addresses_a_turn(route: Route) -> bool {
 
 /// Map a path to its route template and, where it has one, the turn id.
 ///
-/// Classification is deliberately independent of the method, so a `405` records
+/// Classification is independent of the method, so a `405` records
 /// which resource was addressed rather than collapsing to "unrouted" — the
 /// difference between "you used the wrong verb on `/v1/turns`" and "you asked
 /// for a path that does not exist" is exactly what makes a record diagnostic.
@@ -60,7 +60,7 @@ pub(crate) fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
 
 /// Read one parameter out of a raw query string.
 ///
-/// Deliberately minimal — no percent-decoding, no repeated-key semantics, no
+/// Minimal — no percent-decoding, no repeated-key semantics, no
 /// dependency. The only parameter this server reads is `after`, whose value is
 /// a decimal integer: every byte that could need decoding makes it fail to
 /// parse as one, which is the correct outcome anyway. Growing a second
@@ -165,8 +165,8 @@ mod tests {
         assert!(allowed(Route::Unrouted).is_empty(), "404s carry no Allow");
     }
 
-    /// Every real route's template classifies back to the same variant — the
-    /// structural guard against adding a `Route` variant whose path the
+    /// Every real route's template classifies back to the same case — the
+    /// structural guard against adding a `Route` case whose path the
     /// dispatcher never learned (both dispatch matches carry catch-alls, so
     /// that mistake compiles).
     #[test]

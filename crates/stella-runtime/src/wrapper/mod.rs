@@ -14,7 +14,7 @@
 //! # Why the trait is here and the types are one crate down
 //!
 //! `before_turn` performs recall and `after_turn` spawns processes. That is
-//! I/O, and invariant 2 forbids I/O in the engine, so the socket cannot live in
+//! I/O, and AGENTS.md #2 forbids I/O in the engine, so the socket cannot live in
 //! `stella-core` (`doc:turn-loop-wrappers` §9.1). It lives in the crate that
 //! already owns engine assembly and reads no ambient environment by contract
 //! (`tests/no_ambient_reads.rs`) — including here: nothing in this module
@@ -144,7 +144,7 @@ pub use verdict::{again, judge};
 /// cannot implement either one, which is what keeps a verdict from quietly
 /// becoming a model call (`doc:pipeline-as-plugins` §6). There is also no
 /// `Engine`, no provider and no credential: a wrapper names a role *intent* and
-/// the host makes every model call itself (invariant 3).
+/// the host makes every model call itself (AGENTS.md #3).
 #[async_trait]
 pub trait TurnWrapper: Send + Sync {
     /// Contribute to a turn that has not run yet.
@@ -227,7 +227,7 @@ impl AdmittedContribution {
     /// Workspace-relative paths this wrapper will judge its flip against, for
     /// the host to snapshot before the turn and re-check after it (#3587).
     ///
-    /// Unchecked here, deliberately, and it is the same non-check
+    /// Unchecked here,, and it is the same non-check
     /// [`Self::scope`] gets: a path is neither a permission nor a claim, and
     /// the only thing that can validate one is the host that holds the granted
     /// root. It fences each path there — a declaration that escapes the root is
@@ -246,7 +246,7 @@ impl AdmittedContribution {
 
     /// Spend the contributed context as the volatile messages it is.
     ///
-    /// Invariant 7, held at the type rather than at the call site: every
+    /// AGENTS.md #7, held at the type rather than at the call site: every
     /// message here is a user message built by
     /// [`VolatileContext::into_message`], so a host has nothing in hand that
     /// could reach the byte-stable system prefix.
@@ -275,7 +275,7 @@ impl AdmittedContribution {
 /// The contributed *context* needs no check here, and that is the point of
 /// `VolatileContext`: there is no field on it that could ask for the stable
 /// prefix, so "a plugin cannot make every turn a cache miss" is a property of
-/// the type rather than a rule this function has to remember (invariant 7).
+/// the type rather than a rule this function has to remember (AGENTS.md #7).
 ///
 /// It takes the response **by value** and hands back the checked contribution,
 /// so applying something unchecked means writing a line that says so rather

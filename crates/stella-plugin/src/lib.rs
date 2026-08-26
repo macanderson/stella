@@ -37,7 +37,7 @@
 //!
 //! `[runtime]` (`doc:pipeline-as-plugins` §A5) is the process half: the argv
 //! the host starts, the timeout it enforces, and the **exact** environment
-//! slice the child inherits. See [`Runtime`] for why there is deliberately no
+//! slice the child inherits. See [`Runtime`] for why there is no
 //! `language` field — `argv` already distinguishes a Python plugin from a
 //! Node one without Stella learning what a language is — and why the
 //! environment is an allowlist rather than a scrub.
@@ -47,7 +47,7 @@
 //! answers ([`WrapperRequest`] / [`WrapperResponse`]), the closed
 //! [`EvidenceSet`] it may report, and the [`VerdictRule`] read off this
 //! manifest that the **host** — never the plugin — evaluates. `judge` and
-//! `again` are deliberately absent from that vocabulary: they are free
+//! `again` are absent from that vocabulary: they are free
 //! functions in `stella-runtime`, so a plugin cannot implement either one in
 //! any language, and "a verification plugin quietly calls a model to decide
 //! done" stays impossible by construction rather than by policy.

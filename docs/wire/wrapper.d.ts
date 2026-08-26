@@ -56,7 +56,7 @@ export interface AfterTurnRequest {
    */
   turn: TurnOutcome;
   /**
-   * The variant id of the wrapper being asked.
+   * The pipeline id of the wrapper being asked.
    */
   wrapper: string;
 }
@@ -112,8 +112,8 @@ export interface BeforeTurnRequest {
    */
   stage: StageName;
   /**
-   * The variant id of the wrapper being asked — `StageProgram::variant`,
-   * and the join key of every per-variant comparison (#3388).
+   * The pipeline id of the wrapper being asked — `StageProgram::variant`,
+   * and the join key of every per-pipeline comparison (#3388).
    */
   wrapper: string;
 }
@@ -439,7 +439,7 @@ export interface TurnOutcome {
 /**
  * Context a wrapper contributes to a turn.
  *
- * **The invariant-7 constraint, encoded in the type.** Contributed context
+ * **The AGENTS.md #7 constraint, encoded in the type.** Contributed context
  * rides as a volatile message *after* the byte-stable system-prompt prefix,
  * never inside it: prompt-cache hits are a feature, and a wrapper that could
  * inject into the stable prefix would make every installed plugin a per-turn
@@ -505,7 +505,7 @@ export interface VolatileContext {
  *
  * Adjacently framed rather than internally tagged so the body keeps
  * `deny_unknown_fields` — an internally tagged enum hands the tag field down
- * into the variant, where a denying struct rejects it. `Serialize` is derived
+ * into the case, where a denying struct rejects it. `Serialize` is derived
  * from that framing; `Deserialize` is written out by hand over a two-key
  * envelope that denies unknown fields, because the derived reader for the
  * same framing accepts any number of keys beside `point` and `body` and drops

@@ -16,7 +16,7 @@ publish.workspace = true
 # or schemars.
 schema = ["dep:schemars", "stella-protocol/schema"]
 
-# Near-leaf, deliberately: the engine never learns plugins exist (#3245 — the
+# Near-leaf: the engine never learns plugins exist (#3245 — the
 # host binds the grants to the engine's gates), so this crate must not depend
 # on stella-core, and stella-core must never depend on it.
 #
@@ -25,7 +25,7 @@ schema = ["dep:schemars", "stella-protocol/schema"]
 # edge between the two crates the mirror spanned (#3310): `HookEvent` is a
 # vocabulary this crate and stella-core both spell, and keeping two copies
 # identical was a review obligation with nothing red when it was missed.
-# Sharing one type through the crate underneath both is invariant #1 applied
+# Sharing one type through the crate underneath both is AGENTS.md #1 applied
 # literally. stella-protocol is types-only with no I/O, so it costs this crate
 # no behaviour — but it is a real edge, so a *second* workspace dependency
 # here wants the same argument made again, not this one cited.
@@ -38,7 +38,7 @@ serde.workspace = true
 # read, and serde's own buffer for that is private; `serde_json::Value` is the
 # supported one. It is a real edge for a near-leaf crate, so note what it is
 # not: this crate still performs no I/O, and it was already a dev-dependency
-# here (invariant #4's round-trip tests), so the lockfile and the license
+# here (AGENTS.md #4's round-trip tests), so the lockfile and the license
 # allow-list are unchanged by the move.
 serde_json.workspace = true
 # The second workspace edge this manifest's own comment asked to be argued

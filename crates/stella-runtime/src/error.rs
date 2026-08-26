@@ -3,7 +3,7 @@
 //! The CLI originals returned `Result<_, String>` — fine for a binary that
 //! prints the string and exits, useless to a server that has to decide
 //! whether a session-create failed because the *caller* sent a bad model slug
-//! (a 400) or because the *host* is misconfigured (a 500). Naming the variants
+//! (a 400) or because the *host* is misconfigured (a 500). Naming the cases
 //! is what makes that decision possible without parsing prose.
 
 use std::path::PathBuf;

@@ -46,7 +46,7 @@
 //! # This crate declares; it never writes
 //!
 //! Nothing here touches a file — the crate performs no I/O (#3245 §3), so
-//! validating a declaration and applying one are deliberately different jobs in
+//! validating a declaration and applying one are different jobs in
 //! different crates. The host reads `stella.toml`, applies, journals the prior
 //! values and reverts; this module decides only whether a declaration is one a
 //! human could be asked to accept.

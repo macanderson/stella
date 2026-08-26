@@ -60,7 +60,7 @@ const DEFAULT_BIND: &str = "127.0.0.1:8080";
 
 /// The configuration surface, printed by `--help`.
 ///
-/// Deliberately not a clap definition: there are no flags to parse — every knob
+/// Not a clap definition: there are no flags to parse — every knob
 /// is an environment variable — so adding a parser would buy nothing but a
 /// dependency and a second place for the documented defaults to drift from
 /// [`DEFAULT_BIND`].
@@ -220,7 +220,7 @@ async fn run() -> ExitCode {
 /// The `Host` values this deployment answers to, from
 /// `STELLA_SERVE_ALLOWED_HOSTS` (comma-separated).
 ///
-/// Unset is not an error, and deliberately so: on the default loopback bind
+/// Unset is not an error, and so: on the default loopback bind
 /// the guard already knows what the server is called, so requiring this would
 /// make every local run configure something it does not need. On a
 /// non-loopback bind, unset leaves the guard inert — which `serve` reports on

@@ -25,7 +25,7 @@
 //! phrased regression still needs a reviewer; this closes the path where
 //! nobody is looking.
 //!
-//! # What it deliberately does not assert
+//! # What it does not assert
 //!
 //! Only two claims are retired. The host really does evaluate the
 //! [`stella_plugin::VerdictRule`] (`stella_runtime::wrapper::judge`), really

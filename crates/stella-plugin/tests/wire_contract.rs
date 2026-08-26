@@ -1,7 +1,7 @@
 //! The wrapper socket's wire contract, asserted rather than promised.
 //!
-//! Invariant 4 says every type crossing a crate boundary round-trips through
-//! `serde_json` byte-for-byte. For this module that is not one invariant among
+//! AGENTS.md #4 says every type crossing a crate boundary round-trips through
+//! `serde_json` byte-for-byte. For this module that is not one rule among
 //! several — it *is* the contract, because `doc:wrapper-socket` §3 makes the
 //! serialized form primary and the Rust trait a typed view of it. A field that
 //! survives `to_string` but not the trip back is a plugin that loads and then
@@ -11,7 +11,7 @@
 //!
 //! - **Byte-for-byte, both directions**, over a value of every type on the
 //!   wire, including the ones a lazy fixture would leave `None`/empty.
-//! - **Every variant of every closed vocabulary**, because an enum is where a
+//! - **Every case of every closed vocabulary**, because an enum is where a
 //!   rename is invisible: `serde(rename_all)` changes every spelling at once
 //!   and no type check notices.
 //! - **`protocol_version` on every message**, which is the whole of the
@@ -137,7 +137,7 @@ fn every_message_round_trips_byte_for_byte() {
         evidence: observed(),
     });
     // The merged set is not a message — the host assembles it — but it crosses
-    // a crate boundary to `judge`, so invariant 4 covers it all the same.
+    // a crate boundary to `judge`, so AGENTS.md #4 covers it all the same.
     round_trip(&EvidenceSet::from_observed(
         observed(),
         TamperFinding::Clean,
@@ -487,7 +487,7 @@ fn an_after_turn_request_names_the_stage_its_evidence_is_about() {
     );
 }
 
-/// **The #3524 witness for [`VolatileContext`].** Invariant 7's rule — a
+/// **The #3524 witness for [`VolatileContext`].** AGENTS.md #7's rule — a
 /// contribution rides *after* the byte-stable prefix, never inside it — was
 /// carried by a doc comment over two public `String`s, so
 /// `prompt.push_str(&ctx.text)` compiled, changed no type, and left every test
@@ -620,7 +620,7 @@ fn a_malformed_body_reports_the_position_the_author_navigates_by() {
 
     // The reversed order still decodes, and still names the field. It reaches
     // the buffer, so it has no position to offer — which is the trade this
-    // change makes deliberately rather than the regression it would be if the
+    // change makes rather than the regression it would be if the
     // common path had lost one too.
     let body_first = "{\n  \"body\": {\n    \"protocol_version\": 1,\n    \
                       \"system_prompt\": \"you are...\"\n  },\n  \"point\": \"before_turn\"\n}";
@@ -763,7 +763,7 @@ fn every_host_call_is_pinned_on_both_sides() {
 }
 
 /// [`HostCallOk`] is untagged, so the `ok` table is the only thing telling a
-/// plugin which result it holds — and the rule for adding a variant is that
+/// plugin which result it holds — and the rule for adding a case is that
 /// its required keys are disjoint from every other's. Asserted rather than
 /// reviewed: `RecallResult`'s only field defaults, so it decodes `{}` and is
 /// tried first, which makes it the arm a new table falls into when someone

@@ -356,7 +356,7 @@ pub(crate) struct RemoteToolExecutor {
     /// — same seam, same position as the CLI's `GatedToolSet`.
     gate: std::sync::Arc<dyn AuthzGate>,
     /// Who the calls are made as — a host-supplied opaque identity the
-    /// engine never interprets (invariant #1).
+    /// engine never interprets (AGENTS.md #1).
     principal: Principal,
     /// Disambiguates this executor's request ids from every other executor
     /// sharing the turn's [`Pending`] registry (#1496) — the same guarantee,

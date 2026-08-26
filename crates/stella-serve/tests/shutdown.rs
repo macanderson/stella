@@ -244,7 +244,7 @@ async fn a_turn_that_never_reaches_a_boundary_is_cancelled_when_the_grace_expire
         start_drainable_server(TEST_RESUME_GRACE, Duration::from_millis(300)).await;
     let turn_id = create_turn(addr).await;
     let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
-    // Parked on a provider request that is deliberately never answered.
+    // Parked on a provider request that is never answered.
     let _request_id = next_provider_request(&mut sse).await;
 
     shutdown.send(()).expect("the server is listening");

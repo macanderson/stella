@@ -34,7 +34,7 @@
 //! argument it cannot omit, and the resulting [`EvidenceSet`] is what `judge`
 //! reads. "The host owns tamper" is therefore a property of the types rather
 //! than a sentence in a spec someone has to have read — the same move
-//! [`VolatileContext`](crate::VolatileContext) makes for invariant 7.
+//! [`VolatileContext`](crate::VolatileContext) makes for AGENTS.md #7.
 
 use std::collections::BTreeMap;
 

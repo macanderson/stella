@@ -228,7 +228,7 @@ async fn an_unanswered_provider_request_fails_on_the_deadline() {
     let mut session = Session::start(spec_with_deadline("nobody will answer", deadline));
     let started = Instant::now();
 
-    // Read frames but deliberately never resolve the provider request.
+    // Read frames but never resolve the provider request.
     let mut outcome = None;
     let mut provider_requests = 0usize;
     while let Some(frame) = session.next_frame().await {

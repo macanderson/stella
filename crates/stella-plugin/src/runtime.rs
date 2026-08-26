@@ -20,7 +20,7 @@
 //! names and **nothing else**. A plugin is third-party code a user installed;
 //! handing it the operator's whole environment hands it `ANTHROPIC_API_KEY`,
 //! `AWS_SESSION_TOKEN`, `SSH_AUTH_SOCK` and every credential the shell was
-//! carrying, silently, forever. Invariant 3 says every model call is made by
+//! carrying, silently, forever. AGENTS.md #3 says every model call is made by
 //! the host — a plugin that can read the key makes that a policy rather than a
 //! property.
 //!
@@ -74,7 +74,7 @@ pub fn expand_plugin_dir(text: &str, dir: &Path) -> String {
 
 /// The `[runtime]` block — how the host starts this plugin's process.
 ///
-/// Modelled directly on [`crate::OracleCommand`], deliberately: the oracle
+/// Modelled directly on [`crate::OracleCommand`]: the oracle
 /// block already settled that a plugin names a program as an argv list and
 /// never as a shell string (the #1400 rule), and that `${plugin_dir}`
 /// interpolation is the host's job. This block is the same decision applied to

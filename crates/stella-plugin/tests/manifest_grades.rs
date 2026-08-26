@@ -4,7 +4,7 @@
 //! rule — [`LoopGrant::permits_hook`] is the filter a host must consult).
 //!
 //! Round-tripping is checked through both wire shapes: TOML (the manifest's
-//! own format) and `serde_json` (invariant 4 — these types will cross the
+//! own format) and `serde_json` (AGENTS.md #4 — these types will cross the
 //! host boundary as JSON when install consent and `stella app list` render
 //! them).
 

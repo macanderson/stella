@@ -18,7 +18,7 @@ stella-store = { path = "../stella-store" }
 # the edge that ends "stella-plugin has zero consumers", and it is acyclic:
 # stella-plugin's only workspace dependency is stella-protocol, which this
 # crate already takes. The direction is forced — the socket's two async points
-# perform I/O (recall, a test run, a process spawn), which invariant 2 bans in
+# perform I/O (recall, a test run, a process spawn), which AGENTS.md #2 bans in
 # the engine, so the trait lives here and the plugin-facing types live there.
 stella-plugin = { path = "../stella-plugin" }
 serde = { workspace = true }
@@ -70,7 +70,7 @@ tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 # `judge` is a pure total function over a closed evidence vocabulary, which is
 # exactly the shape the rest of the workspace states as a property rather than
 # a table (stella-core's loop detection, and the staged pipeline's witness
-# verification before #3865 deleted that crate). #3510's invariant — a
+# verification before #3865 deleted that crate). #3510's rule — a
 # declared check narrows done and never
 # widens it — is quantified over every oracle a manifest can express, so it is
 # a property test, not a case.

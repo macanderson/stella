@@ -39,7 +39,7 @@
 
 /// Workspace crates the runtime must never declare an edge to, and why.
 ///
-/// Deliberately a list rather than a single check: the next crate that must
+/// A list rather than a single check: the next crate that must
 /// stay out of the assembly seam is added here, not re-derived.
 ///
 /// Each row must name a crate that **exists in this workspace**: a row for a
@@ -134,7 +134,7 @@ fn the_assembly_seam_declares_no_edge_to_a_policy_crate() {
 /// pulls in, and a `CARGO_SCOPE` that widens to this crate whenever the crate
 /// it never calls changes.
 ///
-/// Scoped to `[dependencies]` and to `src/` deliberately, in both directions:
+/// Scoped to `[dependencies]` and to `src/`, in both directions:
 /// a `[dev-dependencies]` entry is *supposed* to be absent from `src/`, and a
 /// `[dependencies]` entry used only by `tests/` is a dev-dependency that was
 /// filed in the wrong table.

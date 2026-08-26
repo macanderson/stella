@@ -318,7 +318,7 @@ async fn an_ask_with_no_channel_open_is_reported_rather_than_waited_out() {
 /// **A driver that asks and then walks away is named as such** (#3794): it was
 /// served, it exited cleanly, and it never wrote a `next`.
 ///
-/// The distinction is the whole point of the variant. Silence from a driver
+/// The distinction is the whole point of the case. Silence from a driver
 /// that asked for nothing is `NoResponse` — the test below this one — and
 /// silence from one that was mid-errand names the errand, so its author is
 /// pointed at the ask it abandoned rather than at the session in general. The
@@ -434,7 +434,7 @@ async fn the_session_cannot_outlive_its_budget_by_asking() {
 /// The transport names what it could not start, rather than reporting the
 /// silence that follows. An installation problem the user fixes is a different
 /// answer from a driver that ran and failed, which is why the two are separate
-/// variants.
+/// cases.
 #[tokio::test]
 async fn a_driver_that_cannot_be_started_names_the_program() {
     let program = "/nonexistent/driver-that-is-not-installed";
@@ -465,7 +465,7 @@ async fn a_driver_that_cannot_be_started_names_the_program() {
 /// Stella, and nothing but a child reading its own environment can see it.
 ///
 /// A driver is the plugin with the most reason to want a model key — it exists
-/// to get work done — and invariant 3's "every model call is made by the host"
+/// to get work done — and AGENTS.md #3's "every model call is made by the host"
 /// is what `work_start` will be for.
 #[tokio::test]
 async fn a_driver_is_denied_the_model_credential_and_inherits_none_from_the_host() {

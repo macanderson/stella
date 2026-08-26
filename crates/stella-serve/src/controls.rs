@@ -95,7 +95,7 @@ pub(crate) struct Controls {
 
 /// The receiver half, moved onto the session thread exactly once.
 ///
-/// Deliberately *not* `Clone` and deliberately without a `watch::Sender`: see
+/// Deliberately *not* `Clone` and without a `watch::Sender`: see
 /// the module docs — the session thread holding its own gate's sender would
 /// defeat the dropped-sender-means-resumed release path.
 pub(crate) struct ControlPorts {

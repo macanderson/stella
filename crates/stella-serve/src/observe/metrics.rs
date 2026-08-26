@@ -12,7 +12,7 @@
 //!
 //! Exposed at `GET /v1/metrics` behind the same bearer token as everything else
 //! (#930 is explicit: authenticated, not open). Pull, never push — nothing here
-//! dials out, per AGENTS.md invariant 3.
+//! dials out, per AGENTS.md #3.
 
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 

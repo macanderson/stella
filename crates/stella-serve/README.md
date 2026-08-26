@@ -58,7 +58,7 @@ What that means for this crate as the plugin architecture lands:
   a model call belongs in `after_turn` as evidence, never in `judge`.
 - **No ambient authority stays the harder rule.** A plugin reached from here is a
   declaration a host binds ([`stella-plugin`](../stella-plugin) is the manifest), never
-  a process that gets its own credentials. Invariant #3 does not relax because a
+  a process that gets its own credentials. AGENTS.md #3 does not relax because a
   wrapper asked.
 
 The binary is meant to run containerized —
@@ -148,7 +148,7 @@ it crosses.
 
 ## Key concepts
 
-**The reverse tool-call protocol.** Two deliberately asymmetric directions.
+**The reverse tool-call protocol.** Two asymmetric directions.
 Outbound is one stream of `ServerFrame`s: mostly `Event` (agent events for the
 UI), plus `ToolRequest` / `ProviderRequest` carrying a `request_id`, terminated by
 exactly one `TurnComplete`. Inbound is the host POSTing `ToolResultIn` /
@@ -200,7 +200,7 @@ and sees `agent.turn.*`, `agent.step.*`, `model.request.*` and `tool.call.*`; a
 policy handler registered with `on_blocking` can `Deny` or `Modify` a
 `tool.call.requested` **before** the `tool_request` frame leaves, so a refused
 tool is one the host is never asked to run. There is no route that registers an
-extension, deliberately: the bearer token authenticates a host, and a host that
+extension: the bearer token authenticates a host, and a host that
 could install a handler could read every tool call's raw input and steer the
 engine with a `Deny`. The settings-declared *shell* hook engine
 (`stella_core::hooks`) stays unreachable here for the same reason the tool
@@ -215,7 +215,7 @@ engine's pre-call estimate and the provider's reported usage into a
 memory — this crate has no store — so a redeployed sidecar re-converges, which
 is why each row carries `samples`. `drift_ratio` is the raw measured gap;
 `applied_factor` is the bounded correction actually multiplied into estimates,
-and the two are deliberately different numbers.
+and the two are different numbers.
 
 The key is host-supplied — `provider_id` comes off the turn request — so the
 registry bounds both how many it tracks (64) and how long each key may be
@@ -374,9 +374,9 @@ To add another remoted port (an approval gate, a command runner):
    `RemoteToolExecutor`: allocate a `request_id`, **register the one-shot before**
    sending the frame, and map a send failure onto whatever "the host is gone"
    means for that port's contract.
-2. Add the outbound `ServerFrame` variant and the inbound `…In` type in
+2. Add the outbound `ServerFrame` case and the inbound `…In` type in
    [`src/frame.rs`](src/frame.rs).
-3. Add a `PendingReply` variant plus its `register_*` / `resolve_*` / `take_*`
+3. Add a `PendingReply` case plus its `register_*` / `resolve_*` / `take_*`
    trio in [`src/pending.rs`](src/pending.rs), keeping the kind check and removal
    under one lock.
 4. Construct the port in `run_session` in [`src/session.rs`](src/session.rs) and
@@ -386,10 +386,10 @@ To add another remoted port (an approval gate, a command runner):
 6. Extend [`tests/bridge.rs`](tests/bridge.rs) first, then
    [`tests/http.rs`](tests/http.rs).
 
-Adding a `ProviderError` variant in `stella-protocol` is smaller but easy to miss
+Adding a `ProviderError` case in `stella-protocol` is smaller but easy to miss
 from the other crate: both `From` impls in [`src/frame.rs`](src/frame.rs) match
 exhaustively, so this crate fails to compile until `ProviderErrorWire` grows the
-matching arm — which is the intended forcing function, since a variant absent from
+matching arm — which is the intended forcing function, since a case absent from
 the wire would be silently reclassified.
 
 ## See also
