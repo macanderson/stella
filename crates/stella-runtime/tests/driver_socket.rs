@@ -8,18 +8,18 @@
 //! be told, and no code path connected the two — `DriveRequest` was never
 //! written to a process and `DriverMessage` was never read from one.
 //!
-//! The drivers below are `sh` scripts, for the reason
-//! `tests/wrapper_host_call.rs` runs its plugins as `sh`: a channel that needs
-//! an SDK is a Rust API with extra steps (`doc:pipeline-as-plugins` §5). None of
-//! them uses a JSON library. The self-driving loop this channel exists for is
-//! eight markdown files and a shell script today (#3599), so "a shell program
-//! can drive" is the requirement rather than a demonstration.
+//! The drivers below are modes of `wrapper-plugin-fixture`, which links `std`
+//! and nothing else: it matches substrings in and writes string literals out,
+//! with no JSON library on either side. That constraint is the point. A channel
+//! that needs an SDK is a Rust API with extra steps
+//! (`doc:pipeline-as-plugins` §5), and the self-driving loop this channel
+//! exists for is eight markdown files and a shell script today (#3599) — so
+//! "a program that is not Rust can drive" is the requirement, not a
+//! demonstration.
 //!
-//! `cfg(unix)` is the same declared gap the rest of this suite carries, tracked
-//! in #3497. The fixture binary that closes it exists —
-//! `wrapper-plugin-fixture`, which `wrapper_socket.rs` and
-//! `wrapper_transport_limits.rs` now drive — and this file has not moved onto
-//! it yet.
+//! Moving off `/bin/sh` is what lets this file run on Windows (#3497, #4697),
+//! where `windows-check.yml` compiles the platform arms nothing else here
+//! parses.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
