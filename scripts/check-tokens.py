@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TOKENS = REPO / "design" / "tokens" / "stella-tokens.json"
+TOKENS_REL = "design/tokens/stella-tokens.json"
 
 # Where every hex must be a live token, not merely a non-retired one.
 TOKEN_ONLY = (
@@ -48,13 +48,17 @@ TOKEN_ONLY = (
 # Files that define the system itself, and so must be able to name retired
 # values in order to ban them.
 #
-# The last two are **ban sites**: tests whose whole job is asserting that a
+# The last three are **ban sites**: tests whose whole job is asserting that a
 # retired value does not ship, on a surface this script cannot see. A hex sweep
 # reads them as offenders, and that is exactly backwards -- the list *is* the
 # enforcement. Leaving them out is not a theoretical hazard: the v5.0 migration
 # swept both, rewriting `#ffb000`/`#0b0b0c` into the live gold and canvas, so
 # `brand-parity.test.ts` spent one merge banning the brand it exists to protect
-# and reported nineteen offenders that were all correct (#4066). They earn the
+# and reported nineteen offenders that were all correct (#4066).
+# `crates/stella-tui/src/theme/tests.rs` joined them when RUST_RGB below gave
+# this script eyes on Rust: its `RETIRED_*` constants are the ban list for that
+# surface, so the first thing the new matcher saw was the one file whose whole
+# job is naming those values (#4910). They earn the
 # exemption for the same reason the four above do, and they need it more,
 # because they are the only files here a sweep would happily "fix".
 #
@@ -69,6 +73,7 @@ SELF = (
     "design/tokens/stella-tokens.css",
     "website/src/lib/brand-parity.test.ts",
     "crates/stella-cli/src/export/tests.rs",
+    "crates/stella-tui/src/theme/tests.rs",
 )
 
 # Surfaces this system has not reached yet. Each entry names the issue that
@@ -106,6 +111,34 @@ HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
 RGB_FUNC = re.compile(
     r"rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})", re.IGNORECASE
 )
+# The same colours again, in the notation Rust writes them: ratatui spells a
+# colour `Color::Rgb(0x0A, 0x0A, 0x0C)`, and the hex-literal channels are what
+# no matcher here could see. #4910 reports this as Rust being invisible
+# outright; it is one notation narrower than that, and the suite is what caught
+# the difference. RGB_FUNC is IGNORECASE, so `Rgb(11, 11, 12)` already matched
+# as an `rgb(` call and the decimal spelling was covered by accident. The `0x`
+# spelling was not, and it is the one this tree actually writes — the single
+# banned value in the tree when this landed was `Color::Rgb(0x0B, 0x0B, 0x0C)`,
+# and twenty-one more literals in `crates/stella-tui/src/palette.rs` had never
+# been checked against anything.
+#
+# Both channel spellings are matched anyway rather than hex alone, so the two
+# notations stop depending on an unrelated flag on another pattern. A bare
+# `Rgb(` counts as well as `Color::Rgb(`: the name can be imported, and a false
+# positive requires three channels that spell a retired brand colour, which is
+# worth flagging wherever it is written.
+RUST_RGB = re.compile(
+    r"\bRgb\s*\(\s*(0[xX][0-9A-Fa-f]{1,2}|\d{1,3})\s*,"
+    r"\s*(0[xX][0-9A-Fa-f]{1,2}|\d{1,3})\s*,"
+    r"\s*(0[xX][0-9A-Fa-f]{1,2}|\d{1,3})\s*[,)]"
+)
+
+
+def channel(text: str) -> int:
+    """One `Color::Rgb` channel, hex-literal or decimal."""
+    return int(text, 16) if text[:2].lower() == "0x" else int(text)
+
+
 # Text extensions only. A hex "found" inside a PNG is a coincidence.
 TEXT_SUFFIXES = {
     ".css",
@@ -132,10 +165,10 @@ TEXT_SUFFIXES = {
 }
 
 
-def tracked_files() -> list[Path]:
+def tracked_files(root: Path) -> list[Path]:
     out = subprocess.run(
         ["git", "ls-files", "-z"],
-        cwd=REPO,
+        cwd=root,
         capture_output=True,
         text=True,
         check=True,
@@ -143,15 +176,20 @@ def tracked_files() -> list[Path]:
     return [Path(p) for p in out.split("\0") if p]
 
 
-def main() -> int:
-    doc = json.loads(TOKENS.read_text())
+def main(argv: list[str]) -> int:
+    # A root argument is what lets the suite point this at a fixture tree; with
+    # no argument it reads its own repository, as every caller does today.
+    # Without it the guard could not be shown to fire, which is the same defect
+    # one notation over from the one it exists to catch.
+    root = Path(argv[1]).resolve() if len(argv) > 1 else REPO
+    doc = json.loads((root / TOKENS_REL).read_text())
     live = {t["hex"].upper() for t in doc["tokens"]}
     banned = {e["hex"].upper(): e["was"] for e in doc["banned"]["values"]}
 
     ban_hits: list[str] = []
     stray_hits: list[str] = []
 
-    for rel in tracked_files():
+    for rel in tracked_files(root):
         posix = rel.as_posix()
         if posix in SELF:
             continue
@@ -159,7 +197,7 @@ def main() -> int:
             continue
         if any(posix.startswith(p) or posix == p for p in MIGRATING):
             continue
-        path = REPO / rel
+        path = root / rel
         try:
             text = path.read_text(errors="ignore")
         except OSError:
@@ -185,6 +223,15 @@ def main() -> int:
                 if hexv in banned:
                     ban_hits.append(
                         f"{posix}:{lineno}: {match.group(0)}) = {hexv} — {banned[hexv]}"
+                    )
+            for match in RUST_RGB.finditer(line):
+                channels = tuple(channel(c) for c in match.groups())
+                if any(c > 255 for c in channels):
+                    continue
+                hexv = "#%02X%02X%02X" % channels
+                if hexv in banned:
+                    ban_hits.append(
+                        f"{posix}:{lineno}: {match.group(0)} = {hexv} — {banned[hexv]}"
                     )
 
     failed = False
@@ -223,4 +270,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))
