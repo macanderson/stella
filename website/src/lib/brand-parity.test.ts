@@ -266,8 +266,32 @@ test("the site's brand tokens are the kit's, value for value", () => {
 
   // The generated ramp, taken from the kit rather than restated here.
   const ramp = [...kit.keys()].filter((name) => name.startsWith("--st-"));
+  // Every name the kit sheet declares is a token that exists. This is the half
+  // the floor below cannot do: a count says nothing about a `--st-` name that
+  // the palette has no entry for, and the loop underneath would then compare a
+  // role against itself and pass.
+  const authority: { tokens: { css: string }[] } = JSON.parse(
+    read(join(REPO, "design", "tokens", "stella-tokens.json")),
+  );
+  const live = new Set(authority.tokens.map((t) => t.css));
+  const unknown = ramp.filter((name) => !live.has(name));
+  assert.deepEqual(
+    unknown,
+    [],
+    `docs/brand/css/tokens.css declares --st-* name(s) that design/tokens/` +
+      `stella-tokens.json does not define: ${unknown.join(", ")}`,
+  );
+
+  // And the sheet has not quietly lost rows, which would make the loop below
+  // pass over less than it thinks. The number moved 21 -> 20 when #4946
+  // retired `comment`, a token nothing painted; it is a floor on the mirror's
+  // size, so it moves only when the palette itself shrinks and the reason goes
+  // here beside it.
+  //
+  // The sheet is a subset by design: it carries 20 of the palette's 32, and
+  // the twelve it has never mirrored are #4978.
   assert.ok(
-    ramp.length >= 21,
+    ramp.length >= 20,
     `docs/brand/css/tokens.css defines the generated --st-* ramp ` +
       `(found ${ramp.length})`,
   );
