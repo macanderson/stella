@@ -18,6 +18,13 @@
 # file as "not ignored" — which is exactly the state this guard exists to
 # find — so the check uses `git ls-files --cached --ignored` instead.
 #
+# This is the one guard #4952 did NOT widen, and the reason is here so the
+# next reader does not take it for an oversight. Every other scanner
+# there gained `--others --exclude-standard` so a brand-new file stops being
+# invisible; here `--cached` is the subject. An untracked scratch file is the
+# correct outcome, not a miss, and adding `--others` would fail the gate on
+# every session's own working directory. Do not "fix" it to match the others.
+#
 # Uses portable POSIX tools so it runs on a bare CI runner.
 set -euo pipefail
 

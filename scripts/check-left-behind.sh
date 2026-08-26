@@ -95,7 +95,7 @@ current_counts() {
   # The existence filter skips tracked files deleted from the working tree but
   # not yet staged (#3268) — awk would otherwise die on the missing path
   # instead of judging the files that exist.
-  git ls-files -z '*.rs' '*.py' '*.sh' '.githooks/*' |
+  git ls-files -z --cached --others --exclude-standard '*.rs' '*.py' '*.sh' '.githooks/*' |
     while IFS= read -r -d '' f; do [ -f "$f" ] && printf '%s\0' "$f"; done |
     xargs -0 awk '
       FILENAME == "scripts/check-left-behind.sh"      { next }
@@ -178,7 +178,7 @@ if [ -n "$report" ]; then
   exit 1
 fi
 
-scanned=$(git ls-files '*.rs' '*.py' '*.sh' '.githooks/*' | wc -l | tr -d ' ')
+scanned=$(git ls-files --cached --others --exclude-standard '*.rs' '*.py' '*.sh' '.githooks/*' | wc -l | tr -d ' ')
 carried=$(grep -cv '^#' "$baseline" || true)
 # The verdict is already decided; the write is best-effort. SIGPIPE is ignored
 # and the write's failure discarded, so a reader that closed the pipe

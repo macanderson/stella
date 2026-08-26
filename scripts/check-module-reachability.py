@@ -235,7 +235,16 @@ def reachable_from(roots: list[Path]) -> tuple[set[Path], list[str]]:
 def tracked_sources(root: Path, crate: Path) -> list[Path]:
     rel = crate.relative_to(root)
     out = subprocess.run(
-        ["git", "ls-files", "-z", f"{rel}/src/**/*.rs", f"{rel}/src/*.rs"],
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            f"{rel}/src/**/*.rs",
+            f"{rel}/src/*.rs",
+        ],
         cwd=root,
         capture_output=True,
         text=True,

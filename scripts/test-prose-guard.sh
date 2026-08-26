@@ -64,6 +64,13 @@ doc() {
   (cd "$1" && git add -A) >/dev/null 2>&1
 }
 
+# The same, but deliberately NOT `git add`ed — the #4952 direction.
+# $1 = root, $2 = relative path, body on stdin.
+doc_untracked() {
+  mkdir -p "$(dirname "$1/$2")"
+  cat >"$1/$2"
+}
+
 # $1 = root, then `path pattern count` triples.
 baseline() {
   root="$1"
@@ -266,6 +273,43 @@ if python3 "$SCRIPT" --adopt=no-such-pattern "$r" >/dev/null 2>&1; then
   no "P13 --adopt rejects an unknown pattern" "--adopt exited 0"
 else
   ok "P13 --adopt rejects an unknown pattern"
+fi
+
+# A brand-new file the author has not staged yet is the file most likely to
+# carry new prose, and it was invisible: `git ls-files` lists tracked files
+# only, so the guard reported OK — which reads exactly like "I read it and
+# found nothing". CI never agreed, because on a PR branch the file is
+# committed (#4952).
+r="$(new_root P14)"
+doc "$r" docs/tracked.md <<'EOF'
+The store keys every child table off `executions.id`.
+EOF
+doc_untracked "$r" docs/untracked.md <<'EOF'
+Two things stated rather than hidden: the guard cannot see this file.
+EOF
+baseline "$r"
+if python3 "$SCRIPT" "$r" >/dev/null 2>&1; then
+  no "P14 an unstaged file is scanned" "the guard passed a file it never read"
+else
+  ok "P14 an unstaged file is scanned"
+fi
+
+# The other direction, so P14 cannot pass by scanning everything: a file
+# `.gitignore` covers stays out. `--exclude-standard` is what keeps a build
+# directory or a session scratch file from failing the gate.
+r="$(new_root P15)"
+printf 'ignored/\n' >"$r/.gitignore"
+doc "$r" docs/tracked.md <<'EOF'
+The store keys every child table off `executions.id`.
+EOF
+doc_untracked "$r" ignored/scratch.md <<'EOF'
+Two things stated rather than hidden: this one is ignored and must stay out.
+EOF
+baseline "$r"
+if python3 "$SCRIPT" "$r" >/dev/null 2>&1; then
+  ok "P15 a gitignored file stays out of the scan"
+else
+  no "P15 a gitignored file stays out of the scan" "the guard read an ignored file"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

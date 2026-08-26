@@ -173,7 +173,7 @@ FOREIGN: list[tuple[str, str, int, str]] = []
 def production_sources(repo: Path = REPO) -> list[Path]:
     """Every tracked Rust file that ships, excluding tests and examples."""
     out = subprocess.run(
-        ["git", "ls-files", "*.rs"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.rs"],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -213,7 +213,7 @@ def references(path: Path, entry: str, repo: Path = REPO) -> bool:
 def dependent_crates(repo: Path = REPO) -> set[str]:
     """Crate directories whose manifest depends on `stella-transcript`."""
     out = subprocess.run(
-        ["git", "ls-files", "*/Cargo.toml"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*/Cargo.toml"],
         cwd=repo,
         capture_output=True,
         text=True,
