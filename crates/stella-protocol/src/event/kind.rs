@@ -1015,14 +1015,27 @@ pub enum AgentEvent {
     /// long-lived; this event is how the TUI shows progress without polling
     /// shared state (L-T1).
     ///
-    /// **No producer in this workspace** (#4454): #4448 removed
-    /// `crates/stella-media`, and CLAUDE.md's tool-surface rule forbids the
-    /// media built-in that would have been its caller (#3236, #3845). This
-    /// variant and [`AgentEvent::MediaComplete`] stay as the wire contract an
-    /// out-of-tree media MCP surface speaks, and because dropping the tags
-    /// would demote an older recording's media events to
-    /// [`AgentEvent::Unknown`]. Retiring them belongs to a `PROTOCOL_VERSION`
-    /// bump, which #4454 decides.
+    /// **No producer in this workspace, and kept anyway** (#4454, which
+    /// decided it): #4448 removed `crates/stella-media`, and CLAUDE.md's
+    /// tool-surface rule forbids the media built-in that would have been its
+    /// caller (#3236, #3845). This variant and [`AgentEvent::MediaComplete`]
+    /// stay as the wire contract an out-of-tree media MCP surface speaks.
+    ///
+    /// The alternative was to retire them at the next version bump, and there
+    /// is no such bump to wait for: this enum carries no version number at
+    /// all. Its forward-compatibility mechanism is [`AgentEvent::Unknown`]
+    /// plus `KNOWN_TYPE_TAGS` — a tag a build does not list is read as an
+    /// event from a newer stella and kept intact, which is what makes the
+    /// generated wire contract additive-only. Dropping a tag is therefore not
+    /// a break a reader can detect and act on: it demotes an older recording's
+    /// media lines to [`AgentEvent::Unknown`], reporting version skew that did
+    /// not happen. Keeping two producerless tags costs a `RecordedOnly` row
+    /// apiece; retiring them costs every recording that carries one.
+    ///
+    /// `stella_plugin::wire::PROTOCOL_VERSION` is the wrapper socket's
+    /// version, not this stream's. An earlier revision of this comment named
+    /// it as the moment to retire these two, which was never a moment it could
+    /// reach.
     MediaProgress {
         artifact_id: String,
         kind: MediaKind,
