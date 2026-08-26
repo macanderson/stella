@@ -1,8 +1,10 @@
 # stella_transcript::word::highlight over a fixed matrix.
 # Generated — re-bless with:
 #   BLESS=1 cargo test -p stella-transcript --test word_highlight_matrix
-# The TypeScript port must reproduce this byte for byte:
-#   node arenabench/ui/scripts/check-word-highlight-parity.mjs
+# The TypeScript port must reproduce this byte for byte. It lives in
+# github.com/macanderson/arenabench, which vendors this file as
+# `ui/golden/word-highlight-matrix.txt`; from that repo's `ui/`:
+#   node scripts/check-word-highlight-parity.mjs
 # Inputs are not echoed; `cases()`/`blocks()` are mirrored in the port.
 pair=identical old=plain("let x = 1;")
 pair=identical new=plain("let x = 1;")
