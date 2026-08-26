@@ -141,7 +141,10 @@ want "a live Color::Rgb tuple passes" expect-pass \
   "pub const GROUND: Color = Color::Rgb($(as_rust_tuple "$LIVE_HEX"));"
 
 # Decimal channels were already covered, by accident: RGB_FUNC is IGNORECASE,
-# so `Rgb(11, 11, 12)` matches it as an `rgb(` call. The case stays because the
+# so a decimal `Rgb(...)` matches it as an `rgb(` call. The channels are not
+# spelled out here on purpose — this file is not a SELF entry and must not
+# become one, because it never needs to name a retired value: every fixture
+# reads its colours out of the token file at run time. The case stays since the
 # coverage is real and should not silently depend on a flag on another pattern
 # — but it passes with RUST_RGB removed, so it is not a witness for it. The two
 # cases either side of it are.
@@ -161,6 +164,21 @@ want "a ban site may name the values it bans" expect-pass \
 # Channels over 255 are not a colour, so the tuple is not one either.
 want "an out-of-range tuple is not read as a colour" expect-pass \
   "crates/stella-tui/src/palette.rs" "let v = Rgb(300, 400, 500);"
+
+# One literal, two matchers, one report. `Rgb(<decimal>)` is matched by both
+# RGB_FUNC (IGNORECASE reads it as `rgb(`) and RUST_RGB, and before this was
+# deduped the same line was listed twice and the count above the list said two
+# places where there was one. Found by this suite failing on its own source
+# once it was committed.
+root="$(new_root "double_report" "crates/stella-tui/src/palette.rs" \
+  "pub const GROUND: Color = Color::Rgb($(as_decimals "$BANNED_HEX"));")"
+out="$(python3 "$SCRIPT" "$root" 2>&1)"
+hits="$(printf '%s\n' "$out" | grep -c 'palette.rs:1:')"
+if [ "$hits" -eq 1 ]; then
+  ok "a literal both matchers see is reported once"
+else
+  bad "one literal was reported $hits time(s): $out"
+fi
 
 # The real tree, read-only, with no argument at all — the path every caller
 # takes. A suite whose cases all pass a root would not notice the default

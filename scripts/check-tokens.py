@@ -188,6 +188,18 @@ def main(argv: list[str]) -> int:
 
     ban_hits: list[str] = []
     stray_hits: list[str] = []
+    # One line, one report. The notations overlap — RGB_FUNC's IGNORECASE and
+    # RUST_RGB both match `Rgb(11, 11, 12)` — so without this a single literal
+    # is named twice and the count above the list says two places when there is
+    # one. Keyed on the value as well as the position, because two different
+    # retired colours on one line are two findings.
+    seen: set[tuple[str, int, str]] = set()
+
+    def record(posix: str, lineno: int, hexv: str, hit: str) -> None:
+        if (posix, lineno, hexv) in seen:
+            return
+        seen.add((posix, lineno, hexv))
+        ban_hits.append(hit)
 
     for rel in tracked_files(root):
         posix = rel.as_posix()
@@ -209,7 +221,12 @@ def main(argv: list[str]) -> int:
             for match in HEX.finditer(line):
                 hexv = match.group(0).upper()
                 if hexv in banned:
-                    ban_hits.append(f"{posix}:{lineno}: {match.group(0)} — {banned[hexv]}")
+                    record(
+                        posix,
+                        lineno,
+                        hexv,
+                        f"{posix}:{lineno}: {match.group(0)} — {banned[hexv]}",
+                    )
                 elif token_only and hexv not in live:
                     stray_hits.append(
                         f"{posix}:{lineno}: {match.group(0)} is not a token in "
@@ -221,8 +238,11 @@ def main(argv: list[str]) -> int:
                     continue
                 hexv = "#%02X%02X%02X" % channels
                 if hexv in banned:
-                    ban_hits.append(
-                        f"{posix}:{lineno}: {match.group(0)}) = {hexv} — {banned[hexv]}"
+                    record(
+                        posix,
+                        lineno,
+                        hexv,
+                        f"{posix}:{lineno}: {match.group(0)}) = {hexv} — {banned[hexv]}",
                     )
             for match in RUST_RGB.finditer(line):
                 channels = tuple(channel(c) for c in match.groups())
@@ -230,8 +250,11 @@ def main(argv: list[str]) -> int:
                     continue
                 hexv = "#%02X%02X%02X" % channels
                 if hexv in banned:
-                    ban_hits.append(
-                        f"{posix}:{lineno}: {match.group(0)} = {hexv} — {banned[hexv]}"
+                    record(
+                        posix,
+                        lineno,
+                        hexv,
+                        f"{posix}:{lineno}: {match.group(0)} = {hexv} — {banned[hexv]}",
                     )
 
     failed = False
