@@ -61,7 +61,7 @@ done
 # PR to nudge, or nothing. Kept free of I/O so scripts/test-automerge-nudge.sh
 # can drive every rule from a fixture instead of from a live queue — the same
 # reason stella-core's decision logic takes owned data rather than reading the
-# world (invariant 2).
+# world (AGENTS.md #2).
 #
 # The rules, and why each one is here:
 #

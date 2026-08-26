@@ -29,7 +29,7 @@
 # cannot catch the SECOND: two branches that are each individually correct and
 # collide only when both land. Nothing that runs pre-merge can, because neither
 # author's tree is wrong. That half needs a post-merge canary on `main`, which
-# #3332 tracks separately and this guard deliberately does not pretend to cover.
+# #3332 tracks separately and this guard does not pretend to cover.
 #
 # `cargo metadata` rather than `--locked` on a build step, matching ci.yml's
 # reasoning: it is a sub-second resolve that reports the drift precisely,
@@ -105,7 +105,7 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 2
 fi
 
-# Deliberately NOT --offline. With a cold registry cache, --offline fails on a
+# NOT --offline. With a cold registry cache, --offline fails on a
 # perfectly correct lock, and a guard that cries wolf gets bypassed. The cost of
 # being right is an index fetch on the rare run where the lock really is stale.
 # `--color never` so the reason below is the same bytes on a developer's

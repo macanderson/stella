@@ -30,7 +30,7 @@ script fails by name on the next gate run instead of quietly measuring a
 different space. That includes the floor: 30 is not typed as a threshold
 anywhere in here, it is read out of the assertions that already enforce it.
 
-The extraction is deliberately brittle in the safe direction. If `hue_deg` moves
+The extraction is brittle in the safe direction. If `hue_deg` moves
 again, this script fails saying it could not find the function, which is a
 handoff to whoever moved it rather than a silent pass — and that is exactly what
 happened when #4071 lifted it out of `theme/tests.rs`.

@@ -16,7 +16,7 @@
 # numbered "turn" banner with a timestamp and elapsed clock, which is what
 # makes the rendered timelapse legible instead of a wall of cargo output.
 #
-# There is deliberately no time limit here: cap wall-clock time from the
+# There is no time limit here: cap wall-clock time from the
 # recorder (`record-demo.sh --limit <minutes>`), which stops this script
 # cleanly at the cutoff and still renders everything captured so far.
 

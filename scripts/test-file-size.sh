@@ -167,7 +167,7 @@ plant "$r" "ui/ok.js" 1400
 plant "$r" ".githooks/pre-push" 1400
 want "N1 files under the limit in every language pass" expect-pass "$r"
 
-# A language the ratchet deliberately does NOT watch must not be flagged —
+# A language the ratchet does NOT watch must not be flagged —
 # the fix for #1563 must widen coverage, not make it unbounded.
 r="$(new_repo "unwatched")"
 plant "$r" "docs/huge.md" 4000

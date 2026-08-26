@@ -12,7 +12,7 @@
 # life passing, because main is usually green, so nothing else would ever
 # exercise the branch it exists for.
 #
-# Deliberately not a `make gate` step, matching `main-canary-test`: the thing
+# Not a `make gate` step, matching `main-canary-test`: the thing
 # under test is a CI-only guard that asks the issue tracker a question, and
 # the gate is hermetic and offline by contract.
 #

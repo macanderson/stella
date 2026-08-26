@@ -66,7 +66,7 @@ reads it once at start-up and refuses a build it was not written against,
 rather than meeting a rename as clap's `unrecognized subcommand` in the middle
 of a cycle.
 
-**The table is deliberately not repeated here.** It lives in
+**The table is not repeated here.** It lives in
 `stella_autonomy::HOST_SURFACE` and the shipping argument parser is checked
 against it in both directions — a verb with no row fails the build, and a row
 naming a verb the binary does not carry fails it too. A copy in this file

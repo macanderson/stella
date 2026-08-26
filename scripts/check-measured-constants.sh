@@ -66,7 +66,7 @@
 # cannot be fooled by is the case that matters: a constant no test mentions at
 # all fails, and the fix is to write the assertion.
 #
-# It deliberately does NOT check that the test pins the value with an
+# It does NOT check that the test pins the value with an
 # `assert_eq!`. A test that computes over the constant and asserts an outcome
 # is a better pin than one that restates the literal, and no grep tells them
 # apart.
@@ -129,7 +129,7 @@ fi
 # must declare a `const` or a `static`. Emitted as
 # "<file>:<line><tab><verdict><tab><identifier>", with `-` for the identifier
 # when there is no declaration to take one from.
-# shellcheck disable=SC2016 # the awk program is deliberately single-quoted:
+# shellcheck disable=SC2016 # the awk program is single-quoted:
 # `$0` is awk's own record, not a shell positional.
 tr '\n' '\0' <"$sources" | xargs -0 awk '
   FILENAME != previous_file { previous_file = FILENAME; marker_line = 0; text = "" }

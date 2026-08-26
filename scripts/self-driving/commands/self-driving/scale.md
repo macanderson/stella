@@ -116,7 +116,7 @@ one that gates the merge anyway.
 
 ## Contention: watchers are not work
 
-The probe deliberately ignores `tail -f` on a match log and shells that merely
+The probe ignores `tail -f` on a match log and shells that merely
 mention `cargo build`. Those outlive the run they were watching, and counting
 them would pin the loop to the light tier **permanently** — a failure that is
 silent, looks like caution, and never recovers.

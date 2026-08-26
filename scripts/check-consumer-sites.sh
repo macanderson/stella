@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Guard: a ConsumerPosture::Behavioral row's `site` string still points at
-# live code. See #4459, #3881, and AGENTS.md invariant 10.
+# live code. See #4459, #3881, and AGENTS.md #10.
 #
 # `crates/stella-protocol/src/event/consumers.rs` is explicit about what it
 # does and does not machine-check: totality over `KNOWN_TYPE_TAGS`, no
@@ -33,7 +33,7 @@
 #   2. The trailing `::`-segment, with any parenthetical aside dropped, must
 #      appear somewhere in that file's text.
 #
-# ── What it deliberately does not check ─────────────────────────────────────
+# ── What it does not check ─────────────────────────────────────
 #
 # Step 2 is a substring match, not a symbol-table lookup — the same
 # shallowness `scripts/check-tool-docs.sh` accepts for the same reason: a
@@ -160,7 +160,7 @@ if [ "$fail" -ne 0 ]; then
   note ""
   note "Each ConsumerPosture::Behavioral row's 'site' is prose for a reviewer"
   note "naming the code that consumes an AgentEvent variant (AGENTS.md"
-  note "invariant 10). Point it at wherever the consumer lives now."
+  note "AGENTS.md #10). Point it at wherever the consumer lives now."
   emit
   exit 1
 fi

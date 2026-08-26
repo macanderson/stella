@@ -41,7 +41,7 @@ missing or unbuildable — but a *stale* binary is neither. It is present, it is
 healthy, and it measures code that is no longer the code anyone means by
 "Stella today". Spending real provider money to learn how a fortnight-old
 commit performs is the failure this check exists to prevent, so the default
-ceiling here is deliberately tighter than ArenaBench's own.
+ceiling here is tighter than ArenaBench's own.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from dataclasses import replace
 from pathlib import Path
 
 #: How many commits behind ``origin/main`` a SUT binary may be before a paid
-#: match is refused. Deliberately far tighter than the freshness checker's own
+#: match is refused. Far tighter than the freshness checker's own
 #: default of 25: that number governs "is this binary plausibly current", while
 #: this one governs "is this binary worth spending money to measure".
 DEFAULT_MAX_BEHIND = 5
@@ -225,7 +225,7 @@ def widen(spec, names: list[str]):
     """Give every seat every credential-shaped name in the file (``--inject-all``).
 
     Additive: a seat keeps the names it declared and gains the rest, so a
-    template that deliberately withholds a metered key from one arm loses that
+    template that withholds a metered key from one arm loses that
     property — which is exactly why this is opt-in and printed loudly rather
     than being the default. The widened set is still fenced by
     :func:`~.model.is_credential_name`, because a declaration is a promise to

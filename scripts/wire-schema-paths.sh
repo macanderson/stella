@@ -60,7 +60,7 @@ die() {
 # same list twice — once for `pull_request`, once for `push` — so the union is
 # taken and duplicates are dropped while order is preserved.
 #
-# `paths-ignore:` is deliberately not matched: it is the inverse question, and
+# `paths-ignore:` is not matched: it is the inverse question, and
 # a filter that treated an ignore list as a match list would select exactly the
 # paths the workflow excludes. Comment lines go first, for the reason
 # scripts/bench-suites.sh drops them — this workflow's header discusses its own
@@ -88,7 +88,7 @@ patterns() {
 # ordinary today, but `.` in `wire-schema.yml` already matters: unescaped it
 # matches any character, so the filter would accept `wire-schemaXyml` and, more
 # to the point, would stop being a statement about the path the workflow named.
-# shellcheck disable=SC2016 # the sed program is deliberately single-quoted: the
+# shellcheck disable=SC2016 # the sed program is single-quoted: the
 # `$`, `\\` and `&` inside it belong to sed, not to the shell.
 ere_escape() {
   printf '%s' "$1" | sed 's/[.[\*^$()+?{}|\\]/\\&/g'

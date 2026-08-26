@@ -56,7 +56,7 @@
 #
 # ── Aliases ──────────────────────────────────────────────────────────────────
 #
-# `judge` is a deliberately retired spelling. It survives in exactly two places,
+# `judge` is a retired spelling. It survives in exactly two places,
 # both of which read it and neither of which writes it: a serde `alias` in Rust,
 # and `_ROLE_ALIASES` in arenabench's config loader, which upgrades an old match
 # file on the way in. That is compatibility, not drift, so the alias table below

@@ -134,7 +134,7 @@ HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
 # sweep on the marketing site. A guard that watches one notation of a two-
 # notation language is a guard that reports zero and means nothing.
 #
-# Deliberately not a general colour parser: `hsl()`, `color()` and `oklch()` are
+# Not a general colour parser: `hsl()`, `color()` and `oklch()` are
 # not matched, and neither is a computed value. This closes the gap that was
 # actually open rather than pretending to close all of them — see the note in
 # the report for what remains unwatched.

@@ -216,7 +216,7 @@ mkdir -p "$r/crates/stella-fixture/src"
 want "N3 a nested String generic and a defaulted-error alias are not violations" \
   expect-pass "$r"
 
-# `pub(crate)` is deliberately out of scope: the hazard is a caller outside the
+# `pub(crate)` is out of scope: the hazard is a caller outside the
 # crate that cannot branch, and an internal helper has none (#2392).
 r="$(new_root pub_crate)"
 mkdir -p "$r/crates/stella-fixture/src"

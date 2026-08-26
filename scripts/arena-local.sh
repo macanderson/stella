@@ -157,7 +157,7 @@ fi
 if [ -n "$BEHIND" ] && [ "$BEHIND" -gt 0 ]; then
   DIRTY="$(git -C "$ROOT" status --porcelain 2>/dev/null | head -n 1)"
   if [ "$BRANCH" != "main" ]; then
-    printf '  %son %s, not main — pull skipped; rebase deliberately if you want those commits%s\n' \
+    printf '  %son %s, not main — pull skipped; rebase if you want those commits%s\n' \
       "$dim" "${BRANCH:-a detached HEAD}" "$reset"
   elif [ -n "$DIRTY" ]; then
     printf '  %sworking tree is dirty — pull skipped (a fast-forward would refuse anyway)%s\n' \

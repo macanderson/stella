@@ -34,7 +34,7 @@
 # the per-tag detail genuinely does exist there. A bare heading is never an
 # acceptable output of this script.
 #
-# Deliberately tolerant everywhere else: a missing file or a missing
+# Tolerant everywhere else: a missing file or a missing
 # `[Unreleased]` heading is a warning, not a failure. A changelog bookkeeping
 # slip must never be the reason a release fails to ship.
 #
@@ -70,7 +70,7 @@ fi
 # Two cases reach here, and neither wants a second heading. The roll runs at
 # TWO call sites per release (the tagged release commit and the bot/version-sync
 # PR), so a re-run or a retry must not stack headings. And a maintainer may have
-# written the section deliberately in the release PR itself — a minor release is
+# written the section in the release PR itself — a minor release is
 # a considered event, and the "CI writes this file" rule exists to stop
 # per-PR bullets accumulating in inconsistent voices, not to overwrite a section
 # someone sat down and wrote. Whoever got there first wins; the roll never

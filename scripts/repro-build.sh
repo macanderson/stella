@@ -32,7 +32,7 @@
 #     root, and a release binary contains zero absolute checkout paths), so this
 #     is a no-op today. It is set anyway because a build script that bakes an
 #     absolute `OUT_DIR` into generated code would leak one silently, and the
-#     two rebuild arms in release.yml deliberately check out at different paths.
+#     two rebuild arms in release.yml check out at different paths.
 #
 # All three of those are rustc flags, and rustc compiles only part of this
 # binary. The C that dependencies ship (tree-sitter) is compiled by cc/clang,
@@ -51,7 +51,7 @@
 #      time from `rustc --print sysroot` and the live environment.
 #   3. A repo-wide rustflag would change the bytes of every dev build AND of the
 #      frozen benchmark SUT (bench/evidence/run/build_sut.sh), invalidating the
-#      recorded SHA in bench/READINESS.md. That script deliberately does not
+#      recorded SHA in bench/READINESS.md. That script does not
 #      route through here.
 #
 # Usage:

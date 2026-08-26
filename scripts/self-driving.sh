@@ -334,7 +334,7 @@ cycle_command() {
   # cycle prompt would be visible in `ps` and can hit ARG_MAX.
   #
   # The budget is per-cycle and enforced by the engine, aborting only at a safe
-  # boundary between model calls (invariant 6) — never mid-tool.
+  # boundary between model calls (AGENTS.md #6) — never mid-tool.
   printf 'cat %s/scripts/self-driving/commands/self-driving.md | stella run --spend-limit %s' \
     "$REPO_ROOT" "${SELF_DRIVING_BUDGET_USD:-10}"
 }
@@ -445,7 +445,7 @@ daemon_stop() {
   pid="$(cat "$DAEMON_PID")"
   kill -TERM "$pid" 2>/dev/null || true
 
-  # Give the shutdown handler room to finish. It deliberately takes a couple of
+  # Give the shutdown handler room to finish. It takes a couple of
   # seconds — it TERMs the in-flight cycle, waits, then KILLs it — and only
   # afterwards records the run as `cancelled`. A one-second escalation raced it
   # every time: the KILL landed mid-handler, the transition was never written,
@@ -896,7 +896,7 @@ PY
 # any more. Nothing warns the user — `/fullauto` still autocompletes, because
 # the file is still on disk.
 #
-# Deliberately surgical. $dst is the user's shared ~/.claude/commands and holds
+# Surgical. $dst is the user's shared ~/.claude/commands and holds
 # commands from other tools and hand-written ones; an `rm -rf "$dst/fullauto"`
 # that met a user's own `fullauto/` would be data loss strictly worse than the
 # staleness it fixes. So: remove only the exact basenames this project ships,

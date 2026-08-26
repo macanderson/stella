@@ -70,7 +70,7 @@ emit() {
 
 # Membership over a newline-delimited list, in pure shell.
 #
-# Deliberately NOT `printf ... | grep -qx`: under `set -o pipefail` that is a
+# NOT `printf ... | grep -qx`: under `set -o pipefail` that is a
 # race, not a test. `grep -q` exits the moment it matches, `printf` then dies
 # of SIGPIPE (141), and pipefail reports the pipeline as failed — so a slug
 # that IS present intermittently reads as absent, depending only on whether

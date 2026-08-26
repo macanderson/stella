@@ -134,7 +134,7 @@ VALID_STATUS = {
 }
 
 # ids are lowercase kebab, optionally namespaced with `/`, so `adr/0007` and
-# `context-reuse` are both fine. Deliberately narrow: an id ends up inside Rust
+# `context-reuse` are both fine. Narrow: an id ends up inside Rust
 # comments and shell globs, and anything exotic will eventually need quoting.
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)*$")
 
@@ -232,7 +232,7 @@ def read(path):
 def parse_frontmatter(text):
     """Return (dict, body_offset) for leading `---` YAML, or (None, 0).
 
-    Deliberately not a YAML parser. Frontmatter here is flat `key: value`
+    Not a YAML parser. Frontmatter here is flat `key: value`
     lines; anything needing more structure is a sign the metadata is growing
     into content, which is what the document body is for.
     """

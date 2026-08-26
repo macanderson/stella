@@ -14,7 +14,7 @@ Two jobs, because the site's copies are not all byte-copies:
 1. **The PWA set** is a straight copy, with two renames the site has always
    used (`icon-maskable-*` -> `maskable-*`).
 
-2. **`src/app/favicon.ico` is deliberately not a byte-copy.** The kit renders
+2. **`src/app/favicon.ico` is not a byte-copy.** The kit renders
    its favicons opaque, so its ICO embeds **RGB** PNGs (colour type 2). Next's
    image pipeline decodes this file through the `ico` crate, which accepts only
    RGBA and fails the production build outright on anything else:

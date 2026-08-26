@@ -25,7 +25,7 @@
 # papering over it with a cast and an `#[allow]`, so the rule is simply: do not
 # touch those two fields on a raw struct.
 #
-# ── Scope, and what is deliberately NOT checked ──────────────────────────────
+# ── Scope, and what is NOT checked ──────────────────────────────
 #
 # Only `st_dev` and `st_ino` — the identity pair. `st_mode` and `st_size` are
 # skewed too (`st_mode` is `u16` on macOS, `u32` on Linux), but the code that
@@ -72,7 +72,7 @@ done
 # repeatedly — does not indict the guard's own subject matter. A source sweep
 # that cannot tell code from prose flags the file documenting the rule, which
 # is precisely how #1747 lost an hour (#1748).
-# shellcheck disable=SC2016 # the awk program is deliberately single-quoted:
+# shellcheck disable=SC2016 # the awk program is single-quoted:
 # its `$0` is awk's whole-line variable and must not be expanded by the shell.
 offenders="$(
   find crates bench -name '*.rs' -type f -print0 2>/dev/null |

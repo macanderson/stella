@@ -130,5 +130,5 @@ Do not file, and do not count toward the streak:
   before you file, every time. Link, do not duplicate.
 - Findings in generated or vendored files.
 - A god file being large. `scripts/file-size-baseline.txt` grandfathers those
-  deliberately; the gate enforces they do not *grow*. "This file is 2400 lines"
+; the gate enforces they do not *grow*. "This file is 2400 lines"
   is a known fact, not a discovery.

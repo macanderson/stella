@@ -10,7 +10,7 @@ yet" -- deliberately not a class of its own. #3167 is the sweep that audits
 those sites into `ToolOutput::classified_error(class, msg)`, and this is its
 ratchet: nothing stops the unclassified count drifting back up once nobody is
 looking, so a crate may shrink its count, never grow it, exactly the shape
-`scripts/check-typed-errors.py` (AGENTS.md invariant #5) uses for the same
+`scripts/check-typed-errors.py` (AGENTS.md #5) uses for the same
 reason -- the rule predates the guard, so the baseline records a debt that
 already existed rather than granting new permission.
 
@@ -21,7 +21,7 @@ Two scoping decisions, both different from `check-typed-errors.py`'s:
     `ToolExecutor` is not library-scoped -- so this walks `crates/*/src`
     without requiring a `lib.rs`.
 
-  * **Every call site, not just `pub fn`s.** The hazard invariant #5 guards is
+  * **Every call site, not just `pub fn`s.** The hazard AGENTS.md #5 guards is
     a caller across a crate boundary that cannot branch; the hazard here is a
     site that never got read for its real failure cause, public or not. A
     private helper's unclassified error is exactly as unaudited as a public
@@ -62,7 +62,7 @@ from pathlib import Path
 
 BASELINE = "scripts/tool-error-class-baseline.txt"
 
-# The pre-#3145 constructor: `ToolOutput::error(`. Deliberately does NOT match
+# The pre-#3145 constructor: `ToolOutput::error(`. Does NOT match
 # `ToolOutput::classified_error(` -- the literal text immediately after
 # `ToolOutput::` differs (`error` vs `classified_error`), so an already-audited
 # site never counts twice.
@@ -109,7 +109,7 @@ def strip_cfg_test(src: str) -> str:
 # `crates/stella-cli/src/tool_docs.rs` is declared `#[cfg(test)] mod
 # tool_docs;` in `crates/stella-cli/src/main.rs` -- its own module doc names
 # the reason ("Why this lives in a #[cfg(test)] module of a binary crate").
-# Its one `ToolOutput::error(` site deliberately exercises the pre-#3145
+# Its one `ToolOutput::error(` site exercises the pre-#3145
 # (unclassified) wire shape to pin the generated docs' schema, so converting
 # it would misrepresent the site AND change what the test proves. Declared
 # here, by exact path, rather than silently miscounted.

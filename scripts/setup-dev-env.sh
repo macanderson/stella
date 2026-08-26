@@ -232,7 +232,7 @@ else
 fi
 
 # ── Tools ────────────────────────────────────────────────────────────────────
-# git and cargo are deliberately absent from this table: we could not have
+# git and cargo are absent from this table: we could not have
 # reached this line without git (repo detection above uses it), and cargo is
 # covered by the toolchain section. A row for either would be unreachable.
 # The hard-failure count comes from the toolchain section AND from every `ci`

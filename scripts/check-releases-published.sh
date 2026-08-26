@@ -139,7 +139,7 @@ tags_json="$(
 # makes the result invalid JSON. It costs nothing on a runner (never a TTY) and
 # is the difference between working and not when a maintainer runs this by hand.
 #
-# The limit is deliberately far above the real count and then CHECKED. A
+# The limit is far above the real count and then CHECKED. A
 # truncated release list makes every release beyond the cut look unpublished:
 # at `--limit 200` against 313 releases this script reported 137 missing tags
 # instead of the true 26. An alarm that inflates by 5x is one nobody believes,

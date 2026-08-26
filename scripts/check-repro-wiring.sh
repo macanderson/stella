@@ -68,7 +68,7 @@ done
 # 1. No release build may bypass the builder. `cargo zigbuild` is matched too:
 #    the local path cross-compiles the Linux targets with it, and it inherits
 #    RUSTFLAGS the same way, so it must route through the builder as well.
-#    bench/evidence/run/build_sut.sh is deliberately NOT covered — the frozen
+#    bench/evidence/run/build_sut.sh is NOT covered — the frozen
 #    benchmark SUT's recorded SHA depends on it staying un-remapped.
 for f in "$workflow" "$local_release"; do
   # Blank out whole-line comments first: the prose in these files is allowed to

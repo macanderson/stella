@@ -4,7 +4,7 @@
 # scripts/arena-run.sh. Needs no server, no Docker and no network; it never
 # launches or signals anything.
 #
-# The invariant worth a test is the one nobody would suspect: both scripts find
+# The rule worth a test is the one nobody would suspect: both scripts find
 # their targets by matching `ps` output against an argv pattern, and `ps -A`
 # lists the awk running the filter and the shell that invoked the script —
 # both of which quote the pattern in their own command lines. With a plain
@@ -134,7 +134,7 @@ chmod +x "$FAKE_DIR/harbor"
 
 # Reparented to init: the launcher exits immediately, so ppid becomes 1.
 #
-# The seat's own stdout goes to DEVNULL deliberately. Inherited, it would be
+# The seat's own stdout goes to DEVNULL. Inherited, it would be
 # this command substitution's pipe, which stays open as long as the seat lives
 # — so `$(...)` would block for the seat's full lifetime instead of returning
 # the pid it just printed.
@@ -216,7 +216,7 @@ check "reap-seats rejects a non-numeric --min-idle-secs" "$?" "1"
 # adapter venv: it passes the import preflight, swallows the launch heredoc,
 # lays down a prepared log, and reports a pid that is already dead (or, with
 # STUB_LINGER, one that dies mid-wait) — so classification has nothing to
-# consult but the log, which is the invariant under test.
+# consult but the log, which is the rule under test.
 LAUNCH_STUB="$STUB_DIR/launcher"
 # A quoted delimiter keeps every line of the stub literal — the `$1`,
 # `$STUB_LOG` and `\n` below belong to the generated script, not to this

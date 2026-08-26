@@ -114,7 +114,7 @@
 #
 # Taking the larger fails a change that genuinely grows a god file past what it
 # inherited, and is silent when the violation arrived from somewhere else. A
-# ceiling raised deliberately via `--update` still passes exactly as before:
+# ceiling raised via `--update` still passes exactly as before:
 # the regenerated ceiling equals the current size.
 #
 # `ceiling` here means the file's own limit, whichever kind it has: the baseline
@@ -189,7 +189,7 @@ fi
 # note above rules out *associative* arrays, which is a different feature.)
 #
 # `.githooks/*` sits beside `*.sh` because the hook there carries no extension.
-# That is the set `make shellcheck` lints, deliberately: this repository
+# That is the set `make shellcheck` lints: this repository
 # already treats everything under `.githooks/` as shell, so a non-shell file
 # appearing there would break that guard first.
 #
@@ -202,7 +202,7 @@ fi
 # crossed on the day they were added, which is the only day that is true for
 # free.
 #
-# `*.mdx` is deliberately NOT here, and the omission is a judgement rather than
+# `*.mdx` is NOT here, and the omission is a judgement rather than
 # an oversight. The website's documentation pages are prose (the longest,
 # `website/content/docs/configuration/settings.mdx`, is 912 lines), and the
 # remedy this guard names — "split them into submodules" — has no meaning for
@@ -359,7 +359,7 @@ if [ "${1:-}" = "--update" ]; then
     # on every machine. A UTF-8 locale sorts punctuation differently (macOS
     # orders agent/tests.rs before agent.rs), which reshuffles untouched lines
     # and buries the one ceiling that actually moved.
-    # Derived from `$over` above and deliberately not recomputed: the set of
+    # Derived from `$over` above and not recomputed: the set of
     # PATHS written must be the exact set the refusal check judged.
     if [ -n "$written" ]; then printf '%s\n' "$written"; fi
   } >"$baseline.tmp"
