@@ -13,15 +13,23 @@ sentence was the only thing left true -- website/src/app/tokens.css sat on the
 v1.0 ramp through the whole life of the v4.0 rebrand while still claiming to
 mirror the kit. A comment cannot hold a shared cell; a generator and a diff can.
 
+Every token also declares a `paint` posture -- whether anything renders it --
+and `check_paint` below is the door that refuses a token with no answer. The
+posture is held to the tree by `check-tokens.py`'s check 4; see #4975 and the
+`$comment` header in the token file for why the palette needs the same
+discipline AGENTS.md rule #10 applies to events.
+
 Usage:
     scripts/gen-tokens.py            # write the generated files
     scripts/gen-tokens.py --check    # fail if any is stale (gate step)
+    scripts/gen-tokens.py --check R  # ...against the tree rooted at R
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -197,8 +205,53 @@ def rust_tokens(doc: dict) -> list[dict]:
     return [tok for tok in doc["tokens"] if tok.get("rust")]
 
 
+ISSUE = re.compile(r"^#\d+$")
+
+
+def check_paint(name: str, paint: object) -> str | None:
+    """Return an error string if `paint` is not a well-formed posture.
+
+    This is the *door*: it asks whether somebody answered "what paints this?",
+    not whether the answer is true. `check-tokens.py`'s check 4 is what holds
+    the answer to the tree, from both sides.
+
+    Separated for the same reason `clamp` is a declaration and not an
+    inference: inference is what lets a warm hex in under a cool name, and a
+    default posture is what would have let `comment` in under `painted`
+    (#4975).
+    """
+    if paint is None:
+        return (
+            f"{name}: no `paint` posture. Declare `\"paint\": \"painted\"` if a "
+            f"surface names this token, or `\"paint\": {{ \"gap\": \"#N\" }}` "
+            f"citing the issue where that is being decided"
+        )
+    if isinstance(paint, str):
+        if paint != "painted":
+            return f"{name}: `paint` is {paint!r}; the only string posture is \"painted\""
+        return None
+    if isinstance(paint, dict):
+        if set(paint) != {"gap"}:
+            return (
+                f"{name}: a gap posture is exactly {{ \"gap\": \"#N\" }}; got keys "
+                f"{sorted(paint)}"
+            )
+        issue = paint["gap"]
+        if not isinstance(issue, str) or not ISSUE.match(issue):
+            return (
+                f"{name}: `paint.gap` is {issue!r}; it must cite an issue as "
+                f'"#1234". A gap with no issue is the silence this field exists '
+                f"to refuse"
+            )
+        return None
+    return f"{name}: `paint` must be a string or an object, not {type(paint).__name__}"
+
+
 def validate(doc: dict) -> list[str]:
-    """Every token against its declared clamp. Returns the failures."""
+    """Every token against its declared clamp and paint posture.
+
+    Returns the failures.
+    """
     errors: list[str] = []
     clamps = doc["clamps"]
     seen: dict[str, str] = {}
@@ -211,6 +264,9 @@ def validate(doc: dict) -> list[str]:
             errors.append(f"{tok['name']}: clamp {clamp!r} is not declared in `clamps`")
             continue
         err = check_clamp(tok["name"], tok["hex"], clamp, clamps[clamp], anchors)
+        if err:
+            errors.append(err)
+        err = check_paint(tok["name"], tok.get("paint"))
         if err:
             errors.append(err)
         # A hex used twice under two names is how a role quietly loses meaning.
@@ -412,9 +468,21 @@ def main() -> int:
         action="store_true",
         help="fail if a generated file is stale instead of writing it",
     )
+    # A root argument is what lets `scripts/test-tokens.sh` point the validator
+    # at a fixture tree, the same reason `check-tokens.py` takes one: a door
+    # nobody can show refusing anything is a door nobody knows is shut. With no
+    # argument it reads its own repository, as every caller does today.
+    ap.add_argument(
+        "root",
+        nargs="?",
+        type=Path,
+        default=REPO,
+        help="repository root to read and write (default: this one)",
+    )
     args = ap.parse_args()
 
-    doc = json.loads(TOKENS.read_text())
+    root = args.root.resolve()
+    doc = json.loads((root / TOKENS.relative_to(REPO)).read_text())
 
     errors = validate(doc)
     if errors:
@@ -427,7 +495,7 @@ def main() -> int:
 
     stale: list[Path] = []
     for rel, content in outputs.items():
-        path = REPO / rel
+        path = root / rel
         if args.check:
             if not path.exists() or path.read_text() != content:
                 stale.append(rel)

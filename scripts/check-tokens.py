@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Guard the colour system: no retired hex anywhere, no stray hex where it matters.
 
-Three checks, deliberately different in strength, because "never use this colour
-again", "use only tokens here" and "quote this token correctly" are different
-promises and only one of them can be made about the whole tree today.
+Four checks, different in strength, because "never use this colour
+again", "use only tokens here", "quote this token correctly" and "something
+renders this" are different promises and only one of them can be made about the
+whole tree today.
 
 1. **The ban.** Every hex in `banned.values` in the token JSON fails wherever it
    appears, in any tracked file. These are the anchor values of retired brand
@@ -42,6 +43,27 @@ promises and only one of them can be made about the whole tree today.
    document names an `--st-*` token, so a marketing surface keeping its own
    accent and status hues under its own variable names is untouched. That is the
    line #2594 drew, and this check does not cross it.
+
+4. **Paint.** Every token declares a `paint` posture in the token JSON, and this
+   is what holds the declaration to the tree, in **both** directions: a
+   `"painted"` token with no site fails, and a `{ "gap": "#N" }` token with a
+   site fails too. See `paint_report` for what the sweep can and cannot see.
+
+   Checks 1-3 are all about a *value*; none of them can ask whether anything
+   renders it. That is how `comment` survived (#4946): a published token with a
+   role sentence, a `--st-comment` declaration on four surfaces, a `COMMENT`
+   constant in the generated `token.rs`, three design renderings using its hex
+   and a row in `scripts/contrast-baseline.txt` -- so one of the sub-AA pairings
+   #4063 was deciding about was a colour no reader had ever seen. Every check
+   above passed it, because every value involved was live.
+
+   This is AGENTS.md rule #10 pointed at the palette, and
+   `crates/stella-protocol/src/event/consumers.rs` is the shape it copies. The
+   difference is what enforces totality: `consumers.rs` gets it from the
+   compiler over an enum, and a colour's consumers are spread across Rust, four
+   stylesheets, HTML and SVG, so "is it painted?" is a text question. The door
+   is `scripts/gen-tokens.py`'s `check_paint`, which refuses a token with no
+   posture; this is the half that refuses a posture that is not true.
 
 `MIGRATING` is the one escape, and it is a ledger, not an allowlist: a path
 listed there is a surface this system has not reached yet, each entry carrying
@@ -207,6 +229,121 @@ TEXT_SUFFIXES = {
 }
 
 
+# Files whose reference to a token cannot tell a painted one from an unpainted
+# one, so check 4 does not read them.
+#
+# The generated artifacts are here for the obvious reason: they are emitted from
+# the token table, so they name every token by construction and would make the
+# sweep vacuously green.
+#
+# `fallback.rs` is here for a subtler version of the same reason, and it is the
+# entry that decides whether this check means anything. `ansi16` is **total over
+# `token::ALL`** -- `every_token_has_a_fallback` is the test that keeps it that
+# way -- so it names all twenty terminal tokens whether or not a cell ever takes
+# one. Counting it would have passed six tokens nothing paints, four of them
+# under values the deck does not even use (`theme::DIFF_ADD_BG` is `#1B2921`
+# where `token::DIFF_ADD_BG` is `#10201A`).
+#
+# An **alias** is NOT excluded: `pub const TEXT_EMPHASIS: Color =
+# token::SILVER_TYPE;` counts as a site. Resolving an alias down to a cell needs
+# transitive analysis this sweep does not do, and the claim it makes is
+# correspondingly bounded -- see `paint_report`.
+PAINT_BLIND = (
+    "design/tokens/stella-tokens.json",
+    "design/tokens/stella-tokens.css",
+    "crates/stella-tui-theme/src/token.rs",
+    "crates/stella-tui-theme/src/fallback.rs",
+    "scripts/gen-tokens.py",
+    "scripts/check-tokens.py",
+)
+
+# A token being *used*, in the two notations this tree writes. A declaration --
+# `--st-bg: #0A0A0C` in a mirrored stylesheet -- is not one of them:
+# `comment` had four of those and no reader ever saw the colour.
+VAR_USE = re.compile(r"var\(\s*(--st-[a-z0-9-]+)")
+RUST_USE = re.compile(r"\btoken::([A-Z][A-Z0-9_]*)\b")
+
+# How many example sites a failure prints before it stops.
+PAINT_EXAMPLES = 3
+
+
+def paint_report(root: Path, doc: dict, files: list[Path]) -> list[str]:
+    """Hold every token's `paint` posture to the tree. Returns the failures.
+
+    **What this sees.** One `var(--st-<name>)` or `token::<RUST>` outside
+    `PAINT_BLIND`, anywhere in a tracked text file. That is a NAME sweep, not a
+    render trace. A guard whose reach is guessed at is a guard that gets
+    trusted past it, so the bound is:
+
+    - It cannot follow a **value copied under another name**. The site ships
+      every one of the eleven web-only stops as a literal under `--stella-*`
+      rather than through `var(--st-*)`, so they read as gaps here and are
+      declared as gaps -- with #4978, where completing those sheets is being
+      decided, as the citation. The posture records the mechanism, not the
+      pixel.
+    - It cannot follow an **alias chain** to a cell, so an alias counts as a
+      site (see `PAINT_BLIND`).
+    - It does not care whether the site is production or a test. No token in
+      this tree is named only by tests, so no verdict here turns on that; if one
+      ever is, this is the sentence that has to change rather than a number.
+    - **Prose counts.** A doc comment writing `token::DIFF_ADD_BG` is a site as
+      far as this is concerned. That makes `painted` fractionally easier to
+      satisfy and can make a real `gap` read as stale -- the loud direction,
+      which names the file and line and is fixed by moving the sentence or
+      declaring the token painted. A structural fix means parsing Rust and CSS,
+      which is a language server rather than a guard.
+
+    **Which files.** `tracked_files` -- `git ls-files --cached --others
+    --exclude-standard` -- so an un-ignored file in a working tree counts even
+    before it is committed. Deliberate, and the same enumeration the three
+    checks above take since #4960: a file that is neither ignored nor committed
+    is still a file a `git add -A` will publish, and this check found exactly
+    that case on its own PR. The cost is that a developer's un-ignored scratch
+    note mentioning a token can turn their local run red; the failure names the
+    path, and the answer is an ignore rule.
+
+    What it does answer is exactly the question `comment` failed: does any
+    hand-written surface name this token at all?
+    """
+    used: dict[str, list[str]] = {}
+    for rel in files:
+        posix = rel.as_posix()
+        if rel.suffix not in TEXT_SUFFIXES or posix in PAINT_BLIND:
+            continue
+        try:
+            text = (root / rel).read_text(errors="ignore")
+        except OSError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for match in VAR_USE.finditer(line):
+                used.setdefault(match.group(1), []).append(f"{posix}:{lineno}")
+            for match in RUST_USE.finditer(line):
+                used.setdefault(match.group(1), []).append(f"{posix}:{lineno}")
+
+    failures: list[str] = []
+    for tok in doc["tokens"]:
+        sites = list(used.get(tok["css"], []))
+        if tok.get("rust"):
+            sites += used.get(tok["rust"], [])
+        paint = tok.get("paint")
+        if paint == "painted" and not sites:
+            failures.append(
+                f"{tok['name']}: declares `painted`, and nothing in the tree "
+                f"names {tok['css']} or token::{tok.get('rust', '-')}. Paint it, "
+                f"retire it, or declare the gap with the issue where that is "
+                f"being decided"
+            )
+        elif isinstance(paint, dict) and sites:
+            shown = ", ".join(sites[:PAINT_EXAMPLES])
+            more = f" (+{len(sites) - PAINT_EXAMPLES} more)" if len(sites) > PAINT_EXAMPLES else ""
+            failures.append(
+                f"{tok['name']}: declares a gap citing {paint['gap']}, but "
+                f"{len(sites)} site(s) name it: {shown}{more}. A gap that has "
+                f"been closed is redeclared as `painted`, not left standing"
+            )
+    return failures
+
+
 def tracked_files(root: Path) -> list[Path]:
     out = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -246,7 +383,10 @@ def main(argv: list[str]) -> int:
         seen.add((posix, lineno, hexv))
         ban_hits.append(hit)
 
-    for rel in tracked_files(root):
+    files = tracked_files(root)
+    paint_hits = paint_report(root, doc, files)
+
+    for rel in files:
         posix = rel.as_posix()
         if rel.suffix not in TEXT_SUFFIXES:
             continue
@@ -356,15 +496,33 @@ def main(argv: list[str]) -> int:
             "naming the token.",
             file=sys.stderr,
         )
+    if paint_hits:
+        failed = True
+        print(
+            f"\n{len(paint_hits)} token(s) declare a `paint` posture the tree "
+            "does not bear out:\n",
+            file=sys.stderr,
+        )
+        for hit in paint_hits:
+            print(f"  {hit}", file=sys.stderr)
+        print(
+            "\n`paint` is declared per token in design/tokens/stella-tokens.json "
+            "and is the answer to \"what renders this?\" — the question nothing "
+            "asked when `comment` shipped unpainted (#4975).",
+            file=sys.stderr,
+        )
 
     if failed:
         return 1
 
     scope = len(TOKEN_ONLY)
     pending = f", {len(MIGRATING)} path(s) still migrating" if MIGRATING else ""
+    painted = sum(1 for t in doc["tokens"] if t.get("paint") == "painted")
+    gaps = len(doc["tokens"]) - painted
     print(
         f"tokens: no retired hex in the tree; {scope} token-only path(s) clean; "
-        f"{citations_ok} token citation(s) quote the palette{pending}"
+        f"{citations_ok} token citation(s) quote the palette; {painted} token(s) "
+        f"painted, {gaps} declared gap(s){pending}"
     )
     return 0
 
