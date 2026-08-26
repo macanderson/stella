@@ -8,10 +8,28 @@ status: living
 
 **Built so far:** §3's three tables — `step_grades`, `turn_grades`,
 `execution_grades` — are in `bench/telemetry_store/schema.sql`, which cites
-this document as their contract. Nothing writes them: §4–§9 (ingestion, the
-deterministic classifiers, the judge fallback, the aggregation formulas and
-the join report) have no implementation, so every column is empty today.
-Tracked as #4751.
+this document as their contract, and `bench/telemetry_store/grade.py` fills
+them (#4751). What runs today is §9's **phase 1**: §4's step windowing and
+price clock, §5's rule chain minus rule 2, and §7's aggregation, all under
+`grader_version = 'v1-deterministic'`.
+
+What this document describes and the tree does not yet do, each with its
+reason:
+
+- **§5 rule 2, the verifier delta.** Not implementable against this store:
+  `verifier_tests` carries one final CTRF report per trial with no window key,
+  sequence or timestamp, so there is no before and after to difference. It
+  needs a harness that re-runs the verifier mid-trial, plus a schema change —
+  #5089.
+- **§6, the agent-assisted fallback, and §8, the join report.** Phases 2 and
+  3, tracked in #5091. Until the judge exists, a window no rule settles is
+  written `direction = 'neutral'`, `direction_source = 'deterministic'`,
+  `direction_reason = 'unclassified_floor'`, exactly as phase 1 requires, so
+  the residue stays visible in the data.
+- **§5 rule 3 is implemented against a substitute** for "the trial's final
+  accepted patch", which this store does not hold: a line counts as convergent
+  when no later `file_change` on the same path undoes it. `grade.py`'s module
+  docstring states the substitution.
 
 ## 0. Summary
 
