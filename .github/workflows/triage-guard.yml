@@ -1,0 +1,33 @@
+name: triage-guard
+on:
+  issues:
+    types: [opened, labeled]
+permissions:
+  issues: write
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          TRIAGE_AGENT: triage-bot   # the only login allowed to set P-labels
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const P = /^P[0-3]$/;
+            if (context.payload.action === 'opened') {
+              await github.rest.issues.addLabels({
+                ...context.repo, issue_number: issue.number, labels: ['triage'] });
+            }
+            if (context.payload.action === 'labeled'
+                && P.test(context.payload.label.name)
+                && context.payload.sender.login !== process.env.TRIAGE_AGENT) {
+              await github.rest.issues.removeLabel({
+                ...context.repo, issue_number: issue.number,
+                name: context.payload.label.name });
+              await github.rest.issues.addLabels({
+                ...context.repo, issue_number: issue.number, labels: ['triage'] });
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: issue.number,
+                body: 'Priority labels are assigned only by the triage agent (SCR-005). Re-queued as `triage`.' });
+            }
