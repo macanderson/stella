@@ -33,12 +33,26 @@
 //!
 //! `stella-pipeline`, while it still existed, re-exported every name below
 //! unchanged from `ports`/`ports::handle`/`witness`, so its own call sites —
-//! including `CandidateHandles`'s own `grant`/`resolve_path`, which now call
-//! [`fence`]/[`canonical_root`] here rather than keeping a second copy —
-//! needed no logic changes, only import-path updates. "One minting
-//! implementation and one fence rather than two" (`wrapper_candidate.rs`'s own
-//! module doc) is exactly why the fence stayed a single copy through the move
-//! instead of being duplicated at the new call site.
+//! including `CandidateHandles`'s own `grant`/`resolve_path`, which called
+//! this module's fence rather than keeping a second copy — needed no logic
+//! changes, only import-path updates. "One minting implementation and one
+//! fence rather than two" (`wrapper_candidate.rs`'s own module doc) is exactly
+//! why the fence stayed a single copy through the move instead of being
+//! duplicated at the new call site.
+//!
+//! # Where the fence ends
+//!
+//! What survives here is [`fence_lexical`], the layer that decides a question
+//! about *text*. The on-disk half used to live beside it and hand back a
+//! `PathBuf`, which is an answer that expires: anything running between that
+//! answer and the `open` that consumed it could re-point a component (#3483).
+//! It is gone, and the caller resolves and uses a name in one confined walk
+//! from a directory descriptor pinned at the root
+//! (`stella_tools::rootfd::RootHandle::open_entry`). That is a substrate this
+//! crate cannot host — it is a near-leaf over borrowed text, with
+//! `stella-protocol` as its only workspace dependency — so the lexical layer
+//! stays and the descriptor-holding half lives where the descriptors already
+//! do.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -425,9 +439,9 @@ pub const HOST_TREE_HANDLE: &str = "host-tree";
 ///
 /// The shared-work-tree case, and the reason it is a function here rather than
 /// a second minting somewhere else: it resolves the root through the same
-/// [`canonical_root`] a candidate-handle registry's own grant path does, so a
-/// plugin's root and the fence in [`resolve_in_root`] cannot come to disagree
-/// about which directory they mean. It fails closed the same two ways — a
+/// [`canonical_root`] a candidate-handle registry's own grant path does, so the
+/// root a plugin is told about is the root the host then opens and watches. It
+/// fails closed the same two ways — a
 /// root the filesystem will not resolve, and a root this host cannot spell as
 /// UTF-8 — rather than handing out a path nothing can be judged against.
 ///
@@ -458,23 +472,6 @@ pub fn host_tree_grant(
     })
 }
 
-/// Resolve one caller-supplied relative path inside `root`, or refuse it.
-///
-/// The same funnel a candidate-handle registry's own `resolve_path` runs, for
-/// a caller that holds a root rather than a handle — a driver checking the
-/// identity of a witness artifact inside the tree it granted, say. Both fence
-/// layers apply: see [`fence`] for what the answer promises and what it
-/// cannot.
-///
-/// # Errors
-///
-/// [`CandidateDenial::Path`] for a path that is absolute, traverses, is
-/// malformed or lands outside `root` once symlinks are followed;
-/// [`CandidateDenial::RootUnavailable`] for a root that will not canonicalise.
-pub fn resolve_in_root(root: &str, relative: &str) -> Result<PathBuf, CandidateDenial> {
-    fence(root, relative)
-}
-
 /// Build the wire [`TestPlan`] for one already-parsed invocation and what it
 /// reported before the turn ran.
 ///
@@ -496,34 +493,31 @@ pub fn test_plan(invocation: &TestInvocation, baseline: Option<&CmdOutcome>) -> 
     })
 }
 
-/// Both fence layers, in order: refuse what is malformed without touching the
-/// filesystem, then judge containment after the filesystem has had its say.
-///
-/// # What this is not
-///
-/// The resolved path is true at the instant it is checked; a sufficiently
-/// determined local attacker can swap a component afterwards (TOCTOU).
-/// Closing that needs `openat`-style resolution held across the use, which is
-/// a substrate change, not a caller change — #3483, declared rather than
-/// pretended away.
-pub fn fence(root: &str, path: &str) -> Result<PathBuf, CandidateDenial> {
-    let relative = fence_lexical(path).map_err(|reason| CandidateDenial::Path {
-        path: path.to_string(),
-        reason,
-    })?;
-    fence_on_disk(root, &relative, path)
-}
-
-/// The pure layer: is this text even capable of naming something inside a
-/// root?
+/// Is this text even capable of naming something inside a root?
 ///
 /// Absolute paths, `..` components, NUL bytes and backslashes are refused
 /// without touching the filesystem, as written and never normalised first —
-/// normalising before checking is how a fence is talked past. Returns the
-/// path rebuilt from its `Normal` components, which is what [`fence_on_disk`]
-/// joins — rebuilt rather than reused so a `./` prefix cannot survive as a
-/// component.
-fn fence_lexical(path: &str) -> Result<PathBuf, PathDenial> {
+/// normalising before checking is how a fence is talked past. Returns the path
+/// rebuilt from its `Normal` components, rebuilt rather than reused so a `./`
+/// prefix cannot survive as a component.
+///
+/// # This is the whole of what a pure layer can decide
+///
+/// It refuses text that could never name an inside path. It cannot say where
+/// the text lands, because that is a question about a filesystem that is still
+/// changing: an on-disk containment check hands back a `PathBuf` that was true
+/// at the instant it was checked, and anything running between that answer and
+/// the `open` that consumes it can re-point a component (#3483). This crate
+/// used to carry that second layer and hand back the path; the caller now
+/// resolves and *uses* the name in one confined walk from a directory
+/// descriptor pinned at the root (`stella_tools::rootfd::RootHandle`), so
+/// containment is a property of the descriptor rather than of a string
+/// somebody has to re-open.
+///
+/// # Errors
+///
+/// [`PathDenial`] naming which of those shapes the text is.
+pub fn fence_lexical(path: &str) -> Result<PathBuf, PathDenial> {
     if path.is_empty() {
         return Err(PathDenial::Empty);
     }
@@ -575,54 +569,6 @@ fn is_drive_letter(name: &std::ffi::OsStr) -> bool {
         name.to_str().map(str::as_bytes),
         Some([letter, b':']) if letter.is_ascii_alphabetic()
     )
-}
-
-/// The filesystem layer: does this well-formed relative path still land
-/// inside the root once every symlink on the way has been followed?
-///
-/// Walks up from the joined path to the deepest component that exists,
-/// canonicalises *that*, and requires the result to sit under the canonical
-/// root — so a link in the middle of the path is judged, not just a link at
-/// the end. The non-existent tail is re-appended afterwards, which is what
-/// lets a caller resolve a path it is about to create.
-///
-/// Fails closed at every step: an unresolvable root, a broken link, or a walk
-/// that runs off the top all refuse.
-fn fence_on_disk(
-    root: &str,
-    relative: &Path,
-    as_written: &str,
-) -> Result<PathBuf, CandidateDenial> {
-    let escapes = || CandidateDenial::Path {
-        path: as_written.to_string(),
-        reason: PathDenial::EscapesRoot,
-    };
-    let canonical_root_path = canonical_root(root)?;
-
-    let mut existing = canonical_root_path.join(relative);
-    let mut tail = Vec::new();
-    // `symlink_metadata` rather than `exists`: a dangling symlink is an entry
-    // that exists, and treating it as absent would append past it instead of
-    // refusing it below.
-    while std::fs::symlink_metadata(&existing).is_err() {
-        let Some(name) = existing.file_name().map(std::ffi::OsStr::to_os_string) else {
-            return Err(escapes());
-        };
-        tail.push(name);
-        if !existing.pop() {
-            return Err(escapes());
-        }
-    }
-
-    let resolved = existing.canonicalize().map_err(|_| escapes())?;
-    if !resolved.starts_with(&canonical_root_path) {
-        return Err(escapes());
-    }
-    let mut full = resolved;
-    for name in tail.iter().rev() {
-        full.push(name);
-    }
-    Ok(full)
 }
 
 #[cfg(test)]
@@ -767,39 +713,6 @@ mod tests {
             fence_lexical("./tests/x.py").expect("in-root"),
             Path::new("tests/x.py")
         );
-    }
-
-    /// The free fence is the same funnel a handle-addressed one runs, so a
-    /// caller holding a root gets exactly the containment a caller holding a
-    /// handle does — the witness for "one fence, not two" across the crate
-    /// boundary this module doc names.
-    #[test]
-    fn the_free_fence_refuses_what_the_lexical_layer_already_refused() {
-        let dir = std::env::temp_dir().join(format!(
-            "stella-plugin-free-fence-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(dir.join("tests")).expect("tests dir");
-        std::fs::write(dir.join("tests/witness.sh"), "exit 1\n").expect("the artifact");
-        let root = dir.canonicalize().expect("canonicalize");
-        let root = root.to_str().expect("utf-8");
-
-        assert!(resolve_in_root(root, "tests/witness.sh").is_ok());
-        assert!(matches!(
-            resolve_in_root(root, "../escape.sh"),
-            Err(CandidateDenial::Path {
-                reason: PathDenial::Traversal,
-                ..
-            })
-        ));
-        assert!(matches!(
-            resolve_in_root(root, "/etc/passwd"),
-            Err(CandidateDenial::Path {
-                reason: PathDenial::Absolute,
-                ..
-            })
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

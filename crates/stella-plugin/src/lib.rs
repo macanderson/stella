@@ -130,8 +130,8 @@ mod wrapper;
 // all live beside the wire types they build against.
 pub use candidate_grant::{
     ArtifactIdentity, ArtifactKind, CmdKind, CmdOutcome, HOST_TREE_HANDLE, TestInvocation,
-    TestInvocationError, canonical_root, fence, host_tree_grant, parse_test_invocation,
-    resolve_in_root, test_plan, witness_identity_matches,
+    TestInvocationError, canonical_root, fence_lexical, host_tree_grant, parse_test_invocation,
+    test_plan, witness_identity_matches,
 };
 pub use configure::{ConfigureEntry, REFUSED_SECTIONS};
 pub use consent::{Capability, RiskLevel, consent_text, highest_risk};

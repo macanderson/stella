@@ -50,107 +50,85 @@ pub(crate) fn custom_tool_report_for_scopes(
     }
 }
 
-/// Identity for the workspace-relative `rel` under `root`, attesting the
-/// location the artifact was actually observed at: `path` carries the opened
-/// file's canonical position relative to the canonical root. A witness that
-/// was renamed and is still reachable through an aliased lookup (a
-/// case-folding filesystem, a symlinked parent directory) therefore reports
-/// its real location, which the pipeline's pinned-path equality rejects as
-/// tampering. A file whose canonical position cannot be stated inside `root`
-/// has no identity at all — fail closed, exactly like a symlink.
-pub(crate) fn fs_artifact_identity(root: &std::path::Path, rel: &str) -> Option<ArtifactIdentity> {
-    let full = root.join(rel);
-    let identity = OpenedWitnessArtifact::open(&full)?.identity_for_path(&full)?;
+/// Identity for the workspace-relative `rel` inside the tree `root` holds open,
+/// attesting the location the artifact was actually observed at.
+///
+/// `root` is a **held directory descriptor**, not a path, and that is the whole
+/// safety argument (#3483). The name is resolved exactly once, by the walk that
+/// opens the file: every interior component is opened `O_NOFOLLOW` from the
+/// descriptor above it, `..` pops that stack rather than asking the kernel, and
+/// the leaf is opened without following a link there either. There is no path
+/// left over for anything to re-point between the check and the use, and the
+/// root itself cannot be swapped — a descriptor keeps naming the directory it
+/// was opened on however the directory is renamed afterwards.
+///
+/// [`stella_tools::rootfd::ConfinedEntry::resolved`] is that same walk's record of where it landed,
+/// so a witness that was renamed and is still reachable at its pinned path
+/// through an aliased lookup (a symlinked parent directory) reports its real
+/// location, which the tamper watch's pinned-path equality rejects. An artifact
+/// whose location cannot be stated, or whose name stops meaning this file while
+/// it is being read, has no identity at all — fail closed, exactly like a
+/// symlink.
+pub(crate) fn fs_artifact_identity(
+    root: &stella_tools::rootfd::RootHandle,
+    rel: &str,
+) -> Option<ArtifactIdentity> {
+    let entry = root.open_entry(rel).ok()?;
+    let identity = witness_identity(&entry)?;
     Some(ArtifactIdentity {
-        path: observed_relative_path(root, &full)?,
+        path: entry.resolved().to_string(),
         ..identity
     })
 }
 
-/// The canonical position of `full` relative to the canonical `root`, in the
-/// repo-relative `/`-separated form the pipeline pins witness paths in.
-fn observed_relative_path(root: &std::path::Path, full: &std::path::Path) -> Option<String> {
-    let canonical_root = std::fs::canonicalize(root).ok()?;
-    let observed = std::fs::canonicalize(full).ok()?;
-    let rel = observed.strip_prefix(&canonical_root).ok()?;
-    let mut out = String::new();
-    for component in rel.components() {
-        if !out.is_empty() {
-            out.push('/');
-        }
-        out.push_str(component.as_os_str().to_str()?);
+/// The content half of an artifact's identity, read from an already-open
+/// confined entry.
+///
+/// Bracketed by [`stella_tools::rootfd::ConfinedEntry::still_named`] on both
+/// sides of the read: the
+/// name this descriptor was opened by must still mean this file before the
+/// bytes are hashed and after, or the fingerprint describes something that name
+/// no longer refers to. Both questions go through the directory descriptor the
+/// walk already holds, so neither is a fresh resolution of `rel`.
+fn witness_identity(entry: &stella_tools::rootfd::ConfinedEntry) -> Option<ArtifactIdentity> {
+    use std::fmt::Write as _;
+    use std::io::Read as _;
+
+    use sha2::{Digest, Sha256};
+
+    let metadata = entry.file.metadata().ok()?;
+    if !metadata.file_type().is_file() {
+        return None;
     }
-    (!out.is_empty()).then_some(out)
-}
-
-struct OpenedWitnessArtifact {
-    file: std::fs::File,
-    metadata: std::fs::Metadata,
-}
-
-impl OpenedWitnessArtifact {
-    fn open(path: &std::path::Path) -> Option<Self> {
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            // FILE_FLAG_OPEN_REPARSE_POINT opens a link/reparse point itself
-            // instead of following it. Link count is unavailable through a
-            // stable std API, so Windows still fails closed below.
-            options.custom_flags(0x0020_0000);
-        }
-        let file = options.open(path).ok()?;
-        let metadata = file.metadata().ok()?;
-        if !metadata.file_type().is_file() || opened_metadata(&metadata).is_none() {
-            return None;
-        }
-        Some(Self { file, metadata })
+    let (mode, link_count) = opened_metadata(&metadata)?;
+    if link_count != 1 || !entry.still_named() {
+        return None;
     }
-
-    fn identity_for_path(mut self, path: &std::path::Path) -> Option<ArtifactIdentity> {
-        use std::fmt::Write as _;
-        use std::io::Read as _;
-
-        use sha2::{Digest, Sha256};
-
-        let (mode, link_count) = opened_metadata(&self.metadata)?;
-        if link_count != 1 || !path_resolves_to_opened_file(path, &self.metadata) {
-            return None;
-        }
-        let mut payload = Vec::new();
-        self.file.read_to_end(&mut payload).ok()?;
-        let final_metadata = self.file.metadata().ok()?;
-        if opened_metadata(&final_metadata) != Some((mode, link_count))
-            || !path_resolves_to_opened_file(path, &final_metadata)
-        {
-            return None;
-        }
-        let mut hasher = Sha256::new();
-        hasher.update(b"regular");
-        hasher.update(mode.to_le_bytes());
-        hasher.update(link_count.to_le_bytes());
-        hasher.update(payload);
-        let mut fingerprint = String::from("sha256:");
-        for byte in hasher.finalize() {
-            write!(&mut fingerprint, "{byte:02x}").ok()?;
-        }
-        Some(ArtifactIdentity {
-            // The observed location is attested by `fs_artifact_identity`,
-            // which knows the workspace root. Left empty here, a bare content
-            // identity can never satisfy the pipeline's pinned-path equality.
-            path: String::new(),
-            fingerprint,
-            kind: ArtifactKind::Regular,
-            mode,
-            link_count,
-        })
+    let mut payload = Vec::new();
+    (&entry.file).read_to_end(&mut payload).ok()?;
+    let final_metadata = entry.file.metadata().ok()?;
+    if opened_metadata(&final_metadata) != Some((mode, link_count)) || !entry.still_named() {
+        return None;
     }
+    let mut hasher = Sha256::new();
+    hasher.update(b"regular");
+    hasher.update(mode.to_le_bytes());
+    hasher.update(link_count.to_le_bytes());
+    hasher.update(payload);
+    let mut fingerprint = String::from("sha256:");
+    for byte in hasher.finalize() {
+        write!(&mut fingerprint, "{byte:02x}").ok()?;
+    }
+    Some(ArtifactIdentity {
+        // The observed location is attested by `fs_artifact_identity`, which
+        // holds the walk that found it. Left empty here, a bare content
+        // identity can never satisfy the tamper watch's pinned-path equality.
+        path: String::new(),
+        fingerprint,
+        kind: ArtifactKind::Regular,
+        mode,
+        link_count,
+    })
 }
 
 #[cfg(unix)]
@@ -165,21 +143,6 @@ fn opened_metadata(_metadata: &std::fs::Metadata) -> Option<(u32, u64)> {
     // manufacture `1`: without proof that no hardlink aliases exist, witness
     // identity is unavailable and acceptance fails closed.
     None
-}
-
-#[cfg(unix)]
-fn path_resolves_to_opened_file(path: &std::path::Path, opened: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    let Ok(current) = std::fs::symlink_metadata(path) else {
-        return false;
-    };
-    current.file_type().is_file() && current.dev() == opened.dev() && current.ino() == opened.ino()
-}
-
-#[cfg(not(unix))]
-fn path_resolves_to_opened_file(_path: &std::path::Path, _opened: &std::fs::Metadata) -> bool {
-    false
 }
 
 /// The session's tool policy.

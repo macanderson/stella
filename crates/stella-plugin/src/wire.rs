@@ -290,11 +290,11 @@ impl WrapperResponse {
 ///   way *back* — a scope, a withheld adoption path, a witness artifact — is
 ///   resolved against this handle's root by the host and refused if it lands
 ///   anywhere else, after symlinks, on the host's own filesystem
-///   (`CandidateDenial`, and this crate's `candidate_grant::fence` for the
-///   implementation — it was the staged pipeline's
-///   `ports::CandidateHandles` until #3865 deleted that crate). The refusal is
-///   the host's; nothing here is a promise
-///   the plugin was asked to keep.
+///   (`CandidateDenial`; this crate's `candidate_grant::fence_lexical` refuses
+///   text that could never name an inside path, and the host walks the rest
+///   from a directory descriptor pinned at the root rather than resolving a
+///   string it then re-opens — #3483). The refusal is the host's; nothing here
+///   is a promise the plugin was asked to keep.
 ///
 /// So a plugin that ignores the root and lies about where it went has told the
 /// host nothing the host will act on, which is the property that lets the same
