@@ -217,7 +217,7 @@ fn fit(line: &Line<'static>, width: usize) -> Vec<Span<'static>> {
         }
     }
     if clipped {
-        spans.push(Span::styled("…", theme::muted()));
+        spans.push(Span::styled("…", theme::text_secondary()));
         used += 1;
     }
     if used < width {
@@ -288,7 +288,7 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         "  letter & arrow hotkeys apply while the prompt box is empty",
-        theme::muted(),
+        theme::text_secondary(),
     )));
     // The metric detail last, under the keys. `?` is reached for as a key sheet
     // far more often than as a dashboard, so the keys keep the top of a panel
@@ -324,7 +324,7 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
         block = block.title_bottom(
             Line::from(Span::styled(
                 format!(" ↓ {below} more · ⇟ space · End "),
-                theme::muted(),
+                theme::text_secondary(),
             ))
             .right_aligned(),
         );

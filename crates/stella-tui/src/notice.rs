@@ -183,7 +183,7 @@ fn notice_lines(text: &str, width: usize) -> Vec<Line<'static>> {
         for detail in details {
             let line = Line::from(vec![
                 Span::raw(" ".repeat(DETAIL_INDENT)),
-                Span::styled(detail, theme::muted()),
+                Span::styled(detail, theme::text_secondary()),
             ]);
             wrap_one_indent(line, width, DETAIL_INDENT, &mut out);
         }

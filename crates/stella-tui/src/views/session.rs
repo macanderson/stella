@@ -142,7 +142,7 @@ fn digest_line(d: &TurnDigest, width: usize) -> Vec<Line<'static>> {
     }
     metric.push(Span::styled(
         parts.join(" · "),
-        Style::new().fg(theme::MUTED),
+        Style::new().fg(theme::TEXT_SECONDARY),
     ));
     let left = vec![Span::styled(
         d.prompt.clone(),
@@ -416,7 +416,7 @@ fn empty_state(area: Rect, buf: &mut Buffer) {
     };
     Paragraph::new(Span::styled(
         "no active session — type a prompt and press Enter to dispatch one",
-        theme::muted(),
+        theme::text_secondary(),
     ))
     .alignment(Alignment::Center)
     .render(mid, buf);
@@ -1118,7 +1118,7 @@ mod tests {
         // the one row they are staring at must be the one the transcript
         // actually holds — only re-styled, never re-written.
         let original = "compiling src/auth.rs and src/auth.rs again";
-        let base = Style::new().fg(theme::MUTED);
+        let base = Style::new().fg(theme::TEXT_SECONDARY);
         let mut lines = vec![Line::from(vec![Span::styled(original, base)])];
         highlight_matches(&mut lines, "auth");
 
@@ -1143,7 +1143,7 @@ mod tests {
             lines[0]
                 .spans
                 .iter()
-                .all(|s| s.style.fg == Some(theme::MUTED)),
+                .all(|s| s.style.fg == Some(theme::TEXT_SECONDARY)),
             "which the unmatched fragments keep untouched"
         );
     }

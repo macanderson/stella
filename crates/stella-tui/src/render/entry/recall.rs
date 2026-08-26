@@ -133,7 +133,7 @@ pub(super) fn recall_lines(
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    let dim = Style::new().fg(theme::MUTED);
+    let dim = Style::new().fg(theme::TEXT_SECONDARY);
 
     // Header: the two numbers that are always worth having, then the two that
     // say whether recall was the reason the turn felt slow.
@@ -358,7 +358,7 @@ fn push_recall_head(cols: &RecallColumns, width: usize, out: &mut Vec<Line<'stat
 /// row is read — a `memory` and a `symbol` cost the prompt the same tokens and
 /// mean entirely different things about what retrieval did.
 fn recall_frame_spans(frame: &RecalledFrameRow, cols: &RecallColumns) -> Vec<Span<'static>> {
-    let dim = Style::new().fg(theme::MUTED);
+    let dim = Style::new().fg(theme::TEXT_SECONDARY);
     let mut spans = vec![Span::styled(
         cell(frame_kind(frame), cols.kind),
         Style::new().fg(theme::TEXT_TERTIARY),

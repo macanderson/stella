@@ -32,7 +32,7 @@ use stella_protocol::{
 
 /// Semantic weight of an annotation line. Each surface owns the mapping to
 /// its palette (e.g. plain maps `Muted` to ANSI dim, the deck to
-/// `theme::MUTED`); no color name may appear in this module.
+/// `theme::TEXT_SECONDARY`); no color name may appear in this module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
     Info,

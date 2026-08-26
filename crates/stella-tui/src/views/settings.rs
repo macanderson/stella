@@ -185,7 +185,7 @@ fn render_pane_nav(pane: SettingsPane, area: Rect, buf: &mut Buffer) {
                 .fg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD)
         } else {
-            theme::muted()
+            theme::text_secondary()
         }
     };
     // Built from `SettingsPane::ALL` rather than written out, so a pane added
@@ -196,11 +196,11 @@ fn render_pane_nav(pane: SettingsPane, area: Rect, buf: &mut Buffer) {
     let mut spans = vec![Span::raw("  ")];
     for (i, entry) in SettingsPane::ALL.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled("  │  ", theme::muted()));
+            spans.push(Span::styled("  │  ", theme::text_secondary()));
         }
         spans.push(Span::styled(entry.label(), style_for(pane == *entry)));
     }
-    spans.push(Span::styled("   ←/→", theme::muted()));
+    spans.push(Span::styled("   ←/→", theme::text_secondary()));
     Paragraph::new(Line::from(spans)).render(area, buf);
 }
 

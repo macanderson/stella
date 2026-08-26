@@ -6,6 +6,37 @@
 use super::*;
 use stella_tui_theme::oklch;
 
+/// Every text-tier name resolves to the tier it names (#4966).
+///
+/// The ladder used to carry a fifth name, `MUTED`, aliased to
+/// `TEXT_SECONDARY` — so `theme::MUTED` was silver while `token::MUTED` was
+/// the tier below it and `palette::MUTED` was a third colour again. A call
+/// site could not tell which one it had reached, and `crate::diff`'s `gutter`
+/// is where it went wrong. There is no name left here that resolves to a tier
+/// other than its own, and this test is what says so: the ladder is pinned to
+/// the generated tokens by name, tightest rung first.
+#[test]
+fn every_text_tier_resolves_to_the_token_it_names() {
+    use stella_tui_theme::token;
+
+    assert_eq!(
+        TEXT_SECONDARY,
+        token::SILVER,
+        "the secondary tier is silver"
+    );
+    assert_eq!(
+        TEXT_TERTIARY,
+        token::MUTED,
+        "the muted tier is the TERTIARY rung — the rung `theme::MUTED` did not name"
+    );
+    assert_eq!(TEXT_DIM, token::DIM, "the dim tier is dim");
+    // The style helper takes the rung its name spells. `muted()` took silver.
+    assert_eq!(text_secondary().fg, Some(TEXT_SECONDARY));
+    // Distinct rungs, so a mis-named alias could not have been harmless.
+    assert_ne!(TEXT_SECONDARY, TEXT_TERTIARY);
+    assert_ne!(TEXT_TERTIARY, TEXT_DIM);
+}
+
 #[test]
 fn agent_color_is_stable_across_calls() {
     assert_eq!(agent_color("lead"), agent_color("lead"));
@@ -174,7 +205,6 @@ fn role_aliases_track_their_palette_token() {
     assert_eq!(HAIRLINE_STRONG, palette::HAIRLINE_STRONG);
     assert_eq!(GROUND, palette::GROUND);
     assert_eq!(INK, TEXT_PRIMARY);
-    assert_eq!(MUTED, TEXT_SECONDARY);
     assert_eq!(RULE, HAIRLINE);
     assert_eq!(OK, SUCCESS);
     assert_eq!(WARN, WARNING);

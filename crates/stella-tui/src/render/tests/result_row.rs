@@ -350,7 +350,7 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
             .unwrap_or_else(|| panic!("no line-number gutter on the `{sign}` row"));
         assert_eq!(
             gutter.style.fg,
-            Some(theme::MUTED),
+            Some(theme::TEXT_SECONDARY),
             "the line-number gutter is not in the dim tone"
         );
         // Syntax foreground survives on top of the ground: two layers, per 6.4.

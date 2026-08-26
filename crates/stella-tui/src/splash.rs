@@ -402,7 +402,7 @@ fn render_large(
             height: 1,
         };
         Paragraph::new(
-            Line::from(Span::styled(detail, theme::muted())).alignment(Alignment::Center),
+            Line::from(Span::styled(detail, theme::text_secondary())).alignment(Alignment::Center),
         )
         .render(detail_rect, buf);
     }
@@ -489,13 +489,13 @@ fn render_compact(state: &SplashState, model: Option<&str>, area: Rect, buf: &mu
             theme::accent(),
             Style::new().fg(theme::INK).add_modifier(Modifier::BOLD),
             Style::new().fg(theme::GOLD),
-            theme::muted(),
+            theme::text_secondary(),
         )
     } else {
         // The single reveal step: before it lands, the whole lockup is one
-        // muted tone.
-        let muted = theme::muted();
-        (muted, muted, muted, muted)
+        // quiet tone.
+        let quiet = theme::text_secondary();
+        (quiet, quiet, quiet, quiet)
     };
 
     let mut lines: Vec<Line<'static>> = vec![

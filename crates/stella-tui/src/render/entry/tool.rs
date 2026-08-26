@@ -115,7 +115,7 @@ fn push_body_line(
                 Some(t) => Span::styled(text, syntax::tok_style(t)),
                 // Punctuation and whitespace keep the body's muted base tone, so
                 // the colored tokens are what the eye lands on.
-                None => Span::styled(text, Style::new().fg(theme::MUTED)),
+                None => Span::styled(text, Style::new().fg(theme::TEXT_SECONDARY)),
             }),
     );
     push_detail_spans(margin, spans, width, out);
@@ -213,7 +213,7 @@ pub(super) fn result_body(
     // margin, and re-deriving it per row is how one of them ends up a
     // cell out of line with the others.
     let margin = rail.continuation();
-    let dim = Style::new().fg(theme::MUTED);
+    let dim = Style::new().fg(theme::TEXT_SECONDARY);
     // A JSON body is re-laid one member to a line *before* anything
     // counts, anchors or folds it. An API response — `gh api`, an MCP
     // server, a REST tool — arrives as one line, so the fold measured a

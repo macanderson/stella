@@ -39,7 +39,7 @@ use crate::palette;
 // The corollary the transcript actually depends on: **prose is neutral.** The
 // accent buys attention, so it may only be spent where attention is owed — on
 // the deck that means the tool being called, the active tab, and the progress
-// fill. Everything else is [`INK`] or [`MUTED`], and a row that wants to be
+// fill. Everything else is [`INK`] or [`TEXT_SECONDARY`], and a row that wants to be
 // scannable does it with a glyph and a column, not with a hue.
 //
 // Status always pairs colour with a glyph (see [`status_glyph`]) so hue never
@@ -80,6 +80,19 @@ pub const HAIRLINE_STRONG: Color = palette::HAIRLINE_STRONG;
 pub const TEXT_PRIMARY: Color = palette::TEXT_PRIMARY;
 /// Secondary text, and the tone context events take. The safe small-text tone
 /// on every dark ground (8.58:1).
+///
+/// This tier is `silver`, and it used to answer to a second name — `MUTED`,
+/// with [`text_secondary`] spelled `muted()`. That name was one tier off its
+/// own value: it resolved here, to `stella_tui_theme::token::SILVER` `#A9AAB5`,
+/// while `token::MUTED` `#777782` is the tier below and `crate::palette::MUTED`
+/// `#5E5E69` is a third colour again — three constants, one word. A call site
+/// reaching for "the muted tier" and writing `muted()` got silver, and
+/// `crate::diff`'s `gutter` is where that happened: `design/tui-v2/SPEC.md`
+/// §6.4 recorded the result as *"Line number gutter in `dim`"*, wrong by two
+/// tiers for as long as both existed (#4946 corrected the spec; #4966 removed
+/// the name). The ladder is `TEXT_PRIMARY` → `TEXT_SECONDARY` →
+/// [`TEXT_TERTIARY`] (which *is* `token::MUTED`) → [`TEXT_DIM`], so the tier a
+/// call site asks for is the tier it gets.
 pub const TEXT_SECONDARY: Color = palette::TEXT_SECONDARY;
 /// Tertiary text (labels, captions). 4.47:1 on [`GROUND`] — just under the
 /// AA body floor, so this is the caption/UI tier and anything a reader must
@@ -191,21 +204,6 @@ pub const GOLD: Color = palette::GOLD;
 pub const GOLD_LIVE: Color = palette::GOLD_LIVE;
 /// Primary text.
 pub const INK: Color = TEXT_PRIMARY;
-/// Dimmed secondary text.
-///
-/// **This is `silver`, not the `muted` tier.** It resolves to
-/// [`palette::TEXT_SECONDARY`], which is `stella_tui_theme::token::SILVER`
-/// `#A9AAB5` — a different colour from `token::MUTED` `#777782`, one tier
-/// brighter, and two tiers from `token::DIM`. The word is shared and the value
-/// is not, so a call site reaching for "the muted tier" and writing
-/// [`muted()`] gets silver.
-///
-/// That is not hypothetical. `crate::diff`'s `gutter` paints [`muted()`], and
-/// `design/tui-v2/SPEC.md` §6.4 recorded the result as *"Line number gutter in
-/// `dim`"* — wrong by two tiers, for as long as both existed. #4946 corrected
-/// the spec against the code; #4966 is where renaming this constant is being
-/// decided, and until it is, the name is checked against nothing.
-pub const MUTED: Color = TEXT_SECONDARY;
 /// Panel border / rule.
 pub const RULE: Color = HAIRLINE;
 
@@ -630,8 +628,8 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     (RAISED, palette::PAPER_RAISED),            // also SELECT_BG
     (HAIRLINE, palette::PAPER_HAIRLINE),        // also RULE
     (HAIRLINE_STRONG, palette::PAPER_HAIRLINE), // one paper seam serves both
-    // Text → ink (INK==TEXT_PRIMARY, MUTED==TEXT_SECONDARY; SYNTAX_COMMENT
-    // rides the tertiary entry, SYNTAX_KEYWORD the emphasis one).
+    // Text → ink (INK==TEXT_PRIMARY; SYNTAX_COMMENT rides the tertiary entry,
+    // SYNTAX_KEYWORD the emphasis one).
     (TEXT_PRIMARY, palette::INK),
     (palette::TEXT_EMPHASIS, palette::INK_EMPHASIS),
     (TEXT_SECONDARY, palette::MUTED),
@@ -712,8 +710,11 @@ pub fn accent() -> Style {
 pub fn heading() -> Style {
     Style::default().fg(INK).add_modifier(Modifier::BOLD)
 }
-pub fn muted() -> Style {
-    Style::default().fg(MUTED)
+/// The secondary text tier — silver. Named for the tier rather than for a
+/// mood, because the mood name was one tier off the value; see
+/// [`TEXT_SECONDARY`].
+pub fn text_secondary() -> Style {
+    Style::default().fg(TEXT_SECONDARY)
 }
 pub fn body() -> Style {
     Style::default().fg(INK)
@@ -752,7 +753,7 @@ pub fn panel_title() -> Style {
 /// A color per agent lifecycle status (dashboard, traces, session HUD).
 pub fn status_color(status: AgentStatus) -> Color {
     match status {
-        AgentStatus::Queued => MUTED,
+        AgentStatus::Queued => TEXT_SECONDARY,
         // Live work takes the brand hue — "active/running" is one of the three
         // things it is reserved for, and the only status that gets it.
         AgentStatus::Running => ACCENT,
@@ -886,7 +887,7 @@ pub fn graph_kind_color(kind: &str) -> Color {
         "function" | "method" => RUN,
         "struct" | "enum" | "trait" => OK,
         "file" | "module" => MAGENTA,
-        _ => MUTED,
+        _ => TEXT_SECONDARY,
     }
 }
 
@@ -983,7 +984,7 @@ pub fn trace_kind_color(kind: TraceKind) -> Color {
         TraceKind::Vcs => RUN,
         TraceKind::Error => BAD,
         TraceKind::Complete => OK,
-        TraceKind::Other => MUTED,
+        TraceKind::Other => TEXT_SECONDARY,
     }
 }
 

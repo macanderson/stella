@@ -974,19 +974,19 @@ fn render_header(board: &FleetBoard, now: Instant, area: Rect, buf: &mut Buffer)
                 .fg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("▸ ", theme::muted()),
+        Span::styled("▸ ", theme::text_secondary()),
         Span::styled(
             board.label.clone(),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::raw("     "),
-        Span::styled("SESSION ", theme::muted()),
+        Span::styled("SESSION ", theme::text_secondary()),
         Span::styled(
             fmt_hms(board.session_elapsed(now)),
             Style::default().fg(theme::TEXT_PRIMARY),
         ),
         Span::raw("     "),
-        Span::styled("FLEET-IDLE ", theme::muted()),
+        Span::styled("FLEET-IDLE ", theme::text_secondary()),
         Span::styled(fmt_clock(idle), Style::default().fg(idle_color)),
     ]);
     Paragraph::new(line).render(area, buf);
@@ -998,10 +998,13 @@ fn render_counts(board: &FleetBoard, view: &FleetView, area: Rect, buf: &mut Buf
         vec![
             Span::styled(format!("{n} "), Style::default().fg(color)),
             Span::styled(format!("{glyph} "), Style::default().fg(color)),
-            Span::styled(format!("{label}   "), theme::muted()),
+            Span::styled(format!("{label}   "), theme::text_secondary()),
         ]
     };
-    let mut spans = vec![Span::styled(format!(" {total} tasks   "), theme::muted())];
+    let mut spans = vec![Span::styled(
+        format!(" {total} tasks   "),
+        theme::text_secondary(),
+    )];
     spans.extend(cell(
         FleetStatus::Running.glyph(),
         board.count(FleetStatus::Running),
@@ -1036,7 +1039,7 @@ fn render_counts(board: &FleetBoard, view: &FleetView, area: Rect, buf: &mut Buf
     // variable-width, so there is nothing stable to right-align against).
     spans.push(Span::styled(
         format!("sort: {}", view.sort.label()),
-        theme::muted(),
+        theme::text_secondary(),
     ));
     Paragraph::new(Line::from(spans)).render(area, buf);
 }
@@ -1084,7 +1087,7 @@ fn grid_row(
 ) -> Row<'static> {
     let status_color = entry.status.color();
     let caret = if focused { "▸" } else { " " };
-    let num = Cell::from(format!("{caret}{pos}")).style(theme::muted());
+    let num = Cell::from(format!("{caret}{pos}")).style(theme::text_secondary());
     let task = Cell::from(truncate(&entry.title_or_id(), 22)).style(theme::body());
     // A supervised task reads as its supervisor verb rather than its fleet
     // status: "running" on a worker the operator just paused would be a lie the
@@ -1113,7 +1116,7 @@ fn grid_row(
         }
     };
     let tool_ago = Cell::from(tool_ago_text).style(Style::default().fg(tool_ago_color));
-    let elapsed = Cell::from(fmt_ms(entry.elapsed(now))).style(theme::muted());
+    let elapsed = Cell::from(fmt_ms(entry.elapsed(now))).style(theme::text_secondary());
 
     let mut row = Row::new(vec![num, task, status, action, tool_ago, elapsed]);
     if focused {
@@ -1163,7 +1166,7 @@ fn render_detail(
             entry.status.label(),
             Style::default().fg(entry.status.color()),
         ),
-        Span::styled(format!(" · tool-ago {tool_ago}"), theme::muted()),
+        Span::styled(format!(" · tool-ago {tool_ago}"), theme::text_secondary()),
     ]));
     // last: <tool> <arg>
     let last = match (&entry.last_tool_name, &entry.last_tool_arg) {
@@ -1172,7 +1175,7 @@ fn render_detail(
         _ => entry.action_text(),
     };
     lines.push(Line::from(vec![
-        Span::styled("   last: ", theme::muted()),
+        Span::styled("   last: ", theme::text_secondary()),
         Span::styled(last, Style::default().fg(theme::TEXT_PRIMARY)),
     ]));
     // A diff or output preview, up to 4 lines.
@@ -1199,7 +1202,7 @@ fn render_detail(
                 "         {}",
                 truncate(out, area.width.saturating_sub(10) as usize)
             ),
-            theme::muted(),
+            theme::text_secondary(),
         )));
     }
     Paragraph::new(lines).render(area, buf);
@@ -1217,20 +1220,20 @@ fn render_footer(view: &FleetView, area: Rect, buf: &mut Buffer) {
                     .fg(theme::DANGER_BRIGHT)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("[x] again to confirm   ", theme::muted()),
-            Span::styled("any other key cancels", theme::muted()),
+            Span::styled("[x] again to confirm   ", theme::text_secondary()),
+            Span::styled("any other key cancels", theme::text_secondary()),
         ]);
         Paragraph::new(line).render(area, buf);
         return;
     }
     let line = Line::from(vec![
-        Span::styled("  [↑/↓] focus   ", theme::muted()),
-        Span::styled("[s] sort   ", theme::muted()),
-        Span::styled("[p] pause   ", theme::muted()),
-        Span::styled("[r] resume   ", theme::muted()),
-        Span::styled("[x] stop   ", theme::muted()),
-        Span::styled("[q] detach   ", theme::muted()),
-        Span::styled("·   deeper telemetry: ", theme::muted()),
+        Span::styled("  [↑/↓] focus   ", theme::text_secondary()),
+        Span::styled("[s] sort   ", theme::text_secondary()),
+        Span::styled("[p] pause   ", theme::text_secondary()),
+        Span::styled("[r] resume   ", theme::text_secondary()),
+        Span::styled("[x] stop   ", theme::text_secondary()),
+        Span::styled("[q] detach   ", theme::text_secondary()),
+        Span::styled("·   deeper telemetry: ", theme::text_secondary()),
         Span::styled("stella observe", Style::default().fg(theme::ACCENT)),
     ]);
     Paragraph::new(line).render(area, buf);
@@ -1241,7 +1244,7 @@ fn rule(area: Rect, buf: &mut Buffer) {
         return;
     }
     let dashes = "─".repeat(area.width as usize);
-    Paragraph::new(Line::from(Span::styled(dashes, theme::muted()))).render(area, buf);
+    Paragraph::new(Line::from(Span::styled(dashes, theme::text_secondary()))).render(area, buf);
 }
 
 impl TaskRow {
