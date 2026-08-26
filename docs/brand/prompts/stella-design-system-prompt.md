@@ -36,7 +36,6 @@ The system is **flat**. There are no 50→950 ramps: v5.0 deletes both the brand
 | `--st-text` | `#E8E8EC` | primary text on dark |
 | `--st-muted` | `#777782` | secondary text |
 | `--st-dim` | `#4B4B56` | hints, captions, line numbers |
-| `--st-comment` | `#565660` | code comments |
 | `--st-green` | `#74C991` | pass, additive diff sign |
 | `--st-red` | `#E0687A` | fail, destructive, removal diff sign |
 | `--st-amber` | `#E78D54` | warning — the one status the core palette does not otherwise name |

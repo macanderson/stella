@@ -225,15 +225,6 @@
       "surfaces": ["tui", "web-dark"]
     },
     {
-      "name": "comment",
-      "hex": "#565660",
-      "clamp": "neutral-gray",
-      "css": "--st-comment",
-      "rust": "COMMENT",
-      "role": "code comments",
-      "surfaces": ["tui", "web-dark"]
-    },
-    {
       "name": "green",
       "hex": "#74C991",
       "clamp": "verdict",
@@ -419,15 +410,22 @@
       "from, so a reader hitting the guard learns which retired system they are",
       "looking at rather than only that they are wrong.",
       "",
-      "Most entries are a superseded kit. The last four are not: they were never",
-      "a kit at all. website/public/presentations/investor-deck.html carried its",
-      "own warm palette, matching neither v1.0 nor v2.0, and it shipped on a",
-      "public URL beside two other brand generations (#3653). A value nobody",
+      "Most entries are the anchors of a superseded kit. Five are not, and they",
+      "arrived by two different routes.",
+      "",
+      "Four were never a kit at all. website/public/presentations/investor-deck.html",
+      "carried its own warm palette, matching neither v1.0 nor v2.0, and it shipped",
+      "on a public URL beside two other brand generations (#3653). A value nobody",
       "specified has exactly the same standing here as one that was retired --",
       "no legitimate use -- so it is banned on the same list rather than a",
       "second one. The tree carries none of the four; they are listed so",
       "reintroducing one fails, which is what #3653's own Verify step asks for",
-      "and what nothing did until this entry existed."
+      "and what nothing did until this entry existed.",
+      "",
+      "The fifth is `comment`, a v5.1 token of THIS kit that nothing ever painted",
+      "(#4946). It is banned rather than merely deleted because deleting it leaves",
+      "the value sitting in three design renderings and two brand tables, where the",
+      "next reader reads it as live."
     ],
     "values": [
       { "hex": "#FFB224", "was": "phosphor-era amber accent" },
@@ -453,7 +451,8 @@
       { "hex": "#D6A526", "was": "investor-deck's invented warm gold -- never a kit value (#3653)" },
       { "hex": "#8B6720", "was": "investor-deck's invented warm gold -- never a kit value (#3653)" },
       { "hex": "#865D08", "was": "investor-deck's invented warm gold -- never a kit value (#3653)" },
-      { "hex": "#F4EFE4", "was": "investor-deck's invented warm paper -- never a kit value (#3653)" }
+      { "hex": "#F4EFE4", "was": "investor-deck's invented warm paper -- never a kit value (#3653)" },
+      { "hex": "#565660", "was": "v5.1 `comment` -- retired unpainted; code comments ship in `muted` (#4946)" }
     ]
   }
 }

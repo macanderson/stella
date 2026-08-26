@@ -32,7 +32,7 @@
 <text x="72" y="180" font-size="11" fill="#BFC1CC">Seen</text>
 <text x="112" y="180" font-size="11" fill="#E8E8EC">{</text>
 <text x="40" y="198" font-size="11" fill="#4B4B56">121</text>
-<text x="72" y="198" font-size="11" fill="#565660">/// Digest a finding into its dedup key.</text>
+<text x="72" y="198" font-size="11" fill="#777782">/// Digest a finding into its dedup key.</text>
 <rect x="32" y="204" width="632" height="18" fill="#241019"/>
 <text x="40" y="217" font-size="11" fill="#E0687A">122 -</text>
 <text x="88" y="217" font-size="11" fill="#E8E8EC">digest:</text>

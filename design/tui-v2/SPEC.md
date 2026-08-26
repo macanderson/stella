@@ -48,7 +48,6 @@ All values are `Color::Rgb`. Grays are neutral or one to two points blue above r
 | `text` | `#E8E8EC` | primary text |
 | `muted` | `#777782` | secondary text |
 | `dim` | `#4B4B56` | hints, keybinding rows, line numbers |
-| `comment` | `#565660` | code comments |
 | `green` | `#74C991` | pass, `+` diff sign |
 | `red` | `#E0687A` | fail, `-` diff sign, delete events, destructive |
 | `diff_add_bg` | `#10201A` | added diff row background |
@@ -239,12 +238,31 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
 
 ### 6.4 Syntax highlighting and diffs
 
-- Engine: `syntect` with a custom theme built from section 3.1 (keywords gold, types silver_type, identifiers text, comments comment, strings silver, primitives silver_type). Two metals plus white is the full syntax palette on purpose.
+- Engine: `syntect` with a custom theme. The roles and the constants that carry them:
+
+  <!-- BEGIN syntax palette -->
+
+  | role | `stella_tui::theme` | value |
+  |---|---|---|
+  | keyword, and a JSON object key | `SYNTAX_KEYWORD` | `#BFC1CC` |
+  | string / char literal | `SYNTAX_STRING` | `#93D896` |
+  | numeric literal | `SYNTAX_NUMBER` | `#8F70E8` |
+  | comment | `SYNTAX_COMMENT` | `#777782` |
+  | type position | `SYNTAX_TYPE` | `#2FD3C6` |
+  | function or method name | `SYNTAX_FUNCTION` | `#E4408F` |
+
+  <!-- END syntax palette -->
+
+  `crates/stella-tui/tests/spec_syntax_palette.rs` holds this table to those constants. It is a table rather than the sentence it replaces because that sentence described a *different* palette in all six roles — keywords gold, strings silver, types silver_type, comments in the `comment` token — and had said so, unchallenged, since before the grammar-backed lexer (#4283) gave the highlighter a type and a function position at all. The `comment` token it named was painted by nothing anywhere in the tree, and is retired (#4946).
+
+  Keywords ride the bright neutral rather than a hue: the amber they used to take measured 5.5° from the resting gold, which puts a keyword within confusion range of the running mark in the one place gold chrome never reaches to disambiguate it. Literals keep a hue so a value stands out from the shape of the code around it.
 - Highlight once when the event arrives, cache `Vec<Line<'static>>`. Never highlight per frame.
 - Diff rows are two-layer: a background tint (`diff_add_bg` or `diff_del_bg`) under foreground spans that keep their syntax colors. The tint covers the **code column, out to the pane edge** — reaching the edge is what makes the ground read as a band rather than tracing the ragged right end of the code — and it covers **nothing to the left of it**. A rail, a line-number gutter, or any other chrome the surface draws in the margin is not part of the diff and never takes the tint.
 
   Stated as a constraint because the obvious mechanism violates it. `Line.style` is the one-call way to tint a row and is correct only where the row is *nothing but* diff; on any row carrying a margin it paints the whole row's area, so a green band swallows the rail whose metal says which event the diff belongs to (SPEC 6.2) — the two layers then disagree about what the row is. In the transcript every diff row carries that rail, so the tint rides a per-span `bg` on the code plus one trailing padded span to the pane edge. A surface with no margin may use `Line.style`; a surface with one must not. The reference implementation is `push_diff_line` in `crates/stella-tui/src/render/row.rs`, and `a_rust_diff_renders_add_and_remove_rows_per_spec_64` asserts both halves — the band reaches the pane edge, and the rail span's `bg` stays `None`.
-- Line number gutter in `dim`. Sign column (`+`/`-`) is mandatory and colored; color is never the only diff signal.
+- Line number gutter in `silver`. Sign column (`+`/`-`) is mandatory and colored; color is never the only diff signal.
+
+  This line read `dim`, and the gutter has never been dim: `crates/stella-tui/src/diff.rs`'s `gutter` paints `theme::muted()`, and `theme::MUTED` aliases `palette::TEXT_SECONDARY`, which is `token::SILVER` `#A9AAB5` — not `token::MUTED` `#777782` and not `dim` `#4B4B56` (#4946). The line is corrected to what ships rather than the gutter recoloured to what it said, because two tiers of difference in a margin is a design call. #4966 is where the alias that makes this easy to fall into is being decided.
 
 ## 7. Plan and task contracts
 

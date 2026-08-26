@@ -114,7 +114,6 @@ fn metal(color: Color) -> char {
         token::TEXT => 'w',
         token::MUTED => 'm',
         token::DIM => 'd',
-        token::COMMENT => 'c',
         token::GREEN => 'n',
         token::RED => 'R',
         token::BORDER => 'b',

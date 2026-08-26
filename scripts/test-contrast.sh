@@ -137,19 +137,28 @@ entry_is "U6 the refused --update left the floor where it was" "$r" muted bg 4.4
 # ── D: a pairing that got better ─────────────────────────────────────────────
 # Lighter but still under its 3.0 floor, so it stays on the ledger at a higher
 # number rather than dropping off it.
+#
+# `dim` rather than `comment`, which carried this case until #4946 retired that
+# token — it was a colour with no paint site on any surface, so its ratchet row
+# guarded nothing. `dim` is the other pairing held to the 3.0 decorative floor,
+# and it is a live tier: hints, keybinding rows and the terminal's line numbers.
+# It appears in a second pairing (`dim on paper`, at 4.5), and #5A5A66 leaves
+# that one at 6.63:1 — well clear, so this case moves the pairing it is about
+# and nothing else.
 r="$(new_root lightened)"
-repaint "$r" comment "#5E5E68"
+repaint "$r" dim "#5A5A66"
 want "D1 a pairing that improved but still fails passes the check" expect-pass "$r" "held by the ratchet"
-want "D2 --update raises its floor" expect-pass "$r" "retightened to 4 pairing(s)" "--update"
-entry_is "D3 the floor is what was really measured" "$r" comment panel 2.99
+want "D2 --update raises its floor" expect-pass "$r" "retightened to 3 pairing(s)" "--update"
+entry_is "D3 the floor is what was really measured" "$r" dim bg 2.91
 
 # Over the threshold: the entry must go, and the check must say so rather than
 # pass — a baselined pairing nobody needs is a standing permission slip.
+# `muted` is on the ledger twice and this clears both, so the count drops by two.
 r="$(new_root cleared)"
 repaint "$r" muted "#7A7A85"
 want "D4 a pairing that cleared its threshold is reported, not passed" \
   expect-fail "$r" "clears its threshold now"
-want "D5 --update drops it" expect-pass "$r" "retightened to 2 pairing(s)" "--update"
+want "D5 --update drops it" expect-pass "$r" "retightened to 1 pairing(s)" "--update"
 entry_is "D6 the cleared pairing is gone" "$r" muted bg absent
 
 # ── B: bootstrap runs once ───────────────────────────────────────────────────

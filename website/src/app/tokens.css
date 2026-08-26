@@ -64,7 +64,6 @@
   --st-text: #e8e8ec; /* primary text on dark, in the deck */
   --st-muted: #777782; /* secondary text */
   --st-dim: #4b4b56; /* hints, captions, line numbers */
-  --st-comment: #565660; /* code comments */
   --st-green: #74c991; /* pass, additive diff sign */
   --st-red: #e0687a; /* fail, destructive, removal diff sign */
   --st-diff-add: #10201a; /* added diff row background */

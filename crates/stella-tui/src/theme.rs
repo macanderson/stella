@@ -192,6 +192,19 @@ pub const GOLD_LIVE: Color = palette::GOLD_LIVE;
 /// Primary text.
 pub const INK: Color = TEXT_PRIMARY;
 /// Dimmed secondary text.
+///
+/// **This is `silver`, not the `muted` tier.** It resolves to
+/// [`palette::TEXT_SECONDARY`], which is `stella_tui_theme::token::SILVER`
+/// `#A9AAB5` — a different colour from `token::MUTED` `#777782`, one tier
+/// brighter, and two tiers from `token::DIM`. The word is shared and the value
+/// is not, so a call site reaching for "the muted tier" and writing
+/// [`muted()`] gets silver.
+///
+/// That is not hypothetical. `crate::diff`'s `gutter` paints [`muted()`], and
+/// `design/tui-v2/SPEC.md` §6.4 recorded the result as *"Line number gutter in
+/// `dim`"* — wrong by two tiers, for as long as both existed. #4946 corrected
+/// the spec against the code; #4966 is where renaming this constant is being
+/// decided, and until it is, the name is checked against nothing.
 pub const MUTED: Color = TEXT_SECONDARY;
 /// Panel border / rule.
 pub const RULE: Color = HAIRLINE;
