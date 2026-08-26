@@ -62,7 +62,7 @@ GATE_NO_BUILD := lockfile-sync format-check
 # had already re-rotted twice, in the same direction each time: a guard was
 # added here and the prose kept the old count (#1437).
 GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings doc-warnings-schema \
-               lint test tool-docs self-driving-test
+               lint lint-schema test tool-docs self-driving-test
 
 # The hermetic guard self-tests — `scripts/test-*.sh` — that deliberately run
 # in NO workflow, and why each one does not. Every other suite runs server-side
@@ -565,10 +565,10 @@ doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included 
 
 # The crates that describe the wire format behind an off-by-default `schema`
 # feature, and the feature spellings that turn it on for each. Named once here
-# because two recipe lines and one workflow read the list; a second copy is the
-# drift `shellcheck` above already paid for (#3375).
-SCHEMA_DOC_CRATES := -p stella-protocol -p stella-plugin -p stella-serve
-SCHEMA_DOC_FEATURES := stella-protocol/schema,stella-plugin/schema,stella-serve/schema
+# because three recipe lines and one workflow read the list; a second copy is
+# the drift `shellcheck` above already paid for (#3375).
+SCHEMA_CRATES := -p stella-protocol -p stella-plugin -p stella-serve
+SCHEMA_FEATURES := stella-protocol/schema,stella-plugin/schema,stella-serve/schema
 
 # The modules `doc-warnings` cannot see. It runs with default features, and
 # describing the wire format is deliberately off by default in all three crates
@@ -590,10 +590,27 @@ SCHEMA_DOC_FEATURES := stella-protocol/schema,stella-plugin/schema,stella-serve/
 # one failing crate must not mask the ones behind it.
 .PHONY: doc-warnings-schema
 doc-warnings-schema: ## Assert rustdoc is clean for the `schema`-gated wire-contract modules (#4584)
-	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_DOC_CRATES) \
-	  --features $(SCHEMA_DOC_FEATURES) --no-deps --keep-going
-	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_DOC_CRATES) \
-	  --features $(SCHEMA_DOC_FEATURES) --no-deps --document-private-items --keep-going
+	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
+	  --features $(SCHEMA_FEATURES) --no-deps --keep-going
+	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
+	  --features $(SCHEMA_FEATURES) --no-deps --document-private-items --keep-going
+
+# The same hole, one instrument over. `lint` runs `cargo clippy --workspace`
+# with DEFAULT features, so clippy never reached `stella-protocol::schema_export`,
+# `stella-plugin::{wire_corpus,wire_schema}` or `stella-serve::schema_export`
+# either — and those two modules carry the tree's only
+# `#![expect(clippy::expect_used)]` that nothing could police. `#[expect]` turns
+# a suppression that stops being true into an error, but only where clippy
+# runs; rustc does not evaluate a tool lint's expectation when the tool is not
+# running, so a plain `cargo build --features schema` reports nothing (#4949).
+#
+# `--all-targets`, unlike `doc-warnings-schema`'s `--lib`: the `#[cfg(test)]`
+# bodies in these three crates do compile under the feature, so there is no
+# reason to lint less than the workspace run does.
+.PHONY: lint-schema
+lint-schema: ## Run clippy over the `schema`-gated wire-contract modules (#4949)
+	cargo clippy $(SCHEMA_CRATES) --features $(SCHEMA_FEATURES) \
+	  --all-targets -- -D warnings
 
 # The presence guard exists because the failure it replaces was
 # indistinguishable from a real finding: on a machine without the binary this

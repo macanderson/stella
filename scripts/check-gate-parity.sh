@@ -148,6 +148,9 @@ step_command() {
   # It must not be 'cargo doc' either — that is `doc-warnings`' alias, and two
   # steps sharing one needle makes both checks vacuous.
   doc-warnings-schema) echo 'make doc-warnings-schema' ;;
+  # Same reasoning one instrument over: the crate list is the Makefile's, and
+  # it must not be 'cargo clippy' — that is `lint`'s alias (#4949).
+  lint-schema) echo 'make lint-schema' ;;
   # The Python guards, whose scripts the `.sh` default below does not fit.
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;

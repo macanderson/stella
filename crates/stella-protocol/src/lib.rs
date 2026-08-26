@@ -46,8 +46,11 @@
 // default build has zero production `unwrap`/`expect`, and `make lint` runs
 // clippy with `-D warnings` on that build, so a new one fails the gate instead
 // of arriving unremarked. The one exception is `schema_export.rs`, which is
-// only compiled under the `schema` feature (not part of `make lint` or CI's
-// clippy run) and carries its own justified `#[expect(clippy::expect_used)]`.
+// compiled only under the `schema` feature and carries its own justified
+// `#[expect(clippy::expect_used)]`. `make lint` runs with default features and
+// never reaches it; `make lint-schema` does, in the gate and in
+// wire-schema.yml, which is what makes that `#[expect]` fail when it stops
+// being true (#4949).
 // `not(test)` scopes the lint exactly as the rule does: it is about runtime
 // data, and `unwrap` in a test is fine.
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
