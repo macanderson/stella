@@ -13,7 +13,7 @@
 //! The two enums could not be unified where either of them lived:
 //! `stella-core` must never learn plugins exist (#3245 open question 3), and
 //! `stella-plugin` must never pull in the engine. So the vocabulary moves
-//! *down* to the crate both may depend on, exactly as invariant #1 says a
+//! *down* to the crate both may depend on, exactly as AGENTS.md #1 says a
 //! shared contract should. `stella-core::hooks` and `stella-plugin::manifest`
 //! re-export this type, so every existing path still resolves and another
 //! event is now one edit rather than two — the drift shape #3310 was filed
@@ -23,7 +23,7 @@
 //!
 //! PascalCase, with no `rename_all`, because these strings are not this
 //! crate's to choose: `"PreToolUse"` is already what a user types in
-//! `.stella/settings.json`. Per invariant #4 the type round-trips through
+//! `.stella/settings.json`. Per AGENTS.md #4 the type round-trips through
 //! `serde_json` byte-for-byte, and this module's `WIRE_STRINGS` test constant
 //! pins each spelling so a rename that would break a shipped settings file
 //! fails a test instead of a user's session.
@@ -43,7 +43,7 @@
 //! **`Pre`/`Post` for a pair that brackets something, a past participle for a
 //! thing that happened, and no `ON_`/`BEFORE_` prefixes** — the tense lives in
 //! the name. The rest of the self-driving vocabulary (the tracker, pull-request
-//! and check events) is designed and deliberately **not** declared here yet:
+//! and check events) is designed and **not** declared here yet:
 //! it needs the `deliver` verbs to have somewhere to fire from, and a hook
 //! point nothing dispatches is a declaration that quietly does nothing. See
 //! the issue tracking it.
@@ -100,7 +100,7 @@ impl HookEvent {
     /// Every event, in declaration order — the set a consumer must cover.
     ///
     /// Kept beside the enum rather than derived by a macro so that adding a
-    /// variant without adding it here fails this module's
+    /// case without adding it here fails this module's
     /// `every_variant_is_listed` test, which is what makes "the whole
     /// vocabulary" a value a caller can iterate instead of a set it re-types.
     pub const ALL: [HookEvent; 7] = [
@@ -147,7 +147,7 @@ mod tests {
 
     /// The pinned wire strings. A rename here is a break of every shipped
     /// `.stella/settings.json` and every plugin manifest, so it has to be a
-    /// deliberate edit to this list.
+    /// considered edit to this list.
     const WIRE_STRINGS: [&str; 7] = [
         "SessionStart",
         "PreToolUse",
@@ -159,7 +159,7 @@ mod tests {
     ];
 
     /// Its position in [`HookEvent::ALL`], derived by a match so the compiler
-    /// forces a new variant to be placed rather than silently omitted.
+    /// forces a new case to be placed rather than silently omitted.
     fn declared_index(event: HookEvent) -> usize {
         match event {
             HookEvent::SessionStart => 0,

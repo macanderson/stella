@@ -20,14 +20,14 @@
 //! # Two shapes, and the rule is the type
 //!
 //! SPEC 7.1: *contracts are required only for tasks that produce diffs;
-//! read-only tasks close on completion of their events.* Both halves are
+//! read-only tasks close on completion of their events.* Each half is
 //! structural rather than validated:
 //!
 //! - [`TaskContract::ReadOnly`] has no field a check could go in, so a
 //!   read-only task cannot carry one. That matters more than it looks — the
 //!   spec's reason for the rule is that a required contract on a task with
 //!   nothing to prove produces *fake checks written to satisfy the UI*, and a
-//!   variant with nowhere to put them is the only version of that rule which
+//!   case with nowhere to put them is the only version of that rule which
 //!   cannot be worked around.
 //! - [`TaskContract::DefinitionOfDone`] holds a [`DefinitionOfDone`], which is
 //!   non-empty by construction. There is no way to build one with zero checks,
@@ -45,7 +45,7 @@
 //! A check a machine settles costs `$0.00`; one a model settles costs a call,
 //! and the contract says out loud which it bought.
 //!
-//! Per check, and deliberately not summed into a ratio. A `det %` over a
+//! Per check, and not summed into a ratio. A `det %` over a
 //! turn's work was specified once and removed: it has no source, and a
 //! number nothing measures is worse on a receipt than an absent one. What
 //! survives is the fact each check already carries — a reader can see that a
@@ -92,8 +92,8 @@ impl Judge {
 
 /// A mechanism this host knows how to run.
 ///
-/// Closed, and deliberately small. It is not the mechanism vocabulary — it is
-/// the set *this host* can carry out itself, which is a smaller and honest
+/// Closed, and small. It is not the mechanism vocabulary — it is
+/// the set *this host* can carry out itself, which is a smaller and truer
 /// claim (the argument [`crate::StageKind`] makes about stages).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -164,7 +164,7 @@ pub enum CheckMechanism {
     /// Never a name [`CheckKind::from_wire_str`] resolves — [`CheckMechanism::new`]
     /// is the only constructor that can produce this arm, and it normalizes, so
     /// `Contributed("unit")` cannot exist to decode as one thing and re-encode
-    /// as another (invariant 4).
+    /// as another (AGENTS.md #4).
     Contributed { name: String, judge: Judge },
 }
 
@@ -608,7 +608,7 @@ mod tests {
         c
     }
 
-    // ── invariant 4: everything crossing a boundary round-trips ──────────────
+    // ── AGENTS.md #4: everything crossing a boundary round-trips ──────────────
 
     #[test]
     fn a_contract_round_trips_byte_for_byte() {
@@ -672,7 +672,7 @@ mod tests {
         );
     }
 
-    /// The other half of SPEC 7.1, and the reason it is a variant rather than a
+    /// The other half of SPEC 7.1, and the reason it is a case rather than a
     /// flag: a read-only task has nowhere to put a check, so the fake checks
     /// the spec warns about have nowhere to go.
     #[test]

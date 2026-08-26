@@ -10,7 +10,7 @@ use crate::completion::PartialUsage;
 /// classification so `stella-core` never has to re-derive one downstream.
 ///
 /// Every payload here is free-form prose an adapter writes and the user
-/// reads: these strings render on the TUI and ride the wire as
+/// reads: these strings render in interactive mode and ride the wire as
 /// [`crate::event::AgentEvent::Error`]'s `message`. Adapters must therefore
 /// summarize, never dump — no `Authorization` header, no request URL with a
 /// key in its query string, no raw response body that might echo one back.
@@ -19,8 +19,8 @@ use crate::completion::PartialUsage;
 // `Clone` because scripted-provider test harnesses replay a scripted error
 // more than once, and every one of them was otherwise obliged to keep its own
 // hand-written exhaustive mirror of this enum — a copy that goes stale
-// silently the moment a variant lands (`stella-core`'s driver tests carried
-// exactly that mirror until #2742 added a variant to it). Every payload here
+// silently the moment a case lands (`stella-core`'s driver tests carried
+// exactly that mirror until #2742 added a case to it). Every payload here
 // is owned data with no source chain, so the derive is free.
 #[derive(Debug, Clone, Error)]
 pub enum ProviderError {
@@ -50,10 +50,10 @@ pub enum ProviderError {
     },
 
     /// The provider refused the call for quota/rate reasons (HTTP 429 and its
-    /// per-dialect equivalents). Retryable, and the only variant that can
+    /// per-dialect equivalents). Retryable, and the only case that can
     /// carry the server's own backoff hint.
     // The hint is interpolated by hand, not with `{retry_after_ms:?}`: the
-    // Debug form leaks Rust syntax into a message the user reads on the TUI
+    // Debug form leaks Rust syntax into a message the user reads in interactive mode
     // ("retry after Some(500)ms", or the nonsense "retry after Nonems" when
     // the server sent no hint at all).
     #[error("provider rate limited{}: {message}", .retry_after_ms.as_ref().map(|ms| format!(" (retry after {ms}ms)")).unwrap_or_default())]
@@ -68,7 +68,7 @@ pub enum ProviderError {
     /// The provider is shedding load: it read the request and refused to
     /// serve it *right now* — HTTP 529, the non-standard "overloaded" status
     /// Anthropic and Z.ai return during a brownout. Retryable, and the only
-    /// other variant besides [`ProviderError::RateLimited`] that can carry
+    /// other case besides [`ProviderError::RateLimited`] that can carry
     /// the server's own backoff hint.
     ///
     /// Split out of [`ProviderError::Transport`] for the reason
@@ -116,7 +116,7 @@ pub enum ProviderError {
     Auth(String),
 
     /// The slug is not in the resolved catalog, so no request was ever
-    /// dispatched. Terminal, and the one variant whose message names the fix.
+    /// dispatched. Terminal, and the one case whose message names the fix.
     #[error(
         "unknown model `{slug}` — run `stella models refresh` or pick from `stella models list`"
     )]
@@ -184,7 +184,7 @@ pub enum ProviderError {
     },
 
     /// A failure the adapter classified as terminal without it fitting a
-    /// narrower variant — a 4xx the dialect does not model, a refusal, a
+    /// narrower case — a 4xx the dialect does not model, a refusal, a
     /// content-policy stop. The catch-all, so it fails closed to "do not
     /// retry" rather than looping on something that will never succeed.
     #[error("terminal provider error: {0}")]
@@ -215,7 +215,7 @@ impl ProviderError {
 
     /// Attach accounting that survived this failure.
     ///
-    /// Decorates the two retryable variants a *dying stream* can produce —
+    /// Decorates the two retryable cases a *dying stream* can produce —
     /// [`ProviderError::Transport`] and [`ProviderError::Overloaded`] — and is
     /// a no-op on every other, so an adapter can pipe its usage through
     /// `map_err` without first proving which error class it is about to
@@ -285,8 +285,8 @@ impl ProviderError {
         )
     }
 
-    /// The server's own stated backoff in milliseconds, for the two variants
-    /// that can carry one. `None` for every other variant, and for a server
+    /// The server's own stated backoff in milliseconds, for the two cases
+    /// that can carry one. `None` for every other case, and for a server
     /// that sent no hint — the caller then guesses with its own backoff.
     #[must_use]
     pub fn retry_after_hint_ms(&self) -> Option<u64> {
@@ -327,7 +327,7 @@ mod tests {
         assert!(!ProviderError::Cancelled.is_retryable());
     }
 
-    /// The variant exists so the engine can react, but the retry ladder must
+    /// The case exists so the engine can react, but the retry ladder must
     /// never re-issue the identical oversized request — that was the original
     /// failure mode #2680 replaces (retry the same request, then abort).
     #[test]
@@ -364,7 +364,7 @@ mod tests {
 
     /// A partial hung on a terminal failure would claim spend for a request
     /// the provider refused outright, so `with_partial` decorates only the two
-    /// retryable variants a dying stream can produce.
+    /// retryable cases a dying stream can produce.
     #[test]
     fn with_partial_is_inert_on_terminal_variants() {
         let err = ProviderError::Auth("bad key".into()).with_partial(PartialUsage::default());
@@ -439,7 +439,7 @@ mod tests {
 
     /// The #2742 witness at the type level: an overloaded provider is
     /// retryable *and* park-eligible, while an ordinary transport fault is
-    /// retryable and NOT — that gap is the whole reason the variant exists.
+    /// retryable and NOT — that gap is the whole reason the case exists.
     #[test]
     fn overloaded_is_retryable_and_park_eligible_while_transport_is_only_retryable() {
         let overloaded =
@@ -479,8 +479,8 @@ mod tests {
         }
     }
 
-    /// Both hint-carrying variants surface their hint through one accessor,
-    /// and the variants that carry none say so rather than inventing one.
+    /// Both hint-carrying cases surface their hint through one accessor,
+    /// and the cases that carry none say so rather than inventing one.
     #[test]
     fn only_the_waiting_variants_carry_a_server_backoff_hint() {
         assert_eq!(

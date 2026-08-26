@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The leaf payload types an [`AgentEvent`] variant carries
+//! The leaf payload types an [`AgentEvent`] case carries
 //! — file-change kinds, verdict evidence, scope/hunk proposals, media refs, PR
 //! and CI status, and the task-board item.
 //!
 //! Split out of `event.rs` for the same reason its tests were (#1857): the
 //! wire contract itself has to stay under the file-size ratchet, and these are
-//! the part of it that grows independently of the variant list. Nothing here
-//! is a variant, so the totality machinery in [`super::tags`] and
-//! [`super::consumers`] (invariant #10) is untouched by the move.
+//! the part of it that grows independently of the case list. Nothing here
+//! is a case, so the totality machinery in [`super::tags`] and
+//! [`super::consumers`] (AGENTS.md #10) is untouched by the move.
 //!
 //! Re-exported from `event` unchanged, so every consumer that spells
 //! `stella_protocol::event::TaskItem` keeps resolving — the same courtesy the
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::ladder::LadderSnapshot;
 // Referenced only by the intra-doc links below, which is a use rustc's
 // `unused_imports` lint does not count. `cfg(doc)` is what keeps both halves
-// honest: rustdoc sets it and resolves the links, every other build never sees
+// correct: rustdoc sets it and resolves the links, every other build never sees
 // the import and so has nothing to warn about. The alternative — spelling the
 // links `[`AgentEvent::X`](super::AgentEvent::X)` — would leak a Rust module
 // path into the published wire contract, because schemars exports these doc
@@ -56,7 +56,7 @@ pub enum FileChangeKind {
     /// worth restoring.
     ///
     /// It stays in the kind space because journals recorded before the purge
-    /// carry it and replay must parse them — deleting the variant would make
+    /// carry it and replay must parse them — deleting the case would make
     /// those streams unreadable. Consumers must keep handling it, and must not
     /// treat its absence from a live stream as evidence that nothing was read.
     Read,
@@ -311,7 +311,7 @@ pub struct TaskItem {
     pub owner: Option<String>,
     /// What this task means by done (SPEC 7.1).
     ///
-    /// `None` is *nobody has said yet*, and is deliberately not the same fact
+    /// `None` is *nobody has said yet*, and is not the same fact
     /// as [`TaskContract::ReadOnly`], which is *somebody looked and there is
     /// nothing to prove*. A board that collapsed the two would let an
     /// undeclared task close on the same terms as one declared harmless —

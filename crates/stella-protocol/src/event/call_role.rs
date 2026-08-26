@@ -8,7 +8,7 @@
 //!
 //! [`ModelCallRole::ALL`] is derived, not written: see the
 //! `model_call_roles!` invocation at the bottom of this file for why a
-//! variant cannot escape it.
+//! case cannot escape it.
 
 use serde::{Deserialize, Serialize};
 
@@ -27,15 +27,15 @@ use super::AgentEvent;
 /// catch-all for an unrecognized one. A role token this build has never seen
 /// fails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —
 /// because a known `"type"` with a body that does not fit stays a hard error by
-/// design (see the module docs). Adding a variant here is therefore a
-/// one-directional change in a way adding an [`AgentEvent`] variant no longer
+/// design (see the module docs). Adding a case here is therefore a
+/// one-directional change in a way adding an [`AgentEvent`] case no longer
 /// is.
 //
-// Everything a *maintainer* needs on top of the above is deliberately a
+// Everything a *maintainer* needs on top of the above is a
 // non-doc comment: this doc comment is the `description` field of
 // `docs/wire/agentevent.schema.json` and its TypeScript twin, so a note about
 // Rust match exhaustiveness would ship to consumers who have no Rust. The
-// tripwire for adding a variant is documented on `model_call_roles!` below.
+// tripwire for adding a case is documented on `model_call_roles!` below.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -84,11 +84,11 @@ pub enum ModelCallRole {
 ///
 /// The completeness argument is the point, and it is the compiler's, not a
 /// reviewer's: the same token list produces both `ALL` and an exhaustive
-/// `match` over [`ModelCallRole`]. A variant added to the enum but not named
+/// `match` over [`ModelCallRole`]. A case added to the enum but not named
 /// here fails that match with `E0004`, so the list is provably a superset of
-/// the variants; `ALL` is built from that same list, so it is provably total.
-/// There is no variant count anywhere to fall out of date — Rust cannot count
-/// variants on stable, and a hand-written length is exactly the drift this
+/// the cases; `ALL` is built from that same list, so it is provably total.
+/// There is no case count anywhere to fall out of date — Rust cannot count
+/// cases on stable, and a hand-written length is exactly the drift this
 /// replaces.
 ///
 /// Modelled on `agent_event_tags!` in [the parent module](super), which binds
@@ -96,7 +96,7 @@ pub enum ModelCallRole {
 macro_rules! model_call_roles {
     ($($variant:ident),* $(,)?) => {
         impl ModelCallRole {
-            /// Every variant of this enum, in declaration order.
+            /// Every case of this enum, in declaration order.
             ///
             /// Derived from the `model_call_roles!` declaration, so it is
             /// total by construction — prefer it to any local "all roles"
@@ -105,9 +105,9 @@ macro_rules! model_call_roles {
             /// human, where declaration order is the readable one.
             pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
 
-            /// Compile-time proof that [`Self::ALL`] names every variant.
+            /// Compile-time proof that [`Self::ALL`] names every case.
             ///
-            /// Never called at runtime and deliberately does nothing: its
+            /// Never called at runtime and does nothing: its
             /// body is an exhaustive `match`, and *that* is the assertion.
             /// The `const` item below forces it to be evaluated, so this
             /// cannot rot into dead code.
@@ -145,7 +145,7 @@ mod tests {
     use super::*;
 
     /// `ALL` is derived from the macro list, so this cannot catch a *missing*
-    /// variant — the `E0004` does that, before this test can run. What it
+    /// case — the `E0004` does that, before this test can run. What it
     /// pins is the two ways a total list can still be wrong: a name repeated
     /// in the declaration, and the claim that the order is the enum's own.
     #[test]
@@ -161,17 +161,17 @@ mod tests {
         assert_eq!(
             ModelCallRole::ALL.first(),
             Some(&ModelCallRole::Unknown),
-            "ALL should open with the declaration-order first variant"
+            "ALL should open with the declaration-order first case"
         );
         assert_eq!(
             ModelCallRole::ALL.last(),
             Some(&ModelCallRole::Summarization),
-            "ALL should close with the declaration-order last variant"
+            "ALL should close with the declaration-order last case"
         );
     }
 
     /// Every role in the family must survive the wire, since `ALL` is what
-    /// downstream parity witnesses iterate. A variant whose serde tag does
+    /// downstream parity witnesses iterate. A case whose serde tag does
     /// not round-trip would make those witnesses assert against a role the
     /// store can never actually name.
     #[test]

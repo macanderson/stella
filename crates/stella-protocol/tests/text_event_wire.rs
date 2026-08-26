@@ -1,6 +1,6 @@
 //! The `text` / `text_delta` wire spellings, both current and legacy.
 //!
-//! Before #1886 the two variants carried each other's natural field name on
+//! Before #1886 the two cases carried each other's natural field name on
 //! the wire: the consolidated body went out as `{"type":"text","delta":…}`
 //! and the live fragment as `{"type":"text_delta","text":…}`. Every consumer
 //! of `stella-events.jsonl` had to learn the swap by observation (arenabench
@@ -69,6 +69,6 @@ fn text_delta_keeps_its_own_type_tag() {
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
     match back {
         AgentEvent::TextDelta { delta } => assert_eq!(delta, "Hel"),
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("unexpected case: {other:?}"),
     }
 }

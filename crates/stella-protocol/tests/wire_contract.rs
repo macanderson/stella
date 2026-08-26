@@ -12,18 +12,18 @@
 //! `serde(default)` field is written as required, both halves stay
 //! self-consistent while every real stream fails the published contract.
 //!
-//! # Coverage, stated honestly
+//! # Coverage
 //!
-//! Deliberately no totals. Every count here is derived from a list the tests
+//! No totals. Every count here is derived from a list the tests
 //! already walk, so a number in this comment is a second copy that only ever
 //! goes stale — and one had: "nineteen enums" was written when the arm-count
 //! table held nineteen rows and was never touched as the table grew past it.
 //! What the coverage IS, checked rather than claimed:
 //!
-//! - Every `AgentEvent` variant: exhaustive, and *proved* exhaustive — the
+//! - Every `AgentEvent` case: exhaustive, and *proved* exhaustive — the
 //!   sample table is checked against [`KNOWN_TYPE_TAGS`], which the
 //!   `agent_event_tags!` macro generates from a match the compiler requires to
-//!   be total. A new variant that reaches the wire without a sample here fails
+//!   be total. A new case that reaches the wire without a sample here fails
 //!   [`every_known_tag_has_a_sample`].
 //! - Every arm of every enum in the payload graph — `ProofStep`,
 //!   `SubAgentPhase`, `MediaJobState`, `ToolOutput`, `DeliveryOutcome` and the
@@ -38,15 +38,15 @@
 //! - Both the "all optional fields present" and "all optional fields absent"
 //!   shapes of the events that carry them.
 //!
-//! What is **not** covered: [`AgentEvent::Unknown`], deliberately and
-//! necessarily. It carries no wire tag of its own, so it is absent from the
+//! What is **not** covered: [`AgentEvent::Unknown`], and
+//! necessarily so. It carries no wire tag of its own, so it is absent from the
 //! schema, and it re-serializes as the foreign object it wrapped — whose
 //! `"type"` is by construction one this build does not know.
 //! [`an_event_from_the_future_is_outside_the_schema_by_construction`] pins
 //! that as the expected result rather than leaving it as a silent gap.
 //!
 //! The validator below implements the subset of JSON Schema 2020-12 that
-//! `schemars` emits for these types. It is deliberately strict: an unmodelled
+//! `schemars` emits for these types. It is strict: an unmodelled
 //! keyword panics rather than being skipped, so the proof can never quietly
 //! become weaker than it looks.
 
@@ -84,7 +84,7 @@ fn committed_schema() -> Value {
 
 /// The sample fixtures — one value per arm of every enum in the payload
 /// graph, and the `AgentEvent` table the proofs below validate. Its own
-/// module because it grows with every new variant while the validator does
+/// module because it grows with every new case while the validator does
 /// not (`scripts/check-file-size.sh`).
 ///
 /// `#[path]` because this file is a test-binary *crate root*, so a bare
@@ -424,14 +424,14 @@ fn every_enum_arm_in_the_payload_graph_actually_reaches_the_wire() {
 #[test]
 fn every_known_tag_has_a_sample() {
     // `KNOWN_TYPE_TAGS` is generated from a match the compiler requires to be
-    // total over `AgentEvent`, so covering it IS covering every variant.
+    // total over `AgentEvent`, so covering it IS covering every case.
     let samples = sample_events();
     let covered: BTreeSet<&str> = samples.iter().map(AgentEvent::type_tag).collect();
     let expected: BTreeSet<&str> = KNOWN_TYPE_TAGS.iter().copied().collect();
     let missing: Vec<&&str> = expected.difference(&covered).collect();
     assert!(
         missing.is_empty(),
-        "no sample event for {missing:?} — a new variant reached the wire without \
+        "no sample event for {missing:?} — a new case reached the wire without \
          being proved against docs/wire/agentevent.schema.json"
     );
     assert_eq!(
@@ -457,7 +457,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
             .len()
     };
 
-    // `StageKind` is deliberately absent. It stopped being a nested *wire*
+    // `StageKind` is absent. It stopped being a nested *wire*
     // vocabulary when `AgentEvent::Stage::name` became an open string
     // (`doc:roleless-core`): the schema has no `$defs/StageKind` to count arms
     // in, because nothing on the wire is constrained to the twelve any more.
@@ -588,7 +588,7 @@ fn a_wrong_field_type_fails_validation() {
 #[test]
 fn an_event_from_the_future_is_outside_the_schema_by_construction() {
     // `AgentEvent::Unknown` re-serializes as the foreign object it wrapped, so
-    // it matches no variant here. That is the correct and intended result: the
+    // it matches no case here. That is the correct and intended result: the
     // schema describes THIS build's vocabulary, and an unmatched `"type"` is
     // version skew, not corruption. Consumers must branch on that difference,
     // which is why it is pinned rather than left implicit.
@@ -610,12 +610,12 @@ fn the_committed_schema_declares_the_whole_known_vocabulary() {
     let schema = committed_schema();
     let tags: Vec<&str> = schema["oneOf"]
         .as_array()
-        .expect("the root is a oneOf over tagged variants")
+        .expect("the root is a oneOf over tagged cases")
         .iter()
         .map(|v| {
             v.pointer("/properties/type/const")
                 .and_then(Value::as_str)
-                .expect("every variant carries a type const")
+                .expect("every case carries a type const")
         })
         .collect();
     assert_eq!(tags, KNOWN_TYPE_TAGS, "in order, and complete");

@@ -8,11 +8,11 @@
 //!
 //! [`ContextRecallPort`] and [`RecalledFrame`] were first defined in
 //! `stella-pipeline::ports`, which was the only caller at the time. That
-//! crate's own module doc already described this as "a deliberately minimal
+//! crate's own module doc already described this as "a minimal
 //! local shape" adapted at the seam so the pipeline "takes **no** dependency
 //! on `stella-context`" — i.e. it was a boundary type from the start, not
 //! pipeline-internal orchestration logic, and every door's recall injection
-//! (`stella run`, `stella goal`, `stella fleet`, the Command Deck) depended on
+//! (`stella run`, `stella goal`, `stella fleet`, interactive mode) depended on
 //! it whether or not the staged pipeline itself ran. The removal census that
 //! later deleted `stella-pipeline` outright (#3865) named this the single
 //! highest-fan-out RETARGET in the whole crate for exactly that reason, and
@@ -31,7 +31,7 @@ use async_trait::async_trait;
 use crate::event::{AgentEvent, ContextFrameRef, ContextUsage, ProviderShare};
 
 /// One frame recalled from the context plane at turn start (the "context
-/// recall" stage). A deliberately minimal local shape: the real
+/// recall" stage). A minimal local shape: the real
 /// `stella-context` crate owns the rich `ContextFrame`/retrieval types; a
 /// host adapts its frames down to this at the seam so nothing above the
 /// context plane takes a dependency on it (dependency direction discipline).
@@ -187,14 +187,14 @@ impl Recall {
     /// Phase 2 (#713) deliverable 3. This lives on [`Recall`] rather than
     /// beside any one caller because it was, until it did, the failure mode
     /// of copying the projection into each of several call sites: the
-    /// one-shot run, the interactive REPL, `/goal`, and the Command Deck all
+    /// one-shot run, interactive mode, `/goal`, and the deck overlay all
     /// recalled and reported nothing, so most real usage was invisible to
     /// `stella inspect`. Copying the projection five times would have made
     /// the event's shape a convention rather than a definition — and the
     /// first divergence would be a provider mix that only some surfaces
     /// counted.
     ///
-    /// `block_id` is deliberately absent here and present on the receipt side
+    /// `block_id` is absent here and present on the receipt side
     /// instead: a recalled frame becomes a context block only once it is
     /// *rendered* into a message, which happens after this event is emitted and
     /// does not happen at all on the planner's structured path. The join to a
@@ -266,7 +266,7 @@ mod tests {
 
     /// Drives a future to completion on the current thread with no runtime.
     ///
-    /// This crate is a zero-logic, zero-I/O leaf (`AGENTS.md` invariant 4) and
+    /// This crate is a zero-logic, zero-I/O leaf (`AGENTS.md` AGENTS.md #4) and
     /// pulls in no async executor — [`ContextRecallPort::recall`] is `async`
     /// only because the trait must accommodate an implementer that really
     /// does await a query, and [`NoContextRecall`]'s own body never does.

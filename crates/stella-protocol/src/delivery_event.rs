@@ -8,7 +8,7 @@
 //! nothing of its own. The only trace was the burst of
 //! [`crate::AgentEvent::FileChange`] rows adoption re-emits afterwards, and reading
 //! that burst as "adoption ran" is an **inference**, not a declared signal —
-//! the failure invariant "every emitted signal names its consumer" describes
+//! the failure rule "every emitted signal names its consumer" describes
 //! from the other side.
 //!
 //! Worse, the inference is not invertible. Three different runs produce the
@@ -85,7 +85,7 @@ pub enum DeliveryOutcome {
         /// Whether a **passing verdict** stood behind the work.
         ///
         /// `false` is the ordinary case for a run that ran out of clock or came
-        /// to rest on the revise rung, and it is deliberately not a reason to
+        /// to rest on the revise rung, and it is not a reason to
         /// withhold: a verdict is a claim about the work, not what decides
         /// whether the work exists (#2927/#2943). Delivery never implies proof,
         /// and this field is what keeps the write from reading as a pass.
@@ -142,7 +142,7 @@ impl DeliveryOutcome {
 mod tests {
     use super::*;
 
-    /// Invariant #4: every type crossing a crate boundary round-trips through
+    /// AGENTS.md #4: every type crossing a crate boundary round-trips through
     /// `serde_json`.
     #[test]
     fn every_outcome_round_trips() {
@@ -175,7 +175,7 @@ mod tests {
     }
 
     /// The tag is what a `jq` reader selects on, so it is contract rather than
-    /// an artifact of the variant's Rust name.
+    /// an artifact of the case's Rust name.
     #[test]
     fn the_outcome_tag_is_a_field_not_a_presence_test() {
         let json = serde_json::to_value(DeliveryOutcome::Declined {

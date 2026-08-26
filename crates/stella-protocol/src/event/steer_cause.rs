@@ -5,12 +5,12 @@
 //!
 //! Split out of `event.rs` for the reason [`super::ModelCallRole`]'s module
 //! gives: the parent is a god file under the size ratchet, and a vocabulary
-//! belongs beside its own enumeration rather than in the middle of the variant
+//! belongs beside its own enumeration rather than in the middle of the case
 //! list.
 
 use serde::{Deserialize, Serialize};
 
-// Doc-link target only: the variant is named in this module's docs but not
+// Doc-link target only: the case is named in this module's docs but not
 // used in its code. `cfg(doc)` keeps rustdoc's intra-doc link resolving
 // without an import a normal build would flag as unused.
 #[cfg(doc)]
@@ -77,7 +77,7 @@ impl SteerCause {
     /// worse than the blank it replaces (#4185).
     ///
     /// [`Self::Unknown`] is **not** a person: a replayed legacy session keeps
-    /// the blank it has today, which is the honest outcome rather than a
+    /// the blank it has today, which is the right outcome rather than a
     /// guess.
     #[must_use]
     pub fn is_from_a_person(self) -> bool {

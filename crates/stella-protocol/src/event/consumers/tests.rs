@@ -12,7 +12,7 @@ use super::*;
 
 #[test]
 fn the_ledger_is_total_over_known_type_tags() {
-    // Adding an `AgentEvent` variant without declaring what consumes it fails
+    // Adding an `AgentEvent` case without declaring what consumes it fails
     // here, naming the tag and what to do about it.
     let violations = audit();
     assert!(
@@ -41,14 +41,14 @@ fn the_ledger_row_count_equals_the_tag_count() {
 fn unclassified_rows_are_a_down_only_debt() {
     // A ratchet, not a budget. Equality on purpose: lowering MAX_UNCLASSIFIED
     // was the point of #2703 and #4501 and had to show as a diff, and raising
-    // it means a variant was filed away unread — the move the ledger exists to
+    // it means a case was filed away unread — the move the ledger exists to
     // prevent.
     let actual = unclassified_count();
     assert_eq!(
         actual, MAX_UNCLASSIFIED,
         "{actual} rows are Unclassified but MAX_UNCLASSIFIED is {MAX_UNCLASSIFIED}. \
          If you classified a signal, lower the constant in the same commit. \
-         If you added a variant and reached for Unclassified, classify it \
+         If you added a case and reached for Unclassified, classify it \
          instead — the ceiling only moves down."
     );
 }
@@ -58,7 +58,7 @@ fn unclassified_rows_are_a_down_only_debt() {
 ///
 /// Distinct from the ratchet above, which only says the count and the constant
 /// agree — it was green at 32 and would be green at 32 again. This one names
-/// the number the census reached, so a later PR that adds a variant and
+/// the number the census reached, so a later PR that adds a case and
 /// re-opens the debt has to argue for it here.
 #[test]
 fn no_shipped_row_is_unclassified() {
@@ -79,7 +79,7 @@ fn no_shipped_row_is_unclassified() {
 /// The two `AgentEvent` surfaces `stella-pipeline`'s removal (#3865) left with
 /// no producer are kept on purpose (#3881), so a journal or a
 /// `stella-events.jsonl` written before that removal still decodes into its
-/// typed variant instead of demoting to [`AgentEvent::Unknown`].
+/// typed case instead of demoting to [`AgentEvent::Unknown`].
 ///
 /// Deleting one is a defensible decision and this is where it has to argue:
 /// the tag leaves `KNOWN_TYPE_TAGS` in the same edit, and this test names what
@@ -101,9 +101,9 @@ fn the_exemplar_rows_show_each_posture_in_use() {
     // shipped ledger, so none of them is dead code the compiler keeps alive
     // and no test ever reaches.
     //
-    // `Unclassified` is deliberately absent: #4501 emptied it, and
+    // `Unclassified` is absent: #4501 emptied it, and
     // `unclassified_rows_are_a_down_only_debt` above is what now pins that at
-    // zero. The negative controls below still construct the variant, so it is
+    // zero. The negative controls below still construct the case, so it is
     // exercised without any shipped row having to hold it.
     let posture = |tag: &str| {
         SIGNAL_CONSUMERS
@@ -305,7 +305,7 @@ fn the_audit_catches_surfaced_nowhere_and_recorded_yet_surfaced() {
 fn every_violation_explains_itself_and_names_its_signal() {
     // A failure message is the whole interface this guard has with the person
     // who trips it. An empty or unspecific one turns a caught bug into a
-    // puzzle, so pin that each variant renders prose naming its own tag.
+    // puzzle, so pin that each case renders prose naming its own tag.
     let violations = vec![
         LedgerViolation::UnknownTag {
             type_tag: "ghost".to_string(),

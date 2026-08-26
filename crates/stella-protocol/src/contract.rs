@@ -13,11 +13,11 @@
 //! # Composition, not restatement
 //!
 //! [`ToolContract`] **contains** the schema rather than re-declaring its
-//! fields. That is deliberate and required for invariant #7: the bytes
+//! fields. That is required for AGENTS.md #7: the bytes
 //! advertised to the model are literally today's [`crate::ToolSchema`],
 //! serialized by today's code, so introducing contracts cannot perturb the
 //! prompt-cache prefix. A future field added *here* is a governance fact that
-//! never reaches the prompt; a field added to the schema is a deliberate
+//! never reaches the prompt; a field added to the schema is a
 //! cache-invalidation event, and keeping the two types separate is what makes
 //! the difference visible in review.
 //!
@@ -29,7 +29,7 @@
 //! keys only on a separate boolean). So:
 //!
 //! - [`ToolSchema::read_only`] — can this mutate workspace state? *Dispatch.*
-//! - [`RiskLevel`] — how bad is the worst honest outcome? *Policy input.*
+//! - [`RiskLevel`] — how bad is the worst well-behaved outcome? *Policy input.*
 //! - [`ToolContract::requires_approval`] — must a human say yes? *Its own
 //!   boolean, never inferred from risk.*
 //!
@@ -41,9 +41,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::tool::ToolSchema;
 
-/// How much damage one honest call of a tool can do.
+/// How much damage one well-behaved call of a tool can do.
 ///
-/// "Honest" is the operative word: this grades what the tool does when it
+/// "Well-behaved" is the operative word: this grades what the tool does when it
 /// works as designed, not what a defect or a hostile implementation could
 /// achieve. A [`Provenance::Declared`] tool's *stated* risk is a claim like
 /// any other and is treated as one by [`ToolContract::declared`].
@@ -51,7 +51,7 @@ use crate::tool::ToolSchema;
 /// Ordered, and the order is the point — a policy expresses a grant as a
 /// ceiling (`risk <= Medium`), so the comparison has to mean something.
 ///
-/// # Unknown tokens read as the maximum, deliberately
+/// # Unknown tokens read as the maximum
 ///
 /// [`Self::Destructive`] carries `#[serde(other)]`, so a grade minted by a
 /// newer build (`"catastrophic"`) deserializes here as `Destructive` rather
@@ -125,7 +125,7 @@ pub enum Provenance {
     /// *claim*; see [`ToolContract::trusted_read_only`] for the one place
     /// that distinction is required today.
     ///
-    /// Unknown tokens read as this variant: a provenance a newer build knows
+    /// Unknown tokens read as this case: a provenance a newer build knows
     /// about is, from here, exactly "not one we can vouch for".
     #[serde(other)]
     Declared,
@@ -133,7 +133,7 @@ pub enum Provenance {
 
 /// Why a contract is not internally consistent.
 ///
-/// Typed rather than a `String` (invariant #5) because the registry branches
+/// Typed rather than a `String` (AGENTS.md #5) because the registry branches
 /// on which claim is contradictory when it refuses to register a tool.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContractError {
@@ -198,7 +198,7 @@ pub struct ToolContract {
     /// The contract-shape revision (#3286) — what an external host reading
     /// contracts off the serve wire pins against, so a future breaking
     /// change to this type's meaning is a number a host can branch on
-    /// rather than a silent reinterpretation. Deliberately **always
+    /// rather than a silent reinterpretation. **Always
     /// serialized** (unlike the optional claims below): a pin nobody can
     /// see is not a pin. Absent on payloads written before the field
     /// existed, which decode as revision 1 — the only shape that ever
@@ -209,7 +209,7 @@ pub struct ToolContract {
     /// same code that always serialized it (see the module docs on why this
     /// is composition rather than restatement).
     pub schema: ToolSchema,
-    /// How bad one honest call can be. Policy input, never an implicit
+    /// How bad one well-behaved call can be. Policy input, never an implicit
     /// approval prompt.
     pub risk: RiskLevel,
     /// Whether a human must say yes before this runs, independent of
@@ -223,12 +223,12 @@ pub struct ToolContract {
     /// What a successful call's structured half ([`crate::tool::ToolOutput`]'s
     /// `Ok.data`) must look like, when the tool promises one (#3285). `None`
     /// means the tool's output is prose only — every tool written before
-    /// this field existed. Deliberately *not* part of [`Self::schema`]: the
+    /// this field existed. *Not* part of [`Self::schema`]: the
     /// model never reads it (it feeds the registry's post-execution check,
-    /// not the prompt), so keeping it here is what keeps invariant #7
+    /// not the prompt), so keeping it here is what keeps AGENTS.md #7
     /// structural. Optional and absent-when-`None` so every contract
     /// serialized before the field round-trips byte-identically
-    /// (invariant #4).
+    /// (AGENTS.md #4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<serde_json::Value>,
     /// The event names this tool may emit mid-execution (#3284). The
@@ -236,7 +236,7 @@ pub struct ToolContract {
     /// this declaration is the allowlist — a tool cannot improvise a
     /// vocabulary its reviewers never saw. Empty — most tools — means the
     /// tool emits nothing. Absent-when-empty so every contract serialized
-    /// before the field round-trips byte-identically (invariant #4).
+    /// before the field round-trips byte-identically (AGENTS.md #4).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<String>,
     /// Whether one announced call may safely run twice (#3287) — the claim
@@ -246,7 +246,7 @@ pub struct ToolContract {
     /// tolerate re-execution *before its step commits*. `false` — the
     /// default, and the safe direction — for every contract written before
     /// the field existed; absent-when-`false` so those payloads round-trip
-    /// byte-identically (invariant #4). For [`Provenance::Declared`] tools
+    /// byte-identically (AGENTS.md #4). For [`Provenance::Declared`] tools
     /// this is a *claim* like every other field here.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub idempotent: bool,
@@ -301,9 +301,9 @@ impl ToolContract {
     /// advertisement, a customer's TOML manifest.
     ///
     /// Graded [`RiskLevel::High`] regardless of what it claims, because the
-    /// honest answer is "unknown" and this is the ceiling-shaped way to say
+    /// answer is "unknown" and this is the ceiling-shaped way to say
     /// so: an operator who wants third-party tools raises the ceiling to
-    /// `High` deliberately, rather than discovering that an unreviewed tool
+    /// `High`, rather than discovering that an unreviewed tool
     /// inherited `Low` from a field it filled in itself. Not
     /// [`RiskLevel::Destructive`] — that grade means "irreversible", and
     /// spending it on "unknown" would leave nothing to say about an
@@ -343,7 +343,7 @@ impl ToolContract {
     /// into a set it cannot mutate the workspace from. A false claim there is
     /// a data race and a broken verification boundary, not a cosmetic error.
     ///
-    /// Deliberately **not** used to filter what is advertised: an untrusted
+    /// **Not** used to filter what is advertised: an untrusted
     /// tool is still callable, still policy-governed, and still displays its
     /// own claim. It just cannot buy privileges with it.
     #[must_use]
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn a_contract_with_an_output_schema_roundtrips_and_a_bare_one_is_the_old_bytes() {
-        // Invariant #4 for #3285, both directions: the new field survives
+        // AGENTS.md #4 for #3285, both directions: the new field survives
         // the wire, and its absence is byte-identical to the pre-#3285
         // serialization so no stored contract changes shape underneath a
         // reader.
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn a_contract_with_events_roundtrips_and_an_eventless_one_is_the_old_bytes() {
-        // Invariant #4 for #3284, same discipline as `output_schema`: the
+        // AGENTS.md #4 for #3284, same discipline as `output_schema`: the
         // declaration survives the wire, and its absence is the pre-#3284
         // bytes.
         let emitting = ToolContract::builtin(schema("delegate", false, false), RiskLevel::High)
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn an_idempotent_claim_roundtrips_and_its_absence_is_the_old_bytes() {
-        // Invariant #4 for #3287, same discipline as `events` and
+        // AGENTS.md #4 for #3287, same discipline as `events` and
         // `output_schema`.
         let claimed =
             ToolContract::declared(schema("mcp__x__status", true, false)).with_idempotent(true);
@@ -564,7 +564,7 @@ mod tests {
         );
     }
 
-    /// Invariant #7's structural guarantee: the advertised half of a contract
+    /// AGENTS.md #7's structural guarantee: the advertised half of a contract
     /// is byte-identical to the `ToolSchema` that existed before contracts,
     /// so nothing about this type can perturb the prompt-cache prefix.
     #[test]

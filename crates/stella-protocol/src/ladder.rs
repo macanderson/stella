@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// - `deterministic: true, passed: false` is emitted by **two** rungs — a red
 ///   touched test ([`LadderRung::Revise`], a genuine failure) and a turn that
-///   dispatched nothing ([`LadderRung::NothingAttempted`], where the honest
+///   dispatched nothing ([`LadderRung::NothingAttempted`], where the right
 ///   label is "no evidence", not "wrong").
 /// - `deterministic: true, passed: true` is emitted both by the full
 ///   deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review
@@ -83,7 +83,7 @@ pub enum LadderRung {
     ///
     /// This is the terminal rung for genuinely inconclusive evidence — no
     /// fail→pass flip, or a diff over budget, or a test that could not be run.
-    /// It is the ladder's honest "I do not know", and the run is scored
+    /// It is the ladder's "I do not know", and the run is scored
     /// `Unverified` on it.
     ///
     /// # Why the two rungs it replaces are gone
@@ -95,7 +95,7 @@ pub enum LadderRung {
     /// an 89-task Terminal-Bench run the opinion agreed with the benchmark's
     /// grader 46% of the time and 17 of its false passes cost 5 tasks outright
     /// — a coin flip that could end a run — so the escalation was removed and
-    /// the honest label put in its place.
+    /// the plain label put in its place.
     ///
     /// Both aliases are retained for the same reason `model_verdict` once
     /// aliased `model_judge`: sessions already on disk spell it those ways, and
@@ -530,7 +530,7 @@ mod tests {
         }
     }
 
-    /// Invariant #4: the snapshot round-trips byte-for-byte, with and without
+    /// AGENTS.md #4: the snapshot round-trips byte-for-byte, with and without
     /// a rung, and with the grader-independence fact in either polarity.
     #[test]
     fn the_snapshot_round_trips() {

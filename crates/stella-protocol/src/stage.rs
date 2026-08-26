@@ -26,9 +26,9 @@
 //! cases, so every one of the twelve encodes exactly the byte it always did
 //! and every recorded session still reads.
 //!
-//! [`StageKind`] itself stays closed and is deliberately untouched. It is not
+//! [`StageKind`] itself stays closed and is untouched. It is not
 //! the stage vocabulary any more; it is the set of boundaries *this host*
-//! emits, which is a smaller and honest claim — and the one the exhaustive
+//! emits, which is a smaller and truer claim — and the one the exhaustive
 //! matches that must stay exhaustive (the diagnostics bridge, the wire corpus)
 //! are actually about.
 //!
@@ -38,7 +38,7 @@
 //! [`StageName::Known`], so [`StageName::Contributed`] can never hold a string
 //! that a known kind would also answer to. Without that, `Contributed("judge")`
 //! would decode as [`StageKind::Verdict`] and re-encode as `"verdict"` — a
-//! value that does not survive its own round trip, which invariant 4 forbids.
+//! value that does not survive its own round trip, which AGENTS.md #4 forbids.
 //!
 //! # This module does not learn what a plugin is
 //!
@@ -78,7 +78,7 @@ impl StageKind {
 
     /// The exact string this kind encodes as on the wire.
     ///
-    /// Hand-written rather than derived because [`StageName`] has to compare
+    /// Hand-written, not derived, because [`StageName`] has to compare
     /// an arbitrary string against the vocabulary without routing every
     /// comparison through `serde_json`. `the_wire_table_matches_serde` pins
     /// the two together, so the table cannot drift from the derive that is
@@ -248,7 +248,7 @@ mod tests {
     /// samples stage kinds *from it*, so a kind missing here is a kind nothing
     /// proves against the committed schema.
     ///
-    /// The `slot` match is exhaustive, so a thirteenth variant does not compile
+    /// The `slot` match is exhaustive, so a thirteenth case does not compile
     /// until it is given a slot — and then this test fails on an out-of-range
     /// index until `ALL` grows too. That is the pair of failures that makes the
     /// omission impossible to land quietly.
@@ -286,7 +286,7 @@ mod tests {
     }
 
     /// The hand-written wire table is only safe because this test pins it to
-    /// the `serde` derive that actually governs the bytes. A variant renamed
+    /// the `serde` derive that actually governs the bytes. A case renamed
     /// in `event.rs` and not here fails right here.
     #[test]
     fn the_wire_table_matches_serde() {

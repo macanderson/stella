@@ -3,7 +3,7 @@
 
 //! A machine-checked description of the `AgentEvent` wire format.
 //!
-//! [`AgentEvent`] is the wire format for three surfaces at once — the TUI
+//! [`AgentEvent`] is the wire format for three surfaces at once — interactive mode
 //! folds it, `--output-format stream-json` prints it, and `stella-serve`
 //! streams it over SSE — and until this module existed nothing proved that a
 //! change to it was additive. `docs/spec/serve-surface.md` says so about
@@ -32,12 +32,12 @@
 //! does not model. If a future type introduces one, the exporter stops instead
 //! of quietly writing a `.d.ts` that lies.
 //!
-//! # What is deliberately NOT described
+//! # What is NOT described
 //!
 //! [`AgentEvent::Unknown`] carries no wire tag of its own (`serde(skip)`), so
 //! it is absent from the schema — correctly. An `Unknown` value re-serializes
 //! as the foreign object it wrapped, whose `"type"` is by definition not one
-//! this build knows, so it validates against no variant here. The schema
+//! this build knows, so it validates against no case here. The schema
 //! describes *this build's* vocabulary; a stream carrying events from a newer
 //! stella is expected to contain objects it rejects, and a consumer must treat
 //! an unmatched `"type"` as forward-compat news rather than corruption. See
@@ -51,7 +51,7 @@
 //! produces byte-identical files, which is what lets
 //! `scripts/check-wire-schema.sh` treat any diff as real drift.
 
-// The crate denies `expect` under invariant #5, and the two below are the one
+// The crate denies `expect` under AGENTS.md #5, and the two below are the one
 // place the lint is wrong. Both serialize a `serde_json::Value`, and the only
 // two ways `serde_json` can fail to serialize — a map key that is not a string,
 // a non-finite float — are unrepresentable in `Value`. The failure is excluded
@@ -100,7 +100,7 @@ pub struct UnsupportedSchema {
 /// sentence they need about an unrecognized socket point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Discriminant {
-    /// The property every variant of a tagged union pins with a `const`.
+    /// The property every case of a tagged union pins with a `const`.
     pub key: &'static str,
     /// The exported name for the union of those `const` values.
     pub vocabulary: &'static str,
@@ -122,7 +122,7 @@ impl Discriminant {
 /// The JSON Schema (2020-12) for one line of the event stream: [`AgentEvent`]
 /// and its whole payload graph, plus the optional `ts` its sink stamps on.
 ///
-/// `ts` is not a member of any variant — it is added at the write boundary by
+/// `ts` is not a member of any case — it is added at the write boundary by
 /// [`crate::journal::stamped_line`], because a stamp is a fact about a write and
 /// the engine that produces events owns no clock (#2111). But this artifact
 /// exists to describe *the bytes a consumer reads*, and those bytes carry the
@@ -131,9 +131,9 @@ impl Discriminant {
 /// module was built to prevent.
 ///
 /// So it is attached here rather than derived, in one uniform pass over every
-/// variant, with its prose taken from [`crate::journal::TS_DESCRIPTION`] so the
+/// case, with its prose taken from [`crate::journal::TS_DESCRIPTION`] so the
 /// published contract and the Rust doc cannot drift. Attaching, not deriving,
-/// is the honest shape: `schemars` would only reproduce it by flattening an
+/// is the right shape: `schemars` would only reproduce it by flattening an
 /// envelope into the root, which would cost the discriminated union — and with
 /// it `KnownTypeTag`, the one thing a forward-compatible consumer most needs.
 #[must_use]
@@ -143,7 +143,7 @@ pub fn agent_event_schema() -> Value {
     schema
 }
 
-/// Declare `ts` as an optional property of every root variant.
+/// Declare `ts` as an optional property of every root case.
 ///
 /// Optional on purpose, and on every surface: a line recorded before the field
 /// existed has none, and `stella-serve` frames the event in an envelope that
@@ -210,13 +210,13 @@ const HEADER: &str = "\
 // Guarded by:       scripts/check-wire-schema.sh (`make wire-schema`)
 //
 // The event stream emitted by `stella --output-format stream-json` (one JSON
-// object per line), by `stella-serve` over SSE, and folded by the TUI.
+// object per line), by `stella-serve` over SSE, and folded by interactive mode.
 //
 // A `\"type\"` value not listed here is NOT an error: it is an event from a
 // newer stella. Forward-compatible consumers keep such a line intact and move
 // on, exactly as `AgentEvent::Unknown` does on the Rust side.
 //
-// Every variant carries an optional `ts`: the wall-clock instant its sink wrote
+// Every case carries an optional `ts`: the wall-clock instant its sink wrote
 // the line, in milliseconds since the Unix epoch. It is stamped by the sink, not
 // by the event, so it is absent on any line recorded before the field existed —
 // treat it as optional forever, and clamp a negative delta, because a system
@@ -248,7 +248,7 @@ pub fn typescript_declarations(schema: &Value) -> Result<String, UnsupportedSche
 /// # The three root shapes
 ///
 /// - a **tagged union** (`AgentEvent`, `ServerFrame`, `WrapperRequest`) — a
-///   `oneOf` of variants each pinning `discriminant.key`, which prints as a
+///   `oneOf` of cases each pinning `discriminant.key`, which prints as a
 ///   discriminated union followed by the vocabulary of its tags;
 /// - a **plain struct** (`ToolResultIn`, `ProviderResultIn`) — one object,
 ///   which prints as an interface exactly as a `$defs` entry would;
@@ -262,7 +262,7 @@ pub fn typescript_declarations(schema: &Value) -> Result<String, UnsupportedSche
 /// either route. The third arrived with the wrapper socket, whose request and
 /// response directions are likewise not alternatives (`point` is a legal tag on
 /// both), and whose payload types must be declared once rather than twice.
-/// Teaching the printer the shape that actually exists is the honest fix in
+/// Teaching the printer the shape that actually exists is the fix in
 /// both cases, and the reason it refuses rather than guesses is that it caught
 /// them.
 ///
@@ -375,7 +375,7 @@ pub fn typescript_declarations_with_header(
     Ok(out)
 }
 
-/// The tag const of every variant of a `oneOf`, in wire order.
+/// The tag const of every case of a `oneOf`, in wire order.
 fn tag_literals(
     owner: &Map<String, Value>,
     path: &str,
@@ -386,7 +386,7 @@ fn tag_literals(
         .and_then(Value::as_array)
         .ok_or_else(|| UnsupportedSchema {
             path: path.to_string(),
-            detail: "no `oneOf` of tagged variants".to_string(),
+            detail: "no `oneOf` of tagged cases".to_string(),
         })?;
     variants
         .iter()
@@ -398,7 +398,7 @@ fn tag_literals(
                 .map(str::to_owned)
                 .ok_or_else(|| UnsupportedSchema {
                     path: format!("{path}/oneOf/{i}"),
-                    detail: format!("variant carries no `{key}` const"),
+                    detail: format!("case carries no `{key}` const"),
                 })
         })
         .collect()
@@ -706,7 +706,7 @@ mod tests {
         assert_eq!(
             tags,
             crate::KNOWN_TYPE_TAGS,
-            "the schema's variant tags must be KNOWN_TYPE_TAGS, in order"
+            "the schema's case tags must be KNOWN_TYPE_TAGS, in order"
         );
     }
 
@@ -791,7 +791,7 @@ mod tests {
         let refused =
             typescript_declarations_with_header(&schema, "", Discriminant::EVENT_TYPE).unwrap_err();
         assert_eq!(refused.path, "#/oneOf/0");
-        assert_eq!(refused.detail, "variant carries no `type` const");
+        assert_eq!(refused.detail, "case carries no `type` const");
 
         let ts = typescript_declarations_with_header(&schema, "", POINT).unwrap();
         assert!(ts.contains("export type WrapperRequest ="), "{ts}");

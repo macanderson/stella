@@ -10,7 +10,7 @@
 //! receipt, the deck's cache panel — as the plain data below. The selection
 //! logic that picks a [`CacheCause`] lives in
 //! `stella_model::cache_economics::diagnose_cache`; this module only names
-//! the causes and the one-line hint each carries, so the CLI and the TUI
+//! the causes and the one-line hint each carries, so the CLI and interactive mode
 //! render identical wording.
 
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// The probable cause of a low prompt-cache hit rate on a multi-turn session.
 ///
 /// A named cause is only meaningful once a session has enough turns to have
-/// *established* a cache to hit (the diagnosis gates on that); the variants
+/// *established* a cache to hit (the diagnosis gates on that); the cases
 /// below are the three failure modes worth calling out, in the order the
 /// diagnosis discriminates them.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -34,7 +34,7 @@ pub enum CacheCause {
     OptInNeverEngaged,
     /// The session *did* write to the cache but reads almost never landed —
     /// the stable prompt prefix is changing between turns (a violation of the
-    /// byte-stable-prompt invariant), so each turn re-writes the prefix
+    /// byte-stable-prompt rule), so each turn re-writes the prefix
     /// instead of reading the previous one.
     PrefixInstability,
     /// Writes happened but the gaps between turns ran longer than the
@@ -57,7 +57,7 @@ impl CacheCause {
             }
             Self::PrefixInstability => {
                 "prompt prefix is unstable between turns — the cached prefix is being \
-                 rewritten each turn instead of reused (byte-stable-prompt invariant)"
+                 rewritten each turn instead of reused (byte-stable-prompt rule)"
             }
             Self::IdleBeyondTtl => {
                 "idle gaps exceeded the provider cache TTL — the prefix expired before the \

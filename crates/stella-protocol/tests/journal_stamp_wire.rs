@@ -106,7 +106,7 @@ fn an_unstamped_line_is_byte_identical_to_the_bare_event() {
 
 #[test]
 fn a_stamped_line_round_trips_byte_for_byte() {
-    // Invariant #4, on the type that now crosses the CLI → arena boundary.
+    // AGENTS.md #4, on the type that now crosses the CLI → arena boundary.
     let line = stamped_line(&tool_result(), TS).unwrap();
     let parsed: StampedEvent = serde_json::from_str(&line).unwrap();
 

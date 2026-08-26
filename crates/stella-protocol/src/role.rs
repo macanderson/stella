@@ -61,7 +61,7 @@ pub enum Role {
 /// An explicit `provider/model` pin. A caller either holds `Some(ModelRef)`
 /// (an explicit pin from a flag, config, or slash command) or `None` (auto:
 /// the router resolves by task class + scenario defaults). There is
-/// deliberately no "auto" variant here — see module docs.
+/// no "auto" case here — see module docs.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRef {

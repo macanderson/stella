@@ -19,7 +19,7 @@
 //! The same event is written to more than one sink (the durable JSONL file and
 //! stdout), the engine that produced it is a pure, replayable, clock-free fold,
 //! and `stella-protocol` carries no time source by charter. Putting `ts` inside
-//! the enum would have meant a field on every variant, a clock reachable from
+//! the enum would have meant a field on every case, a clock reachable from
 //! `stella-core`, and a stamp baked into every replay fixture.
 //!
 //! So the event vocabulary is untouched and the stamp rides in an envelope
@@ -54,7 +54,7 @@ use crate::event::AgentEvent;
 /// contract a consumer reads and the contract this module documents cannot
 /// drift apart.
 ///
-/// Deliberately terse — it is repeated on every variant of a generated
+/// Terse — it is repeated on every case of a generated
 /// artifact, and the reasoning behind each clause belongs in this module's docs
 /// and in the `.d.ts` banner, which a reader meets exactly once.
 pub const TS_DESCRIPTION: &str = "\
@@ -100,7 +100,7 @@ struct StampedEventRef<'a> {
 /// Serialize one journal line: `event`, stamped with `ts_ms`.
 ///
 /// `ts_ms` is milliseconds since the Unix epoch, read from the caller's clock —
-/// this crate has no time source of its own (invariant #2), so the sink that
+/// this crate has no time source of its own (AGENTS.md #2), so the sink that
 /// owns a clock supplies the instant and this function only renders it.
 ///
 /// # Errors

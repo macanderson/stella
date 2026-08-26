@@ -1,11 +1,11 @@
-//! The tag table's own contract, as distinct from the per-variant
+//! The tag table's own contract, as distinct from the per-case
 //! round-trips in the parent module: that `type_tag()` agrees with what
-//! serde writes, that [`KNOWN_TYPE_TAGS`] is total over the typed variants,
+//! serde writes, that [`KNOWN_TYPE_TAGS`] is total over the typed cases,
 //! and that a tag from a *newer* stella degrades to
 //! [`AgentEvent::Unknown`] instead of failing the parse.
 //!
 //! Split from `event/tests.rs` (#1857) rather than left to grow: the parent
-//! gains a test per new variant, and one file carrying both concerns was
+//! gains a test per new case, and one file carrying both concerns was
 //! within thirty lines of the file-size ratchet.
 
 use super::*;
@@ -13,11 +13,11 @@ use super::*;
 #[test]
 fn type_tag_matches_the_serde_type_wire_tag() {
     // `type_tag()` must return exactly the `"type"` string serde writes,
-    // since both come from the same `snake_case` variant name. The match's
-    // exhaustiveness is compiler-enforced (a new variant cannot escape a
+    // since both come from the same `snake_case` case name. The match's
+    // exhaustiveness is compiler-enforced (a new case cannot escape a
     // tag), so this only pins that the hand-written strings are correct —
     // cross-checked against serde for a representative sample, weighted to
-    // the recently added variants most prone to a copy-paste tag.
+    // the recently added cases most prone to a copy-paste tag.
     let sample = vec![
         AgentEvent::Stage {
             name: StageKind::Triage.into(),
@@ -156,7 +156,7 @@ fn type_tag_matches_the_serde_type_wire_tag() {
 
 #[test]
 fn an_unrecognized_type_tag_degrades_to_unknown_rather_than_failing() {
-    // The whole point of the change. A reader built before this variant
+    // The whole point of the change. A reader built before this case
     // existed must not fail the line — it must keep going.
     let line = r#"{"type":"quantum_entangled","turn":7,"nested":{"a":[1,2]}}"#;
     let event: AgentEvent = serde_json::from_str(line).expect("future event must parse");
@@ -216,20 +216,20 @@ fn a_known_tag_with_a_malformed_body_is_still_a_hard_error() {
 
 #[test]
 fn every_known_type_tag_resolves_to_a_typed_variant() {
-    // Proves the variant→tag list in `agent_event_tags!` has no typo.
+    // Proves the case→tag list in `agent_event_tags!` has no typo.
     //
     // Combined with two structural facts this is airtight: the generated
-    // match is exhaustive (so every variant is listed) and duplicate arms
+    // match is exhaustive (so every case is listed) and duplicate arms
     // would be unreachable (so each is listed once) — meaning
-    // `KNOWN_TYPE_TAGS.len()` equals the variant count. If every listed tag
+    // `KNOWN_TYPE_TAGS.len()` equals the case count. If every listed tag
     // is additionally a *real* serde name, as asserted below, the mapping is
     // a bijection and no real tag can be missing from the list. A missing
     // one would silently demote all of its events to `Unknown`.
     //
-    // The probe is a bare `{"type": tag}`, and today every variant has at
+    // The probe is a bare `{"type": tag}`, and today every case has at
     // least one required field, so it always errors. That is expected — the
     // assertion is on WHICH error. `missing field ...` proves serde routed
-    // the tag to a variant; `unknown variant ...` proves it did not, which
+    // the tag to a case; `unknown variant ...` proves it did not, which
     // is exactly the typo this test exists to catch. Asserting only on the
     // `Ok` arm would assert nothing at all.
     for tag in KNOWN_TYPE_TAGS {
@@ -238,11 +238,11 @@ fn every_known_type_tag_resolves_to_a_typed_variant() {
             Ok(event) => assert!(
                 !event.is_unknown(),
                 "`{tag}` is in KNOWN_TYPE_TAGS but deserialized as Unknown — \
-                 the tag string does not match any serde variant name"
+                 the tag string does not match any serde case name"
             ),
             Err(err) => assert!(
                 !err.to_string().contains("unknown variant"),
-                "`{tag}` is in KNOWN_TYPE_TAGS but serde has no variant by \
+                "`{tag}` is in KNOWN_TYPE_TAGS but serde has no case by \
                  that name, so every event carrying it decodes as Unknown: {err}"
             ),
         }
@@ -269,13 +269,13 @@ fn a_literal_unknown_tag_is_not_privileged() {
     // `Unknown` is `serde(skip)`, so it has no wire tag of its own. An
     // event literally tagged `"unknown"` is just another unrecognized tag
     // and must round-trip as one rather than being mistaken for the
-    // fallback variant's own encoding.
+    // fallback case's own encoding.
     let line = r#"{"type":"unknown","event_type":"spoof","payload":{}}"#;
     let event: AgentEvent = serde_json::from_str(line).unwrap();
     assert_eq!(event.type_tag(), "unknown");
 
     // It round-trips as the opaque object it is — the decoy `event_type`
-    // and `payload` keys stay ordinary payload data, not the variant's
+    // and `payload` keys stay ordinary payload data, not the case's
     // own fields.
     let after: Value = serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
     assert_eq!(after, serde_json::from_str::<Value>(line).unwrap());
@@ -284,7 +284,7 @@ fn a_literal_unknown_tag_is_not_privileged() {
 
 #[test]
 fn a_known_event_wire_format_is_unchanged_by_the_fallback() {
-    // The hand-written codec must be a pass-through for known variants —
+    // The hand-written codec must be a pass-through for known cases —
     // no tag rename, no extra wrapper, no reordering.
     let event = AgentEvent::Text {
         text: "hello".into(),
