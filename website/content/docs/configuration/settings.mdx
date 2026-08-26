@@ -834,10 +834,11 @@ changing the file takes effect on the next settings load.
 ## Lifecycle hooks
 
 `settings.json` also carries `hooks` — shell commands that fire on agent lifecycle events.
-That schema is documented on the [Hooks](/docs/agent-tools/hooks) page. Two of the seven
-events bracket a [self-driving](/docs/self-improvement) work unit rather than a turn:
-`PreIssueWork` can hold the loop off an issue entirely, and `PostIssueWork` reports how one
-went.
+That schema is documented on the [Hooks](/docs/agent-tools/hooks) page. Most of the
+events name a point inside a turn; the rest fire around a
+[self-driving](/docs/self-improvement) run, cycle, issue, pull request or set of checks.
+`PreIssueWork` can hold the loop off an issue entirely; every other loop event reports and
+cannot veto.
 
 Unlike `providers`, hooks **concatenate** across scopes — every scope can add matchers and
 none replaces another's. Hooks from the user and org-managed scopes always load, but hooks

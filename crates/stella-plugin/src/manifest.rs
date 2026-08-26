@@ -553,10 +553,16 @@ impl PluginManifest {
             if !seen_hooks.insert(*hook) {
                 return Err(ManifestError::DuplicateHook { hook: *hook });
             }
-            // The loop-lifecycle pair is spellable here — it is one vocabulary
-            // — and not routable to a plugin, so it is refused by name rather
-            // than granted and never dispatched (#3599).
-            if matches!(hook, HookEvent::PreIssueWork | HookEvent::PostIssueWork) {
+            // Every loop event is spellable here — it is one vocabulary — and
+            // none is routable to a plugin, so each is refused by name rather
+            // than granted and never dispatched (#3599, #4017).
+            //
+            // Asked of `in_turn` rather than of a list of names, because a
+            // list is what this was and it covered two events while the
+            // vocabulary held twenty-four. A new event outside a turn is
+            // refused the moment it is declared, without anyone remembering
+            // to add it here.
+            if !hook.in_turn() {
                 return Err(ManifestError::HookNotAvailableToPlugins { hook: *hook });
             }
         }
@@ -855,7 +861,19 @@ mod tests {
     /// silently never fires (#3599).
     #[test]
     fn a_plugin_may_not_be_routed_at_a_loop_lifecycle_hook() {
-        for hook in ["PreIssueWork", "PostIssueWork"] {
+        // Every event outside a turn, taken from the vocabulary rather than
+        // listed here: a hand-kept list is what this was, and it covered two
+        // of them while seventeen more were being added (#4017).
+        let outside: Vec<HookEvent> = HookEvent::ALL
+            .into_iter()
+            .filter(|event| !event.in_turn())
+            .collect();
+        assert!(
+            outside.len() > 2,
+            "the loop vocabulary is the subject; a two-event set means this \
+             test is asserting about the wrong thing: {outside:?}"
+        );
+        for hook in outside {
             let err = parse(&format!(
                 "name = \"x\"\n[loop]\nparticipation = \"steering\"\nhooks = [\"{hook}\"]"
             ))
@@ -865,8 +883,29 @@ mod tests {
                 "{hook} must be refused: {err:?}"
             );
             let text = err.to_string();
-            assert!(text.contains(hook), "{text}");
+            assert!(text.contains(hook.as_str()), "{text}");
             assert!(text.contains("outside any turn"), "{text}");
+        }
+
+        // And the in-turn five still load, so the refusal above is a line
+        // through the vocabulary rather than a refusal of every hook.
+        for hook in HookEvent::ALL.into_iter().filter(|event| event.in_turn()) {
+            // `Stop` is the arbiter's own hook and drags that grade's own
+            // rules with it, which is a different subject from this one.
+            let extra = if hook == HookEvent::Stop {
+                "\n\n[requirements]\nr = \"the tests pass\""
+            } else {
+                ""
+            };
+            let grade = if hook == HookEvent::Stop {
+                "arbiter"
+            } else {
+                "steering"
+            };
+            parse(&format!(
+                "name = \"x\"\n[loop]\nparticipation = \"{grade}\"\nhooks = [\"{hook}\"]{extra}"
+            ))
+            .unwrap_or_else(|error| panic!("{hook} must load: {error}"));
         }
     }
 

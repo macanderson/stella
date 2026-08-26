@@ -647,3 +647,111 @@ fn an_unparsable_checkpoint_degrades_to_fresh_rather_than_a_userless_transcript(
     );
     assert_eq!(messages[0].content, "fresh system prompt");
 }
+
+/// **The witness for #3233's second half.** A resumed session must not mint a
+/// lane id whose journal key already holds a dead lane's transcript.
+///
+/// [`SubSessions::new`] starts `next_req` at 0, and a resumed deck keeps its
+/// session id — `command_deck` says so where it adopts the record: "the
+/// registry never forks a resumed session's identity". So the first prompt
+/// lane after a resume minted `req:1`, bound `{session}__req-1`, found the
+/// killed lane's checkpoint sitting there, and [`initial_messages`] re-entered
+/// an unrelated conversation instead of starting on the prompt the user had
+/// just typed. Per-lane durability is what made that reachable; the recorded
+/// lanes are what closes it.
+#[test]
+fn a_resumed_session_never_re_mints_a_lane_id_that_already_has_a_transcript() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let session = "ses-resumed";
+
+    // A lane of the previous run, killed mid-turn with a checkpoint on its
+    // own key — the state per-lane durability leaves behind.
+    let dead = crate::durability::SessionDurability::default();
+    let dead_key = lane_journal_key(session, "req:1");
+    assert!(
+        crate::durability::bind_session(&dead, workspace.path(), &dead_key).is_none(),
+        "the dead lane binds"
+    );
+    dead.sink().expect("bound").persist(r#"{"lane":"req:1"}"#);
+
+    let lead = crate::durability::SessionDurability::default();
+    assert!(
+        crate::durability::bind_session(&lead, workspace.path(), session).is_none(),
+        "the lead binds"
+    );
+
+    let mut subs = SubSessions::resuming(&lead, session);
+    let lane = subs.next_req_lane();
+    assert_eq!(
+        lane, "req:2",
+        "a resumed session must step over the lane ids it already recorded"
+    );
+
+    let fresh = crate::durability::SessionDurability::default();
+    let fresh_key = lane_journal_key(session, &lane);
+    assert!(
+        crate::durability::bind_session(&fresh, workspace.path(), &fresh_key).is_none(),
+        "the new lane binds"
+    );
+    assert_eq!(
+        fresh.checkpoint(),
+        None,
+        "and lands on a key carrying no transcript"
+    );
+}
+
+/// The counter steps over lanes of *this* session only. Sessions share one
+/// store, so reading every recorded key would start a fresh deck's lane
+/// numbering wherever the busiest neighbour left off.
+#[test]
+fn another_sessions_lanes_do_not_move_this_sessions_counter() {
+    let workspace = tempfile::tempdir().expect("workspace");
+
+    let other = crate::durability::SessionDurability::default();
+    let other_key = lane_journal_key("ses-other", "req:7");
+    crate::durability::bind_session(&other, workspace.path(), &other_key);
+    other.sink().expect("bound").persist(r#"{"lane":"req:7"}"#);
+
+    let lead = crate::durability::SessionDurability::default();
+    crate::durability::bind_session(&lead, workspace.path(), "ses-mine");
+
+    let mut subs = SubSessions::resuming(&lead, "ses-mine");
+    assert_eq!(subs.next_req_lane(), "req:1");
+}
+
+/// **The fence.** The deck's board is built by [`SubSessions::resuming`], and
+/// nothing else in the crate's shipping code may build one.
+///
+/// The witness above proves the mechanism; only this proves the driver uses
+/// it, and the two come apart cleanly — reverting the deck's one call site to
+/// [`SubSessions::new`] leaves every assertion above passing. Anything that
+/// starts a deck session owns a session id that may already have lanes under
+/// it, so `new` is for tests and for `resuming` itself.
+#[test]
+fn the_deck_builds_its_lane_board_through_the_resuming_seam() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/command_deck.rs");
+    let body = std::fs::read_to_string(&src).expect("command_deck.rs");
+    // Built rather than written, so this fence is not its own match.
+    let bare = format!("SubSessions::{}(", "new");
+    assert!(
+        !body.contains(&bare),
+        "command_deck.rs builds a lane board with `SubSessions::new`. A deck \
+         session id may already have `req:<n>` lanes recorded under it, and \
+         re-minting one lands the next dispatch inside a dead lane's \
+         transcript (#3233). Use `SubSessions::resuming`."
+    );
+    assert!(
+        body.contains("SubSessions::resuming("),
+        "command_deck.rs must build its lane board through the seam"
+    );
+}
+
+/// An unbound handle reads as "nothing recorded", which is
+/// [`SubSessions::new`]'s numbering — a store that will not answer must not
+/// stop a session starting.
+#[test]
+fn an_unbound_session_starts_its_lane_numbering_where_a_fresh_one_does() {
+    let unbound = crate::durability::SessionDurability::default();
+    let mut subs = SubSessions::resuming(&unbound, "ses-1");
+    assert_eq!(subs.next_req_lane(), "req:1");
+}

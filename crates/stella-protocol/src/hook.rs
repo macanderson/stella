@@ -30,23 +30,16 @@
 //!
 //! # Two families, one vocabulary
 //!
-//! The original five events name points **inside a turn**. [`HookEvent::PreIssueWork`]
-//! and [`HookEvent::PostIssueWork`] name points **around a turn**: the
-//! self-driving loop deciding to work an issue, and the outcome when it is
-//! done (#3599). They share this enum rather than getting one of their own for
-//! the reason this module exists at all — a user registers both in the same
-//! `hooks` block of the same settings file, and a plugin declares both in the
-//! same `[loop] hooks` list. A second enum would be a second vocabulary to
-//! keep identical, which is the drift shape #3310 removed.
+//! Some events name points **inside a turn** and the rest name points around
+//! one, fired by the self-driving loop; [`HookEvent::in_turn`] is the line, and
+//! only an in-turn event may be granted to a plugin. They share this enum for
+//! the reason this module exists — a user registers both in the same `hooks`
+//! block, and a second enum would be a second vocabulary to keep identical.
 //!
-//! The naming rule for anything added here, so the set stays readable as one:
-//! **`Pre`/`Post` for a pair that brackets something, a past participle for a
-//! thing that happened, and no `ON_`/`BEFORE_` prefixes** — the tense lives in
-//! the name. The rest of the self-driving vocabulary (the tracker, pull-request
-//! and check events) is designed and **not** declared here yet:
-//! it needs the `deliver` verbs to have somewhere to fire from, and a hook
-//! point nothing dispatches is a declaration that quietly does nothing. See
-//! the issue tracking it.
+//! The naming rule for anything added here: **`Pre`/`Post` for a pair that
+//! brackets something, a past participle for a thing that happened, and no
+//! `ON_`/`BEFORE_` prefixes** — the tense lives in the name. Only a `Pre` can
+//! veto, because only a `Pre` names something that has not happened yet.
 
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +87,79 @@ pub enum HookEvent {
     /// without its `Pre` having been allowed would make the pair useless for
     /// exactly the bookkeeping it exists for.
     PostIssueWork,
+
+    /// A self-driving run has begun, before its first cycle. Reports.
+    ///
+    /// Reports rather than vetoes, with every event below it: the tense is the
+    /// rule, and a run-level veto would duplicate [`HookEvent::PreIssueWork`]
+    /// at a coarser grain while being unable to say *which* work it withheld —
+    /// the one thing an operator reading a skip needs. These were declared once
+    /// #4001 gave each somewhere real to fire from (#4017); a hook point
+    /// nothing dispatches is a declaration that quietly does nothing.
+    DriveRunStart,
+    /// A self-driving run has ended, carrying why it stopped. Reports.
+    ///
+    /// The reason is the field a scheduler acts on: a run that ended because
+    /// the operator asked, one that ended on a spent budget and one that
+    /// crashed all want different next moves, and a subscriber that could only
+    /// see "it ended" would have to guess between them.
+    DriveRunEnd,
+    /// A cycle has begun. Reports.
+    DriveCycleStart,
+    /// A cycle has ended and its ledger record is written. Reports.
+    DriveCycleEnd,
+    /// A cycle produced nothing — the dry-streak advance. Reports.
+    ///
+    /// The signal that separates *alive but starved* from *dead*, which a
+    /// monitor cannot get from silence: a loop with an empty backlog and a
+    /// loop whose process died emit the same nothing.
+    DriveIdle,
+
+    /// The loop filed a finding as an issue. Reports.
+    IssueCreated,
+    /// The loop closed an issue, `--partial` included. Reports.
+    IssueClosed,
+    /// The loop gave up on an issue and handed it to a human. Reports.
+    ///
+    /// Carries the reason in the loop's own vocabulary, because a subscriber's
+    /// next move differs by it: a ceiling that was reached can be raised, and
+    /// a review that needs a human cannot.
+    IssueEscalated,
+
+    /// The loop opened a pull request. Reports.
+    PullRequestOpened,
+    /// The loop took a pull request out of draft. Reports.
+    PullRequestReadyForReview,
+    /// The base moved under a pull request. Reports.
+    PullRequestConflicted,
+    /// A pull request landed. Reports.
+    PullRequestMerged,
+
+    /// A pull request's checks failed **and the base is green**, so the
+    /// failure is this change's. Reports.
+    ///
+    /// Not the same event as [`HookEvent::BaseBroken`]: the whole `deliver`
+    /// machine turns on that distinction, and collapsing the two is how a loop
+    /// spends its budget fixing somebody else's breakage.
+    ChecksFailed,
+    /// A pull request's checks failed **and so does the base**, so the failure
+    /// is not this change's. Reports.
+    ///
+    /// The event a `main`-health monitor wants: it is the one that says the
+    /// tree is broken for everyone rather than for this branch.
+    BaseBroken,
+    /// A pull request's checks passed. Reports.
+    ChecksGreen,
+
+    /// The loop stopped because it reached its spend ceiling. Reports.
+    DriveBudgetExhausted,
+    /// The loop declined to start, or to continue. Reports.
+    ///
+    /// Distinct from an error: nothing broke, and the loop chose not to run —
+    /// an operator stop, steering switched off, a `main-red` hold. A
+    /// subscriber that read a refusal as a failure would page somebody about a
+    /// working system.
+    DriveRefused,
 }
 
 impl HookEvent {
@@ -103,7 +169,7 @@ impl HookEvent {
     /// case without adding it here fails this module's
     /// `every_variant_is_listed` test, which is what makes "the whole
     /// vocabulary" a value a caller can iterate instead of a set it re-types.
-    pub const ALL: [HookEvent; 7] = [
+    pub const ALL: [HookEvent; 24] = [
         HookEvent::SessionStart,
         HookEvent::PreToolUse,
         HookEvent::PostToolUse,
@@ -111,6 +177,23 @@ impl HookEvent {
         HookEvent::PreCompact,
         HookEvent::PreIssueWork,
         HookEvent::PostIssueWork,
+        HookEvent::DriveRunStart,
+        HookEvent::DriveRunEnd,
+        HookEvent::DriveCycleStart,
+        HookEvent::DriveCycleEnd,
+        HookEvent::DriveIdle,
+        HookEvent::IssueCreated,
+        HookEvent::IssueClosed,
+        HookEvent::IssueEscalated,
+        HookEvent::PullRequestOpened,
+        HookEvent::PullRequestReadyForReview,
+        HookEvent::PullRequestConflicted,
+        HookEvent::PullRequestMerged,
+        HookEvent::ChecksFailed,
+        HookEvent::BaseBroken,
+        HookEvent::ChecksGreen,
+        HookEvent::DriveBudgetExhausted,
+        HookEvent::DriveRefused,
     ];
 
     /// Whether this event fires for one specific tool call — the events
@@ -118,6 +201,48 @@ impl HookEvent {
     /// and run every registered action.
     pub fn tool_scoped(self) -> bool {
         matches!(self, HookEvent::PreToolUse | HookEvent::PostToolUse)
+    }
+
+    /// Whether this event names a point **inside** a turn.
+    ///
+    /// The two families this enum holds, as a value rather than a paragraph.
+    /// An in-turn event is dispatched by the engine's driver and is the only
+    /// kind a plugin may be routed at; everything else is dispatched by the
+    /// self-driving loop, outside every turn, from the operator's own `hooks`
+    /// settings.
+    ///
+    /// A total `match` rather than a `matches!` allowlist, and that is the
+    /// point: the allowlist form would silently place a new event on the
+    /// outside, and `stella_plugin`'s refusal and the host's routing table
+    /// both read this. Placing it wrongly is a decision somebody has to write
+    /// down; forgetting to place it does not compile.
+    pub fn in_turn(self) -> bool {
+        match self {
+            HookEvent::SessionStart
+            | HookEvent::PreToolUse
+            | HookEvent::PostToolUse
+            | HookEvent::Stop
+            | HookEvent::PreCompact => true,
+            HookEvent::PreIssueWork
+            | HookEvent::PostIssueWork
+            | HookEvent::DriveRunStart
+            | HookEvent::DriveRunEnd
+            | HookEvent::DriveCycleStart
+            | HookEvent::DriveCycleEnd
+            | HookEvent::DriveIdle
+            | HookEvent::IssueCreated
+            | HookEvent::IssueClosed
+            | HookEvent::IssueEscalated
+            | HookEvent::PullRequestOpened
+            | HookEvent::PullRequestReadyForReview
+            | HookEvent::PullRequestConflicted
+            | HookEvent::PullRequestMerged
+            | HookEvent::ChecksFailed
+            | HookEvent::BaseBroken
+            | HookEvent::ChecksGreen
+            | HookEvent::DriveBudgetExhausted
+            | HookEvent::DriveRefused => false,
+        }
     }
 
     /// The wire spelling — identical to the serde representation, and to
@@ -131,6 +256,23 @@ impl HookEvent {
             HookEvent::PreCompact => "PreCompact",
             HookEvent::PreIssueWork => "PreIssueWork",
             HookEvent::PostIssueWork => "PostIssueWork",
+            HookEvent::DriveRunStart => "DriveRunStart",
+            HookEvent::DriveRunEnd => "DriveRunEnd",
+            HookEvent::DriveCycleStart => "DriveCycleStart",
+            HookEvent::DriveCycleEnd => "DriveCycleEnd",
+            HookEvent::DriveIdle => "DriveIdle",
+            HookEvent::IssueCreated => "IssueCreated",
+            HookEvent::IssueClosed => "IssueClosed",
+            HookEvent::IssueEscalated => "IssueEscalated",
+            HookEvent::PullRequestOpened => "PullRequestOpened",
+            HookEvent::PullRequestReadyForReview => "PullRequestReadyForReview",
+            HookEvent::PullRequestConflicted => "PullRequestConflicted",
+            HookEvent::PullRequestMerged => "PullRequestMerged",
+            HookEvent::ChecksFailed => "ChecksFailed",
+            HookEvent::BaseBroken => "BaseBroken",
+            HookEvent::ChecksGreen => "ChecksGreen",
+            HookEvent::DriveBudgetExhausted => "DriveBudgetExhausted",
+            HookEvent::DriveRefused => "DriveRefused",
         }
     }
 }
@@ -148,7 +290,7 @@ mod tests {
     /// The pinned wire strings. A rename here is a break of every shipped
     /// `.stella/settings.json` and every plugin manifest, so it has to be a
     /// considered edit to this list.
-    const WIRE_STRINGS: [&str; 7] = [
+    const WIRE_STRINGS: [&str; 24] = [
         "SessionStart",
         "PreToolUse",
         "PostToolUse",
@@ -156,6 +298,23 @@ mod tests {
         "PreCompact",
         "PreIssueWork",
         "PostIssueWork",
+        "DriveRunStart",
+        "DriveRunEnd",
+        "DriveCycleStart",
+        "DriveCycleEnd",
+        "DriveIdle",
+        "IssueCreated",
+        "IssueClosed",
+        "IssueEscalated",
+        "PullRequestOpened",
+        "PullRequestReadyForReview",
+        "PullRequestConflicted",
+        "PullRequestMerged",
+        "ChecksFailed",
+        "BaseBroken",
+        "ChecksGreen",
+        "DriveBudgetExhausted",
+        "DriveRefused",
     ];
 
     /// Its position in [`HookEvent::ALL`], derived by a match so the compiler
@@ -169,6 +328,23 @@ mod tests {
             HookEvent::PreCompact => 4,
             HookEvent::PreIssueWork => 5,
             HookEvent::PostIssueWork => 6,
+            HookEvent::DriveRunStart => 7,
+            HookEvent::DriveRunEnd => 8,
+            HookEvent::DriveCycleStart => 9,
+            HookEvent::DriveCycleEnd => 10,
+            HookEvent::DriveIdle => 11,
+            HookEvent::IssueCreated => 12,
+            HookEvent::IssueClosed => 13,
+            HookEvent::IssueEscalated => 14,
+            HookEvent::PullRequestOpened => 15,
+            HookEvent::PullRequestReadyForReview => 16,
+            HookEvent::PullRequestConflicted => 17,
+            HookEvent::PullRequestMerged => 18,
+            HookEvent::ChecksFailed => 19,
+            HookEvent::BaseBroken => 20,
+            HookEvent::ChecksGreen => 21,
+            HookEvent::DriveBudgetExhausted => 22,
+            HookEvent::DriveRefused => 23,
         }
     }
 
@@ -208,5 +384,32 @@ mod tests {
             let expected = matches!(event, HookEvent::PreToolUse | HookEvent::PostToolUse);
             assert_eq!(event.tool_scoped(), expected, "{event}");
         }
+    }
+
+    /// The two families, pinned from the outside: an in-turn event is one the
+    /// engine's driver dispatches, and every loop event — the `Issue` pair
+    /// included — sits outside a turn, which is what makes it unroutable to a
+    /// plugin.
+    ///
+    /// Spelled as a list here rather than re-deriving [`HookEvent::in_turn`]'s
+    /// match, because a test that recomputed the answer would agree with any
+    /// mistake the answer contains.
+    #[test]
+    fn the_in_turn_family_is_exactly_the_five_the_engine_dispatches() {
+        let in_turn: Vec<&str> = HookEvent::ALL
+            .into_iter()
+            .filter(|event| event.in_turn())
+            .map(HookEvent::as_str)
+            .collect();
+        assert_eq!(
+            in_turn,
+            [
+                "SessionStart",
+                "PreToolUse",
+                "PostToolUse",
+                "Stop",
+                "PreCompact"
+            ]
+        );
     }
 }

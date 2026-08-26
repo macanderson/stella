@@ -17,15 +17,12 @@
 //! the terminal. Close the terminal and the parent dies; the child does not
 //! notice, because it left that session before it began.
 //!
-//! Process-level supervision is the weaker of the two properties #1552 named,
-//! and the engine-level one now stands behind it (#1586): every turn already
-//! checkpoints into the workspace's work journal at each committed step
-//! boundary, so a supervised run whose *process* is killed — OOM, `kill -9`,
-//! power loss — leaves a resume point where a mere closed terminal never
-//! needed one. [`resume_supervised`] is the verb that picks it up: it
-//! relaunches the same session under a fresh supervised child, which
-//! continues the interrupted turn from that boundary instead of restarting
-//! it (`crate::agent::resume`).
+//! Engine-level durability stands behind it: every turn checkpoints into the
+//! work journal at each committed step boundary, so a supervised run whose
+//! *process* is killed — OOM, `kill -9`, power loss — leaves a resume point.
+//! [`resume_supervised`] relaunches that session under a fresh supervised
+//! child, continuing the interrupted turn from that boundary rather than
+//! restarting it (`crate::agent::resume`).
 //!
 //! # Why supervision keys on a controlling terminal
 //!

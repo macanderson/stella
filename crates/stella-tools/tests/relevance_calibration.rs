@@ -29,24 +29,17 @@
 //! per-`HttpEmbedder` field, so `voyage-code-3` and a local model may
 //! legitimately differ.
 //!
-//! ## `STELLA_CALIBRATION_INDEX` — what made this affordable to run
+//! ## `STELLA_CALIBRATION_INDEX` — rank an existing index
 //!
-//! Without it the harness builds an index into a temporary directory and
-//! embeds this whole repository first, which is the ~11M paid tokens the
-//! session that wrote this file declined to spend. With it, the harness ranks
-//! against an index that is **already filled under the same fingerprint** —
-//! the one a working checkout's `search::backfill` pass has been filling all
-//! along — and the run's entire cost is one query embedding per labelled
-//! query. Four, at the time of writing.
-//!
-//! It changes nothing about what is measured. The distribution is a property
-//! of the embedder and the corpus, and the corpus is the same rows either way;
-//! what the flag removes is the re-embedding of rows that already exist. The
-//! harness prints the chunk count it ranked over, so a thin index cannot be
-//! mistaken for a full one, and it still refuses to report a distribution over
-//! zero rows. Point it at a **copy** of a live session's database rather than
-//! the live file: it opens the graph for writing (`CodeGraph::open`), and a
-//! session's own indexer is already writing to that one.
+//! Without it the harness embeds this whole repository into a temporary
+//! index first (~11M paid tokens); with it, it ranks against an index
+//! already filled under the same fingerprint and the run costs one query
+//! embedding per labelled query. What is measured is unchanged — the flag
+//! only removes re-embedding — and the harness prints the chunk count it
+//! ranked over, refusing a distribution over zero rows. Point it at a
+//! **copy** of a live session's database, never the live file: it opens the
+//! graph for writing (`CodeGraph::open`), and the session's own indexer is
+//! already writing there.
 //!
 //! # What it prints, and what to do with it
 //!

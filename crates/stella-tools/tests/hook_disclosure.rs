@@ -28,7 +28,9 @@
 use std::collections::BTreeSet;
 
 use serde_json::Value;
-use stella_core::hooks::{HookIssueInfo, HookIssueOutcome, HookPayload, HookToolInfo};
+use stella_core::hooks::{
+    HookIssueInfo, HookIssueOutcome, HookPayload, HookPullRequestInfo, HookRunInfo, HookToolInfo,
+};
 use stella_plugin::{HOOK_FIELDS, HookEvent};
 
 /// The dotted paths present in one serialized payload, in the spelling serde
@@ -118,7 +120,168 @@ fn widest_payloads() -> Vec<(HookEvent, Vec<HookPayload>)> {
             .map(|outcome| HookPayload::post_issue_work("/w", issue.clone(), outcome))
             .collect(),
         ),
+        // The loop-lifecycle five. `HookRunInfo::cycle` is present for the
+        // three that happen inside a cycle and absent for the two that
+        // bracket every cycle, which is the difference their rows record.
+        (
+            HookEvent::DriveRunStart,
+            vec![HookPayload::drive(
+                HookEvent::DriveRunStart,
+                "/w",
+                HookRunInfo::new("r-1"),
+                None,
+            )],
+        ),
+        (
+            HookEvent::DriveRunEnd,
+            vec![HookPayload::drive(
+                HookEvent::DriveRunEnd,
+                "/w",
+                HookRunInfo::new("r-1"),
+                Some("stopped by hand".into()),
+            )],
+        ),
+        (
+            HookEvent::DriveCycleStart,
+            vec![HookPayload::drive(
+                HookEvent::DriveCycleStart,
+                "/w",
+                HookRunInfo::new("r-1").in_cycle(7),
+                None,
+            )],
+        ),
+        (
+            HookEvent::DriveCycleEnd,
+            vec![HookPayload::drive(
+                HookEvent::DriveCycleEnd,
+                "/w",
+                HookRunInfo::new("r-1").in_cycle(7),
+                None,
+            )],
+        ),
+        (
+            HookEvent::DriveIdle,
+            vec![HookPayload::drive(
+                HookEvent::DriveIdle,
+                "/w",
+                HookRunInfo::new("r-1").in_cycle(7),
+                Some("the queue is empty".into()),
+            )],
+        ),
+        (
+            HookEvent::IssueCreated,
+            vec![HookPayload::tracker(
+                HookEvent::IssueCreated,
+                "/w",
+                issue.clone(),
+                None,
+            )],
+        ),
+        (
+            HookEvent::IssueClosed,
+            vec![HookPayload::tracker(
+                HookEvent::IssueClosed,
+                "/w",
+                issue.clone(),
+                Some("fixed by #1".into()),
+            )],
+        ),
+        (
+            HookEvent::IssueEscalated,
+            vec![HookPayload::tracker(
+                HookEvent::IssueEscalated,
+                "/w",
+                issue.clone(),
+                Some("the fix ceiling was reached".into()),
+            )],
+        ),
+        (
+            HookEvent::PullRequestOpened,
+            vec![HookPayload::pull_request(
+                HookEvent::PullRequestOpened,
+                "/w",
+                pr(),
+                None,
+            )],
+        ),
+        (
+            HookEvent::PullRequestReadyForReview,
+            vec![HookPayload::pull_request(
+                HookEvent::PullRequestReadyForReview,
+                "/w",
+                pr(),
+                None,
+            )],
+        ),
+        (
+            HookEvent::PullRequestConflicted,
+            vec![HookPayload::pull_request(
+                HookEvent::PullRequestConflicted,
+                "/w",
+                pr(),
+                None,
+            )],
+        ),
+        (
+            HookEvent::PullRequestMerged,
+            vec![HookPayload::pull_request(
+                HookEvent::PullRequestMerged,
+                "/w",
+                pr(),
+                None,
+            )],
+        ),
+        (
+            HookEvent::ChecksFailed,
+            vec![HookPayload::pull_request(
+                HookEvent::ChecksFailed,
+                "/w",
+                pr(),
+                None,
+            )],
+        ),
+        (
+            HookEvent::BaseBroken,
+            vec![HookPayload::pull_request(
+                HookEvent::BaseBroken,
+                "/w",
+                pr(),
+                None,
+            )],
+        ),
+        (
+            HookEvent::ChecksGreen,
+            vec![HookPayload::pull_request(
+                HookEvent::ChecksGreen,
+                "/w",
+                pr(),
+                None,
+            )],
+        ),
+        (
+            HookEvent::DriveBudgetExhausted,
+            vec![HookPayload::drive(
+                HookEvent::DriveBudgetExhausted,
+                "/w",
+                HookRunInfo::new("r-1"),
+                Some("$10.00 of $10.00".into()),
+            )],
+        ),
+        (
+            HookEvent::DriveRefused,
+            vec![HookPayload::drive(
+                HookEvent::DriveRefused,
+                "/w",
+                HookRunInfo::new("r-1"),
+                Some("an operator stop is in place".into()),
+            )],
+        ),
     ]
+}
+
+/// The pull request every delivery event in the census is about.
+fn pr() -> HookPullRequestInfo {
+    HookPullRequestInfo::new("412").for_issue("4310")
 }
 
 /// **The anti-drift guard for #4310.** Every field of every payload type has a
@@ -133,6 +296,9 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         final_text,
         issue,
         issue_outcome,
+        run,
+        pull_request,
+        reason,
     } = HookPayload::post_tool_use("/w", "bash", serde_json::json!({}), false, "out");
     let HookToolInfo {
         name,
@@ -144,6 +310,11 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         title,
         branch,
     } = HookIssueInfo::new("1");
+    let HookRunInfo { run_id, cycle } = HookRunInfo::new("r-1");
+    let HookPullRequestInfo {
+        number: pr_number,
+        issue: pr_issue,
+    } = HookPullRequestInfo::new("412");
     // `HookIssueOutcome` is an internally tagged enum: `status` is the tag, and
     // each arm's own field crosses beside it. Matched exhaustively so a fourth
     // arm does not compile until it has rows.
@@ -183,10 +354,19 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         named("issue.branch", branch),
         named("issueOutcome.status", issue_outcome),
         named("issue", issue),
+        named("run.runId", run_id),
+        named("run.cycle", cycle),
+        named("run", run),
+        named("pullRequest.number", pr_number),
+        named("pullRequest.issue", pr_issue),
+        named("pullRequest", pull_request),
+        named("reason", reason),
     ];
-    // `issue` is not a leaf; its own fields are named above, so drop the
-    // container from the list the table is checked against.
-    declared.retain(|path| *path != "issue");
+    // `issue`, `run` and `pullRequest` are not leaves; their own fields are
+    // named above, so drop the containers from the list the table is checked
+    // against. They are still destructured, which is what makes a new field
+    // inside one of them an `E0027` rather than a silence.
+    declared.retain(|path| !matches!(*path, "issue" | "run" | "pullRequest"));
     declared.extend(arm_fields);
 
     let table: BTreeSet<&str> = HOOK_FIELDS.iter().map(|field| field.path).collect();

@@ -45,10 +45,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
 use crate::host_call::HostCall;
-use crate::manifest::{HookEvent, Participation, PluginManifest};
+use crate::manifest::{Participation, PluginManifest};
 use crate::oracle::OracleProcessSource;
 use crate::runtime::Runtime;
 use crate::wire::{WIRE_FIELDS, WrapperPoint, hook_disclosures_for};
+
+/// When each hook event fires, in the words the prompt shows.
+mod moments;
+use moments::hook_moment;
 
 /// How bad one honest call of a tool is — re-exported from
 /// [`stella_protocol`], which is where the vocabulary lives.
@@ -649,21 +653,6 @@ fn point_moment(point: WrapperPoint) -> &'static str {
     match point {
         WrapperPoint::BeforeTurn => "before each turn runs",
         WrapperPoint::AfterTurn => "once each turn has finished",
-    }
-}
-
-/// When each hook event fires, on the same terms as [`point_moment`].
-/// Exhaustive by construction: an eighth [`HookEvent`] does not compile until
-/// it has words here.
-fn hook_moment(event: HookEvent) -> &'static str {
-    match event {
-        HookEvent::SessionStart => "when a session starts",
-        HookEvent::PreToolUse => "before every tool call",
-        HookEvent::PostToolUse => "after every tool call",
-        HookEvent::Stop => "when a turn is about to finish",
-        HookEvent::PreCompact => "before the context is compacted",
-        HookEvent::PreIssueWork => "before the self-driving loop works an issue",
-        HookEvent::PostIssueWork => "after the self-driving loop works an issue",
     }
 }
 
