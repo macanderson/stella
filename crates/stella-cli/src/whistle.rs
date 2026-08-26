@@ -64,3 +64,45 @@ pub(crate) fn spawn_for_session(
 ) -> Option<()> {
     None
 }
+
+/// One session's whistle: the tap its engine drains, and the listener that
+/// feeds it, bound together for as long as the session runs.
+///
+/// The two halves must live exactly as long as each other and no door has a
+/// use for either alone, so they are one value. It also spares every caller
+/// the platform split: [`spawn_for_session`] returns a `WhistleListener` on
+/// Unix and `()` everywhere else, and a door holding the guard in a local
+/// would have to name whichever type its build has.
+pub(crate) struct SessionWhistle {
+    tap: std::sync::Arc<tap::HeadlessSteerTap>,
+    /// Unbinds and removes the socket file when this value is dropped.
+    #[cfg(unix)]
+    _listener: Option<listener::WhistleListener>,
+    #[cfg(not(unix))]
+    _listener: Option<()>,
+}
+
+impl SessionWhistle {
+    /// Publish `session`'s whistle socket, or — for a run with no session
+    /// identity to publish under — a tap nothing can reach, which drains
+    /// empty forever and is what a door with `session: None` should attach.
+    pub(crate) fn open(session: Option<&str>) -> Self {
+        let tap: std::sync::Arc<tap::HeadlessSteerTap> = std::sync::Arc::default();
+        let listener = session.and_then(|id| spawn_for_session(id, tap.clone()));
+        Self {
+            tap,
+            _listener: listener,
+        }
+    }
+
+    /// What to hand `stella_core::Engine::with_steering`.
+    pub(crate) fn steering(&self) -> &dyn stella_core::ports::TurnSteering {
+        self.tap.as_ref()
+    }
+
+    /// What to hand a `stella_core::ports::TurnControls` builder, for a door
+    /// that reaches its engine through one rather than building it directly.
+    pub(crate) fn controls(&self) -> stella_core::ports::TurnControls {
+        stella_core::ports::TurnControls::none().with_steering(self.tap.clone())
+    }
+}
