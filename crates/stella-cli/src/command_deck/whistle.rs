@@ -247,11 +247,11 @@ mod tests {
     fn a_finished_turns_tap_stops_receiving() {
         let relay = Arc::new(DeckWhistle::default());
         drop(relay.mint_turn_tap());
-        RelayHandle(Arc::downgrade(&relay)).push("still worth saying".to_string());
+        RelayHandle(Arc::downgrade(&relay)).push("the next turn should know".to_string());
 
         assert_eq!(
             relay.mint_turn_tap().drain_steering(),
-            vec!["still worth saying"]
+            vec!["the next turn should know"]
         );
     }
 }
