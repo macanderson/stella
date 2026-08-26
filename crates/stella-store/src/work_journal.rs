@@ -991,6 +991,53 @@ mod tests {
         );
     }
 
+    /// A key's own refs are the record that it exists, and `recorded_keys`
+    /// reads them back under whatever prefix the caller composes.
+    ///
+    /// Both lineages count. A key that only ever checkpointed has a `head` and
+    /// no `tree`; one that only ever snapshotted has the reverse; reading
+    /// either alone would report a live key as absent, and a caller avoiding a
+    /// name it must not reuse (#3233) would then reuse it. A key with both is
+    /// listed once. Turn marks name no key of their own.
+    #[test]
+    fn a_prefix_finds_every_key_recorded_under_it_and_nothing_else() {
+        let (_guard, ws, store) = scratch();
+        std::fs::write(ws.join("a.txt"), "code\n").unwrap();
+
+        // A checkpoint (the `head` lineage) and a snapshot (the `tree` one),
+        // on different keys, plus a turn mark that must name no key.
+        let checkpointed = WorkJournal::open_in(&store, &ws, "ses-1__req-1").unwrap();
+        let commit = checkpointed
+            .record(&["a.txt".into()], &[], "stella(req:1): edit")
+            .unwrap();
+        checkpointed.mark_turn(1, &commit).unwrap();
+
+        let snapshotted = WorkJournal::open_in(&store, &ws, "ses-1__req-2").unwrap();
+        snapshotted.snapshot_worktree().unwrap();
+
+        let neighbour = WorkJournal::open_in(&store, &ws, "ses-2__req-9").unwrap();
+        neighbour
+            .record(&["a.txt".into()], &[], "stella(req:9): edit")
+            .unwrap();
+
+        let reader = WorkJournal::open_in(&store, &ws, "ses-1").unwrap();
+        assert_eq!(
+            reader.recorded_keys("ses-1__").unwrap(),
+            vec!["ses-1__req-1".to_string(), "ses-1__req-2".to_string()],
+            "a checkpointed key and a snapshotted one are both recorded, and a \
+             turn mark names no key of its own"
+        );
+        assert_eq!(
+            reader.recorded_keys("ses-2__").unwrap(),
+            vec!["ses-2__req-9".to_string()],
+            "the prefix is the whole filter — a neighbour's keys stay its own"
+        );
+        assert!(
+            reader.recorded_keys("ses-3__").unwrap().is_empty(),
+            "a prefix nothing was recorded under is an empty answer, not an error"
+        );
+    }
+
     #[test]
     fn a_checkpoint_blob_rides_along_and_replays_per_turn() {
         // Turn state and workspace state land in ONE object, so "restart turn
