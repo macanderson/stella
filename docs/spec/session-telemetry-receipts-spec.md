@@ -91,7 +91,7 @@ already carries** rather than duplicating it.
 
 ---
 
-## 2. Non-negotiable invariants
+## 2. Non-negotiable rules
 
 1. **Additive-only wire contract.** Every new field is `#[serde(default)]`; every
    new event variant is optional. Old `journal.jsonl` and `events` rows keep
@@ -347,7 +347,7 @@ the local block registry, never in export.
 ### 6.1 Mutations are manifest diffs, not a separate log
 
 A context mutation (block added / removed / summarized) is **derivable as the diff
-between consecutive manifests** of the same turn. The spec deliberately does *not*
+between consecutive manifests** of the same turn. The spec does *not*
 add a per-mutation event — that would be a second thing to keep consistent with
 the manifest series. The inspector computes `added = manifest[N] − manifest[N−1]`
 and `removed = manifest[N−1] − manifest[N]` from `block_id` sets. Typed events are
@@ -508,7 +508,7 @@ opinion.**
 
 A block's `total_carry` is *wasted* to the extent the block was never useful.
 Usefulness is judged by four signals of decreasing provability. Each judgment is a
-row carrying its `method` and `confidence` (invariant §5):
+row carrying its `method` and `confidence` (rule §5):
 
 ```rust
 AgentEvent::BlockUsefulness {
@@ -686,7 +686,7 @@ This is the Stella-specific shape a generic OpenTelemetry export cannot produce:
 not just "model X cost $Y," but "the triage model's recalled context was 70%
 wasted while the worker's was 20%," and "the verifier and worker disagree on the
 worker's self-rating." That comparison is only possible because usefulness and
-self-rating are attributed per model-call coordinate (invariant §6).
+self-rating are attributed per model-call coordinate (rule §6).
 
 ---
 
@@ -1030,7 +1030,7 @@ or acting on it — the gate governs the latter.
 
 | User ask | Delivered by | Tier |
 | --- | --- | --- |
-| Optimal shape for one session, many models | §3 coordinate model + §6 invariant (every record carries the model coord) + §10 | A (coordinate + roster); comparative self-vs-verifier is B |
+| Optimal shape for one session, many models | §3 coordinate model + §6 rule (every record carries the model coord) + §10 | A (coordinate + roster); comparative self-vs-verifier is B |
 | LLM self-reflect and rate own performance | §11 (receipt-grounded, adjudicated against VerifierVerdict) | **B — gated on calibration** |
 | Capture memory writes + subsequent citations | §9 (`nod_…` join key: `ContextWrite.written` ↔ `memory_citations`) + §9.2 every injection | A (write/inject/cite join); "dead weight" verdict is B |
 | Tokens kept in context — useful vs unuseful | §8 cost-of-carry + labeled usefulness signals; §7 cache economics underneath | A (cost-of-carry + provable signals); inferred labels B |

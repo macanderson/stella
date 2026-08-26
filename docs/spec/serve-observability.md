@@ -102,17 +102,17 @@ That is the whole architecture. Everything below is detail.
 
 These are not preferences; each one has already rejected an obvious approach.
 
-1. **Invariant 3 — zero telemetry egress by default** (AGENTS.md). Nothing here
+1. **AGENTS.md #3 — zero telemetry egress by default.** Nothing here
    leaves the machine. Records go to stderr or an operator-chosen file; metrics
    are **pull**, over the same authenticated socket, never push. There is no
    sink that opens a connection. See §8 for the redaction discipline that keeps
    *content* out of records even locally.
-2. **Invariant 2 — no I/O in the engine.** Rules out any design that reaches
+2. **AGENTS.md #2 — no I/O in the engine.** Rules out any design that reaches
    into `stella-core`. It does not have to: see §7.
-3. **Invariant 4 — serde-first.** The event type crosses a crate boundary
+3. **AGENTS.md #4 — serde-first.** The event type crosses a crate boundary
    (`stella-serve` → its binary, and eventually the host), so it round-trips
    through `serde_json` with a test.
-4. **Invariant 5 — typed errors, no panics.** A sink that cannot write must
+4. **AGENTS.md #5 — typed errors, no panics.** A sink that cannot write must
    degrade, never panic. Losing a log line must not lose a turn.
 5. **The file-size ratchet.** `server.rs` is 1,257 lines against a `LIMIT` of
    1,500 (`scripts/check-file-size.sh`). ~240 lines of headroom, and rustfmt's
@@ -209,7 +209,7 @@ Two shape decisions worth stating:
 
 ## 5. Layer 2 — the `Observer` port
 
-Invariant 1's grain, applied to logging: ports, not direct dependencies.
+AGENTS.md #1's grain, applied to logging: ports, not direct dependencies.
 
 ```rust
 pub trait Observer: Send + Sync + 'static {
@@ -315,7 +315,7 @@ Four properties this buys, in the order the memory on this pattern prescribes:
    helpers nothing reached (`RequestRecord::route`, `request_id_for`) and
    refused to compile until they were deleted, so the module has no
    almost-used second path lying around for a future edit to reach for. The
-   *single-record* guarantee rests on rule 4, which is where it belongs.
+   *single-record* guarantee rests on AGENTS.md #4, which is where it belongs.
 4. **Prove it with a property, not examples.** §10 — and the property earned
    its keep: injecting the classic bug (skip the emit when nothing was written,
    i.e. forget the hangup path) fails it with `input of 0 byte(s) produced 0
@@ -400,13 +400,13 @@ pub struct TurnTally {
 }
 ```
 
-**[amended — not built, and deliberately so.]** This section originally also
+**[amended — not built.]** This section originally also
 planned individual `AgentEvent` records behind `STELLA_SERVE_LOG=debug`.
 Building it showed that to be a mistake: `AgentEvent::Text`, `TextDelta` and
 `Reasoning` carry model output verbatim, so those records would put
 prompt-adjacent content in a log file — and would make §8's no-content property
 *conditional on a verbosity flag*, which is the "safe unless you turn the knob"
-shape of invariant that fails in production. The tally supersedes it: aggregates
+shape of rule that fails in production. The tally supersedes it: aggregates
 answer the diagnostic questions (is this turn progressing? how many retries?)
 with no payload reaching a record, so the property holds unconditionally.
 
@@ -418,7 +418,7 @@ situation #930 lists — because a turn whose `steps` has not advanced while its
 
 ## 8. Redaction — content stays out, and it is proven
 
-Invariant 3's enforcement machinery (`crates/stella-store/src/content_free.rs`) guards
+AGENTS.md #3's enforcement machinery (`crates/stella-store/src/content_free.rs`) guards
 *egress*. Records here never egress, so that harness does not automatically
 apply. But "it stays on the box" is not a reason to put prompts in a log file:
 operators ship logs, and a log is the easiest accidental egress there is.
@@ -480,7 +480,7 @@ AGENTS.md requires a new dependency be argued rather than assumed:
    round-tripped, consumed by the TUI, the observatory and the journal. Adding
    `tracing` there yields a *parallel* stream that is less structured, is not
    serializable, and that no existing consumer reads. That is worse than the
-   status quo, not better, and it spends invariant 2's clean edge to get there.
+   status quo, not better, and it spends AGENTS.md #2's clean edge to get there.
 3. **The port makes it reversible for one file.** Deferring costs nothing later,
    because `TracingObserver` is additive by construction (§5).
 4. **The scale does not warrant it.** Eighteen event variants and one binary.
@@ -565,10 +565,10 @@ already exists — never `make file-size-update`.
 
 ---
 
-## 12. What this deliberately does not do
+## 12. What this does not do
 
 - **No engine changes.** `stella-core` gains nothing and loses nothing;
-  invariant 2 stays clean and the `tracing`-in-the-engine question stays
+  AGENTS.md #2 stays clean and the `tracing`-in-the-engine question stays
   unasked.
 - **No egress.** No sink dials out. `/v1/metrics` is pull, authenticated,
   same-socket, same token.

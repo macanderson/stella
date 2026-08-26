@@ -114,7 +114,7 @@ carrying a reason. It is not. Either the reason follows, in which case the
 word adds nothing to it, or no reason follows, in which case the word is
 standing in for one.
 
-- **Before:** This is deliberately a source scan rather than a runtime check.
+- **Before:** `This is deliberately a source scan rather than a runtime check.`
 - **After:** This is a source scan rather than a runtime check, because the
   defect is which call site was used, which no runtime check can see.
 

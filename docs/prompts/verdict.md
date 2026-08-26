@@ -72,7 +72,7 @@ You are an impartial verifier assessing whether a coding agent has fully met a s
 {"met": true|false, "reasoning": "why, in one or two sentences", "feedback": "if not met: the single most useful next action or evidence request"}
 ```
 
-The prompt deliberately names no individual tools: the verifier judges with
+The prompt names no individual tools: the verifier judges with
 whatever read-only surface the host actually offers, so the offered set can
 vary without the prompt drifting. The offered set is
 `VERIFIER_TOOL_ALLOWLIST` (`crates/stella-cli/src/agent/goal.rs`), pinned by a

@@ -48,7 +48,7 @@ FPS = 25  # 4 centiseconds per frame — GIF delays are integral hundredths
 # the CSS subset
 # ---------------------------------------------------------------------------
 #
-# Deliberately narrow: `animation` shorthand with a name, a duration in
+# Narrow: `animation` shorthand with a name, a duration in
 # seconds, `linear` or `steps(1, end)`, and `infinite`; `@keyframes` whose
 # selectors are comma-separated percentages; and the three properties the kit's
 # spinners animate — `opacity`, `transform` (translateX / scale), and a

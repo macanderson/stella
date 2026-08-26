@@ -13,7 +13,7 @@ file and line.
   with Zhou et al.'s 2026 survey and extracts concrete backlog considerations.
 
 - [**Stella: A Defensible Technology Position**](./stella-defensible-position.md)
-  — the capstone analysis. Identifies seven architectural invariants that make
+  — the capstone analysis. Identifies seven architectural rules that make
   Stella's design expensive to replicate and shows why their *combination* —
   not any single property — constitutes the moat. Covers ports-not-direct-dependencies,
   no-I/O-in-the-engine, the witness-test contract, BYOK + no-phone-home,

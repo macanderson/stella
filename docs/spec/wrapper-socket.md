@@ -44,7 +44,7 @@ That asymmetry is the whole design, and §3 argues it rather than assuming it.
 | Half | Crate | Why there and not elsewhere |
 |---|---|---|
 | The **wire contract** — request/response types for `before_turn` and `after_turn`, the evidence vocabulary, the verdict rule | `stella-plugin` | It is the plugin-facing contract, and `stella-plugin` is the plugin-contract crate: pure types and validation, `stella-protocol` its only workspace dependency. A non-Rust author needs exactly this crate's JSON shapes and nothing else, which is a property worth being able to state. |
-| The **trait** and the code that sequences the points | `stella-runtime` | `before_turn` performs recall and `after_turn` spawns processes. That is I/O, and invariant 2 forbids I/O in the engine (`doc:turn-loop-wrappers` §9.1). `stella-runtime` already owns engine assembly and reads no ambient environment by contract (`crates/stella-runtime/tests/no_ambient_reads.rs`). |
+| The **trait** and the code that sequences the points | `stella-runtime` | `before_turn` performs recall and `after_turn` spawns processes. That is I/O, and AGENTS.md #2 forbids I/O in the engine (`doc:turn-loop-wrappers` §9.1). `stella-runtime` already owns engine assembly and reads no ambient environment by contract (`crates/stella-runtime/tests/no_ambient_reads.rs`). |
 | `judge` and `again?` | `stella-runtime`, as free functions | They are synchronous, I/O-free and total. §4 is why they are not trait methods. |
 
 This adds one dependency edge: `stella-runtime → stella-plugin`. It is
@@ -152,7 +152,7 @@ for later stages to read.
 **May not:** run the loop itself, or reach for ambient authority. Every
 capability arrives in the request.
 
-**The invariant-7 constraint, and it is required.** Contributed context
+**The AGENTS.md #7 constraint, and it is required.** Contributed context
 rides as a *volatile* message **after** the byte-stable system-prompt prefix,
 never inside it. Prompt-cache hits are a feature, and a wrapper that could
 inject into the stable prefix would make every installed plugin a cost
@@ -188,7 +188,7 @@ never what they were, so `plugins/stella-research` re-derives search terms from
 the goal string, which is strictly weaker than questions produced by a model
 call that already read the goal *and* the task class.
 
-That gap is real and it is deliberately not closed yet, because **nothing
+That gap is real and it is not closed yet, because **nothing
 produces the questions**. The built-in triage stage that named them
 (`stella-pipeline`'s `parse_research_questions`) went with that crate in #3865,
 and the shipping door publishes `questions: 0` unconditionally
@@ -475,14 +475,14 @@ the real tree (#3892). A plugin author should know:
 
 What is still not covered: a process **killed** mid-fan-out leaks its
 worktrees, since the sweep that discards them runs at the end of a wrapped run
-(#2813 is that shape); and `stella fleet gc` deliberately cannot reclaim them,
+(#2813 is that shape); and `stella fleet gc` cannot reclaim them,
 because the substrate stays out of the `.stella/worktrees/` + `fleet/`
 namespace rather than borrow a sweeper that would then delete checkouts it did
 not create.
 
 ---
 
-## 7. What this design deliberately does not do
+## 7. What this design does not do
 
 - **It does not let a plugin emit a trace.** Plugins emit journal events in
   the `plugin.<id>.*` namespace; the trace is a fold
@@ -494,7 +494,7 @@ not create.
   wrapper names a role *intent*; the host resolves it against the user's BYOK
   providers, carves the budget, attaches gate/steering/hooks, runs the turn and
   settles once. For an out-of-process wrapper that is a JSON request on stdio
-  and **every model call is made by the host** — invariant 3, intact.
+  and **every model call is made by the host** — AGENTS.md #3, intact.
 - **It does not admit a second granularity.** Self-driving is an outer loop
   over whole runs, not a turn participant, and it becomes a *host* rather than
   a wrapper (`doc:pipeline-as-plugins` §10). Widening this socket to a second

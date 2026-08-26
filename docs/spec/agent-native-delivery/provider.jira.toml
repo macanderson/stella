@@ -6,7 +6,7 @@
 # built yet — this file is the target, and it exists so the §4 prose can be
 # read against a concrete artifact rather than a fragment.
 #
-# The example is deliberately a MESSY project, not a clean one: eleven
+# The example is a MESSY project, not a clean one: eleven
 # statuses, five issue types, two of them customer-invented, and three
 # mandatory create-screen fields Stella has no opinion about. A format that
 # only handles the tidy case is not a format.

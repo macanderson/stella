@@ -112,7 +112,7 @@ string alone. `WITNESS: no` was guessed with no way to see whether the
 workspace even *has* a test harness, and the chat-versus-task call had no
 evidence of what the workspace is.
 
-It rides in the volatile payload half deliberately: the listing changes per
+It rides in the volatile payload half: the listing changes per
 workspace, so putting it in the instruction block would destroy the
 byte-stability the split exists for.
 

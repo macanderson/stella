@@ -10,7 +10,7 @@ status: living
 enforcement half — the cross-surface capability matrix — ships with this
 document as the `stella-parity` crate and runs in `cargo test --workspace`.
 **Companion docs:** `docs/spec/serve-surface.md` (the API surface in
-detail), `AGENTS.md` (the numbered architectural invariants this document
+detail), `AGENTS.md` (the numbered architectural rules this document
 assumes).
 
 Stella is heading three places at once, and all three consume the same
@@ -36,7 +36,7 @@ honest, and the gaps between today's tree and the embedding story.
 ## 1. The machine: one engine, layered ports, two front doors
 
 Every arrow points at a dependency. The essential property (AGENTS.md
-invariant 1) is that arrows only ever point *down*: the decision core is
+AGENTS.md #1) is that arrows only ever point *down*: the decision core is
 plain synchronous logic over owned data, and everything that touches the
 world — models, processes, files, sockets — arrives through a port trait
 implemented above it.
@@ -205,7 +205,7 @@ an API route, or an agent-facing CLI behavior means updating the matrix in
 the same PR. `Deferred` is an honest and expected answer. The matrix's job
 is to make sure a human wrote the answer down where a test keeps it true.
 
-What this deliberately does **not** do yet: sweep the CLI's clap tree into
+What this does **not** do yet: sweep the CLI's clap tree into
 the matrix (the CLI's 34 commands are mostly offline introspection; mapping
 them all is noise), or verify *behavioral* equivalence between surfaces
 (that needs the harness described in G8). Both are declared follow-ups, not
@@ -281,7 +281,7 @@ never picks a location (ADR 0013).
 
 So the `Checkpoint` format has two production writers, and what remains is
 the *replay* direction: no route accepts a checkpoint, `Engine::resume_turn`
-has zero production callers, and serve deliberately does not re-drive a turn
+has zero production callers, and serve does not re-drive a turn
 on restart — a resumed turn's first act is a reverse request only a host can
 answer. A host that reads back a resume point today must continue it by
 driving `stella-engine` in its own process. That is a real capability for a

@@ -381,7 +381,7 @@ that the socket is the existing hook surface. The first and third clauses hold.
 The middle one needs a location, and it cannot be `stella-core`:
 
 `before_turn` does recall and research; `after_turn` runs a test command or an
-oracle process. That is I/O, and invariant #2 forbids I/O in the engine. A
+oracle process. That is I/O, and AGENTS.md #2 forbids I/O in the engine. A
 socket defined in core is either a trait core never calls — which is fine but
 is not a socket — or a trait core awaits, which puts the process spawn inside
 the engine.
@@ -444,7 +444,7 @@ What makes that enforceable rather than aspirational:
   `witness_author`); the host resolves the intent against the user's BYOK
   providers, carves the budget, attaches gate/steering/hooks, runs the turn, and
   settles once. For an out-of-process wrapper this is a JSON request on stdio
-  and every model call is made by the host — invariant #3 and #3245 §3, intact.
+  and every model call is made by the host — AGENTS.md #3 and #3245 §3, intact.
 - **This was gated on #3274 slice 2 — it has since landed, with a correction
   worth carrying forward.** `TurnCapabilities` (#3387) now exists in
   `crates/stella-core/src/driver/capabilities.rs`, and

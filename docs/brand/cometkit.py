@@ -14,7 +14,7 @@ it. `docs/brand/logo/svg/` is normative for shape; the paths here are those
 files' path data, and `check_svg_parity` in `build_marks.py` fails the build if
 the two ever drift.
 
-Rasterising goes through `rasterize`, which is deliberately the only place in
+Rasterising goes through `rasterize`, which is the only place in
 the kit that spawns a renderer. Commit 10781aa31 regenerated all 52 PNGs with a
 rasteriser that emitted torn scanlines and channel-separated garbage, and the
 damage reached the remote because the exports had no builder to run and no
@@ -75,7 +75,7 @@ BRAND_ON_LIGHT = BRAND
 BRAND_DEEP = "#141413"  # ink
 INK = "#0A0A0C"  # bg — the canvas
 PAPER = "#F4F1EA"  # text — primary text on dark
-# Pure white, and deliberately not the `paper` token `#FFFCF5`: an asset is
+# Pure white, and not the `paper` token `#FFFCF5`: an asset is
 # composited onto whatever page carries it, and white is the ground that makes
 # no assumption about which. It is the one value here that is not a token.
 PAPER_BG = "#FFFFFF"
@@ -403,7 +403,7 @@ def verify_png(path: Path) -> None:
 def png_opaque_colours(path: Path) -> dict[tuple[int, int, int], int]:
     """Every fully-opaque RGB value in an 8-bit RGBA PNG, with its pixel count.
 
-    The half `verify_png` deliberately could not do. Its docstring called
+    The half `verify_png` could not do. Its docstring called
     judging the pixels "the reviewer's job", which was honest about the gap and
     wrong about who could close it: a colour-profile drift moves the gold by a
     few points in a direction no reviewer can see on an uncalibrated panel, and
@@ -489,7 +489,7 @@ def _unfiltered_scanlines(
 def png_rgba_pixels(png: bytes) -> tuple[int, int, bytes]:
     """An 8-bit non-interlaced RGB/RGBA PNG's pixels, normalised to RGBA.
 
-    Deliberately minimal — colour types 2 and 6 are every PNG this kit
+    Minimal — colour types 2 and 6 are every PNG this kit
     produces. Anything else raises rather than being silently accepted,
     matching `rgbaPixels` in `website/src/lib/brand-parity.test.ts`, which is
     the consumer this normalisation exists to satisfy.

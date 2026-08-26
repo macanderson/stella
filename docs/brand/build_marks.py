@@ -11,7 +11,7 @@ nearby. Commit 10781aa31 did exactly that and committed 52 torn PNGs.
     python3 docs/brand/build_marks.py --check     # validate, write nothing
     python3 docs/brand/build_marks.py --sync-site # ...and mirror into website/
 
-`--check` deliberately does not compare bytes. librsvg's output shifts between
+`--check` does not compare bytes. librsvg's output shifts between
 releases, so a byte comparison would fail the build on a Homebrew upgrade while
 the art was still correct — an alarm that cries wolf gets silenced, and a
 silenced guard is how the corruption travelled. What it asserts instead is what
@@ -64,7 +64,7 @@ class Export:
         return PNG_DIR / f"{self.stem}-{self.width}w.png"
 
 
-# The `-adaptive` SVGs are deliberately absent: they switch on a media query,
+# The `-adaptive` SVGs are absent: they switch on a media query,
 # and a PNG cannot. Exporting one would freeze it to whichever branch librsvg
 # happened to take, which is a mark that is wrong on half of all surfaces.
 LOGO_EXPORTS: list[Export] = [

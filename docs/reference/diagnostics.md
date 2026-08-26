@@ -128,7 +128,7 @@ The agent changed a file: `kind` (create/modify/delete), a `path` classified rat
 
 A work-tree measurement was attempted and failed, so this turn's file ledger is empty for reasons that have nothing to do with what the turn wrote. Read it as the absence of an answer: `AgentEvent::FileChange` and the `files_touched` rows for this reading are missing, and their emptiness is evidence of nothing.
 
-`reason` classifies the underlying `StoreError` — `io` (the dedicated git index or a journal path could not be read or written, the common case since the measurement is `git add -A` plus `git write-tree`), `other` (an invariant check with no branch of its own, including a `write-tree` that named no tree), `sqlite`, `corrupt`, `schema`, `serde`, or `unknown` for a variant this build's `stella-store` did not have. The message itself carries the path and git's stderr and stays off this plane.
+`reason` classifies the underlying `StoreError` — `io` (the dedicated git index or a journal path could not be read or written, the common case since the measurement is `git add -A` plus `git write-tree`), `other` (a rule check with no branch of its own, including a `write-tree` that named no tree), `sqlite`, `corrupt`, `schema`, `serde`, or `unknown` for a variant this build's `stella-store` did not have. The message itself carries the path and git's stderr and stays off this plane.
 
 The turn is unaffected — measurement is observability, and a turn that ended is not made less ended by an unmeasurable tree — so the action is to look at the workspace's `.stella-journal` store rather than at the run. Repeated records mean every turn of the session is reporting an empty edit footprint; `store.db`'s `tool_calls` table still has what the file tools named, which is where a reader attributes the turn from instead.
 
@@ -202,7 +202,7 @@ Every retry for a model call failed: `attempts` tries on turn `turn`, and `retry
 - **Fields:** `seq`, `attempt`
 <!-- facts:end -->
 
-A model call failed and is being retried (`attempt` counts from the first retry). The provider's error prose is deliberately absent (§5.3); a cluster of these against one provider is rate limiting or an outage, and `agent.provider.fallback` may follow.
+A model call failed and is being retried (`attempt` counts from the first retry). The provider's error prose is absent (§5.3); a cluster of these against one provider is rate limiting or an outage, and `agent.provider.fallback` may follow.
 
 ### `agent.policy.decision`
 
@@ -535,7 +535,7 @@ A clause in `STELLA_LOG` (or `--log-filter`) did not parse and was ignored. Fiel
 - **Fields:** built at runtime; see the emit site
 <!-- facts:end -->
 
-The process panicked. Carries the panic's `file`, `line`, and `column` (a location in stella's own source, through the reviewed hatch) — and deliberately not the panic message, which routinely interpolates runtime content (§5.2 has no crash exception). Written into the crash ring dump; the human-readable message went to stderr. This is the record to attach to a bug report.
+The process panicked. Carries the panic's `file`, `line`, and `column` (a location in stella's own source, through the reviewed hatch) — and not the panic message, which routinely interpolates runtime content (§5.2 has no crash exception). Written into the crash ring dump; the human-readable message went to stderr. This is the record to attach to a bug report.
 
 ### `diag.ring.dumped`
 

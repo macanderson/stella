@@ -57,7 +57,7 @@ big-bang cutover becomes incremental transfer. The owner **ratified it on
 2026-07-26** (issue #711), settling its second open question in the same act —
 `node`, `edge`, and `embedding` are a derived index and never transfer
 authority, so `lineage_id` lands on `memory` and `episode` only. Its first open
-question (whether the backfill ever becomes mandatory) is deliberately left
+question (whether the backfill ever becomes mandatory) is left
 open; nothing before Phase 3 forces it.
 
 | # | Title | Status |

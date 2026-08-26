@@ -65,7 +65,7 @@ Two files per task lived under `crates/stella-pipeline/tests/fixtures/golden/`:
 - `<task_id>.manifest.json` — `task_id`, a one-line `description`, the
   `source`, and `event_count`.
 
-`event_count` was not decoration. `parse_jsonl` deliberately tolerates a torn
+`event_count` was not decoration. `parse_jsonl` tolerates a torn
 final line (L-T1) — correct for a live reader recovering from a crashed writer,
 and exactly wrong for a committed fixture, where it would silently hand back a
 recording one event short and weaken every assertion made against it. The count
@@ -77,7 +77,7 @@ turned that into a loud `GoldenError::Truncated`.
   (`GoldenError::Recording`) — this is what a foreign wire format produces;
 - a manifest whose `task_id` disagrees with the file it was loaded as
   (`GoldenError::TaskIdMismatch`);
-- a recording that violates the protocol's own structural invariants
+- a recording that violates the protocol's own structural rules
   (`GoldenError::NotWellFormed`). A golden is the yardstick other runs are
   measured against; an ill-formed one would license ill-formed runs.
 
@@ -147,7 +147,7 @@ overlap is inverted from what a golden replay needs:
 | `stage` | No | Carries a free-text `label`; the stage *kind* is dropped entirely. `AgentEvent::Stage` needs a typed `StageKind`. The two vocabularies also differ: the reference has `evaluate`/`enhance`/`route`/`revise`, this protocol has `ScopeReview`/`Witness`/`Verify`/`Reflect`/`ContextWrite`. |
 | `text` | **Yes** | — |
 | `reasoning` | **Yes** | — |
-| `tool` (start/end) | No | No `call_id` on either phase, so `validate_stream`'s tool-pairing invariant is not merely unmet — it is *unrepresentable*. |
+| `tool` (start/end) | No | No `call_id` on either phase, so `validate_stream`'s tool-pairing rule is not merely unmet — it is *unrepresentable*. |
 | `result` | No | The stream terminates with `result`; this protocol terminates with `complete`, which `validate_stream` requires to be last. |
 
 The two kinds that already parse (`text`, `reasoning`) are exactly the ones
@@ -200,7 +200,7 @@ public OSS repo's CI can never regenerate a reference fixture. The policy
   by whoever can run the reference engine, adapted through the versioned
   adapter above, and checked in like any other fixture.
 - **CI re-validates, never regenerates.** The loader's gates (manifest count,
-  structural invariants, provenance kind) run on every load, so a committed
+  structural rules, provenance kind) run on every load, so a committed
   reference golden is continuously proven well-formed even though it cannot
   be reproduced downstream.
 - **Refresh is attributed, not automated.** A refreshed recording lands as an

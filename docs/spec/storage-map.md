@@ -463,7 +463,7 @@ written (nothing downstream breaks); the storage tables are the richer model
 layered beside them. `graph_nodes`/`graph_edges` in `stella-store` remain
 reserved and untouched — this feature does not adopt dead scaffolding.
 
-Rebuild invariant: `rm .stella/private/codegraph.db` followed by a mount reproduces
+Rebuild rule: `rm .stella/private/codegraph.db` followed by a mount reproduces
 the structural index byte-for-byte from source + manifest. Anything that
 would fail that test belongs in the manifest instead.
 
@@ -488,7 +488,7 @@ purpose: gross amount charged, in the currency named by `currency`.
 boundary of table: refund state lives in `refunds`, not here.
 ```
 
-Cards deliberately include the parent chain's intent sentences — a field card
+Cards include the parent chain's intent sentences — a field card
 must be findable from the query "where do we store how much a customer was
 charged", which shares no tokens with `amount`. Under the default
 `HashEmbedder` (character trigrams) intents already help; under the tracked

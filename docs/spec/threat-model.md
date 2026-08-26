@@ -21,10 +21,10 @@ whether the set is *complete*, because none of them enumerates the assets or
 the adversary.
 
 `SECURITY.md` is a disclosure policy plus an in-scope/out-of-scope list.
-`docs/spec/enterprise-authority-telemetry.md` is an invariants list scoped to
-the managed plane. `AGENTS.md` invariant 3 covers telemetry egress. This
+`docs/spec/enterprise-authority-telemetry.md` is a rules list scoped to
+the managed plane. AGENTS.md #3 covers telemetry egress. This
 document is the missing middle: assets, adversaries, boundaries, and the
-attack paths that cross them — including the ones Stella deliberately does not
+attack paths that cross them — including the ones Stella does not
 defend against.
 
 The most useful section is probably [Residual risk](#residual-risk). A threat
@@ -118,7 +118,7 @@ over the config default, in either direction, for one launch. See
 `AuthorityPolicy` (`settings/authority.rs:37`) is an org-managed ceiling read
 only from the managed scope, which itself is loaded through a hardened path
 (`O_NOFOLLOW`, single-link regular file, root-or-euid owner, no group/other
-write). Its semantics are deliberately one-directional: `off` denies; `on`
+write). Its semantics are one-directional: `off` denies; `on`
 *permits a later explicit grant but never grants by itself*.
 
 `apply_tool_ceiling` re-denies every tool key the managed ceiling denies after
@@ -208,7 +208,7 @@ This is the boundary most weakened off Unix — see
 
 ### B7 — Local execution data → network
 
-Zero telemetry egress by default is an `AGENTS.md` invariant with a real
+Zero telemetry egress by default is an `AGENTS.md` rule with a real
 enforcement mechanism: `crates/stella-store/src/content_free.rs` holds a reviewed
 allowlist of hub columns plus a sentinel harness every egress encoder
 registers with, and adding a column or an encoder key fails `make gate` until
@@ -343,7 +343,7 @@ silently `chmod`-ing changes the mode of a file Stella did not create.
 
 ### R9 — No secret detector exists
 
-#696 deliberately did *not* ship `AgentEvent::redacted()` or
+#696 did *not* ship `AgentEvent::redacted()` or
 `AttachmentKind::is_inlined_verbatim()`, on the grounds that both would
 advertise a guarantee nothing enforces. Consequence: a secret the *user* pastes
 into a prompt, or that appears in a tool result, is stored in

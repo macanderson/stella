@@ -805,7 +805,7 @@ implement this pipeline:
 10. **Validate and evaluate:** Run contract validators, capture user feedback and task outcomes, and attach the result to the trace.
 11. **Learn safely:** Capture outcomes and citations; update state; create durable records only through explicit promotion rules.
 
-### 14.1 Compiler invariants
+### 14.1 Compiler rules
 
 - No unauthorized item enters a frame.
 - No expired, superseded, or out-of-scope item is treated as active.

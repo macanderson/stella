@@ -15,7 +15,7 @@ parity test is the check on it rather than the process.
 
 The mapping below is the same one the test's `PAIRS` table encodes, renames
 included (`icon-maskable-{192,512}.png` → `maskable-{192,512}.png`). One file
-is deliberately NOT a byte-copy: `src/app/favicon.ico` is the kit's pixels
+is NOT a byte-copy: `src/app/favicon.ico` is the kit's pixels
 re-encoded to RGBA (`cometkit.ico_as_rgba`), because Next's `ico` decoder
 rejects the kit's opaque RGB PNGs and fails the production build on them. The
 re-encode is compared by *pixels* before writing, so a compressor that emits

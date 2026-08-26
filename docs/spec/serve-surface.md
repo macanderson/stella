@@ -38,7 +38,7 @@ to rather than by having its transport pulled. `StepOutcome::Continue` is
 also the seam where a durable runner persists `state.to_checkpoint()` — and
 as of #1198 this server does, when the embedder gives it somewhere to put
 one. See "Durability" below for what that means and, just as importantly,
-what it deliberately does not.
+what it does not.
 
 **Date:** 2026-07-20, revised 2026-07-30. **Owner:** Mac Anderson.
 **Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
@@ -434,7 +434,7 @@ the engine is structured as a headless library, not a terminal program:
 
 | Gap | Evidence | Fixed by |
 |---|---|---|
-| ~~**Bin-only crate.**~~ **CLOSED (#971 phase 0).** `stella-cli` is still bin-only, but the wiring it duplicated across seven call sites now lives in **`stella-runtime`**, which any surface can link. Its invariant — no `std::env`, no `current_dir()`, every ambient switch an explicit `RuntimeSpec` field — is what makes N sessions with N roots and N trust postures sound in one process, and is enforced executably by `crates/stella-runtime/tests/no_ambient_reads.rs`. | was: `agent.rs`, `agent/goal.rs`, `command_deck.rs`, `fleet_cmd.rs`, `subsession.rs` each re-assembling the stack. | Done. |
+| ~~**Bin-only crate.**~~ **CLOSED (#971 phase 0).** `stella-cli` is still bin-only, but the wiring it duplicated across seven call sites now lives in **`stella-runtime`**, which any surface can link. Its rule — no `std::env`, no `current_dir()`, every ambient switch an explicit `RuntimeSpec` field — is what makes N sessions with N roots and N trust postures sound in one process, and is enforced executably by `crates/stella-runtime/tests/no_ambient_reads.rs`. | was: `agent.rs`, `agent/goal.rs`, `command_deck.rs`, `fleet_cmd.rs`, `subsession.rs` each re-assembling the stack. | Done. |
 | ~~**Whole-loop API only.**~~ **CLOSED (#971 phase 1).** **`stella-engine`** exposes `run_step(&mut TurnState) -> StepOutcome`, a versioned serde `Checkpoint`, and a `CancelToken` read at the same safe boundary as the pause gate and budget enforcer. `run_turn` is now a loop over `run_step`, so there is one code path — `driver.rs` shrank rather than grew. **Not yet consumed by `stella-serve`.** | was: `run_turn` owning the whole `for step in 0..max_steps` loop. | Done; wiring into serve is the next increment. |
 | **No transport / no server.** The event channel and control ports exist but are only wired to stdin/TUI. No process hosts them over a socket; no graceful shutdown. | Observatory is read-only; `run_turn` future is `!Send`. | **`stella-serve`** — HTTP/SSE + reverse-tool-RPC sidecar, thread-per-session. |
 
@@ -717,7 +717,7 @@ ADR-033 §7 names).
    on the facade.
    **Correction:** `ProviderError::Cancelled` is **not** dead — `stella-serve`'s
    `RemoteProvider` produces it on a live path. That crate landed after the
-   sentence claiming otherwise was written. The token deliberately does not
+   sentence claiming otherwise was written. The token does not
    produce it: the token stops at a step boundary, whereas `Cancelled` belongs
    to a call already in flight.
 7. ⬜ `complete_observed` overrides for OpenAI/Gemini/Vertex/Bedrock adapters so

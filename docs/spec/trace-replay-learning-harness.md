@@ -14,7 +14,7 @@ engagement, with **no model calls at all**.
 **Status:** **Proposed.** Implements epic #2304.
 **Date:** 2026-08-08. **Owner:** Mac Anderson.
 **Companion:** the paid with-records bench arm, which measures *outcome*; this
-document measures *formation* and deliberately claims nothing about outcome
+document measures *formation* and claims nothing about outcome
 (§10).
 
 ---
@@ -22,7 +22,7 @@ document measures *formation* and deliberately claims nothing about outcome
 ## 1. Why this can exist at all — the learner census
 
 Every learner in the tree already sits below the model boundary or behind a
-port. That is invariant 1 ("ports, not direct dependencies") and invariant 2 ("no I/O in
+port. That is AGENTS.md #1 ("ports, not direct dependencies") and AGENTS.md #2 ("no I/O in
 the engine") paying out: replay needs **no new architecture**, only a driver and
 a clock.
 
@@ -110,7 +110,7 @@ next reader does not re-audit it.
 
 ## 3. The trace format
 
-Versioned and serde-first (invariant 4: round-trips through `serde_json`
+Versioned and serde-first (AGENTS.md #4: round-trips through `serde_json`
 byte-for-byte, with a round-trip test).
 
 ```rust
@@ -307,7 +307,7 @@ Two further caveats:
   `custom-title`. The adapter reads `user`/`assistant` for the transcript stub
   and `result` for the outcome flag; the rest is harness bookkeeping.
 
-### 7.1 The privacy gate — hard, per invariant 3
+### 7.1 The privacy gate — hard, per AGENTS.md #3
 
 - **Local-only, opt-in.** A subcommand or example that must be invoked
   explicitly; never a default path, never reached by `cargo test`.
@@ -376,7 +376,7 @@ parallel once 2 lands.
 
 ---
 
-## 10. What this deliberately does not do
+## 10. What this does not do
 
 - **It does not measure outcome.** Whether learned context makes Terminal-Bench
   tasks faster, cheaper, or more likely to pass is the companion paid bench arm.
@@ -508,7 +508,7 @@ harness earning its keep before it shipped.
 - **`TraceTurn` gained `forget` and `removed_files`.** Assertions 5 and 6 are
   unreachable without them, and both model real events in an engagement.
 - **Assertion 6 asserts against `retirement::retired_ids`, not the store's live
-  nodes.** Retirement deliberately does not write `node.superseded_at`, because
+  nodes.** Retirement does not write `node.superseded_at`, because
   staying retrievable by id is what separates retirement from forgetting. A test
   asserting "the memory is gone" fails against a working sweep, and one
   asserting "the count went down" re-specifies retirement as deletion.

@@ -48,7 +48,7 @@ question, and it is the sentence the rest of the design leans on:
 | `repository` | `<repo>/.stella/rules/` | yes | yes |
 | `organization` | `<repo>/.stella/rules/` of a repository the organization owns | yes | yes |
 
-`organization` deliberately has no third location. An organization-scoped record
+`organization` has no third location. An organization-scoped record
 is published *through* a repository the organization owns, which is the same
 substrate with a different audience — inventing an org-wide file location would
 require a central service, and the solo path must work without one (§18).
@@ -150,7 +150,7 @@ injects regardless of task matching — so the record loads and carries a
 `RecordFinding::UnknownTask`.
 
 Adding a task name is an edit to `stella_core::records::KNOWN_TASKS` and a line
-in this ADR, deliberately: a vocabulary that grows without a decision is an open
+in this ADR: a vocabulary that grows without a decision is an open
 vocabulary with extra steps.
 
 ## Decision 6 — `review_every` is the record-surface field; `review_after` stays
@@ -216,7 +216,7 @@ months.
 - A new field still needs a decision. This ADR settles the fields that exist; it
   does not open a process for adding more without one.
 
-## What this deliberately does not decide
+## What this does not decide
 
 - **Whether `.claude/rules/` remains a live read path.** ADR 0011 left this open
   and it is still a behavioural question, not a schema one.

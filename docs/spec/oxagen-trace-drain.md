@@ -41,7 +41,7 @@ construction** or **local-only**:
 
 The full trace **does** exist, completely, on every machine that runs Stella.
 It has two representations (§2). What does not exist is a pipe that carries it
-off the box, because `AGENTS.md` invariant #3 ("zero telemetry egress by
+off the box, because AGENTS.md #3 ("zero telemetry egress by
 default") makes building one an explicit, reviewed decision rather than a
 feature increment.
 
@@ -211,7 +211,7 @@ without registering a guard fails the gate.
 >
 > The correct shape is a **separate, declared egress class** —
 > content-bearing, consent-gated — with its own guard asserting its own
-> invariants (that it never runs without explicit consent, that redaction ran,
+> rules (that it never runs without explicit consent, that redaction ran,
 > that the endpoint is the enrolled one). That is an architecture decision for
 > a maintainer, not an implementation detail, and §12 records it as an open
 > question rather than deciding it here.
@@ -347,7 +347,7 @@ The fit is exact and needs no migration. Two decisions ride on it:
 > Collapsing to `cache_read_tokens` loses the write cost, which is the half
 > that is actually *billed* on Anthropic and the half a cache-efficacy
 > dashboard needs. Stella treats provider cache posture as a declared parity
-> axis for exactly this reason (`AGENTS.md` invariant #8, `CachePosture`).
+> axis for exactly this reason (AGENTS.md #8, `CachePosture`).
 > **Add `cache_write_tokens` and `cache_miss_tokens` columns** rather than
 > flattening. `retries` likewise has no home and is a genuine reliability
 > signal.
@@ -589,7 +589,7 @@ exist. The trace schema in §6–§8 should be the same for both, so a
 
 ## 10. Privacy, redaction, and the audit posture
 
-The whole point of the drain is to ship what invariant #3 currently forbids, so
+The whole point of the drain is to ship what AGENTS.md #3 currently forbids, so
 the compensating controls are not optional decoration.
 
 1. **Consent is explicit, per-workspace, and revocable.** The existing drain's
@@ -633,16 +633,16 @@ Oxagen's `apps/mcp` already ships an enormous tool surface (a-to-z:
 `agent`, `graph`, `ontology`, `schema`, `skill`, `sandbox`, `eval`, `billing`,
 `iam`, …). **Do not point Stella at all of it.**
 
-Stella's tool doctrine (`CLAUDE.md`; `AGENTS.md` invariant #9) is that the
+Stella's tool doctrine (`CLAUDE.md`; AGENTS.md #9) is that the
 model chooses a tool from its `description` alone, and that the built-in
-surface is deliberately tiny — one shell, the file CRUD quartet, one unified
+surface is tiny — one shell, the file CRUD quartet, one unified
 search, plus a coordination half. A few hundred additional tool descriptions in
 the prompt would dominate the context budget and degrade tool choice on every
 turn, and it would do so *silently* — the failure mode is worse decisions, not
 an error.
 
 **Recommendation: a curated `stella` MCP profile** — a named subset Oxagen
-exposes specifically for coding agents, single-purpose per invariant #9 (a
+exposes specifically for coding agents, single-purpose per AGENTS.md #9 (a
 parameter may scope an operation, never select one).
 
 A defensible starting set:
@@ -690,14 +690,14 @@ judged against a declared `VerdictRule`. That is the natural home for:
 That last point is worth weighing against §9's v1 seriously: it may be that the
 right answer is *an Oxagen plugin*, not a new drain format in Stella's tree —
 which would keep the content-bearing egress out of the reference implementation
-entirely, and leave invariant #3 intact and unqualified. §12.
+entirely, and leave AGENTS.md #3 intact and unqualified. §12.
 
 ---
 
 ## 12. Open questions — decisions a maintainer owns
 
 1. **Does the content-bearing egress live in Stella's tree at all?** §11.2's
-   plugin route keeps invariant #3 unqualified and puts the trace drain in
+   plugin route keeps AGENTS.md #3 unqualified and puts the trace drain in
    Oxagen's repository where its consent story already exists. §9's v1 route
    makes it a first-class Stella feature with better reliability machinery.
    These are genuinely different products, and this is the decision everything

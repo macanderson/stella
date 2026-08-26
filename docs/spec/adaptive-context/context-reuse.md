@@ -521,7 +521,7 @@ affects another provider's.
 
 **When to verify** is host policy, not protocol. A host **SHOULD** re-verify
 held frames at turn boundaries once they are older than the freshness window it
-is willing to tolerate. This is deliberately informative: `verify_frames` holds
+is willing to tolerate. This is informative: `verify_frames` holds
 no state, caches no frames, and tracks no turns — the protocol's job is to
 answer the question when asked, not to decide when to ask it.
 

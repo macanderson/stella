@@ -66,7 +66,7 @@ previous one,
 which is the quieter half of the same failure — an asset with no builder does
 not get rebuilt when its source moves.
 
-`--check` deliberately does **not** compare bytes. librsvg's output shifts
+`--check` does **not** compare bytes. librsvg's output shifts
 between releases, so a byte comparison would go red on a Homebrew upgrade while
 the art was still correct, and a guard that cries wolf gets ignored. Each one
 asserts what a broken build actually violates instead: that every file exists,

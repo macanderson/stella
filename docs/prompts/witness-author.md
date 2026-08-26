@@ -142,12 +142,12 @@ multi-byte characters would put the marker's byte index mid-character and panic
 — taking the whole run down over a witness author that explained itself in
 Japanese.
 
-## What is deliberately absent
+## What is absent
 
 - **The authoring snapshot's path.** The prompt names the *project* root, not
   the snapshot directory, which carries a pid and a sequence number. Naming the
   snapshot would put per-run noise into a prompt that wants to cache
-  (invariant 7), and it is not the root the goal's paths are written against
+  (AGENTS.md #7), and it is not the root the goal's paths are written against
   anyway (#2130).
 - **A project-test-command anchor.** Structurally impossible: the stage is only
   reachable when `config.test_command` is `None`. The probed runner set is the

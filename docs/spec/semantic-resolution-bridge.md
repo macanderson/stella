@@ -76,7 +76,7 @@ strategy (`crates/stella-mcp/tests/`).
   no-daemon ethos and "no new dependencies casually" (`AGENTS.md`).
 - **Determinism:** answers vary with server version, toolchain, and cargo
   metadata state. Tool output is volatile context (never the byte-stable
-  prompt prefix), so invariant 7 survives — but witness tests can't pin real
+  prompt prefix), so AGENTS.md #7 survives — but witness tests can't pin real
   server output; they need a fake LSP fixture server, and per-server quirks
   (rust-analyzer's readiness notifications, tsserver's non-standard protocol
   framing) each cost adapter code.
@@ -84,7 +84,7 @@ strategy (`crates/stella-mcp/tests/`).
   seconds to minutes at GB-scale RSS. First-query latency violates the L-C1
   "never add latency to a query" discipline unless warmed at session start —
   which spends the memory whether or not a resolution query ever arrives.
-- **Invariant fit:** clean on "ports, not direct dependencies" (it *is* an adapter
+- **Rule fit:** clean on "ports, not direct dependencies" (it *is* an adapter
   behind a trait; `stella-core` never sees it); hostile to dependency-light /
   no-daemon unless gated behind a tool switch like the shell and web tools
   (`tools.bash: "off"` withholds the shell — registered by default in every
@@ -129,7 +129,7 @@ take, given the data `stella-graph` already has (file paths + languages, raw
    relative, a bare leading segment matched against workspace member names;
    walk segments while they name modules and emit a **file-level** edge to the
    last module file. External crates stay unresolved — today's correct
-   behavior. File-level edges deliberately skip `pub use` re-export chasing:
+   behavior. File-level edges skip `pub use` re-export chasing:
    an edge to the re-exporting file is still a true dependency edge, and
    item-level identity is precisely the semantics this option does not claim.
 
@@ -215,7 +215,7 @@ speculative.
 | `toml` already a `stella-graph` dependency | `crates/stella-graph/Cargo.toml:30` |
 | Opt-in gating precedent: bash/web off by default in every scope | `crates/stella-tools/src/bash.rs:1-12`; `crates/stella-cli/src/settings.rs:552`; `AGENTS.md` (`.stella/` table) |
 | Child-process JSON-RPC lifecycle + fixture-server test precedent | `crates/stella-mcp/src/client.rs`, `crates/stella-mcp/tests/` |
-| Invariants weighed: ports-not-direct-dependencies, no I/O in engine, byte-stable prompts, no casual dependencies | `AGENTS.md` §"Architecture: ports, not direct dependencies", §"Code style" |
+| Rules weighed: ports-not-direct-dependencies, no I/O in engine, byte-stable prompts, no casual dependencies | `AGENTS.md` §"Architecture: ports, not direct dependencies", §"Code style" |
 | Workspace scale used for latency framing: 376 `.rs` files, ~214k lines | `fd -e rs` count at `fef8e4b` |
 | ONNX embedder is a separate tracked follow-up | `crates/stella-context/src/lib.rs:40`, `embed.rs:5-18` |
 

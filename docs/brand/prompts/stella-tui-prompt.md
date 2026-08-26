@@ -58,7 +58,7 @@ generated from `design/tokens/stella-tokens.json` and clamped by the rules in
 
 Light-terminal adaptation: probe background via OSC 11 (fallback `$COLORFGBG`, config override `theme = auto|dark|light`). On light backgrounds swap gold→brand-deep for any colored TEXT and for the mark glyphs, and muted→`#61676F` (241). The stop to swap to, and the measured ratio that justifies it, are SPEC 2's — the values this brief used to quote were v4.0's and no longer describe any pair in the system.
 
-Budget: gold appears in at most ~5 places per screen — the lockup, the prompt star, the spinner, one primary action, one key stat. Everything else is default text and muted. Gold is the signal, never the surface: no gold backgrounds except the single primary button/toast. Green and red exist only for semantic success/diff/error — never decoration. Warnings are amber (`⚠ lowercase message`) and are deliberately NOT the accent — a verdict may never be told from chrome; errors are red (`✕ message`); never color-only — always pair glyph + text.
+Budget: gold appears in at most ~5 places per screen — the lockup, the prompt star, the spinner, one primary action, one key stat. Everything else is default text and muted. Gold is the signal, never the surface: no gold backgrounds except the single primary button/toast. Green and red exist only for semantic success/diff/error — never decoration. Warnings are amber (`⚠ lowercase message`) and are NOT the accent — a verdict may never be told from chrome; errors are red (`✕ message`); never color-only — always pair glyph + text.
 
 ## the spinner — assemble, don't spin
 

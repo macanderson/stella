@@ -50,7 +50,7 @@ future PR is reviewable against them:
    different glyph *and* different hue, per the deck's glyph-over-hue rule.
    A plugin's self-report is a claim; host-run evidence is a fact; the
    deck's one job is never to let the first impersonate the second.
-3. **The finish-invariant holds.** A turn that ends without a verdict
+3. **The finish-rule holds.** A turn that ends without a verdict
    closes the panel in a terminal state — never left reading as in-flight
    on a dead turn (the #2007 class of bug).
 4. **Snapshot coverage.** The panel ships with deck snapshots covering at
@@ -67,7 +67,7 @@ mirrored it; the contrast-table argument for keeping it was circular (the
 tables existed to check a token nothing rendered). Removed with its
 `palette::ORACLE_RED` / `ORACLE_RED_INK` values, fallback entries, and
 paper remap. If Decision 2's panel wants a pre-flip red, it reintroduces
-one deliberately, with a consumer attached — a token earns its place by
+one, with a consumer attached — a token earns its place by
 being painted, not by waiting.
 
 ## Decision 4 — the `Proof`/`Verdict` consumer rows say `RecordedOnly`

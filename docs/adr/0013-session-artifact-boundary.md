@@ -124,7 +124,7 @@ never asked to mean anything off this machine.
 "local-first state, BYOK credentials, ... and zero telemetry egress by default",
 with exactly two explicit, opt-in egress paths named
 (`website/content/docs/principles/index.mdx` § "What this buys you,
-concretely", and invariant 4 under § "The seven invariants, briefly"). A sync
+concretely", and rule 4 under § "The seven rules, briefly"). A sync
 feature built *into* Stella would carve a third. A sync feature built *on top of* an artifact API
 does not: producing an artifact is a local operation that writes bytes the
 caller asked for, and Stella still uploads nothing.
@@ -182,7 +182,7 @@ implementation finds itself defining a diff format, it has taken a wrong turn.**
 Two consequences follow, and both matter.
 
 **The artifact is a delta, not a tree.** `record` stages named paths
-individually and never `git add -A`, deliberately, because sweeping the tree
+individually and never `git add -A`,, because sweeping the tree
 "would make the history a lie about what the agent did"
 (`work_journal.rs:181-183`); gitignored paths are filtered out entirely
 (`work_journal.rs:204`). So the pack contains exactly the files the agent
@@ -200,7 +200,7 @@ Stella has no standing to make, and it would move files the agent never read.
 whatever tree happens to be there. The bundle — not `Checkpoint::to_json` — is
 the unit of the API.
 
-**The CLI sidecar is deliberately excluded from v1.** `journal.jsonl`,
+**The CLI sidecar is excluded from v1.** `journal.jsonl`,
 `history.json` and `queue.json` (`crates/stella-store/src/journal.rs:50-54`) are not
 in the artifact:
 
@@ -258,7 +258,7 @@ argument on the replay call, not a fallback the API takes when verification
 fails. An overridden replay records the override in the resulting session's
 first commit message, so a divergent history says why it diverged.
 
-**What the fingerprint deliberately does not claim.** It covers exactly the
+**What the fingerprint does not claim.** It covers exactly the
 paths the session touched, because that is all `remember_observed` records. So
 it cannot false-positive on churn elsewhere in the repository, and it cannot
 detect a tree that differs *only* in files the session never read. That is the
@@ -423,7 +423,7 @@ from anything above, and each would need its own decision:
   not deferred.
 - **Any first-party upload path.** Producing an artifact writes bytes locally.
   Nothing in this design sends anything anywhere, and the two named egress paths
-  in `principles/index.mdx` (invariant 4) remain the only two.
+  in `principles/index.mdx` (rule 4) remain the only two.
 - **A portable workspace identity.** `workspace_local`'s id stays machine-local
   and stays out of the artifact's identity story. It is not "not yet portable";
   it is not portable.

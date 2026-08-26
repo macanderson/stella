@@ -130,7 +130,7 @@ did not cost this property. The caller resolves `agents.plan` over
 `agents.plan.prompt` still arrives here carrying the worker's — and an operator
 who wants the planner steered separately now has somewhere to say so.
 
-The conversational fast path deliberately does *not* take this row. Its whole
+The conversational fast path does *not* take this row. Its whole
 job is to replace the engineering persona with `CONVERSATIONAL_SYSTEM_PROMPT`
 ("no tools, no code, no plan, no test"), and prepending the operator's worker
 prose would re-arm exactly what that replacement suppresses — on a turn that
