@@ -119,8 +119,8 @@ pub(super) fn spawn_mcp_connect(
 ///
 /// A path git cannot restore — an untracked file, a repo-less workspace — is
 /// reported with git's own words rather than guessed at: the row's
-/// `git-backed` label states the mechanism, and the mechanism's refusal is
-/// the honest answer.
+/// `git-backed` label states the mechanism, so the mechanism's refusal is
+/// the answer to report.
 pub(super) fn service_undo_delete(
     input: &WorkspaceInput,
     workspace: &str,
