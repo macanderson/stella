@@ -116,7 +116,10 @@ macro_rules! log_error {
             // a macro nobody uses. `vec_init_then_push` is unavoidable here —
             // the field list is assembled from two independent repetitions, so
             // it cannot be one `vec!` literal.
-            #[allow(clippy::vec_init_then_push)]
+            #[expect(
+                clippy::vec_init_then_push,
+                reason = "the field list is assembled from two independent macro repetitions, so it cannot be one `vec!` literal"
+            )]
             fn to_field(&self) -> $crate::FieldValue {
                 #[allow(unused_mut, unused_variables)]
                 match self {

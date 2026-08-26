@@ -729,7 +729,10 @@ fn seed_receipt(store: &Store, execution_id: i64, call: &ToolCall, output: &Tool
 /// One ledger append through the real write API, with the record's own
 /// identity, hash and timestamps — the shape every production writer uses
 /// (`crates/stella-cli/src/memory/observations.rs::append_observation` et al).
-#[allow(clippy::too_many_arguments)] // mirrors LedgerAppend's own field list
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors LedgerAppend's own field list"
+)]
 fn append_lifecycle(
     store: &ContextStore,
     kind: &str,

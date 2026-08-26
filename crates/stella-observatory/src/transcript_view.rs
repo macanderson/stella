@@ -338,7 +338,10 @@ fn fmt_tok(n: u64) -> String {
     if n < 1_000 {
         n.to_string()
     } else {
-        #[allow(clippy::cast_precision_loss)] // Display only; ±1 token is invisible at 0.1k.
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "display only; ±1 token is invisible at 0.1k"
+        )]
         let thousands = n as f64 / 1_000.0;
         format!("{thousands:.1}k")
     }
@@ -349,7 +352,7 @@ fn fmt_ms(ms: u64) -> String {
     if ms < 1_000 {
         format!("{ms}ms")
     } else {
-        #[allow(clippy::cast_precision_loss)] // Display only.
+        #[expect(clippy::cast_precision_loss, reason = "display only")]
         let secs = ms as f64 / 1_000.0;
         format!("{secs:.1}s")
     }
@@ -360,7 +363,7 @@ fn micros_from_usd(usd: f64) -> u64 {
     if !usd.is_finite() || usd <= 0.0 {
         return 0;
     }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Guarded above; saturates.
+    #[expect(clippy::cast_possible_truncation, reason = "guarded above; saturates")]
     let micros = (usd * 1_000_000.0).round() as i128;
     u64::try_from(micros.clamp(0, i128::from(u64::MAX))).unwrap_or(u64::MAX)
 }

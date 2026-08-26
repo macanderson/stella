@@ -9,9 +9,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::error::ContextError;
 
 /// Insert or update an episode (idempotent by `public_id`). Returns rowid.
-// The parameters are the episode row's own columns for a plain SQL insert;
-// a struct would just move the same list up one level.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameters are the episode row's own columns for a plain SQL insert; a struct would just move the same list up one level"
+)]
 pub(crate) fn insert_episode(
     conn: &Connection,
     public_id: &str,

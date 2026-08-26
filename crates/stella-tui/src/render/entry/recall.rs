@@ -118,7 +118,10 @@ const GAP_W: usize = 2;
 // for a field to be dropped, which is precisely how `latency_ms` and
 // `used_ann_index` reached no surface at all. `model/recall.rs`'s `Projected`
 // alias declines the same invitation for the same reason.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the paragraph above: these are exactly TranscriptEntry::ContextRecall's fields plus the two render inputs and the sink, and a parameter struct would be the third place a field can be dropped"
+)]
 pub(super) fn recall_lines(
     frames: &[RecalledFrameRow],
     tokens: u32,

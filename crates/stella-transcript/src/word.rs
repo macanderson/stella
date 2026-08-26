@@ -320,7 +320,10 @@ fn saturated(spans: &[Span], line: &str) -> bool {
         .filter(|s| s.changed)
         .map(|s| s.text.chars().count())
         .sum();
-    #[allow(clippy::cast_precision_loss)] // Line lengths are far below f64's exact-integer range.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "line lengths are far below f64's exact-integer range"
+    )]
     let fraction = changed as f64 / total as f64;
     fraction > SATURATION
 }

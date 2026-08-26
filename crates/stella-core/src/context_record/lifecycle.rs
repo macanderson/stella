@@ -235,7 +235,10 @@ impl ProposalRecord {
     /// hand it a grade it prefers. `None` is a proposal with no supporting
     /// observations at all, which stores no grade — absent evidence, not weak
     /// evidence.
-    #[allow(clippy::too_many_arguments)] // content-addressed constructor: every field feeds the hash, so a builder would just hide the same list
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "content-addressed constructor: every field feeds the hash, so a builder would just hide the same list"
+    )]
     pub fn new(
         proposal_kind: RecordProposalKind,
         status: RecordProposalStatus,

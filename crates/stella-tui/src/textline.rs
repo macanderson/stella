@@ -235,7 +235,10 @@ pub fn provider_fallback(from: &str, to: &str, reason: &str) -> EventLine {
     }
 }
 
-#[allow(clippy::too_many_arguments)] // mirrors the event's metering fields 1:1
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors the event's metering fields 1:1"
+)]
 pub fn step_usage(
     step: usize,
     model: &str,
