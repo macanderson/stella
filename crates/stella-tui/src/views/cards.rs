@@ -112,6 +112,15 @@ pub(crate) fn marker(selected: bool) -> Span<'static> {
 
 /// Paint `lines` into `inner`, tinting the rows in `selected_rows` with the
 /// selection background (the style half of the marker+tint convention).
+///
+/// More rows than `inner` is tall are **folded, and the fold is admitted** —
+/// never silently dropped off the bottom. [`card_area`] caps a card's height
+/// at the frame, so any card can be handed more rows than it can draw; a
+/// twenty-step plan on a short terminal used to render its first few steps
+/// and say nothing about the rest (#4776). The window follows the selection,
+/// which is the same defect seen from the other side: `plan_sel` could point
+/// at a step that was never drawn, and `x skip` then acted on a row the
+/// reader could not see.
 pub(crate) fn render_body(
     lines: Vec<Line<'static>>,
     selected_row: Option<usize>,
@@ -124,7 +133,91 @@ pub(crate) fn render_body(
     {
         line.style = line.style.bg(token::HL);
     }
+    let height = inner.height as usize;
+    if height > 0 && lines.len() > height {
+        lines = fold_to(lines, selected_row, height);
+    }
     Paragraph::new(lines).render(inner, buf);
+}
+
+/// One row of a fold admission, dim so it reads as chrome rather than content.
+fn fold_row(text: String) -> Line<'static> {
+    Line::from(Span::styled(text, Style::new().fg(token::MUTED)))
+}
+
+/// Window `lines` down to exactly `height` rows around `selected`, spending a
+/// row at each cut end to say how much was cut there.
+///
+/// The admission costs a row, which is why the count is taken *after* the
+/// window is chosen: the marker replaces a content row, so that row is hidden
+/// too and has to be counted among the hidden. Getting this backwards yields
+/// an off-by-one that only shows up at the exact boundary, which is the one
+/// place nobody looks.
+fn fold_to(
+    lines: Vec<Line<'static>>,
+    selected: Option<usize>,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let total = lines.len();
+    // One row cannot hold both a row and the admission that it is hiding
+    // others. The admission wins: a single arbitrary row with nothing saying
+    // it is arbitrary is the failure this whole function is about.
+    if height == 1 {
+        return vec![fold_row(format!("… {total} rows, none fit"))];
+    }
+
+    let sel = selected.unwrap_or(0).min(total.saturating_sub(1));
+    // Centred on the selection, clamped to the ends so the last page is full
+    // rather than trailing blank rows.
+    let mut offset = sel.saturating_sub(height / 2).min(total - height);
+
+    // Whether an end is cut decides whether that row is a marker, which
+    // decides where content can sit, which decides the offset — so the three
+    // are settled together rather than in one pass. A single nudge is not
+    // enough and gets this exactly wrong at the end of a long list: moving
+    // the window down to free the bottom marker can newly cut the top, and
+    // the selection lands on the marker it was moved away from.
+    //
+    // Each step moves `offset` strictly toward the selection, so it settles.
+    // The bound is there in case a future edit breaks that.
+    for _ in 0..3 {
+        let lo = offset + usize::from(offset > 0);
+        let hi = offset + height - usize::from(offset + height < total);
+        if lo >= hi {
+            // No room for content at all — the collapse below owns this.
+            break;
+        }
+        if sel < lo {
+            offset -= lo - sel;
+        } else if sel >= hi {
+            offset = (offset + (sel - hi + 1)).min(total - height);
+        } else {
+            break;
+        }
+    }
+
+    let cut_above = offset > 0;
+    let cut_below = total > offset + height;
+    // Two admissions in a two-row window leave nowhere for the row the reader
+    // is looking at, so the window would be nothing but chrome. Below that
+    // floor the two collapse into one count and the selection keeps its row:
+    // the reader must always be able to see the thing they selected.
+    if height <= usize::from(cut_above) + usize::from(cut_below) {
+        return vec![
+            lines[sel].clone(),
+            fold_row(format!("… {} of {total} hidden", total - 1)),
+        ];
+    }
+
+    let mut out: Vec<Line<'static>> = lines[offset..offset + height].to_vec();
+    if cut_above {
+        out[0] = fold_row(format!("↑ {} more above", offset + 1));
+    }
+    if cut_below {
+        let below = total - (offset + height);
+        out[height - 1] = fold_row(format!("↓ {} more below", below + 1));
+    }
+    out
 }
 
 /// A mini fraction bar over `width` cells: `filled/total` in the given
@@ -204,6 +297,114 @@ pub(crate) fn truncate_cols(text: &str, max_cols: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rows(n: usize) -> Vec<Line<'static>> {
+        (0..n).map(|i| Line::from(format!("step {i}"))).collect()
+    }
+
+    fn texts(lines: &[Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    /// The property `plan_rail.rs::an_overlong_plan_folds_its_tail_and_admits_it`
+    /// carried until #4686 deleted it: too many rows fold, and the fold says
+    /// so. It came back as #4776, on the card that replaced the rail.
+    #[test]
+    fn an_overlong_body_folds_its_tail_and_admits_it() {
+        let out = fold_to(rows(20), None, 6);
+        assert_eq!(out.len(), 6, "the fold fits the height it was given");
+        let text = texts(&out);
+        assert!(
+            text.last().is_some_and(|row| row.contains("more below")),
+            "the tail is admitted rather than dropped: {text:?}"
+        );
+    }
+
+    /// The count includes the row the marker itself displaced. Twenty rows in
+    /// a window of six shows rows 0..=4 and spends row 5 on the admission, so
+    /// fifteen are hidden — not fourteen.
+    #[test]
+    fn the_fold_counts_the_row_its_own_marker_displaced() {
+        let text = texts(&fold_to(rows(20), None, 6));
+        assert_eq!(text[4], "step 4", "five content rows precede the marker");
+        assert_eq!(text[5], "↓ 15 more below", "{text:?}");
+    }
+
+    /// The other half of #4776: a selection past the fold used to be styled
+    /// on a row that was never drawn, so `x skip` acted on something invisible.
+    #[test]
+    fn the_window_follows_a_selection_past_the_fold() {
+        let text = texts(&fold_to(rows(40), Some(30), 7));
+        assert!(
+            text.iter().any(|row| row == "step 30"),
+            "the selected row is inside the window: {text:?}"
+        );
+        assert!(text[0].contains("more above"), "{text:?}");
+        assert!(
+            text.last().is_some_and(|row| row.contains("more below")),
+            "{text:?}"
+        );
+    }
+
+    /// A marker on the selected row would show the fold and hide the thing
+    /// the reader had chosen, which is the original defect with extra steps.
+    #[test]
+    fn a_marker_never_lands_on_the_selection() {
+        for sel in 0..40 {
+            for height in 2..10 {
+                let text = texts(&fold_to(rows(40), Some(sel), height));
+                let want = format!("step {sel}");
+                assert!(
+                    text.contains(&want),
+                    "selection {sel} fell on a marker at height {height}: {text:?}"
+                );
+            }
+        }
+    }
+
+    /// The last page is full rather than trailing blank rows: a window
+    /// clamped to the end still draws `height` rows.
+    #[test]
+    fn a_selection_at_the_end_still_fills_the_window() {
+        let out = fold_to(rows(20), Some(19), 6);
+        assert_eq!(out.len(), 6);
+        let text = texts(&out);
+        assert_eq!(text[5], "step 19", "{text:?}");
+        assert!(text[0].contains("more above"), "{text:?}");
+    }
+
+    /// One row cannot carry both content and the admission that it is hiding
+    /// the rest, so it carries the admission.
+    #[test]
+    fn a_single_row_window_admits_that_nothing_fits() {
+        let text = texts(&fold_to(rows(9), None, 1));
+        assert_eq!(text, vec!["… 9 rows, none fit".to_string()]);
+    }
+
+    /// `fold_to` being correct buys nothing if `render_body` stops calling it,
+    /// and every test above would still pass. This one paints.
+    #[test]
+    fn render_body_paints_the_admission_rather_than_dropping_the_tail() {
+        let area = Rect::new(0, 0, 24, 4);
+        let mut buf = Buffer::empty(area);
+        render_body(rows(20), None, area, &mut buf);
+        let painted: String = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+        assert!(
+            painted.contains("more below"),
+            "the card admits what it cut: {painted:?}"
+        );
+    }
 
     /// `card_frame` draws the same chrome family as every hand-rolled
     /// overlay: a rounded border, and hints on the bottom rule rather than
