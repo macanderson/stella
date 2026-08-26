@@ -159,7 +159,7 @@ pub use package::{
 };
 pub use program::{SignalValues, StageProgram};
 pub use progressive::{ProgressiveResolver, StageDecision};
-pub use runtime::{PLUGIN_DIR_PLACEHOLDER, Runtime, expand_plugin_dir};
+pub use runtime::{PLUGIN_DIR_PLACEHOLDER, ProcessBlock, Runtime, expand_plugin_dir};
 pub use wire::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
     Continuation, Correction, EvidenceProvenance, EvidenceSet, FlipObservation, HOOK_FIELDS,

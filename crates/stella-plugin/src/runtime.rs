@@ -72,7 +72,44 @@ pub fn expand_plugin_dir(text: &str, dir: &Path) -> String {
     text.replace(PLUGIN_DIR_PLACEHOLDER, &dir.to_string_lossy())
 }
 
+/// Which block declared a process, so a refusal names the table to edit.
+///
+/// Two blocks describe a process in the same words — [`Runtime`] serves both —
+/// and a rule broken in one of them must not report the other's name. The
+/// alternative was a second copy of the rules under `[driver.process]`, which
+/// is how one copy grows a check the other silently does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessBlock {
+    /// `[runtime]` — the process a plugin is inside a turn.
+    Runtime,
+    /// `[driver.process]` — the process a plugin is while driving Stella.
+    DriverProcess,
+}
+
+impl ProcessBlock {
+    /// The TOML table, spelled as a manifest writes it.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Runtime => "[runtime]",
+            Self::DriverProcess => "[driver.process]",
+        }
+    }
+}
+
+impl std::fmt::Display for ProcessBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The `[runtime]` block — how the host starts this plugin's process.
+///
+/// Also the `[driver.process]` block, which is the identical decision for the
+/// process a driver *is*: an argv rather than a shell string, a timeout, and an
+/// environment allowlist. One type rather than two, because a second copy would
+/// be a second set of rules to keep identical — and [`ProcessBlock`] is what
+/// keeps a refusal naming the block the author actually wrote.
 ///
 /// Modelled directly on [`crate::OracleCommand`]: the oracle
 /// block already settled that a plugin names a program as an argv list and
@@ -137,20 +174,24 @@ impl Runtime {
 
     /// The cross-field rules, kept beside the type they govern exactly as
     /// [`crate::consent`]'s and [`crate::wrapper`]'s are.
-    pub(crate) fn validate(&self) -> Result<(), ManifestError> {
+    ///
+    /// `block` is only ever the name in the message: the rules are the same in
+    /// both blocks, and a process that would not start is not more startable
+    /// for having been declared under a different table.
+    pub(crate) fn validate(&self, block: ProcessBlock) -> Result<(), ManifestError> {
         if self.argv.is_empty() {
-            return Err(ManifestError::EmptyRuntimeArgv);
+            return Err(ManifestError::EmptyProcessArgv { block });
         }
         if self.argv.iter().any(|arg| arg.trim().is_empty()) {
-            return Err(ManifestError::BlankRuntimeArg);
+            return Err(ManifestError::BlankProcessArg { block });
         }
         if self.timeout_secs == 0 {
-            return Err(ManifestError::ZeroRuntimeTimeout);
+            return Err(ManifestError::ZeroProcessTimeout { block });
         }
         let mut seen = std::collections::HashSet::with_capacity(self.env.len());
         for name in &self.env {
             if name.is_empty() {
-                return Err(ManifestError::EmptyRuntimeEnvName);
+                return Err(ManifestError::EmptyProcessEnvName { block });
             }
             // A name that is not a name can never match a variable, so the
             // allowlist entry is dead — and a dead entry in a security
@@ -159,10 +200,16 @@ impl Runtime {
             // platform; surrounding whitespace is the same defect wearing a
             // subtler spelling (`" PATH"` looks granted and matches nothing).
             if name.contains('=') || name.contains('\0') || name.trim() != name {
-                return Err(ManifestError::InvalidRuntimeEnvName { name: name.clone() });
+                return Err(ManifestError::InvalidProcessEnvName {
+                    block,
+                    name: name.clone(),
+                });
             }
             if !seen.insert(name) {
-                return Err(ManifestError::DuplicateRuntimeEnv { name: name.clone() });
+                return Err(ManifestError::DuplicateProcessEnv {
+                    block,
+                    name: name.clone(),
+                });
             }
         }
         Ok(())
@@ -271,16 +318,16 @@ mod tests {
     #[test]
     fn argv_and_timeout_bounds_match_the_oracle_command_they_are_modelled_on() {
         let empty = parse(&format!("{OBSERVER}argv = []\ntimeout_secs = 5")).unwrap_err();
-        assert!(matches!(empty, ManifestError::EmptyRuntimeArgv));
+        assert!(matches!(empty, ManifestError::EmptyProcessArgv { .. }));
 
         let blank = parse(&format!(
             "{OBSERVER}argv = [\"python3\", \" \"]\ntimeout_secs = 5"
         ))
         .unwrap_err();
-        assert!(matches!(blank, ManifestError::BlankRuntimeArg));
+        assert!(matches!(blank, ManifestError::BlankProcessArg { .. }));
 
         let zero = parse(&format!("{OBSERVER}argv = [\"python3\"]\ntimeout_secs = 0")).unwrap_err();
-        assert!(matches!(zero, ManifestError::ZeroRuntimeTimeout));
+        assert!(matches!(zero, ManifestError::ZeroProcessTimeout { .. }));
     }
 
     /// A dead allowlist entry reads to its author as a granted one, so each
@@ -301,8 +348,8 @@ mod tests {
             assert!(
                 matches!(
                     err,
-                    ManifestError::EmptyRuntimeEnvName
-                        | ManifestError::InvalidRuntimeEnvName { .. }
+                    ManifestError::EmptyProcessEnvName { .. }
+                        | ManifestError::InvalidProcessEnvName { .. }
                 ),
                 "{why} must be refused, got {err:?}"
             );
@@ -312,7 +359,7 @@ mod tests {
             "{OBSERVER}argv = [\"node\"]\ntimeout_secs = 5\nenv = [\"PATH\", \"PATH\"]"
         ))
         .unwrap_err();
-        assert!(matches!(dupe, ManifestError::DuplicateRuntimeEnv { .. }));
+        assert!(matches!(dupe, ManifestError::DuplicateProcessEnv { .. }));
     }
 
     /// A `none`-grade content bundle is never invoked at any point, so a

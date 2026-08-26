@@ -8,6 +8,13 @@
 # no `[oracle]` and no `[wrapper]`: none of them would be true. Stella never
 # starts this program — a person does, and then it starts Stella.
 #
+# Stella CAN start a driver, since #3783: a `[driver.process]` block names the
+# program and `stella plugin drive <name>` opens one session against it. This
+# package still declares none, because there is no program here to name — see
+# WHAT THIS FILE IS NOT below. The absence is now itself disclosed at install
+# ("is not started by Stella"), so a reader can tell this declaration from a
+# driver the host will spawn.
+#
 # WHAT THIS FILE IS FOR. The run playbook's D-3 settles the authority
 # question: making the loop a plugin RELOCATES the authority it already holds
 # as a shell script running as you, and grants nothing new. The requirement

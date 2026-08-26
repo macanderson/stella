@@ -51,7 +51,7 @@ use crate::package::{
     McpContribution, RecordContribution, SkillContribution, ToolContribution,
     validate_contributions,
 };
-use crate::runtime::Runtime;
+use crate::runtime::{ProcessBlock, Runtime};
 use crate::wire::WrapperPoint;
 use crate::wrapper::{StageName, Wrapper};
 
@@ -648,6 +648,13 @@ impl PluginManifest {
                 Some(0) => return Err(ManifestError::ZeroDriverMaxCalls),
                 _ => {}
             }
+            // The process rules are `[runtime]`'s, and the grade check is
+            // again absent for the same reason: a driver's process is started
+            // outside every turn, so no standing inside one could be required
+            // of it (#3783).
+            if let Some(process) = &driver.process {
+                process.validate(ProcessBlock::DriverProcess)?;
+            }
         }
 
         if grant.hooks.contains(&HookEvent::Stop) && !participation.includes(Participation::Arbiter)
@@ -750,7 +757,7 @@ impl PluginManifest {
             if !participation.includes(Participation::Observer) {
                 return Err(ManifestError::RuntimeRequiresObserver { participation });
             }
-            runtime.validate()?;
+            runtime.validate(ProcessBlock::Runtime)?;
         }
 
         if let Some(roles) = &self.roles {
@@ -1332,5 +1339,95 @@ mod tests {
             parse("name = \"x\"\n[driver]\ncalls = [\"sweep_audit\"]\nmax_calls = 0").unwrap_err(),
             ManifestError::ZeroDriverMaxCalls
         ));
+    }
+
+    /// A driver names its own process, and `[runtime]` could not have carried
+    /// it: the same argv under `[runtime]` is refused at `participation =
+    /// "none"`, the only grade a plugin that never stands inside a turn can
+    /// carry (#3783).
+    ///
+    /// The second assertion is why the first is not enough: on its own it
+    /// would pass against a design that reused `[runtime]` and quietly
+    /// required a driver to overstate its in-turn standing to gain a process.
+    #[test]
+    fn a_driver_declares_its_own_process_and_runtime_could_not_have_carried_it() {
+        const PROCESS: &str = "argv = [\"python3\", \"${plugin_dir}/main.py\"]\n\
+                               timeout_secs = 600\nenv = [\"HOME\"]";
+
+        let driving = parse(&format!(
+            "name = \"x\"\n[loop]\nparticipation = \"none\"\n\n[driver]\n\
+             calls = [\"backlog_next\"]\n\n[driver.process]\n{PROCESS}"
+        ))
+        .expect("a driver's process loads at grade `none`");
+        let process = driving
+            .driver
+            .expect("the [driver] block is parsed")
+            .process
+            .expect("the [driver.process] block is parsed");
+        assert_eq!(process.argv[0], "python3");
+        assert_eq!(process.timeout_secs, 600);
+        assert_eq!(process.env, vec!["HOME".to_string()]);
+
+        // The same program under `[runtime]`, at the same grade, does not load.
+        assert!(matches!(
+            parse(&format!(
+                "name = \"x\"\n[loop]\nparticipation = \"none\"\n\n[runtime]\n{PROCESS}"
+            ))
+            .unwrap_err(),
+            ManifestError::RuntimeRequiresObserver {
+                participation: Participation::None
+            }
+        ));
+
+        // Absent is not empty here either: a grant with no process is a driver
+        // Stella cannot start, which `plugins/stella-selfdriving` relies on.
+        assert!(
+            parse("name = \"x\"\n[driver]\ncalls = [\"backlog_next\"]")
+                .expect("a processless driver loads")
+                .driver
+                .expect("the block is parsed")
+                .process
+                .is_none()
+        );
+    }
+
+    /// `[runtime]`'s rules, reported against the block the author actually
+    /// wrote. A refusal that named `[runtime]` would send them to a table
+    /// their manifest does not contain.
+    #[test]
+    fn a_driver_process_defect_names_the_driver_block() {
+        let err = parse(
+            "name = \"x\"\n[driver]\ncalls = [\"backlog_next\"]\n\n\
+             [driver.process]\nargv = []\ntimeout_secs = 5",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ManifestError::EmptyProcessArgv {
+                block: ProcessBlock::DriverProcess
+            }
+        ));
+        assert!(err.to_string().starts_with("[driver.process]"), "{err}");
+
+        let dead = parse(
+            "name = \"x\"\n[driver]\n\n[driver.process]\n\
+             argv = [\"node\"]\ntimeout_secs = 5\nenv = [\" PATH\"]",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            dead,
+            ManifestError::InvalidProcessEnvName {
+                block: ProcessBlock::DriverProcess,
+                ..
+            }
+        ));
+
+        // And `[runtime]`'s own refusals still name `[runtime]`.
+        let runtime = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"observer\"\n\n\
+             [runtime]\nargv = []\ntimeout_secs = 5",
+        )
+        .unwrap_err();
+        assert!(runtime.to_string().starts_with("[runtime]"), "{runtime}");
     }
 }

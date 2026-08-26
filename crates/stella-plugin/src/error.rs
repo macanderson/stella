@@ -9,6 +9,7 @@ use crate::driver::DriverCall;
 use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
 use crate::package::ContributionKind;
+use crate::runtime::ProcessBlock;
 use crate::wire::WrapperPoint;
 use crate::wrapper::{HostStage, Signal, SignalKind, StageName};
 
@@ -485,42 +486,59 @@ pub enum ManifestError {
         participation: Participation,
     },
 
-    /// `[runtime] argv` was empty — there is no program to run. The
-    /// [`Self::EmptyOracleArgv`] rule, applied to the plugin's own process.
-    #[error("[runtime] argv must name a program: it is empty")]
-    EmptyRuntimeArgv,
+    /// A process block's `argv` was empty — there is no program to run. The
+    /// [`Self::EmptyOracleArgv`] rule, applied to a plugin's own process.
+    #[error("{block} argv must name a program: it is empty")]
+    EmptyProcessArgv {
+        /// Which block declared it.
+        block: ProcessBlock,
+    },
 
-    /// A `[runtime] argv` element was blank. A blank program name spawns
-    /// nothing and a blank argument is one the author did not mean to pass.
-    #[error("[runtime] argv contains a blank entry")]
-    BlankRuntimeArg,
+    /// A process block's `argv` had a blank element. A blank program name
+    /// spawns nothing and a blank argument is one the author did not mean to
+    /// pass.
+    #[error("{block} argv contains a blank entry")]
+    BlankProcessArg {
+        /// Which block declared it.
+        block: ProcessBlock,
+    },
 
-    /// `[runtime] timeout_secs = 0` — the host would kill the process before
-    /// it ran.
-    #[error("[runtime] timeout_secs must be at least 1")]
-    ZeroRuntimeTimeout,
+    /// A process block's `timeout_secs = 0` — the host would kill the process
+    /// before it ran.
+    #[error("{block} timeout_secs must be at least 1")]
+    ZeroProcessTimeout {
+        /// Which block declared it.
+        block: ProcessBlock,
+    },
 
-    /// A `[runtime] env` entry was the empty string, which names no variable.
-    #[error("[runtime] env contains an empty variable name")]
-    EmptyRuntimeEnvName,
+    /// A process block's `env` entry was the empty string, which names no
+    /// variable.
+    #[error("{block} env contains an empty variable name")]
+    EmptyProcessEnvName {
+        /// Which block declared it.
+        block: ProcessBlock,
+    },
 
-    /// A `[runtime] env` entry could never match a variable — it carried an
-    /// `=`, a NUL, or surrounding whitespace. Dead in an allowlist is worse
+    /// A process block's `env` entry could never match a variable — it carried
+    /// an `=`, a NUL, or surrounding whitespace. Dead in an allowlist is worse
     /// than absent: it reads to its author as granted.
     #[error(
-        "[runtime] env entry `{name}` is not an environment variable name, so \
-         it can never match one"
+        "{block} env entry `{name}` is not an environment variable name, so it can never match one"
     )]
-    InvalidRuntimeEnvName {
+    InvalidProcessEnvName {
+        /// Which block declared it.
+        block: ProcessBlock,
         /// The entry that names no variable.
         name: String,
     },
 
-    /// `[runtime] env` named the same variable twice. Always an editing
-    /// mistake, and deduplicating silently would hide it — the
+    /// A process block's `env` named the same variable twice. Always an
+    /// editing mistake, and deduplicating silently would hide it — the
     /// [`Self::DuplicateHook`] rule for the other allowlist in this manifest.
-    #[error("[runtime] env declares `{name}` more than once")]
-    DuplicateRuntimeEnv {
+    #[error("{block} env declares `{name}` more than once")]
+    DuplicateProcessEnv {
+        /// Which block declared it.
+        block: ProcessBlock,
         /// The variable named twice.
         name: String,
     },
