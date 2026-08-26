@@ -2,7 +2,6 @@
 
 @AGENTS.md
 
-b
 ## Hard rules for every session
 
 - **The bar is reference-grade Rust, and there is no second bar.** This
