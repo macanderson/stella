@@ -96,6 +96,22 @@ fn snapshot_ref(session: &str) -> String {
     format!("refs/stella/{session}/tree")
 }
 
+/// The journal key a lineage-tip refname belongs to, or `None` for a refname
+/// this module did not write in that shape.
+///
+/// Both tips, [`session_ref`]'s `head` and [`snapshot_ref`]'s `tree`, because
+/// the two lineages are independent: a session that only ever snapshotted the
+/// work tree has a `tree` ref and no `head`, so reading `head` alone would
+/// leave it invisible to both readers below. A turn mark points at an ancestor
+/// and says nothing a tip does not, which is what the `/` rejection excludes.
+fn journal_key_of(refname: &str) -> Option<&str> {
+    let key = refname.strip_prefix("refs/stella/").and_then(|rest| {
+        rest.strip_suffix("/head")
+            .or_else(|| rest.strip_suffix("/tree"))
+    })?;
+    (!key.is_empty() && !key.contains('/')).then_some(key)
+}
+
 /// The reserved directory stella's own records live under, so a blob can
 /// never collide with a real workspace path — and so a per-turn diff can
 /// filter the records back out ([`WorkJournal::changed_paths_at_turn`]).
@@ -770,6 +786,36 @@ impl WorkJournal {
         Ok(report)
     }
 
+    /// Every journal key in this store whose name begins with `prefix`,
+    /// sorted, each listed once.
+    ///
+    /// A key is a namespace, and a caller that mints keys by composing one —
+    /// `stella-cli`'s deck derives a worker lane's key from the lead session's
+    /// (#3233) — needs to read back the ones it already minted. Every ref this
+    /// module writes lives under its key, so the refs *are* that record; until
+    /// this, nothing could ask them for it. [`Self::recorded_sessions`] is the
+    /// retention half of the same question and stays private, because an age
+    /// cutoff is [`Self::prune`]'s business alone.
+    ///
+    /// This module learns no composition rule. A prefix is whatever the caller
+    /// says it is, so the convention that separates a session from a lane
+    /// stays in the crate that mints it.
+    ///
+    /// An empty result is a real answer — nothing recorded under that prefix —
+    /// and is not distinguished from a store with no history at all.
+    pub fn recorded_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        let listing = self.git(&["for-each-ref", "--format=%(refname)", "refs/stella/"])?;
+        let mut keys: Vec<String> = listing
+            .lines()
+            .filter_map(|line| journal_key_of(line.trim()))
+            .filter(|key| key.starts_with(prefix))
+            .map(str::to_string)
+            .collect();
+        keys.sort();
+        keys.dedup();
+        Ok(keys)
+    }
+
     /// Every session this store holds history for, oldest tip first, paired
     /// with that tip's committer time.
     ///
@@ -796,15 +842,9 @@ impl WorkJournal {
             let Some((at, refname)) = line.trim().split_once(' ') else {
                 continue;
             };
-            let Some(session) = refname.strip_prefix("refs/stella/").and_then(|rest| {
-                rest.strip_suffix("/head")
-                    .or_else(|| rest.strip_suffix("/tree"))
-            }) else {
+            let Some(session) = journal_key_of(refname) else {
                 continue;
             };
-            if session.is_empty() || session.contains('/') {
-                continue;
-            }
             let Ok(at) = at.parse::<i64>() else {
                 continue;
             };

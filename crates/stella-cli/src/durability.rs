@@ -300,6 +300,19 @@ impl SessionDurability {
         self.journal()?.pipeline_frame()
     }
 
+    /// Every journal key in this workspace's store beginning with `prefix`,
+    /// sorted; empty while unbound or when the store cannot be read.
+    ///
+    /// Best-effort by design, like every other read on this handle: a caller
+    /// asking which keys exist is deciding what to *avoid*, and a store that
+    /// will not answer must not stop a session starting. The cost of an empty
+    /// answer is the behaviour that stood before anything asked.
+    pub fn recorded_keys(&self, prefix: &str) -> Vec<String> {
+        self.journal()
+            .and_then(|journal| journal.recorded_keys(prefix).ok())
+            .unwrap_or_default()
+    }
+
     /// The sink to hand [`stella_core::EngineConfig::checkpoint_sink`], or
     /// `None` while this handle is unbound.
     ///
