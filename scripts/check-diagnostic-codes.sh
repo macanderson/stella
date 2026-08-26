@@ -23,9 +23,13 @@
 # scans source rather than running a binary — so this stays cheap and works in
 # `make guards-fast`, which compiles nothing. `make diag-reference` regenerates
 # the reference's generated parts and preserves its hand-written prose.
+#
+# An optional root is forwarded, so scripts/test-diagnostic-codes.sh can run
+# the gate's own entry point against a fixture tree rather than a paraphrase of
+# it (#4948). No caller in the tree passes one.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-exec python3 ./scripts/diagnostic-codes.py check
+exec python3 ./scripts/diagnostic-codes.py check "$@"

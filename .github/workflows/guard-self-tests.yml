@@ -146,6 +146,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-deck-paths.sh
 
+      - name: diagnostic-code registry failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-diagnostic-codes.sh
+
       - name: deleted-tests guard reads a live PR body over a stale one
         if: ${{ !cancelled() }}
         run: ./scripts/test-deleted-tests.sh
