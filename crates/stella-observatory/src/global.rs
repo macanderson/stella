@@ -24,7 +24,7 @@ const LOCAL_SCOPE: &str = "(local)";
 /// stands in for `HOME` on Windows).
 ///
 /// This was a hand-synced COPY of `stella_store::usage::data_dir`, because the
-/// observatory deliberately does not link `stella-store` (whose `Store::open`
+/// observatory does not link `stella-store` (whose `Store::open`
 /// runs migrations, i.e. writes). Both now call the same `stella-home`, which
 /// has no dependencies and so costs that isolation nothing — the copy, and the
 /// comment asking readers to keep it equal by hand, are gone (#1139).

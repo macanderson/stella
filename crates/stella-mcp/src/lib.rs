@@ -71,7 +71,7 @@
 //!   server degrades gracefully instead of aborting the agent ([`toolset`],
 //!   [`client`]). Per-server status is exposed via [`McpToolSet::health`].
 //! - **Resources are tools** (#2678). A server that declared the `resources`
-//!   capability advertises two synthetic, single-purpose tools per invariant
+//!   capability advertises two synthetic, single-purpose tools per rule
 //!   #9 — `mcp__<server>__list_resources` and `mcp__<server>__read_resource`
 //!   ([`toolset`]) — driving `resources/list` / `resources/read` on its live
 //!   client. Embedded text resources in a `tools/call` result render inline

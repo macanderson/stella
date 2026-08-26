@@ -64,8 +64,8 @@ impl fmt::Display for Level {
 ///
 /// [`LevelFilter::Off`] silences a sink entirely; it does **not** stop records
 /// being emitted (§6), which is what property 3 of §12 pins down.
-/// Variant order is the loudness order, so `Ord` means "at least as verbose
-/// as". The default is [`LevelFilter::Warn`] rather than the first variant: an
+/// Case order is the loudness order, so `Ord` means "at least as verbose
+/// as". The default is [`LevelFilter::Warn`] rather than the first case: an
 /// operator who set nothing wants to hear about problems and nothing else (§6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum LevelFilter {

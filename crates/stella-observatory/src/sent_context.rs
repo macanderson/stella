@@ -167,7 +167,7 @@ fn call_context(
 /// One call's manifest in wire order, each entry joined to its block registry
 /// row.
 ///
-/// A `LEFT JOIN`, deliberately: a manifest citing a block that was never
+/// A `LEFT JOIN`: a manifest citing a block that was never
 /// registered must come back as an entry with no `kind` — an unresolved block
 /// the reader is told about — rather than vanish from the wire order.
 pub(crate) fn manifest_entries(

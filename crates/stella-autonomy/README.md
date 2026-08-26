@@ -121,7 +121,7 @@ the CLI does — so the dashboard and the terminal cannot disagree.
 - This crate has no `async`, no `tokio`, and must stay that way — a governor
   that reads the machine itself cannot be handed a fake `Supply` in a test.
   The caller (`stella-cli`) probes; this crate decides.
-- `finding_digest`'s `":L"` uses a capital `L` deliberately, matching the
+- `finding_digest`'s `":L"` uses a capital `L`, matching the
   shell pipeline's `sed` (its lowercasing ran *before* the substitution). A
   differently-cased marker silently re-reports every finding in every
   existing `seen.txt`.

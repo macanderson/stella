@@ -12,7 +12,7 @@
 //! real MCP tool — so per-tool policy and UI grouping treat them as the
 //! server's. Two tools, not one with a mode flag: `list` and `read` are
 //! different verbs, and a parameter may scope an operation (a cursor, a URI),
-//! never select one (invariant #9).
+//! never select one (AGENTS.md #9).
 //!
 //! Both schemas are `read_only: true`: the verbs are the protocol's read
 //! surface and the schemas are authored *here*, not by the untrusted server —

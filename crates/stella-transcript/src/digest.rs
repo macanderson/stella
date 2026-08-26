@@ -27,7 +27,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 /// looking at real output: three lines is under a stack frame, under a failing
 /// assertion's context, and under the shape of most JSON a tool returns.
 ///
-/// The invariant every surface owes this constant is
+/// The rule every surface owes this constant is
 /// `head.len() + tail.len() == min(body.len(), PREVIEW_LINES)`, which
 /// `crates/stella-transcript/src/tests.rs` asserts directly and
 /// `crates/stella-tui/src/render/tests/tool_output.rs` asserts against the deck's own
@@ -178,7 +178,7 @@ fn json_body(lines: &[String]) -> Option<Vec<String>> {
 
 /// Whether an output line is just the invocation coming back.
 ///
-/// Deliberately conservative: an exact match after trimming, or the invocation
+/// Conservative: an exact match after trimming, or the invocation
 /// behind a shell prompt sigil. A fuzzy rule would eventually eat a real first
 /// line of output, and losing content is a worse failure than showing one
 /// redundant line.
@@ -439,7 +439,7 @@ pub fn step_digest(step: &Step, object_width: usize) -> StepDigest {
             added,
             removed,
             // The first file's status is the call's: a single-purpose tool
-            // (invariant #9) cannot create one file and delete another.
+            // (AGENTS.md #9) cannot create one file and delete another.
             kind: call.files[0].status,
             files: call.files.len(),
         })

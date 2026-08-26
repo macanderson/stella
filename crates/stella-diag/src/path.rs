@@ -101,7 +101,7 @@ log_enum! {
         Svg => "svg",
         /// A file with no extension at all — `Makefile`, `LICENSE`, a binary.
         None => "none",
-        /// Anything not listed above. Deliberately unspecific: the alternative
+        /// Anything not listed above. Unspecific: the alternative
         /// is echoing a filename fragment into a log.
         Other => "other",
     }
@@ -133,7 +133,7 @@ impl Extension {
 ///
 /// Explicit rather than ambient, so classification is a pure function of its
 /// inputs and a test can pin every class without touching the environment —
-/// the same reason invariant 2 pushes I/O to the edges. [`PathContext::detect`]
+/// the same reason AGENTS.md #2 pushes I/O to the edges. [`PathContext::detect`]
 /// is the one constructor that reads the environment, and callers at an I/O
 /// boundary are where it belongs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -347,11 +347,11 @@ mod tests {
 
     /// **Every declared extension is actually recognised** (#3710).
     ///
-    /// `Extension::of` used to re-list the variants by hand, with nothing
+    /// `Extension::of` used to re-list the cases by hand, with nothing
     /// connecting the copy to the `log_enum!` block above it: adding `Zig =>
     /// "zig"` compiled clean, failed no test, and classified every `.zig` file
     /// as `other`. Walking `Extension::ALL` is what closes that, and this is
-    /// the assertion that would have caught the hand-copy the moment a variant
+    /// the assertion that would have caught the hand-copy the moment a case
     /// outlived it.
     #[test]
     fn every_declared_extension_classifies_as_itself() {

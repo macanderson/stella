@@ -38,7 +38,7 @@
 //! then the CLI's own argument tree would be both the claim and its own
 //! evidence, which is not a check.
 //!
-//! # What this module deliberately does not do
+//! # What this module does not do
 //!
 //! It does not execute anything, and it holds no flags. A verb's *flags* are
 //! clap's business and change far more often than the verb set — pinning

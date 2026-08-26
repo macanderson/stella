@@ -18,7 +18,7 @@ use crate::error::McpError;
 /// is rejected instead of being parsed from its first 8 KiB.
 const MAX_CALLBACK_HEAD_BYTES: usize = 8192;
 
-/// Why a callback connection yielded no request head. Both variants mean
+/// Why a callback connection yielded no request head. Both cases mean
 /// "ignore this connection and keep waiting" — the browser retries, and the
 /// caller's overall `options.timeout` still bounds the wait.
 #[derive(Debug, PartialEq, Eq)]

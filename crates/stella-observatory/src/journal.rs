@@ -3,7 +3,7 @@
 
 //! One execution's transcript, projected from its slice of the `events`
 //! journal — the answer text, reasoning and tool traffic the telemetry
-//! projections deliberately do not carry.
+//! projections do not carry.
 //!
 //! Split out of `db.rs`, which had reached 1482 of the guard's 1500 lines with
 //! no baseline entry, so the next addition to it would have failed the gate
@@ -228,7 +228,7 @@ fn tool_names(conn: &Connection, id: i64) -> Result<HashMap<String, String>, DbE
 /// (`{"type":"text","text":…}`; rows written before #1886 spell the field
 /// `delta`, so `text` reads both). Only the fields the transcript needs are
 /// lifted out, keyed by the row's own `event_type` column. A payload that no
-/// longer parses (a hand-edited store, a variant this binary predates) keeps
+/// longer parses (a hand-edited store, a case this binary predates) keeps
 /// its seq/type header with no body rather than erroring — one unreadable row
 /// must not blank the transcript around it.
 fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Value {

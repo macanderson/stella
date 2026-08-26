@@ -4,7 +4,7 @@
 //! The emitter every call site talks to, and the macro that builds a record.
 //!
 //! [`Dx`] is a **handle, not a global**. `docs/spec/diagnostics.md` §7.1 is
-//! the reason: invariant 2 already banned ambient state, so a diagnostic
+//! the reason: AGENTS.md #2 already banned ambient state, so a diagnostic
 //! handle rides as an explicit parameter exactly like every other input a
 //! decision function receives. Nothing here is a thread-local or a task-local,
 //! both of which are wrong under `!Send` turn futures and wrong under `tokio`
@@ -296,7 +296,7 @@ pub trait Facet {
     /// This event's stable diagnostic code (§11).
     fn code(&self) -> &'static str;
 
-    /// How loud it is. Derived from the variant rather than stored on it, so a
+    /// How loud it is. Derived from the case rather than stored on it, so a
     /// record's severity can never disagree with what happened.
     fn level(&self) -> Level;
 

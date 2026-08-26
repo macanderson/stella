@@ -221,7 +221,7 @@ fn cap(s: &str, max: usize) -> String {
 /// What one span of a field row *is*, so each surface can paint it in its own
 /// palette.
 ///
-/// Deliberately not a colour: this crate is a near-leaf and holds no terminal
+/// Not a colour: this crate is a near-leaf and holds no terminal
 /// or web theme. The deck maps these onto `stella-tui-theme` tokens, the HTML
 /// renderer onto classes, and a surface with one flat tone ignores them
 /// entirely — which is what the export does today, and why the export needs

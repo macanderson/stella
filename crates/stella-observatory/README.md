@@ -22,7 +22,7 @@ queries directly: `executions.kind` is now the **door** a turn came in by (`run`
 `deck`, `deck-sub`, `goal`, `fleet`) and `executions.pipeline_variant` is the
 **wrapper** that ran, NULL for an unwrapped turn (#3388). This crate selects
 `e.kind` in three places ([`src/db.rs`](src/db.rs)); a view that wants to answer
-"did verification help?" reads the variant, and one that groups only by `kind`
+"did verification help?" reads the case, and one that groups only by `kind`
 across the v25 → v26 migration boundary is comparing pre- and post-split rows and
 must say so.
 
@@ -92,7 +92,7 @@ free one). This crate builds no binary —
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The HTTP responder: the route table, the `Host` and head-cap gates, the CSP, `serve`. Open it to add a route or to touch anything security-relevant. |
-| [`src/db.rs`](src/db.rs) | Every query against `.stella/private/store.db` and `fleet.db`. Open it when a panel needs a new aggregate; the SQL deliberately mirrors `stella stats` semantics (resolved = outcome `completed`, `off-grid` = provider `local`). |
+| [`src/db.rs`](src/db.rs) | Every query against `.stella/private/store.db` and `fleet.db`. Open it when a panel needs a new aggregate; the SQL mirrors `stella stats` semantics (resolved = outcome `completed`, `off-grid` = provider `local`). |
 | [`src/sent_context.rs`](src/sent_context.rs) | `/api/execution-context`: the receipt queries (`step_receipt`, `step_manifest`, `context_blocks`) and the fold that rebuilds the messages one model call was sent, with the digest-verification verdict. Kept out of `src/db.rs` so that file stays clear of the 1500-line ratchet. |
 | [`src/context_db.rs`](src/context_db.rs) | `/api/context-lifecycle` (#1871): the self-improvement plane read out of `.stella/private/context.db` — the promotion audit trail (`context_records` folded by lineage in append order), current episodes, and selection health. Record bodies deserialize through `stella-core`'s own `context_record` types and the health fold is the CLI's `fold_selection_health`, linked rather than copied. |
 | [`src/context_diff.rs`](src/context_diff.rs) | `/api/execution-context-diff` (#1511): `stella inspect --diff`, served — the unified diff between one call's reconstruction and its resolved baseline (`prev`/`first`/`prompt`, same-role, whole-session). The differ itself is the `stella-diff` leaf crate. |
@@ -233,7 +233,7 @@ neither routed through `redact`. A token passed on the command line
 credential sitting in a field the scrubber does not look at. Anything new that
 reaches the browser must be audited the same way before it lands.
 
-### The palette is a mirror, and one data-mark step is deliberately unused
+### The palette is a mirror, and one data-mark step is unused
 
 The `:root` block at the top of `index.html` mirrors the comet brand kit
 (v5.0) — Gold `#EFC53F` on `#0A0A0C` over a neutral graphite
@@ -387,7 +387,7 @@ through `redact`, or emit key names only, the way `mcp_servers` does.
 - [`../../AGENTS.md`](../../AGENTS.md) — "Glossary — the identifiers that look alike"
   (the `execution_id` / `run_id` distinction this crate joins across), "The
   `.stella/` directory (per-workspace state)" for what each store holds, and
-  invariant 3, "Zero telemetry egress by default".
+  AGENTS.md #3, "Zero telemetry egress by default".
 - [`../../website/content/docs/commands/observe.mdx`](../../website/content/docs/commands/observe.mdx)
   and [`../../website/content/docs/telemetry/dashboard.mdx`](../../website/content/docs/telemetry/dashboard.mdx)
   — the user-facing flags and a tour of each tab.

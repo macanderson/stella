@@ -583,7 +583,7 @@ impl Default for LoginOptions {
 /// browser, the authorization server reports an error, or `options.timeout`
 /// elapses.
 ///
-/// `server_name` is the caller's storage key. This function deliberately does
+/// `server_name` is the caller's storage key. This function does
 /// nothing with it: the flow is driven entirely by `server_url`, and nothing
 /// here logs, so accepting the name only keeps the call site symmetrical with
 /// the [`TokenStore::put`] that follows.

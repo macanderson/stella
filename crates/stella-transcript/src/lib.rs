@@ -83,7 +83,7 @@
 //! ## Purity
 //!
 //! Nothing here reads a file, spawns a process, formats a timestamp or touches
-//! the network (invariant #2). A caller hands over owned data and gets a string
+//! the network (AGENTS.md #2). A caller hands over owned data and gets a string
 //! or a grid back, which is what makes every acceptance check in this crate a
 //! plain unit test.
 

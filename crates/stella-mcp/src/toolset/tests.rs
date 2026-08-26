@@ -1155,7 +1155,7 @@ async fn server_annotations_ride_the_declared_contract_never_the_schema() {
 /// A native layer that carries a [`DispatchGate`] whose verdict is fixed at
 /// construction — the stand-in for the real registry's gate, which lives in
 /// `stella-tools` and cannot be reached from here (this crate deliberately
-/// does not depend on it, invariant #1). Records every name the gate saw.
+/// does not depend on it, AGENTS.md #1). Records every name the gate saw.
 struct GatedNative {
     verdict: DispatchAdmission,
     admitted: Arc<std::sync::Mutex<Vec<String>>>,

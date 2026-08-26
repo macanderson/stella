@@ -15,7 +15,7 @@
 //!
 //! A raw count answers "how busy was it", which is the question that flatters.
 //! [`SessionStats`] therefore also derives the three ratios that answer
-//! "was it *worth* it", and each is deliberately capable of reporting badly:
+//! "was it *worth* it", and each is capable of reporting badly:
 //!
 //! - [`SessionStats::inflation_ratio`] — issues created per issue closed. A
 //!   loop that sustains more than 1.0 is **losing ground**: it is filing faster
@@ -196,7 +196,7 @@ impl SessionStats {
             "completed" => self.closed_completed += 1,
             "not_planned" => self.closed_not_planned += 1,
             "duplicate" => self.closed_duplicate += 1,
-            // Deliberately lands nowhere but the total, so `closures_balance`
+            // Lands nowhere but the total, so `closures_balance`
             // reports false and a reader learns the vocabulary grew.
             _ => {}
         }
@@ -244,7 +244,7 @@ mod tests {
     /// them shipped that way (#4118). The compiler cannot catch it: a `pub`
     /// field that nothing assigns is neither dead code nor a warning.
     ///
-    /// This is the discipline of invariant #10's consumer ledger
+    /// This is the discipline of AGENTS.md #10's consumer ledger
     /// (`stella_protocol::event::consumers`) pointed at production instead of
     /// consumption, and it enforces the same half: a field cannot be added
     /// without a line naming where it is written, which a reviewer reads. It

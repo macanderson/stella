@@ -6,7 +6,7 @@
 //! writes — the same two rules the rest of this crate lives under, for the same
 //! reason: an observer that mutates what it observes is not an observer.
 //!
-//! Three shapes matter, and they are deliberately different files:
+//! Three shapes matter, and they are different files:
 //!
 //! - `runs.jsonl` — one append per **state transition** of a run. Readers fold
 //!   by `run_id`, last write winning. It is append-only because the case this
@@ -310,7 +310,7 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
 /// completely between them and a dashboard that only said "health: poor" would
 /// send a reader to re-derive all of this by hand.
 ///
-/// Deliberately the same four signals `self-driving metrics` reports, so the page
+/// The same four signals `self-driving metrics` reports, so the page
 /// and the terminal never disagree about whether the loop is in trouble.
 fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
     let n = cycles.len() as i64;

@@ -16,7 +16,7 @@
 //!
 //! This is the half that was wrong rather than merely inflexible. The old
 //! `priority_rank` mapped "carries no priority label" to `3` — below `P2` and
-//! indistinguishable from an issue somebody had deliberately ranked lowest. So
+//! indistinguishable from an issue somebody had ranked lowest. So
 //! a P0 filed thirty seconds ago with no labels yet sorted beneath a P2 from
 //! March, and the loop would work its way through the entire ranked backlog
 //! before ever looking at it.
@@ -266,7 +266,7 @@ mod tests {
     /// The witness for this module's reason to exist. `priority_rank` mapped
     /// "no priority label" to `3`, one below `P2`, so a freshly filed issue
     /// nobody had triaged yet sorted underneath everything anyone had ever
-    /// ranked — including issues deliberately marked as least urgent. A P0
+    /// ranked — including issues marked as least urgent. A P0
     /// filed a minute ago would wait for the entire backlog.
     #[test]
     fn an_unlabelled_issue_is_unassessed_not_lowest() {

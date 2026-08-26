@@ -33,7 +33,7 @@
 //!    whatever the page's ground is, which necessarily flips with the theme
 //!    (`#0A0A0C` on the dark page, `#FFFFFF` on the paper one).
 //!    Pinning the old literal here would pin the old design, so this now
-//!    asserts the *invariant* the literal was standing in for: `--ink` is
+//!    asserts the *rule* the literal was standing in for: `--ink` is
 //!    declared in the dark root and re-pointed in both light gates, and the
 //!    selectors that need an on-accent colour still reach for it rather than
 //!    for `--ground`.
@@ -118,7 +118,7 @@ fn declarations(block: &str) -> BTreeMap<String, String> {
 /// an OS-light reader got the dark scheme's `#BFC1CC` on white — 1.68:1 on
 /// `--surface`, which is not a contrast failure so much as invisible ink.
 ///
-/// This asserts the invariant `crates/stella-cli/src/export.rs` states for
+/// This asserts the rule `crates/stella-cli/src/export.rs` states for
 /// its own two gates and holds: no colour is defined only inside the media
 /// query, and no colour disagrees across them.
 #[test]

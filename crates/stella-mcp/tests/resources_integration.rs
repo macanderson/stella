@@ -3,7 +3,7 @@
 //! result renders its text instead of a placeholder, a resources-capable
 //! server advertises `list_resources`/`read_resource` as read-only tools that
 //! round-trip on the wire, and a server without the capability advertises
-//! neither. Deliberately written against the *pre-change* public surface
+//! neither. Written against the *pre-change* public surface
 //! (`McpToolSet` + `ToolExecutor` only, the [`auth_probe_suppression`]
 //! pattern), so the whole file compiles on the base commit and fails there on
 //! behavior, not on a missing symbol.

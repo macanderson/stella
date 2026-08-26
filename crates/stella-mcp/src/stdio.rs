@@ -403,7 +403,7 @@ impl Transport for StdioTransport {
         // The whole map is moved out under the lock and the sends happen
         // outside it: `oneshot::Sender::send` never awaits, but taking first
         // keeps the critical section a single statement, which is the
-        // invariant [`Pending`] depends on.
+        // rule [`Pending`] depends on.
         let orphaned = std::mem::take(&mut *lock_pending(&self.pending));
         for (_id, tx) in orphaned {
             let _ = tx.send(Err(McpError::Closed(self.stderr_tail.annotate(format!(

@@ -161,7 +161,7 @@ fn blocks() -> Vec<(&'static str, Vec<String>, Vec<String>)> {
 
 /// Escape a span's text for the golden.
 ///
-/// Deliberately hand-rolled rather than `{:?}`: the TypeScript half has to
+/// Hand-rolled rather than `{:?}`: the TypeScript half has to
 /// produce the same bytes, and `Debug for str` and `JSON.stringify` disagree
 /// on apostrophes, on `\0`, and on how they spell an escaped code point. Five
 /// rules, identical in both files, is a contract two languages can keep.
@@ -194,7 +194,7 @@ fn render_spans(spans: &[Span]) -> String {
 
 /// Render the whole matrix as the text both languages must agree on.
 ///
-/// Deliberately a flat, greppable line per side rather than JSON, for the same
+/// A flat, greppable line per side rather than JSON, for the same
 /// reason `view-plan-matrix.txt` is: the file is read by a human deciding
 /// whether a re-bless is right. The inputs are **not** echoed — two of them are
 /// 3 kB of generated filler — so the case list is mirrored in the TypeScript

@@ -51,7 +51,7 @@ use super::{Runs, Tok};
 pub enum Lang {
     /// Rust.
     Rust,
-    /// TypeScript / JavaScript (and their `x`/module variants).
+    /// TypeScript / JavaScript (and their `x`/module forms).
     TsJs,
     /// Python.
     Python,

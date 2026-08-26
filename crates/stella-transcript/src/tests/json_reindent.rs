@@ -14,7 +14,7 @@ use crate::model::Output;
 use crate::syntax;
 
 /// Every non-whitespace character outside a string literal, in order — the
-/// invariant [`syntax::reindent_json`] promises, and the only one that makes it
+/// rule [`syntax::reindent_json`] promises, and the only one that makes it
 /// safe to run over a body nobody has parsed.
 fn skeleton(text: &str) -> String {
     let mut out = String::new();

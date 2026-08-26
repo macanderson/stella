@@ -36,7 +36,7 @@ pub struct SseEvent {
 /// past any plausible single JSON-RPC message and still cheap to hold.
 const MAX_BUFFERED_BYTES: usize = 8 * 1024 * 1024;
 
-/// A terminal decoding failure. Both variants are fatal for the stream: more
+/// A terminal decoding failure. Both cases are fatal for the stream: more
 /// bytes cannot repair either one, so the transport drops the connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SseError {

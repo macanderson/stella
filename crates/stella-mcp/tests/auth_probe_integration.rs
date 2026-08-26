@@ -6,7 +6,7 @@
 //! stored login clearing suppression (and a successful connect retiring the
 //! probe record), TTL expiry restoring the probe, and a fresh 401 re-arming
 //! it. The core hit-count witness lives in `auth_probe_suppression.rs`,
-//! which deliberately compiles against the pre-change crate surface.
+//! which compiles against the pre-change crate surface.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

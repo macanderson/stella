@@ -295,7 +295,7 @@ impl Cursor {
 /// Apply one command to a fold state and cursor.
 ///
 /// Returns the invocation string when the command was [`Command::CopyInvocation`]
-/// — the crate cannot reach a clipboard (invariant #2), so it hands the host the
+/// — the crate cannot reach a clipboard (AGENTS.md #2), so it hands the host the
 /// exact text to put there and stays pure.
 pub fn apply(
     run: &Run,

@@ -660,7 +660,7 @@ fn last_write_wins_and_cycles_aggregate_into_their_run() {
 
 /// The ledger is written here, read by the observatory, and appended to by
 /// future writers; a round-trip that drops unknown keys would destroy what it
-/// did not understand (invariant 4's discipline applied to a file format).
+/// did not understand (AGENTS.md #4's discipline applied to a file format).
 #[test]
 fn cycle_records_round_trip_and_preserve_foreign_keys() {
     let raw = json!({

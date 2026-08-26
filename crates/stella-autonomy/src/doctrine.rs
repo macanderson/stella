@@ -10,7 +10,7 @@
 //!
 //! So the tie-breakers are configuration, and this module is their vocabulary.
 //!
-//! # What belongs here, and what deliberately does not
+//! # What belongs here, and what does not
 //!
 //! This repository already carries **four steering planes that do not know
 //! about each other** (#3243), and the fastest way to make that five is to add
@@ -33,7 +33,7 @@
 //!   is a context record, and this module's answer to that request is a
 //!   pointer, not a field.
 //!
-//! The test for whether something belongs here is the same one invariant 5
+//! The test for whether something belongs here is the same one AGENTS.md #5
 //! applies to error types: **does a caller branch on it?** A pure machine
 //! branching on a closed enum belongs; a sentence a model reads does not.
 

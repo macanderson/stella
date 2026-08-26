@@ -5,7 +5,7 @@
 //! not compile.**
 //!
 //! A field value is not `serde_json::Value` and not `impl Display`. It is
-//! [`FieldValue`], a closed algebra whose only string variant holds a
+//! [`FieldValue`], a closed algebra whose only string case holds a
 //! [`StaticStr`] — a string that provably lives in the binary. [`Loggable`] is
 //! implemented for the things that cannot carry runtime content (integers,
 //! `bool`, `f64`, `Duration`, `&'static str`, closed enums declared through
@@ -23,7 +23,7 @@
 //! diag!(&dx, warn, "tools.write.denied", path = user_path);
 //! ```
 //!
-//! `tracing` would happily log that with `%user_path`. Invariant 3's most
+//! `tracing` would happily log that with `%user_path`. AGENTS.md #3's most
 //! dangerous failure mode stops being a thing review has to catch and starts
 //! being a thing the compiler catches. The witness lives in
 //! `tests/compile_fail.rs` (property 1 of §12) because a runtime test cannot
@@ -133,7 +133,7 @@ impl ReviewedValue {
 /// What a diagnostic field may hold. A closed algebra, and the reason a record
 /// is content-free by construction.
 ///
-/// The only variants that can carry a string are [`FieldValue::Str`], whose
+/// The only cases that can carry a string are [`FieldValue::Str`], whose
 /// payload is a [`StaticStr`], and [`FieldValue::Reviewed`], whose payload can
 /// only be built by [`Redacted::reviewed`](crate::Redacted::reviewed). There is
 /// no `Value`, no `Display`, and no `Debug` escape.
@@ -152,7 +152,7 @@ pub enum FieldValue {
     /// it back as a float).
     Float(f64),
     Str(StaticStr),
-    /// A truncated correlation handle. Its own variant rather than a string
+    /// A truncated correlation handle. Its own case rather than a string
     /// because [`ShortId`] is the one runtime-derived value whose *width* is
     /// the safety argument (§7.2), and eight bytes is a type here, not a
     /// convention.
@@ -201,7 +201,7 @@ impl<'de> Deserialize<'de> for FieldValue {
 
 struct FieldValueVisitor;
 
-/// The text of a value that was written as a JSON string, whichever variant it
+/// The text of a value that was written as a JSON string, whichever case it
 /// read back as. Eight-hex-character strings land in [`FieldValue::Short`], so
 /// matching on [`FieldValue::Str`] alone would miss them.
 fn as_text(value: &FieldValue) -> Option<String> {
@@ -247,7 +247,7 @@ impl<'de> Visitor<'de> for FieldValueVisitor {
     /// [`ShortId`], which is the only shape [`FieldValue::Short`] can have
     /// written. A `&'static str` field whose literal value happens to be eight
     /// lowercase hex digits therefore reads back as a `Short` — it
-    /// re-serializes to identical bytes, so invariant 4 holds either way, and
+    /// re-serializes to identical bytes, so AGENTS.md #4 holds either way, and
     /// no consumer of a record distinguishes the two.
     fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
         Ok(ShortId::from_exact(value).map_or_else(
@@ -269,8 +269,8 @@ impl<'de> Visitor<'de> for FieldValueVisitor {
     /// by a tag because the *serialized* form is the public surface (§11) and a
     /// tag would be noise in every operator's `jq`. A hand-built `Map` with
     /// precisely the keys `reviewed` and `note` would read back as a
-    /// `Reviewed` — it re-serializes to identical bytes, so invariant 4 holds
-    /// byte-for-byte either way; only the Rust-level variant differs, and no
+    /// `Reviewed` — it re-serializes to identical bytes, so AGENTS.md #4 holds
+    /// byte-for-byte either way; only the Rust-level case differs, and no
     /// emit site in the workspace builds that key pair by hand.
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let mut entries: Vec<(StaticStr, FieldValue)> = Vec::new();
@@ -370,7 +370,7 @@ impl Loggable for f64 {
     /// Exact across a round trip for every finite `f64`, including
     /// full-precision ones — but only because this crate's manifest enables
     /// serde_json's `float_roundtrip`. Its default parser is lossy by one ULP
-    /// for a large fraction of doubles, which would make invariant 4 false for
+    /// for a large fraction of doubles, which would make AGENTS.md #4 false for
     /// any record carrying a float. See `Cargo.toml`.
     fn to_field(&self) -> FieldValue {
         if self.is_finite() {
@@ -522,7 +522,7 @@ impl<'de> Deserialize<'de> for Fields {
 
 /// Declare a closed enum that may be logged.
 ///
-/// A closed variant set is a finite, reviewed vocabulary — §5.2's third row —
+/// A closed case set is a finite, reviewed vocabulary — §5.2's third row —
 /// so it is safe where a `String` is not. The generated type renders to its
 /// `&'static str` spelling, which is the value that reaches the record and the
 /// value operators match on.
@@ -559,18 +559,18 @@ macro_rules! log_enum {
         }
 
         impl $name {
-            /// Every variant, in declaration order.
+            /// Every case, in declaration order.
             ///
             /// Generated from the same list as [`Self::as_static`], which is
             /// the point: a caller that has to walk the vocabulary — a
             /// classifier, a completion list, a table — walks *this* rather
-            /// than re-typing the variants beside it, so adding one is still
+            /// than re-typing the cases beside it, so adding one is still
             /// the one-line change the enum's own doc promises. A hand-copied
             /// second list compiles clean and silently stops covering the new
-            /// variant (#3710).
+            /// case (#3710).
             pub const ALL: [Self; [$(Self::$variant),*].len()] = [$(Self::$variant),*];
 
-            /// This variant's stable spelling, as it appears in a record.
+            /// This case's stable spelling, as it appears in a record.
             #[must_use]
             pub const fn as_static(self) -> &'static str {
                 match self {
@@ -624,7 +624,7 @@ mod tests {
     }
 
     /// `ALL` is generated from the same list as `as_static`, in declaration
-    /// order, and its length is the number of variants — the property a caller
+    /// order, and its length is the number of cases — the property a caller
     /// walking the vocabulary depends on, and the one a hand-copied list
     /// cannot promise (#3710).
     #[test]

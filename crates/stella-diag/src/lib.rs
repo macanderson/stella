@@ -33,7 +33,7 @@
 //! **Content in a log does not compile** ([`Loggable`], §5.2). A field value is
 //! not `serde_json::Value` and not `impl Display`; it is a closed type
 //! constructible only from things that cannot carry runtime content. `tracing`
-//! would log `%user_path` happily. Here it is a type error, so invariant 3's
+//! would log `%user_path` happily. Here it is a type error, so AGENTS.md #3's
 //! most dangerous failure mode stops being a thing review has to catch.
 //!
 //! **A crash dump you can safely ask for** ([`Ring`], §7.4). Every record at
@@ -57,20 +57,20 @@
 //! assert_eq!(record.cx.turn, Some(3));
 //! ```
 //!
-//! [`Dx`] is a **handle, not a global**: invariant 2 already banned ambient
+//! [`Dx`] is a **handle, not a global**: AGENTS.md #2 already banned ambient
 //! state, so correlation rides as an explicit parameter and this crate needs no
 //! thread-locals, no task-locals, and no spans (§7.1). That is also the
 //! strongest argument in §10 for not adopting a facade — `tracing`'s spans
 //! exist to reconstruct context that ordinary code loses, and this codebase
 //! does not lose it.
 //!
-//! ## What this deliberately does not do
+//! ## What this does not do
 //!
 //! Verbatim from §14, because each of these will be proposed again:
 //!
 //! - **No logging in `stella-core`'s pure functions** (§7.3). They return
 //!   rationale as typed values; the caller — already at an I/O boundary —
-//!   records it. This is the invariant most likely to erode.
+//!   records it. This is the rule most likely to erode.
 //! - **No egress, at any level, in any build.** No sink opens a socket.
 //! - **No per-token records.** [`Dx`] emits nothing per `TextDelta`; the
 //!   sanctioned alternative is a bounded tally.
@@ -80,10 +80,10 @@
 //!   for replay; the diagnostic plane references it by `seq` and never
 //!   restates it (§8).
 
-// Invariant #5: library code never panics on runtime data. This crate is at
+// AGENTS.md #5: library code never panics on runtime data. This crate is at
 // zero production `unwrap`/`expect`, and this keeps it there — `make lint` runs
 // clippy with `-D warnings`, so a new one fails the gate instead of arriving
-// unremarked. `not(test)` scopes the lint exactly as the invariant does: the
+// unremarked. `not(test)` scopes the lint exactly as the rule does: the
 // rule is about runtime data, and `unwrap` in a test is fine.
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 

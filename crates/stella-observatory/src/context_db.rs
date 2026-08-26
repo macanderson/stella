@@ -19,14 +19,14 @@
 //! - **Folds are linked, never copied.** Record bodies deserialize through
 //!   `stella_core::context_record`'s own types, and selection health goes
 //!   through the same `fold_selection_health` the CLI runs — pure decision
-//!   logic over owned data (invariant 2), the same bargain that lets this
+//!   logic over owned data (AGENTS.md #2), the same bargain that lets this
 //!   crate link the self-driving fold. What *is* re-implemented here is the
 //!   SQL itself, because the write side (`stella-context`) runs migrations on
 //!   open and an observer must never mutate what it observes; the
 //!   schema-conformance suite builds a real `context.db` through that crate's
 //!   migration path to prove these queries stay resolvable.
 //!
-//! Episode ↔ execution linkage is deliberately absent: the only tie is a
+//! Episode ↔ execution linkage is absent: the only tie is a
 //! summary-tag convention (see `crates/stella-cli/src/memory.rs`, the #1042
 //! trace-pointer note), so episodes render as they are rather than through an
 //! invented join.

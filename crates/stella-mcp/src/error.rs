@@ -59,13 +59,13 @@ pub enum McpError {
 
 impl McpError {
     /// A credential-free, **length-bounded** summary safe to surface to the
-    /// model as a `ToolOutput::Error` message. (No `McpError` variant ever
+    /// model as a `ToolOutput::Error` message. (No `McpError` case ever
     /// carries a secret — credentials are never logged nor forwarded,
     /// §8 — so this is the `Display` form, named for intent.)
     ///
     /// # Bounded, because half of this string is the server's
     ///
-    /// Several variants interpolate text the *server* chose and this client
+    /// Several cases interpolate text the *server* chose and this client
     /// only relayed: [`McpError::JsonRpc`]'s `message` is the wire error
     /// object's own, and [`McpError::Transport`]/[`McpError::Protocol`] wrap
     /// decoder and HTTP-body text. That makes the rendered string untrusted
@@ -123,7 +123,7 @@ mod tests {
         );
     }
 
-    /// The bound is on the *rendered* string, so it holds for every variant
+    /// The bound is on the *rendered* string, so it holds for every case
     /// that relays server-chosen text — not just [`McpError::JsonRpc`].
     #[test]
     fn every_variant_relaying_server_text_is_bounded() {

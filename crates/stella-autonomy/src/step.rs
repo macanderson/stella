@@ -34,12 +34,12 @@
 //! The one obligation this puts on a host is the one thing the machine cannot
 //! do for it: **keep polling.** A host that exits the process on
 //! [`LoopStep::Blocked`] makes resumption impossible no matter what this
-//! function returns, which is why the variant carries a [`Clearance`] naming
+//! function returns, which is why the case carries a [`Clearance`] naming
 //! the observable to watch instead of reading as a terminal state.
 //!
 //! # Finishing outranks starting
 //!
-//! The precedence below puts `Deliver` above `Claim` deliberately. A loop that
+//! The precedence below puts `Deliver` above `Claim`. A loop that
 //! claims whenever the queue is non-empty accumulates open PRs it never drives
 //! green, and the backlog it is measured against grows by its own work in
 //! flight. Finish first.
@@ -102,7 +102,7 @@ pub enum BlockReason {
 
 /// What would unblock the loop — the observable a parked host watches.
 ///
-/// Every variant is a condition the loop can detect for itself. That is the
+/// Every case is a condition the loop can detect for itself. That is the
 /// point: **none of them is an operator telling it to resume.** A human who
 /// clears the cause has already said everything that needs saying.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,7 +141,7 @@ impl BlockReason {
 
 /// What the loop is waiting for when there is nothing to do.
 ///
-/// Watch is not sleep: each variant names an event a cheap sentinel can
+/// Watch is not sleep: each case names an event a cheap sentinel can
 /// detect, so a watching loop costs nothing until the world changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -243,7 +243,7 @@ pub enum UnblockAttempt {
 ///
 /// A projection of [`crate::PrState`] onto the only question the top-level
 /// machine asks: is this one finished, stuck, or still moving? Keeping it
-/// separate means a new `PrState` variant does not silently change what the
+/// separate means a new `PrState` case does not silently change what the
 /// loop does with it — the mapping is a caller's explicit choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -664,7 +664,7 @@ mod tests {
 
     /// The witness. A loop that cannot halt is not autonomous, it is
     /// unsupervised — so a stop is tested before any amount of available work,
-    /// and work is deliberately available here in every form the machine knows.
+    /// and work is available here in every form the machine knows.
     #[test]
     fn a_stop_outranks_every_kind_of_available_work() {
         let busy = LoopState {
@@ -1013,7 +1013,7 @@ mod tests {
     }
 
     /// `Ignore` is reachable and does nothing — present for the operator who
-    /// wants a silent loop, and deliberately not the default.
+    /// wants a silent loop, and not the default.
     #[test]
     fn ignore_neither_files_nor_fixes() {
         let red = LoopObservation {

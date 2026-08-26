@@ -30,7 +30,7 @@ const OBJECT_WIDTH: usize = 46;
 
 /// Escape text for HTML text content and quoted attributes.
 ///
-/// Both contexts at once, deliberately: a single escaper that is safe in the
+/// Both contexts at once: a single escaper that is safe in the
 /// stricter context cannot be misapplied, and a transcript is full of model
 /// output that is *designed* to look like markup.
 #[must_use]
@@ -162,7 +162,7 @@ fn receipt_id(turn_index: usize) -> String {
 
 /// The expanded turn's closing receipt — `grid::turn_frame_bottom`'s counterpart.
 ///
-/// The two renderers deliberately agree on *what* closes a turn (its status
+/// The two renderers agree on *what* closes a turn (its status
 /// word and its chips) and on *where* (after the last thing the turn did).
 /// `grid` has no choice about it: its frame has to be printable a line at a
 /// time as the turn runs, and neither fact exists when the top rail goes out.
