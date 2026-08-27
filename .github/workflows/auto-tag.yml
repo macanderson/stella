@@ -321,8 +321,32 @@ jobs:
           existing="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')"
           if [ -n "${existing}" ]; then
             gh pr edit "${existing}" --title "${title}" --body "${body}"
+            pr="${existing}"
           else
             gh pr create --base main --head "${branch}" --title "${title}" --body "${body}"
+            pr="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')"
+          fi
+
+          # `no-issue` is SCR-003's escape hatch, and this PR is what it is for:
+          # a write-back of a version that was already released closes nothing,
+          # so it can never name an issue whose definition of done a human
+          # ticks. Without the label `dod` fails every release PR with "this PR
+          # links no issue" — a red that recurs on each release and that no
+          # author can clear, because there is no issue to link. The label keeps
+          # the waiver auditable (`is:pr label:no-issue`) instead of exempting
+          # the workflow somewhere only its own source records.
+          #
+          # Applied as its own non-fatal step rather than `gh pr create
+          # --label`: that flag aborts the whole command when the label is
+          # missing from the repository, which would turn a deleted label into
+          # "the release write-back never opened" instead of "the write-back is
+          # red on one advisory check". The weaker failure is the right one
+          # here, so this warns and carries on.
+          if [ -n "${pr}" ]; then
+            gh pr edit "${pr}" --add-label no-issue \
+              || echo "::warning::could not apply the no-issue label to #${pr}; dod will be red until it is applied by hand"
+          else
+            echo "::warning::could not resolve the write-back PR number; no-issue not applied"
           fi
 
       # Merging a Cargo-only bot/version-sync PR the normal way never
