@@ -56,7 +56,7 @@ use stella_plugin::{
 
 /// The glyph the host stamps on a plugin's chrome (SPEC 12).
 ///
-/// Deliberately not one of the deck's own event glyphs: a reader scanning a
+/// Not one of the deck's own event glyphs: a reader scanning a
 /// transcript should be able to tell at a glance which rectangles Stella drew
 /// and which a third party did.
 pub const PANEL_GLYPH: char = '◳';
@@ -406,14 +406,19 @@ mod tests {
         blit(&frame, lease, &mut buf);
 
         assert_eq!(
-            buf.cell((border_x, lease.y)).expect("a border cell").symbol(),
+            buf.cell((border_x, lease.y))
+                .expect("a border cell")
+                .symbol(),
             before,
             "the host's border survived a plugin's wide glyph"
         );
         let row: String = (lease.x..lease.x + lease.width)
             .map(|x| buf.cell((x, lease.y)).map(|c| c.symbol()).unwrap_or(" "))
             .collect();
-        assert_eq!(row, "aaaaa ", "the glyph that did not fit was dropped whole");
+        assert_eq!(
+            row, "aaaaa ",
+            "the glyph that did not fit was dropped whole"
+        );
     }
 
     /// A wide glyph that *does* fit occupies both its columns, and the second

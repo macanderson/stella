@@ -3200,6 +3200,7 @@ version = "0.9.252"
 dependencies = [
  "async-trait",
  "futures-util",
+ "libc",
  "proptest",
  "serde",
  "serde_json",

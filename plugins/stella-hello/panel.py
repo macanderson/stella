@@ -4,9 +4,10 @@
 """stella-hello's panel process: read one request, write one frame, exit.
 
 The whole protocol is here. The host writes a `PanelRequest` to this process's
-stdin and closes it; this writes a `PanelResponse` to stdout and exits. There
-is no loop, no daemon and no socket to manage — a panel is asked for one frame
-at a time, so a plugin that draws a frame and stops is the normal shape.
+stdin and closes it; this writes a `PanelResponse` and a newline to stdout and
+exits. There is no loop, no daemon and no socket to manage — a panel is asked
+for one frame at a time, so a plugin that draws a frame and stops is the normal
+shape.
 
 A frame paints in *token names* (`gold`, `silver`, `muted`), never RGB. The
 host resolves them against the live theme, which is what lets a panel follow a
@@ -45,7 +46,7 @@ def frame(lease):
     rows = lease["rect"]["rows"]
 
     # A meter that fits whatever width the host gave us, so the panel is
-    # honest at 40 columns and at 200.
+    # right at 40 columns and at 200.
     bar_width = max(0, min(24, cols - 12))
     filled = bar_width // 2
     lines = [
@@ -86,7 +87,11 @@ def main():
             "paint": {"lines": frame(lease)},
         },
     }
+    # The newline ends the frame. The host reads one line rather than to
+    # end-of-file, so a panel that backgrounds a helper still answers on time.
     json.dump(response, sys.stdout)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

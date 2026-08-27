@@ -65,6 +65,10 @@ path = "tests/fixtures/wrapper-plugin-fixture.rs"
 dist = false
 
 [dev-dependencies]
+# `panel_host`'s reaping witness only: `kill(pid, 0)` is the one way to ask
+# whether a process group actually died, and a test that asserts reaping by
+# any weaker means is asserting that the call returned.
+libc.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 # `judge` is a pure total function over a closed evidence vocabulary, which is
