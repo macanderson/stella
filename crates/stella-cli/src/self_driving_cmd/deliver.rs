@@ -800,10 +800,21 @@ pub(super) fn base_is_broken(branch: &str) -> bool {
 /// must keep them, and that difference is an argument to one gatherer rather
 /// than a second copy of four reads (#4300).
 pub(super) fn prs_matching(key: &str) -> Result<Vec<String>, String> {
+    // `title,body` as well as `number`: the search is a full-text one on the
+    // bare number, so the forge answers with every open pull request that
+    // mentions it for any reason. The text is what says whether the mention is
+    // this issue — see `contention::prs_naming`.
     let raw = gh(&[
-        "pr", "list", "--state", "open", "--search", key, "--json", "number",
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--search",
+        key,
+        "--json",
+        "number,title,body",
     ])?;
-    Ok(super::contention::pr_numbers(&raw))
+    Ok(super::contention::prs_naming(&raw, key))
 }
 
 /// Open pull requests that say they close `key`.

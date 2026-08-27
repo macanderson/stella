@@ -23,7 +23,7 @@
 //! base-fix site must keep seeing every worktree.
 //!
 //! The parsing is split out into pure functions ([`branches_naming`],
-//! [`worktrees_naming`], [`pr_numbers`], [`claims_naming`]) for the ordinary
+//! [`worktrees_naming`], [`prs_naming`], [`claims_naming`]) for the ordinary
 //! reason — the reads need a subprocess and the decisions do not, so only the
 //! decisions can be tested.
 //!
@@ -193,18 +193,44 @@ pub(super) fn worktrees_naming(porcelain: &str, key: &str, own_root: Option<&Pat
         .collect()
 }
 
-/// Pull request numbers from a `gh pr list --json number` payload.
+/// Pull request numbers from a `gh pr list --json number,title,body` payload,
+/// keeping the ones whose text names `key` as an issue.
 ///
-/// Tolerant of a row missing the field rather than failing the whole read: a
-/// payload this build only partly understands still carries the numbers it
-/// does understand, and dropping all of them would turn a forge change into a
-/// silent loss of the strongest cheap signal.
+/// The search that produced this payload is a full-text one on the bare
+/// number, so the forge answers with every open pull request that mentions it
+/// for any reason — "43 files changed", "cuts latency by 43%". Each of those
+/// deferred issue #43, and a deferral writes no `spent` entry, so it deferred
+/// again on the next pass. `deliver::open_prs_for_issue`, in the same file,
+/// already searched the precise form; this one did not.
+///
+/// A mention is `#<key>` with no digit after it, so `#43` names issue 43 and
+/// `#4300` does not. The loop writes `Closes #<key>` into every pull request it
+/// opens, so its own always match.
+///
+/// Two tolerances, both in the direction that keeps a signal rather than losing
+/// one: a row missing `number` is skipped rather than failing the whole read,
+/// and a row carrying **neither** `title` nor `body` counts as contention. This
+/// build cannot tell whether such a row names the issue, and silently dropping
+/// a contention signal it could not read is what ends with two loops on one
+/// issue.
 #[must_use]
-pub(super) fn pr_numbers(raw: &str) -> Vec<String> {
+pub(super) fn prs_naming(raw: &str, key: &str) -> Vec<String> {
     let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(raw) else {
         return Vec::new();
     };
+    let reference = format!("#{key}");
     rows.iter()
+        .filter(|row| {
+            let title = row.get("title").and_then(serde_json::Value::as_str);
+            let body = row.get("body").and_then(serde_json::Value::as_str);
+            match (title, body) {
+                (None, None) => true,
+                _ => [title, body]
+                    .into_iter()
+                    .flatten()
+                    .any(|text| names_issue(text, &reference)),
+            }
+        })
         .filter_map(|row| row.get("number").and_then(serde_json::Value::as_u64))
         .map(|n| n.to_string())
         .collect()
@@ -555,14 +581,62 @@ mod tests {
         );
     }
 
-    /// A payload with a row this build cannot read still yields the rest.
+    /// A pull request that merely contains the number is not about the issue.
+    ///
+    /// The search behind this payload is full-text on the bare number, so the
+    /// forge returns everything mentioning it. Counting all of them deferred
+    /// the issue, and a deferral writes no `spent` entry, so it deferred again
+    /// every pass.
     #[test]
-    fn pr_numbers_survives_a_row_it_cannot_read() {
+    fn a_pull_request_that_only_mentions_the_number_is_not_contention() {
+        let raw = r#"[
+            {"number":11,"title":"perf: cuts latency by 43%","body":"no issue here"},
+            {"number":12,"title":"43 files changed","body":"a sweep"},
+            {"number":13,"title":"fix: the thing","body":"Closes #43"}
+        ]"#;
+
         assert_eq!(
-            pr_numbers(r#"[{"number":7},{"title":"no number here"},{"number":9}]"#),
-            vec!["7".to_string(), "9".to_string()]
+            prs_naming(raw, "43"),
+            vec!["13".to_string()],
+            "only the one that names the issue"
         );
-        assert!(pr_numbers("not json at all").is_empty());
+    }
+
+    /// `#43` is not `#4300`.
+    #[test]
+    fn a_longer_issue_reference_is_not_a_mention_of_its_prefix() {
+        let raw = r#"[
+            {"number":11,"title":"fix","body":"Closes #4300"},
+            {"number":12,"title":"fix","body":"Refs #43, and more"}
+        ]"#;
+
+        assert_eq!(prs_naming(raw, "43"), vec!["12".to_string()]);
+    }
+
+    /// A row this build cannot read counts as contention rather than vanishing.
+    ///
+    /// The two errors are not symmetric: keeping a row the build cannot
+    /// classify costs a deferral, and dropping it costs two loops working one
+    /// issue. A forge that stops returning `title` and `body` must not silently
+    /// switch this signal off.
+    #[test]
+    fn a_row_with_no_text_at_all_is_kept() {
+        assert_eq!(
+            prs_naming(r#"[{"number":7}]"#, "43"),
+            vec!["7".to_string()],
+            "neither field present: this build cannot tell, so it does not drop it"
+        );
+        // A row with text that simply does not name the issue is still dropped.
+        assert!(prs_naming(r#"[{"number":7,"title":"unrelated"}]"#, "43").is_empty());
+        // And a row with no number is skipped rather than failing the read.
+        assert_eq!(
+            prs_naming(
+                r#"[{"title":"Closes #43"},{"number":9,"body":"Closes #43"}]"#,
+                "43"
+            ),
+            vec!["9".to_string()]
+        );
+        assert!(prs_naming("not json at all", "43").is_empty());
     }
 
     /// One claim, as the ledger would hand it back.
