@@ -165,6 +165,83 @@ impl GraphNode {
     }
 }
 
+/// The file ledger, indexed for [`GraphSnapshot::stamp_session_touches`].
+///
+/// Two of [`GraphNode::lives_in`]'s three arms are equality tests on a string
+/// the ledger already holds, so they become lookups. Only the third — a node
+/// whose `location` sits *inside* a ledger path — still needs to try
+/// candidates, and it tries at most as many as the location has `:` in it
+/// rather than scanning the ledger.
+///
+/// **Built per call, not cached.** The projection is recomputed every frame on
+/// purpose (see `stamp_session_touches`), and a cached index would be the
+/// invalidation rule ADR 0019 chose the per-frame projection to avoid. Building
+/// it is one pass over the ledger; the scan it replaces was one pass *per node*.
+///
+/// # Why it stores indices rather than touches
+///
+/// `find` returned the FIRST matching row, and several rows can match one node
+/// — a path and its basename twin, or two spellings of one file. Preserving
+/// which row wins means comparing ledger positions across the three arms and
+/// taking the lowest, so a rewrite that stamped "any match" would be a
+/// behaviour change wearing a performance change's clothes.
+struct LedgerIndex<'a> {
+    /// Ledger position of the first row whose path is exactly this string.
+    by_path: std::collections::HashMap<&'a str, usize>,
+    /// Ledger position of the first row whose path *ends* with `/<basename>`.
+    by_basename: std::collections::HashMap<&'a str, usize>,
+}
+
+impl<'a> LedgerIndex<'a> {
+    fn of(ledger: &'a [FileTouch]) -> Self {
+        let mut by_path = std::collections::HashMap::with_capacity(ledger.len());
+        let mut by_basename = std::collections::HashMap::with_capacity(ledger.len());
+        for (i, row) in ledger.iter().enumerate() {
+            // `or_insert` and not `insert`: first wins, which is what `find`
+            // did.
+            by_path.entry(row.path.as_str()).or_insert(i);
+            // `lives_in`'s middle arm is `path.strip_suffix(label)` ending in
+            // `/`, which is exactly "the label IS this path's basename". A
+            // path with no `/` has no basename match, and `rsplit_once`
+            // returning `None` is that case.
+            if let Some((_, base)) = row.path.rsplit_once('/') {
+                by_basename.entry(base).or_insert(i);
+            }
+        }
+        Self {
+            by_path,
+            by_basename,
+        }
+    }
+
+    /// The first ledger row `node` lives in, by the same rules and the same
+    /// tie-break `ledger.iter().find(|row| node.lives_in(&row.path))` used.
+    fn first_match<'l>(&self, node: &GraphNode, ledger: &'l [FileTouch]) -> Option<&'l FileTouch> {
+        let mut best: Option<usize> = None;
+        let mut consider = |i: Option<usize>| {
+            if let Some(i) = i {
+                best = Some(best.map_or(i, |b| b.min(i)));
+            }
+        };
+
+        // `self.label == path`
+        consider(self.by_path.get(node.label.as_str()).copied());
+        // `path.strip_suffix(label)` ending in `/` — the label IS the basename.
+        consider(self.by_basename.get(node.label.as_str()).copied());
+        // `location` is `path` or `path:line`. The candidates are the location
+        // itself and every prefix ending just before a `:`, which is what
+        // `strip_prefix(path)` accepted.
+        if let Some(loc) = node.location.as_deref() {
+            consider(self.by_path.get(loc).copied());
+            for (i, _) in loc.match_indices(':') {
+                consider(self.by_path.get(&loc[..i]).copied());
+            }
+        }
+
+        best.and_then(|i| ledger.get(i))
+    }
+}
+
 impl GraphSnapshot {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
@@ -188,8 +265,9 @@ impl GraphSnapshot {
     /// answer the ledger wins: it is this session's own record of this
     /// session.
     pub fn stamp_session_touches(&mut self, ledger: &[FileTouch]) {
+        let index = LedgerIndex::of(ledger);
         for node in &mut self.nodes {
-            if let Some(row) = ledger.iter().find(|row| node.lives_in(&row.path)) {
+            if let Some(row) = index.first_match(node, ledger) {
                 node.touch = Some(row.touch);
             }
         }
@@ -221,6 +299,180 @@ impl GraphSnapshot {
 
 #[cfg(test)]
 mod tests {
+    /// **The witness for the rewrite (#5221).** The index answers exactly what
+    /// the linear scan answered, tie-break included.
+    ///
+    /// `stamp_session_touches` used to be
+    /// `ledger.iter().find(|row| node.lives_in(&row.path))`, and `find` returns
+    /// the FIRST match. Several rows can match one node — a path and its
+    /// basename twin, two spellings of one file — so an index that stamped
+    /// "any match" would be a behaviour change wearing a performance change's
+    /// clothes, and the goldens would not catch it because they carry no such
+    /// collision.
+    ///
+    /// Checked against the old implementation directly rather than against
+    /// pinned expectations: the requirement is *equivalence*, and the fixture
+    /// below contains every collision the rewrite could get wrong.
+    #[test]
+    fn the_ledger_index_agrees_with_the_scan_it_replaced() {
+        let ledger: Vec<FileTouch> = [
+            // A basename twin: both end in `/lib.rs`, and the FIRST must win.
+            "crates/a/src/lib.rs",
+            "crates/b/src/lib.rs",
+            // The exact path of a node's label, later than its basename twin.
+            "lib.rs",
+            // A near-miss the rules must keep rejecting.
+            "crates/a/src/my_lib.rs",
+            // The location arm's target, and a decoy sharing its prefix.
+            "crates/a/src/engine.rs",
+            "crates/a/src/engine.rs.bak",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, path)| FileTouch {
+            path: (*path).to_string(),
+            touch: SessionTouch {
+                // A distinct turn per row, so "which row won" is visible in
+                // the stamp rather than inferred.
+                turn: Some(i as u32),
+                kind: stella_protocol::FileChangeKind::Modified,
+            },
+        })
+        .collect();
+
+        let nodes = vec![
+            // Matches by basename — two rows qualify, the first wins.
+            GraphNode {
+                label: "lib.rs".into(),
+                kind: "file".into(),
+                location: None,
+                touch: None,
+            },
+            // Matches by location, with a `:line` suffix.
+            GraphNode {
+                label: "run_turn".into(),
+                kind: "function".into(),
+                location: Some("crates/a/src/engine.rs:412".into()),
+                touch: None,
+            },
+            // The near miss: a node called `lib.rs` must not light up
+            // `my_lib.rs`, and this node's own label matches nothing else.
+            GraphNode {
+                label: "my_lib.rs".into(),
+                kind: "file".into(),
+                location: None,
+                touch: None,
+            },
+            // Nothing matches at all.
+            GraphNode {
+                label: "absent.rs".into(),
+                kind: "file".into(),
+                location: Some("crates/z/src/absent.rs:1".into()),
+                touch: None,
+            },
+        ];
+
+        // The implementation this replaced, kept here as the oracle.
+        let scanned: Vec<Option<SessionTouch>> = nodes
+            .iter()
+            .map(|node| {
+                ledger
+                    .iter()
+                    .find(|row| node.lives_in(&row.path))
+                    .map(|row| row.touch)
+            })
+            .collect();
+
+        let mut snapshot = GraphSnapshot {
+            nodes: nodes.clone(),
+            ..GraphSnapshot::default()
+        };
+        snapshot.stamp_session_touches(&ledger);
+        let indexed: Vec<Option<SessionTouch>> =
+            snapshot.nodes.iter().map(|node| node.touch).collect();
+
+        assert_eq!(
+            indexed, scanned,
+            "the index and the scan must stamp the same row for every node"
+        );
+        // And the fixture is doing its job — a run where nothing matched would
+        // pass the comparison above while proving nothing.
+        assert!(
+            scanned.iter().filter(|t| t.is_some()).count() >= 2,
+            "the fixture must exercise real matches: {scanned:?}"
+        );
+    }
+
+    /// **The measurement #5221 asks for**, at the documented bounds.
+    ///
+    /// `#[ignore]` because it is a timing, not an assertion: a wall-clock
+    /// threshold in CI is a flake generator, and the number is only meaningful
+    /// on a machine nobody is also compiling on. Run it by hand:
+    ///
+    /// ```text
+    /// cargo test -p stella-tui --lib stamping_at_the_documented_bounds -- --ignored --nocapture
+    /// ```
+    ///
+    /// The bounds are the real ones, not hypothetical: nodes are capped at
+    /// `agent::graph_view`'s `QUERY_MAX_FRAMES` (256) and the ledger at
+    /// `model::file_state`'s `MAX_TRACKED_FILES` (2048), so this is the worst
+    /// frame the deck can be asked to draw — and it is the worst *kind* of
+    /// worst, because no node matches any row. A match short-circuits `find`;
+    /// a miss walks the whole ledger. Every one of the 524k `lives_in` calls
+    /// here is a full scan.
+    #[test]
+    #[ignore = "a timing, not an assertion — see the doc comment"]
+    fn stamping_at_the_documented_bounds_is_cheap_enough_to_do_every_frame() {
+        const NODES: usize = 256;
+        const LEDGER: usize = 2048;
+
+        let mut snapshot = GraphSnapshot {
+            nodes: (0..NODES)
+                .map(|i| GraphNode {
+                    label: format!("symbol_{i}"),
+                    kind: "function".into(),
+                    location: Some(format!("crates/some-crate/src/module_{i}.rs:{i}")),
+                    touch: None,
+                })
+                .collect(),
+            ..GraphSnapshot::default()
+        };
+        // Disjoint from every node's path, so nothing short-circuits.
+        let ledger: Vec<FileTouch> = (0..LEDGER)
+            .map(|i| FileTouch {
+                path: format!("crates/other-crate/src/unrelated_{i}.rs"),
+                touch: SessionTouch {
+                    turn: Some(1),
+                    kind: stella_protocol::FileChangeKind::Modified,
+                },
+            })
+            .collect();
+
+        // A few frames, so a single scheduling hiccup does not become the
+        // reported number.
+        const FRAMES: u32 = 20;
+        let start = std::time::Instant::now();
+        for _ in 0..FRAMES {
+            snapshot.stamp_session_touches(&ledger);
+        }
+        let per_frame = start.elapsed() / FRAMES;
+
+        println!(
+            "stamp_session_touches: {NODES} nodes x {LEDGER} ledger rows, \
+             {per_frame:?} per frame"
+        );
+        // No threshold asserted. The number goes on #5221; a reader who wants
+        // a budget should add one with a `MEASURED:` marker and its own
+        // argument for the ceiling.
+        //
+        // What dominates it now is BUILDING the index — two maps over 2048
+        // rows, once per frame — not the lookups. That is the trade ADR 0019
+        // asks for: a per-frame projection with no invalidation rule. If this
+        // ever needs to be faster, the next move is the generation counter the
+        // issue describes, and it needs its own argument for reintroducing
+        // invalidation.
+    }
+
     use super::*;
 
     fn snapshot_with_files(files: &[&str]) -> GraphSnapshot {
