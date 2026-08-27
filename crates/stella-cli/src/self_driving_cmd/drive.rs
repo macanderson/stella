@@ -870,9 +870,6 @@ pub(super) fn drive(
                             evidence.join(", ")
                         ),
                     );
-                    // Remember what was declined, so the machine returns to
-                    // ordinary work on the next step instead of re-deferring
-                    // every poll until the peer's fix lands.
                     state.deferred_fix_evidence = evidence;
                 }
             },
