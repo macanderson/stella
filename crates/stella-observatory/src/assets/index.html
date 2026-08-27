@@ -4447,6 +4447,9 @@ function cachePct(read, miss) {
 /* The payload the list was last drawn from, so typing in the filter redraws
    without a fetch and the 5s poll redraws without dropping what was typed. */
 let sesData = null;
+/* What the turn list was last drawn from — see the signature check in
+   `openSession` for why a repaint has to be earned. */
+let sesTurnsSig = { session: null, sig: "" };
 let sesFilter = "";
 /* Wall clock in the reader's own zone. The store stamps UTC, and the
    question a turn list answers is when this happened to the person reading
@@ -4684,10 +4687,26 @@ async function openSession(id, quiet) {
       avgRating ? ` · self-rated ${esc(avgRating)}/10 over ${fmtInt(rated.length)} turns` : ""}</div>
     ${d?.turns_truncated ? `<div class="feed-item"><b>Note</b> — showing the newest
       turns only; older turns were clipped from this view.</div>` : ""}`;
-  $("ses-turns").innerHTML = turns.length
-    ? `<div class="tl">${turns.map((t, i) => turnCardHtml(t, i, turns)).join("")}</div>`
-    : `<div class="empty">No turns stamped for this session yet${
-       reg ? " — it may not have completed a turn" : ""}.</div>`;
+  /* Only when something changed. This runs on every 5s poll, and rewriting
+     the list unconditionally took an expanded prompt or an open turn diff
+     with it — the reader taps to see the whole prompt and it collapses under
+     them a moment later. The signature covers every field a card draws, so a
+     turn that finishes, costs more, or arrives still repaints. */
+  const sig = JSON.stringify(turns.map(t => [
+    t.id, t.outcome, t.steps, t.tool_calls, t.tool_errors, t.files_touched,
+    t.lines_added, t.lines_removed, t.input_tokens, t.output_tokens,
+    t.cache_read_tokens, t.cache_miss_tokens, t.model_ms, t.retries,
+    t.cost_usd, t.finished_at, t.receipts, t.journal_turn,
+    t.reflection ? t.reflection.self_rating : null,
+    (t.skills ?? []).join(","), (t.mcp_servers ?? []).join(","),
+  ]));
+  if (sesTurnsSig.session !== id || sesTurnsSig.sig !== sig) {
+    sesTurnsSig = { session: id, sig };
+    $("ses-turns").innerHTML = turns.length
+      ? `<div class="tl">${turns.map((t, i) => turnCardHtml(t, i, turns)).join("")}</div>`
+      : `<div class="empty">No turns stamped for this session yet${
+         reg ? " — it may not have completed a turn" : ""}.</div>`;
+  }
   // What ← prev / next → on the transcript page step through, so arriving
   // from this list costs no extra request.
   txSiblings = { session: id, ids: turns.map(t => num(t.id)) };
