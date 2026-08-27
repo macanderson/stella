@@ -1177,6 +1177,13 @@ issue without finishing it — `Refs` deliberately does not close. One issue may
 be closed by exactly one PR; if a fix spans several, close on the last and
 `Refs` the rest.
 
+**One keyword per issue.** `Closes #A, #B` closes `#A` and leaves `#B` open:
+GitHub parses the keyword and the reference immediately after it, and reads the
+rest of the list as prose. Write `Closes #A, Closes #B`. This is the same
+failure the section opens with — an issue whose work shipped, staying open, with
+nothing to notice it but an audit — reached by a different wrong guess about
+what the parser reads, and #5210 is where it happened.
+
 ---
 
 ## Testing approach
