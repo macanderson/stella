@@ -671,7 +671,8 @@ impl Store {
 
     /// `db_path` is the on-disk file behind `conn` (`None` for in-memory), and
     /// exists only so an unreadable file can be named in the error — see
-    /// [`corrupt_store_error`]. [`Store::integrity_check`] needs no path: its
+    /// [`corrupt_store_error`], and [`Store::migrate_and_prepare_exports`] for
+    /// damage past page 1. [`Store::integrity_check`] needs no path: its
     /// verdicts carry SQLite's own wording, and the caller located the file.
     fn init(conn: Connection, root: Option<PathBuf>, db_path: Option<&Path>) -> Result<Self> {
         // execute_batch tolerates the row PRAGMA journal_mode returns (a
@@ -697,8 +698,7 @@ impl Store {
             conn: Mutex::new(conn),
             root,
         };
-        store.migrate()?;
-        enterprise_telemetry::initialize_store_export_schema(&mut store.lock())?;
+        store.migrate_and_prepare_exports(db_path)?;
         Ok(store)
     }
 

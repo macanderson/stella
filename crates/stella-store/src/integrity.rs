@@ -87,6 +87,52 @@ pub(crate) fn corrupt_store_error(error: rusqlite::Error, db_path: Option<&Path>
     }
 }
 
+/// Re-classify an error raised anywhere in the open sequence, so corruption
+/// found after page 1 carries the same remedy corruption found *on* page 1
+/// already does.
+///
+/// [`corrupt_store_error`] maps the pragma batch, which is the first statement
+/// to touch page 1 — so it catches a file whose header is gone or overwritten.
+/// It cannot catch the shape that occurs in the field: a header that reads back
+/// perfectly and damaged pages further in, which SQLite reports only once some
+/// statement walks them. On the maintainer's 1 GB store that statement was
+/// `migrate`'s `CREATE INDEX` over `events` (v38 → v39), several hundred
+/// thousand rows past the header, and the failure reached the user as the bare
+/// `database disk image is malformed` with no remedy attached — while
+/// `PRAGMA user_version` on the same file answered 38 without complaint (#4564).
+///
+/// Re-classifying at the boundary buys the diagnosis for nothing: the statement
+/// has already failed and SQLite has already put the code on the error, so this
+/// reads a field rather than scanning a file. That is why the fix here is not
+/// the `quick_check`-on-open that #4564 floated — a scan spends time on every
+/// healthy open to learn what the failing open is already being told.
+pub(crate) fn classify_store_corruption(error: StoreError, db_path: Option<&Path>) -> StoreError {
+    match error {
+        StoreError::Sqlite(sqlite) if is_sqlite_corruption(&sqlite) => {
+            corrupt_store_error(sqlite, db_path)
+        }
+        other => other,
+    }
+}
+
+impl Store {
+    /// The rest of opening, after the pragma batch has proved page 1 readable:
+    /// bring the schema up to date, then give the enterprise export its tables.
+    ///
+    /// Both steps run under [`classify_store_corruption`], because page 1 reading
+    /// cleanly says nothing about the rest of the file and these are the first
+    /// statements that walk it — `migrate`'s `CREATE INDEX` reads every row of
+    /// the table it indexes. It lives beside the classifier rather than inline in
+    /// `Store::init` so that `lib.rs`, which is closed to growth, does not carry
+    /// the explanation as well as the call (AGENTS.md § "God files").
+    pub(crate) fn migrate_and_prepare_exports(&self, db_path: Option<&Path>) -> Result<()> {
+        self.migrate()
+            .map_err(|error| classify_store_corruption(error, db_path))?;
+        crate::enterprise_telemetry::initialize_store_export_schema(&mut self.lock())
+            .map_err(|error| classify_store_corruption(error, db_path))
+    }
+}
+
 /// How many problem rows a report keeps. `PRAGMA integrity_check` stops at 100
 /// findings by default and a wall of them tells the user nothing the first few
 /// don't — but the count is never truncated, only the listing.
@@ -439,13 +485,23 @@ pub struct StoreQuarantine {
 ///    successful repair would turn into new corruption. Renames come first
 ///    because they are the part that has to work — after this step the
 ///    workspace is usable again even if everything below fails.
-/// 2. `VACUUM INTO` a new `store.db.salvaged-<epoch>` — a page-by-page copy of
-///    everything SQLite can still read out of the quarantined file. Localized
-///    damage (a torn index, an unreadable page in one table) often salvages
-///    nearly everything; a shredded header salvages nothing, and that is
+/// 2. `VACUUM INTO` a new `store.db.salvaged-<epoch>` — a copy of the quarantined
+///    file that succeeds only when SQLite can walk it end to end. Salvage is
 ///    recorded in [`StoreQuarantine::salvage_error`] rather than failing the
 ///    repair. The read is immutable, so the quarantined evidence is never
 ///    modified by the attempt to read it.
+///
+///    **`VACUUM INTO` is all-or-nothing, and on real damage the answer is
+///    usually nothing.** It reads through the b-tree, so one unreadable page on
+///    any path it takes aborts the whole copy — a shredded header and a handful
+///    of bad pages in the middle of a healthy 1 GB file fail it alike. Measured
+///    on the maintainer's store (#4564): six damaged pages across four trees,
+///    `VACUUM INTO` salvaged zero rows, while `.recover` — which rebuilds from
+///    surviving cell records instead of walking the tree — returned 376,129 of
+///    376,140 events and every row of `executions`, `telemetry` and
+///    `tool_calls`. That is why the caller prints the by-hand `.recover` line
+///    beside this result and does not present the salvage attempt as the
+///    recovery: replacing this step with `.recover` is #5282.
 ///
 /// Nothing is deleted and nothing is overwritten — every target name is made
 /// unique first — so the whole operation is undoable with `mv`, and the caller
@@ -654,6 +710,108 @@ mod tests {
         file.seek(SeekFrom::Start(0)).expect("seek");
         file.write_all(&[0x7f; 128]).expect("write garbage");
         file.sync_all().expect("sync");
+    }
+
+    /// A store whose `events` table spans enough pages that damage can be put
+    /// past the header without touching it, staged so that reopening rebuilds
+    /// the `events_by_task` index — the v38 → v39 step, and the full table scan
+    /// that walked the maintainer's damaged pages in #4564.
+    fn workspace_needing_an_index_rebuild(rows: usize) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Store::open(dir.path()).expect("store");
+        let id = store
+            .begin_execution("run", "fill enough pages to corrupt", "zai", "glm-5.2")
+            .expect("execution");
+        for seq in 0..rows {
+            store
+                .record_event(
+                    id,
+                    seq as u64,
+                    &AgentEvent::Text {
+                        // Wide enough that the rows cannot all share a page.
+                        text: format!("{seq:06} {}", "payload ".repeat(24)),
+                    },
+                )
+                .expect("event");
+        }
+        store
+            .finish_execution(id, "completed", 0.5)
+            .expect("finish");
+        {
+            // Drop the index and wind the stamp back, so the reopen genuinely
+            // re-runs the migration rather than skipping an index that is
+            // already there. Checkpointed so every row is in the main file and
+            // not in a `-wal` the corruption below would miss.
+            let conn = store.lock();
+            conn.execute_batch("DROP INDEX IF EXISTS events_by_task;")
+                .expect("drop the index the migration rebuilds");
+            conn.pragma_update(None, "user_version", 38i64)
+                .expect("wind the schema stamp back to v38");
+            conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+                .expect("checkpoint");
+        }
+        drop(store);
+        let db_path = dir.path().join(".stella/private/store.db");
+        assert!(db_path.is_file(), "fixture store exists");
+        (dir, db_path)
+    }
+
+    /// Overwrite a run of pages in the middle of the file, leaving page 1 — the
+    /// header — byte-for-byte intact. This is the field shape: the file still
+    /// identifies as SQLite and answers `PRAGMA user_version`, and only a
+    /// statement that walks the damaged pages ever notices.
+    fn shred_pages_past_the_header(db_path: &Path) {
+        use std::io::{Seek, SeekFrom, Write};
+        let len = std::fs::metadata(db_path).expect("stat").len();
+        assert!(
+            len > 256 * 1024,
+            "fixture must be large enough to damage past the header: {len} bytes"
+        );
+        let start = len / 3;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(db_path)
+            .expect("open db for corruption");
+        file.seek(SeekFrom::Start(start)).expect("seek");
+        file.write_all(&vec![0x7f; (len / 3) as usize])
+            .expect("write garbage");
+        file.sync_all().expect("sync");
+    }
+
+    /// The witness for #4564. Corruption that page 1 cannot reveal must still
+    /// reach the user as the error that names the repair.
+    ///
+    /// Before the fix this failed on the `Corrupt` arm: `Store::open` returned
+    /// `Sqlite(SqliteFailure(DatabaseCorrupt, 11))`, whose whole message is
+    /// "database disk image is malformed" — an accurate sentence that leaves
+    /// the user with no next move, and the exact message a real 1 GB store
+    /// produced while its header read back perfectly.
+    #[test]
+    fn corruption_below_the_header_still_names_the_repair() {
+        let (dir, db_path) = workspace_needing_an_index_rebuild(4_000);
+        shred_pages_past_the_header(&db_path);
+
+        // The premise: the header survived, so nothing about page 1 is what
+        // makes this file fail. If this ever stops holding, the test has
+        // stopped covering the case it was written for.
+        let header = Connection::open(&db_path).expect("a damaged file still opens");
+        let stamped: i64 = header
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("the header still answers its version");
+        assert_eq!(stamped, 38, "page 1 is intact and still readable");
+        drop(header);
+
+        match Store::open(dir.path()) {
+            Ok(_) => panic!("a store with shredded pages must not open"),
+            Err(error @ StoreError::Corrupt { .. }) => assert!(
+                error.to_string().contains("stella doctor"),
+                "corruption found after page 1 carries the remedy too: {error}"
+            ),
+            Err(other) => panic!(
+                "corruption below the header must classify as Corrupt, not as a \
+                 bare SQLite failure: {other:?}"
+            ),
+        }
     }
 
     #[test]
