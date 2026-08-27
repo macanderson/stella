@@ -25,10 +25,17 @@
 //! # A slot exists because a grant did
 //!
 //! Nothing here constructs a slot from a manifest. The host composes the
-//! roster, drops every package whose install grant is not in force, and hands
-//! what is left to [`PanelDeck::seat`] — so "no frame before the grant" is a
-//! property of the route table rather than of the renderer, and the renderer
-//! cannot be the place it is undone.
+//! roster, drops every package whose install grant is not in force and every
+//! panel the operator has not allowed, and hands what is left to
+//! [`PanelDeck::reseat`] — so "no frame before the grant" is a property of the
+//! route table rather than of the renderer, and the renderer cannot be the
+//! place it is undone.
+//!
+//! It hands them over **again** whenever the roster could have changed, which
+//! is what makes a retraction take effect inside a live session: a seat is the
+//! grant's shadow, so the list is replaced whole and the seating it belongs to
+//! is counted, and a frame request raised against an older one names a seating
+//! that no longer exists (#5253).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -208,25 +215,44 @@ pub struct PanelDeck {
     slots: Vec<PanelSlot>,
     /// Which command panel's popup is open, as an index into `slots`.
     open_popup: Option<usize>,
+    /// Which composition of the roster these seats came from, echoed onto
+    /// every request raised against them (#5253).
+    generation: u64,
 }
 
 impl PanelDeck {
-    /// Seat one admitted panel. The host calls this once per route.
-    pub fn seat(&mut self, slot: PanelSlot) {
-        self.slots.push(slot);
-    }
-
-    /// Replace every seat with the ones the driver admitted.
+    /// Replace every seat with the ones the driver admitted, as of
+    /// `generation`.
+    ///
+    /// **The only way seats are made**, which is what the seating generation
+    /// needs to be true. A `seat(one)` that pushed a single slot lived here
+    /// with no caller; it is gone rather than left, because it would add a slot
+    /// the deck then stamps with a generation that slot was never part of, and
+    /// a request raised against it would name a seating the driver's route list
+    /// does not agree with. Deletion rather than a comment, on CLAUDE.md's
+    /// reasoning about an unused item that asserts something the code does not.
     ///
     /// Wholesale rather than per-seat, because the seat list is the grant's
     /// shadow: a plugin retracted between two of these must lose its rectangle,
     /// and merging would leave it drawing from a slot nobody renewed.
-    pub fn reseat(&mut self, seats: &[crate::envelope::PanelSeat]) {
+    ///
+    /// The open popup closes with them. It is an index into a list that has
+    /// just been replaced, so keeping it would leave whichever plugin now
+    /// holds that index open on the screen without anybody having typed its
+    /// name.
+    pub fn reseat(&mut self, generation: u64, seats: &[crate::envelope::PanelSeat]) {
         self.open_popup = None;
+        self.generation = generation;
         self.slots = seats
             .iter()
             .map(|seat| PanelSlot::new(&seat.plugin, seat.surface, seat.command.clone()))
             .collect();
+    }
+
+    /// Which composition these seats came from.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Every seated panel, in seating order.
@@ -280,6 +306,7 @@ impl PanelDeck {
             panel.awaiting = true;
             panel.asked_at = Some(now);
             out.push(crate::envelope::WorkspaceInput::PanelFrameWanted {
+                generation: self.generation,
                 slot,
                 tick: panel.tick,
                 cols,
@@ -350,7 +377,7 @@ const REFRESH: std::time::Duration = std::time::Duration::from_millis(1000);
 pub fn ingest(deck: &mut PanelDeck, inbound: &crate::envelope::Inbound) -> bool {
     use crate::envelope::Inbound;
     match inbound {
-        Inbound::PanelsSeated(seats) => deck.reseat(seats),
+        Inbound::PanelsSeated { generation, seats } => deck.reseat(*generation, seats),
         Inbound::PanelFrame { slot, frame } => {
             if let Some(slot) = deck.slot_mut(*slot) {
                 // Refused frames are dropped rather than reported: a frame for
@@ -557,17 +584,24 @@ mod tests {
     #[test]
     fn a_frame_in_flight_across_a_reseat_lands_nowhere() {
         let mut deck = PanelDeck::default();
-        deck.reseat(&[
-            seat("alpha", PanelSurface::Settings),
-            seat("beta", PanelSurface::Overlay),
-        ]);
+        deck.reseat(
+            1,
+            &[
+                seat("alpha", PanelSurface::Settings),
+                seat("beta", PanelSurface::Overlay),
+            ],
+        );
         let (slot, tick) = drawn_then_asked(&mut deck)
             .into_iter()
             .find(|(slot, _)| *slot == 0)
             .expect("alpha asked for a frame");
 
         // alpha is uninstalled while its frame is in flight, so slot 0 is beta.
-        deck.reseat(&[seat("beta", PanelSurface::Overlay)]);
+        // A second seating, numbered as the driver numbers it — which the frame
+        // does not carry and `settle` never reads. That is the point: this rule
+        // holds on the frame's own surface and tick alone, so it is still the
+        // last line of defence for a host that got the seating wrong.
+        deck.reseat(2, &[seat("beta", PanelSurface::Overlay)]);
         assert_eq!(deck.slots()[0].plugin(), "beta", "slot 0 changed hands");
 
         let landed = deck.slot_mut(slot).expect("a seat").settle(frame(
@@ -595,7 +629,7 @@ mod tests {
     #[test]
     fn a_frame_answering_its_own_lease_is_drawn() {
         let mut deck = PanelDeck::default();
-        deck.reseat(&[seat("alpha", PanelSurface::Settings)]);
+        deck.reseat(1, &[seat("alpha", PanelSurface::Settings)]);
         let (slot, tick) = drawn_then_asked(&mut deck)[0];
 
         assert!(
@@ -616,7 +650,7 @@ mod tests {
     #[test]
     fn a_frame_answering_another_surface_is_refused() {
         let mut deck = PanelDeck::default();
-        deck.reseat(&[seat("alpha", PanelSurface::Settings)]);
+        deck.reseat(1, &[seat("alpha", PanelSurface::Settings)]);
         let (slot, tick) = drawn_then_asked(&mut deck)[0];
 
         assert!(
@@ -634,7 +668,7 @@ mod tests {
     #[test]
     fn a_frame_carrying_a_stale_tick_is_refused() {
         let mut deck = PanelDeck::default();
-        deck.reseat(&[seat("alpha", PanelSurface::Settings)]);
+        deck.reseat(1, &[seat("alpha", PanelSurface::Settings)]);
         let (slot, tick) = drawn_then_asked(&mut deck)[0];
 
         assert!(
@@ -652,7 +686,7 @@ mod tests {
     #[test]
     fn a_seat_that_asked_for_nothing_accepts_nothing() {
         let mut deck = PanelDeck::default();
-        deck.reseat(&[seat("alpha", PanelSurface::Settings)]);
+        deck.reseat(1, &[seat("alpha", PanelSurface::Settings)]);
         assert!(
             !deck
                 .slot_mut(0)
@@ -669,7 +703,10 @@ mod tests {
         let mut deck = PanelDeck::default();
         assert!(ingest(
             &mut deck,
-            &Inbound::PanelsSeated(vec![seat("alpha", PanelSurface::Settings)])
+            &Inbound::PanelsSeated {
+                generation: 1,
+                seats: vec![seat("alpha", PanelSurface::Settings)],
+            }
         ));
         assert!(ingest(&mut deck, &Inbound::PanelSilent { slot: 0 }));
         assert!(ingest(

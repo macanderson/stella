@@ -82,8 +82,29 @@ fn seat_hello(ui: &mut DeckUi, manifest: &PluginManifest) {
             command: Some("hello".to_string()),
         },
     ];
+    reseat(ui, 1, seats);
+}
+
+/// Replace the deck's seats, the way the driver does at session open and
+/// again at every `/reload`.
+fn reseat(ui: &mut DeckUi, generation: u64, seats: Vec<PanelSeat>) {
     let mut model = WorkspaceModel::new();
-    stella_tui::deck_ui::ingest_inbound(&Inbound::PanelsSeated(seats), &mut model, ui);
+    stella_tui::deck_ui::ingest_inbound(
+        &Inbound::PanelsSeated { generation, seats },
+        &mut model,
+        ui,
+    );
+}
+
+/// One overlay seat for `plugin`, which is all the reseat witnesses need: the
+/// SESSION tab draws every overlay panel, so a seat there is on screen without
+/// a tab switch or a popup.
+fn overlay_seat(plugin: &str) -> PanelSeat {
+    PanelSeat {
+        plugin: plugin.to_string(),
+        surface: PanelSurface::Overlay,
+        command: None,
+    }
 }
 
 /// Run one full loop turn for `slot`: draw once so the deck measures the lease,
@@ -104,6 +125,7 @@ async fn pump(ui: &mut DeckUi, slot: usize, process: &Runtime, mut draw: impl Fn
                 tick,
                 cols,
                 rows,
+                ..
             } if asked == slot => Some((tick, cols, rows)),
             _ => None,
         })
@@ -361,6 +383,114 @@ fn slots_asked(ui: &mut DeckUi, now: std::time::Instant) -> Vec<usize> {
         .collect();
     asked.sort_unstable();
     asked
+}
+
+/// Every request the deck raised at `now`, as `(generation, slot)`.
+fn requests_at(ui: &mut DeckUi, now: std::time::Instant) -> Vec<(u64, usize)> {
+    ui.panels
+        .requests_at(now)
+        .into_iter()
+        .filter_map(|input| match input {
+            WorkspaceInput::PanelFrameWanted {
+                generation, slot, ..
+            } => Some((generation, slot)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **The retraction witness (#5253).** A plugin dropped by a reseat is asked
+/// for no further frames — asserted on `requests_at`, not on the rendering,
+/// because a rectangle that has stopped being painted and one that is still
+/// starting somebody's process every second look identical on screen.
+#[test]
+fn a_plugin_dropped_by_a_reseat_is_asked_for_no_further_frames() {
+    let mut ui = ready_ui();
+    let model = lead_workspace();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a test terminal");
+    let mut draw = |ui: &mut DeckUi| {
+        terminal
+            .draw(|f| stella_tui::deck_render::render_deck(&model, ui, f))
+            .expect("the deck draws");
+    };
+
+    reseat(
+        &mut ui,
+        1,
+        vec![overlay_seat("alpha"), overlay_seat("beta")],
+    );
+    draw(&mut ui);
+    let opened = std::time::Instant::now();
+    assert_eq!(
+        slots_asked(&mut ui, opened),
+        vec![0, 1],
+        "both overlays are on screen"
+    );
+
+    // `alpha` is retracted — `plugins.alpha = "off"`, or removed outright —
+    // and the driver reseats with what is left.
+    reseat(&mut ui, 2, vec![overlay_seat("beta")]);
+    let plugins: Vec<&str> = ui.panels.slots().iter().map(|slot| slot.plugin()).collect();
+    assert_eq!(plugins, vec!["beta"], "alpha lost its seat");
+
+    // A clear refresh interval later, so the interval is not what answers.
+    draw(&mut ui);
+    let later = opened + std::time::Duration::from_secs(5);
+    let asked = requests_at(&mut ui, later);
+    assert_eq!(
+        asked,
+        vec![(2, 0)],
+        "one seat, and it names the seating it belongs to"
+    );
+    assert_eq!(
+        ui.panels.slots()[0].plugin(),
+        "beta",
+        "and the seat that was asked is beta's"
+    );
+}
+
+/// **The in-flight witness (#5253).** A request minted before a reseat carries
+/// the seating it was minted under, so the driver can tell it from one raised
+/// against the seats that exist now.
+///
+/// `PanelSlot::settle` already keeps a stale *frame* off the screen
+/// (`a_frame_in_flight_across_a_reseat_lands_nowhere`), and that is not this:
+/// by the time a frame exists, the plugin that now holds the slot index has
+/// already been started. The generation is what the driver refuses on, before
+/// anything runs.
+#[test]
+fn a_request_minted_before_a_reseat_names_the_seating_it_was_minted_under() {
+    let mut ui = ready_ui();
+    let model = lead_workspace();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a test terminal");
+    let mut draw = |ui: &mut DeckUi| {
+        terminal
+            .draw(|f| stella_tui::deck_render::render_deck(&model, ui, f))
+            .expect("the deck draws");
+    };
+
+    reseat(&mut ui, 7, vec![overlay_seat("alpha")]);
+    draw(&mut ui);
+    let opened = std::time::Instant::now();
+    let in_flight = requests_at(&mut ui, opened);
+    assert_eq!(in_flight, vec![(7, 0)]);
+
+    // Slot 0 changes hands while that request is still travelling.
+    reseat(&mut ui, 8, vec![overlay_seat("beta")]);
+    draw(&mut ui);
+    let after = requests_at(&mut ui, opened + std::time::Duration::from_secs(5));
+    assert_eq!(
+        after,
+        vec![(8, 0)],
+        "the new seating raises its own request"
+    );
+
+    assert_ne!(
+        in_flight[0].0, after[0].0,
+        "and the two name the same slot under different seatings, which is the \
+         whole of what the driver has to tell apart"
+    );
+    assert_eq!(ui.panels.generation(), 8);
 }
 
 /// The namespaced alias is derived and always available, whatever the manifest

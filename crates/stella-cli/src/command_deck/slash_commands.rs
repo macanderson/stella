@@ -32,6 +32,19 @@ pub(super) enum DeckCommand {
     /// derived state (memory domains, Graph tab, custom extensions) which the
     /// new taxonomy/index changed.
     InitCompleted,
+    /// `/reload` re-read the settings chain; skip the turn AND reseat the
+    /// panel deck from a freshly composed roster (#5253).
+    ///
+    /// Carried back to the driver loop rather than done in `reload_command`
+    /// for `SessionModel`'s reason: reseating moves state only the loop owns
+    /// — the route list `spawn_tick` indexes and the seating generation that
+    /// tells a request minted before the reseat from one minted after it —
+    /// and neither is reachable from here.
+    ///
+    /// Its own answer rather than folded into `Handled`, because the two mean
+    /// different things to the loop: `Handled` is "this command is finished",
+    /// and this is "it is finished and it changed something you hold".
+    Reloaded,
     /// `/model <provider/slug>` typed in full: skip the turn and apply the
     /// session-only model switch. Carried back to the driver loop rather
     /// than applied in `run_deck_command`, because the switch moves state
@@ -218,7 +231,10 @@ pub(super) async fn run_deck_command(
                 Err(e) => say(format!("init failed: {e}")),
             }
         }
-        "/reload" => say(settings_io::reload_command(cfg, in_tx)),
+        "/reload" => {
+            say(settings_io::reload_command(cfg, in_tx));
+            return DeckCommand::Reloaded;
+        }
         // Deck-local commands (tab switches, `/agents` opening the Agents
         // tab, the transcript-page overlays) are normally consumed in
         // interactive mode, but a queued one reaches here — accept it as handled (a no-op)
