@@ -19,7 +19,7 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use stella_plugin::{PanelLease, PanelRect, PluginManifest, Runtime};
+use stella_plugin::{PanelLease, PanelRect, PanelSurface, PluginManifest, Runtime};
 
 /// The manifest and the process the demo drives, resolved from the repository
 /// rather than written inline — a demo that invented its own manifest would
@@ -79,6 +79,7 @@ async fn the_hello_plugin_draws_its_panel_in_the_deck() {
     // Ask the plugin for one frame against exactly that rectangle.
     let lease = PanelLease::new(
         &manifest.name,
+        PanelSurface::Command,
         7,
         PanelRect {
             cols: lease_rect.width,
@@ -93,7 +94,9 @@ async fn the_hello_plugin_draws_its_panel_in_the_deck() {
 
     // It answered the lease it was given, and its frame fits.
     assert_eq!(frame.tick, lease.tick, "the frame echoes the host's tick");
-    frame.fits(lease.rect).expect("the frame fits its lease");
+    // `admits` rather than `fits`: geometry alone would draw a frame answering
+    // a different surface or a tick the host has moved past.
+    lease.admits(&frame).expect("the frame answers this lease");
 
     // Blit it through the real host renderer.
     terminal

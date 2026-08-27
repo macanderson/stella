@@ -41,7 +41,12 @@ def span(text, fg=None, bold=False):
 
 
 def frame(lease):
-    """The rows this plugin draws, given the rectangle it was leased."""
+    """The rows this plugin draws, given the rectangle it was leased.
+
+    The same drawing for every surface, which is the point of one frame
+    protocol: a settings pane, a transcript block and a popup differ in where
+    the host puts them, not in how a plugin fills them.
+    """
     cols = lease["rect"]["cols"]
     rows = lease["rect"]["rows"]
 
@@ -83,6 +88,10 @@ def main():
         "point": "frame",
         "body": {
             "protocol_version": PROTOCOL_VERSION,
+            # Echo the surface and the tick the host asked about. A plugin may
+            # hold several panels, so a frame that named neither could not say
+            # which lease it was answering.
+            "surface": lease["surface"],
             "tick": lease["tick"],
             "paint": {"lines": frame(lease)},
         },

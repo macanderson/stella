@@ -285,10 +285,16 @@ pub fn point() -> PanelPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_plugin::{PanelPaint, PanelRect};
+    use stella_plugin::{PanelPaint, PanelRect, PanelSurface};
 
     fn lease(cols: u16, rows: u16) -> PanelLease {
-        PanelLease::new("hello", 1, PanelRect { cols, rows }, 33)
+        PanelLease::new(
+            "hello",
+            PanelSurface::Command,
+            1,
+            PanelRect { cols, rows },
+            33,
+        )
     }
 
     fn shell(script: &str) -> Runtime {
@@ -303,7 +309,7 @@ mod tests {
     /// request, the child answers a frame, and the frame arrives decoded.
     #[tokio::test]
     async fn a_panel_process_answers_one_frame() {
-        let script = r#"cat > /dev/null; printf '%s\n' '{"point":"frame","body":{"protocol_version":1,"tick":1,"paint":{"lines":[{"spans":[{"text":"hello"}]}]}}}'"#;
+        let script = r#"cat > /dev/null; printf '%s\n' '{"point":"frame","body":{"protocol_version":1,"surface":"command","tick":1,"paint":{"lines":[{"spans":[{"text":"hello"}]}]}}}'"#;
         let tick = ask(&shell(script), lease(20, 3)).await.expect("a frame");
         let frame = tick.frame.expect("the child drew one");
         assert_eq!(frame.tick, 1);
@@ -319,7 +325,7 @@ mod tests {
     /// host that sent nothing would fail this rather than pass on a fixture.
     #[tokio::test]
     async fn the_child_is_told_the_rectangle_it_was_leased() {
-        let script = r#"REQ=$(cat); printf '{"point":"frame","body":{"protocol_version":1,"tick":1,"paint":{"lines":[{"spans":[{"text":"%s"}]}]}}}\n' "$(printf '%s' "$REQ" | tr -cd '0-9' | head -c 4)""#;
+        let script = r#"REQ=$(cat); printf '{"point":"frame","body":{"protocol_version":1,"surface":"command","tick":1,"paint":{"lines":[{"spans":[{"text":"%s"}]}]}}}\n' "$(printf '%s' "$REQ" | tr -cd '0-9' | head -c 4)""#;
         let tick = ask(&shell(script), lease(20, 3)).await.expect("a frame");
         let frame = tick.frame.expect("the child drew one");
         let PanelPaint::Lines(lines) = frame.paint else {
@@ -360,7 +366,7 @@ mod tests {
             ("timeout", "sleep 30 & echo $! > PIDFILE; sleep 30", false),
             (
                 "success",
-                "sleep 30 & echo $! > PIDFILE; cat > /dev/null;                  printf '{\"point\":\"frame\",\"body\":{\"protocol_version\":1,\"tick\":1,\
+                "sleep 30 & echo $! > PIDFILE; cat > /dev/null;                  printf '{\"point\":\"frame\",\"body\":{\"protocol_version\":1,\"surface\":\"command\",\"tick\":1,\
                  \"paint\":{\"lines\":[]}}}\n'",
                 true,
             ),
@@ -380,11 +386,11 @@ mod tests {
             // The grandchild's pid, as the script recorded it.
             let mut pid = None;
             for _ in 0..50 {
-                if let Ok(text) = std::fs::read_to_string(&pidfile) {
-                    if let Ok(parsed) = text.trim().parse::<i32>() {
-                        pid = Some(parsed);
-                        break;
-                    }
+                if let Ok(text) = std::fs::read_to_string(&pidfile)
+                    && let Ok(parsed) = text.trim().parse::<i32>()
+                {
+                    pid = Some(parsed);
+                    break;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
@@ -430,7 +436,7 @@ mod tests {
             std::env::set_var("STELLA_PANEL_SECRET", "no");
         }
         let mut process = shell(
-            r#"cat > /dev/null; printf '{"point":"frame","body":{"protocol_version":1,"tick":1,"paint":{"lines":[{"spans":[{"text":"%s/%s"}]}]}}}\n' "${STELLA_PANEL_ALLOWED:-absent}" "${STELLA_PANEL_SECRET:-absent}""#,
+            r#"cat > /dev/null; printf '{"point":"frame","body":{"protocol_version":1,"surface":"command","tick":1,"paint":{"lines":[{"spans":[{"text":"%s/%s"}]}]}}}\n' "${STELLA_PANEL_ALLOWED:-absent}" "${STELLA_PANEL_SECRET:-absent}""#,
         );
         process.env = vec!["STELLA_PANEL_ALLOWED".into()];
         let tick = ask(&process, lease(30, 2)).await.expect("a frame");

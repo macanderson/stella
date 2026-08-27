@@ -264,18 +264,21 @@ pub fn throttle_tag(area: Rect, elapsed_ms: u64, budget_ms: u32, buf: &mut Buffe
         return;
     }
     let y = area.y + area.height - 1;
-    let mut x = area.x + 1;
     let style = Style::new().fg(token::RED);
-    for ch in tag.chars() {
-        write_cell(buf, x, y, ch, style);
-        x += 1;
+    // The tag is the host's own ASCII, so one column per character holds here
+    // where it does not for a plugin's glyphs (see `write_run`).
+    for (offset, ch) in tag.chars().enumerate() {
+        let Ok(offset) = u16::try_from(offset) else {
+            return;
+        };
+        write_cell(buf, area.x + 1 + offset, y, ch, style);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_plugin::{PanelSpan, PanelText};
+    use stella_plugin::{PanelSpan, PanelSurface, PanelText};
 
     fn text_of(buf: &Buffer) -> String {
         let area = *buf.area();
@@ -295,6 +298,7 @@ mod tests {
 
     fn lines(rows: Vec<Vec<PanelSpan>>) -> PanelFrame {
         PanelFrame::new(
+            PanelSurface::Overlay,
             1,
             PanelPaint::Lines(rows.into_iter().map(PanelLine::new).collect()),
         )
@@ -357,6 +361,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let lease = Rect::new(1, 1, 4, 1);
         let frame = PanelFrame::new(
+            PanelSurface::Overlay,
             1,
             PanelPaint::Diff(vec![
                 PanelPatch::new(0, 0, PanelText::new("abcdef").unwrap(), PanelStyle::plain()),
