@@ -785,6 +785,13 @@ impl SessionModel {
                     deterministic: evidence.deterministic,
                 });
             }
+            // A snapshot row: the board arrives whole and is carried whole
+            // (`TranscriptEntry::GateBoard`), so there is nothing to fold.
+            AgentEvent::GateBoard { board } => {
+                self.transcript.push(TranscriptEntry::GateBoard {
+                    board: board.clone(),
+                });
+            }
             AgentEvent::ScopeReview { proposal } => {
                 self.transcript.push(TranscriptEntry::ScopeReview {
                     summary: proposal.summary.clone(),

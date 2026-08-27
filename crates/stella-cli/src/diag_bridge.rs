@@ -638,6 +638,38 @@ impl DomainBridge {
                     self.at_seq().with("passed", *passed),
                 );
             }
+            // The verdict's per-gate tally. Counts only: a gate's name is the
+            // plugin author's string and its log is process output, and §7
+            // forbids either as a field value — which is the whole reason this
+            // records three numbers and not the board. `undecided` is its own
+            // count rather than `total - green - failed`, so a reader of the
+            // record does not have to reconstruct an abstention by subtraction.
+            AgentEvent::GateBoard { board } => {
+                self.emit(
+                    Level::Info,
+                    "agent.verifier.gate_board",
+                    self.at_seq()
+                        .with("gates", board.total() as u64)
+                        .with("green", board.green() as u64)
+                        .with(
+                            "failed",
+                            board.gates.iter().filter(|gate| gate.failed()).count() as u64,
+                        )
+                        .with(
+                            "undecided",
+                            board
+                                .gates
+                                .iter()
+                                .filter(|gate| {
+                                    matches!(
+                                        gate.state,
+                                        stella_protocol::GateState::Undecided { .. }
+                                    )
+                                })
+                                .count() as u64,
+                        ),
+                );
+            }
             // Whether the run's work reached the tree, and why not when it did
             // not (#2942). `Info`, with the verdict: these are the two records
             // a reader joins to tell "we judged it red" from "we threw it away".

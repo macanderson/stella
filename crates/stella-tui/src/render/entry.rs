@@ -265,6 +265,15 @@ fn projected_rows(
             ));
             true
         }
+        // SPEC 8.1's board, drawn from the v2 palette from the start — it has
+        // no v1 predecessor to keep working, so there is no legacy arm to
+        // intercept and nothing to lose by routing it here. `expanded` is the
+        // deck's per-entry flag, which `l` toggles: it opens every failure
+        // block on this board to its whole log.
+        TranscriptEntry::GateBoard { board } => {
+            out.extend(crate::views::gate_board::board_rows(board, expanded, width));
+            true
+        }
         TranscriptEntry::Complete {
             cost_usd,
             turn,
@@ -539,6 +548,13 @@ fn entry_body(
         // path, so a gap here is the det/model split going quiet at the moment
         // it happens. One implementation, no second one to rot (#4157).
         TranscriptEntry::Model { .. } => {
+            projected_rows(entry, view, expanded, width, out);
+        }
+        // The router's, and never anything else's: SPEC 8.1's board is drawn
+        // once, in `views::gate_board`. The arm exists because this match is
+        // exhaustive by design, and it delegates rather than drawing a second
+        // board here for the reason the two above delegate.
+        TranscriptEntry::GateBoard { .. } => {
             projected_rows(entry, view, expanded, width, out);
         }
         TranscriptEntry::BudgetTick {

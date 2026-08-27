@@ -1249,6 +1249,20 @@ pub enum WorkspaceInput {
     /// with [`Inbound::Notice`] naming what was restored or why it could not
     /// be — an untracked file has no git reading to restore from.
     UndoDelete { paths: Vec<String> },
+    /// `r` on a highlighted gate board: ask for one gate to be evaluated
+    /// again — SPEC 8.1's `r rerun gate`.
+    ///
+    /// A *request*, and the driver's answer is an [`Inbound::Notice`] either
+    /// way. Verification belongs to the plugin that reported the evidence and
+    /// stella never re-runs a gate itself (AGENTS.md's opening), so a door with
+    /// no verification plugin bound has no gate to re-request and says so
+    /// rather than pretending. That is the whole of the contract here: the key
+    /// reaches a driver, the driver answers in words, and no surface renders a
+    /// re-run that did not happen.
+    RerunGate {
+        /// The gate's name, as its row states it.
+        gate: String,
+    },
     /// Plan card (`/plan`), post-approval `e`: ask the driver to open a
     /// scope-change proposal for `agent`'s locked scope. The deck never edits
     /// scope locally — a granted change arrives back as a fresh

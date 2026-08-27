@@ -1206,6 +1206,22 @@ pub(crate) async fn run_wrapped(
     }
     match report {
         Ok(report) => {
+            // SPEC 8.1's board, onto the run's own event stream so the deck,
+            // the recorded journal and the offline transcript export all carry
+            // which gate went red rather than only the verdict's prose. Sent
+            // through the registry's sender because this door assembles no
+            // channel of its own; a run with persistence off has none, and the
+            // board is simply not recorded — the same degradation every other
+            // event on this path takes.
+            //
+            // After the stream closed above, because that stream belongs to a
+            // *different* execution — the plugin's own child turns — and this
+            // board belongs to the run.
+            if let Some(events) = registry.events() {
+                let _ = events.send(stella_protocol::AgentEvent::GateBoard {
+                    board: report.board.clone(),
+                });
+            }
             report_to(
                 // One wrapper, one lane, one process — nothing to attribute.
                 None,

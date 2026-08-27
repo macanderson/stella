@@ -1672,7 +1672,7 @@ mod steer;
 pub use gates::HunkMarks;
 mod nav;
 mod queue_editor;
-mod undo;
+mod row_keys;
 pub use dispatch::{DispatchRoute, MidTurnPrompt, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
@@ -1844,30 +1844,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // global meaning would be a keypress that visibly does nothing.
     if is_ctrl_o && !matches!(ui.tab, DeckTab::Skills | DeckTab::Mcp) {
         if let Some(sel) = ui.session_selected {
-            // Only a genuinely expandable entry toggles — a no-op press must
-            // not bump `expanded_rev` and invalidate the settled fold cache.
-            if let Some(agent) = model.agents.get(ui.focused)
-                && agent.model.transcript.get(sel).is_some_and(is_expandable)
-            {
-                let id = agent.meta.id.clone();
-                if ui.transcript_expand_all {
-                    // Collapsing ONE row out of the everything-open overlay:
-                    // materialize the overlay into the per-entry set first,
-                    // so the toggle below closes just the highlighted row and
-                    // the rest stay open.
-                    let all: std::collections::HashSet<usize> = agent
-                        .model
-                        .transcript
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, e)| is_expandable(e))
-                        .map(|(i, _)| i)
-                        .collect();
-                    ui.expanded.insert(id.clone(), all);
-                    ui.transcript_expand_all = false;
-                }
-                toggle_expanded(ui, &id, sel);
-            }
+            row_keys::toggle_entry_expansion(model, ui, sel);
         } else {
             ui.transcript_expand_all = !ui.transcript_expand_all;
         }
@@ -3438,12 +3415,18 @@ fn toggle_expanded(ui: &mut DeckUi, agent: &str, idx: usize) {
 
 /// Whether `ctrl+o` can meaningfully expand this entry — exactly the variants
 /// whose [`crate::render::entry_lines`] rendering honors the expanded flag: a
-/// tool call, a tool result, a collapsed thought, or a context recall.
+/// tool call, a tool result, a collapsed thought, a context recall, or a gate
+/// board whose failure block has a log to open (SPEC 8.1's `l full log`, which
+/// is this same flag reached by a second key).
 fn is_expandable(entry: &crate::model::TranscriptEntry) -> bool {
     use crate::model::TranscriptEntry as E;
     matches!(
         entry,
-        E::ToolStart { .. } | E::ToolResult { .. } | E::Reasoning(_) | E::ContextRecall { .. }
+        E::ToolStart { .. }
+            | E::ToolResult { .. }
+            | E::Reasoning(_)
+            | E::ContextRecall { .. }
+            | E::GateBoard { .. }
     )
 }
 
@@ -3512,22 +3495,11 @@ fn handle_session_key(
             ui.session_selected = None;
             Some(DeckAction::Handled)
         }
-        // `u` with a delete event highlighted is that row's own affordance
-        // (`· git-backed · u undo`). Guarded on a blank composer like every
-        // bare-letter hotkey, so a prompt containing a `u` never loses its
-        // keystroke — and on the highlight actually being a delete, so any
-        // other `u` still falls through to typing.
-        KeyCode::Char('u')
-            if !key.modifiers.intersects(
-                KeyModifiers::CONTROL
-                    | KeyModifiers::SUPER
-                    | KeyModifiers::META
-                    | KeyModifiers::ALT,
-            ) && ui.composer.is_blank() =>
-        {
-            undo::selected_delete_paths(model, ui)
-                .map(|paths| DeckAction::Send(WorkspaceInput::UndoDelete { paths }))
-        }
+        // A bare letter the highlighted row lends the keyboard: `u` on a delete
+        // (`· git-backed · u undo`), `l` / `r` on a failed gate board (SPEC
+        // 8.1). `row_keys` owns both halves of the decision — see it for why
+        // this is one arm rather than three.
+        KeyCode::Char(c) if row_keys::is_bare_row_key(c, key, ui) => row_keys::act(c, model, ui),
         // The expand-ALL overlay's Esc way out (precedence rule 8): claimed
         // here, ahead of the turn-stop Esc, so closing the overlay can never
         // cancel a running turn.

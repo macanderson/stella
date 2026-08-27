@@ -25,6 +25,12 @@ use crate::model::TranscriptEntry;
 /// **not** included — a retry that eventually succeeded is noise on this path,
 /// and one that didn't is followed by an entry that is a failure in its own
 /// right.
+///
+/// A gate board counts when one of its gates determinately failed, which is
+/// what `^N jump` under a failure block jumps to (SPEC 8.1). A board whose
+/// gates all held does not, and neither does one whose gates went *undecided*:
+/// an abstention is explicitly not a failure, and landing a failure walk on one
+/// would blame a worker for an instrument that did not report.
 #[must_use]
 pub fn is_failure(entry: &TranscriptEntry) -> bool {
     use TranscriptEntry as E;
@@ -34,7 +40,7 @@ pub fn is_failure(entry: &TranscriptEntry) -> bool {
             | E::Error { .. }
             | E::Verdict { passed: false, .. }
             | E::GoalVerdict { met: false, .. }
-    )
+    ) || matches!(entry, E::GateBoard { board } if board.has_failure())
 }
 
 /// The next failure at or after `from` when `forward`, or at or before it when
@@ -118,6 +124,23 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
         E::ContextWrite { provider, .. } => vec![provider],
         E::MediaComplete { label, path, .. } => vec![label, path],
         E::Verdict { summary, .. } | E::ScopeReview { summary, .. } => vec![summary],
+        // Every gate's name, plus the failing case and its log — "which gate
+        // went red, and did it ever say `ECONNREFUSED`?" is precisely the
+        // question a reader brings to a find box after a verify turn, and the
+        // log is the only place the answer lives once the excerpt has cut it.
+        E::GateBoard { board } => board
+            .gates
+            .iter()
+            .flat_map(|gate| {
+                std::iter::once(gate.name.as_str()).chain(match &gate.state {
+                    stella_protocol::GateState::Failed { case, log } => {
+                        vec![case.as_str(), log.as_str()]
+                    }
+                    stella_protocol::GateState::Undecided { reason } => vec![reason.as_str()],
+                    stella_protocol::GateState::Green => Vec::new(),
+                })
+            })
+            .collect(),
         E::GoalVerdict { reasoning, .. } => vec![reasoning],
         // The child's id and task are the searchable part; its summary never
         // reaches the transcript, by design.

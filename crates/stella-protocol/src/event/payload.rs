@@ -351,3 +351,128 @@ impl TaskStatus {
         matches!(self, TaskStatus::Pending | TaskStatus::InProgress)
     }
 }
+
+/// A verify turn's gate board — SPEC 8.1's `◇ gate board · patch-7 · 4/5 green`.
+///
+/// One row per gate, where a gate is one clause of the definition of done that
+/// an installed verification plugin declared. Verification is the plugin's, not
+/// this host's (AGENTS.md's opening): the plugin reports what it observed, the
+/// host evaluates that evidence against the plugin's declared rule, and this
+/// board is the result of that evaluation. Nothing here was re-run or
+/// re-checked by stella, so a row states what the rule concluded from what the
+/// plugin said — never a measurement stella took.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct GateBoard {
+    /// What is under verification, as the board's header names it (`patch-7`).
+    ///
+    /// `None` on a door with no patch identity to state, and it renders as no
+    /// cell at all — a header that invented one would name a thing the reader
+    /// cannot go and look at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<String>,
+    /// The rows, in the rule's own order.
+    ///
+    /// That order is the manifest's: a verdict rule keys its requirements in a
+    /// `BTreeMap`, so two runs over the same rule draw the board the same way.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gates: Vec<GateRow>,
+}
+
+impl GateBoard {
+    /// Gates that held — the numerator of `4/5 green`.
+    #[must_use]
+    pub fn green(&self) -> usize {
+        self.gates
+            .iter()
+            .filter(|gate| gate.state == GateState::Green)
+            .count()
+    }
+
+    /// Gates on the board.
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.gates.len()
+    }
+
+    /// Whether any gate determinately failed.
+    ///
+    /// A failure, not an abstention: a gate the evidence could not decide is
+    /// [`GateState::Undecided`] and is not counted here, because blaming a
+    /// worker for an instrument that did not report is what the three-answer
+    /// verdict exists to prevent.
+    #[must_use]
+    pub fn has_failure(&self) -> bool {
+        self.gates.iter().any(GateRow::failed)
+    }
+}
+
+/// One gate on a [`GateBoard`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct GateRow {
+    /// The gate's name — the `[requirements]` key the plugin's manifest wrote.
+    pub name: String,
+    /// What the rule concluded about it.
+    pub state: GateState,
+    /// Whether deciding this gate asked no model and cost nothing, which is
+    /// what earns the row its `$0.00 · det` price (SPEC 6.3, SPEC 8.1).
+    ///
+    /// True for every gate the host's own `judge` decided: that function is
+    /// synchronous, I/O-free and total, so there is no `.await` to hang a model
+    /// call on and no arm that escalates to one. It is a field rather than a
+    /// constant because the price belongs to whoever produced the row — a
+    /// producer that ever does buy a call to settle a gate has to say so here,
+    /// and `$0.00` over a row that spent money is exactly the flattering number
+    /// AGENTS.md forbids.
+    pub deterministic: bool,
+}
+
+impl GateRow {
+    /// Whether this gate determinately failed.
+    #[must_use]
+    pub fn failed(&self) -> bool {
+        matches!(self.state, GateState::Failed { .. })
+    }
+}
+
+/// What the verdict rule concluded about one gate.
+///
+/// Three answers rather than a `bool`, for the reason the wrapper socket's own
+/// verdict has three: "the evidence could not decide" is a real outcome, and
+/// rendering it as a failure blames a worker for the instrument while rendering
+/// it as a pass is the false claim the verification path exists to prevent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GateState {
+    /// Every clause of this gate held.
+    Green,
+    /// The gate did not hold, and what the evidence said about it.
+    ///
+    /// The two fields ride the failing state rather than sitting beside it on
+    /// [`GateRow`], so a green row carrying a failure block is not something
+    /// this type can express. The alternative — an `Option` next to a `state` —
+    /// makes the renderer's red-scarcity rule (SPEC 2, SPEC 8.1) a convention a
+    /// producer can break instead of a property of the value it sends.
+    Failed {
+        /// The failing case, as the evidence named it: the check the manifest
+        /// wrote, or the flip that was not observed.
+        case: String,
+        /// Everything the gate reported about the failure, in full.
+        ///
+        /// The board renders the first lines of it (SPEC 8.1's two-line
+        /// excerpt) and the reader opens the rest, so the excerpting is the
+        /// renderer's decision and is not baked in here where a second surface
+        /// could not undo it. Empty where the plugin reported no detail, which
+        /// renders as a failure block with no excerpt rather than one with a
+        /// blank one.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        log: String,
+    },
+    /// The evidence could not decide this gate, in the words a report prints.
+    Undecided {
+        /// Why — the host's own sentence about what the evidence lacked.
+        reason: String,
+    },
+}

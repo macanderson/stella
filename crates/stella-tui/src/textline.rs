@@ -30,6 +30,9 @@ use stella_protocol::{
     ProviderShare, StageKind, StageName, TaskItem, TaskStatus, Withholder,
 };
 
+mod gate;
+pub use gate::gate_board;
+
 /// Semantic weight of an annotation line. Each surface owns the mapping to
 /// its palette (e.g. plain maps `Muted` to ANSI dim, the deck to
 /// `theme::TEXT_SECONDARY`); no color name may appear in this module.
@@ -779,6 +782,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             evidence.deterministic,
             &evidence.summary,
         )),
+        AgentEvent::GateBoard { board } => Some(gate_board(board)),
         AgentEvent::ScopeReview { proposal } => Some(scope_review(
             &proposal.summary,
             proposal.steps.len(),

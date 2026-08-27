@@ -38,6 +38,12 @@ pub(super) fn event_intensity(ev: &AgentEvent) -> u8 {
         // the stage boundaries it interleaves with, so a well-proven turn does
         // not read as busier than an unproven one doing the same edits.
         AgentEvent::Proof { .. } => 170,
+        // A gate board is the same kind of thing one scope out — the decision a
+        // verify turn reached, not the work it did — so it is pitched with the
+        // proof steps rather than with the edits. Explicit rather than falling
+        // through the wildcard, which is the class of arm `event/tags.rs` warns
+        // is invisible to the compiler.
+        AgentEvent::GateBoard { .. } => 170,
         // A sub-agent bracket is a boundary, pitched with `Stage` for the
         // same reason: the child's real work already registers through its
         // forwarded tool calls and metering, so pricing the bracket as work
@@ -257,6 +263,11 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             TraceKind::Verdict,
             format!("round {round} {}", if *met { "met" } else { "unmet" }),
         ),
+        // The per-gate breakdown behind a verdict, so it shares that kind. The
+        // trace line names the gates that failed rather than only the tally: a
+        // reader scrolling the traces tab is looking for which one went red,
+        // and `4/5 green` makes them go and find out.
+        AgentEvent::GateBoard { board } => (TraceKind::Verdict, gate_board_trace(board)),
         AgentEvent::MediaProgress { kind, .. } => {
             (TraceKind::Media, format!("{kind:?}").to_lowercase())
         }
@@ -369,6 +380,26 @@ pub(super) fn snip(text: &str) -> String {
     } else {
         let head: String = flat.chars().take(MAX - 1).collect();
         format!("{head}…")
+    }
+}
+
+/// One-line trace summary of a gate board — `4/5 green · failed: tests`.
+///
+/// The failed names, never the undecided ones: a trace row is scanned, and a
+/// gate nobody could decide reads as a failure the moment it is listed beside
+/// them. The board itself distinguishes the two, and `^N` walks to it.
+fn gate_board_trace(board: &stella_protocol::GateBoard) -> String {
+    let tally = format!("{}/{} green", board.green(), board.total());
+    let failed: Vec<&str> = board
+        .gates
+        .iter()
+        .filter(|gate| gate.failed())
+        .map(|gate| gate.name.as_str())
+        .collect();
+    if failed.is_empty() {
+        tally
+    } else {
+        format!("{tally} · failed: {}", failed.join(", "))
     }
 }
 

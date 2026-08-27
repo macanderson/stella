@@ -19,7 +19,8 @@
 //! determinism extends through the renderer precisely because these are inert).
 
 use stella_protocol::{
-    BudgetMode, CiStatus, MediaJobState, MediaKind, PrStatus, StageName, SubAgentStatus, Withholder,
+    BudgetMode, CiStatus, GateBoard, MediaJobState, MediaKind, PrStatus, StageName, SubAgentStatus,
+    Withholder,
 };
 
 use super::recall::{RecallBudget, RecalledFrameRow};
@@ -331,6 +332,15 @@ pub enum TranscriptEntry {
         summary: String,
         deterministic: bool,
     },
+    /// A verify turn's gate board (`AgentEvent::GateBoard`) — SPEC 8.1.
+    ///
+    /// The board rides whole rather than as one entry per gate, because
+    /// `^N jump` and the selection both work on entries: split into rows, a
+    /// jump would land on a gate with its own header scrolled off, and `l` on a
+    /// failure block would have no board to fold back into. The protocol type
+    /// is carried unchanged — every field on it is already content with no
+    /// styling, which is what an entry is (module docs).
+    GateBoard { board: GateBoard },
     /// A goal-check verdict from the verifier loop (`AgentEvent::GoalVerdict`) —
     /// the symmetric scrollback row to [`Self::Verdict`]. `met` is the
     /// pass/fail; `round` is the verifier iteration it settled on.
