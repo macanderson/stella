@@ -26,6 +26,24 @@ use tokio::sync::mpsc;
 use crate::command_deck::chrome_note;
 use crate::config::Config;
 
+/// The session-scoped MCP management state the deck shares with the live tool
+/// layer, in one value because the two halves are always passed together and
+/// always mean the same thing: what this session is allowed to call.
+///
+/// - `disabled` — servers the operator toggled off. Session-scoped by design:
+///   it changes a running conversation's tool set and is forgotten at exit.
+/// - `grants` — servers whose declared capabilities the operator granted (SPEC
+///   §9.3). Mirrors `.stella/mcp.toml`, so unlike the toggle it survives.
+///
+/// Both are `Arc<Mutex<HashSet<_>>>` shared with `McpToolSet`, which re-reads
+/// them on every advertise and every dispatch — so a toggle or a grant takes
+/// effect on the next model call with no reconnect.
+#[derive(Clone)]
+pub(crate) struct McpSession {
+    pub(crate) disabled: stella_mcp::DisabledServers,
+    pub(crate) grants: stella_mcp::CapabilityGrants,
+}
+
 /// Build the MCP tab snapshot: every configured server (`.stella/mcp.toml`)
 /// joined with its live session state — enabled (not in the disabled set),
 /// connected (in the live tool set), health, per-server tool count (derived
@@ -77,6 +95,7 @@ pub(crate) async fn mcp_snapshot(
                     stella_mcp::split_wire_name(&s.name).is_some_and(|(server, _)| server == name)
                 })
                 .count();
+            let latency_ms = crate::mcp_cmd::latency_ms(&health, name);
             let health = crate::mcp_cmd::health_label(&health, name);
             let calls: u64 = usage
                 .iter()
@@ -106,6 +125,8 @@ pub(crate) async fn mcp_snapshot(
                 enabled,
                 connected: connected_now,
                 health: connected_now.then_some(health).flatten(),
+                latency_ms: connected_now.then_some(latency_ms).flatten(),
+                granted: config.is_granted(name),
                 tool_count,
                 dropped_tools: dropped.get(name).copied().unwrap_or(0),
                 trimmed_tools: trimmed.get(name).copied().unwrap_or(0),
@@ -183,9 +204,15 @@ pub(crate) async fn mcp_detail(
         .ok_or_else(|| format!("`{name}` is not configured in .stella/mcp.toml"))?;
     let card = config.card(name).expect("name resolved above");
     let connected = mcp.is_some_and(|s| s.connected_names().contains(&name));
-    let health = match mcp {
-        Some(s) => crate::mcp_cmd::health_label(&s.health().await, name),
-        None => None,
+    let (health, latency_ms) = match mcp {
+        Some(s) => {
+            let rows = s.health().await;
+            (
+                crate::mcp_cmd::health_label(&rows, name),
+                crate::mcp_cmd::latency_ms(&rows, name),
+            )
+        }
+        None => (None, None),
     };
     let usage = crate::mcp_cmd::usage_stats(&cfg.workspace_root)?;
     let per_tool: HashMap<&str, u64> = usage
@@ -244,6 +271,8 @@ pub(crate) async fn mcp_detail(
         enabled: !disabled_now,
         connected,
         health: connected.then_some(health).flatten(),
+        latency_ms: connected.then_some(latency_ms).flatten(),
+        granted: config.is_granted(name),
         dropped_tools: crate::mcp_cmd::dropped_by_server(mcp)
             .get(name)
             .copied()
@@ -337,6 +366,9 @@ async fn run_mcp_search(cfg: &Config, query: &str) -> stella_tui::McpSearchOutco
                             || configured.contains(&alias),
                         kinds: crate::mcp_cmd::install_kinds(&e.server),
                         description: e.server.description.clone().unwrap_or_default(),
+                        tier: display_tier(e.tier),
+                        installs: e.installs,
+                        signature: display_signature(e.signature),
                         name: e.server.name,
                     }
                 })
@@ -357,6 +389,74 @@ async fn run_mcp_search(cfg: &Config, query: &str) -> stella_tui::McpSearchOutco
     }
 }
 
+/// Cross the read-model seam for a registry entry's source tier.
+///
+/// Exhaustive on purpose, and not a `From` impl: `stella-tui` takes only leaf
+/// dependencies, so the two enums cannot know about each other and this is the
+/// one place they meet. A tier added in `stella-mcp` fails to compile here
+/// rather than rendering as something it is not.
+fn display_tier(tier: stella_mcp::SourceTier) -> stella_tui::McpSourceTier {
+    match tier {
+        stella_mcp::SourceTier::Official => stella_tui::McpSourceTier::Official,
+        stella_mcp::SourceTier::Vendor => stella_tui::McpSourceTier::Vendor,
+        stella_mcp::SourceTier::Community => stella_tui::McpSourceTier::Community,
+    }
+}
+
+/// The same seam for the signature column. The blocked states stay distinct
+/// across it: `unsigned` and `withdrawn` send an operator to different places.
+fn display_signature(signature: stella_mcp::SignatureStatus) -> stella_tui::McpSignature {
+    match signature {
+        stella_mcp::SignatureStatus::Signed => stella_tui::McpSignature::Signed,
+        stella_mcp::SignatureStatus::Unsigned => stella_tui::McpSignature::Unsigned,
+        stella_mcp::SignatureStatus::Withdrawn(_) => stella_tui::McpSignature::Withdrawn,
+    }
+}
+
+/// Record a capability grant and make it effective in this session: the
+/// decision goes to `.stella/mcp.toml`, the name joins the shared grant set
+/// the tool layer consults on every model call, and the server is enabled.
+///
+/// Disk first. A grant that is live but unrecorded would evaporate at the next
+/// start, and the operator — who just read a tool list and answered for it —
+/// would be asked again with no way to tell why. A write that fails leaves the
+/// server withheld and says so, which is the safe direction.
+pub(crate) fn apply_mcp_grant(
+    cfg: &Config,
+    session: &McpSession,
+    name: &str,
+    in_tx: &mpsc::UnboundedSender<Inbound>,
+) -> bool {
+    match crate::mcp_cmd::set_granted(&cfg.workspace_root, name, true) {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = in_tx.send(chrome_note(format!(
+                "mcp: `{name}` is not configured in .stella/mcp.toml — nothing granted\n"
+            )));
+            return false;
+        }
+        Err(e) => {
+            let _ = in_tx.send(chrome_note(format!(
+                "mcp: could not record the grant for `{name}`: {e} — it stays withheld\n"
+            )));
+            return false;
+        }
+    }
+    session
+        .grants
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(name.to_string());
+    // Granting is the first ENABLE: a server left in the disabled set would
+    // have been reviewed and still advertise nothing.
+    session
+        .disabled
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(name);
+    true
+}
+
 /// Service one MCP-tab action from the deck. Returns `true` if `input` was an
 /// MCP verb (so the caller skips its own dispatch). Search/install/remove/auth
 /// touch `.stella/mcp.toml` (and, for search, the registry over HTTP); toggle
@@ -365,10 +465,15 @@ pub(crate) async fn service_mcp_action(
     input: &WorkspaceInput,
     cfg: &Config,
     mcp: Option<&stella_mcp::McpToolSet>,
-    disabled: &stella_mcp::DisabledServers,
+    session: &McpSession,
     in_tx: &mpsc::UnboundedSender<Inbound>,
 ) -> bool {
+    let disabled = &session.disabled;
     match input {
+        WorkspaceInput::McpGrant { name } => {
+            apply_mcp_grant(cfg, session, name, in_tx);
+            send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
+        }
         WorkspaceInput::McpToggle { name } => {
             {
                 let mut set = disabled.lock().unwrap_or_else(|p| p.into_inner());

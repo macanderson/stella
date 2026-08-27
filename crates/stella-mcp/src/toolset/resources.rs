@@ -70,11 +70,12 @@ pub fn read_resource_tool_name(server: &str) -> String {
 }
 
 /// Append the two resource tools for every connected server that declared the
-/// `resources` capability — honoring the session's live disable and standing
-/// aside for a real tool that claims the same wire name.
+/// `resources` capability — honoring whatever withholds the server's real
+/// tools (the session disable, the capability grant) and standing aside for a
+/// real tool that claims the same wire name.
 pub(super) fn extend_schemas(set: &super::McpToolSet, schemas: &mut Vec<ToolSchema>) {
     for client in &set.clients {
-        if !client.supports_resources() || set.is_disabled(client.name()) {
+        if !client.supports_resources() || set.withheld(client.name()).is_some() {
             continue;
         }
         for schema in [
@@ -90,9 +91,9 @@ pub(super) fn extend_schemas(set: &super::McpToolSet, schemas: &mut Vec<ToolSche
 
 /// Route `name` if it is some resources-capable server's synthetic tool:
 /// drive the wire call and render its bounded, model-visible answer — or the
-/// session-disabled error, matching how a real server's tools answer while
-/// disabled. `None` for every other name, including a wire name a real tool
-/// claims ([`shadowed_by_real_tool`] — advertise ⇔ answer).
+/// same refusal a real tool of that server would give while it is withheld.
+/// `None` for every other name, including a wire name a real tool claims
+/// ([`shadowed_by_real_tool`] — advertise ⇔ answer).
 pub(super) async fn route(
     set: &super::McpToolSet,
     name: &str,
@@ -110,13 +111,8 @@ pub(super) async fn route(
         if !is_list && name != read_resource_tool_name(server) {
             continue;
         }
-        if set.is_disabled(server) {
-            return Some(ToolOutput::classified_error(
-                stella_protocol::ErrorClass::RefusedByPolicy,
-                format!(
-                    "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
-                ),
-            ));
+        if let Some(withheld) = set.withheld(server) {
+            return Some(withheld.refusal(server, name));
         }
         let output = if is_list {
             run_list(client, input).await

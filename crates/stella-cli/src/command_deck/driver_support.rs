@@ -37,7 +37,7 @@ use crate::subsession::{self, SubSessions, SupervisorMsg};
 pub(super) fn spawn_mcp_connect(
     cfg: Config,
     registry: Arc<ToolRegistry>,
-    disabled: stella_mcp::DisabledServers,
+    session: crate::deck_mcp::McpSession,
     slot: Arc<tokio::sync::OnceCell<Arc<stella_mcp::McpToolSet>>>,
     in_tx: UnboundedSender<Inbound>,
     chrome_tx: UnboundedSender<Inbound>,
@@ -68,11 +68,27 @@ pub(super) fn spawn_mcp_connect(
                 )));
                 match crate::mcp_cmd::oauth_manager(&cfg.workspace_root) {
                     Ok(auth) => {
+                        // The plan is what actually reaches connect (plugin
+                        // contributions included), so the grant set is built
+                        // from it rather than from `mcp.toml` alone.
+                        let grants_now =
+                            crate::mcp_cmd::initial_grants(&cfg.workspace_root, &servers);
+                        {
+                            let mut set = session.grants.lock().unwrap_or_else(|p| p.into_inner());
+                            set.extend(
+                                grants_now
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .iter()
+                                    .cloned(),
+                            );
+                        }
                         let set = agent::connect_mcp_servers(
                             &servers,
                             registry.clone(),
                             Some(registry.mcp_usage_ledger()),
-                            Some(disabled.clone()),
+                            Some(session.disabled.clone()),
+                            Some(session.grants.clone()),
                             Some(auth),
                         )
                         .await;
@@ -100,8 +116,13 @@ pub(super) fn spawn_mcp_connect(
             }
         }
         // Seed the MCP tab with the configured servers and their live state.
-        crate::deck_mcp::send_mcp_snapshot(&cfg, slot.get().map(Arc::as_ref), &disabled, &in_tx)
-            .await;
+        crate::deck_mcp::send_mcp_snapshot(
+            &cfg,
+            slot.get().map(Arc::as_ref),
+            &session.disabled,
+            &in_tx,
+        )
+        .await;
         // MCP connect settled (or there was nothing to connect) — the other
         // init leg the launch splash waits on.
         release_splash();

@@ -269,6 +269,21 @@ pub enum McpCmd {
         /// The configured server's local name
         name: String,
     },
+    /// Show what a configured server declares at handshake, and grant (or
+    /// revoke) its capabilities. A server installed from the registry
+    /// advertises nothing to the model until it is granted.
+    Grant {
+        /// The configured server's local name
+        name: String,
+        /// Record the grant without the confirmation prompt (for scripts and
+        /// provisioning; the capabilities are still printed)
+        #[arg(long)]
+        yes: bool,
+        /// Withdraw a grant given earlier: the server stays configured and
+        /// connected, and its tools stop being offered to the model
+        #[arg(long, conflicts_with = "yes")]
+        revoke: bool,
+    },
     /// OAuth login to a configured http server (opens your browser; tokens
     /// land owner-only in .stella/private/mcp_oauth.json and auto-refresh)
     Login {

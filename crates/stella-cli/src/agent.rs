@@ -675,7 +675,7 @@ pub(crate) async fn record_turn_episode<T, E>(
 /// instead (applied in [`connect_mcp_servers`]) — without that override the
 /// connect bound would double as the call bound and kill every long-running
 /// tool call at 10s.
-const MCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub(crate) const MCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The parse of `.stella/mcp.toml` **and** of every installed package's own
 /// `mcp.toml`, split from the connect so a caller that owns a UI (the deck)
@@ -802,6 +802,7 @@ pub(crate) async fn connect_mcp_servers(
     native: std::sync::Arc<dyn ToolExecutor>,
     usage: Option<stella_core::mcp_usage::McpUsageLedger>,
     disabled: Option<stella_mcp::DisabledServers>,
+    grants: Option<stella_mcp::CapabilityGrants>,
     auth: Option<std::sync::Arc<stella_mcp::OAuthManager>>,
 ) -> McpToolSet {
     let mut set = McpToolSet::connect_with_auth(servers, MCP_CONNECT_TIMEOUT, auth)
@@ -819,6 +820,12 @@ pub(crate) async fn connect_mcp_servers(
     }
     if let Some(disabled) = disabled {
         set = set.with_disabled_servers(disabled);
+    }
+    // The first-enable handshake gate (SPEC §9.3). Installing a set makes it
+    // default-deny, so every caller that can reach a human passes one — the
+    // property must not depend on which surface is driving.
+    if let Some(grants) = grants {
+        set = set.with_capability_grants(grants);
     }
     set
 }
@@ -855,8 +862,12 @@ pub(crate) async fn connect_mcp(
         }
     };
     // A one-shot run has no interactive enable/disable, so no disabled set.
+    // It DOES get the capability gate: a grant is recorded on disk, so a run
+    // with no deck attached reads the same answer the deck wrote, and a server
+    // nobody has reviewed must not become callable by being run from a script.
     let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root)?;
-    let set = connect_mcp_servers(&servers, native, usage, None, Some(auth)).await;
+    let grants = crate::mcp_cmd::initial_grants(&cfg.workspace_root, &servers);
+    let set = connect_mcp_servers(&servers, native, usage, None, Some(grants), Some(auth)).await;
     if print_diagnostics {
         crate::mcp_cmd::print_connect_diagnostics(&set);
     }

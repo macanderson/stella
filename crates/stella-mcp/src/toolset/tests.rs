@@ -15,6 +15,8 @@ use crate::protocol::PREFERRED_PROTOCOL_VERSION;
 use crate::transport::Transport;
 use crate::transport::testkit::ScriptedTransport;
 
+mod gate;
+
 /// A fake native executor advertising one tool, `bash`.
 struct FakeNative;
 #[async_trait]
@@ -495,6 +497,7 @@ async fn colliding_wire_names_drop_every_claimant_and_are_reported() {
         native: None,
         usage: None,
         disabled: None,
+        grants: None,
         candidate_safe: HashSet::new(),
     };
     set.rebuild_routes();

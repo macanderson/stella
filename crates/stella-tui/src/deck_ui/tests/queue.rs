@@ -417,6 +417,9 @@ fn mcp_tab_navigates_toggles_and_enters_search() {
             auth_fields: vec!["Authorization".into()],
             oauth: Some(false),
             calls: 5,
+            // Already reviewed, so `e` is the plain toggle this test is
+            // about — the first-enable handshake has its own test.
+            granted: true,
             ..Default::default()
         },
         McpServerInfo {
@@ -430,6 +433,7 @@ fn mcp_tab_navigates_toggles_and_enters_search() {
             auth_fields: vec![],
             oauth: None,
             calls: 0,
+            granted: true,
             ..Default::default()
         },
     ];
@@ -439,7 +443,7 @@ fn mcp_tab_navigates_toggles_and_enters_search() {
     handle_deck_key(key(KeyCode::Up), &model, &mut ui);
     assert_eq!(ui.mcp.selected, 0);
 
-    // `e` toggles the selected server (session enable/disable).
+    // `e` toggles an already-granted server (session enable/disable).
     let action = handle_deck_key(ch('e'), &model, &mut ui);
     assert_eq!(
         action,

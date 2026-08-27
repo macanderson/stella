@@ -41,31 +41,27 @@ pub fn login_required_tool_name(server: &str) -> String {
     wire_name(server, LOGIN_REQUIRED_TOOL)
 }
 
-/// Append each auth-suppressed server's placeholder schema — honoring the
-/// session's live disable, exactly like a real server's tools.
+/// Append each auth-suppressed server's placeholder schema — withheld by the
+/// session disable and the capability grant, exactly like a real server's
+/// tools.
 pub(super) fn extend_schemas(set: &super::McpToolSet, schemas: &mut Vec<ToolSchema>) {
     for (name, _) in &set.auth_required {
-        if !set.is_disabled(name) {
+        if set.withheld(name).is_none() {
             schemas.push(login_required_schema(name));
         }
     }
 }
 
 /// Route `name` if it is some auth-suppressed server's synthetic tool: the
-/// login instruction — or the session-disabled error, matching how a real
-/// server's tools answer while disabled. `None` for every other name.
+/// login instruction — or the same refusal a real tool of that server would
+/// give while it is withheld. `None` for every other name.
 pub(super) fn route(set: &super::McpToolSet, name: &str) -> Option<ToolOutput> {
     let (server, _) = set
         .auth_required
         .iter()
         .find(|(server, _)| name == login_required_tool_name(server))?;
-    if set.is_disabled(server) {
-        return Some(ToolOutput::classified_error(
-            stella_protocol::ErrorClass::RefusedByPolicy,
-            format!(
-                "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
-            ),
-        ));
+    if let Some(withheld) = set.withheld(server) {
+        return Some(withheld.refusal(server, name));
     }
     Some(login_required_output(server))
 }
@@ -114,6 +110,9 @@ pub(super) fn auth_required_health(server: &str, reason: &str) -> ServerHealth {
         connect_failures: 0,
         last_error: Some(reason.to_string()),
         retry_in: None,
+        // Never dialed, so there is no round trip to report. A synthesized
+        // zero would render as the nearest server on the tab.
+        latency: None,
     }
 }
 

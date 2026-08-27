@@ -9,7 +9,8 @@
 //! claim about an arm no test had ever entered.
 
 use super::*;
-use crate::envelope::McpServerInfo;
+use crate::envelope::{McpServerDetail, McpServerInfo, McpToolRow};
+use crate::views::mcp_tab::McpMode;
 
 fn server(name: &str, oauth: Option<bool>) -> McpServerInfo {
     McpServerInfo {
@@ -17,6 +18,7 @@ fn server(name: &str, oauth: Option<bool>) -> McpServerInfo {
         kind: if oauth.is_some() { "http" } else { "stdio" }.into(),
         enabled: true,
         connected: true,
+        granted: true,
         oauth,
         ..Default::default()
     }
@@ -84,4 +86,103 @@ fn mcp_x_removes_the_selected_server_and_r_refreshes() {
         "zoxr",
         "with a prompt in progress the verbs are letters"
     );
+}
+
+/// **The witness (#5047).** SPEC §9.3: the first enable of a server shows what
+/// it declares and requires the grant. `e` on an ungranted row must NOT reach
+/// the wire as a toggle — it opens the handshake and asks the driver for the
+/// declared capabilities instead.
+///
+/// The `assert_ne` is the point: the old arm sent `McpToggle` for every row,
+/// so enabling an unreviewed third-party server was one keystroke with nothing
+/// in between.
+#[test]
+fn e_on_an_ungranted_server_opens_the_handshake_instead_of_enabling_it() {
+    let mut fresh = server("stripe", Some(false));
+    fresh.granted = false;
+    let (model, mut ui) = mcp_ui(vec![fresh]);
+
+    let action = handle_deck_key(ch('e'), &model, &mut ui);
+    assert_ne!(
+        action,
+        DeckAction::Send(WorkspaceInput::McpToggle {
+            name: "stripe".into()
+        }),
+        "an unreviewed server must not be enabled by one keystroke"
+    );
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::McpInspect {
+            name: "stripe".into(),
+            // Reviewing what a server declares must not call a registry.
+            lookup: false,
+        })
+    );
+    assert_eq!(ui.mcp.mode, McpMode::Handshake);
+    assert_eq!(
+        ui.mcp.handshake.as_ref().map(|g| g.server.as_str()),
+        Some("stripe")
+    );
+
+    // The grant stands down until there is something to grant: a decision
+    // about capabilities nobody was shown is not a decision.
+    assert_eq!(
+        handle_deck_key(ch('g'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(ui.mcp.mode, McpMode::Handshake, "still asking");
+
+    ui.mcp.apply_detail(McpServerDetail {
+        name: "stripe".into(),
+        tools: vec![McpToolRow {
+            name: "create_refund".into(),
+            ..McpToolRow::default()
+        }],
+        ..McpServerDetail::default()
+    });
+    assert_eq!(
+        handle_deck_key(ch('g'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::McpGrant {
+            name: "stripe".into()
+        })
+    );
+    assert_eq!(ui.mcp.mode, McpMode::Browse);
+    assert!(ui.mcp.handshake.is_none());
+}
+
+/// Walking away from the gate grants nothing. Esc is the only exit that is not
+/// the grant, and it must reach no wire — the withheld state is the default,
+/// so denying costs no message.
+#[test]
+fn esc_denies_the_handshake_and_sends_nothing() {
+    let mut fresh = server("stripe", Some(false));
+    fresh.granted = false;
+    let (model, mut ui) = mcp_ui(vec![fresh]);
+    handle_deck_key(ch('e'), &model, &mut ui);
+
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(ui.mcp.mode, McpMode::Browse);
+    assert!(ui.mcp.handshake.is_none());
+}
+
+/// The gate is modal: a stray letter while it is up must not act on the list
+/// behind it. `x` there would remove the very server being reviewed.
+#[test]
+fn the_handshake_swallows_the_browse_verbs_behind_it() {
+    let mut fresh = server("stripe", Some(false));
+    fresh.granted = false;
+    let (model, mut ui) = mcp_ui(vec![fresh]);
+    handle_deck_key(ch('e'), &model, &mut ui);
+
+    for verb in ['x', 'o', 'a', 'r', 's', 'e'] {
+        assert_eq!(
+            handle_deck_key(ch(verb), &model, &mut ui),
+            DeckAction::Handled,
+            "`{verb}` reached the list behind the handshake"
+        );
+    }
+    assert_eq!(ui.mcp.mode, McpMode::Handshake);
 }

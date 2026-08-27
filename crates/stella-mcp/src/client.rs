@@ -217,6 +217,9 @@ impl McpClient {
         self.tools = handshake.tools;
         self.dropped_tools = handshake.dropped_tools;
         self.resources_capability = handshake.resources_capability;
+        self.conn
+            .get_mut()
+            .note_handshake_latency(handshake.latency);
         // The handshake is itself a completed request round-trip
         // (`initialize` + `tools/list`), so a freshly-connected server is
         // legitimately `Live`.
@@ -481,7 +484,11 @@ impl McpClient {
         )
         .await
         {
-            Ok(Ok(_)) => {}
+            // The fresh handshake re-measures the round trip: the number
+            // describes the connection that is live now, not the one that
+            // dropped — a server that moved, or a link that degraded, would
+            // otherwise report its first-connect distance forever.
+            Ok(Ok(handshake)) => conn.note_handshake_latency(handshake.latency),
             Ok(Err(err)) => {
                 conn.note_connect_failure(&err);
                 return Err(err);
@@ -525,6 +532,7 @@ impl McpClient {
             connect_failures: conn.health.connect_failures,
             last_error: conn.health.last_error.clone(),
             retry_in: conn.retry_in(),
+            latency: conn.health.latency,
         }
     }
 
@@ -615,6 +623,8 @@ struct Handshake {
     dropped_tools: usize,
     /// The server declared the `resources` capability (#2678).
     resources_capability: bool,
+    /// How long the `initialize` request itself took to come back.
+    latency: Duration,
 }
 
 /// Build a fresh (pre-handshake) transport for `config`. Shared by the first
@@ -656,7 +666,15 @@ async fn run_handshake(name: &str, transport: &dyn Transport) -> Result<Handshak
             website_url: None,
         },
     };
+    // The measurement is this one request and nothing else. `tools/list`
+    // below pages, so folding it in would price a catalogue server as a
+    // distant one; the stdio spawn that precedes the transport is process
+    // start-up, not distance. `initialize` is the smallest round trip every
+    // server must answer, which makes the number comparable between two rows
+    // of the MCP tab (SPEC §9.3's latency column).
+    let started = Instant::now();
     let raw = transport.request("initialize", to_value(&params)?).await?;
+    let latency = started.elapsed();
     let result: InitializeResult = serde_json::from_value(raw)
         .map_err(|e| McpError::Protocol(format!("could not decode initialize result: {e}")))?;
 
@@ -698,6 +716,7 @@ async fn run_handshake(name: &str, transport: &dyn Transport) -> Result<Handshak
         tools,
         dropped_tools,
         resources_capability,
+        latency,
     })
 }
 

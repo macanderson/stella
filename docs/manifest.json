@@ -90,6 +90,11 @@
       "status": "proposed",
       "title": "ADR 0017: The plan graph is persisted in the store, not the context plane"
     },
+    "adr/0018-mcp-capability-grants": {
+      "path": "docs/adr/0018-mcp-capability-grants.md",
+      "status": "proposed",
+      "title": "ADR 0018: MCP servers are withheld until their handshake is granted"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

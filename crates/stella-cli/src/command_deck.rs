@@ -794,10 +794,22 @@ pub async fn run_deck_session(
     //   • `mcp_disabled` — server names disabled this session; toggling it
     //     hides a server's tools from the model on the next call (live, no
     //     reconnect), because the engine re-reads schemas each call.
+    //   • `mcp_grants` — server names whose declared capabilities the operator
+    //     has granted (SPEC §9.3's first-enable handshake). Default-deny: a
+    //     connected server absent from it advertises nothing and refuses every
+    //     call. Seeded from `.stella/mcp.toml` when the connect task builds
+    //     its plan, and added to live when a grant is given, so a server
+    //     becomes usable in the session it was reviewed in.
     //   • the usage ledger (from the registry) records every MCP call for the
     //     `mcp_usage` telemetry table.
     let mcp_disabled: stella_mcp::DisabledServers =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let mcp_grants: stella_mcp::CapabilityGrants =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let mcp_session = crate::deck_mcp::McpSession {
+        disabled: mcp_disabled.clone(),
+        grants: mcp_grants.clone(),
+    };
     // `Arc<McpToolSet>` (not a bare `McpToolSet`) so a turn can cheaply clone
     // the connected set into the Best-of-N candidate surface + orchestrator
     // pre-fetch (issue #248 Phase 1) alongside its own `&dyn ToolExecutor`.
@@ -806,7 +818,7 @@ pub async fn run_deck_session(
     let mcp_configured = spawn_mcp_connect(
         cfg.clone(),
         registry.clone(),
-        mcp_disabled.clone(),
+        mcp_session.clone(),
         mcp_slot.clone(),
         in_tx.clone(),
         deck_tx.clone(),
@@ -1438,7 +1450,7 @@ pub async fn run_deck_session(
                             &other,
                             cfg,
                             mcp_slot.get().map(Arc::as_ref),
-                            &mcp_disabled,
+                            &mcp_session,
                             &in_tx,
                         )
                         .await
@@ -2044,6 +2056,16 @@ pub async fn run_deck_session(
                             if !set.remove(&name) {
                                 set.insert(name);
                             }
+                        }
+                        // A capability grant IS honored mid-turn, for the
+                        // reason the toggle is: the operator has just answered
+                        // a question that was blocking a server, and the
+                        // shared set the tool layer consults is what the next
+                        // model call reads. Deferring it would leave the tab
+                        // saying `granted` while every call kept being
+                        // refused until the turn ended.
+                        Some(WorkspaceInput::McpGrant { name }) => {
+                            crate::deck_mcp::apply_mcp_grant(cfg, &mcp_session, &name, &in_tx);
                         }
                         Some(WorkspaceInput::McpSearch { .. })
                         | Some(WorkspaceInput::McpInstall { .. })
