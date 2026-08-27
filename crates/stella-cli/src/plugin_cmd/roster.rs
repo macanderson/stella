@@ -356,10 +356,11 @@ impl PluginRoster {
                 continue;
             };
             if !plugin.panel_grant.admits() {
-                // No route, so no lease, so no process. The operator was told
-                // why by `read_tier`, which is the only place that knows
-                // whether this package's panel was denied, drifted, or never
-                // asked about.
+                // No route, so no lease, so no process. Silent here, and said
+                // by the two surfaces that have somewhere to put it: `stella
+                // plugin list`'s `panel:` line and the deck's own handshake
+                // block. `PanelGrantState::notice` is the one wording both
+                // read, so a withheld panel cannot be explained two ways.
                 continue;
             }
             let Some(process) = &panel.process else {
