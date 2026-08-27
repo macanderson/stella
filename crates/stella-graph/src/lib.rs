@@ -26,9 +26,11 @@
 //! - **Resolves** Python relative imports (`from . import x`,
 //!   `from ..pkg import y`), TS/JS relative specifiers (`./x`, `../y`,
 //!   `index.*`), and the literal-path imports of C (`#include "x.h"`) and PHP
-//!   (`require '…'`) to real files; bare package specifiers, Rust `use` paths,
-//!   Java packages, and PHP namespaces are recorded unresolved — the edge
-//!   survives even when its target is outside the tree.
+//!   (`require '…'`) to real files, and Rust `use` paths to the file defining
+//!   the deepest segment that names a module file (#443);
+//!   bare package specifiers, `use` paths into crates outside the workspace
+//!   layout, Java packages, and PHP namespaces are recorded unresolved — the
+//!   edge survives even when its target is outside the tree.
 //! - **Maps storage** through vendor-neutral adapters ([`storage`]): SQL DDL,
 //!   Prisma, TS/JS ORMs (Drizzle, TypeORM, Mongoose, DynamoDB), and Python
 //!   ORMs (Django, SQLAlchemy) all reduce to one layer/namespace/relation/field
