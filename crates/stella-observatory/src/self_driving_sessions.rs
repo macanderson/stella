@@ -886,7 +886,9 @@ fn session_json(
         .map(|(_, c)| c)
         .sum();
     let mut issues: Vec<Value> = s.issues.values().map(|i| issue_json(i, learning)).collect();
-    issues.sort_by_key(|i| -i.get("claimed_unix").and_then(Value::as_i64).unwrap_or(0));
+    issues.sort_by_key(|i| {
+        std::cmp::Reverse(i.get("claimed_unix").and_then(Value::as_i64).unwrap_or(0))
+    });
     let busy = s.issues.values().filter(|i| i.is_open()).count();
     let lessons: i64 = issues
         .iter()
@@ -1034,7 +1036,9 @@ fn sessions_from(roots: &[PathBuf], workspace_root: &Path, now: i64) -> Value {
             .iter()
             .map(|s| session_json(s, l, now, &learning, &costs))
             .collect();
-        session_rows.sort_by_key(|s| -s.get("started_unix").and_then(Value::as_i64).unwrap_or(0));
+        session_rows.sort_by_key(|s| {
+            std::cmp::Reverse(s.get("started_unix").and_then(Value::as_i64).unwrap_or(0))
+        });
         for s in &session_rows {
             if str_at(s, "status") == "running" {
                 running += 1;
@@ -1101,9 +1105,13 @@ fn sessions_from(roots: &[PathBuf], workspace_root: &Path, now: i64) -> Value {
         all_sessions.extend(session_rows);
     }
 
-    all_sessions.sort_by_key(|s| -s.get("started_unix").and_then(Value::as_i64).unwrap_or(0));
+    all_sessions.sort_by_key(|s| {
+        std::cmp::Reverse(s.get("started_unix").and_then(Value::as_i64).unwrap_or(0))
+    });
     all_sessions.truncate(MAX_SESSIONS);
-    lessons_all.sort_by_key(|m| -m.get("recorded_unix").and_then(Value::as_i64).unwrap_or(0));
+    lessons_all.sort_by_key(|m| {
+        std::cmp::Reverse(m.get("recorded_unix").and_then(Value::as_i64).unwrap_or(0))
+    });
     lessons_all.truncate(100);
 
     let merged: i64 = all_sessions

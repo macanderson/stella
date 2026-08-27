@@ -45,7 +45,7 @@ members = [
 exclude = [".stella-examples"]
 
 [workspace.package]
-version = "0.9.263"
+version = "0.9.265"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
@@ -124,6 +124,12 @@ base64 = "0.23"
 arboard = { version = "3", default-features = false, features = ["image-data"] }
 png = "0.18"
 crossterm = "0.29"
+# Microphone capture for push-to-talk dictation (ADR 0020). Consumed only by
+# `stella-cli`, and only on macOS/Windows, where it binds the OS frameworks
+# (CoreAudio, WASAPI) and needs no system packages — on Linux the recorder is
+# an `arecord` subprocess instead, so ALSA headers never become a build
+# dependency of an `install.sh` source build.
+cpal = "0.16"
 notify = "8"
 ratatui = "0.30"
 unicode-width = "0.2"

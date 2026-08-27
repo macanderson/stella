@@ -161,16 +161,24 @@ pub(crate) fn append_promotion(
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     let mut appended = text;
+    // A ledger that lost only its trailing newline still verifies, so
+    // without this the new line glues onto the old tail — one unparseable
+    // line, durably written. Normalize first, and verify BEFORE the write,
+    // so a bad concatenation is an error returned and not a corrupt
+    // governance file already on disk.
+    if !appended.is_empty() && !appended.ends_with('\n') {
+        appended.push('\n');
+    }
     appended.push_str(&line);
     appended.push('\n');
+    let events = stella_core::records::promotion::parse_and_verify(&appended)
+        .map_err(|violation| format!("ledger invalid after append: {}", violation.reason))?;
     stella_store::durable::write_atomic_preserving_mode(
         &path,
         appended.as_bytes(),
         stella_store::durable::MODE_SHARED,
     )
     .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    let events = stella_core::records::promotion::parse_and_verify(&appended)
-        .map_err(|violation| format!("ledger invalid after append: {}", violation.reason))?;
     Ok(stella_core::records::promotion::policy_version(&events))
 }
 

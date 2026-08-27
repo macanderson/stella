@@ -105,7 +105,9 @@ fn every_parked_row_cites_an_issue() {
             _ => continue,
         };
         assert!(
-            cited.starts_with('#') && cited[1..].chars().all(|c| c.is_ascii_digit()),
+            cited.len() > 1
+                && cited.starts_with('#')
+                && cited[1..].chars().all(|c| c.is_ascii_digit()),
             "the {} row cites `{cited}`, which is not a `#NNNN` issue reference",
             row.surface.as_str()
         );

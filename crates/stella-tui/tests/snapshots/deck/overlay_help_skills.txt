@@ -14,18 +14,19 @@
 │ │  e               edit the selected skill                                       !cmd            run a shell command NOW (skips the queue)                 │ │
 │ │  p               pin / unpin                                                   /               slash commands — ↑↓ pick · tab completes · ⏎ runs         │ │
 │ │  n               new skill — drafted by the LLM                                ctrl-v          paste — a copied image is attached to the prompt          │ │
-│ │  ctrl-o          preview                                                       ctrl-a          SUB-AGENTS — o open · n nudge · f flag · x stop · xx del… │ │
-│ │  ctrl-x ×2       delete (press twice to confirm)                               ctrl-t          the queue editor                                          │ │
-│ │  type            search skills                                                 ctrl-e          SESSIONS — every session on this machine                  │ │
-│ │                                                                                ctrl-k          CONTEXT — active skills + MCP servers                     │ │
-│ │  moving around — every tab, every overlay                                      ctrl-g          INSPECT — the context sent on any recorded call           │ │
-│ │  ← →             the sibling: the pane beside this one, else the tab besi…     ctrl-s          PLAN — every step of the approved plan, in full           │ │
-│ │  ↑ ↓ · k j       the item above / below                                        ⏎               on PLAN: zoom the step — contract, evidence, planned vs … │ │
-│ │  ⏎               open it — a diff, a lane, a message's full text               esc             on the zoom: back to PLAN, on the step you zoomed         │ │
-│ │  ⌫               back up one level; never reaches a running turn               r s b i ⌥       on the zoom: re-run checks · split · hand off · promote … │ │
-│ │  ⇞ ⇟ · Home End  a page · the ends                                             >text           steer the running turn — lands at the next step boundary  │ │
-│ │  tab / ⇧tab      the next / previous tab                                       esc             steer: your draft + queue go INTO the running turn        │ │
-│ │  q / esc         close any overlay                                             esc esc         cancel NOW & hold — nothing runs until your next prompt   │ │
+│ │  ctrl-o          preview                                                       space (hold)    dictate — keep holding until listening, release to inser… │ │
+│ │  ctrl-x ×2       delete (press twice to confirm)                               ctrl-a          SUB-AGENTS — o open · n nudge · f flag · x stop · xx del… │ │
+│ │  type            search skills                                                 ctrl-t          the queue editor                                          │ │
+│ │                                                                                ctrl-e          SESSIONS — every session on this machine                  │ │
+│ │  moving around — every tab, every overlay                                      ctrl-k          CONTEXT — active skills + MCP servers                     │ │
+│ │  ← →             the sibling: the pane beside this one, else the tab besi…     ctrl-g          INSPECT — the context sent on any recorded call           │ │
+│ │  ↑ ↓ · k j       the item above / below                                        ctrl-s          PLAN — every step of the approved plan, in full           │ │
+│ │  ⏎               open it — a diff, a lane, a message's full text               ⏎               on PLAN: zoom the step — contract, evidence, planned vs … │ │
+│ │  ⌫               back up one level; never reaches a running turn               esc             on the zoom: back to PLAN, on the step you zoomed         │ │
+│ │  ⇞ ⇟ · Home End  a page · the ends                                             r s b i ⌥       on the zoom: re-run checks · split · hand off · promote … │ │
+│ │  tab / ⇧tab      the next / previous tab                                       >text           steer the running turn — lands at the next step boundary  │ │
+│ │  q / esc         close any overlay                                             esc             steer: your draft + queue go INTO the running turn        │ │
+│ │                                                                                esc esc         cancel NOW & hold — nothing runs until your next prompt   │ │
 │ │                                                                                ?               this sheet                                                │ │
 │ │                                                                                ctrl-c          quit stella                                               │ │
 │ │                                                                                                                                                          │ │
@@ -33,13 +34,12 @@
 │ │                                                                                                                                                          │ │
 │ │  model                                                                                                                                                   │ │
 │ │  worker          zai/glm-5.2-air · answering                                                                                                             │ │
-│ │                                                                                                                                                          │ │
-╰─│  machine                                                                                                                                                 │─╯
- r│  engine          3 active · 3 total                                                                                                                      │
-  │  cpu             42%                                                                                                                                     │
- s│  mem             148M                                                                                                                                    │
- 4└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
+╰─│                                                                                                                                                          │─╯
+ r│  machine                                                                                                                                                 │
+  │  engine          3 active · 3 total                                                                                                                      │
+ s│  cpu             42%                                                                                                                                     │
+ 4│  mem             148M                                                                                                                                    │
+ ▶└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 >>>
  ⏎ queue · ↓ 2 sub-agents · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

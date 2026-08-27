@@ -638,6 +638,15 @@ pub enum Inbound {
         agent: AgentId,
         proposal: Box<stella_protocol::RevisionProposal>,
     },
+    /// A finished dictation's text ([`WorkspaceInput::VoiceStop`]'s answer).
+    /// Ingest pastes it at the composer's cursor and returns
+    /// [`crate::voice::VoiceUi`] to rest — never a model fold: a dictation
+    /// is keyboard input that arrived by another route.
+    VoiceTranscript { text: String },
+    /// A dictation that produced no text (no recorder, no credential, a
+    /// refused transcription request). Ingest returns the voice state to
+    /// rest and raises `reason` as a transient notice.
+    VoiceFailed { reason: String },
 }
 
 // The ISSUES tab's read models. Re-exported rather than moved behind a
@@ -1278,6 +1287,16 @@ pub enum WorkspaceInput {
     /// (`AgentEvent::BudgetTick::session_limit_usd`), so an ignored or
     /// clamped request never shows a cap that is not in force.
     SetBudget { limit_usd: Option<f64> },
+    /// Push-to-talk crossed its warmup: start capturing microphone audio.
+    /// The driver answers the eventual [`WorkspaceInput::VoiceStop`] with
+    /// [`Inbound::VoiceTranscript`] or [`Inbound::VoiceFailed`]; a start it
+    /// cannot honour answers [`Inbound::VoiceFailed`] immediately.
+    VoiceStart,
+    /// The held key was released: stop capturing and transcribe what was
+    /// heard.
+    VoiceStop,
+    /// Abandon the capture without transcribing (Esc while listening).
+    VoiceCancel,
     /// Tear down the deck.
     Quit,
 }

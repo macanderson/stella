@@ -871,7 +871,11 @@ impl WorkspaceModel {
             | Inbound::PanelsSeated { .. }
             | Inbound::PanelFrame { .. }
             | Inbound::PanelSilent { .. }
-            | Inbound::PanelThrottled { .. } => {}
+            | Inbound::PanelThrottled { .. }
+            // A dictation's text is keyboard input by another route — it
+            // lands in the composer (`ingest_inbound`), never the record.
+            | Inbound::VoiceTranscript { .. }
+            | Inbound::VoiceFailed { .. } => {}
         }
     }
 

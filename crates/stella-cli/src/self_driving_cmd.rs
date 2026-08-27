@@ -721,7 +721,8 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
     let supply = probes::supply(&st.repo_root);
     let demand = demand(&st.repo_root);
     let cal = st.calibration();
-    let plan = stella_autonomy::plan_cycle(supply, demand, &cal, state::floors());
+    let plan =
+        stella_autonomy::plan_cycle(supply, demand, &cal, state::floors(), &state::aimd_limits());
     let aperture = st.aperture();
 
     if explain {

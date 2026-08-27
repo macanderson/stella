@@ -338,7 +338,13 @@ fn ceilings() -> Calibration {
 
 #[track_caller]
 fn assert_plan(supply: Supply, demand: Demand, want: (&str, bool, u32, &str, &str, u32, &str)) {
-    let plan = plan_cycle(supply, demand, &ceilings(), Floors::default());
+    let plan = plan_cycle(
+        supply,
+        demand,
+        &ceilings(),
+        Floors::default(),
+        &AimdLimits::default(),
+    );
     let got = (
         plan.tier.as_str(),
         plan.local_build,
@@ -492,13 +498,41 @@ proptest! {
             busy,
         };
         let demand = Demand { open_defects: defects, p0: p0.min(defects) };
-        let with = plan_cycle(supply, demand, &ceilings(), Floors::default());
-        let without = plan_cycle(supply, Demand::default(), &ceilings(), Floors::default());
+        let limits = AimdLimits::default();
+        let with = plan_cycle(supply, demand, &ceilings(), Floors::default(), &limits);
+        let without = plan_cycle(supply, Demand::default(), &ceilings(), Floors::default(), &limits);
         prop_assert_eq!(with.tier, without.tier, "demand moved the tier");
         prop_assert!(with.batch >= 1);
         if with.tier == Tier::Light {
             prop_assert!(with.batch <= 5, "light tier batch {} > 5", with.batch);
         }
+    }
+
+    /// `AimdLimits` promises bounds "the controller may never cross, whatever
+    /// the evidence says" — and `Calibration` deserializes from disk with no
+    /// range check, so the plan must hold the promise for ARBITRARY ceilings,
+    /// not just ones the controller wrote.
+    #[test]
+    fn the_plan_stays_inside_the_hard_bounds_for_arbitrary_ceilings(
+        batch_ceiling in prop::num::u32::ANY,
+        parallel_ceiling in prop::num::u32::ANY,
+        clean_run in prop::num::u32::ANY,
+        defects in 0u32..300, p0 in 0u32..40,
+    ) {
+        let cal = Calibration {
+            batch_ceiling,
+            parallel_ceiling,
+            clean_run,
+            note: String::new(),
+            extra: serde_json::Map::new(),
+        };
+        let demand = Demand { open_defects: defects, p0: p0.min(defects) };
+        let limits = AimdLimits::default();
+        let plan = plan_cycle(base_supply(), demand, &cal, Floors::default(), &limits);
+        prop_assert!(plan.batch >= 1 && plan.batch <= limits.batch_max,
+            "batch {} escaped [1, {}]", plan.batch, limits.batch_max);
+        prop_assert!(plan.parallel >= 1 && plan.parallel <= limits.parallel_max,
+            "parallel {} escaped [1, {}]", plan.parallel, limits.parallel_max);
     }
 }
 
@@ -622,6 +656,63 @@ fn a_run_the_live_pointer_moved_on_from_reports_crashed() {
     };
     assert_eq!(status("r-old"), "crashed");
     assert_eq!(status("r-new"), "running");
+}
+
+/// `runs.jsonl` and the live pointer are runtime data: a record carrying
+/// `i64::MIN` must not panic the fold (the old sort negated `at_unix`, which
+/// overflows on exactly that value) and must sort to the old end, and a
+/// heartbeat of `i64::MIN` must read as stale, not overflow the subtraction.
+#[test]
+fn extreme_timestamps_neither_panic_the_fold_nor_the_liveness_rule() {
+    let mut ancient = run_rec("r-min", "completed");
+    ancient["at_unix"] = json!(i64::MIN);
+    let rows = fold_runs(
+        &[ancient, run_rec("r-1", "completed")],
+        &[],
+        None,
+        10_000,
+        900,
+    );
+    assert_eq!(
+        rows.iter().map(|r| r.run_id.as_str()).collect::<Vec<_>>(),
+        ["r-1", "r-min"],
+        "newest first, the unrepresentable timestamp last"
+    );
+
+    assert_eq!(
+        liveness("r-1", "r-1", i64::MIN, 10_000, 900),
+        Liveness::Stale
+    );
+}
+
+/// A crashed run keeps its last-known phase — "audit (1200s ago)" is the
+/// first thing a human wants from a crash — while a run the live pointer
+/// never covered stays blank.
+#[test]
+fn a_crashed_run_reports_its_last_known_phase() {
+    let live = json!({"run_id": "r-1", "phase": "audit", "heartbeat_unix": 0});
+    let rows = fold_runs(&[run_rec("r-1", "running")], &[], Some(&live), 10_000, 900);
+    assert_eq!(rows[0].status, "crashed");
+    assert_eq!(rows[0].phase, "audit (10000s ago)");
+}
+
+/// `calibration.json` deserializes with no range check, so the controller's
+/// arithmetic must survive a hand-edited or corrupt ceiling at the type's
+/// edge — saturating to the hard max, never wrapping past the clamp.
+#[test]
+fn calibrate_survives_ceilings_at_the_integer_edge() {
+    let limits = AimdLimits::default();
+    let mut cal = Calibration {
+        batch_ceiling: u32::MAX,
+        parallel_ceiling: u32::MAX,
+        clean_run: u32::MAX,
+        note: String::new(),
+        extra: serde_json::Map::new(),
+    };
+    calibrate(&mut cal, CycleOutcome::Ok, &limits);
+    assert_eq!(cal.batch_ceiling, limits.batch_max);
+    assert_eq!(cal.parallel_ceiling, limits.parallel_max);
+    assert_eq!(cal.clean_run, u32::MAX, "saturates rather than wraps");
 }
 
 #[test]

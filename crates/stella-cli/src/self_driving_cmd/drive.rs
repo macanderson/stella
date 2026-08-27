@@ -873,12 +873,12 @@ pub(super) fn drive(
                         Audit::Deferred,
                         None,
                         &format!(
-                            "somebody else is already fixing the base ({}); waiting rather \
-                             than duplicating",
+                            "somebody else is already fixing the base ({}); carrying on with \
+                             ordinary work rather than duplicating",
                             evidence.join(", ")
                         ),
                     );
-                    sleep(poll_secs);
+                    state.deferred_fix_evidence = evidence;
                 }
             },
 

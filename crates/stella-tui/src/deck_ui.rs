@@ -627,6 +627,8 @@ pub struct DeckUi {
     pub issues: IssuesPanel,
     /// The one global composer — typing works from any tab.
     pub composer: Composer,
+    /// Push-to-talk dictation state (`crate::voice`, ADR 0020).
+    pub voice: crate::voice::VoiceUi,
     /// A mid-turn submission parked at the routing card, waiting for the user
     /// to say whether it steers the running turn, continues the thread, or
     /// forks a sidecar. See [`dispatch`].
@@ -910,6 +912,7 @@ impl Default for DeckUi {
             skills: SkillsPanel::default(),
             issues: IssuesPanel::default(),
             composer: Composer::with_paste_threshold(crate::composer::DECK_PASTE_LINE_THRESHOLD),
+            voice: crate::voice::VoiceUi::default(),
             pending_dispatch: None,
             mid_turn_prompt: MidTurnPrompt::default(),
             splash: SplashState::new(),
@@ -1214,6 +1217,18 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     }
     if let Inbound::IndexReadiness(readiness) = inbound {
         ui.index_readiness = *readiness;
+        return;
+    }
+    // A dictation's answer is keyboard input by another route: paste the
+    // text at the cursor, or say why there is none (`crate::voice`).
+    if let Inbound::VoiceTranscript { text } = inbound {
+        ui.voice.settled();
+        ui.paste(text);
+        return;
+    }
+    if let Inbound::VoiceFailed { reason } = inbound {
+        ui.voice.settled();
+        ui.notice.push(reason.clone());
         return;
     }
     // A plan revision a failing gate put up: the scrollback row and the

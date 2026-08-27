@@ -111,6 +111,7 @@ mod slash_pump;
 mod steering;
 mod task_tap;
 mod theme_cmd;
+mod voice;
 mod whistle;
 mod worker_control;
 use driver_support::{
@@ -431,6 +432,10 @@ pub async fn run_deck_session(
     let (ask_tx, ask_rx) = mpsc::unbounded_channel::<String>();
     let (question_tx, question_rx) = mpsc::unbounded_channel::<QuestionOutcome>();
     let (approval_tx, approval_rx) = mpsc::unbounded_channel::<ApprovalResponse>();
+    // Push-to-talk capture state (ADR 0020): at most one live microphone per
+    // session, serviced idle or mid-turn; answers ride `deck_tx` so a replay
+    // never re-pastes an old dictation.
+    let mut voice_lane = voice::VoiceLane::default();
 
     let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
     // The deck can park a turn on a human, so it declares a surface rather
@@ -795,6 +800,7 @@ pub async fn run_deck_session(
         no_anim,
         accessible,
         mid_turn_prompt: steer::mid_turn_prompt_policy(cfg),
+        voice_enabled: voice::enabled(cfg),
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering
@@ -1533,14 +1539,15 @@ pub async fn run_deck_session(
                         // loop turns over, so the next turn reads the files
                         // as they are now.
                         let mut settings_stale = false;
-                        if !crate::deck_mcp::service_mcp_action(
-                            &other,
-                            cfg,
-                            mcp_slot.get().map(Arc::as_ref),
-                            &mcp_session,
-                            &in_tx,
-                        )
-                        .await
+                        if !voice::service(&other, &mut voice_lane, &deck_tx, cfg)
+                            && !crate::deck_mcp::service_mcp_action(
+                                &other,
+                                cfg,
+                                mcp_slot.get().map(Arc::as_ref),
+                                &mcp_session,
+                                &in_tx,
+                            )
+                            .await
                             && !service_registry_action(
                                 &other,
                                 &sessions_view::SessionScope {
@@ -2255,6 +2262,18 @@ pub async fn run_deck_session(
                         // there is nothing for a busy lane to contend with.
                         Some(input @ WorkspaceInput::RerunGate { .. }) => {
                             service_rerun_gate(&input, &in_tx);
+                        }
+                        // Dictation is serviced mid-turn on the same
+                        // reasoning: the microphone and the transcription
+                        // request touch nothing the running turn is using,
+                        // and a spoken prompt lands in the composer to be
+                        // queued like a typed one.
+                        Some(
+                            input @ (WorkspaceInput::VoiceStart
+                            | WorkspaceInput::VoiceStop
+                            | WorkspaceInput::VoiceCancel),
+                        ) => {
+                            voice::service(&input, &mut voice_lane, &deck_tx, cfg);
                         }
                         // `a approve r{n}` on a revision proposal: one row on
                         // the task board, serviced mid-turn on the same

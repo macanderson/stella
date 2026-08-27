@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The ISSUES tab's read models — tracker-agnostic by construction.
+//! The ISSUES tab's read models and wire types — tracker-agnostic by
+//! construction.
 //!
 //! The driver maps whatever issue source it carries into these shapes and the
 //! deck never learns which tracker it was, which is what lets one tab serve
 //! GitHub and Linear without a branch anywhere in this crate.
 //!
-//! Split out of `envelope.rs` when that file met the 1500-line ceiling. A
-//! subject rather than an arbitrary cut: these five types are one vocabulary
-//! and nothing outside the ISSUES tab reads them. Re-exported from the parent,
+//! Split out of `envelope.rs` under #629's 1500-line ratchet, the same move
+//! `skills.rs` made (#3493). A subject rather than an arbitrary cut: these
+//! types are one vocabulary, nothing outside the ISSUES tab reads them, and
+//! none carries behaviour beyond a display label. Re-exported from the parent,
 //! so every `envelope::IssueRow` path still resolves.
 
 /// One row of the ISSUES tab's browse list — tracker-agnostic: the driver
@@ -84,6 +86,8 @@ pub struct EntityHit {
 
 /// Which create-form field a type-ahead [`WorkspaceInput::EntitySearch`]
 /// feeds — each has its own vocabulary (people vs. labels).
+///
+/// [`WorkspaceInput::EntitySearch`]: crate::envelope::WorkspaceInput::EntitySearch
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityField {
     Assignee,
@@ -100,19 +104,21 @@ impl EntityField {
 }
 
 /// An action on one existing issue ([`WorkspaceInput::IssueAct`]).
+///
+/// [`WorkspaceInput::IssueAct`]: crate::envelope::WorkspaceInput::IssueAct
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IssueAction {
     /// Add a comment (the deck's `c` prompt).
     Comment(String),
     /// Move to a named status (any workflow-state word on Linear; on GitHub
-    /// only the two states below exist, and they have their own options).
+    /// only the two states below exist, each with its own option here).
     SetStatus(String),
     /// Close the issue (the deck's `x` on an open row).
     Close,
     /// Re-open a closed issue (the deck's `x` on a closed row).
     ///
     /// Its own option rather than `SetStatus("open")` so the driver selects
-    /// the provider call by matching on the shape instead of comparing a
+    /// the provider call by matching on the enum instead of comparing a
     /// status string — the same reason [`IssueAction::Close`] is not
     /// `SetStatus("closed")`, and why the port grew
     /// `IssueProvider::reopen` rather than a status setter.

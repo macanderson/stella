@@ -108,6 +108,10 @@ pub struct DeckOptions {
     /// queue for the lead so Esc can steer it (the default), raise the routing
     /// card, or fork a sidecar. See [`crate::deck_ui::MidTurnPrompt`].
     pub mid_turn_prompt: crate::deck_ui::MidTurnPrompt,
+    /// Whether push-to-talk dictation is armed (`voice.enabled` in settings;
+    /// off by default — ADR 0020). The caller reads settings for the reason
+    /// it resolves [`Self::mid_turn_prompt`]: this crate does not read config.
+    pub voice_enabled: bool,
 }
 
 fn now_ms() -> u64 {
@@ -129,6 +133,28 @@ fn is_clipboard_pull(key: crossterm::event::KeyEvent) -> bool {
         && key
             .modifiers
             .contains(crossterm::event::KeyModifiers::CONTROL)
+}
+
+/// Whether `key` is the bare spacebar — the push-to-talk hold key
+/// (`crate::voice`, ADR 0020). Bare only: a modified space is a chord, and
+/// chords are the pure key layer's to route. A named predicate with a
+/// witness for the same reason [`is_clipboard_pull`] is one (#4368) — the
+/// run loop consults it around the dispatcher, so no test can press it
+/// *through* the dispatcher.
+fn is_plain_space(key: crossterm::event::KeyEvent) -> bool {
+    key.code == crossterm::event::KeyCode::Char(' ')
+        && key.modifiers == crossterm::event::KeyModifiers::NONE
+}
+
+/// Whether normal dispatch of a plain space actually landed one space in the
+/// main composer at the cursor — the observation `crate::voice` folds
+/// instead of predicting the key-precedence chain (see its module docs). A
+/// space claimed by a list, a toggle, or a modal sub-composer moves nothing
+/// here and therefore never arms dictation.
+fn space_landed_in_composer(composer: &Composer, before_len: usize, before_cursor: usize) -> bool {
+    composer.buffer().len() == before_len + 1
+        && composer.cursor() == before_cursor + 1
+        && composer.buffer()[..composer.cursor()].ends_with(' ')
 }
 
 /// Run one `!` shell command **immediately** on the local event lane.
@@ -578,6 +604,10 @@ pub async fn run_deck(
     // Enter semantics follow the terminal's actual capability (see
     // `crate::term::TerminalGuard::kitty` and `crate::composer::classify_enter`).
     ui.enter_submits = !guard.kitty();
+    // Push-to-talk: enablement is the caller's (settings), release reporting
+    // is the terminal's (the same push as the Enter semantics above).
+    ui.voice.enabled = opts.voice_enabled;
+    ui.voice.release_events = guard.kitty();
     let mut resources = ResourceMonitor::new();
 
     // Synthetic-event lane for `!` shell commands: spawned commands report
@@ -701,7 +731,38 @@ pub async fn run_deck(
                             ));
                         });
                     }
-                    Some(Event::Key(key)) if key.kind != KeyEventKind::Release => {
+                    // A reported key release reaches only the voice fold —
+                    // the dispatcher's no-Release contract is unchanged. On
+                    // terminals without `REPORT_EVENT_TYPES` this arm never
+                    // fires and the repeat-gap fallback in the tick arm ends
+                    // the hold instead (`crate::voice`).
+                    Some(Event::Key(key)) if key.kind == KeyEventKind::Release => {
+                        if is_plain_space(key)
+                            && ui.voice.space_release(model.now_ms) == crate::voice::VoiceCmd::Stop
+                        {
+                            let _ = submissions.send(WorkspaceInput::VoiceStop);
+                        }
+                    }
+                    // While recording, the held space's repeats are "still
+                    // held", never characters — and Esc abandons the capture.
+                    Some(Event::Key(key)) if ui.voice.swallows_space() && is_plain_space(key) => {
+                        ui.voice.space_repeat(model.now_ms);
+                    }
+                    Some(Event::Key(key))
+                        if ui.voice.esc_cancels()
+                            && key.code == crossterm::event::KeyCode::Esc =>
+                    {
+                        if ui.voice.cancel() == crate::voice::VoiceCmd::Cancel {
+                            let _ = submissions.send(WorkspaceInput::VoiceCancel);
+                        }
+                    }
+                    Some(Event::Key(key)) => {
+                        // Snapshot for the voice observation below: dispatch
+                        // decides where the key goes, and the composer's own
+                        // growth says whether a plain space became text.
+                        let space = is_plain_space(key);
+                        let before_len = ui.composer.buffer().len();
+                        let before_cursor = ui.composer.cursor();
                         match handle_deck_key(key, &model, &mut ui) {
                             DeckAction::Quit => {
                                 debug.note("user quit");
@@ -774,6 +835,16 @@ pub async fn run_deck(
                         // A dispatched palette row changed the `recent` list;
                         // every other keystroke leaves this a no-op.
                         ui.composer.flush_recent();
+                        // The voice observation (`crate::voice`): a plain
+                        // space that really landed in the composer extends
+                        // the hold; any other key says the user is typing.
+                        if space
+                            && space_landed_in_composer(&ui.composer, before_len, before_cursor)
+                        {
+                            ui.voice.typed_space(model.now_ms);
+                        } else if !space {
+                            ui.voice.interrupt();
+                        }
                     }
                     // Bracketed paste: the whole paste arrives as one event
                     // (the guard enabled it), so the composer can fold it
@@ -783,6 +854,8 @@ pub async fn run_deck(
                     // it while open (`DeckUi::paste`).
                     Some(Event::Paste(text)) => {
                         ui.paste(&text);
+                        // A paste is typing, not holding.
+                        ui.voice.interrupt();
                     }
                     // Any mouse event dismisses the startup notice, exactly as
                     // any key does.
@@ -840,6 +913,22 @@ pub async fn run_deck(
                 // gauges, elapsed timers, sparklines, and effects stay live.
                 model.now_ms = now_ms();
                 resources.sample(&mut model);
+                // Push-to-talk timing (`crate::voice`): the warmup completes
+                // here — retracting exactly the spaces the arming run typed —
+                // and, without release reporting, a quiet repeat stream ends
+                // the recording here too.
+                match ui.voice.tick(model.now_ms) {
+                    crate::voice::VoiceCmd::Start { retract } => {
+                        for _ in 0..retract {
+                            ui.composer.backspace();
+                        }
+                        let _ = submissions.send(WorkspaceInput::VoiceStart);
+                    }
+                    crate::voice::VoiceCmd::Stop => {
+                        let _ = submissions.send(WorkspaceInput::VoiceStop);
+                    }
+                    crate::voice::VoiceCmd::Cancel | crate::voice::VoiceCmd::None => {}
+                }
             }
         }
     }
@@ -885,6 +974,47 @@ mod tests {
             KeyCode::Char('c'),
             KeyModifiers::CONTROL
         )));
+    }
+
+    /// **The witness for the push-to-talk hold key.** Bare Space and nothing
+    /// else: a modified space is a chord for the pure key layer, and every
+    /// other key is typing (which aborts an arming run).
+    #[test]
+    fn a_bare_space_is_the_push_to_talk_key_and_a_modified_space_is_not() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        assert!(is_plain_space(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE
+        )));
+        assert!(!is_plain_space(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!is_plain_space(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE
+        )));
+    }
+
+    /// The voice fold consumes what dispatch *did*, not what the key was: a
+    /// space the composer actually absorbed extends the hold, and a space a
+    /// list or toggle claimed must not (`crate::voice`'s module docs).
+    #[test]
+    fn the_voice_observation_requires_a_space_that_actually_landed() {
+        let mut composer = Composer::with_paste_threshold(48);
+        composer.insert_char('h');
+        let (len, cur) = (composer.buffer().len(), composer.cursor());
+
+        // Claimed elsewhere: the composer did not move.
+        assert!(!space_landed_in_composer(&composer, len, cur));
+
+        // A non-space insertion is typing, not holding.
+        composer.insert_char('i');
+        assert!(!space_landed_in_composer(&composer, len, cur));
+
+        let (len, cur) = (composer.buffer().len(), composer.cursor());
+        composer.insert_char(' ');
+        assert!(space_landed_in_composer(&composer, len, cur));
     }
 
     #[tokio::test]

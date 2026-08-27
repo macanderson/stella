@@ -100,10 +100,20 @@
       "status": "proposed",
       "title": "ADR 0019: The Graph tab's session tags are stamped by the deck, not by the producer"
     },
+    "adr/0020-voice-dictation-push-to-talk": {
+      "path": "docs/adr/0020-voice-dictation-push-to-talk.md",
+      "status": "proposed",
+      "title": "ADR 0020: Voice dictation is a held spacebar, and transcription is BYOK"
+    },
     "adr/0021-a-memory-event-names-one-memory": {
       "path": "docs/adr/0021-a-memory-event-names-one-memory.md",
       "status": "implemented",
       "title": "ADR 0021: A memory event names one memory"
+    },
+    "adr/0022-adopt-standing-decisions-scr-corpus": {
+      "path": "docs/adr/0022-adopt-standing-decisions-scr-corpus.md",
+      "status": "implemented",
+      "title": "ADR 0022: Adopt org standing decisions as a Steering Context Record corpus"
     },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",

@@ -198,9 +198,11 @@ pub struct ProposalRecord {
     ///
     /// The proposal has to store it because it keeps only the observations'
     /// `record_id`s and so cannot re-derive the grade later. `None` means a
-    /// record written before provenance was carried: absent, not weak, and
-    /// refused by [`stella_protocol::provenance::authorises`] rather than
-    /// rounded down to a grade it never earned.
+    /// record written before provenance was carried: absent, not weak — and
+    /// meant to be refused by [`stella_protocol::provenance::authorises`]
+    /// rather than rounded down to a grade it never earned, once that gate
+    /// is wired into the publication paths (today nothing calls it on any of
+    /// them; #4865 tracks the wiring).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<ProvenanceGrade>,
     pub score: ProposalScore,

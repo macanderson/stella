@@ -551,7 +551,12 @@ pub fn select_skills_reporting(
         // least two shared terms unless a domain tag corroborates.
         let corroborated = !matched_domains.is_empty() || matched_terms.len() >= 2;
 
-        if corroborated && score >= config.min_score {
+        // The floor reads the evidence-bearing half only. The AutoCreated
+        // bonus is a tie-break on ordering, and its own doc promises it is
+        // "never large enough to select a skill that is otherwise below
+        // min_score" — letting it into the threshold gave freshly-mined
+        // skills a LOWER selection floor than hand-authored ones.
+        if corroborated && lexical + domain_score >= config.min_score {
             selected.push(SelectedSkill {
                 skill: skill.clone(),
                 score,

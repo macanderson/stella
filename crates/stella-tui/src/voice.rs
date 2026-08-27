@@ -1,0 +1,461 @@
+//! Push-to-talk dictation: the pure hold-spacebar state machine.
+//!
+//! Hold Space in the composer and, after a warmup, the deck records the
+//! microphone and pastes the transcript at the cursor (ADR 0020). This module
+//! is only the *decision* half: a fold over observed key events and the deck's
+//! ~30fps tick clock, held on [`crate::deck_ui::DeckUi`] like every other
+//! interaction state. Capture and transcription live on the driver side of
+//! the wire ([`crate::envelope::WorkspaceInput::VoiceStart`] out,
+//! [`crate::envelope::Inbound::VoiceTranscript`] back) — this crate never
+//! touches a microphone or the network.
+//!
+//! ## Why the machine consumes *observations*, not raw keys
+//!
+//! A bare space is a hotkey in half the deck (page-down in lists, a toggle on
+//! SKILLS, a hunk mark under a pending gate) and a printable character in the
+//! composer. Predicting which one a given press will be means re-implementing
+//! `handle_key_inner`'s precedence chain here, which would drift. Instead the
+//! shell dispatches the key normally and then reports what actually happened:
+//! [`VoiceUi::typed_space`] fires only when the composer really grew by one
+//! space at the cursor. A held space on a tab where space pages simply never
+//! arms, and the retraction count is exact by construction — the spaces to
+//! remove are precisely the ones observed in.
+//!
+//! ## How release is detected
+//!
+//! Best case the terminal reports key release (`TerminalGuard::enter` asks
+//! for `REPORT_EVENT_TYPES`) and [`VoiceUi::space_release`] ends the hold on
+//! the release event itself. Every other terminal ends it when the OS
+//! key-repeat stream goes quiet: while a key is held the OS delivers repeats
+//! every few tens of milliseconds, so a gap longer than [`LISTENING_GAP_MS`]
+//! means the key is up. That fallback requires OS key-repeat to be enabled;
+//! with repeat disabled and no release reporting, the hold can never be told
+//! from a tap and dictation stays dormant (#5347 tracks tap-to-toggle as the
+//! remedy).
+
+/// How long Space must be held before recording starts. Long enough that
+/// every ordinary use of the key — a word gap, a quick run of indentation —
+/// ends first; short enough not to feel like a wait. A tap, or a hold
+/// released inside the warmup, types exactly the spaces it typed.
+pub const WARMUP_MS: u64 = 1_500;
+
+/// The widest silence the *arming* phase survives between space insertions.
+/// It must cover the OS's initial key-repeat delay — the one long gap between
+/// the first press and the first repeat, up to ~700ms on a slow-repeat
+/// setting — or a genuine hold would be dismissed as a tap before its first
+/// repeat arrived.
+pub const ARMING_GAP_MS: u64 = 750;
+
+/// The repeat-stream gap that means "released" while listening, on terminals
+/// that do not report key release. Inter-repeat gaps are a few tens of
+/// milliseconds once repeat is underway, so this trades ~a third of a second
+/// of stop latency for immunity to scheduling jitter.
+pub const LISTENING_GAP_MS: u64 = 350;
+
+/// The hard cap on one recording, matching Claude Code's two minutes. The
+/// tick arm stops the capture at the cap even if the key is somehow still
+/// reading as held (a stuck key, a terminal that stopped repeating).
+pub const MAX_HOLD_MS: u64 = 120_000;
+
+/// Where the dictation gesture currently stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VoicePhase {
+    /// No gesture in progress.
+    #[default]
+    Idle,
+    /// Space is (apparently) held, warmup running. The spaces it has typed
+    /// so far stay in the composer — a hold abandoned here was just typing.
+    Arming {
+        /// When the first space of this run was observed.
+        since_ms: u64,
+        /// When the most recent space was observed (the gap clock).
+        last_ms: u64,
+        /// How many spaces this run has inserted — the retraction count if
+        /// the warmup completes.
+        typed: usize,
+    },
+    /// Recording. Space events are swallowed; release (or a quiet repeat
+    /// stream) ends it.
+    Listening { since_ms: u64, last_ms: u64 },
+    /// Capture ended; the driver is transcribing. The composer works
+    /// normally — the transcript pastes at the cursor when it arrives.
+    Transcribing { since_ms: u64 },
+}
+
+/// What the shell must do about a transition, beyond updating the phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceCmd {
+    /// Nothing — the common case.
+    None,
+    /// Warmup crossed: remove the `retract` warmup spaces from the composer
+    /// and send [`crate::envelope::WorkspaceInput::VoiceStart`].
+    Start { retract: usize },
+    /// The hold ended: send [`crate::envelope::WorkspaceInput::VoiceStop`].
+    Stop,
+    /// Esc while listening: send
+    /// [`crate::envelope::WorkspaceInput::VoiceCancel`].
+    Cancel,
+}
+
+/// The deck's dictation state: capability bits set once at startup, and the
+/// phase the events below fold.
+#[derive(Debug, Clone, Default)]
+pub struct VoiceUi {
+    /// `voice.enabled` from settings, threaded in via `DeckOptions`. Off by
+    /// default: holding a key is too easy to do by accident for it to stream
+    /// microphone audio to a provider unasked (ADR 0020).
+    pub enabled: bool,
+    /// Whether the terminal reports key release (the kitty keyboard protocol
+    /// was pushed — `TerminalGuard::kitty`). With it, release ends the hold
+    /// on the event; without it, the repeat-gap fallback does.
+    pub release_events: bool,
+    phase: VoicePhase,
+}
+
+impl VoiceUi {
+    pub fn phase(&self) -> VoicePhase {
+        self.phase
+    }
+
+    /// Whether the microphone is (or should be) live — the caret recolours
+    /// on exactly this.
+    pub fn recording(&self) -> bool {
+        matches!(self.phase, VoicePhase::Listening { .. })
+    }
+
+    /// Whether the shell should swallow plain-space key events instead of
+    /// dispatching them (recording: a repeat is "still held", not a
+    /// character).
+    pub fn swallows_space(&self) -> bool {
+        self.recording()
+    }
+
+    /// Whether Esc currently means "abandon the recording".
+    pub fn esc_cancels(&self) -> bool {
+        self.recording()
+    }
+
+    /// A plain space was dispatched normally and the composer really grew by
+    /// one space at the cursor. Starts or extends the arming run; the warmup
+    /// itself completes on [`Self::tick`], so this never returns a command.
+    pub fn typed_space(&mut self, now_ms: u64) {
+        if !self.enabled {
+            return;
+        }
+        self.phase = match self.phase {
+            VoicePhase::Idle => VoicePhase::Arming {
+                since_ms: now_ms,
+                last_ms: now_ms,
+                typed: 1,
+            },
+            VoicePhase::Arming {
+                since_ms, typed, ..
+            } => VoicePhase::Arming {
+                since_ms,
+                last_ms: now_ms,
+                typed: typed + 1,
+            },
+            other => other,
+        };
+    }
+
+    /// A plain space arrived while recording (swallowed by the shell): the
+    /// key is still held.
+    pub fn space_repeat(&mut self, now_ms: u64) {
+        if let VoicePhase::Listening { since_ms, .. } = self.phase {
+            self.phase = VoicePhase::Listening {
+                since_ms,
+                last_ms: now_ms,
+            };
+        }
+    }
+
+    /// The terminal reported Space released (only ever arrives when
+    /// [`Self::release_events`]).
+    pub fn space_release(&mut self, now_ms: u64) -> VoiceCmd {
+        match self.phase {
+            // Released inside the warmup: it was a tap (or a short hold);
+            // the spaces it typed stay typed.
+            VoicePhase::Arming { .. } => {
+                self.phase = VoicePhase::Idle;
+                VoiceCmd::None
+            }
+            VoicePhase::Listening { .. } => {
+                self.phase = VoicePhase::Transcribing { since_ms: now_ms };
+                VoiceCmd::Stop
+            }
+            _ => VoiceCmd::None,
+        }
+    }
+
+    /// Any non-space key (or a paste) landed while arming: the user is
+    /// typing, not holding. The spaces already typed stay typed.
+    pub fn interrupt(&mut self) {
+        if matches!(self.phase, VoicePhase::Arming { .. }) {
+            self.phase = VoicePhase::Idle;
+        }
+    }
+
+    /// Esc while recording: abandon the capture without transcribing.
+    pub fn cancel(&mut self) -> VoiceCmd {
+        if self.recording() {
+            self.phase = VoicePhase::Idle;
+            VoiceCmd::Cancel
+        } else {
+            VoiceCmd::None
+        }
+    }
+
+    /// The deck's heartbeat (~30fps): where the warmup completes and where a
+    /// quiet repeat stream (or the [`MAX_HOLD_MS`] cap) ends a recording.
+    pub fn tick(&mut self, now_ms: u64) -> VoiceCmd {
+        match self.phase {
+            VoicePhase::Arming {
+                since_ms,
+                last_ms,
+                typed,
+            } => {
+                if now_ms.saturating_sub(last_ms) > ARMING_GAP_MS {
+                    // The stream went quiet before the warmup: a tap.
+                    self.phase = VoicePhase::Idle;
+                    VoiceCmd::None
+                } else if now_ms.saturating_sub(since_ms) >= WARMUP_MS {
+                    self.phase = VoicePhase::Listening {
+                        since_ms: now_ms,
+                        last_ms: now_ms,
+                    };
+                    VoiceCmd::Start { retract: typed }
+                } else {
+                    VoiceCmd::None
+                }
+            }
+            VoicePhase::Listening { since_ms, last_ms } => {
+                let released =
+                    !self.release_events && now_ms.saturating_sub(last_ms) > LISTENING_GAP_MS;
+                if released || now_ms.saturating_sub(since_ms) >= MAX_HOLD_MS {
+                    self.phase = VoicePhase::Transcribing { since_ms: now_ms };
+                    VoiceCmd::Stop
+                } else {
+                    VoiceCmd::None
+                }
+            }
+            _ => VoiceCmd::None,
+        }
+    }
+
+    /// The driver answered ([`crate::envelope::Inbound::VoiceTranscript`] or
+    /// [`crate::envelope::Inbound::VoiceFailed`]): the gesture is over,
+    /// whatever phase it was in — a failed start can answer while still
+    /// listening.
+    pub fn settled(&mut self) {
+        self.phase = VoicePhase::Idle;
+    }
+
+    /// The pulse-row line for an in-progress gesture, or `None` at rest.
+    /// Deterministic over `(phase, now_ms)` — the goldens render it.
+    pub fn status_line(&self, now_ms: u64) -> Option<String> {
+        match self.phase {
+            VoicePhase::Idle => None,
+            VoicePhase::Arming { .. } => Some("◌ keep holding to dictate…".to_string()),
+            VoicePhase::Listening { since_ms, .. } => {
+                let s = now_ms.saturating_sub(since_ms) / 1000;
+                Some(format!(
+                    "● listening {}:{:02} · release to stop · esc cancels",
+                    s / 60,
+                    s % 60
+                ))
+            }
+            VoicePhase::Transcribing { .. } => Some("◌ transcribing…".to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn armed(v: &mut VoiceUi, start_ms: u64) {
+        v.typed_space(start_ms);
+        assert!(matches!(v.phase(), VoicePhase::Arming { .. }));
+    }
+
+    fn hold_through_warmup(v: &mut VoiceUi) -> VoiceCmd {
+        // A held key: press at t=0, repeats every 50ms past the warmup.
+        armed(v, 0);
+        let mut typed = 1;
+        let mut t = 0;
+        while t < WARMUP_MS {
+            t += 50;
+            v.typed_space(t);
+            typed += 1;
+            let cmd = v.tick(t);
+            if let VoiceCmd::Start { retract } = cmd {
+                assert_eq!(retract, typed, "every warmup space is retracted");
+                return cmd;
+            }
+        }
+        panic!("warmup never completed: {:?}", v.phase());
+    }
+
+    fn enabled() -> VoiceUi {
+        VoiceUi {
+            enabled: true,
+            ..VoiceUi::default()
+        }
+    }
+
+    #[test]
+    fn disabled_never_arms() {
+        let mut v = VoiceUi::default();
+        v.typed_space(0);
+        assert_eq!(v.phase(), VoicePhase::Idle);
+    }
+
+    #[test]
+    fn a_tap_stays_a_tap() {
+        let mut v = enabled();
+        armed(&mut v, 0);
+        // No repeats follow; the gap clock dismisses the run.
+        assert_eq!(v.tick(ARMING_GAP_MS + 1), VoiceCmd::None);
+        assert_eq!(v.phase(), VoicePhase::Idle);
+    }
+
+    #[test]
+    fn typing_a_word_after_spaces_aborts_the_arming() {
+        let mut v = enabled();
+        armed(&mut v, 0);
+        v.typed_space(100);
+        v.interrupt(); // any other key
+        assert_eq!(v.phase(), VoicePhase::Idle);
+    }
+
+    #[test]
+    fn a_hold_crosses_the_warmup_and_retracts_exactly_what_it_typed() {
+        let mut v = enabled();
+        let cmd = hold_through_warmup(&mut v);
+        assert!(matches!(cmd, VoiceCmd::Start { .. }));
+        assert!(v.recording());
+        assert!(v.swallows_space());
+    }
+
+    #[test]
+    fn a_slow_initial_repeat_delay_survives_the_arming_gap() {
+        // Press, then nothing for 700ms (a slow OS initial delay), then
+        // repeats: the run must still be alive when the first repeat lands.
+        let mut v = enabled();
+        armed(&mut v, 0);
+        assert_eq!(v.tick(700), VoiceCmd::None);
+        assert!(
+            matches!(v.phase(), VoicePhase::Arming { .. }),
+            "700ms without a repeat is inside ARMING_GAP_MS"
+        );
+        v.typed_space(700);
+        let mut t = 700;
+        loop {
+            t += 50;
+            v.typed_space(t);
+            if let VoiceCmd::Start { .. } = v.tick(t) {
+                break;
+            }
+            assert!(t < 3 * WARMUP_MS, "warmup must complete");
+        }
+        assert!(v.recording());
+    }
+
+    #[test]
+    fn a_quiet_repeat_stream_stops_the_recording_without_release_events() {
+        let mut v = enabled();
+        hold_through_warmup(&mut v);
+        let VoicePhase::Listening { last_ms, .. } = v.phase() else {
+            panic!("recording");
+        };
+        assert_eq!(v.tick(last_ms + LISTENING_GAP_MS), VoiceCmd::None);
+        assert_eq!(v.tick(last_ms + LISTENING_GAP_MS + 1), VoiceCmd::Stop);
+        assert!(matches!(v.phase(), VoicePhase::Transcribing { .. }));
+    }
+
+    #[test]
+    fn with_release_events_the_release_stops_it_and_the_gap_does_not() {
+        let mut v = enabled();
+        v.release_events = true;
+        hold_through_warmup(&mut v);
+        let VoicePhase::Listening { last_ms, .. } = v.phase() else {
+            panic!("recording");
+        };
+        // The gap clock is inert: a terminal that reports releases may
+        // legitimately stop repeating (some do while other keys interleave).
+        assert_eq!(v.tick(last_ms + 10 * LISTENING_GAP_MS), VoiceCmd::None);
+        assert!(v.recording());
+        assert_eq!(
+            v.space_release(last_ms + 10 * LISTENING_GAP_MS + 1),
+            VoiceCmd::Stop
+        );
+        assert!(matches!(v.phase(), VoicePhase::Transcribing { .. }));
+    }
+
+    #[test]
+    fn a_release_inside_the_warmup_is_a_tap_that_keeps_its_spaces() {
+        let mut v = enabled();
+        v.release_events = true;
+        armed(&mut v, 0);
+        assert_eq!(v.space_release(200), VoiceCmd::None);
+        assert_eq!(v.phase(), VoicePhase::Idle);
+    }
+
+    #[test]
+    fn esc_cancels_a_recording_without_transcribing() {
+        let mut v = enabled();
+        hold_through_warmup(&mut v);
+        assert!(v.esc_cancels());
+        assert_eq!(v.cancel(), VoiceCmd::Cancel);
+        assert_eq!(v.phase(), VoicePhase::Idle);
+    }
+
+    #[test]
+    fn the_hard_cap_stops_a_recording_the_repeats_keep_alive() {
+        let mut v = enabled();
+        hold_through_warmup(&mut v);
+        let VoicePhase::Listening { since_ms, .. } = v.phase() else {
+            panic!("recording");
+        };
+        // Keep the repeat stream alive right up to the cap.
+        let mut t = since_ms;
+        while t < since_ms + MAX_HOLD_MS {
+            t += 100;
+            v.space_repeat(t);
+        }
+        assert_eq!(v.tick(t), VoiceCmd::Stop);
+    }
+
+    #[test]
+    fn settled_returns_to_rest_from_any_phase() {
+        let mut v = enabled();
+        hold_through_warmup(&mut v);
+        // A driver that could not start answers VoiceFailed while the deck
+        // is still listening.
+        v.settled();
+        assert_eq!(v.phase(), VoicePhase::Idle);
+    }
+
+    #[test]
+    fn the_status_line_tracks_the_phase() {
+        let mut v = enabled();
+        assert_eq!(v.status_line(0), None);
+        armed(&mut v, 0);
+        assert!(v.status_line(0).unwrap().contains("keep holding"));
+        // A fresh machine for the hold: the helper counts its own spaces.
+        let mut v = enabled();
+        hold_through_warmup(&mut v);
+        let VoicePhase::Listening { since_ms, .. } = v.phase() else {
+            panic!("recording");
+        };
+        let line = v.status_line(since_ms + 65_000).unwrap();
+        assert!(line.contains("listening 1:05"), "{line}");
+        v.tick(since_ms + MAX_HOLD_MS);
+        assert!(
+            v.status_line(since_ms + MAX_HOLD_MS)
+                .unwrap()
+                .contains("transcribing")
+        );
+    }
+}

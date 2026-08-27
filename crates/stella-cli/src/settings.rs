@@ -260,6 +260,13 @@ pub struct Settings {
     /// (`/theme`). Whole-block last-wins across scopes; carries no authority.
     #[serde(default)]
     pub ui: Option<UiSettings>,
+    /// Push-to-talk dictation ([`VoiceSettings`], ADR 0020). Whole-block
+    /// last-wins across scopes like `ui`, and outside the project trust
+    /// boundary for the same reason: it names a provider id, a model slug,
+    /// and a language — never an endpoint or a command, so it carries no
+    /// credential routing of its own.
+    #[serde(default)]
+    pub voice: Option<VoiceSettings>,
     /// What a turn's verdict is worth as a training label (#1043). Whole-block
     /// last-wins across scopes; carries no credential or egress authority, so
     /// no trust restoration — a project setting a weight is expressing an
@@ -859,6 +866,33 @@ impl UiSettings {
     pub fn is_empty(&self) -> bool {
         self.theme.is_none() && self.mid_turn_prompt.is_none()
     }
+}
+
+/// The `voice` section of settings.json / `[voice]` of stella.toml —
+/// push-to-talk dictation (ADR 0020). All fields optional; validation and
+/// defaults happen at the read site (`command_deck::voice`), the house
+/// convention.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct VoiceSettings {
+    /// Whether holding Space records at all. Absent means **disabled**: a
+    /// held key is too easy to press by accident for it to stream microphone
+    /// audio to a provider unasked — the zero-egress rule's one exception is
+    /// selected by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// The provider id whose OpenAI-compatible `audio/transcriptions`
+    /// endpoint transcribes. Unset falls back to `openai`; any provider
+    /// whose settings declare a compatible `base_url` (a local Whisper
+    /// server, `groq`) works the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// The transcription model slug. Unset falls back at the read site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// BCP 47 language hint forwarded to the transcriber (e.g. `en`).
+    /// Unset sends no hint and the model auto-detects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 impl UiSettings {

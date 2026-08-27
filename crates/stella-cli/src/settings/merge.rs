@@ -331,6 +331,12 @@ impl Settings {
         if let Some(ui) = &scope.ui {
             self.ui = Some(ui.clone());
         }
+        // Voice (ADR 0020): whole-block last-wins, same as `ui` above. Must
+        // be listed explicitly or the block parses everywhere and merges to
+        // `None` — the `enable_recap` defect this function's doc names.
+        if let Some(voice) = &scope.voice {
+            self.voice = Some(voice.clone());
+        }
         // Reward weights (#1043): whole-block last-wins, same as `ui` above and
         // for the same reason — a project that declares any weight is stating a
         // complete opinion about its own verifier, so a per-field merge that left

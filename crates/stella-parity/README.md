@@ -50,11 +50,17 @@ everywhere at once. The embedding story the matrix serves is
 
 ## Boundary — does this change belong here?
 
-One file, one job: `src/lib.rs` holds the posture types, the matrix rows, and
-the tests (inline `mod tests`) that keep the rows true. A change belongs
-here when it is a matrix decision — a new row, a posture change, a witness
-name, a composition-seam entry, lowering `UNWITNESSED_BASELINE` after writing
-a missing witness. The capability *itself* never lives here: its engine home
+Two ledgers, one discipline. `src/lib.rs` holds the CLI-vs-API capability
+matrix: the posture types, the matrix rows, and the tests (inline `mod
+tests`) that keep the rows true. `src/evolution.rs` holds the evolution
+ledger (AGENTS.md rule 11): one row per surface Stella changes itself
+through — framework, memory, skill, tool, workflow, model — each declaring a
+posture, timing, impact class, rollback artifact, and, for a live posture,
+the witness test proving the surface can be changed; its rows and the
+`EvolutionSurface` enum come from one macro table, so a surface without a
+row does not compile. A change belongs here when it is a ledger decision — a
+new row, a posture change, a witness name, a composition-seam entry,
+lowering `UNWITNESSED_BASELINE` after writing a missing witness. The capability *itself* never lives here: its engine home
 is `stella-core`, its surfaces are `stella-cli` and `stella-serve`, and this
 crate only records how they relate.
 
