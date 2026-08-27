@@ -16,8 +16,8 @@ agent, sizes the work, assigns exactly one priority label, optionally a
 size, removes `triage`, and comments a one-line rationale.
 
 Priority scheme: `P0` drop everything · `P1` this cycle · `P2` next cycle ·
-`P3` backlog. Rule: every open issue carries either a priority label or
-`triage` — never neither, never both.
+`P3` backlog · `P4` someday, speculative. Rule: every open issue carries
+either a priority label or `triage` — never neither, never both.
 
 ## Rationale
 
@@ -30,7 +30,7 @@ the maintainer one place (the triage agent's rationale comments) to audit it.
 
 - When filing any issue: use the task template; touch no labels beyond the
   `triage` it applies automatically.
-- Never add, remove, or change `P0`–`P3` or `size/*` labels — the
+- Never add, remove, or change `P0`–`P4` or `size/*` labels — the
   triage-guard workflow strips such labels and re-queues the issue.
 - The triage agent (once stood up) never implements anything and never
   closes issues — it only sizes and orders. Mixing roles collapses the

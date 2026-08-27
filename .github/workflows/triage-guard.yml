@@ -28,7 +28,13 @@ jobs:
         with:
           script: |
             const issue = context.payload.issue;
-            const P = /^P[0-3]$/;
+            // Every level SCR-005's Directive names, `P4` included. A level the
+            // label set has and this regex does not is a hole in both
+            // directions: the guard never strips it from a non-triage login,
+            // and an issue carrying only that label reads as unprioritised to
+            // every query built on this pattern while reading as triaged to a
+            // human (#5216). Keep this in step with SCR-005's scheme.
+            const P = /^P[0-4]$/;
             const allowed = process.env.TRIAGE_LOGINS.split(/\s+/);
             const names = issue.labels.map(l => (typeof l === 'string' ? l : l.name));
             if (context.payload.action === 'opened'

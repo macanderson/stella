@@ -1304,6 +1304,6 @@ macanderson org repos.
   follow-up, tech-debt item, or logical next step you noticed. Apply ONLY
   the `triage` label.
 - **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
-  separation of duties:** Never apply priority (`P0`–`P3`) or size labels —
+  separation of duties:** Never apply priority (`P0`–`P4`) or size labels —
   a dedicated triage agent owns sizing and priority; a guard workflow
   strips creator-applied priorities.
