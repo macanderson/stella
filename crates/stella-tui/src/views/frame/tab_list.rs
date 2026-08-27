@@ -167,6 +167,45 @@ mod tests {
         assert!(row.contains("9/9"), "{row}");
     }
 
+    /// [`Rung::Solo`] is reachable from a real frame width, not only by
+    /// handing [`spans`] a budget by hand.
+    ///
+    /// The goldens stop at 56 columns, where [`Rung::Short`] still fits, so
+    /// without this the narrowest rung would be exercised only by a caller
+    /// that does not exist — and a rung nothing reaches is a rung that rots.
+    /// The budget comes from `right_edge_reserve`, the shipped arithmetic, so
+    /// this is the frame width a terminal would actually have to be.
+    #[test]
+    fn the_narrowest_rung_is_reachable_from_a_real_frame_width() {
+        let reserve = crate::views::frame::right_edge_reserve(&[]);
+        // One column under the *narrowest* `Short` rendering, so every tab is
+        // past its own threshold rather than only the widest-titled one.
+        let narrowest_short = DeckTab::ALL
+            .iter()
+            .map(|t| width(&rung_spans(*t, Rung::Short)))
+            .min()
+            .expect("nine tabs");
+        let frame = narrowest_short + reserve - 1;
+        assert!(
+            frame < 56,
+            "Solo sits at {frame} columns, which the 56-column golden would already cover"
+        );
+
+        for tab in DeckTab::ALL {
+            let row: String = spans(tab, frame - reserve)
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect();
+            assert_eq!(
+                spans(tab, frame - reserve),
+                rung_spans(tab, Rung::Solo),
+                "{tab:?} is not on the last rung at {frame} columns: {row}"
+            );
+            assert!(row.contains(tab.title()), "{row}");
+            assert!(row.contains(&format!("/{}", DeckTab::ALL.len())), "{row}");
+        }
+    }
+
     /// The abbreviated rung still names all nine tabs, and the active one in
     /// full: the rung exists to keep the list readable, not to shorten it.
     #[test]
