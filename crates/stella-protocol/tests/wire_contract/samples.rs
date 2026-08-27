@@ -178,7 +178,7 @@ pub(crate) fn all_ci_statuses() -> Vec<CiStatus> {
 
 pub(crate) fn all_task_statuses() -> Vec<TaskStatus> {
     use TaskStatus::*;
-    vec![Pending, InProgress, Completed, Cancelled]
+    vec![Pending, InProgress, Completed, Cancelled, Verify, Blocked]
 }
 
 pub(crate) fn all_block_kinds() -> Vec<BlockKind> {

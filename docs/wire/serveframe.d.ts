@@ -2301,11 +2301,9 @@ export interface TaskItem {
 }
 
 /**
- * Lifecycle of a `TaskItem`. Terminal states are `Completed` and
- * `Cancelled`; a cancelled task keeps its row (the board is an audit
- * surface, not just a scheduler).
+ * Where one task on the board is in its lifecycle. `completed` and `cancelled` are terminal; the rest can still change. `verify` means the work is done and its checks are running, and `blocked` means something outside the task stopped it — a red gate, an unmet dependency — which is a different fact from `cancelled`, a decision to abandon it. Tokens are only ever added, so a reader that does not recognise one is reading a newer stream.
  */
-export type TaskStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type TaskStatus = "pending" | "in_progress" | "completed" | "cancelled" | "verify" | "blocked";
 
 /**
  * One tool invocation the model requested.

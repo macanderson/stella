@@ -3933,7 +3933,7 @@
       "type": "object"
     },
     "TaskStatus": {
-      "description": "Lifecycle of a `TaskItem`. Terminal states are `Completed` and\n`Cancelled`; a cancelled task keeps its row (the board is an audit\nsurface, not just a scheduler).",
+      "description": "Where one task on the board is in its lifecycle. `completed` and `cancelled` are terminal; the rest can still change. `verify` means the work is done and its checks are running, and `blocked` means something outside the task stopped it — a red gate, an unmet dependency — which is a different fact from `cancelled`, a decision to abandon it. Tokens are only ever added, so a reader that does not recognise one is reading a newer stream.",
       "oneOf": [
         {
           "const": "pending",
@@ -3953,6 +3953,16 @@
         {
           "const": "cancelled",
           "description": "Abandoned. Terminal, and the row is kept — the board is an audit\nsurface, not just a scheduler.",
+          "type": "string"
+        },
+        {
+          "const": "verify",
+          "description": "The work is done and its checks are running or awaiting a verdict —\nSPEC 7.2's `◇ verify`, the window between \"the worker stopped\" and \"the\ngates are green\" that the board had no word for.\n\nOpen, because the verdict is what moves it: to [`Self::Completed`] on\ngreen, to [`Self::Blocked`] on red. Closing on entry here would be the\nmodel marking its own homework, which SPEC 7.1 exists to stop.\n\nNothing sets it yet — the gate board is #5042.",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "Stopped by something the task does not control: a red gate, an unmet\ndependency.\n\nOpen rather than terminal, because SPEC 8.1's receipt reads `merge\nblocked · unblocks on green`. A blocked task that could never move\nagain would be a dead row wearing a live word.\n\nA different fact from [`Self::Cancelled`], which is a decision to\nabandon the work. Both draw SPEC 4's one `✗`, and until this case\nexisted the board could not tell a reader which had happened.\n\nNothing sets it yet — the gate that would is #5042.",
           "type": "string"
         }
       ]
