@@ -710,7 +710,11 @@ fn gh_plain(args: &[&str]) -> Option<String> {
 }
 
 /// The demand half of the governor, read through the issue port.
-fn demand(root: &std::path::Path) -> Demand {
+///
+/// `Err` when the tracker could not be read. Distinct from a demand of zero,
+/// which is the answer when the backlog really is empty — see
+/// [`backlog::demand_from`].
+fn demand(root: &std::path::Path) -> Result<Demand, String> {
     backlog::demand_from(
         &crate::issue_provider::GhIssueProvider,
         &config::load(root).triage,
@@ -719,7 +723,17 @@ fn demand(root: &std::path::Path) -> Demand {
 
 fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
     let supply = probes::supply(&st.repo_root);
-    let demand = demand(&st.repo_root);
+    // Still sized as though the backlog were empty when the tracker cannot be
+    // read — a refusal to plan is the less survivable answer — but said out
+    // loud. A plan drawn against a demand nobody measured is not the same
+    // plan as one drawn against a measured zero, and the operator reading it
+    // is the one who can tell the difference.
+    let demand = demand(&st.repo_root).unwrap_or_else(|error| {
+        say(&format!(
+            "the tracker could not be read ({error}) — planning as though the backlog were empty"
+        ));
+        Demand::default()
+    });
     let cal = st.calibration();
     let plan =
         stella_autonomy::plan_cycle(supply, demand, &cal, state::floors(), &state::aimd_limits());

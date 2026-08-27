@@ -118,18 +118,28 @@ pub(super) fn render_queue(
 
 /// Size the demand half of the governor from the same read.
 ///
-/// A tracker that cannot be reached yields [`Demand::default`] rather than an
-/// error: the governor's job is to size a cycle, and a cycle sized as though
-/// the backlog were empty is a survivable answer where a refusal to plan is
-/// not. That degradation is inherited from the `gh_available()` check this
-/// replaces, not introduced here.
+/// `Err` when the tracker could not be read, which is **not** a demand of
+/// zero. This used to return [`Demand::default`] for both, on the argument
+/// that a cycle sized as though the backlog were empty is survivable where a
+/// refusal to plan is not. That argument is right about `plan` and wrong about
+/// every other reader: `watch` printed `✓ defect queue empty` for an
+/// unreachable tracker and stood the loop down on it.
+///
+/// So the degradation moves to the callers, where it can differ, and neither
+/// of them takes it silently — `plan` still sizes against an empty backlog and
+/// says that is what it is doing, and `watch` treats the unread queue as a
+/// reason to wake.
 pub(super) fn demand_from(
     provider: &dyn IssueProvider,
     policy: &stella_autonomy::priority::TriagePolicy,
-) -> Demand {
-    let Ok((queue, _)) = ranked(provider, policy) else {
-        return Demand::default();
-    };
+) -> Result<Demand, String> {
+    // The read's failure is reported, not flattened. `Demand::default()` is
+    // zero open defects, which is the *answer to a different question* — an
+    // unreachable tracker and an empty backlog are opposite facts and used to
+    // arrive here as the same number. `watch` then printed
+    // `✓ defect queue empty` and stood the loop down, and the governor planned
+    // a cycle against a demand nobody had measured.
+    let (queue, _) = ranked(provider, policy)?;
     // The most urgent rung the operator declared, whatever they call it.
     let urgent = policy.ladder.most_urgent().unwrap_or_default();
     let p0 = queue
@@ -137,10 +147,10 @@ pub(super) fn demand_from(
         .iter()
         .filter(|issue| issue.labels.iter().any(|label| label.name == urgent))
         .count();
-    Demand {
+    Ok(Demand {
         open_defects: u32::try_from(queue.ranked.len()).unwrap_or(u32::MAX),
         p0: u32::try_from(p0).unwrap_or(u32::MAX),
-    }
+    })
 }
 
 /// Why a filing did not happen.
@@ -1002,7 +1012,7 @@ mod tests {
     #[test]
     fn demand_is_a_fold_of_the_same_ranking() {
         let policy = stella_autonomy::priority::TriagePolicy::default();
-        let demand = demand_from(&backlog(), &policy);
+        let demand = demand_from(&backlog(), &policy).expect("the fake backlog reads");
         assert_eq!(
             demand.open_defects, 3,
             "the feature is not a defect, and the unranked one is not yet work"
@@ -1013,16 +1023,32 @@ mod tests {
         );
     }
 
-    /// An unreachable tracker sizes a cycle as though the backlog were empty,
-    /// rather than refusing to plan.
+    /// An unreachable tracker is not an empty backlog.
+    ///
+    /// This used to assert the opposite — that the read's failure yields
+    /// `Demand::default()` — on the argument that a cycle sized as though the
+    /// backlog were empty is survivable where a refusal to plan is not. That
+    /// argument holds for `plan`, and it still degrades there, out loud. It
+    /// does not hold for `watch`, which read the same zero and printed
+    /// `✓ defect queue empty` about a queue it had never seen, then stood the
+    /// loop down.
+    ///
+    /// So the degradation belongs to the caller, and this reports what it
+    /// read.
     #[test]
-    fn an_unreachable_tracker_degrades_rather_than_failing() {
-        assert_eq!(
-            demand_from(
-                &DeadProvider,
-                &stella_autonomy::priority::TriagePolicy::default()
-            ),
-            Demand::default()
+    fn an_unreachable_tracker_is_not_a_measured_zero() {
+        let answer = demand_from(
+            &DeadProvider,
+            &stella_autonomy::priority::TriagePolicy::default(),
+        );
+        assert!(
+            answer.is_err(),
+            "a tracker that could not be read reports so: {answer:?}"
+        );
+        assert_ne!(
+            answer.ok(),
+            Some(Demand::default()),
+            "and is distinguishable from a backlog that really is empty"
         );
     }
 

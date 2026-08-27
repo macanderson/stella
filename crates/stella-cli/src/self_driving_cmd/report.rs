@@ -85,6 +85,20 @@ fn ci_verdict(conclusion: Option<&str>) -> Finding {
     }
 }
 
+/// What the defect queue says, given the count or the reason it is unknown.
+///
+/// An unreachable tracker is not an empty backlog. Both used to arrive here as
+/// `Demand::default()` — zero open defects — and the sentinel printed
+/// `✓ defect queue empty` and stood the loop down over a queue it had not
+/// read.
+fn queue_verdict(open_defects: Result<u32, String>) -> Finding {
+    match open_defects {
+        Ok(0) => Finding::Quiet("defect queue empty".to_string()),
+        Ok(n) => Finding::Alarm(format!("{n} open defects in the queue")),
+        Err(error) => Finding::Unknown(format!("the defect queue could not be read: {error}")),
+    }
+}
+
 /// Whether main has moved since the sweep that was recorded clean.
 ///
 /// Both sides are optional and their absences mean different things, so
@@ -122,13 +136,7 @@ pub(super) fn watch(st: &LoopState) -> Result<(), String> {
     triggered |= head_verdict(head_now.as_deref(), head_seen).report();
 
     if gh_available() {
-        let d = demand(&st.repo_root);
-        if d.open_defects > 0 {
-            println!("  ! {} open defects in the queue", d.open_defects);
-            triggered = true;
-        } else {
-            println!("  ✓ defect queue empty");
-        }
+        triggered |= queue_verdict(demand(&st.repo_root).map(|d| d.open_defects)).report();
 
         let ci = gh_plain(&[
             "run",
@@ -298,6 +306,31 @@ mod tests {
             );
             assert!(finding.report());
         }
+    }
+
+    /// An unreadable defect queue is not an empty one.
+    ///
+    /// `demand` returned `Demand::default()` for both an unreachable tracker
+    /// and a genuinely empty backlog, so this check printed
+    /// `✓ defect queue empty` about a queue it had never read, left
+    /// `triggered` false, and the sentinel said SLEEP.
+    #[test]
+    fn a_defect_queue_that_could_not_be_read_is_not_an_empty_one() {
+        let finding = queue_verdict(Err("gh: not authenticated".to_string()));
+        assert!(matches!(finding, Finding::Unknown(_)), "{finding:?}");
+        assert!(finding.report(), "and it wakes rather than sleeping");
+    }
+
+    /// The two measured answers are unchanged.
+    #[test]
+    fn a_measured_queue_is_quiet_when_empty_and_loud_when_not() {
+        let empty = queue_verdict(Ok(0));
+        assert!(matches!(empty, Finding::Quiet(_)));
+        assert!(!empty.report());
+
+        let full = queue_verdict(Ok(4));
+        assert!(matches!(full, Finding::Alarm(_)));
+        assert!(full.report());
     }
 
     /// Two unknowns do not agree that nothing happened.
