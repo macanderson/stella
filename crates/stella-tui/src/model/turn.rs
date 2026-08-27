@@ -155,6 +155,15 @@ fn activity_of(role: ModelCallRole) -> Option<String> {
 /// never `0 tok/s` — the substitution [`super::ReadSize`] and
 /// [`crate::views::transcript::Extent`] both already refuse, because a zero
 /// asserts a measurement where there was none (#2290, #4150).
+///
+/// Not a second copy of `deck::AgentEntry::live_tok_per_s`, which shares the
+/// arithmetic and neither numerator nor denominator. That one is the **live**
+/// rate of a turn still running: the turn's output so far over the deck's own
+/// clock since the turn opened, tool time included, and it needs no settled
+/// record because there is none yet. This one is one **call**, settled, over
+/// the wall clock that call alone took. A turn's rate and its slowest call's
+/// rate are different readings, and either standing in for the other would
+/// answer a question nobody asked.
 fn tokens_per_sec(output_tokens: u64, duration_ms: u64, complete: bool) -> Option<u32> {
     if !complete || output_tokens == 0 || duration_ms == 0 {
         return None;
