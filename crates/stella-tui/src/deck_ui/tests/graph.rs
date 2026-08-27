@@ -17,6 +17,7 @@ fn ui_with_graph() -> DeckUi {
             label: "src/b.rs".into(),
             kind: "file".into(),
             location: Some("src/b.rs".into()),
+            touch: None,
         }],
         edges: vec![],
         files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
@@ -137,6 +138,7 @@ fn a_re_rooted_snapshot_resets_the_node_cursor() {
             label: "src/a.rs".into(),
             kind: "file".into(),
             location: Some("src/a.rs".into()),
+            touch: None,
         }],
         edges: vec![],
         files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
@@ -159,6 +161,7 @@ fn arrows_walk_the_neighborhood_and_clamp_at_both_ends() {
         label: label.into(),
         kind: "file".into(),
         location: Some(label.into()),
+        touch: None,
     };
     if let Some(graph) = ui.graph.as_mut() {
         graph.nodes = vec![node("src/a.rs"), node("src/b.rs"), node("src/c.rs")];

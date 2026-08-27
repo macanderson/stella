@@ -23,31 +23,37 @@ pub fn demo_graph() -> GraphSnapshot {
             label: "run_turn".into(),
             kind: "function".into(),
             location: Some("stella-core/src/driver.rs:239".into()),
+            touch: None,
         },
         GraphNode {
             label: "Engine".into(),
             kind: "struct".into(),
             location: Some("stella-core/src/engine.rs:48".into()),
+            touch: None,
         },
         GraphNode {
             label: "Router".into(),
             kind: "struct".into(),
             location: Some("stella-core/src/router.rs:373".into()),
+            touch: None,
         },
         GraphNode {
             label: "AgentEvent".into(),
             kind: "enum".into(),
             location: Some("stella-protocol/src/event.rs:55".into()),
+            touch: None,
         },
         GraphNode {
             label: "Ledger".into(),
             kind: "struct".into(),
             location: Some("stella-fleet/src/ledger.rs:90".into()),
+            touch: None,
         },
         GraphNode {
             label: "driver.rs".into(),
             kind: "file".into(),
             location: Some("stella-core/src/driver.rs".into()),
+            touch: None,
         },
     ];
     let edges = vec![

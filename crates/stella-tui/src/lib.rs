@@ -126,7 +126,7 @@ pub use envelope::{
 pub use fleet_dashboard::{
     FleetControl, FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,
 };
-pub use graph::{GraphEdge, GraphNode, GraphSnapshot};
+pub use graph::{FileTouch, GraphEdge, GraphNode, GraphSnapshot, SessionTouch};
 pub use resource::ResourceMonitor;
 pub use splash::SplashState;
 pub use views::settings::SettingsPane;

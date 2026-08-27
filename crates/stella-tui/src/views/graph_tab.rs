@@ -9,24 +9,27 @@
 //! ╭──────────────────────╮ ╭ ▤ crates/stella-protocol/src/lib.rs   ● hot ───╮
 //! │ ▤ lib.rs       ● hot │ │ imports 24 → · ← imported-by 12 · tests 6      │
 //! │ ▢ Attachment      18 │ │ → attachment::Attachment                       │
-//! │ ƒ human_bytes      3 │ │ ← stella-cli::self_driving_cmd                 │
+//! │ ƒ human_bytes      3 │ │ ← self_driving_cmd · edited turn 14            │
 //! │ ⋯ 16 more            │ ╰────────────────────────────────────────────────╯
 //! │ ▤ file · ▢ type · ƒ fn│ ╭ coupling · neighbors by edge count ───────────╮
 //! │ right column = edges │ │ attachment::Attachment ████████  18            │
 //! ╰──────────────────────╯ ╰────────────────────────────────────────────────╯
 //! ↵ open file · / files · ⇥ panes
-//! every answer here is deterministic · $0.00
+//! every answer here is deterministic · $0.00 · 12ms
 //! ```
 //!
 //! Renders from [`crate::deck_ui::DeckUi::graph`], the out-of-band
-//! [`GraphSnapshot`], plus the focused lane's file ledger for the `● hot`
-//! mark — a node is hot when this session changed the file it lives in.
+//! [`GraphSnapshot`], plus the focused lane's file ledger, which supplies the
+//! `● hot` mark and the `edited turn 14` tag beside an edge: a node is hot when
+//! this session touched the file it lives in, and the tag names the turn that
+//! did it. [`GraphSnapshot::stamp_session_touches`] writes both from that one
+//! ledger every frame, so one cannot go stale while the other has not.
 //! Every number is a count of edges the index already holds; no model is
 //! consulted, which is what the footer's `$0.00` states.
 //!
 //! The rendering's `12ms` is [`GraphSnapshot::query_ms`], measured by the
-//! driver and drawn only when it is there — a demo snapshot nobody timed
-//! carries `None` and the bar simply omits it.
+//! driver and drawn in the query bar and the footer — and only when it is
+//! there: a demo snapshot nobody timed carries `None` and both omit it.
 //!
 //! The renderings' `q free-form query` is the query bar's second mode. `q`
 //! opens a modal box on this tab; `⏎` sends the text as a
@@ -45,7 +48,7 @@ use stella_tui_theme::{glyph, token};
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
-use crate::graph::{GraphNode, GraphSnapshot};
+use crate::graph::{FileTouch, GraphSnapshot, SessionTouch};
 
 /// The SPEC 4 glyph for a node kind: file, type, fn — anything else a plain
 /// bullet.
@@ -59,16 +62,33 @@ pub fn kind_glyph(kind: &str) -> char {
     }
 }
 
-/// Whether `node` lives in a file this session changed.
-fn is_hot(node: &GraphNode, changed: &[String]) -> bool {
-    changed.iter().any(|path| {
-        node.label == *path
-            || path.ends_with(&format!("/{}", node.label))
-            || node
-                .location
-                .as_deref()
-                .is_some_and(|loc| loc.starts_with(path.as_str()))
-    })
+/// The focused lane's file ledger, as [`GraphSnapshot::stamp_session_touches`]
+/// reads it: every path the session has touched, with the turn that touched it
+/// and what it did.
+///
+/// The same `files` vector the FILES tab lists and the transcript resolves its
+/// diffs from. Reading it here rather than keeping a second record of "touched
+/// this session" is what lets the `● hot` mark and the `edited turn N` tag
+/// beside it never disagree.
+fn session_ledger(model: &WorkspaceModel, focused: usize) -> Vec<FileTouch> {
+    model
+        .agents
+        .get(focused)
+        .map(|agent| {
+            agent
+                .model
+                .files
+                .iter()
+                .map(|file| FileTouch {
+                    path: file.path.clone(),
+                    touch: SessionTouch {
+                        turn: file.touched_turn,
+                        kind: file.kind,
+                    },
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Passive form of an edge kind for an incoming relation — `imports` →
@@ -98,6 +118,15 @@ fn rounded(title: Line<'static>) -> Block<'static> {
 /// They were a separate module for as long as this tab had two renderers and
 /// the older one still owned the deck's entry point; it has one now.
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+    // The session's own touches, re-read from the ledger on every frame: the
+    // neighborhood is queried once and then sits here for the rest of a
+    // session, so a tag written at query time would name turn 3 long after
+    // turn 9 edited the same file.
+    let ledger = session_ledger(model, ui.focused);
+    if let Some(snapshot) = ui.graph.as_mut() {
+        snapshot.stamp_session_touches(&ledger);
+    }
+
     let Some(snapshot) = ui.graph.as_ref().filter(|g| !g.is_empty()) else {
         // An empty snapshot that carries a query is a query that matched
         // nothing, which is a different fact from "no index here" and gets
@@ -119,16 +148,9 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     let cursor = ui.graph_cursor.min(snapshot.nodes.len() - 1);
     ui.graph_cursor = cursor;
 
-    // The files this session changed, for the `● hot` mark.
-    let changed: Vec<String> = model
-        .agents
-        .get(ui.focused)
-        .map(|a| a.model.files.iter().map(|f| f.path.clone()).collect())
-        .unwrap_or_default();
     paint(
         snapshot,
         cursor,
-        &changed,
         ui.accessible,
         ui.graph_query.as_deref(),
         area,
@@ -167,8 +189,10 @@ fn render_empty(hint: &str, area: Rect, buf: &mut Buffer) {
     Paragraph::new(line).render(row, buf);
 }
 
-/// Draw the loaded tab. `cursor` is already clamped by the caller; `changed`
-/// is the focused lane's changed paths.
+/// Draw the loaded tab. `cursor` is already clamped by the caller, and
+/// `snapshot` already carries this session's touches
+/// ([`GraphSnapshot::stamp_session_touches`]), which is what the `● hot` marks
+/// and the `edited turn N` tags are drawn from.
 ///
 /// `typing` is the query box's live buffer while it is open — deck state, not
 /// snapshot state, because it is text nobody has answered yet. Once the
@@ -179,7 +203,6 @@ fn render_empty(hint: &str, area: Rect, buf: &mut Buffer) {
 pub fn paint(
     snapshot: &GraphSnapshot,
     cursor: usize,
-    changed: &[String],
     accessible: bool,
     typing: Option<&str>,
     area: Rect,
@@ -253,10 +276,10 @@ pub fn paint(
     } else {
         Layout::horizontal([Constraint::Percentage(36), Constraint::Percentage(64)]).split(bands[2])
     };
-    render_list(snapshot, cursor, changed, panes[0], buf);
+    render_list(snapshot, cursor, panes[0], buf);
 
     let right = Layout::vertical([Constraint::Min(5), Constraint::Length(8)]).split(panes[1]);
-    render_card(snapshot, cursor, changed, right[0], buf);
+    render_card(snapshot, cursor, right[0], buf);
     let coupling_area = if right[1].height >= 4 {
         right[1]
     } else {
@@ -290,25 +313,25 @@ pub fn paint(
     keys.push(Span::styled(" · ", dim));
     keys.push(Span::styled("↑↓", muted));
     keys.push(Span::styled(" walk", dim));
-    Paragraph::new(vec![
-        Line::from(keys),
-        Line::from(vec![
-            Span::styled(" every answer here is deterministic", dim),
-            Span::styled(" · ", dim),
-            Span::styled("$0.00", gold),
-        ]),
-    ])
-    .render(bands[3], buf);
+    // SPEC 9.1's footer prices the view AND states what it cost to answer:
+    // `every answer here is deterministic · $0.00 · 12ms`. The timing is the
+    // same [`GraphSnapshot::query_ms`] the query bar reports, drawn under the
+    // same rule — a snapshot nobody timed says nothing rather than `0ms`,
+    // because "free" and "not measured" are different claims (#4335).
+    let mut price = vec![
+        Span::styled(" every answer here is deterministic", dim),
+        Span::styled(" · ", dim),
+        Span::styled("$0.00", gold),
+    ];
+    if let Some(ms) = snapshot.query_ms {
+        price.push(Span::styled(" · ", dim));
+        price.push(Span::styled(format!("{ms}ms"), muted));
+    }
+    Paragraph::new(vec![Line::from(keys), Line::from(price)]).render(bands[3], buf);
 }
 
 /// The node list: glyph, label, then `● hot` or the edge count on the right.
-fn render_list(
-    snapshot: &GraphSnapshot,
-    cursor: usize,
-    changed: &[String],
-    area: Rect,
-    buf: &mut Buffer,
-) {
+fn render_list(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
     let block = rounded(Line::default());
@@ -340,7 +363,7 @@ fn render_list(
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, node) in snapshot.nodes.iter().enumerate().take(end).skip(start) {
         let selected = i == cursor;
-        let hot = is_hot(node, changed);
+        let hot = node.touch.is_some();
         let right = if hot {
             "● hot".to_string()
         } else {
@@ -399,13 +422,7 @@ fn render_list(
 
 /// The node card: grouped relation counts with the reverse direction, then a
 /// sample of the edges themselves.
-fn render_card(
-    snapshot: &GraphSnapshot,
-    cursor: usize,
-    changed: &[String],
-    area: Rect,
-    buf: &mut Buffer,
-) {
+fn render_card(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
     let text = Style::new().fg(token::TEXT);
@@ -418,7 +435,7 @@ fn render_card(
         Span::styled(node.label.clone(), Style::new().fg(token::GOLD)),
         Span::raw(" "),
     ];
-    if is_hot(node, changed) {
+    if node.touch.is_some() {
         title.push(Span::styled("● hot ", Style::new().fg(token::GOLD_BRIGHT)));
     }
     let block = rounded(Line::from(title));
@@ -473,17 +490,28 @@ fn render_card(
             let Some(other) = snapshot.nodes.get(other) else {
                 continue;
             };
-            lines.push(if outgoing {
-                Line::from(vec![
+            let mut spans = if outgoing {
+                vec![
                     Span::styled(format!(" {} → ", edge.kind), dim),
                     Span::styled(other.label.clone(), text),
-                ])
+                ]
             } else {
-                Line::from(vec![
+                vec![
                     Span::styled(format!(" {} ← ", passive(&edge.kind)), dim),
                     Span::styled(other.label.clone(), text),
-                ])
-            });
+                ]
+            };
+            // SPEC 9.1's session tag: the edge names a file this session
+            // touched, so it says when — `← self_driving_cmd · edited turn 14`.
+            // It hangs off the node at the FAR end, which is the one the line
+            // cites; the node under the cursor already wears `● hot` in the
+            // card's own title, so repeating its turn on every one of its edges
+            // would say the same thing twenty-four times.
+            if let Some(tag) = other.touch.and_then(|touch| touch.tag()) {
+                spans.push(Span::styled(" · ", dim));
+                spans.push(Span::styled(tag, Style::new().fg(token::GOLD_BRIGHT)));
+            }
+            lines.push(Line::from(spans));
             shown += 1;
         }
         if total > shown {
@@ -503,22 +531,74 @@ mod tab;
 mod tests {
     use super::*;
 
+    use crate::envelope::{AgentMeta, Inbound};
+    use stella_protocol::{AgentEvent, FileChangeKind};
+
+    /// The ledger the tab reads is the lane's own `files` vector, carrying the
+    /// turn each path was last touched in — which is what turns a `● hot` mark
+    /// into `edited turn N`.
     #[test]
-    fn a_node_is_hot_when_its_file_changed_this_session() {
-        let file = GraphNode {
-            label: "lib.rs".into(),
-            kind: "file".into(),
-            location: None,
+    fn the_ledger_carries_each_paths_turn_and_the_verb_that_reached_it() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        let change = |path: &str, kind| Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::FileChange {
+                path: path.into(),
+                kind,
+                added: 1,
+                removed: 0,
+                diff: None,
+                minimal: true,
+                task_id: None,
+            },
         };
-        let sym = GraphNode {
-            label: "Attachment".into(),
-            kind: "struct".into(),
-            location: Some("crates/stella-protocol/src/lib.rs:48".into()),
+        let end_turn = Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::TurnComplete {
+                model: "test".into(),
+                cost_usd: 0.0,
+            },
         };
-        let changed = vec!["crates/stella-protocol/src/lib.rs".to_string()];
-        assert!(is_hot(&file, &changed));
-        assert!(is_hot(&sym, &changed));
-        assert!(!is_hot(&file, &["crates/other.rs".to_string()]));
+
+        model.apply_inbound(&change("src/a.rs", FileChangeKind::Modified));
+        model.apply_inbound(&change("src/read_only.rs", FileChangeKind::Read));
+        model.apply_inbound(&end_turn);
+        model.apply_inbound(&change("src/b.rs", FileChangeKind::Created));
+        // Turn 2 re-reads the file turn 1 edited. The turn belongs to the
+        // edit, so it must not follow the read.
+        model.apply_inbound(&change("src/a.rs", FileChangeKind::Read));
+        model.apply_inbound(&end_turn);
+        // Turn 3 edits it again, and that one does move the tag.
+        model.apply_inbound(&change("src/b.rs", FileChangeKind::Modified));
+
+        let ledger = session_ledger(&model, 0);
+        let row = |path: &str| {
+            ledger
+                .iter()
+                .find(|row| row.path == path)
+                .unwrap_or_else(|| panic!("{path} in the ledger"))
+                .touch
+        };
+        assert_eq!(
+            row("src/a.rs").tag().as_deref(),
+            Some("edited turn 1"),
+            "a later read must not carry the turn of the earlier edit forward"
+        );
+        assert_eq!(
+            row("src/b.rs").tag().as_deref(),
+            Some("edited turn 3"),
+            "a second mutation moves both the verb and the turn"
+        );
+        assert_eq!(
+            row("src/read_only.rs").tag(),
+            None,
+            "a path only read names no turn rather than inventing one"
+        );
+
+        // A lane index nothing registered reads as an empty ledger rather than
+        // panicking — the Graph tab renders before any lane exists.
+        assert!(session_ledger(&model, 7).is_empty());
     }
 
     #[test]

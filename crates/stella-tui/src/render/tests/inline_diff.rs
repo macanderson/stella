@@ -58,6 +58,7 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
         changes: 1,
         reads: 0,
         touched_seq: 1,
+        touched_turn: Some(1),
     }];
     (entry, files)
 }

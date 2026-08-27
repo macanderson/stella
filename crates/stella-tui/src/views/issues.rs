@@ -208,6 +208,7 @@ mod tests {
             label: path.to_string(),
             kind: "file".into(),
             location: Some(path.to_string()),
+            touch: None,
         };
         GraphSnapshot {
             focus: "src/hot.rs".into(),
@@ -218,11 +219,13 @@ mod tests {
                     label: "run_turn".into(),
                     kind: "function".into(),
                     location: Some("src/hot.rs:12".into()),
+                    touch: None,
                 },
                 GraphNode {
                     label: "Engine".into(),
                     kind: "struct".into(),
                     location: Some("src/hot.rs:40".into()),
+                    touch: None,
                 },
             ],
             edges: vec![

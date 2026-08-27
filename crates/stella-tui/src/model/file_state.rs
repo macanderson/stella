@@ -75,6 +75,26 @@ pub struct FileState {
     /// (read or mutation) — the recency key [`MAX_TRACKED_FILES`] eviction
     /// orders by. Purely event-derived, so replay determinism (L-T1) holds.
     pub touched_seq: u64,
+    /// The 1-based turn ordinal of this path's most recent **mutation** — the
+    /// `N` the Graph tab's `edited turn N` names (SPEC 9.1), read off
+    /// [`SessionModel::turns_completed`](super::SessionModel::turns_completed)
+    /// as the change folds.
+    ///
+    /// Mutations only, in step with [`Self::kind`], which reads never move
+    /// either. A read that advanced this would put the turn of the read under
+    /// the verb of an older edit: a file edited in turn 2 and read in turn 5
+    /// would render `edited turn 5`, naming a turn that edited nothing.
+    ///
+    /// `None` therefore means one of two things, and neither carries a tag:
+    /// this path has only been read, or the ledger kept it across a `/clear`.
+    /// The ledger survives a reset and the turn counter does not, so a stamp
+    /// made under the previous conversation's numbering would be read against
+    /// the new one's — a file edited in turn 5 before the reset would outrank
+    /// one edited in turn 1 after it, and the tab would name a turn the
+    /// transcript no longer has.
+    /// [`SessionModel::reset_conversation`](super::SessionModel::reset_conversation)
+    /// clears it instead: the touch is still known, its turn is not.
+    pub touched_turn: Option<u32>,
 }
 
 /// One remembered mutation: its diff text, the `changes` seq it happened at

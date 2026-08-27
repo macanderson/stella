@@ -59,7 +59,7 @@ use std::path::PathBuf;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+use stella_protocol::{AgentEvent, FileChangeKind, ToolCall, ToolOutput};
 use stella_tui::Inbound;
 use stella_tui::scenario::{demo_graph, demo_inbound, demo_linked_work};
 use stella_tui::{
@@ -68,15 +68,15 @@ use stella_tui::{
     render_deck,
 };
 
-/// The GRAPH tab's query-bar goldens. Split out because this file is the
-/// whole deck's golden surface and every tab wants rows in it, so it is the
-/// one that reaches the 1500-line ceiling first; the submodule shares every
-/// helper below and blesses with the same command.
+/// The GRAPH tab's query-bar and session-tag goldens. Split out because this
+/// file is the whole deck's golden surface and every tab wants rows in it, so
+/// it is the one that reaches the 1500-line ceiling first; the submodule
+/// shares every helper below and blesses with the same command.
 ///
 /// `#[path]` because this target's module root is `tests/`, so a plain
 /// `mod graph` would want `tests/graph.rs` — and Cargo compiles every
-/// `tests/*.rs` as its own test binary, which would build these three
-/// goldens twice under two names.
+/// `tests/*.rs` as its own test binary, which would build those goldens
+/// twice under two names.
 #[path = "deck_render_snapshots/graph.rs"]
 mod graph;
 

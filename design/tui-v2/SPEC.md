@@ -368,9 +368,10 @@ Turn begin, turn end receipt, skill auto-trigger, memory log and promotion, comp
 
 - Query bar: current selector (`file:...`) plus `q` for free-form graph queries. Right side: `438 nodes · 12ms · det`.
 - Left: node list for the current scope, glyph-typed (`▤ ▢ ƒ`), right column is edge count. `● hot` marks nodes touched this session, tagged with the turn.
-- Right top: node card with **grouped relations including the reverse direction**: `imports 24 → · ← imported-by 12 · writes 2 · tests 6`, then a short mixed sample of edges. Reverse edges may carry session tags (`edited turn 14`).
+- Right top: node card with **grouped relations including the reverse direction**: `imports 24 → · ← imported-by 12 · writes 2 · tests 6`, then a short mixed sample of edges. An edge in that sample carries a session tag when this session touched the file at its far end (`← stella-cli::self_driving_cmd · edited turn 14`), in either direction. The verb is the touch's own — `created`, `edited`, `deleted`, `read` — and the tag hangs off the node the line cites, never off the node under the cursor, which already wears `● hot` in the card's own title.
 - Right bottom: **coupling ranking**: neighbors sorted by edge count with gold block-char bars and counts. Caption: `high coupling = blast radius if you edit this file`. This replaces the decorative dot-matrix neighborhood.
 - Footer prices the view: `every answer here is deterministic · $0.00 · 12ms`.
+- **A measured number or none.** The `12ms` in the query bar and in the footer is the wall clock the producer reported for this neighborhood; a snapshot nobody timed — a synthesized demo, a scenario fixture — carries no duration, and both places omit it rather than print a `0ms` no one measured. The session tag follows the same rule: it names a turn only when the file ledger holds one, so a path retained across `/clear` stays `● hot` and names no turn.
 
 ### 9.2 SKILLS (rendering `05-skills`)
 
