@@ -154,6 +154,7 @@ pub(crate) fn asking_plugin(
             dir: PathBuf::from(dir),
             scope: PluginScope::User,
             consent: crate::plugin_cmd::receipt::ConsentState::Receipted,
+            panel_grant: crate::plugin_cmd::panel_grant::PanelGrantState::Undecided,
         }],
         Vec::new(),
         &BTreeMap::new(),

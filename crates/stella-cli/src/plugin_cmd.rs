@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `stella plugin install|list|remove` — the loader
+//! `stella plugin install|list|panel|remove|drive` — the loader
 //! (`doc:pipeline-as-plugins` §A4).
 //!
-//! Three verbs, one for each thing a human does with a plugin, and each one
-//! doing exactly that thing (invariant 9 — no `install --remove`).
+//! One verb for each thing a human does with a plugin, and each one doing
+//! exactly that thing (invariant 9 — no `install --remove`). `panel` is the
+//! one that decides rather than acts: it answers SPEC 12.4's `[a]llow [d]eny`
+//! for a plugin that asks to draw on the screen, and `--allow`/`--deny` are
+//! that answer given up front the way `install --yes` is, never a second verb
+//! hiding in a flag.
 //!
 //! # Install is a consent transaction, not a copy
 //!
@@ -32,6 +36,17 @@
 //! and owns that directory, could rewrite its grant into one no human ever saw
 //! (#3514). See [`receipt`] for what the receipt does and does not buy.
 //!
+//! # Drawing on the screen is a second transaction
+//!
+//! A `[panel]` block asks for a rectangle of the operator's terminal, which
+//! SPEC 12 calls the place the strongest limits belong. So it is granted
+//! separately, recorded separately ([`panel_grant`]), and withheld until
+//! somebody answers: a package can be installed with its panel denied, and
+//! denying one costs the plugin nothing but the rectangle. `install` asks it
+//! for what it is copying; [`decide_panel`] is what answers it for a package
+//! that arrived by `git clone`, one whose manifest has changed since, or one
+//! whose grant is being withdrawn.
+//!
 //! # Uninstall actually uninstalls
 //!
 //! Removing a plugin deletes its directory — in **every** tier that holds the
@@ -49,6 +64,7 @@ use crate::settings::{Settings, Toggle};
 
 pub(crate) mod configure;
 pub(crate) mod package;
+pub(crate) mod panel_grant;
 pub(crate) mod process;
 pub(crate) mod receipt;
 pub(crate) mod roster;
@@ -81,6 +97,25 @@ pub enum PluginCmd {
         /// The plugin's `name`, as `stella plugin list` prints it.
         #[arg(value_name = "NAME")]
         name: String,
+    },
+    /// Decide whether an installed plugin may draw on your screen: print its
+    /// panel handshake, and record the answer (SPEC 12.4).
+    ///
+    /// The answer is a fact about the manifest's exact bytes, so it is asked
+    /// again whenever the declaration changes — and it is a fact about the
+    /// screen alone: denying a panel leaves the package's tools, skills and
+    /// hooks running.
+    Panel {
+        /// The plugin's `name`, as `stella plugin list` prints it.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Answer `allow` without prompting. Required when no human is
+        /// present to read the handshake.
+        #[arg(long, conflicts_with = "deny")]
+        allow: bool,
+        /// Answer `deny` without prompting.
+        #[arg(long)]
+        deny: bool,
     },
     /// Open one driver session against an installed plugin that declares
     /// `[driver]`, and report what it says to do next.
@@ -123,6 +158,9 @@ pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
             install(&root, dir, (*scope).into(), *yes, &settings)
         }
         PluginCmd::List => list(&root, &settings),
+        PluginCmd::Panel { name, allow, deny } => {
+            decide_panel(&root, name, panel_answer(*allow, *deny), &settings)
+        }
         PluginCmd::Remove { name } => remove(&root, name),
         PluginCmd::Drive { name } => drive(&root, name),
     }
@@ -408,6 +446,28 @@ fn install(
         scope.as_str(),
         destination.display()
     );
+
+    // SPEC 12.4's second transaction, and outside the one above:
+    // a package that is installed and not drawing is a coherent state, so a
+    // failure here is a notice naming the verb that resolves it rather than a
+    // rollback of a copy that succeeded. `--yes` answers this the way it
+    // answers the install — the document it accepted carries the panel section
+    // — so a scripted install of a panel plugin still yields a drawing panel.
+    if manifest.panel.is_some() {
+        let answer = if yes {
+            PanelAnswer::Given(panel_grant::PanelVerdict::Allow)
+        } else {
+            PanelAnswer::Ask
+        };
+        if let Err(reason) =
+            grant_panel_at_install(&tier, scope, name, &manifest, &consented, answer)
+        {
+            eprintln!(
+                "  ! `{name}` is installed, but its panel grant was not recorded: {reason}\n    \
+                 It will not draw until `stella plugin panel {name}` decides."
+            );
+        }
+    }
     if let Some(target) = &config_target {
         println!(
             "  set {} value(s) in {} — `stella plugin remove {name}` puts them back",
@@ -486,6 +546,199 @@ fn install_configuration(
     Ok(())
 }
 
+/// Show the panel handshake for a package [`install`] has just copied, and
+/// record the answer.
+///
+/// Split out of `install` rather than inlined so the tier, the entry name and
+/// the consented bytes are named once and cannot drift from the receipt filed
+/// beside them — and so this reads as the second transaction it is.
+fn grant_panel_at_install(
+    tier: &Path,
+    scope: PluginScope,
+    entry: &str,
+    manifest: &stella_plugin::PluginManifest,
+    consented: &str,
+    answer: PanelAnswer,
+) -> Result<(), String> {
+    let signature = format!("sha256:{}", receipt::digest(consented.as_bytes()));
+    let Some(handshake) = stella_plugin::panel_handshake_text(manifest, &signature) else {
+        return Ok(());
+    };
+    println!("\n{handshake}");
+    let verdict = match answer {
+        PanelAnswer::Given(verdict) => {
+            println!("\n(accepted with --yes)");
+            verdict
+        }
+        PanelAnswer::Ask => {
+            if !crate::interactive::human_is_present(true) {
+                return Err("no terminal is attached to answer it".to_string());
+            }
+            confirm_panel()?
+        }
+    };
+    panel_grant::record(
+        tier,
+        scope,
+        entry,
+        &manifest.name,
+        consented.as_bytes(),
+        verdict,
+    )?;
+    println!("  panel: {} for `{}`", verdict.as_str(), manifest.name);
+    Ok(())
+}
+
+/// What `stella plugin panel` was told to answer, or that it must ask.
+///
+/// Three states rather than a `bool`, because "nobody said" is the normal case
+/// and the one that has to reach a human: `--allow`/`--deny` are the answer
+/// given up front, exactly as `install --yes` is, and their absence is a
+/// question rather than a default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelAnswer {
+    Given(panel_grant::PanelVerdict),
+    Ask,
+}
+
+/// Fold the two flags into an answer. `clap` already refuses both at once
+/// (`conflicts_with`), so the impossible pair cannot arrive here.
+fn panel_answer(allow: bool, deny: bool) -> PanelAnswer {
+    match (allow, deny) {
+        (true, _) => PanelAnswer::Given(panel_grant::PanelVerdict::Allow),
+        (_, true) => PanelAnswer::Given(panel_grant::PanelVerdict::Deny),
+        _ => PanelAnswer::Ask,
+    }
+}
+
+/// `stella plugin panel <name>` — SPEC 12.4's handshake and the grant under it.
+///
+/// # Why this is a verb of its own rather than a question `install` asks
+///
+/// `install` does ask it, for a package it is copying (see [`install`]). This
+/// exists for the three cases that never reach an install prompt, and each one
+/// is a state a user can be in today:
+///
+///   * a package that arrived with a `git clone` into `.stella/plugins` and
+///     was never installed by this binary at all;
+///   * a plugin installed before the panel it now declares — the manifest
+///     changed, so its grant is `Drifted` and a re-ask is the only way back
+///     that is not `remove` plus `install`;
+///   * an operator withdrawing a panel they previously allowed, without
+///     uninstalling the tools and hooks they still want.
+///
+/// The plugin is resolved through the **roster** rather than by scanning the
+/// tiers, so the package answered about is the one actually in force —
+/// including the project-over-user shadowing, which is what makes an
+/// unqualified name mean one package.
+fn decide_panel(
+    workspace_root: &Path,
+    name: &str,
+    answer: PanelAnswer,
+    settings: &Settings,
+) -> Result<(), String> {
+    let name = checked_name(name)?;
+    let (roster, notices) = PluginRoster::load(workspace_root, settings);
+    for notice in &notices {
+        eprintln!("{notice}");
+    }
+    let plugin = roster.get(name).ok_or_else(|| {
+        format!("no plugin named `{name}` is installed — `stella plugin list` shows what is")
+    })?;
+    if plugin.manifest.panel.is_none() {
+        return Err(format!(
+            "`{name}` declares no `[panel]`, so there is nothing to allow or deny"
+        ));
+    }
+    // The bytes on disk, re-read here rather than carried from the roster's
+    // parse: the grant is keyed on a digest, and the digest has to be of the
+    // file the next load will read. Reading it once, now, is also what makes
+    // the handshake and the record describe the same manifest.
+    let (_, manifest_text) = roster::read_manifest(&plugin.dir)?
+        .ok_or_else(|| format!("{} holds no {MANIFEST_FILE} any more", plugin.dir.display()))?;
+    let signature = format!("sha256:{}", receipt::digest(manifest_text.as_bytes()));
+    let Some(handshake) = stella_plugin::panel_handshake_text(&plugin.manifest, &signature) else {
+        return Err(format!(
+            "`{name}` declares no `[panel]`, so there is nothing to allow or deny"
+        ));
+    };
+    println!("{handshake}");
+
+    let verdict = match answer {
+        PanelAnswer::Given(verdict) => verdict,
+        PanelAnswer::Ask => {
+            // `install`'s rule, for the same reason: the most dangerous thing a
+            // plugin does must not have "yes" as its unattended default, and an
+            // automated answer must be a flag somebody typed.
+            if !crate::interactive::human_is_present(true) {
+                return Err(
+                    "nothing here can ask you to decide that — no terminal is attached. \
+                     Re-run with --allow or --deny once you have read the handshake above."
+                        .to_string(),
+                );
+            }
+            confirm_panel()?
+        }
+    };
+
+    let tier = tier_dir(workspace_root, plugin.scope)?;
+    let entry = plugin
+        .dir
+        .file_name()
+        .and_then(|entry| entry.to_str())
+        .ok_or_else(|| format!("{} has no usable name", plugin.dir.display()))?;
+    panel_grant::record(
+        &tier,
+        plugin.scope,
+        entry,
+        &plugin.manifest.name,
+        manifest_text.as_bytes(),
+        verdict,
+    )?;
+    match verdict {
+        panel_grant::PanelVerdict::Allow => println!(
+            "\n`{name}` may draw its panel. It takes effect in the next session, or at the \
+             next `/reload`."
+        ),
+        panel_grant::PanelVerdict::Deny => println!(
+            "\n`{name}` may not draw a panel. Its tools, skills and hooks are untouched — \
+             `stella plugin remove {name}` is what takes those away."
+        ),
+    }
+    Ok(())
+}
+
+/// Ask SPEC 12.4's question once, on stdout, and accept only an explicit
+/// answer to it.
+///
+/// Neither letter is a default. [`confirm`] can treat everything that is not
+/// `y` as no because the thing being refused is an install that has not
+/// happened; here both answers are decisions that get written down, and
+/// guessing which one a stray newline meant would record a grant nobody gave.
+fn confirm_panel() -> Result<panel_grant::PanelVerdict, String> {
+    use std::io::{BufRead as _, Write as _};
+
+    loop {
+        print!("\n{} ", stella_plugin::PANEL_GRANT_ASK);
+        std::io::stdout()
+            .flush()
+            .map_err(|e| format!("cannot write the prompt: {e}"))?;
+        let mut line = String::new();
+        let read = std::io::stdin()
+            .lock()
+            .read_line(&mut line)
+            .map_err(|e| format!("cannot read your answer: {e}"))?;
+        if read == 0 {
+            return Err("stdin closed before you answered, so nothing was recorded".to_string());
+        }
+        match line.trim().to_ascii_lowercase().as_str() {
+            "a" | "allow" => return Ok(panel_grant::PanelVerdict::Allow),
+            "d" | "deny" => return Ok(panel_grant::PanelVerdict::Deny),
+            _ => println!("answer `a` to allow or `d` to deny."),
+        }
+    }
+}
+
 /// Ask once, on stdout, and accept only an explicit yes.
 fn confirm() -> Result<bool, String> {
     use std::io::{BufRead as _, Write as _};
@@ -561,6 +814,24 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
         }
         for line in driver_lines(plugin) {
             println!("{line}");
+        }
+        // The panel grant, for a package that declares one. The `runs:` and
+        // `drives:` lines above report the two programs a plugin can put on
+        // the machine and say nothing about the third, which is the one that
+        // draws on the operator's screen — and unlike those, this one is
+        // withheld by default, so a listing that omitted it would leave "my
+        // panel never appears" unanswerable.
+        if plugin.manifest.panel.is_some() {
+            println!(
+                "  panel: {}",
+                match plugin.panel_grant.notice(&plugin.manifest.name) {
+                    Some(notice) => notice,
+                    None => format!(
+                        "allowed — `stella plugin panel {}` changes it",
+                        plugin.manifest.name
+                    ),
+                }
+            );
         }
     }
 
@@ -808,6 +1079,11 @@ fn remove_reporting(
             // answer stands once the thing it was about is gone.
             if let Some(entry) = dir.file_name().and_then(|entry| entry.to_str()) {
                 receipt::forget(&tier, entry);
+                // And the panel grant with it, for the same reason one layer
+                // over (#5056): a grant left behind would let a later
+                // directory of the same name draw on the operator's screen
+                // under an answer given about a package that is gone.
+                panel_grant::forget(&tier, entry);
             }
             report(format!(
                 "removed `{name}` ({}) from {}",

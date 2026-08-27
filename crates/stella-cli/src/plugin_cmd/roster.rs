@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 use stella_core::ports::Principal;
 use stella_plugin::{HookEvent, PanelSurface, PluginManifest, Runtime};
 
+use super::panel_grant::{self, PanelGrantState};
 use super::receipt::{self, ConsentState};
 use crate::settings::{Settings, Toggle};
 
@@ -123,6 +124,17 @@ pub(crate) struct InstalledPlugin {
     /// for (#3514). Read from the tier's consent receipts by [`read_tier`];
     /// [`PluginRoster::compose`] is what acts on it.
     pub(crate) consent: ConsentState,
+    /// Whether a human allowed this package to draw on their screen (#5056,
+    /// SPEC 12.4). Read from the tier's panel grants by [`read_tier`];
+    /// [`PluginRoster::panel_routes`] is what acts on it.
+    ///
+    /// Separate from [`Self::consent`], and acted on one layer further in,
+    /// because the two withhold different things: a package whose install
+    /// grant drifted must not load at all, while one whose panel is denied
+    /// keeps every tool, skill and hook it declared and loses only the
+    /// rectangle. Folding them would make "stop drawing on my screen" mean
+    /// "uninstall".
+    pub(crate) panel_grant: PanelGrantState,
 }
 
 impl InstalledPlugin {
@@ -319,12 +331,19 @@ impl PluginRoster {
     ///
     /// **This is the authoritative panel filter, and it is what "no frame
     /// before the grant" means.** A route exists only where the manifest
-    /// declared the surface *and* a `[panel.process]` to draw it with, and only
-    /// for a plugin already in the roster — which is to say one whose install
-    /// grant is in force, since [`PluginRoster::compose`] drops every package
-    /// that fails [`InstalledPlugin::admitted`]. Nothing downstream re-checks
-    /// the grant, so nothing here may emit a route the manifest did not declare
-    /// or the operator did not consent to.
+    /// declared the surface *and* a `[panel.process]` to draw it with, only for
+    /// a plugin already in the roster — which is to say one whose install grant
+    /// is in force, since [`PluginRoster::compose`] drops every package that
+    /// fails [`InstalledPlugin::admitted`] — and only where a human answered
+    /// **allow** to that plugin's panel handshake (#5056, SPEC 12.4). Nothing
+    /// downstream re-checks any of it, so nothing here may emit a route the
+    /// manifest did not declare or the operator did not grant.
+    ///
+    /// The panel grant is asked here rather than in
+    /// [`PluginRoster::compose`] because it withholds a rectangle and not a
+    /// package: a denied plugin keeps its tools, its skills and its hooks. That
+    /// is what makes deny a usable answer rather than a euphemism for
+    /// uninstall.
     ///
     /// A grant with surfaces and no process yields nothing, which is
     /// [`hook_routes`](PluginRoster::hook_routes)'s rule restated: the
@@ -336,6 +355,13 @@ impl PluginRoster {
             let Some(panel) = &plugin.manifest.panel else {
                 continue;
             };
+            if !plugin.panel_grant.admits() {
+                // No route, so no lease, so no process. The operator was told
+                // why by `read_tier`, which is the only place that knows
+                // whether this package's panel was denied, drifted, or never
+                // asked about.
+                continue;
+            }
             let Some(process) = &panel.process else {
                 // A panel grant with no `[panel.process]` has nothing to ask
                 // for a frame.
@@ -562,11 +588,26 @@ pub(crate) fn read_tier(
                 if let Some(notice) = consent.notice(scope, &manifest.name, &path) {
                     notices.push(notice);
                 }
+                // The panel grant, on the same clock and for the same reason
+                // (#5056, SPEC 12.4). Read for every package rather than only
+                // for one declaring a `[panel]`, so a manifest that grows the
+                // block between two loads is `Undecided` the moment it does
+                // instead of inheriting an answer nobody gave. It is spoken
+                // only where the package actually declares a panel — a plugin
+                // with no `[panel]` is not being withheld from anything.
+                let panel_grant =
+                    panel_grant::check(dir, scope, &path, &manifest.name, text.as_bytes());
+                if manifest.panel.is_some()
+                    && let Some(notice) = panel_grant.notice(&manifest.name)
+                {
+                    notices.push(format!("  {notice}"));
+                }
                 found.push(InstalledPlugin {
                     manifest,
                     dir: path,
                     scope,
                     consent,
+                    panel_grant,
                 });
             }
             Ok(None) => {}
@@ -670,6 +711,7 @@ mod tests {
             dir: PathBuf::from("/ws/.stella/plugins").join(name),
             scope,
             consent: ConsentState::Receipted,
+            panel_grant: PanelGrantState::Allowed,
         }
     }
 
@@ -800,6 +842,7 @@ mod tests {
             dir: PathBuf::from("/ws/.stella/plugins/quiet"),
             scope: PluginScope::Project,
             consent: ConsentState::Receipted,
+            panel_grant: PanelGrantState::Allowed,
         };
         let roster = PluginRoster::compose(Vec::new(), vec![plugin], &BTreeMap::new());
         assert_eq!(roster.plugins().len(), 1);
@@ -927,6 +970,7 @@ mod tests {
             dir: PathBuf::from("/ws/.stella/plugins/watch"),
             scope: PluginScope::Project,
             consent: ConsentState::Receipted,
+            panel_grant: PanelGrantState::Allowed,
         };
         assert_eq!(
             plugin.manifest.loop_grant.participation,

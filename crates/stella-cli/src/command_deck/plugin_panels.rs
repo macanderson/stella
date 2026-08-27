@@ -109,6 +109,84 @@ pub(super) fn seat(routes: &[PluginPanelRoute]) -> Seating {
     seat_with(routes, &deck_reserved())
 }
 
+/// The handshake blocks a session owes its operator before any panel draws —
+/// SPEC 12.4's first sentence (#5056).
+///
+/// One block per installed plugin that declares a `[panel]`, in roster order,
+/// and none for a workspace with no panel plugins at all.
+///
+/// # Why an allowed panel still says something, and why it is one line
+///
+/// SPEC 12.4 asks for the handshake *before any panel*, not before the first
+/// one ever. A rectangle drawn by somebody else's program on every boot is a
+/// standing grant, and a standing grant that is never restated becomes
+/// invisible — which is the same failure the install receipt exists to catch,
+/// one surface later. But the full document is what you read to *decide*, and
+/// re-reading it at every boot for a decision already made would train a reader
+/// to skip the block that matters. So an allowed panel gets the two facts that
+/// change — what it draws, and the signature the grant covers — and the verb
+/// that withdraws it.
+///
+/// A panel that is **not** allowed gets the whole document, because that
+/// reader has a decision in front of them.
+///
+/// # The signature is re-read from disk
+///
+/// Not digested from the roster's own parse: the grant on disk is keyed to the
+/// bytes `read_tier` will hash on the next load, and a signature computed from
+/// anything else would show a reader a number that decides nothing. A manifest
+/// that has become unreadable since the roster was composed yields no block
+/// rather than a block with a fabricated signature in it.
+pub(super) fn handshakes(roster: &crate::plugin_cmd::roster::PluginRoster) -> Vec<String> {
+    let mut blocks = Vec::new();
+    for plugin in roster.plugins() {
+        if plugin.manifest.panel.is_none() {
+            continue;
+        }
+        let Ok(Some((_, text))) = crate::plugin_cmd::roster::read_manifest(&plugin.dir) else {
+            continue;
+        };
+        let signature = format!(
+            "sha256:{}",
+            crate::plugin_cmd::receipt::digest(text.as_bytes())
+        );
+        let name = &plugin.manifest.name;
+        if plugin.panel_grant.admits() {
+            let surfaces: Vec<&str> = PanelSurface::all()
+                .iter()
+                .filter(|surface| {
+                    plugin
+                        .manifest
+                        .panel
+                        .as_ref()
+                        .is_some_and(|panel| panel.draws(**surface))
+                })
+                .map(|surface| surface.as_str())
+                .collect();
+            blocks.push(format!(
+                "◳ panel · {name} — you allowed this plugin to draw on your screen \
+                 ({}), under manifest signature {signature}. \
+                 `stella plugin panel {name}` withdraws it.",
+                surfaces.join(", ")
+            ));
+            continue;
+        }
+        let mut block = String::new();
+        if let Some(handshake) = stella_plugin::panel_handshake_text(&plugin.manifest, &signature) {
+            block.push_str(&handshake);
+            block.push('\n');
+        }
+        if let Some(notice) = plugin.panel_grant.notice(name) {
+            block.push('\n');
+            block.push_str(&notice);
+        }
+        if !block.is_empty() {
+            blocks.push(block);
+        }
+    }
+    blocks
+}
+
 /// Spawn the exchange for one frame request and answer the deck with exactly
 /// one panel envelope.
 ///
@@ -329,9 +407,20 @@ mod tests {
     }
 
     /// Plant that plugin into `tier`, optionally with the consent receipt
-    /// `stella plugin install` writes.
+    /// `stella plugin install` writes and the panel grant `stella plugin
+    /// panel` writes.
+    ///
+    /// The two are separate arguments because they are separate transactions
+    /// (#5056): a package can be installed and its panel denied, and the whole
+    /// point of the second gate is that the first does not answer for it.
     #[cfg(unix)]
-    fn plant_panel(tier: &std::path::Path, name: &str, marker: &std::path::Path, consented: bool) {
+    fn plant_panel(
+        tier: &std::path::Path,
+        name: &str,
+        marker: &std::path::Path,
+        consented: bool,
+        panel: Option<crate::plugin_cmd::panel_grant::PanelVerdict>,
+    ) {
         let dir = tier.join(name);
         std::fs::create_dir_all(&dir).expect("fixture plugin dir");
         let text = panel_manifest(name, marker);
@@ -347,6 +436,30 @@ mod tests {
             )
             .expect("fixture receipt");
         }
+        if let Some(verdict) = panel {
+            crate::plugin_cmd::panel_grant::record(
+                tier,
+                crate::plugin_cmd::roster::PluginScope::User,
+                name,
+                name,
+                text.as_bytes(),
+                verdict,
+            )
+            .expect("fixture panel grant");
+        }
+    }
+
+    /// Compose the user tier as a session would, and report its panel routes.
+    #[cfg(unix)]
+    fn panel_routes_of(tier: &std::path::Path) -> Vec<PluginPanelRoute> {
+        use crate::plugin_cmd::roster::{PluginRoster, PluginScope};
+
+        PluginRoster::compose(
+            crate::plugin_cmd::roster::read_tier(tier, PluginScope::User, &mut Vec::new()),
+            Vec::new(),
+            &std::collections::BTreeMap::new(),
+        )
+        .panel_routes()
     }
 
     /// **The gate witness.** No panel frame is requested before the install
@@ -366,8 +479,6 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn no_panel_frame_is_requested_before_the_install_grant() {
-        use crate::plugin_cmd::roster::{PluginRoster, PluginScope};
-
         // The lock, but **not** `paths::test_user_home`: nothing here reads the
         // ambient home — `read_tier`, `receipt::record` and
         // `resolve_user_plugins_dir` are all handed the tier explicitly — and
@@ -387,13 +498,8 @@ mod tests {
         let marker = root.join("the-panel-process-ran");
 
         // Planted, complete, and never consented to.
-        plant_panel(&tier, "unconsented", &marker, false);
-        let ungranted = PluginRoster::compose(
-            crate::plugin_cmd::roster::read_tier(&tier, PluginScope::User, &mut Vec::new()),
-            Vec::new(),
-            &std::collections::BTreeMap::new(),
-        );
-        let routes = ungranted.panel_routes();
+        plant_panel(&tier, "unconsented", &marker, false, None);
+        let routes = panel_routes_of(&tier);
         assert!(routes.is_empty(), "an ungranted plugin has no panel route");
 
         // The deck asks anyway — a request naming a slot the roster never
@@ -412,14 +518,15 @@ mod tests {
             marker.display()
         );
 
-        // Anti-vacuity: the same bytes run once the grant is on record.
-        plant_panel(&tier, "consented", &marker, true);
-        let granted = PluginRoster::compose(
-            crate::plugin_cmd::roster::read_tier(&tier, PluginScope::User, &mut Vec::new()),
-            Vec::new(),
-            &std::collections::BTreeMap::new(),
+        // Anti-vacuity: the same bytes run once both grants are on record.
+        plant_panel(
+            &tier,
+            "consented",
+            &marker,
+            true,
+            Some(crate::plugin_cmd::panel_grant::PanelVerdict::Allow),
         );
-        let routes = granted.panel_routes();
+        let routes = panel_routes_of(&tier);
         assert_eq!(routes.len(), 1, "a granted plugin's panel routes");
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         spawn_tick(&routes, 0, 1, 40, 8, &tx);
@@ -442,6 +549,263 @@ mod tests {
             "a frameless tick still rearms the seat: {got:?}"
         );
         assert!(marker.exists(), "the granted plugin's process did run");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **The panel-grant witness (#5056).** An installed, consented, perfectly
+    /// loadable plugin whose panel handshake was answered `deny` — or never
+    /// answered at all — does not have its panel program started.
+    ///
+    /// Asserted on the marker file rather than on `panel_routes()` for the
+    /// reason the install-grant witness above gives, and the reason is sharper
+    /// here: the install grant withholds the whole package, so a build that
+    /// ignored it would fail in a dozen visible ways. A panel grant withholds
+    /// one rectangle from a package that is otherwise fully in force — its
+    /// hooks fire, its tools are registered, its process is a program the host
+    /// already knows how to start — so "the route list is empty" and "nobody's
+    /// code ran" are genuinely different claims, and only the second one is the
+    /// security property.
+    ///
+    /// The three states are asserted together because they share one marker
+    /// path: if any of them started a process, the file exists, and the test
+    /// cannot pass by having checked the wrong one.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn no_panel_frame_is_requested_when_the_panel_grant_does_not_allow_it() {
+        use crate::plugin_cmd::panel_grant::PanelVerdict;
+
+        // `test_env::lock` for `spawn_tick`'s `std::env::var`, on the sibling
+        // witness's reasoning; the home is never read, so it is never moved.
+        let _env = crate::test_env::lock();
+        let root = std::env::temp_dir().join(format!("stella-panel-deny-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp root");
+        let tier = stella_home::resolve_user_plugins_dir(Some(root.join(".stella")))
+            .expect("an explicit stella root resolves its plugins tier");
+        let marker = root.join("the-panel-process-ran");
+
+        // Installed and consented to, both of them. One was answered `deny`;
+        // the other was never asked.
+        plant_panel(&tier, "denied", &marker, true, Some(PanelVerdict::Deny));
+        plant_panel(&tier, "unasked", &marker, true, None);
+
+        let routes = panel_routes_of(&tier);
+
+        // The deck asks for both slots regardless — a request naming a slot the
+        // roster never produced is exactly what a stale deck sends.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        for slot in [0, 1] {
+            spawn_tick(&routes, slot, 1, 40, 8, &tx);
+        }
+        drop(tx);
+        // Drained before anything is asserted, and that is the synchronisation
+        // rather than a check: every sender clone lives inside a spawned task,
+        // so `None` means each task has finished — which is the only moment at
+        // which "the marker does not exist" distinguishes "no process was
+        // started" from "one was started and has not touched the file yet".
+        let answered = rx.recv().await;
+
+        // THE property first, so a flip fails on somebody's code having run
+        // rather than on the route list that is only evidence about it
+        // (`a_frame_in_flight_across_a_reseat_lands_nowhere`'s ordering).
+        assert!(
+            !marker.exists(),
+            "a panel process ran without an allow: {}",
+            marker.display()
+        );
+        assert!(
+            routes.is_empty(),
+            "and no route existed for it to run from: {routes:?}"
+        );
+        assert!(
+            answered.is_none(),
+            "nothing was even answered: {answered:?}"
+        );
+
+        // Anti-vacuity, and the reason the gate is the *panel* grant rather
+        // than the install one: the same package, the same receipt, the same
+        // bytes — answered `allow` — does run.
+        plant_panel(&tier, "allowed", &marker, true, Some(PanelVerdict::Allow));
+        let routes = panel_routes_of(&tier);
+        assert_eq!(routes.len(), 1, "only the allowed panel is routed");
+        assert_eq!(routes[0].plugin, "allowed");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_tick(&routes, 0, 1, 40, 8, &tx);
+        // Either no-frame envelope, on the sibling witness's measured reason:
+        // the fixture starts a real process and a loaded machine overruns the
+        // 33ms budget often enough that pinning one of them is a race.
+        let got = rx.recv().await;
+        assert!(
+            matches!(
+                got,
+                Some(
+                    stella_tui::envelope::Inbound::PanelSilent { slot: 0 }
+                        | stella_tui::envelope::Inbound::PanelThrottled { slot: 0, .. }
+                )
+            ),
+            "a frameless tick still rearms the seat: {got:?}"
+        );
+        assert!(marker.exists(), "the allowed plugin's process did run");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **The visible-handshake witness (#5056).** Before any panel is seated,
+    /// the session says which plugin is about to draw on the screen and under
+    /// what grant — the full SPEC 12.4 document with the `[a]llow [d]eny` ask
+    /// where the decision is still open, and the standing grant plus the way to
+    /// withdraw it where it is not.
+    #[cfg(unix)]
+    #[test]
+    fn the_first_seat_is_preceded_by_a_handshake_for_every_panel_plugin() {
+        use crate::plugin_cmd::panel_grant::PanelVerdict;
+        use crate::plugin_cmd::roster::{PluginRoster, PluginScope};
+
+        let _env = crate::test_env::lock();
+        let root = std::env::temp_dir().join(format!("stella-panel-shake-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp root");
+        let tier = stella_home::resolve_user_plugins_dir(Some(root.join(".stella")))
+            .expect("an explicit stella root resolves its plugins tier");
+        let marker = root.join("unused");
+
+        plant_panel(&tier, "granted", &marker, true, Some(PanelVerdict::Allow));
+        plant_panel(&tier, "pending", &marker, true, None);
+        // A plugin with no `[panel]` at all, so the block list is about panels
+        // rather than about the roster.
+        let quiet = tier.join("quiet");
+        std::fs::create_dir_all(&quiet).expect("fixture plugin dir");
+        let quiet_text = "name = \"quiet\"\n";
+        std::fs::write(
+            quiet.join(crate::plugin_cmd::roster::MANIFEST_FILE),
+            quiet_text,
+        )
+        .expect("fixture manifest");
+        crate::plugin_cmd::receipt::record(
+            &tier,
+            PluginScope::User,
+            "quiet",
+            "quiet",
+            quiet_text.as_bytes(),
+        )
+        .expect("fixture receipt");
+
+        let roster = PluginRoster::compose(
+            crate::plugin_cmd::roster::read_tier(&tier, PluginScope::User, &mut Vec::new()),
+            Vec::new(),
+            &std::collections::BTreeMap::new(),
+        );
+        let blocks = handshakes(&roster);
+        assert_eq!(
+            blocks.len(),
+            2,
+            "one block per panel plugin, and none for `quiet`: {blocks:?}"
+        );
+
+        // Roster order is name order: `granted`, then `pending`.
+        let granted = &blocks[0];
+        assert!(granted.contains("◳ panel · granted"), "{granted}");
+        assert!(granted.contains("sha256:"), "the signature: {granted}");
+        assert!(
+            granted.contains("stella plugin panel granted"),
+            "and the way to withdraw it: {granted}"
+        );
+        assert!(
+            !granted.contains(stella_plugin::PANEL_GRANT_ASK),
+            "a decided grant is not asked again: {granted}"
+        );
+
+        let pending = &blocks[1];
+        assert!(
+            pending.contains(stella_plugin::PANEL_GRANT_ASK),
+            "an undecided panel is asked: {pending}"
+        );
+        assert!(pending.contains("Manifest signature: sha256:"), "{pending}");
+        assert!(
+            pending.contains("stella plugin panel pending"),
+            "and named the verb that answers: {pending}"
+        );
+        assert!(
+            pending.contains("nobody has been asked yet"),
+            "and why it is not drawing: {pending}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A denial takes the rectangle and nothing else: the package still loads,
+    /// and its hook dispatches are untouched.
+    ///
+    /// Without this, "deny" could be implemented by dropping the package from
+    /// the roster and every assertion above would still pass — while the
+    /// operator who wanted to stop a panel drawing had silently lost the
+    /// plugin's tools and hooks as well.
+    #[cfg(unix)]
+    #[test]
+    fn a_denied_panel_costs_the_plugin_nothing_but_the_rectangle() {
+        use crate::plugin_cmd::panel_grant::PanelVerdict;
+        use crate::plugin_cmd::roster::{PluginRoster, PluginScope};
+
+        let _env = crate::test_env::lock();
+        let root = std::env::temp_dir().join(format!("stella-panel-kept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp root");
+        let tier = stella_home::resolve_user_plugins_dir(Some(root.join(".stella")))
+            .expect("an explicit stella root resolves its plugins tier");
+
+        let dir = tier.join("hooked");
+        std::fs::create_dir_all(&dir).expect("fixture plugin dir");
+        let text = "name = \"hooked\"\n\
+                    \n\
+                    [loop]\n\
+                    participation = \"steering\"\n\
+                    hooks = [\"PreToolUse\"]\n\
+                    \n\
+                    [runtime]\n\
+                    argv = [\"/bin/true\"]\n\
+                    timeout_secs = 2\n\
+                    env = []\n\
+                    \n\
+                    [panel]\n\
+                    surfaces = [\"settings\"]\n\
+                    denies = [\"network\", \"write-outside-sandbox\"]\n\
+                    \n\
+                    [panel.process]\n\
+                    argv = [\"/bin/true\"]\n\
+                    timeout_secs = 2\n\
+                    env = []\n";
+        std::fs::write(dir.join(crate::plugin_cmd::roster::MANIFEST_FILE), text)
+            .expect("fixture manifest");
+        for scope in [PluginScope::User] {
+            crate::plugin_cmd::receipt::record(&tier, scope, "hooked", "hooked", text.as_bytes())
+                .expect("fixture receipt");
+            crate::plugin_cmd::panel_grant::record(
+                &tier,
+                scope,
+                "hooked",
+                "hooked",
+                text.as_bytes(),
+                PanelVerdict::Deny,
+            )
+            .expect("fixture panel grant");
+        }
+
+        let roster = PluginRoster::compose(
+            crate::plugin_cmd::roster::read_tier(&tier, PluginScope::User, &mut Vec::new()),
+            Vec::new(),
+            &std::collections::BTreeMap::new(),
+        );
+        assert_eq!(roster.plugins().len(), 1, "the package still loads");
+        assert_eq!(
+            roster.hook_routes().len(),
+            1,
+            "and its hook dispatch is untouched"
+        );
+        assert!(
+            roster.panel_routes().is_empty(),
+            "only the rectangle is gone"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
