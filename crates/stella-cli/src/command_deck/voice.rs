@@ -314,6 +314,11 @@ fn wav_from_pcm16(sample_rate: u32, channels: u16, samples: &[i16]) -> Vec<u8> {
 /// Average interleaved frames down to one channel. Halves (or better) the
 /// upload, which is what keeps a two-minute capture at a 48kHz stereo
 /// device default inside the compatible servers' upload ceilings.
+///
+/// The `cfg` mirrors its one production caller, the `cpal` capture path —
+/// the Linux recorder is told to record mono at the source — while `test`
+/// keeps the unit test compiling on every platform CI runs.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn downmix_to_mono(channels: u16, samples: &[i16]) -> Vec<i16> {
     let n = usize::from(channels.max(1));
     if n == 1 {
