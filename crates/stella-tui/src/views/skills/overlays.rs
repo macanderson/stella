@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The SKILLS tab's dialogs: the scope picker, the LLM-assisted create flow
-//! (description → creating → failed), the version pin picker, the `SKILL.md`
-//! editor, and the `ctrl+o` markdown preview.
+//! The SKILLS tab's dialogs: the scope picker, the LLM-assisted create flow,
+//! the version pin picker, the learned-skill rename, the `SKILL.md` editor,
+//! and the `ctrl+o` preview (source traces, for a learned skill).
 //!
 //! Each one floats over the tab's two source boxes and frames itself, because
 //! it is drawn above the content area rather than inside it — a dialog with no
@@ -189,6 +189,41 @@ pub fn render_prompt(ui: &DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
             dialog(
                 "pin version",
                 "↑/↓ choose · ⏎ pin · esc cancel",
+                lines,
+                area,
+                buf,
+            );
+        }
+        // The learned-skill rename (SPEC 9.2). The dialog's job is two
+        // sentences: take a name, and promise on screen that the `was <hash>`
+        // provenance survives — a rename that drops it and one that keeps it
+        // are indistinguishable at the prompt, and keeping it is the whole
+        // reason this is a verb of its own rather than an edit.
+        Some(SkillPrompt::Rename {
+            name, buffer, was, ..
+        }) => {
+            let mut lines = vec![
+                Line::from(Span::styled(format!("Rename {}", truncate(name, 44)), text)),
+                Line::default(),
+                Line::from(vec![
+                    Span::styled("> ", Style::new().fg(token::GOLD)),
+                    Span::styled(buffer.clone(), text),
+                    Span::styled("▌", Style::new().fg(token::GOLD)),
+                ]),
+                Line::default(),
+            ];
+            lines.push(Line::from(Span::styled(
+                if was.is_empty() {
+                    "stays a learned skill · its source traces are kept".to_string()
+                } else {
+                    format!("keeps its provenance · was {was}")
+                },
+                muted,
+            )));
+            lines.push(Line::default());
+            dialog(
+                "rename learned skill",
+                "⏎ rename · esc cancel",
                 lines,
                 area,
                 buf,

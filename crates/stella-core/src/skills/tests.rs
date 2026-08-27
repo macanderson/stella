@@ -621,7 +621,7 @@ fn mines_a_recurring_preference_at_the_threshold() {
         observation("the user prefers tables over prose for comparisons", 2),
         observation("the user prefers tables over prose for comparisons", 3),
     ];
-    let candidates = mine_skill_candidates(obs, &[], &SkillMineConfig::default());
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].occurrences, 3);
     assert_eq!(candidates[0].evidence.len(), 3);
@@ -640,7 +640,7 @@ fn a_non_latin_lesson_mints_a_name_a_human_can_read() {
         observation("форматировать запросы перед отправкой, всегда", 2),
         observation("запросы перед отправкой форматировать", 3),
     ];
-    let candidates = mine_skill_candidates(obs, &[], &SkillMineConfig::default());
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
     assert_eq!(candidates.len(), 1, "one cluster: {candidates:#?}");
     let name = &candidates[0].name;
     assert!(
@@ -656,7 +656,7 @@ fn a_non_latin_lesson_mints_a_name_a_human_can_read() {
 #[test]
 fn does_not_mine_a_one_off_below_the_threshold() {
     let obs = vec![observation("a one-time thing nobody repeated", 1)];
-    assert!(mine_skill_candidates(obs, &[], &SkillMineConfig::default()).is_empty());
+    assert!(mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default()).is_empty());
 }
 
 #[test]
@@ -668,7 +668,7 @@ fn mines_a_single_salient_observation() {
         salient: true,
         reference: "memory:m1".to_string(),
     }];
-    let candidates = mine_skill_candidates(obs, &[], &SkillMineConfig::default());
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
     assert_eq!(candidates.len(), 1);
     assert!(candidates[0].salient);
     assert_eq!(candidates[0].occurrences, 1);
@@ -688,7 +688,7 @@ fn dedups_against_an_existing_skill() {
         &[],
         SkillOrigin::Workspace,
     )];
-    assert!(mine_skill_candidates(obs, &existing, &SkillMineConfig::default()).is_empty());
+    assert!(mine_skill_candidates(obs, &existing, &[], &SkillMineConfig::default()).is_empty());
 }
 
 #[test]
@@ -716,7 +716,7 @@ fn mining_unions_domains_across_the_cluster() {
             reference: "t#3".to_string(),
         },
     ];
-    let candidates = mine_skill_candidates(obs, &[], &SkillMineConfig::default());
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
     assert_eq!(candidates[0].domains, vec!["sql", "formatting"]);
 }
 
@@ -739,7 +739,7 @@ fn mining_respects_the_limit() {
         limit: 2,
         ..SkillMineConfig::default()
     };
-    assert_eq!(mine_skill_candidates(obs, &[], &config).len(), 2);
+    assert_eq!(mine_skill_candidates(obs, &[], &[], &config).len(), 2);
 }
 
 #[test]
@@ -749,9 +749,119 @@ fn mining_is_deterministic_across_reruns() {
         observation("prefer tables over prose for comparisons", 2),
         observation("prefer tables over prose for comparisons", 3),
     ];
-    let first = mine_skill_candidates(obs.clone(), &[], &SkillMineConfig::default());
-    let second = mine_skill_candidates(obs, &[], &SkillMineConfig::default());
+    let first = mine_skill_candidates(obs.clone(), &[], &[], &SkillMineConfig::default());
+    let second = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
     assert_eq!(first[0].name, second[0].name);
+}
+
+// ---- rejection: the negative half of the signal (#5046) ----
+
+/// Three occurrences of one lesson, the shipped promotion threshold.
+fn thrice(text: &str) -> Vec<SkillObservation> {
+    (1..=3).map(|at| observation(text, at)).collect()
+}
+
+/// **The witness.** A rejected candidate is not re-minted, even though every
+/// observation that produced it is still in the pool — which is the whole
+/// point: the reflection log is append-only and re-read in full every turn, so
+/// a rejection that only deleted the file would be undone by the next pass.
+#[test]
+fn a_rejected_candidate_is_not_mined_again() {
+    let lesson = "prefer tables over prose for comparisons";
+    let mined = mine_skill_candidates(thrice(lesson), &[], &[], &SkillMineConfig::default());
+    assert_eq!(mined.len(), 1, "the control must mine: {mined:#?}");
+    let rejection = SkillRejection {
+        mined_as: mined[0].name.clone(),
+        lesson: mined[0].body.clone(),
+        rejected_at: 42,
+    };
+
+    assert!(
+        mine_skill_candidates(
+            thrice(lesson),
+            &[],
+            std::slice::from_ref(&rejection),
+            &SkillMineConfig::default(),
+        )
+        .is_empty(),
+        "the same observations minted the rejected skill straight back"
+    );
+}
+
+/// The rejection is keyed on the **mined** identity, and [`candidate_id`] is
+/// the one function that derives it — so a rejection recorded by a caller that
+/// only ever saw the skill's filename still matches.
+#[test]
+fn a_rejection_matches_on_the_mined_identity_alone() {
+    let lesson = "database credentials must never appear in log output";
+    let rejection = SkillRejection {
+        mined_as: candidate_id(lesson),
+        // A skill whose body was emptied before it was rejected: identity is
+        // the only key left, and it must still be enough.
+        lesson: String::new(),
+        rejected_at: 7,
+    };
+    assert!(
+        mine_skill_candidates(
+            thrice(lesson),
+            &[],
+            std::slice::from_ref(&rejection),
+            &SkillMineConfig::default(),
+        )
+        .is_empty()
+    );
+}
+
+/// Rejection catches restatements, exactly as a tombstone does. A re-worded
+/// cluster mints a different `<hash8>`, so identity alone would let the same
+/// rejected procedure back in under a new name.
+#[test]
+fn a_paraphrase_of_a_rejected_skill_is_also_rejected() {
+    let original = "always add a regression test for every bug fix";
+    let paraphrase = "always add a regression test for each bug fix";
+    let rejection = SkillRejection {
+        mined_as: candidate_id(original),
+        lesson: original.to_string(),
+        rejected_at: 1,
+    };
+    assert_ne!(
+        candidate_id(original),
+        candidate_id(paraphrase),
+        "the paraphrase must mint a DIFFERENT id, or this proves nothing"
+    );
+    assert!(
+        mine_skill_candidates(
+            thrice(paraphrase),
+            &[],
+            std::slice::from_ref(&rejection),
+            &SkillMineConfig::default(),
+        )
+        .is_empty()
+    );
+}
+
+/// A rejection is narrow: it stops the skill it names, and nothing else. The
+/// loop must keep learning from every other lesson in the same pool, or `x`
+/// would be a way to silently switch mining off.
+#[test]
+fn a_rejection_does_not_suppress_an_unrelated_lesson() {
+    let rejected_lesson = "team members must not force push shared branches";
+    let other = "queries must always use the correct tenant scope";
+    let rejection = SkillRejection {
+        mined_as: candidate_id(rejected_lesson),
+        lesson: rejected_lesson.to_string(),
+        rejected_at: 1,
+    };
+    let mut obs = thrice(rejected_lesson);
+    obs.extend(thrice(other));
+    let mined = mine_skill_candidates(
+        obs,
+        &[],
+        std::slice::from_ref(&rejection),
+        &SkillMineConfig::default(),
+    );
+    assert_eq!(mined.len(), 1, "only the rejected one goes: {mined:#?}");
+    assert_eq!(mined[0].name, candidate_id(other));
 }
 
 // ---- markdown round-trip ----
@@ -765,7 +875,7 @@ fn rendered_markdown_round_trips_through_the_parser() {
         salient: true,
         reference: "memory:m1".to_string(),
     }];
-    let candidates = mine_skill_candidates(obs, &[], &SkillMineConfig::default());
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
     let candidate = &candidates[0];
     let markdown = render_skill_markdown(candidate);
     let parsed = skill_from_file(&format!("{}.md", candidate.name), &markdown).unwrap();

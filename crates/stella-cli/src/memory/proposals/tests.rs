@@ -37,7 +37,7 @@ fn three_distinct_tasks_induce_one_eligible_proposal() {
         .map(|t| observation(LESSON, t))
         .collect();
 
-    let induced = induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
+    let induced = induce_proposals(&store, &observations, &[], &[], &SkillMineConfig::default());
     assert_eq!(induced.len(), 1, "one cluster, one proposal");
     let proposal = &induced[0].proposal;
     assert_eq!(proposal.score.distinct_tasks, 3);
@@ -73,7 +73,7 @@ fn thirty_repetitions_inside_one_task_induce_nothing_eligible() {
         })
         .collect();
 
-    let induced = induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
+    let induced = induce_proposals(&store, &observations, &[], &[], &SkillMineConfig::default());
     assert!(!induced.is_empty(), "the miner still clusters them");
     for i in &induced {
         assert_eq!(
@@ -101,7 +101,7 @@ fn induction_preserves_the_lexical_candidate_identity() {
         .into_iter()
         .map(|t| observation(LESSON, t))
         .collect();
-    let induced = induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
+    let induced = induce_proposals(&store, &observations, &[], &[], &SkillMineConfig::default());
     assert_eq!(
         induced[0].candidate.name,
         "prefer-updating-witness-test-assertions-e2010443"
@@ -122,7 +122,7 @@ fn evidence_references_and_timestamps_survive_the_ledger_round_trip() {
         .into_iter()
         .map(|t| observation(LESSON, t))
         .collect();
-    let induced = induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
+    let induced = induce_proposals(&store, &observations, &[], &[], &SkillMineConfig::default());
 
     let evidence = &induced[0].candidate.evidence;
     let mut seen: Vec<(String, u64)> = evidence
@@ -163,6 +163,7 @@ fn an_already_captured_lesson_induces_no_proposal() {
             &store,
             &observations,
             &existing,
+            &[],
             &SkillMineConfig::default()
         )
         .is_empty()
@@ -178,7 +179,7 @@ fn proposals_are_persisted_to_the_ledger() {
         .into_iter()
         .map(|t| observation(LESSON, t))
         .collect();
-    induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
+    induce_proposals(&store, &observations, &[], &[], &SkillMineConfig::default());
 
     let stored = all_proposals(&store, 100);
     assert_eq!(stored.len(), 1);
@@ -195,8 +196,8 @@ fn re_inducing_the_same_proposal_is_idempotent() {
         .into_iter()
         .map(|t| observation(LESSON, t))
         .collect();
-    induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
-    induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
+    induce_proposals(&store, &observations, &[], &[], &SkillMineConfig::default());
+    induce_proposals(&store, &observations, &[], &[], &SkillMineConfig::default());
     assert_eq!(all_proposals(&store, 100).len(), 1);
 }
 
@@ -209,11 +210,11 @@ fn new_evidence_appends_a_revision_rather_than_replacing() {
         .into_iter()
         .map(|t| observation(LESSON, t))
         .collect();
-    induce_proposals(&store, &three, &[], &SkillMineConfig::default());
+    induce_proposals(&store, &three, &[], &[], &SkillMineConfig::default());
 
     let mut four = three;
     four.push(observation(LESSON, 400));
-    induce_proposals(&store, &four, &[], &SkillMineConfig::default());
+    induce_proposals(&store, &four, &[], &[], &SkillMineConfig::default());
 
     let stored = all_proposals(&store, 100);
     assert_eq!(stored.len(), 2, "both revisions survive");
@@ -268,7 +269,7 @@ fn peek_grade_by_candidate_distinguishes_environment_observation_from_model_crit
             .map(|t| observation(OPINION_LESSON, t)),
     );
 
-    let induced = induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
+    let induced = induce_proposals(&store, &observations, &[], &[], &SkillMineConfig::default());
     assert_eq!(induced.len(), 2, "one proposal per distinct lesson cluster");
     let candidate_named = |body: &str| {
         induced

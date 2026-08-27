@@ -60,6 +60,17 @@ pub struct SkillRow {
     /// disabled by that tier's state file like any other row there. What has
     /// no answer in the existing columns is *whose* it is, which is this.
     pub contributed_by: Option<String>,
+    /// The provenance of a **learned** skill — what it was mined from, when,
+    /// and the identity it was minted under (SPEC 9.2). `Some` only for a row
+    /// whose [`Self::origin`] is `"auto"`; `None` for everything else, and for
+    /// a learned skill whose file carries no `## Evidence` section at all.
+    ///
+    /// A struct rather than three more optional columns because the four
+    /// facts are one fact — "this came from N traces on turn M, minted as
+    /// `<hash>`, here they are" — and because [`Self::evidence_grade`] already
+    /// showed what happens when one aspect of provenance is a bare `Option`
+    /// beside the rest.
+    pub learned: Option<LearnedProvenance>,
     /// Session/persistent enabled state (a disabled skill is excluded from
     /// recall injection; the file stays on disk).
     pub enabled: bool,
@@ -69,6 +80,45 @@ pub struct SkillRow {
     pub latest: u32,
     /// Whether the deck may uninstall (delete) it.
     pub removable: bool,
+}
+
+/// A learned skill's provenance — SPEC 9.2's `from N traces · turn M ·
+/// was <hash>`, plus the traces themselves for `ctrl+o`.
+///
+/// The driver assembles this: `traces`/`sources` from the `## Evidence`
+/// section the miner writes into every auto-created `SKILL.md`, `turn` and
+/// `was` from the per-scope sidecar the learner records at creation and
+/// [`SkillOp::Rename`] carries forward. Kept plain data for the same reason
+/// [`SkillRow`] is, so this crate stays independent of the skills engine.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LearnedProvenance {
+    /// How many source traces the skill was mined from — the `N` of
+    /// `from N traces`. `0` when the file has an `## Evidence` heading with
+    /// nothing under it, which renders as no trace count rather than "from 0".
+    pub traces: u32,
+    /// The workspace turn it was learned on. `None` for a skill mined before
+    /// the turn was recorded; the row then omits the `turn M` segment rather
+    /// than printing a turn nobody observed.
+    pub turn: Option<u64>,
+    /// The `<hash8>` suffix of the identity it was mined under — the
+    /// `was <hash>` a rename must not lose. Empty only if the mined identity
+    /// carried no hash suffix at all.
+    pub was: String,
+    /// One entry per source trace, in the order the file lists them (newest
+    /// first) — what `ctrl+o` shows.
+    pub sources: Vec<LearnedSource>,
+}
+
+/// One source trace behind a learned skill, parsed back out of the
+/// `## Evidence` line the miner wrote.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LearnedSource {
+    /// The observation reference, e.g. `reflection:1787462110`.
+    pub reference: String,
+    /// The unix-seconds instant the observation was made.
+    pub observed_at: u64,
+    /// The observation text, as the miner truncated it (160 chars).
+    pub snippet: String,
 }
 
 /// One registry search hit, parsed from `npx skills find` into structured
@@ -144,4 +194,22 @@ pub enum SkillOp {
         name: String,
         version: u32,
     },
+    /// Give a learned skill a human name (SPEC 9.2's `r rename`), keeping its
+    /// `was <hash>` provenance. Renames the entry on disk, rewrites the
+    /// frontmatter `name:`, and carries the row's enabled / pinned / learned
+    /// state across — none of which a delete-and-recreate would do.
+    Rename {
+        scope: SkillScope,
+        from: String,
+        to: String,
+    },
+    /// Reject a learned skill (SPEC 9.2's `x reject teaches the learner`):
+    /// delete it **and** record the rejection where the miner reads it, so the
+    /// next reflection pass does not mint it again.
+    ///
+    /// Separate from [`Self::Uninstall`] because the two make different
+    /// claims. Uninstalling says "I do not want this file"; rejecting says
+    /// "this should never have been learned", and only the second is a fact
+    /// about the learner.
+    Reject { scope: SkillScope, name: String },
 }

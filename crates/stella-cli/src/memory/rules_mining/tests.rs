@@ -219,6 +219,7 @@ fn both_miners_agree_on_identity_and_their_proposals_stay_distinct() {
         &store,
         &observations,
         &[],
+        &[],
         &stella_core::skills::SkillMineConfig::default(),
     );
 

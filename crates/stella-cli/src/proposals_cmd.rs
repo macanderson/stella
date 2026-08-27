@@ -173,6 +173,11 @@ fn refresh(store: &ContextStore, workspace_root: &std::path::Path) -> Result<(),
         store,
         &observations,
         &[],
+        // The same rejections the loop reads (#5046), for the same reason both
+        // miners run here: a `refresh` that re-proposed a skill the user just
+        // rejected in the SKILLS tab would disagree with the loop it is
+        // standing in for.
+        &crate::skill_manager::rejections(workspace_root),
         &stella_core::skills::SkillMineConfig::default(),
     );
     crate::memory::rules_mining::induce_rule_proposals(

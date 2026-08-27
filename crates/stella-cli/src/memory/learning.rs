@@ -645,6 +645,18 @@ impl SessionMemory {
                     }
                     if std::fs::write(&path, markdown).is_ok() {
                         self.skills_created += 1;
+                        // The provenance the file cannot hold (#5046): the
+                        // mined identity, so `was <hash>` survives a rename,
+                        // and the workspace turn, which nothing on disk
+                        // records. Best-effort — a sidecar that will not write
+                        // costs the row its `turn M`, never the skill.
+                        let _ = crate::skill_manager::record_learned(
+                            stella_tui::SkillScope::Project,
+                            &candidate.name,
+                            &candidate.name,
+                            self.learned_turn(),
+                            &self.workspace_root,
+                        );
                         if !quiet {
                             println!(
                                 "  {} new skill auto-created from recurring observations: {} ({})",
@@ -731,6 +743,7 @@ impl SessionMemory {
             &self.store,
             &observations,
             &existing,
+            &self.rejected_skills(),
             &SkillMineConfig::default(),
         );
 
@@ -882,8 +895,42 @@ impl SessionMemory {
         }
 
         let existing = self.load_skills();
-        let candidates =
-            skills::mine_skill_candidates(observations, &existing, &SkillMineConfig::default());
+        let candidates = skills::mine_skill_candidates(
+            observations,
+            &existing,
+            &self.rejected_skills(),
+            &SkillMineConfig::default(),
+        );
         self.write_candidates(candidates, quiet);
+    }
+
+    /// The learned skills the user rejected (SPEC 9.2's `x`), as the miner
+    /// reads them.
+    ///
+    /// Read fresh on every pass rather than cached at open, for the same
+    /// reason the tombstone sweep is: the SKILLS tab writes a rejection while
+    /// the session is running, and a rejection the running session ignores
+    /// until restart would re-mint the skill the user just rejected.
+    ///
+    /// Read from the skills scopes rather than from the proposal ledger,
+    /// because the ledger is optional — the shipped lexical loop records no
+    /// proposal at all, so a ledger-keyed rejection would work on one of the
+    /// two paths and silently not on the other.
+    fn rejected_skills(&self) -> Vec<skills::SkillRejection> {
+        crate::skill_manager::rejections(&self.workspace_root)
+    }
+
+    /// The turn to stamp on a skill learned right now — SPEC 9.2's `turn M`.
+    ///
+    /// The workspace-wide turn the A/B control hands out (#1221), which is the
+    /// only durable turn counter a session has: it is claimed once per turn
+    /// and persisted in the context store, so it means the same thing across
+    /// sessions and across restarts, unlike an in-process tally.
+    ///
+    /// `None` before the session has claimed one — a `stella memory` sweep, or
+    /// any path that mines without ever recalling. Absent rather than zero:
+    /// "turn 0" is a turn that did not happen, and the row omits the segment.
+    fn learned_turn(&self) -> Option<u64> {
+        (self.ab_turn > 0).then_some(self.ab_turn)
     }
 }
