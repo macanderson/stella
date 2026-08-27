@@ -57,6 +57,11 @@ struct GhIssue {
     state: String,
     #[serde(rename = "createdAt", default)]
     created_at: String,
+    /// Present only when the query asks for it, like `state` above. Absent is
+    /// an empty string, which the kernel's contract already reserves for "this
+    /// provider could not say" — never the creation stamp standing in for it.
+    #[serde(rename = "updatedAt", default)]
+    updated_at: String,
     #[serde(default)]
     url: String,
 }
@@ -110,6 +115,7 @@ impl GhIssue {
                 .map(|label| IssueLabel { name: label.name })
                 .collect(),
             created_at: self.created_at,
+            updated_at: self.updated_at,
             url: self.url,
             // GitHub's parent edge needs a second (GraphQL) call per issue,
             // which the queue read does not need and should not pay for.
@@ -136,7 +142,7 @@ impl IssueProvider for GhIssueProvider {
             "--limit",
             &limit,
             "--json",
-            "number,title,body,labels,createdAt,url",
+            "number,title,body,labels,createdAt,updatedAt,url",
         ])?;
         let rows: Vec<GhIssue> =
             serde_json::from_str(&raw).map_err(|error| IssueError::Malformed {
@@ -316,7 +322,7 @@ impl IssueProvider for GhIssueProvider {
             "--limit".into(),
             fetch,
             "--json".into(),
-            "number,title,body,labels,state,createdAt,url".into(),
+            "number,title,body,labels,state,createdAt,updatedAt,url".into(),
         ];
         if !query.trim().is_empty() {
             args.push("--search".into());

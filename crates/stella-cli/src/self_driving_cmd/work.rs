@@ -972,6 +972,7 @@ mod tests {
             class: IssueClass::Bug,
             labels: Vec::new(),
             created_at: "2026-08-19T00:00:00Z".into(),
+            updated_at: "2026-08-19T00:00:00Z".into(),
             url: String::new(),
             parent: None,
         }

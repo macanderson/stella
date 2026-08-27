@@ -742,6 +742,7 @@ mod tests {
             class: IssueClass::Bug,
             labels: labels.iter().copied().map(IssueLabel::from).collect(),
             created_at: created.into(),
+            updated_at: created.into(),
             url: String::new(),
             parent: None,
         }

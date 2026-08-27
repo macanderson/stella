@@ -190,10 +190,12 @@ fn issue_row(issue: &Issue) -> IssueRow {
         // the field to the port first, for every tracker.
         assignee: None,
         url: issue.url.clone(),
-        // The port carries a creation stamp and no update stamp, and the two
-        // are different facts — the row would rather say nothing than date an
-        // issue by when it was filed (#5196).
-        updated_at: None,
+        // Empty is the port's "this tracker could not say", and it stays
+        // `None` here rather than becoming an empty string the age column
+        // would have to special-case. The creation stamp is never substituted:
+        // dating an issue by when it was filed is what the age column and the
+        // heat sort's age term must not be told (#5196).
+        updated_at: Some(issue.updated_at.clone()).filter(|stamp| !stamp.is_empty()),
         // A tracker knows nothing about a session's claim, so a tracker read
         // never fills this. Its producer is the workspace's dispatch ledger —
         // which [`super::start_work::approve`] now writes to as well as the
@@ -698,6 +700,10 @@ mod tests {
             class: IssueClass::Bug,
             labels: vec![IssueLabel::from("bug")],
             created_at: String::new(),
+            // Distinct from `created_at` on purpose: a test that gave both the
+            // same value could not tell the row reading the update stamp from
+            // the row falling back to the creation one.
+            updated_at: format!("2026-08-{number:02}T00:00:00Z"),
             url: format!("https://github.com/o/r/issues/{number}"),
             parent: None,
         }
@@ -824,6 +830,46 @@ mod tests {
         assert!(
             matches!(missed, IssueError::NotFound { ref key } if key.as_str() == "9999"),
             "{missed:?}"
+        );
+    }
+
+    /// The tracker's update stamp reaches the row, so the age column and the
+    /// heat sort's age term have something to read.
+    ///
+    /// It used to be a hard-coded `None` here, because the kernel `Issue`
+    /// carried a creation stamp and no update stamp — every row was undated
+    /// and the age term contributed nothing to the sort while looking as
+    /// though it did (#5196).
+    #[test]
+    fn a_rows_age_comes_from_the_trackers_update_stamp() {
+        let tracker = FakeTracker {
+            rows: vec![an_issue(7, IssueState::Open)],
+            ..FakeTracker::default()
+        };
+        let rows = issues_list(&tracker, None, None, 0).expect("list");
+        assert_eq!(
+            rows[0].updated_at.as_deref(),
+            Some("2026-08-07T00:00:00Z"),
+            "the row dates the issue by when it last changed"
+        );
+    }
+
+    /// A tracker that cannot say leaves the row undated rather than dating it
+    /// by when the issue was filed — the substitution the age column must
+    /// never be handed.
+    #[test]
+    fn an_absent_update_stamp_stays_absent() {
+        let mut issue = an_issue(7, IssueState::Open);
+        issue.created_at = "2026-01-01T00:00:00Z".into();
+        issue.updated_at = String::new();
+        let tracker = FakeTracker {
+            rows: vec![issue],
+            ..FakeTracker::default()
+        };
+        let rows = issues_list(&tracker, None, None, 0).expect("list");
+        assert_eq!(
+            rows[0].updated_at, None,
+            "an empty stamp is `could not say`, never the creation stamp"
         );
     }
 
