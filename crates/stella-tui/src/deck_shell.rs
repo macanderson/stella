@@ -97,6 +97,13 @@ pub struct DeckOptions {
     ///
     /// `--plain` is unaffected and stays what it is: the no-terminal path.
     pub accessible: bool,
+    /// Where the palette's `recent` section is kept for this workspace
+    /// (`.stella/private/palette-recent.json`), or `None` for a caller that
+    /// has no workspace to keep it in — the section is then in-session only.
+    /// The caller resolves the path for the reason it resolves
+    /// [`Self::debug_log_path`]: this crate does not decide where a workspace
+    /// lives.
+    pub recent_path: Option<PathBuf>,
     /// What a plain prompt typed at a running agent does (`ui.mid_turn_prompt`):
     /// queue for the lead so Esc can steer it (the default), raise the routing
     /// card, or fork a sidecar. See [`crate::deck_ui::MidTurnPrompt`].
@@ -547,6 +554,9 @@ pub async fn run_deck(
     ));
     ui.graph = opts.initial_graph.clone();
     ui.slash_commands = opts.slash_commands.clone();
+    if let Some(path) = opts.recent_path.as_ref() {
+        ui.composer.keep_recent_in(path);
+    }
     ui.color_mode = color_mode;
     ui.no_anim = no_anim;
     ui.accessible = opts.accessible;
@@ -751,6 +761,9 @@ pub async fn run_deck(
                             }
                             DeckAction::Handled | DeckAction::Ignored => {}
                         }
+                        // A dispatched palette row changed the `recent` list;
+                        // every other keystroke leaves this a no-op.
+                        ui.composer.flush_recent();
                     }
                     // Bracketed paste: the whole paste arrives as one event
                     // (the guard enabled it), so the composer can fold it

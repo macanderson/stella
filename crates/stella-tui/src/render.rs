@@ -250,6 +250,14 @@ pub(crate) const SLASH_POPUP_MAX_ROWS: usize = 8;
 /// under the matches — the key hints ride the top border, so no interior row
 /// but the hint is chrome (SPEC 10).
 ///
+/// SPEC 10 asked for a centered `Rect` and was amended to this instead
+/// (#5048), the way SPEC 11's `tab` binding was amended to
+/// [`crate::keymap::PLAN_CARD_KEYS`]. The palette completes the word under the
+/// cursor, and centering moves the completions away from the letters that
+/// produced them — every terminal and editor autocomplete anchors to the caret
+/// for that reason. The `panel` ground and the `rule` border the same bullet
+/// asks for are unchanged, and [`render_slash_popup`] now paints them.
+///
 /// `rows` counts group headings as well as matches ([`display_rows`]): a
 /// sectioned browse list that sized itself on matches alone would clip its
 /// last commands behind their own captions.
@@ -274,6 +282,21 @@ pub(crate) fn slash_popup_area(root: Rect, composer: Rect, rows: usize) -> Rect 
 pub(crate) enum PopupRow {
     Heading(String),
     Command(usize),
+}
+
+/// `text` split into `(matched, run)` pairs against a set of char offsets:
+/// consecutive characters on the same side of the match share a run, so a
+/// contiguous highlight costs one span rather than one per character.
+pub(crate) fn highlight_runs(text: &str, highlights: &[usize]) -> Vec<(bool, String)> {
+    let mut runs: Vec<(bool, String)> = Vec::new();
+    for (i, ch) in text.chars().enumerate() {
+        let hot = highlights.contains(&i);
+        match runs.last_mut() {
+            Some((was, run)) if *was == hot => run.push(ch),
+            _ => runs.push((hot, ch.to_string())),
+        }
+    }
+    runs
 }
 
 /// The palette's interior rows: every match, with its section heading above
@@ -316,12 +339,15 @@ pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -
 /// ╰────────────────────────────────────────────────────────────────╯
 /// ```
 ///
-/// Each row is the command in gold — the typed prefix lit bright, the rest
-/// gold — its one-line effect dim, and a live value on the right when the
-/// model has one (`/inbox · 3 unread`). The selected row carries the `▸`
-/// marker *plus* the highlight ground: the golden suite strips style, so a
-/// style-only selection would be invisible to it. User-authored commands keep
-/// their `SlashKind` glyph.
+/// Each row is the command in gold — the letters the query matched lit
+/// bright wherever they fell, the rest gold — its one-line effect dim, and a
+/// live value on the right when the model has one (`/inbox · 3 unread`). The
+/// letters come from [`crate::composer::SlashMatch::highlights`], so `ga`
+/// lights the `g` and the `a` of `/graph query` rather than only a typed
+/// prefix (#5048). The selected row carries the `▸` marker *plus* the
+/// highlight ground: the golden suite strips style, so a style-only selection
+/// would be invisible to it. User-authored commands keep their `SlashKind`
+/// glyph.
 ///
 /// `live` overrides descriptions with values read from the model at render
 /// time, keyed by command name — computed by the caller each frame, never
@@ -334,12 +360,11 @@ pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -
 /// With no query typed, the list is sectioned: [`SlashMenu::sections`] puts
 /// `relevant now · <why>` over the commands the session's own state makes
 /// worth reaching for, then a heading per [`crate::composer::SlashDomain`]
-/// group (#4338). A typed query drops the headings — grouping a three-row
-/// result buries the rows under their own captions — and keeps the flat
-/// ranking, in which a relevant command still leads its rank.
-///
-/// The renderings' `recent` section is still absent: it needs per-workspace
-/// persistence, which the deck has no store for (#4338).
+/// group (#4338), and closes with `recent` — the commands this workspace ran
+/// last, kept across restarts by [`crate::composer::Recents`] (#5048). A typed
+/// query drops the headings — grouping a three-row result buries the rows
+/// under their own captions — and keeps the flat ranking, in which a relevant
+/// command still leads its rank.
 pub(crate) fn render_slash_popup(
     menu: &SlashMenu,
     selected: usize,
@@ -371,7 +396,6 @@ pub(crate) fn render_slash_popup(
     let first = scroll_window_start(rows.len(), selected_row, visible);
     let last = (first + visible).min(rows.len());
     let inner_w = inner_width(area);
-    let query = menu.query.trim_start_matches('/').to_ascii_lowercase();
 
     let mut lines: Vec<Line<'static>> = rows[first..last]
         .iter()
@@ -384,7 +408,8 @@ pub(crate) fn render_slash_popup(
                 }
                 PopupRow::Command(index) => *index,
             };
-            let c = menu.matches[index];
+            let m = &menu.matches[index];
+            let c = m.command;
             let is_sel = index == selected;
             let marker = if is_sel { "▸ " } else { "  " };
             let live_value = live
@@ -392,24 +417,18 @@ pub(crate) fn render_slash_popup(
                 .find(|(name, _)| *name == c.name)
                 .map(|(_, v)| v.clone());
             let description = c.description.clone();
-            // The typed prefix lights up inside the name — `/ga` → `/ga`tes.
             let name = c.name.clone();
-            let bare = name.trim_start_matches('/').to_ascii_lowercase();
-            let (head, tail) = if !query.is_empty() && bare.starts_with(&query) {
-                let cut = 1 + query.len();
-                (name[..cut].to_string(), name[cut..].to_string())
-            } else {
-                (String::new(), name.clone())
-            };
             let mut spans = vec![Span::styled(marker.to_string(), gold)];
             if c.kind != crate::composer::SlashKind::Builtin {
                 spans.push(Span::styled(format!("{} ", c.kind.glyph()), muted));
             }
-            if !head.is_empty() {
-                spans.push(Span::styled(head.clone(), lit));
+            // The matched letters light wherever they fell. Runs are coalesced
+            // so a contiguous match is one span rather than one per character.
+            for (hot, run) in highlight_runs(&name, &m.highlights) {
+                spans.push(Span::styled(run, if hot { lit } else { gold }));
             }
-            let pad = 16usize.saturating_sub(head.chars().count() + tail.chars().count());
-            spans.push(Span::styled(format!("{tail}{}", " ".repeat(pad)), gold));
+            let pad = 16usize.saturating_sub(name.chars().count());
+            spans.push(Span::styled(" ".repeat(pad), gold));
             spans.push(Span::styled(format!(" {description}"), dim));
             if let Some(value) = live_value {
                 let used: usize = spans.iter().map(Span::width).sum();
@@ -451,6 +470,10 @@ pub(crate) fn render_slash_popup(
         .borders(Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(Style::new().fg(token::RULE))
+        // SPEC 10's `panel` ground. `Clear` alone leaves the terminal's own
+        // background showing through a floating overlay, so the palette read
+        // as a hole in the deck rather than as a panel over it (#5048).
+        .style(Style::new().bg(token::PANEL))
         .title(Line::from(vec![
             Span::styled(" / commands", gold),
             Span::styled(format!("  {shown} of {total} · fuzzy "), muted),
@@ -533,6 +556,9 @@ pub(crate) fn render_arg_popup(
         .borders(Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(Style::new().fg(token::RULE))
+        // The same `panel` ground the command palette floats on — the two
+        // overlays are one shape and must not differ in their ground.
+        .style(Style::new().bg(token::PANEL))
         .title(Line::from(vec![
             Span::styled(format!(" {command}"), gold),
             Span::styled(format!("  {} of {total} ", last - first), muted),

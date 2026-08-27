@@ -186,6 +186,18 @@ fn system_notice(text: String) -> Inbound {
     Inbound::Notice(text)
 }
 
+/// Where this workspace keeps the command palette's `recent` section
+/// (SPEC 10). It sits under `.stella/private/` with the rest of the generated
+/// local state, so it is gitignored and never travels: the last five commands
+/// a person ran are theirs, and a clone that inherited someone else's would be
+/// wrong as well as private (AGENTS.md § the `.stella/` directory).
+fn palette_recent_path(workspace_root: &std::path::Path) -> PathBuf {
+    workspace_root
+        .join(".stella")
+        .join("private")
+        .join("palette-recent.json")
+}
+
 /// `STELLA_DEBUG=1` → the structured deck log path (L-T8), mirroring the
 /// location `stella_tui::DeckOptions` documents. `None` otherwise, and
 /// on any failure to create the directory — a lost debug log never gates the
@@ -721,6 +733,7 @@ pub async fn run_deck_session(
         debug_log_path: debug_log_path(),
         slash_commands: deck_slash_commands(&custom),
         initial_graph: agent::graph_snapshot(&cfg.workspace_root),
+        recent_path: Some(palette_recent_path(&cfg.workspace_root)),
         no_anim,
         accessible,
         mid_turn_prompt: steer::mid_turn_prompt_policy(cfg),
