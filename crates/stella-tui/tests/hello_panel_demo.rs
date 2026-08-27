@@ -13,7 +13,7 @@
 //! Run it and read the panel:
 //!
 //! ```text
-//! cargo test -p stella-cli --test hello_panel_demo -- --nocapture
+//! cargo test -p stella-tui --test hello_panel_demo -- --nocapture
 //! ```
 
 use ratatui::Terminal;
@@ -87,7 +87,10 @@ async fn the_hello_plugin_draws_its_panel_in_the_deck() {
         },
         33,
     );
-    let tick = stella_runtime::panel_host::ask(&process, lease.clone())
+    // The caller owns the ambient world and resolves the environment; the
+    // runtime crate never reads it (`stella-runtime/tests/no_ambient_reads.rs`).
+    let env = stella_runtime::panel_host::resolve_env(&process, |name| std::env::var(name).ok());
+    let tick = stella_runtime::panel_host::ask(&process, lease.clone(), &env)
         .await
         .expect("the hello plugin answers a frame");
     let frame = tick.frame.expect("it drew one");

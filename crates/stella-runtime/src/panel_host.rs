@@ -3,36 +3,26 @@
 
 //! Driving a plugin's panel process — SPEC 12's other half.
 //!
-//! The deck's `plugin_panel` host draws a frame; this asks a plugin for one. The
-//! exchange is one JSON [`PanelRequest`] on the child's stdin and one
-//! [`PanelResponse`] **followed by a newline** on its stdout, the shape the
-//! wrapper socket already speaks, so a plugin author who has written a driver
-//! has written this.
+//! The deck's `plugin_panel` host draws a frame; this asks a plugin for one.
+//! The exchange is one JSON [`PanelRequest`] on the child's stdin and one
+//! [`PanelResponse`] **followed by a newline** on its stdout. Reading to that
+//! newline rather than to EOF is what lets a panel start a helper: a
+//! backgrounded grandchild inherits stdout and holds the pipe open, so a host
+//! waiting for EOF would time out against a panel that answered instantly.
 //!
-//! The newline is the frame's end, and reading to it rather than to EOF is
-//! what lets a panel start a helper process: a backgrounded grandchild
-//! inherits stdout and holds the pipe open, so a host waiting for EOF would
-//! time out every tick against a panel that had answered instantly.
+//! Three rules bind a caller:
 //!
-//! # It never runs on the draw path
-//!
-//! A panel is asked for between frames, never during one: the deck's draw is a
-//! pure projection of state it already holds ([`IMPLEMENTATION-PLAN.md` §1's
-//! async boundary]), and a process that a repaint waits on is a process that
-//! can freeze the terminal. [`ask`] is `async` and its result lands in state
-//! for the *next* draw, which is also what makes the frame budget mean
-//! something: a plugin that misses it costs a stale panel and a visible tag,
-//! never a stalled deck.
-//!
-//! # The environment is the manifest's, exactly
-//!
-//! `env_clear` then the allowlist the `[panel.process]` block named, so a panel
-//! sees the variables a human consented to and no others — the rule
-//! `stella_runtime::wrapper::driver_subprocess` applies to a driver, for the
-//! same reason. A panel is a program on somebody's machine; "draws a box" and
-//! "draws a box, with your `GITHUB_TOKEN`" are different things to agree to.
-//!
-//! [`IMPLEMENTATION-PLAN.md` §1's async boundary]: https://github.com/macanderson/stella/blob/main/design/tui-v2/IMPLEMENTATION-PLAN.md
+//! - **Never on the draw path.** [`ask`] is `async` and its frame lands in
+//!   state for the *next* repaint. A draw that waited on somebody else's
+//!   process could freeze the terminal, and it is what makes the frame budget
+//!   mean something: a slow panel costs a stale frame and a visible tag.
+//! - **The environment is the caller's to resolve.** `env_clear`, then exactly
+//!   the pairs passed in — a panel sees what a human consented to and nothing
+//!   else. This crate reads no ambient state to build that list
+//!   (`tests/no_ambient_reads.rs`), so [`resolve_env`] applies the manifest's
+//!   allowlist over a lookup the caller supplies.
+//! - **The process group is reaped when the tick ends.** EOF on stdout is not
+//!   process exit.
 
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -120,12 +110,52 @@ impl std::error::Error for PanelError {
     }
 }
 
-/// Ask `process` for one frame against `lease`.
+/// The environment a panel process is started with: `PATH`, then the
+/// `[panel.process] env` allowlist, resolved through `lookup`.
+///
+/// `lookup` rather than `std::env::var` because this crate may not read
+/// process-global state. A caller that owns the ambient world passes
+/// `|name| std::env::var(name).ok()`; a test passes a map, and two sessions in
+/// one process can hand this different answers.
+///
+/// `PATH` is included without the manifest naming it: it is how a program is
+/// located, not a secret to be granted, and without it `env_clear` leaves the
+/// child to `execvp`'s built-in default — so a `python3` in a virtualenv or in
+/// Homebrew is simply not found. A manifest naming `PATH` explicitly is
+/// honoured once, not twice.
+#[must_use]
+pub fn resolve_env(
+    process: &Runtime,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    let mut out = Vec::with_capacity(process.env.len() + 1);
+    if let Some(path) = lookup("PATH") {
+        out.push(("PATH".to_string(), path));
+    }
+    for name in &process.env {
+        if name == "PATH" {
+            continue;
+        }
+        if let Some(value) = lookup(name) {
+            out.push((name.clone(), value));
+        }
+    }
+    out
+}
+
+/// Ask `process` for one frame against `lease`, started with exactly `env`.
+///
+/// `env` is the whole environment the child sees — [`resolve_env`] builds it
+/// from the manifest, and nothing here adds to it.
 ///
 /// # Errors
 ///
 /// [`PanelError`], naming which of the four ways the exchange failed.
-pub async fn ask(process: &Runtime, lease: PanelLease) -> Result<PanelTick, PanelError> {
+pub async fn ask(
+    process: &Runtime,
+    lease: PanelLease,
+    env: &[(String, String)],
+) -> Result<PanelTick, PanelError> {
     let Some((program, args)) = process.argv.split_first() else {
         return Err(PanelError::Spawn {
             program: String::new(),
@@ -156,23 +186,8 @@ pub async fn ask(process: &Runtime, lease: PanelLease) -> Result<PanelTick, Pane
         // A panel that outlives its tick is killed. Without this, a plugin that
         // ignores a closed stdin keeps drawing for a session that has moved on.
         .kill_on_drop(true);
-    // `PATH` first, then the manifest's allowlist. Without it `env_clear`
-    // leaves the child to `execvp`'s built-in default (roughly `/usr/bin:/bin`),
-    // so a `python3` in a virtualenv, in Homebrew, or anywhere else an operator
-    // actually installed one is simply not found — a panel that works for
-    // whoever wrote it and fails everywhere else. `PATH` is how a program is
-    // located, not a secret a manifest should have to ask for; everything that
-    // is a secret still has to be named.
-    if let Ok(path) = std::env::var("PATH") {
-        command.env("PATH", path);
-    }
-    for name in &process.env {
-        if name == "PATH" {
-            continue;
-        }
-        if let Ok(value) = std::env::var(name) {
-            command.env(name, value);
-        }
+    for (name, value) in env {
+        command.env(name, value);
     }
     stella_tools::exec::detach_into_own_process_group(&mut command);
 
@@ -310,7 +325,9 @@ mod tests {
     #[tokio::test]
     async fn a_panel_process_answers_one_frame() {
         let script = r#"cat > /dev/null; printf '%s\n' '{"point":"frame","body":{"protocol_version":1,"surface":"command","tick":1,"paint":{"lines":[{"spans":[{"text":"hello"}]}]}}}'"#;
-        let tick = ask(&shell(script), lease(20, 3)).await.expect("a frame");
+        let tick = ask(&shell(script), lease(20, 3), &[])
+            .await
+            .expect("a frame");
         let frame = tick.frame.expect("the child drew one");
         assert_eq!(frame.tick, 1);
         match frame.paint {
@@ -326,7 +343,9 @@ mod tests {
     #[tokio::test]
     async fn the_child_is_told_the_rectangle_it_was_leased() {
         let script = r#"REQ=$(cat); printf '{"point":"frame","body":{"protocol_version":1,"surface":"command","tick":1,"paint":{"lines":[{"spans":[{"text":"%s"}]}]}}}\n' "$(printf '%s' "$REQ" | tr -cd '0-9' | head -c 4)""#;
-        let tick = ask(&shell(script), lease(20, 3)).await.expect("a frame");
+        let tick = ask(&shell(script), lease(20, 3), &[])
+            .await
+            .expect("a frame");
         let frame = tick.frame.expect("the child drew one");
         let PanelPaint::Lines(lines) = frame.paint else {
             panic!("expected lines")
@@ -343,7 +362,9 @@ mod tests {
     async fn a_silent_panel_times_out_rather_than_hanging() {
         let mut process = shell("sleep 30");
         process.timeout_secs = 1;
-        let err = ask(&process, lease(10, 2)).await.expect_err("times out");
+        let err = ask(&process, lease(10, 2), &[])
+            .await
+            .expect_err("times out");
         assert!(matches!(err, PanelError::Timeout { .. }), "{err:?}");
     }
 
@@ -376,7 +397,7 @@ mod tests {
             let mut process = shell(&script.replace("PIDFILE", &pidfile.display().to_string()));
             process.timeout_secs = 1;
 
-            let outcome = ask(&process, lease(10, 2)).await;
+            let outcome = ask(&process, lease(10, 2), &[]).await;
             assert_eq!(
                 outcome.is_ok(),
                 answers,
@@ -420,7 +441,7 @@ mod tests {
     /// A plugin that writes rubbish is named, not silently ignored.
     #[tokio::test]
     async fn an_unreadable_frame_is_a_decode_error() {
-        let err = ask(&shell("cat > /dev/null; echo not-json"), lease(10, 2))
+        let err = ask(&shell("cat > /dev/null; echo not-json"), lease(10, 2), &[])
             .await
             .expect_err("decodes nothing");
         assert!(matches!(err, PanelError::Decode { .. }), "{err:?}");
@@ -428,18 +449,28 @@ mod tests {
 
     /// The environment is the manifest's allowlist and nothing else — the
     /// consent document's promise, enforced at the spawn.
+    ///
+    /// The lookup is a map rather than the process environment, which is what
+    /// `tests/no_ambient_reads.rs` requires of this crate and what lets this
+    /// test state its inputs instead of mutating the world other tests share.
     #[tokio::test]
     async fn a_panel_sees_only_the_variables_its_manifest_named() {
-        // SAFETY: single-threaded test setup before any spawn reads it.
-        unsafe {
-            std::env::set_var("STELLA_PANEL_ALLOWED", "yes");
-            std::env::set_var("STELLA_PANEL_SECRET", "no");
-        }
+        let world = |name: &str| match name {
+            "STELLA_PANEL_ALLOWED" => Some("yes".to_string()),
+            "STELLA_PANEL_SECRET" => Some("no".to_string()),
+            "PATH" => std::option_env!("PATH").map(str::to_string),
+            _ => None,
+        };
         let mut process = shell(
             r#"cat > /dev/null; printf '{"point":"frame","body":{"protocol_version":1,"surface":"command","tick":1,"paint":{"lines":[{"spans":[{"text":"%s/%s"}]}]}}}\n' "${STELLA_PANEL_ALLOWED:-absent}" "${STELLA_PANEL_SECRET:-absent}""#,
         );
         process.env = vec!["STELLA_PANEL_ALLOWED".into()];
-        let tick = ask(&process, lease(30, 2)).await.expect("a frame");
+        let env = resolve_env(&process, world);
+        assert!(
+            env.iter().all(|(name, _)| name != "STELLA_PANEL_SECRET"),
+            "the un-named variable never even reaches the spawn: {env:?}"
+        );
+        let tick = ask(&process, lease(30, 2), &env).await.expect("a frame");
         let PanelPaint::Lines(lines) = tick.frame.expect("a frame").paint else {
             panic!("expected lines")
         };
