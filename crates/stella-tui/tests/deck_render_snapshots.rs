@@ -93,11 +93,6 @@ mod task_zoom;
 #[path = "deck_render_snapshots/gate_board.rs"]
 mod gate_board;
 
-/// SPEC 7.3's plan-panel economics. See [`graph`]'s doc for why this is
-/// `#[path]` rather than a plain `mod`.
-#[path = "deck_render_snapshots/plan_economics.rs"]
-mod plan_economics;
-
 /// See [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
 #[path = "deck_render_snapshots/start_work.rs"]
 mod start_work;
@@ -106,6 +101,15 @@ mod start_work;
 /// `#[path]` rather than a plain `mod`.
 #[path = "deck_render_snapshots/mcp.rs"]
 mod mcp;
+
+/// SPEC 7.3's plan-panel economics. See [`graph`]'s doc for why this is
+/// `#[path]` rather than a plain `mod`.
+///
+/// Declared last rather than in the list's order, so this and #5043's
+/// `revision_proposal` module do not both land on the line above
+/// [`start_work`] and collide when the two branches meet.
+#[path = "deck_render_snapshots/plan_economics.rs"]
+mod plan_economics;
 
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
