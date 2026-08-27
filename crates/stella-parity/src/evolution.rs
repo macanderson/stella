@@ -144,21 +144,6 @@ pub enum EvolutionPosture {
         design_doc: &'static str,
         reason: &'static str,
     },
-    /// Considered, and dropped. Cites the issue where that was decided.
-    ///
-    /// #2780's four postures do not describe this, and the tree contains it:
-    /// weight-space adaptation was designed, filed, and closed as **not
-    /// planned**. Calling that `Planned` would be false, and `Prohibited`
-    /// wants a design document that was never written — the decision lives in
-    /// the closed issue and nowhere else. A fifth posture costs one line; the
-    /// alternative is a row that reads as parked work somebody will pick up.
-    NotPursued {
-        /// A `#NNNN` GitHub issue, closed as not planned.
-        decided_in: &'static str,
-        /// What exists in place of the surface, so the row is not read as
-        /// "nothing here".
-        today: &'static str,
-    },
 }
 
 impl EvolutionPosture {
@@ -167,10 +152,9 @@ impl EvolutionPosture {
     pub fn witness(&self) -> Option<&'static str> {
         match self {
             Self::Shipped { witness, .. } | Self::Experimental { witness, .. } => Some(witness),
-            Self::ShippedUnwitnessed { .. }
-            | Self::Planned { .. }
-            | Self::Prohibited { .. }
-            | Self::NotPursued { .. } => None,
+            Self::ShippedUnwitnessed { .. } | Self::Planned { .. } | Self::Prohibited { .. } => {
+                None
+            }
         }
     }
 
@@ -361,8 +345,8 @@ evolution_surfaces! {
 
     /// The weights Stella runs on.
     Model => "model",
-        EvolutionPosture::NotPursued {
-            decided_in: "#836",
+        EvolutionPosture::Planned {
+            issue: "#836",
             today: "`stella dataset export` writes an SFT corpus plus a manifest and stops. \
                     The corpus has no in-tree consumer: there is no trainer, no adapter \
                     registry, and no promotion loop anywhere in the workspace, and human \
@@ -370,8 +354,9 @@ evolution_surfaces! {
         },
         EvolutionTiming::OfflineBatch,
         ImpactClass::ExecutableTool,
-        "not applicable — nothing is promoted, so there is nothing to reverse. Were this \
-         surface built, the rollback artifact would have to exist before the promotion path did";
+        "nothing is promoted yet, so there is nothing to reverse. This row's `ImpactClass` is \
+         what constrains the build: an adapter is an `ExecutableTool`, so the rollback artifact \
+         has to exist before the promotion path does, not after";
 }
 
 /// How many live rows name no witness.
