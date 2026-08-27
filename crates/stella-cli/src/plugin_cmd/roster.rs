@@ -588,20 +588,24 @@ pub(crate) fn read_tier(
                 if let Some(notice) = consent.notice(scope, &manifest.name, &path) {
                     notices.push(notice);
                 }
-                // The panel grant, on the same clock and for the same reason
-                // (#5056, SPEC 12.4). Read for every package rather than only
-                // for one declaring a `[panel]`, so a manifest that grows the
-                // block between two loads is `Undecided` the moment it does
-                // instead of inheriting an answer nobody gave. It is spoken
-                // only where the package actually declares a panel — a plugin
-                // with no `[panel]` is not being withheld from anything.
+                // The panel grant, on the same clock (#5056, SPEC 12.4). Read
+                // for every package rather than only for one declaring a
+                // `[panel]`, so a manifest that grows the block between two
+                // loads is `Undecided` the moment it does instead of
+                // inheriting an answer nobody gave.
+                //
+                // Not pushed into `notices`, unlike the receipt above, and the
+                // difference is what a notice from here means: these say a
+                // **package was withheld** and name the way to load it. A
+                // panel grant withholds a rectangle from a package that is
+                // fully in force, so it is spoken by the two surfaces that
+                // have somewhere to put it — `stella plugin list`'s `panel:`
+                // line, and the deck's own handshake block
+                // (`command_deck::plugin_panels::handshakes`) — rather than
+                // through a channel whose every other line is about a plugin
+                // that did not load.
                 let panel_grant =
                     panel_grant::check(dir, scope, &path, &manifest.name, text.as_bytes());
-                if manifest.panel.is_some()
-                    && let Some(notice) = panel_grant.notice(&manifest.name)
-                {
-                    notices.push(format!("  {notice}"));
-                }
                 found.push(InstalledPlugin {
                     manifest,
                     dir: path,
