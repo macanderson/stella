@@ -525,7 +525,7 @@ impl Plan {
     /// zero somebody could read as "nothing was planned".
     #[must_use]
     pub fn planned_count(&self) -> Option<usize> {
-        (!self.proposed.is_empty()).then(|| self.proposed.len())
+        (!self.proposed.is_empty()).then_some(self.proposed.len())
     }
 
     /// `(complete, total)` — the rail's fraction.
