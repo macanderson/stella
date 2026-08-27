@@ -135,6 +135,28 @@ pub fn last_said(entry: &AgentEntry) -> Option<String> {
     })
 }
 
+/// The dictation status line, while a push-to-talk gesture is in progress —
+/// it claims this row ahead of the pulse and the pipeline strip
+/// (`deck_render`'s band arbitration), because it is the one live activity
+/// the user is driving with a held key. Returns whether it drew. Red while
+/// the microphone is live, muted for the warmup and the transcription wait;
+/// never gold — gold is identity, not state.
+pub fn render_voice_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) -> bool {
+    if area.width == 0 || area.height == 0 {
+        return false;
+    }
+    let Some(line) = ui.voice.status_line(model.now_ms) else {
+        return false;
+    };
+    let style = if ui.voice.recording() {
+        Style::new().fg(token::RED)
+    } else {
+        Style::new().fg(token::MUTED)
+    };
+    Paragraph::new(Line::from(vec![Span::raw(" "), Span::styled(line, style)])).render(area, buf);
+    true
+}
+
 /// Draw the row into the top row of `area`. Draws nothing when the row
 /// should stay air.
 pub fn render_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {

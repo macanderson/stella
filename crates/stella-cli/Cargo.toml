@@ -114,6 +114,12 @@ zeroize.workspace = true
 # serve a turn. The same suite still audits the in-tree providers in tests.
 contextgraph-conformance.workspace = true
 
+# Microphone capture for push-to-talk dictation (`command_deck::voice`, ADR
+# 0020). Target-scoped: on Linux the recorder is an `arecord` subprocess, so
+# a `cpal`/ALSA build dependency never reaches `install.sh` source builds.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+cpal.workspace = true
+
 [dev-dependencies]
 # The OKLCH ruler the 30° hue-separation law is measured with. `design_token_parity`
 # transcribed Ottosson's matrices a second time and then held one law to a 20°

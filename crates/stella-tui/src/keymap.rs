@@ -571,6 +571,20 @@ pub const BINDINGS: &[Binding] = &[
         Everywhere,
         &["ctrl_v_is_the_clipboard_pull_and_a_bare_v_is_not"],
     ),
+    // Wherever a bare space types, that is (`voice`'s observation fold); a
+    // tab where space pages or toggles never arms. Off until `voice.enabled`
+    // (ADR 0020).
+    row(
+        "space (hold)",
+        "dictate — keep holding until listening, release to insert the transcript",
+        Everywhere,
+        &[
+            "a_bare_space_is_the_push_to_talk_key_and_a_modified_space_is_not",
+            "the_voice_observation_requires_a_space_that_actually_landed",
+            "a_hold_crosses_the_warmup_and_retracts_exactly_what_it_typed",
+            "esc_cancels_a_recording_without_transcribing",
+        ],
+    ),
     row(
         "ctrl-a",
         "SUB-AGENTS — o open · n nudge · f flag · x stop · xx delete · r resume · rr restart",
@@ -720,8 +734,9 @@ mod tests {
     /// their modal editor), `views/subagents.rs` (the overlay's own verbs), and
     /// `deck_shell.rs` (`⌃V`, claimed by the run loop above the pure key
     /// layer because the capture is blocking I/O).
-    fn witness_sources() -> [&'static str; 30] {
+    fn witness_sources() -> [&'static str; 31] {
         [
+            include_str!("voice.rs"),
             include_str!("deck_ui/tests/agents.rs"),
             include_str!("deck_ui/tests/composer.rs"),
             include_str!("deck_ui/tests/esc.rs"),

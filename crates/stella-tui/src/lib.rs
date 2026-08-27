@@ -90,6 +90,7 @@ pub mod tool_class;
 pub mod transcript_build;
 pub mod transcript_nav;
 pub mod views;
+pub mod voice;
 
 pub use accessible::{FlushBlock, NOTICE_MARKER, Scrollback};
 pub use ansi::strip_ansi;

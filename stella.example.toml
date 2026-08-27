@@ -464,6 +464,26 @@ theme = "stella-dark"
 
 
 # -----------------------------------------------------------------------------
+# VOICE — push-to-talk dictation (ADR 0020)
+#
+# Hold Space in the composer; after a short warmup the deck records the
+# microphone, and releasing the key transcribes what it heard and pastes the
+# text at the cursor. Off until you turn it on: recording streams audio to the
+# provider below, so that egress is opted into by name, never by default.
+#
+# Transcription is any OpenAI-compatible `audio/transcriptions` endpoint. The
+# provider id resolves through [providers] (and the built-in table) for its
+# base_url and API key, so there is no separate credential here.
+
+[voice]
+enabled = false
+# provider = "openai"        # or "groq", or any [providers] entry with a
+#                            # compatible base_url (a local Whisper server)
+# model = "whisper-1"
+# language = "en"            # BCP 47 hint; omit to auto-detect
+
+
+# -----------------------------------------------------------------------------
 # PLUGINS — the per-plugin retraction switches
 #
 # `"<plugin-name>" = "on" | "off"`, where the name is what `stella plugin list`

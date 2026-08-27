@@ -375,6 +375,23 @@ theme = "stella-light"
 mid_turn_prompt = "queue"   # queue | ask | spawn
 ```
 
+### `[voice]`
+
+Push-to-talk dictation: hold Space in the composer, speak, release, and the transcript
+lands at the cursor. Whole-block last-wins, like `[ui]`. Off by default — recording
+streams microphone audio to the provider named below, an egress you opt into by name.
+The provider id resolves through `[providers]` (or the built-in table) for its endpoint
+and API key, so this section holds no credential of its own; any provider with an
+OpenAI-compatible `audio/transcriptions` endpoint works, a local Whisper server included.
+
+```toml title="stella.toml"
+[voice]
+enabled = true
+provider = "openai"          # any [providers] entry with a compatible base_url
+model = "whisper-1"
+language = "en"              # BCP 47 hint; omit to auto-detect
+```
+
 ### `[reward]`
 
 What a finished turn's verdict is worth as a training label (#1043). Whole-block last-wins,

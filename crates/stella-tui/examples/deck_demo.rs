@@ -437,6 +437,15 @@ async fn main() -> std::io::Result<()> {
                         proposal.revision, proposal.subject
                     )));
                 }
+                // The demo has no microphone: a dictation gesture answers
+                // with the failure the real driver would send if it had no
+                // recorder, so the deck's voice state settles.
+                WorkspaceInput::VoiceStart => {
+                    let _ = react_tx.send(Inbound::VoiceFailed {
+                        reason: "voice: the demo has no recorder".to_string(),
+                    });
+                }
+                WorkspaceInput::VoiceStop | WorkspaceInput::VoiceCancel => {}
                 WorkspaceInput::Quit => break,
             }
         }

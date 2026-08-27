@@ -476,6 +476,38 @@ byte-for-byte at the value level, so changing a theme from the deck's SETTINGS t
 drops `providers`, `hooks`, or a forward-compatible key it does not recognise. Clearing
 the theme removes the `ui` key rather than leaving an empty `{}` behind.
 
+## The `voice` section
+
+Push-to-talk dictation: hold Space in the composer, speak, release, and the transcript
+lands at the cursor. Off by default — recording streams microphone audio to the provider
+named below, an egress you opt into by name. The provider id resolves through
+`providers` (or the built-in table) for its endpoint and API key, so this section holds
+no credential of its own; any provider with an OpenAI-compatible `audio/transcriptions`
+endpoint works, a local Whisper server included.
+
+<CardGrid size="md">
+  <OptionCard name="enabled" defaultValue="false">
+    Whether holding Space records at all. Until this is `true`, a held spacebar just
+    types spaces.
+  </OptionCard>
+  <OptionCard name="provider" defaultValue="openai">
+    The provider id whose `audio/transcriptions` endpoint transcribes. Any `providers`
+    entry with a compatible `base_url` works the same way.
+  </OptionCard>
+  <OptionCard name="model" defaultValue="whisper-1">
+    The transcription model slug.
+  </OptionCard>
+  <OptionCard name="language">
+    BCP 47 language hint (for example `en`). Omit it and the model auto-detects.
+  </OptionCard>
+</CardGrid>
+
+```json title="<workspace>/.stella/settings.json"
+{
+  "voice": { "enabled": true, "provider": "openai", "model": "whisper-1" }
+}
+```
+
 ## The `plan_review` section
 
 The deck's plan gate. Before the first step of a plan runs, the task board goes to whoever

@@ -638,6 +638,15 @@ pub enum Inbound {
         agent: AgentId,
         proposal: Box<stella_protocol::RevisionProposal>,
     },
+    /// A finished dictation's text ([`WorkspaceInput::VoiceStop`]'s answer).
+    /// Ingest pastes it at the composer's cursor and returns
+    /// [`crate::voice::VoiceUi`] to rest — never a model fold: a dictation
+    /// is keyboard input that arrived by another route.
+    VoiceTranscript { text: String },
+    /// A dictation that produced no text (no recorder, no credential, a
+    /// refused transcription request). Ingest returns the voice state to
+    /// rest and raises `reason` as a transient notice.
+    VoiceFailed { reason: String },
 }
 
 /// One row of the ISSUES tab's browse list — tracker-agnostic: the driver
@@ -698,54 +707,8 @@ pub struct LinkedWork {
     pub tests_total: usize,
 }
 
-/// One row of the create form's type-ahead popup. `kind` is a display type
-/// label ("Person", "Agent", "Memory", "Symbol", "Label", …) — rows render as
-/// `Kind: label — description`. `insert` is what picking the row writes into
-/// the field: `@login` or an email for people, the label name for labels.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EntityHit {
-    pub kind: String,
-    pub label: String,
-    pub description: String,
-    pub insert: String,
-}
-
-/// Which create-form field a type-ahead [`WorkspaceInput::EntitySearch`]
-/// feeds — each has its own vocabulary (people vs. labels).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EntityField {
-    Assignee,
-    Label,
-}
-
-impl EntityField {
-    pub fn label(self) -> &'static str {
-        match self {
-            EntityField::Assignee => "assignee",
-            EntityField::Label => "labels",
-        }
-    }
-}
-
-/// An action on one existing issue ([`WorkspaceInput::IssueAct`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IssueAction {
-    /// Add a comment (the deck's `c` prompt).
-    Comment(String),
-    /// Move to a named status (any workflow-state word on Linear; on GitHub
-    /// only the two states below exist, and they have their own variants).
-    SetStatus(String),
-    /// Close the issue (the deck's `x` on an open row).
-    Close,
-    /// Re-open a closed issue (the deck's `x` on a closed row).
-    ///
-    /// Its own variant rather than `SetStatus("open")` so the driver selects
-    /// the provider call by matching a variant instead of comparing a status
-    /// string — the same reason [`IssueAction::Close`] is not
-    /// `SetStatus("closed")`, and why the port grew
-    /// `IssueProvider::reopen` rather than a status setter.
-    Reopen,
-}
+mod issues;
+pub use issues::{EntityField, EntityHit, IssueAction};
 
 /// The session-registry lifecycle phase, exactly the grouping the SESSIONS
 /// overlay shows. A TUI-local mirror of `stella-store`'s `SessionStatus`
@@ -1373,6 +1336,16 @@ pub enum WorkspaceInput {
     /// (`AgentEvent::BudgetTick::session_limit_usd`), so an ignored or
     /// clamped request never shows a cap that is not in force.
     SetBudget { limit_usd: Option<f64> },
+    /// Push-to-talk crossed its warmup: start capturing microphone audio.
+    /// The driver answers the eventual [`WorkspaceInput::VoiceStop`] with
+    /// [`Inbound::VoiceTranscript`] or [`Inbound::VoiceFailed`]; a start it
+    /// cannot honour answers [`Inbound::VoiceFailed`] immediately.
+    VoiceStart,
+    /// The held key was released: stop capturing and transcribe what was
+    /// heard.
+    VoiceStop,
+    /// Abandon the capture without transcribing (Esc while listening).
+    VoiceCancel,
     /// Tear down the deck.
     Quit,
 }
