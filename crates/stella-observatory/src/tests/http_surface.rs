@@ -187,6 +187,79 @@ fn narrow_screens_get_one_tab_row_and_a_rail_beside_the_content() {
     }
 }
 
+/// On a wide screen the picker sits beside the replay it controls.
+///
+/// One column is right for a phone and wrong at 1400px: the list took the
+/// full width and the replay started below the fold, so choosing a session
+/// meant scrolling to find out what the choice did. The layout is settled in
+/// the sheet, and the scroll-on-click is settled in the script — both are
+/// checkable here; whether it *looks* right is not.
+#[test]
+fn a_wide_screen_puts_the_picker_beside_the_replay() {
+    for needle in [
+        "class=\"ses-cols\"",                  // the two-column container
+        "class=\"card section-gap ses-pick\"", // the picker becomes a rail
+        "class=\"ses-replay\"",                // …and the replay is its own column
+        "@media(min-width:1080px)",            // the breakpoint that turns it on
+        ".ses-pick{position:sticky",           // the rail stays while the list scrolls
+        "matchMedia(\"(min-width:1080px)\")",  // …so a click must not scroll the page
+    ] {
+        assert!(
+            INDEX_HTML.contains(needle),
+            "the wide-screen session layout is missing {needle}"
+        );
+    }
+}
+
+/// A table that scrolls sideways says so, and keeps the cell that names the
+/// row.
+///
+/// Ten containers on this page overflow at phone width and none of them
+/// admitted it: the columns simply stopped, with no edge and no hint that
+/// more were to the right. The shadow pair is pure CSS on the scroller
+/// itself, so it covers every table at once rather than the ones somebody
+/// remembered to wrap.
+#[test]
+fn a_sideways_table_admits_it_and_holds_its_first_column() {
+    for needle in [
+        "no-repeat local",                // the pair that covers the shadow at an edge
+        "no-repeat scroll",               // …and the pair that shows while there is more
+        ".scroll-x table th:first-child", // the identity column stays put
+        "position:sticky;left:0",
+        "max-width:45vw", // …without eating the screen it made swipeable
+    ] {
+        assert!(
+            INDEX_HTML.contains(needle),
+            "the scrolling-table affordance is missing {needle}"
+        );
+    }
+}
+
+/// The Overview's execution list is the session timeline's twin, so it is
+/// drawn by the same card rather than by a twelve-column table.
+#[test]
+fn the_overview_lists_executions_as_cards() {
+    for needle in [
+        "function execCardHtml",        // the card
+        "goTranscript(+tr.dataset.id)", // …still opens the turn it names
+        "const dayShort",               // the 56px rail needs a date that fits
+    ] {
+        assert!(
+            INDEX_HTML.contains(needle),
+            "the Overview execution list is missing {needle}"
+        );
+    }
+    for gone in [
+        "<th scope=\"col\">kind</th>",   // the twelve-column table it replaced
+        "<th scope=\"col\">prompt</th>", // …whose headers exist nowhere else
+    ] {
+        assert!(
+            !INDEX_HTML.contains(gone),
+            "the Overview execution table was replaced by cards, but {gone} survives"
+        );
+    }
+}
+
 /// The transcript host must not be styled by the masthead's status dot.
 ///
 /// `paintRenderedTranscript` puts `live` on the host so the shared stylesheet
