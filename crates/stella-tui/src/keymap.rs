@@ -422,7 +422,7 @@ pub const BINDINGS: &[Binding] = &[
         "r",
         "refresh the list",
         Tab(T::Issues),
-        &["issues_browse_keys_refresh_and_start_work"],
+        &["issues_browse_keys_refresh_and_open_the_start_work_draft"],
     ),
     row(
         "/",
@@ -465,9 +465,12 @@ pub const BINDINGS: &[Binding] = &[
     ),
     row(
         "w",
-        "start work on the selected issue",
+        "draft a plan for the selected issue, and wait for approval",
         Tab(T::Issues),
-        &["issues_browse_keys_refresh_and_start_work"],
+        &[
+            "issues_browse_keys_refresh_and_open_the_start_work_draft",
+            "nothing_runs_before_the_approval_key",
+        ],
     ),
     // ── SETTINGS ────────────────────────────────────────────────────────
     row(

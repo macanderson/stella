@@ -146,6 +146,27 @@ impl IssueProvider for GhIssueProvider {
         Ok(rows.into_iter().map(GhIssue::into_issue).collect())
     }
 
+    /// `gh issue view` — one issue, asked for by number.
+    ///
+    /// Overrides the trait's search-and-filter default because GitHub can
+    /// answer the identity question directly: `gh issue view 5044` is one
+    /// round trip that either finds that issue or fails, where the default
+    /// spends a search and then hopes the ranker put it in the page.
+    async fn get(&self, key: &IssueKey) -> Result<Issue, IssueError> {
+        let raw = gh_json(&[
+            "issue",
+            "view",
+            key.as_str(),
+            "--json",
+            "number,title,body,labels,state,createdAt,url",
+        ])?;
+        let row: GhIssue = serde_json::from_str(&raw).map_err(|error| IssueError::Malformed {
+            provider: GITHUB.into(),
+            reason: error.to_string(),
+        })?;
+        Ok(row.into_issue())
+    }
+
     async fn file(&self, draft: &IssueDraft) -> Result<IssueKey, IssueError> {
         let mut args: Vec<String> = vec![
             "issue".into(),

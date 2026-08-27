@@ -14,6 +14,7 @@ use stella_protocol::issue::{Issue, IssueDraft, IssueKey, IssueLabel, IssueProvi
 use stella_tui::{EntityField, EntityHit, Inbound, IssueAction, IssueRow, WorkspaceInput};
 use tokio::sync::mpsc::UnboundedSender;
 
+use super::start_work;
 use crate::config::Config;
 use crate::issue_provider::GhIssueProvider;
 
@@ -37,7 +38,7 @@ const TYPEAHEAD_HITS: usize = 20;
 /// this builds the same fresh current-thread runtime the self-driving commands
 /// use rather than borrowing a handle on the deck's — blocking a deck worker
 /// on a subprocess is what would stall the driver loop.
-fn block_on<F: std::future::Future>(future: F) -> Result<F::Output, String> {
+pub(super) fn block_on<F: std::future::Future>(future: F) -> Result<F::Output, String> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -127,9 +128,6 @@ pub(super) fn issues_act<P: IssueProvider + ?Sized>(
             "unsupported status `{status}` — GitHub issues are open or closed \
              (`x` closes and re-opens)"
         )),
-        IssueAction::StartWork => {
-            Err("start work is the self-driving loop's claim, not a tracker status".to_string())
-        }
     }
 }
 
@@ -197,10 +195,10 @@ fn issue_row(issue: &Issue) -> IssueRow {
         // issue by when it was filed (#5196).
         updated_at: None,
         // A tracker knows nothing about a session's claim, so a tracker read
-        // never fills this. Its producer is the self-driving loop's dispatch
-        // ledger, which [`issues_act`] refuses to stand in for —
-        // `IssueAction::StartWork` is that refusal — and which has no read
-        // path to the deck yet (#5197).
+        // never fills this. Its producer is the workspace's dispatch ledger —
+        // which [`super::start_work::approve`] now writes to as well as the
+        // self-driving loop, and which still has no read path back to the
+        // deck's browse list (#5197).
         linked: None,
     }
 }
@@ -265,6 +263,36 @@ pub(super) fn handle_issues_input(
             tokio::task::spawn_blocking(move || {
                 let outcome = issues_act(&GhIssueProvider, &key, &action);
                 let _ = in_tx.send(Inbound::IssueActDone { seq, key, outcome });
+            });
+            true
+        }
+        WorkspaceInput::IssueDraftPlan { key, seq } => {
+            let (in_tx, seq) = (in_tx.clone(), *seq);
+            let (key, root, model) = (
+                key.clone(),
+                cfg.workspace_root.clone(),
+                cfg.model_id.clone(),
+            );
+            // Spawned blocking like every sibling: `gh` is a subprocess, the
+            // code graph and the store are synchronous SQLite, and the rules
+            // are a directory walk.
+            tokio::task::spawn_blocking(move || {
+                let outcome =
+                    start_work::draft_plan(&GhIssueProvider, &root, &model, &key).map(Box::new);
+                let _ = in_tx.send(Inbound::IssueDraft { seq, outcome });
+            });
+            true
+        }
+        WorkspaceInput::IssueStartWork { key, tasks, seq } => {
+            let (in_tx, seq) = (in_tx.clone(), *seq);
+            let (key, tasks, root) = (key.clone(), tasks.clone(), cfg.workspace_root.clone());
+            tokio::task::spawn_blocking(move || {
+                let outcome = start_work::approve(&root, &key, &tasks);
+                let _ = in_tx.send(Inbound::IssueActDone {
+                    seq,
+                    key: key.clone(),
+                    outcome,
+                });
             });
             true
         }
@@ -767,6 +795,36 @@ mod tests {
             assert_eq!(*limit, ISSUES_PAGE);
             assert_eq!(*offset, want_offset, "page {page}");
         }
+    }
+
+    /// [`IssueProvider::get`]'s default keeps an **exact** key and nothing
+    /// else. `FakeTracker` implements no `get`, so this drives the default —
+    /// and its `search` ignores the query and hands back every row, which is
+    /// exactly the tracker this default has to be safe against: a relevance
+    /// ranker must never be able to answer an identity question with a
+    /// neighbour.
+    #[test]
+    fn the_default_issue_read_keeps_an_exact_key_and_refuses_a_near_miss() {
+        let tracker = FakeTracker {
+            rows: vec![
+                an_issue(87, IssueState::Open),
+                an_issue(874, IssueState::Open),
+                an_issue(8740, IssueState::Open),
+            ],
+            ..FakeTracker::default()
+        };
+        let found = block_on(tracker.get(&IssueKey::from("874")))
+            .expect("runtime")
+            .expect("the exact key");
+        assert_eq!(found.key, IssueKey::from("874"));
+
+        let missed = block_on(tracker.get(&IssueKey::from("9999")))
+            .expect("runtime")
+            .expect_err("no such issue");
+        assert!(
+            matches!(missed, IssueError::NotFound { ref key } if key.as_str() == "9999"),
+            "{missed:?}"
+        );
     }
 
     /// A row's key is the display spelling; the tracker gets the bare one.

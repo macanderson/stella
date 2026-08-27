@@ -141,7 +141,7 @@ fn p_with_no_rows_notifies_instead_of_opening_the_popup() {
 }
 
 #[test]
-fn issues_browse_keys_refresh_and_start_work() {
+fn issues_browse_keys_refresh_and_open_the_start_work_draft() {
     let model = WorkspaceModel::new();
     let mut ui = issues_ui();
     ui.issues.rows = vec![a_issue("#7")];
@@ -153,12 +153,21 @@ fn issues_browse_keys_refresh_and_start_work() {
     ));
     let action = handle_deck_key(ch('w'), &model, &mut ui);
     match action {
-        DeckAction::Send(WorkspaceInput::IssueAct { key, action, .. }) => {
+        DeckAction::Send(WorkspaceInput::IssueDraftPlan { key, seq }) => {
             assert_eq!(key, "#7");
-            assert_eq!(action, IssueAction::StartWork);
+            assert_eq!(
+                ui.issues.start_work.wait, seq,
+                "the panel waits on the request it just sent"
+            );
         }
-        other => panic!("expected IssueAct, got {other:?}"),
+        other => panic!("expected IssueDraftPlan, got {other:?}"),
     }
+    assert_eq!(ui.issues.mode, IssuesMode::StartWork);
+    assert_eq!(ui.issues.start_work.issue_key, "#7");
+    assert!(
+        ui.issues.start_work.draft.is_none(),
+        "the overlay opens empty — the draft is the driver's answer"
+    );
 }
 
 #[test]
@@ -849,4 +858,270 @@ fn issues_o_opens_the_selection_in_the_browser() {
     handle_deck_key(ch('o'), &model, &mut ui);
     assert_eq!(ui.composer.buffer(), "zo", "a prompt in progress wins");
     assert!(ui.issues.notice.is_none());
+}
+
+// ── SPEC 8.2: the start-work draft and its approval gate ───────────────
+
+fn a_draft(key: &str) -> crate::start_work::StartWorkDraft {
+    use crate::start_work::{DraftContract, DraftSources, DraftTask, StartWorkDraft};
+    StartWorkDraft {
+        issue_key: key.to_string(),
+        issue_title: "dedup digest persists across CI runs".into(),
+        sources: DraftSources::default(),
+        tasks: vec![
+            DraftTask {
+                subject: "read the seen-set write path".into(),
+                contract: None,
+            },
+            DraftTask {
+                subject: "persist the digest set".into(),
+                contract: Some(DraftContract {
+                    done_means: "the file exists after a run".into(),
+                    mechanism: "graph".into(),
+                    deterministic: true,
+                }),
+            },
+        ],
+        gates: 5,
+        estimate: None,
+    }
+}
+
+/// Open the overlay on `#7` and let the driver's draft land on it.
+fn drafted(model: &mut WorkspaceModel, ui: &mut DeckUi) {
+    ui.issues.rows = vec![a_issue("#7")];
+    ui.issues.loaded = true;
+    handle_deck_key(ch('w'), model, ui);
+    let seq = ui.issues.start_work.wait;
+    ingest_inbound(
+        &Inbound::IssueDraft {
+            seq,
+            outcome: Ok(Box::new(a_draft("#7"))),
+        },
+        model,
+        ui,
+    );
+}
+
+/// SPEC 8.2's acceptance: **nothing runs before `a`**.
+///
+/// The witness is an absence, so it is asserted the way
+/// `no_tool_call_reaches_an_ungranted_server_before_the_grant` asserts one:
+/// drive every key the overlay accepts *except* the approval, and prove the
+/// deck emitted no [`WorkspaceInput::IssueStartWork`] — the only request that
+/// opens a branch, takes the `issue:<n>` claim, or authors a plan revision.
+/// Then press `a` and prove it emits exactly one.
+#[test]
+fn nothing_runs_before_the_approval_key() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    let mut sent: Vec<WorkspaceInput> = Vec::new();
+    let press = |ui: &mut DeckUi, model: &WorkspaceModel, c: char, sent: &mut Vec<_>| {
+        if let DeckAction::Send(input) = handle_deck_key(ch(c), model, ui) {
+            sent.push(input);
+        }
+    };
+
+    ui.issues.rows = vec![a_issue("#7")];
+    ui.issues.loaded = true;
+    press(&mut ui, &model, 'w', &mut sent);
+    let seq = ui.issues.start_work.wait;
+    ingest_inbound(
+        &Inbound::IssueDraft {
+            seq,
+            outcome: Ok(Box::new(a_draft("#7"))),
+        },
+        &mut model,
+        &mut ui,
+    );
+    // Everything the overlay offers short of approving: open the editor, walk
+    // the tasks, take one out, put it back, close the editor.
+    for c in ['e', 'j', 'k', ' ', ' ', 'e'] {
+        press(&mut ui, &model, c, &mut sent);
+    }
+    assert!(
+        !sent
+            .iter()
+            .any(|input| matches!(input, WorkspaceInput::IssueStartWork { .. })),
+        "the draft is a read — no key but `a` may start work: {sent:?}"
+    );
+    assert!(
+        sent.iter().all(|input| matches!(
+            input,
+            WorkspaceInput::IssueDraftPlan { .. } | WorkspaceInput::IssuesRefresh { .. }
+        )),
+        "and the only requests it made were reads: {sent:?}"
+    );
+
+    press(&mut ui, &model, 'a', &mut sent);
+    let approvals: Vec<&WorkspaceInput> = sent
+        .iter()
+        .filter(|input| matches!(input, WorkspaceInput::IssueStartWork { .. }))
+        .collect();
+    match approvals.as_slice() {
+        [WorkspaceInput::IssueStartWork { key, tasks, .. }] => {
+            assert_eq!(key, "#7");
+            assert_eq!(
+                tasks,
+                &vec![
+                    "read the seen-set write path".to_string(),
+                    "persist the digest set".to_string(),
+                ],
+                "the approval carries the plan the human is looking at"
+            );
+        }
+        other => panic!("expected exactly one approval, got {other:?}"),
+    }
+    assert_eq!(
+        ui.issues.mode,
+        IssuesMode::Browse,
+        "the overlay closes on a"
+    );
+}
+
+/// `x` and `esc` both leave without approving, and say so.
+#[test]
+fn cancelling_the_draft_starts_nothing() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    drafted(&mut model, &mut ui);
+    let action = handle_deck_key(ch('x'), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert_eq!(ui.issues.mode, IssuesMode::Browse);
+    assert!(ui.issues.start_work.draft.is_none());
+    assert_eq!(
+        ui.issues.notice.as_deref(),
+        Some("start work cancelled — nothing ran")
+    );
+
+    drafted(&mut model, &mut ui);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(ui.issues.mode, IssuesMode::Browse);
+}
+
+/// The edit is what the approval sends: a task taken out with `e`/Space is
+/// absent from the request, not merely greyed on screen.
+#[test]
+fn a_task_taken_out_never_reaches_the_approval() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    drafted(&mut model, &mut ui);
+    handle_deck_key(ch('e'), &model, &mut ui);
+    handle_deck_key(ch(' '), &model, &mut ui);
+    match handle_deck_key(ch('a'), &model, &mut ui) {
+        DeckAction::Send(WorkspaceInput::IssueStartWork { tasks, .. }) => {
+            assert_eq!(tasks, vec!["persist the digest set".to_string()]);
+        }
+        other => panic!("expected an approval, got {other:?}"),
+    }
+}
+
+/// An approval with nothing left to do opens no branch.
+#[test]
+fn an_emptied_plan_is_refused_rather_than_approved() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    drafted(&mut model, &mut ui);
+    handle_deck_key(ch('e'), &model, &mut ui);
+    handle_deck_key(ch(' '), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    handle_deck_key(ch(' '), &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(ch('a'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(
+        ui.issues.mode,
+        IssuesMode::StartWork,
+        "the overlay stays up"
+    );
+    let error = ui.issues.start_work.error.clone().unwrap_or_default();
+    assert!(error.contains("nothing to approve"), "{error}");
+}
+
+/// `a` before the driver has answered starts nothing either — there is no
+/// plan to approve yet.
+#[test]
+fn approving_before_the_draft_lands_starts_nothing() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7")];
+    ui.issues.loaded = true;
+    handle_deck_key(ch('w'), &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(ch('a'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(ui.issues.mode, IssuesMode::StartWork);
+    assert!(
+        ui.issues
+            .start_work
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("has not arrived"))
+    );
+}
+
+/// A draft that arrives after the human closed the overlay does not re-open
+/// it, and a stale seq never overwrites a newer draft.
+#[test]
+fn a_late_draft_reopens_nothing_and_a_stale_one_is_dropped() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7")];
+    ui.issues.loaded = true;
+    handle_deck_key(ch('w'), &model, &mut ui);
+    let seq = ui.issues.start_work.wait;
+    handle_deck_key(ch('x'), &model, &mut ui);
+    ingest_inbound(
+        &Inbound::IssueDraft {
+            seq,
+            outcome: Ok(Box::new(a_draft("#7"))),
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert_eq!(ui.issues.mode, IssuesMode::Browse);
+    assert!(ui.issues.start_work.draft.is_none());
+
+    drafted(&mut model, &mut ui);
+    ingest_inbound(
+        &Inbound::IssueDraft {
+            seq: ui.issues.start_work.wait - 1,
+            outcome: Err("an older request failed".into()),
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert!(
+        ui.issues.start_work.error.is_none(),
+        "an older lane's failure never lands on a newer draft"
+    );
+}
+
+/// A failed draft is shown in the overlay rather than swallowed.
+#[test]
+fn a_failed_draft_lands_on_the_overlay() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7")];
+    ui.issues.loaded = true;
+    handle_deck_key(ch('w'), &model, &mut ui);
+    let seq = ui.issues.start_work.wait;
+    ingest_inbound(
+        &Inbound::IssueDraft {
+            seq,
+            outcome: Err("no tracker connected".into()),
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert_eq!(
+        ui.issues.start_work.error.as_deref(),
+        Some("no tracker connected")
+    );
+    assert_eq!(ui.issues.mode, IssuesMode::StartWork);
 }

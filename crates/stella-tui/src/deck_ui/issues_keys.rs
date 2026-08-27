@@ -2,9 +2,13 @@
 //!
 //! Non-modal, exactly like the MCP tab's Browse mode — the composer stays
 //! live, so every letter verb gates on `composer_empty` and never shadows the
-//! first character of a prompt. The tab's other modes (the create form, the
-//! comment/status prompts, the tracker search line) are modal and stay in
-//! `deck_ui.rs` beside the state they drive.
+//! first character of a prompt.
+//!
+//! The two modal surfaces that hold a *selection* rather than a text buffer
+//! are here too — the send-to-prompt confirmation and the start-work draft.
+//! The three that hold text (the create form, the comment/status prompts,
+//! the tracker search line) stay in `deck_ui.rs` beside the buffers they
+//! type into.
 //!
 //! **Row keys carry their `#`.** `IssueRow::key` is the *display* spelling —
 //! the driver's `issue_row` puts the `#` on at the boundary and strips it
@@ -15,9 +19,10 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::{DeckAction, DeckUi, IssuesMode, IssuesPanel};
+use super::{DeckAction, DeckTab, DeckUi, IssuesMode, IssuesPanel};
 use crate::deck::WorkspaceModel;
 use crate::envelope::{IssueAction, IssueRow, WorkspaceInput};
+use crate::start_work::StartWorkDraft;
 
 /// The page size the ISSUES tab browses by — kept in step with the driver's
 /// own page read, so a short page is how the tab knows the list is exhausted.
@@ -189,18 +194,161 @@ pub(super) fn handle_issues_browse_key(
                 ui.issues.notice = Some(NO_SELECTION.into());
                 return Some(DeckAction::Handled);
             };
+            // A draft request and nothing else. `w` opens the overlay on an
+            // empty panel and asks the driver to read; the branch, the claim
+            // and the plan's first revision all wait for `a` (SPEC 8.2).
             let issue_key = row.key.clone();
             let seq = ui.issues.bump_seq();
-            ui.issues.act_wait = seq;
-            ui.issues.busy = true;
-            ui.issues.notice = Some(format!("starting work on {issue_key}…"));
-            Some(DeckAction::Send(WorkspaceInput::IssueAct {
+            ui.issues.start_work.open(&issue_key, seq);
+            ui.issues.mode = IssuesMode::StartWork;
+            ui.issues.notice = None;
+            Some(DeckAction::Send(WorkspaceInput::IssueDraftPlan {
                 key: issue_key,
-                action: IssueAction::StartWork,
                 seq,
             }))
         }
         _ => None,
+    }
+}
+
+/// Fold one [`crate::envelope::Inbound::IssueDraft`] into the start-work
+/// overlay.
+///
+/// Dropped unless the overlay is still open on the request that asked for it:
+/// a draft that arrives after the human pressed `x` must not re-open a card
+/// they closed, and an older seq's answer must not overwrite a newer one's —
+/// the same lane guard every other ISSUES-tab reply is under.
+pub(super) fn ingest_draft(
+    ui: &mut DeckUi,
+    seq: u64,
+    outcome: &Result<Box<StartWorkDraft>, String>,
+) {
+    if ui.issues.mode != IssuesMode::StartWork || seq < ui.issues.start_work.wait {
+        return;
+    }
+    match outcome {
+        Ok(draft) => {
+            ui.issues.start_work.draft = Some((**draft).clone());
+            ui.issues.start_work.error = None;
+        }
+        Err(error) => ui.issues.start_work.error = Some(error.clone()),
+    }
+}
+
+/// The start-work overlay's keys (SPEC 8.2's action row): `a` approves and
+/// starts, `e` opens the drafted task list for editing, `x` and `esc` cancel.
+/// While editing, ↑/↓ move the cursor and Space takes a task out of the plan
+/// or puts it back.
+///
+/// # The approval gate
+///
+/// `a` is the **only** key here that emits
+/// [`WorkspaceInput::IssueStartWork`], and that request is the only thing
+/// that opens a branch, takes the workspace's `issue:<n>` claim, or authors
+/// the plan's first revision. Every other key returns [`DeckAction::Handled`]
+/// and changes nothing outside the panel — which is what the overlay's footer
+/// promises when it says `nothing runs before approval`, and what
+/// `nothing_runs_before_the_approval_key` proves.
+///
+/// Modal: an unrecognised key is swallowed rather than falling through to the
+/// composer, so a stray letter cannot type into a prompt behind the overlay.
+pub(super) fn handle_start_work_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    let panel = &mut ui.issues.start_work;
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('x') => {
+            panel.close();
+            ui.issues.mode = IssuesMode::Browse;
+            ui.issues.notice = Some("start work cancelled — nothing ran".into());
+            DeckAction::Handled
+        }
+        KeyCode::Char('e') if panel.draft.is_some() => {
+            panel.editing = !panel.editing;
+            DeckAction::Handled
+        }
+        KeyCode::Up | KeyCode::Char('k') if panel.editing => {
+            panel.move_cursor(-1);
+            DeckAction::Handled
+        }
+        KeyCode::Down | KeyCode::Char('j') if panel.editing => {
+            panel.move_cursor(1);
+            DeckAction::Handled
+        }
+        KeyCode::Char(' ') if panel.editing => {
+            panel.toggle();
+            DeckAction::Handled
+        }
+        KeyCode::Char('a') => approve_start_work(ui),
+        _ => DeckAction::Handled,
+    }
+}
+
+/// `a`: send the kept tasks for approval and hand the tab back to the browse
+/// list, which is where the outcome notice lands.
+///
+/// A draft that has not arrived, and a plan the human has emptied, are both
+/// refused in the overlay rather than sent — an approval with no tasks would
+/// open a branch for a plan with nothing in it.
+fn approve_start_work(ui: &mut DeckUi) -> DeckAction {
+    if ui.issues.start_work.draft.is_none() {
+        ui.issues.start_work.error = Some("the draft has not arrived yet".into());
+        return DeckAction::Handled;
+    }
+    let tasks: Vec<String> = ui
+        .issues
+        .start_work
+        .kept()
+        .iter()
+        .map(|task| task.subject.clone())
+        .collect();
+    if tasks.is_empty() {
+        ui.issues.start_work.error = Some("every task was taken out — nothing to approve".into());
+        return DeckAction::Handled;
+    }
+    let issue_key = ui.issues.start_work.issue_key.clone();
+    let seq = ui.issues.bump_seq();
+    ui.issues.act_wait = seq;
+    ui.issues.busy = true;
+    ui.issues.start_work.close();
+    ui.issues.mode = IssuesMode::Browse;
+    ui.issues.notice = Some(format!("starting work on {issue_key}…"));
+    DeckAction::Send(WorkspaceInput::IssueStartWork {
+        key: issue_key,
+        tasks,
+        seq,
+    })
+}
+
+/// The send-to-prompt confirmation (`p`): ⏎ submits the staged issues as one
+/// prompt and forwards to the Session tab so the human watches it land; Esc
+/// cancels back to the browse list. Every other key is swallowed — the popup
+/// is modal.
+pub(super) fn handle_issue_confirm_send_key(
+    key: KeyEvent,
+    model: &WorkspaceModel,
+    ui: &mut DeckUi,
+) -> DeckAction {
+    match key.code {
+        KeyCode::Esc => {
+            ui.issues.mode = IssuesMode::Browse;
+            DeckAction::Handled
+        }
+        KeyCode::Enter => {
+            let rows: Vec<IssueRow> = ui.issues.picked_rows().into_iter().cloned().collect();
+            ui.issues.mode = IssuesMode::Browse;
+            if rows.is_empty() {
+                // The list refreshed out from under the popup — nothing to
+                // send, and nothing to confirm either.
+                ui.issues.notice = Some("the selection is gone — the list changed".into());
+                return DeckAction::Handled;
+            }
+            let text = issues_prompt_text(&rows);
+            ui.issues.picked.clear();
+            // Forward to the transcript BEFORE submitting so the human lands
+            // where the prompt is about to appear.
+            ui.set_tab(DeckTab::Session);
+            super::submit_prompt(ui, model, text)
+        }
+        _ => DeckAction::Handled,
     }
 }
 

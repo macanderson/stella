@@ -284,6 +284,14 @@ pub struct IssueDraft {
     pub assignee: Option<String>,
 }
 
+/// How many rows [`IssueProvider::get`]'s default search asks for before it
+/// gives up on finding an exact key.
+///
+/// A tracker asked for its own issue number puts it at or near the top, so
+/// this is a bound on a pathological ranker rather than a page size — the
+/// default keeps one row and discards the rest either way.
+const SEARCH_PAGE: usize = 20;
+
 /// The port every tracker is reached through — AGENTS.md #1 for the backlog
 /// plane.
 ///
@@ -435,6 +443,28 @@ pub trait IssueProvider: Send + Sync {
         _offset: usize,
     ) -> Result<Vec<Issue>, IssueError> {
         self.list_open(limit).await
+    }
+
+    /// One issue in full, by key — title, body, labels and state.
+    ///
+    /// [`IssueProvider::search`] can return the same rows, and does not
+    /// replace this: a search takes the tracker's own query syntax and answers
+    /// with whatever it matched, so a caller that needs *this* issue would be
+    /// trusting a relevance ranker with an identity question. The start-work
+    /// draft (`design/tui-v2/SPEC.md` §8.2) is built from one issue's body and
+    /// must be built from the right one.
+    ///
+    /// Default searches for the key and keeps only an **exact** match,
+    /// answering [`IssueError::NotFound`] when there is none. That degrades
+    /// visibly rather than fabricating, the way this trait's other read
+    /// defaults do — a tracker whose search cannot find its own key reports a
+    /// miss, never a neighbouring issue.
+    async fn get(&self, key: &IssueKey) -> Result<Issue, IssueError> {
+        self.search(key.as_str(), None, SEARCH_PAGE, 0)
+            .await?
+            .into_iter()
+            .find(|issue| issue.key == *key)
+            .ok_or_else(|| IssueError::NotFound { key: key.clone() })
     }
 
     /// The labels this tracker already knows, for a picker.

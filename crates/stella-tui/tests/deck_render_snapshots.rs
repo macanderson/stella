@@ -93,6 +93,10 @@ mod task_zoom;
 #[path = "deck_render_snapshots/gate_board.rs"]
 mod gate_board;
 
+/// See [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/start_work.rs"]
+mod start_work;
+
 /// The MCP tab's golden fixture. See [`graph`]'s doc for why this is
 /// `#[path]` rather than a plain `mod`.
 #[path = "deck_render_snapshots/mcp.rs"]
