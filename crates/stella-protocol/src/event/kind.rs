@@ -964,6 +964,88 @@ pub enum AgentEvent {
         )]
         task_id: Option<crate::TaskId>,
     },
+    /// One memory landed in the context store — SPEC 6.3's `memory` (log)
+    /// event, one per memory.
+    ///
+    /// [`AgentEvent::ContextWrite`] is the same write counted rather than
+    /// named: `3 facts · 1 superseded → provider` says a number where this
+    /// says which lessons, on which rung, at what confidence, and what it
+    /// would take to promote them. A reader who disagrees with a memory can
+    /// only act on the one that names it.
+    MemoryLogged {
+        /// The memory's stable public id — the `nod_…` handle
+        /// `stella memory forget` and the transcript's `x reject` both take.
+        memory_id: String,
+        /// The lesson as stored, quoted verbatim on the row beneath the head.
+        text: String,
+        /// Which rung of [`MemoryClass::LADDER`] it entered on.
+        class: MemoryClass,
+        /// Confidence in the lesson, `0..=100` — the same scale the context
+        /// lifecycle's own `Confidence` newtype carries, so the number does
+        /// not change units on its way to a screen. Rendered `conf 0.62`.
+        confidence: u8,
+        /// The store's own word for what sort of memory this is
+        /// (`reflection`, `note`, `insight`). Open, because that vocabulary
+        /// belongs to the store and gains entries without this event's leave.
+        kind: String,
+        /// Whether this memory's weight decays with age. A durable fact about
+        /// the codebase does not; a note about how one turn went does.
+        decays: bool,
+        /// The confidence at which it promotes to [`MemoryClass::next`], on
+        /// the same `0..=100` scale — the workspace's own
+        /// `auto_activate_at_confidence`, carried rather than assumed,
+        /// because it is configurable per workspace.
+        promotes_at: u8,
+        /// Which board task this memory is evidence for.
+        ///
+        /// See [`crate::TaskId`] for the stamping contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which board task this memory is evidence for. Absent means no task was running when it was recorded, or the stream predates the field."
+            )
+        )]
+        task_id: Option<crate::TaskId>,
+    },
+    /// A memory moved up the ladder — SPEC 6.3's `memory` (promote) event.
+    ///
+    /// The rung matters because it is authority: an observation is recalled,
+    /// a rule is *injected into the prompt as an instruction*. So a promotion
+    /// is the moment something the loop inferred starts steering every later
+    /// turn, and `now prompt-injected` on the row is that fact stated where a
+    /// person can see it happen.
+    MemoryPromoted {
+        /// The lesson's lineage — the identity its proposal, its promotion
+        /// event and its published record all share, and therefore the one
+        /// thing that is stable across the promotion itself.
+        ///
+        /// Not a memory's `nod_…` id: a promotion is mined from
+        /// several observations across several tasks, so no single stored
+        /// memory is *the* thing promoted, and naming one would pick a
+        /// winner the evidence does not.
+        lineage_id: String,
+        /// The rung it left.
+        from: MemoryClass,
+        /// The rung it reached.
+        to: MemoryClass,
+        /// The confidence that carried it, `0..=100` (rendered `conf 0.87`).
+        confidence: u8,
+        /// The immutable governance record this promotion is auditable
+        /// through — the `promotion_event` record's own id.
+        audit_event_id: String,
+        /// Which board task this promotion is evidence for.
+        ///
+        /// See [`crate::TaskId`] for the stamping contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which board task this promotion is evidence for. Absent means no task was running when it landed, or the stream predates the field."
+            )
+        )]
+        task_id: Option<crate::TaskId>,
+    },
     /// A workspace skill entered this turn's context — one event per skill
     /// the steering section actually carried.
     ///

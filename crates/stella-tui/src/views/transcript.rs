@@ -33,6 +33,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use stella_protocol::MemoryClass;
 use stella_tui_theme::{glyph, token};
 
 use crate::model::ReadSize;
@@ -161,8 +162,23 @@ pub enum EventKind {
     Run { touched: Option<Touched> },
     /// `✦ skill <name> · auto|/cmd · n tok`.
     Skill { trigger: String, tokens: u32 },
-    /// `◆ memory logged · mem_id`.
-    Memory,
+    /// `◆ memory logged`, with the memory's own id in the metric group and
+    /// the [`memory_log_body`] ladder beneath it.
+    MemoryLog { memory_id: String },
+    /// `◆ memory promoted OBSERVATION → RULE · conf 0.87 · audit event <id> ·
+    /// now prompt-injected` — **one row**, which SPEC 6.3 states as a note on
+    /// the event rather than as a shape a renderer can choose.
+    ///
+    /// So everything it says rides the head: a body row would put the audit
+    /// handle on a second line, and a promotion is the quietest event that
+    /// changes what steers every later turn. It earns a line, not a block.
+    MemoryPromote {
+        from: MemoryClass,
+        to: MemoryClass,
+        /// `0..=100`, rendered `conf 0.87`.
+        confidence: u8,
+        audit_event_id: String,
+    },
     /// `◇ gate <name> · state` — always priced, `$0.00` when deterministic.
     Gate { state: String, deterministic: bool },
     /// `◐ model <activity> · tok/s`.
@@ -217,7 +233,9 @@ impl EventKind {
             | EventKind::Run { .. }
             | EventKind::Gate { .. } => token::GOLD,
             EventKind::Delete { .. } => token::RED,
-            EventKind::Skill { .. } | EventKind::Memory => token::SILVER,
+            EventKind::Skill { .. }
+            | EventKind::MemoryLog { .. }
+            | EventKind::MemoryPromote { .. } => token::SILVER,
             EventKind::Model { .. } => token::GOLD_BRIGHT,
             // An unrecognised tool — an MCP server's, a workspace custom one —
             // is still *stella acting*, which SPEC 2 says is gold. Dim is the
@@ -244,7 +262,7 @@ impl EventKind {
             EventKind::Write { .. } => glyph::WRITE,
             EventKind::Delete { .. } => glyph::FAILED,
             EventKind::Skill { .. } => glyph::SKILL,
-            EventKind::Memory => glyph::MEMORY,
+            EventKind::MemoryLog { .. } | EventKind::MemoryPromote { .. } => glyph::MEMORY,
             EventKind::Gate { .. } => glyph::GATE,
             EventKind::Model { .. } => glyph::RUNNING,
             EventKind::Compaction { .. } => glyph::COMPACTED,
@@ -270,7 +288,7 @@ impl EventKind {
             EventKind::Delete { .. } => "delete",
             EventKind::Run { .. } => "run",
             EventKind::Skill { .. } => "skill",
-            EventKind::Memory => "memory",
+            EventKind::MemoryLog { .. } | EventKind::MemoryPromote { .. } => "memory",
             EventKind::Gate { .. } => "gate",
             EventKind::Model { .. } => "model",
             EventKind::Compaction { .. } => "compacted",
@@ -745,12 +763,161 @@ fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
             None => Vec::new(),
         },
         EventKind::Run { touched } | EventKind::Other { touched, .. } => touched_detail(*touched),
+        // The whole promotion on one row (SPEC 6.3): where it moved, on what
+        // confidence, and the record that makes the move auditable.
+        //
+        // The confidence is the one green cell. It is the number that decided
+        // the promotion, and green is what this scheme spends on a threshold
+        // that was met — the same reading `receipt`'s test count takes, and
+        // the reason it is not spent on the rungs beside it.
+        EventKind::MemoryPromote {
+            from,
+            to,
+            confidence,
+            audit_event_id,
+        } => vec![
+            Span::styled(
+                format!(" {} → {}", class_label(*from), class_label(*to)),
+                Style::new().fg(token::MUTED),
+            ),
+            Span::styled(
+                format!(" · conf {}", fmt_confidence(*confidence)),
+                Style::new().fg(token::GREEN),
+            ),
+            // `now prompt-injected` is the consequence of the move: an
+            // observation is recalled, a rule is injected as an instruction,
+            // so this is the row where something the loop inferred starts
+            // steering every later turn.
+            Span::styled(
+                format!(" · audit event {audit_event_id} · now prompt-injected"),
+                dim,
+            ),
+        ],
         // Named rather than swept up by a wildcard, so adding an `EventKind`
         // is an `E0004` here the way it already is in `head_glyph` (#4320).
         // A kind that earns no detail column says so; it does not fall
-        // through. Both of these carry their measurement in the head's own
-        // subject, leaving nothing for a tail to add.
-        EventKind::Memory | EventKind::Compaction { .. } => Vec::new(),
+        // through. All three carry what they have to say elsewhere: the
+        // memory log in its body and its own id in the metric group, the
+        // other two in the head's subject.
+        EventKind::MemoryLog { .. } | EventKind::Compaction { .. } => Vec::new(),
+    }
+}
+
+/// A rung as the ladder spells it — `OBSERVATION`.
+///
+/// Upper-cased from the wire spelling rather than tabulated a second time: a
+/// second table is a second thing to keep in step with [`MemoryClass::LADDER`],
+/// and it would say the same words louder.
+fn class_label(class: MemoryClass) -> String {
+    class.as_str().to_ascii_uppercase()
+}
+
+/// `0.62` — a `0..=100` confidence as the two-decimal fraction every SPEC 6.3
+/// memory row states.
+fn fmt_confidence(confidence: u8) -> String {
+    format!("{:.2}", f64::from(confidence) / 100.0)
+}
+
+/// The ladder's own separator. The character is [`glyph::COLLAPSED`]'s, and
+/// this is not that constant: there it means *this row is folded* and a reader
+/// can press it open, here it means *the next rung up*. One glyph, two
+/// vocabularies — renaming the fold marker must not silently reword the
+/// ladder.
+const LADDER_STEP: &str = " ▸ ";
+
+/// `OBSERVATION ▸ RULE ▸ FACT`, with `current` lit and the rest receding.
+///
+/// Every rung renders, always. A row that named only the class it is on would
+/// say where the memory is and not where it can go — and *where it can go* is
+/// the whole reason the footer beneath states a threshold.
+fn ladder_spans(current: MemoryClass) -> Vec<Span<'static>> {
+    let dim = Style::new().fg(token::DIM);
+    let mut spans = Vec::new();
+    for rung in MemoryClass::LADDER {
+        if !spans.is_empty() {
+            spans.push(Span::styled(LADDER_STEP, dim));
+        }
+        spans.push(Span::styled(
+            class_label(rung),
+            if rung == current {
+                Style::new().fg(token::TEXT)
+            } else {
+                dim
+            },
+        ));
+    }
+    spans
+}
+
+/// The two rows under a logged memory's head (SPEC 6.3): the lesson quoted
+/// verbatim, then the ladder with its metrics.
+///
+/// The text is quoted rather than merely indented because it is the only
+/// content on this screen written by a *model* about the user's own work, and
+/// the quotes are what say so — the rest of a transcript row is the deck's own
+/// words about what happened.
+///
+/// `kind` is the producer's own word for the sort of memory this is and is
+/// rendered as given: that vocabulary belongs to whatever wrote the memory and
+/// gains entries without this renderer's leave, so translating it here is how
+/// the two come to disagree.
+#[must_use]
+pub fn memory_log_body(
+    text: &str,
+    class: MemoryClass,
+    confidence: u8,
+    kind: &str,
+    decays: bool,
+) -> Vec<Line<'static>> {
+    let muted = Style::new().fg(token::MUTED);
+    // The rail is two cells with no trailing space of its own, so every body
+    // row owns the gap between it and its own first glyph — the quoted line
+    // below does the same.
+    let mut ladder = vec![Span::raw(" ")];
+    ladder.extend(ladder_spans(class));
+    // Every rung renders on every row, so the ladder is one fixed width and a
+    // constant gap is all the alignment the metrics beside it need: a run of
+    // memory rows states its confidences down a straight edge whichever rung
+    // each of them is lit on.
+    ladder.push(Span::styled(" ".repeat(LADDER_METRIC_GAP), muted));
+    let mut metrics = format!(" conf {} · kind {kind}", fmt_confidence(confidence));
+    // Stated only when true. `does not decay` on every durable memory would be
+    // a column that says nothing on the rows that carry it most.
+    if decays {
+        metrics.push_str(" · decays");
+    }
+    ladder.push(Span::styled(metrics, muted));
+    vec![
+        Line::from(vec![Span::styled(
+            format!(" \"{text}\""),
+            Style::new().fg(token::TEXT),
+        )]),
+        Line::from(ladder),
+    ]
+}
+
+/// Cells between the ladder and the metrics beside it.
+const LADDER_METRIC_GAP: usize = 6;
+
+/// The dim trailing line under a logged memory (SPEC 6.3's footer).
+///
+/// `promotes to <rung> at <conf>` elides at the top of the ladder, where there
+/// is no rung above to name — a fact still states its affordances, because a
+/// reader can reject a memory whatever rung it reached.
+///
+/// SPEC 6.3 lists `e edit` here too. It is absent because it is unrouted:
+/// pressing `e` on a memory row does nothing, and an affordance a row promises
+/// and the deck does not answer is worse than one it never offered. #5231 is
+/// where it lands.
+#[must_use]
+pub fn memory_log_footer(class: MemoryClass, promotes_at: u8) -> String {
+    match class.next() {
+        Some(next) => format!(
+            " promotes to {} at {} · x reject",
+            class_label(next),
+            fmt_confidence(promotes_at)
+        ),
+        None => " x reject".to_string(),
     }
 }
 
@@ -795,6 +962,16 @@ fn metrics(event: &Event) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     if event.duration_ms > 0 {
         spans.push(Span::styled(format!("⚡{}ms", event.duration_ms), dim));
+    }
+    // The memory's own id, right-aligned and whole (SPEC 6.3's `· mem_id`).
+    // Whole rather than elided, because it is the handle
+    // `stella memory forget` / `restore` take: a row that shortened it would
+    // make the one identifier on it unusable everywhere except the row itself.
+    if let EventKind::MemoryLog { memory_id } = &event.kind {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" · ", dim));
+        }
+        spans.push(Span::styled(memory_id.clone(), dim));
     }
     if matches!(event.kind, EventKind::Read { .. }) && event.is_collapsed() {
         if !spans.is_empty() {

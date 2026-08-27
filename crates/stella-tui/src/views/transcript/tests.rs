@@ -153,7 +153,21 @@ fn every_event_row_shows_its_rail_in_the_correct_metal() {
             },
             token::SILVER,
         ),
-        (EventKind::Memory, token::SILVER),
+        (
+            EventKind::MemoryLog {
+                memory_id: "nod_1".into(),
+            },
+            token::SILVER,
+        ),
+        (
+            EventKind::MemoryPromote {
+                from: MemoryClass::Observation,
+                to: MemoryClass::Rule,
+                confidence: 87,
+                audit_event_id: "prm_1".into(),
+            },
+            token::SILVER,
+        ),
         (
             EventKind::Model {
                 tokens_per_sec: Some(1),
@@ -389,7 +403,15 @@ fn every_head_glyph_is_in_the_vocabulary() {
             trigger: "auto".into(),
             tokens: 1,
         },
-        EventKind::Memory,
+        EventKind::MemoryLog {
+            memory_id: "nod_83b3f1d29a".into(),
+        },
+        EventKind::MemoryPromote {
+            from: MemoryClass::Observation,
+            to: MemoryClass::Rule,
+            confidence: 87,
+            audit_event_id: "prm_1".into(),
+        },
         EventKind::Gate {
             state: "pass".into(),
             deterministic: true,

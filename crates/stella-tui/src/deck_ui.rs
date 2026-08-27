@@ -1670,6 +1670,7 @@ pub(crate) mod graph;
 /// `↑`/`↓`/`j`/`k`/`⇞`/`⇟`/`Home`/`End` — one vocabulary for every list and body.
 pub mod list_nav;
 mod local;
+mod memory;
 mod overlays;
 mod parked;
 /// The session-override pickers' key routing (`/model`, `/agent`).
@@ -3472,8 +3473,9 @@ fn handle_session_key(
         }
         // A bare letter the highlighted row lends the keyboard: `u` on a delete
         // (`· git-backed · u undo`), `l` / `r` on a failed gate board (SPEC
-        // 8.1). `row_keys` owns both halves of the decision — see it for why
-        // this is one arm rather than three.
+        // 8.1), `x` on a logged memory (SPEC 6.3's `· x reject`). `row_keys`
+        // owns both halves of the decision — see it for why this is one arm
+        // rather than four.
         KeyCode::Char(c) if row_keys::is_bare_row_key(c, key, ui) => row_keys::act(c, model, ui),
         // The expand-ALL overlay's Esc way out (precedence rule 8): claimed
         // here, ahead of the turn-stop Esc, so closing the overlay can never

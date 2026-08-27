@@ -19,8 +19,8 @@
 //! determinism extends through the renderer precisely because these are inert).
 
 use stella_protocol::{
-    BudgetMode, CiStatus, GateBoard, MediaJobState, MediaKind, PrStatus, StageName, SubAgentStatus,
-    Withholder,
+    BudgetMode, CiStatus, GateBoard, MediaJobState, MediaKind, MemoryClass, PrStatus, StageName,
+    SubAgentStatus, Withholder,
 };
 
 use super::recall::{RecallBudget, RecalledFrameRow};
@@ -323,6 +323,38 @@ pub enum TranscriptEntry {
         provider: String,
         upserts: u32,
         superseded: u32,
+    },
+    /// One memory landed — SPEC 6.3's `memory` (log) event.
+    ///
+    /// Every field is settled, none optional: the event is emitted after the
+    /// memory has landed, so there is no in-flight state for it the way there
+    /// is for a tool call between its dispatch and its result.
+    MemoryLog {
+        /// The `nod_…` handle `x reject` names and `stella memory forget`
+        /// takes.
+        memory_id: String,
+        text: String,
+        class: MemoryClass,
+        /// `0..=100`, rendered `conf 0.62`.
+        confidence: u8,
+        /// The store's own word — `reflection`, `note`, `insight`. Open, so it
+        /// is carried as text rather than mapped onto an enum this crate would
+        /// then have to keep in step with the store's.
+        kind: String,
+        decays: bool,
+        /// `0..=100`, the confidence at which it reaches the next rung.
+        promotes_at: u8,
+    },
+    /// A memory moved up the ladder — SPEC 6.3's `memory` (promote) event.
+    MemoryPromote {
+        /// The lesson's lineage, shared by its proposal and its published
+        /// record — see the wire event for why this is not a memory's own id.
+        lineage_id: String,
+        from: MemoryClass,
+        to: MemoryClass,
+        confidence: u8,
+        /// The governance record the promotion is auditable through.
+        audit_event_id: String,
     },
     /// A media job changed state. The wire enum is retained (not a label)
     /// so the renderer can distinguish failure — labeling is wording, and

@@ -35,6 +35,12 @@ use super::transcript::{
 };
 use crate::model::{FileState, GraphFact, ReadSize, TranscriptEntry};
 
+// SPEC 6.3's two memory rows. Their own module because this file sits past
+// the 1500-line ceiling already, and because a memory is not a call: none of
+// the resolvers below apply to it (AGENTS.md § "God files").
+mod memory;
+pub use memory::{LoggedMemory, memory_log_rows, memory_promote_rows};
+
 /// What is known about one call at the moment its head renders — each field
 /// filled by its own resolver, or its `None`/default while nothing has
 /// answered.

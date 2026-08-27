@@ -16,8 +16,8 @@ use stella_protocol::completion::{
 use stella_protocol::delivery_event::{DeliveryDecline, DeliveryOutcome};
 use stella_protocol::event::{
     BudgetMode, BudgetScope, CiStatus, FileChangeKind, GateBoard, GateRow, GateState,
-    MediaJobState, MediaKind, ModelCallRole, PolicyKind, PrStatus, ProofStep, ProofTree,
-    ScopeProposal, StageKind, SteerCause, TaskItem, TaskStatus, UsageIncompleteReason,
+    MediaJobState, MediaKind, MemoryClass, ModelCallRole, PolicyKind, PrStatus, ProofStep,
+    ProofTree, ScopeProposal, StageKind, SteerCause, TaskItem, TaskStatus, UsageIncompleteReason,
 };
 use stella_protocol::ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation};
 use stella_protocol::receipt::{
@@ -160,6 +160,10 @@ pub(crate) fn all_ladder_rungs() -> Vec<LadderRung> {
 pub(crate) fn all_flip_outcomes() -> Vec<FlipOutcome> {
     use FlipOutcome::*;
     vec![Unobserved, NotAchieved, Achieved]
+}
+
+pub(crate) fn all_memory_classes() -> Vec<MemoryClass> {
+    MemoryClass::LADDER.to_vec()
 }
 
 /// Every answer a gate board's row can carry (SPEC 8.1), each with the fields
@@ -496,6 +500,24 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             provider: "workspace-memory".into(),
             upserts: 2,
             superseded: 1,
+            task_id: Some(TaskId::new("3")),
+        },
+        AgentEvent::MemoryLogged {
+            memory_id: "nod_83b3f1d29a".into(),
+            text: "dedup keys must be stable across runs; hash finding text only".into(),
+            class: MemoryClass::Observation,
+            confidence: 62,
+            kind: "reflection".into(),
+            decays: true,
+            promotes_at: 85,
+            task_id: Some(TaskId::new("3")),
+        },
+        AgentEvent::MemoryPromoted {
+            lineage_id: "prp_directive_dedup-keys-a1b2c3d4".into(),
+            from: MemoryClass::Observation,
+            to: MemoryClass::Rule,
+            confidence: 87,
+            audit_event_id: "prm_directive_dedup_keys_a1b2c3d4e5f6".into(),
             task_id: Some(TaskId::new("3")),
         },
         AgentEvent::SkillInjected {
@@ -877,6 +899,24 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 kind,
                 subject: "run_command".into(),
                 outcome: "deny".into(),
+            }),
+    );
+    // Every rung, including the top one no promotion targets in the sample
+    // above — a memory can be *logged* as a fact, and an arm nothing
+    // serializes is an arm nothing proves validates.
+    events.extend(
+        all_memory_classes()
+            .into_iter()
+            .map(|class| AgentEvent::MemoryLogged {
+                memory_id: "nod_1f2e3d4c5b6a".into(),
+                text: "the deck's forwarder holds Stage(Execute) until the first non-recall event"
+                    .into(),
+                class,
+                confidence: 70,
+                kind: "insight".into(),
+                decays: false,
+                promotes_at: 85,
+                task_id: None,
             }),
     );
     events.extend(

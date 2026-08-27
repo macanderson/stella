@@ -3,13 +3,14 @@
 
 //! The bare letters a highlighted transcript row lends the keyboard.
 //!
-//! Three of them today: `u` on a delete event (SPEC 6.3's `· git-backed ·
-//! u undo`, SPEC 11), and `l` / `r` on a gate board carrying a failure (SPEC
-//! 8.1's `^N jump · l full log · r rerun gate`). One module rather than three
-//! arms in `deck_ui.rs`, which is a god file closed to growth — and one
-//! *shape*, because all three answer the same two questions: does this
-//! keystroke belong to the keyboard or to the composer, and does the highlight
-//! actually offer this verb?
+//! Four of them today: `u` on a delete event (SPEC 6.3's `· git-backed ·
+//! u undo`, SPEC 11), `l` / `r` on a gate board carrying a failure (SPEC
+//! 8.1's `^N jump · l full log · r rerun gate`), and `x` on a logged memory
+//! (SPEC 6.3's `· x reject`). One module rather than four arms in
+//! `deck_ui.rs`, which is a god file closed to growth — and one *shape*,
+//! because all four answer the same two questions: does this keystroke belong
+//! to the keyboard or to the composer, and does the highlight actually offer
+//! this verb?
 //!
 //! # The rule every letter here follows
 //!
@@ -36,7 +37,7 @@ use crate::model::TranscriptEntry;
 /// them keeps this half cheap enough to run on every letter typed into the
 /// composer.
 pub(super) fn is_bare_row_key(c: char, key: KeyEvent, ui: &DeckUi) -> bool {
-    matches!(c, 'u' | 'l' | 'r')
+    matches!(c, 'u' | 'l' | 'r' | 'x')
         && !key.modifiers.intersects(
             KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META | KeyModifiers::ALT,
         )
@@ -66,6 +67,18 @@ pub(super) fn act(c: char, model: &WorkspaceModel, ui: &mut DeckUi) -> Option<De
         'r' => {
             let gate = selected_failed_board(model, ui)?.1;
             Some(DeckAction::Send(WorkspaceInput::RerunGate { gate }))
+        }
+        // The text travels with the id because the rejection is a tombstone
+        // and an id alone would not hold it: the reflection loop re-mines
+        // paraphrases, so the same lesson returns tomorrow under a fresh
+        // `nod_…`. `stella-store`'s `forget` compares candidates against the
+        // content it copied in, which is what catches the restatement.
+        'x' => {
+            let (memory_id, text) = super::memory::selected_memory(model, ui)?;
+            Some(DeckAction::Send(WorkspaceInput::RejectMemory {
+                memory_id,
+                text,
+            }))
         }
         _ => None,
     }

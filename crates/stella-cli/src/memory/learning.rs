@@ -10,11 +10,12 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use stella_context::{ContextDelta, MemoryInput};
+use stella_core::context_record::{ProposalScore, confidence_from_score};
 use stella_core::skills::appraisal::EvalEvidence;
 use stella_core::skills::{
     self, AutoCreateConfig, AutoCreateDecision, SkillMineConfig, SkillObservation,
 };
-use stella_protocol::Provider;
+use stella_protocol::{AgentEvent, MemoryClass, Provider};
 
 use super::{
     LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, TurnEvidence, reflect_on_turn,
@@ -39,6 +40,62 @@ mod guarantees;
 /// that happens to call it.
 #[cfg(test)]
 mod dedupe;
+
+/// One SPEC 6.3 `memory` (log) event per lesson the store just wrote.
+///
+/// Paired positionally with [`stella_context::UpsertReceipt::memory_node_ids`],
+/// which is the order the delta was built in — and zipped, so a receipt that
+/// reported fewer ids than lessons yields fewer events rather than a row
+/// wearing its neighbour's identity. That id is the handle `x reject` and
+/// `stella memory forget` both take, which is why the event waits for the
+/// write instead of riding alongside it.
+///
+/// ## Where each number comes from
+///
+/// * **class** — [`MemoryClass::Observation`], always. A lesson this turn just
+///   learned has been seen once; the rungs above it are earned by recurrence
+///   across distinct tasks ([`SessionMemory::induce_rules`]) and by evidence
+///   stronger than recurrence, neither of which one turn can supply.
+/// * **confidence** — [`confidence_from_score`] over the evidence the lesson
+///   actually has: one occurrence, one distinct task. The same function the
+///   rule miner scores a proposal with, so the number on the row and the
+///   number the promotion gate reads are one derivation rather than two.
+/// * **kind** — the lesson's own [`LessonKind`], which is the axis that varies
+///   here. The store's `memory.kind` is `reflection` for every one of these,
+///   and would be a column that never changes.
+/// * **decays** — a process note is true of the turn that produced it and not
+///   evidently of the next; a domain lesson is still true on a task the agent
+///   has never seen. That is the distinction [`LessonKind`] draws, and the one
+///   [`LessonKind::recall_tier`] already spends the recall budget on.
+fn memory_logged_events(
+    novel: &[ReflectionLesson],
+    memory_node_ids: &[String],
+    promotes_at: u8,
+) -> Vec<AgentEvent> {
+    novel
+        .iter()
+        .zip(memory_node_ids)
+        .map(|(lesson, memory_id)| AgentEvent::MemoryLogged {
+            memory_id: memory_id.clone(),
+            text: lesson.lesson.clone(),
+            class: MemoryClass::Observation,
+            confidence: confidence_from_score(&ProposalScore {
+                occurrences: 1,
+                distinct_tasks: 1,
+                salient: false,
+                rank: 0.0,
+            })
+            .map_or(0, |confidence| confidence.get()),
+            kind: match lesson.kind {
+                LessonKind::Domain => "domain".to_string(),
+                LessonKind::Process => "process".to_string(),
+            },
+            decays: lesson.kind == LessonKind::Process,
+            promotes_at,
+            task_id: None,
+        })
+        .collect()
+}
 
 impl SessionMemory {
     /// Post-turn self-reflection: one cheap model call producing 0-3
@@ -94,7 +151,7 @@ impl SessionMemory {
                 };
             }
         };
-        let (parsed, self_review, reflection_cost_usd, reflection_events) = reflected;
+        let (parsed, self_review, reflection_cost_usd, mut reflection_events) = reflected;
 
         // One best-effort handle to `.stella/private/store.db` for this whole
         // persistence pass: the self-review write, the tombstone read and the
@@ -210,6 +267,14 @@ impl SessionMemory {
         // guessed (see `anchors::resolve_anchors`). A lesson that names no file
         // simply gets no anchors, which is the common case for process notes
         // and is exactly right — they are not about a file.
+        // The workspace's own promotion bar, read once for every memory this
+        // turn logs: it is what a row's `promotes to RULE at 0.85` footer
+        // names, and it is configurable per workspace
+        // (`context.promotion.inferred_directive.auto_activate_at_confidence`),
+        // so a row that printed a constant would be wrong wherever it was
+        // tuned.
+        let promotes_at = super::tuning::inferred_directive_promotion(&self.workspace_root)
+            .auto_activate_at_confidence;
         let stored = if novel.is_empty() {
             // Nothing needed storing, so nothing failed to store: a
             // restatement-only turn feeds the miners below and claims no
@@ -248,7 +313,17 @@ impl SessionMemory {
                     .collect(),
                 ..Default::default()
             };
-            self.store.upsert(delta).await.is_ok()
+            match self.store.upsert(delta).await {
+                Ok(receipt) => {
+                    reflection_events.extend(memory_logged_events(
+                        &novel,
+                        &receipt.memory_node_ids,
+                        promotes_at,
+                    ));
+                    true
+                }
+                Err(_) => false,
+            }
         };
 
         // 2. Append to the mining log and mine for auto-creatable skills.
@@ -303,7 +378,7 @@ impl SessionMemory {
             }
         }
         if let Some(log_path) = &log_path {
-            self.auto_create_skills(log_path, quiet);
+            reflection_events.extend(self.auto_create_skills(log_path, quiet));
         }
 
         // A restatement-only turn stays quiet, exactly as it did when the
@@ -458,7 +533,13 @@ impl SessionMemory {
     /// the observations here is what stops a forgotten lesson from returning
     /// as an auto-created skill — the second door that made a plain `DELETE`
     /// insufficient.
-    pub(super) fn auto_create_skills(&mut self, log_path: &Path, quiet: bool) {
+    ///
+    /// Returns the SPEC 6.3 `memory` (promote) events the pass produced — one
+    /// per rule that auto-activated. They ride the return value rather than a
+    /// field on `self` for the reason [`ReflectionReport::events`] exists:
+    /// this crate is a binary with several doors, and the caller is the only
+    /// thing that knows which surface is listening.
+    pub(super) fn auto_create_skills(&mut self, log_path: &Path, quiet: bool) -> Vec<AgentEvent> {
         // Reading and writing the workspace skills directory are one authority.
         // Without `include_workspace_skills` the loader is handed an empty
         // workspace dir, so a skill written there would never be read back —
@@ -499,9 +580,12 @@ impl SessionMemory {
         // obligation is to keep the thing it must stay compatible WITH
         // runnable, so both paths are exercised by the same guarantee suite.
         if self.lifecycle_enabled {
-            self.auto_create_skills_typed(log_path, quiet);
+            self.auto_create_skills_typed(log_path, quiet)
         } else {
+            // The pre-migration path mines skills only: it has no proposal, no
+            // ledger and so no promotion to announce.
             self.auto_create_skills_lexical(log_path, quiet);
+            Vec::new()
         }
     }
 
@@ -704,7 +788,7 @@ impl SessionMemory {
     /// Everything else is identical, deliberately: the same miner, the same
     /// thresholds, the same tombstone sweep, the same cap, the same no-clobber
     /// guard, the same rendering.
-    fn auto_create_skills_typed(&mut self, log_path: &Path, quiet: bool) {
+    fn auto_create_skills_typed(&mut self, log_path: &Path, quiet: bool) -> Vec<AgentEvent> {
         // 0. Attribution (#715 deliverables 1 and 5). What finished turns
         //    actually put in front of the model, and what they said about it,
         //    become immutable ledger records; then context that has provably
@@ -734,7 +818,7 @@ impl SessionMemory {
             .filter(|o| !stella_store::is_suppressed(&o.text, forgotten.iter().map(String::as_str)))
             .collect();
         if observations.is_empty() {
-            return;
+            return Vec::new();
         }
 
         // 3. Induce durable proposals over the unchanged miner.
@@ -778,7 +862,7 @@ impl SessionMemory {
         //    Its miner is the structural twin of the skills one and shares
         //    `stella_core::mining`; running both from one observation pool is
         //    what makes that sharing pay off rather than being decorative.
-        self.induce_rules(&observations, &declined, quiet);
+        self.induce_rules(&observations, &declined, quiet)
     }
 
     /// Mine rule proposals from the same observations, and auto-activate only
@@ -803,7 +887,7 @@ impl SessionMemory {
         observations: &[stella_core::context_record::ObservationRecord],
         declined: &std::collections::HashMap<String, stella_core::context_record::PromotionAction>,
         quiet: bool,
-    ) {
+    ) -> Vec<AgentEvent> {
         let existing = crate::rules::load_workspace_rules_unfiltered(&self.workspace_root);
         let induced = super::rules_mining::induce_rule_proposals(
             &self.store,
@@ -812,6 +896,7 @@ impl SessionMemory {
             &stella_core::rules::MineConfig::default(),
         );
         let promotion = super::tuning::inferred_directive_promotion(&self.workspace_root);
+        let mut promoted = Vec::new();
 
         for rule in induced {
             if declined.get(&rule.proposal.lineage_id)
@@ -843,15 +928,24 @@ impl SessionMemory {
                 &rule.candidate,
                 rule.proposal.provenance,
             ) {
-                Ok(Some(path)) if !quiet => {
-                    println!(
-                        "  {} new advisory rule from recurring observations: {} ({})",
-                        "✦".white().bold(),
-                        rule.candidate.id.bright_magenta(),
-                        path.display()
-                    );
+                Ok(Some(path)) => {
+                    if let Some(event) = self.record_auto_activation(&rule.proposal) {
+                        promoted.push(event);
+                    }
+                    if !quiet {
+                        println!(
+                            "  {} new advisory rule from recurring observations: {} ({})",
+                            "✦".white().bold(),
+                            rule.candidate.id.bright_magenta(),
+                            path.display()
+                        );
+                    }
                 }
-                Ok(_) => {}
+                // The rule file was already there, so nothing was promoted
+                // now and no event is owed: a promotion announced once per
+                // reflection turn for as long as the file exists would be a
+                // row claiming a change that stopped happening turns ago.
+                Ok(None) => {}
                 // A lesson the record surface refuses (an overlong or
                 // multi-line statement) stays a reviewable proposal; saying
                 // nothing here would read as "activated".
@@ -865,6 +959,59 @@ impl SessionMemory {
                 Err(_) => {}
             }
         }
+        promoted
+    }
+
+    /// Record the governance event for one auto-activated rule, and describe
+    /// it as SPEC 6.3's `memory` (promote).
+    ///
+    /// The event is written **before** the transcript row is minted, and the
+    /// row is only minted if the write succeeded, because the row cites the
+    /// record: `audit event <id>` on a screen naming a record no ledger holds
+    /// is worse than a promotion that renders nothing at all.
+    ///
+    /// Writing it at all closes a gap this path had since it shipped. The
+    /// lifecycle's contract is that replaying `promotion_event` records in
+    /// order reproduces the loop's governance state exactly
+    /// ([`PromotionEventRecord`](stella_core::context_record::PromotionEventRecord)),
+    /// and auto-activation wrote a rule file into
+    /// `.stella/rules/` with no event to explain it — so a replay reconstructed
+    /// a workspace missing every rule the loop had activated on its own. The
+    /// review surface's own `keep` has always recorded one
+    /// (`proposals_cmd::decide`).
+    ///
+    /// [`PromotionActor::System`](stella_core::context_record::PromotionActor)
+    /// because no person was asked, which is also
+    /// what makes the enforcement below un-escalatable:
+    /// `PromotionEventRecord::new` refuses a system actor blocking
+    /// enforcement outright, so this call cannot mint a directive that denies
+    /// a tool call even if someone later changes the argument.
+    fn record_auto_activation(
+        &self,
+        proposal: &stella_core::context_record::ProposalRecord,
+    ) -> Option<AgentEvent> {
+        use stella_core::context_record::{
+            DirectiveEnforcement, PromotionAction, PromotionActor, PromotionEventRecord,
+        };
+        let event = PromotionEventRecord::new(
+            &proposal.lineage_id,
+            PromotionAction::AutoActivated,
+            PromotionActor::System,
+            Some(DirectiveEnforcement::Advisory),
+            None,
+            "recurring across distinct tasks at or above the auto-activation confidence",
+            stella_context::format_rfc3339(crate::memory::unix_now_secs()),
+        )
+        .ok()?;
+        crate::proposals_cmd::record_event(&self.store, &event).ok()?;
+        Some(AgentEvent::MemoryPromoted {
+            lineage_id: proposal.lineage_id.clone(),
+            from: MemoryClass::Observation,
+            to: MemoryClass::Rule,
+            confidence: proposal.confidence.get(),
+            audit_event_id: event.record_id,
+            task_id: None,
+        })
     }
 
     /// The lexical path exactly as it shipped — reached whenever

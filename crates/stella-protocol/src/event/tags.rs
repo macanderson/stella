@@ -404,6 +404,26 @@ agent_event_tags! {
     ContextWrite => "context_write",
         ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
+    // One memory, by name, where `context_write` gives a count.
+    // `Behavioral`: the deck resolves
+    // a highlighted memory row back to this event's `memory_id` and `text` to
+    // send `WorkspaceInput::RejectMemory`, which tombstones the memory so the
+    // reflection loop stops re-learning it. Delete the consumer and `x` sends
+    // nothing — a rejection a reader makes stops reaching the learner, which
+    // is what #5032 was filed about.
+    MemoryLogged => "memory_logged",
+        ConsumerPosture::Behavioral {
+            site: "stella-tui/src/deck_ui/memory.rs::selected_memory",
+        },
+        &[];
+    // A memory gained instruction authority. `RecordedOnly`: the transcript
+    // renders one line and the diagnostic bridge records one, and nothing
+    // branches on it — no Observatory query names the tag and no engine
+    // decision reads it. #5230 is where wiring a consumer, or declaring that
+    // recording is the intended end state, is being decided.
+    MemoryPromoted => "memory_promoted",
+        ConsumerPosture::RecordedOnly { issue: "#5230" },
+        &[];
     // A workspace skill entered the turn's context. `RecordedOnly`: the deck
     // folds it to `TranscriptEntry::Skill` and draws SPEC 6.3's `✦ skill`
     // head, which is the only place a user learns which skill fired and what

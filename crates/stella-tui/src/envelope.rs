@@ -1278,6 +1278,16 @@ pub enum WorkspaceInput {
     /// with [`Inbound::Notice`] naming what was restored or why it could not
     /// be — an untracked file has no git reading to restore from.
     UndoDelete { paths: Vec<String> },
+    /// `x` on a highlighted memory row: tombstone that memory so it stops
+    /// steering the agent and the reflection loop stops re-learning it — the
+    /// row's `· x reject` affordance (SPEC 6.3).
+    ///
+    /// `text` rides along because the tombstone is content-addressed as well
+    /// as id-addressed: the loop re-mines paraphrases, so a rejection stored
+    /// against the id alone would be undone by the next turn that re-learned
+    /// the same lesson under a new one. The driver answers with
+    /// [`Inbound::Notice`].
+    RejectMemory { memory_id: String, text: String },
     /// `r` on a highlighted gate board: ask for one gate to be evaluated
     /// again — SPEC 8.1's `r rerun gate`.
     ///

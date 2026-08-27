@@ -188,7 +188,12 @@ impl NodeInput {
         }
     }
 
-    fn public_id(&self) -> String {
+    /// The stable `nod_…` identity this input will be stored under.
+    ///
+    /// Crate-visible so [`crate::UpsertReceipt`] can report the id of a mirror
+    /// node it mints, rather than leaving a caller to reconstruct kind, uri
+    /// spelling and hash for itself.
+    pub(crate) fn public_id(&self) -> String {
         node_public_id(self.kind, self.natural_key())
     }
 }

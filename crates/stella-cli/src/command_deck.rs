@@ -114,8 +114,8 @@ mod theme_cmd;
 mod whistle;
 mod worker_control;
 use driver_support::{
-    handle_supervisor_msg, service_registry_action, service_rerun_gate, service_undo_delete,
-    spawn_mcp_connect, spawn_notification_poller, spawn_pr_monitor,
+    handle_supervisor_msg, service_registry_action, service_reject_memory, service_rerun_gate,
+    service_undo_delete, spawn_mcp_connect, spawn_notification_poller, spawn_pr_monitor,
 };
 use lead_turn::run_lead_turn;
 use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
@@ -1516,6 +1516,7 @@ pub async fn run_deck_session(
                                 &in_tx,
                             )
                             && !service_undo_delete(&other, &workspace_path, &in_tx)
+                            && !service_reject_memory(&other, &workspace_path, &in_tx)
                             && !inspect_service::service_inspect_action(
                                 &other,
                                 &store,
@@ -2204,6 +2205,15 @@ pub async fn run_deck_session(
                         // it is looking at a deletion that just happened.
                         Some(input @ WorkspaceInput::UndoDelete { .. }) => {
                             service_undo_delete(&input, &workspace_path, &in_tx);
+                        }
+                        // `x reject` on a memory row is serviced mid-turn on
+                        // the same reasoning: a tombstone is one local SQLite
+                        // write, and the reader pressing it is looking at a
+                        // lesson the turn just wrote. Waiting would let the
+                        // rejected memory be recalled by the very turn the
+                        // reader is watching.
+                        Some(input @ WorkspaceInput::RejectMemory { .. }) => {
+                            service_reject_memory(&input, &workspace_path, &in_tx);
                         }
                         // `r rerun gate` likewise: it answers in words rather
                         // than running anything (`service_rerun_gate`), so

@@ -904,6 +904,11 @@ export type MediaJobState = {
 export type MediaKind = "image" | "svg" | "video";
 
 /**
+ * Where a memory sits on the promotion ladder: an observation was seen once and steers nothing; a rule has repeated across distinct tasks and is injected into the prompt as an instruction; a fact is established by something stronger than its own recurrence. Repetition alone never reaches the top rung.
+ */
+export type MemoryClass = "observation" | "rule" | "fact";
+
+/**
  * Concrete purpose of one provider call. This is more precise than the
  * router's tier role: repair and guidance calls must remain distinguishable
  * in the paid-call ledger even when they share a provider/model.
@@ -2157,6 +2162,91 @@ export type AgentEvent = {
   upserts: number;
 } | {
   /**
+   * Which rung of [`MemoryClass::LADDER`] it entered on.
+   */
+  class: MemoryClass;
+  /**
+   * Confidence in the lesson, `0..=100` — the same scale the context
+   * lifecycle's own `Confidence` newtype carries, so the number does
+   * not change units on its way to a screen. Rendered `conf 0.62`.
+   */
+  confidence: number;
+  /**
+   * Whether this memory's weight decays with age. A durable fact about
+   * the codebase does not; a note about how one turn went does.
+   */
+  decays: boolean;
+  /**
+   * The store's own word for what sort of memory this is
+   * (`reflection`, `note`, `insight`). Open, because that vocabulary
+   * belongs to the store and gains entries without this event's leave.
+   */
+  kind: string;
+  /**
+   * The memory's stable public id — the `nod_…` handle
+   * `stella memory forget` and the transcript's `x reject` both take.
+   */
+  memory_id: string;
+  /**
+   * The confidence at which it promotes to [`MemoryClass::next`], on
+   * the same `0..=100` scale — the workspace's own
+   * `auto_activate_at_confidence`, carried rather than assumed,
+   * because it is configurable per workspace.
+   */
+  promotes_at: number;
+  /**
+   * Which board task this memory is evidence for. Absent means no task was running when it was recorded, or the stream predates the field.
+   */
+  task_id?: TaskId | null;
+  /**
+   * The lesson as stored, quoted verbatim on the row beneath the head.
+   */
+  text: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
+  type: "memory_logged";
+} | {
+  /**
+   * The immutable governance record this promotion is auditable
+   * through — the `promotion_event` record's own id.
+   */
+  audit_event_id: string;
+  /**
+   * The confidence that carried it, `0..=100` (rendered `conf 0.87`).
+   */
+  confidence: number;
+  /**
+   * The rung it left.
+   */
+  from: MemoryClass;
+  /**
+   * The lesson's lineage — the identity its proposal, its promotion
+   * event and its published record all share, and therefore the one
+   * thing that is stable across the promotion itself.
+   *
+   * Not a memory's `nod_…` id: a promotion is mined from
+   * several observations across several tasks, so no single stored
+   * memory is *the* thing promoted, and naming one would pick a
+   * winner the evidence does not.
+   */
+  lineage_id: string;
+  /**
+   * Which board task this promotion is evidence for. Absent means no task was running when it landed, or the stream predates the field.
+   */
+  task_id?: TaskId | null;
+  /**
+   * The rung it reached.
+   */
+  to: MemoryClass;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
+  type: "memory_promoted";
+} | {
+  /**
    * The skill's slug, as its `SKILL.md` frontmatter names it.
    */
   name: string;
@@ -2491,6 +2581,8 @@ export type KnownTypeTag =
   | "file_change"
   | "context_recall"
   | "context_write"
+  | "memory_logged"
+  | "memory_promoted"
   | "skill_injected"
   | "block_registered"
   | "step_manifest"

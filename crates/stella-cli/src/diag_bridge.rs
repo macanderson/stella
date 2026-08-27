@@ -56,6 +56,8 @@ use stella_protocol::{
     PolicyKind, StageKind, ToolOutput, UsageIncompleteReason,
 };
 
+mod memory;
+
 /// This module's `module_path!()`, so every record it emits filters under the
 /// same target regardless of which helper built it.
 const TARGET: &str = "stella::diag_bridge";
@@ -757,6 +759,21 @@ impl DomainBridge {
                         .with("superseded", *superseded),
                 );
             }
+            // SPEC 6.3's two memory records live in `memory`, which also
+            // carries why neither one states the memory's id or its text.
+            AgentEvent::MemoryLogged {
+                class,
+                confidence,
+                decays,
+                promotes_at,
+                ..
+            } => memory::logged(self, *class, *confidence, *decays, *promotes_at),
+            AgentEvent::MemoryPromoted {
+                from,
+                to,
+                confidence,
+                ..
+            } => memory::promoted(self, *from, *to, *confidence),
             // The cost only. A skill's slug is workspace-authored text, which
             // a diagnostic field cannot hold at all (`stella-diag`'s field
             // types), and the transcript is where a reader learns *which*
