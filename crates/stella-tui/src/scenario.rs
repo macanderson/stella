@@ -12,7 +12,7 @@ use stella_protocol::{
     ScopeProposal, StageKind, ToolCall, ToolOutput, VerdictEvidence,
 };
 
-use crate::envelope::{AgentMeta, AgentStatus, Inbound};
+use crate::envelope::{AgentMeta, AgentStatus, Inbound, LinkedWork};
 use crate::graph::{GraphEdge, GraphNode, GraphSnapshot};
 use crate::plan::{ActualStep, EvidenceKind, EvidenceRow, PlanLanes, StepLedger, StepSpend};
 
@@ -94,6 +94,29 @@ pub fn demo_graph() -> GraphSnapshot {
         // than a made-up one.
         query_ms: None,
         query: None,
+    }
+}
+
+/// A sample claim for the ISSUES tab: the plan, branch and evidence one
+/// session opened for an issue (SPEC 9.4's `linked` line).
+///
+/// The touched file is a file node of [`demo_graph`], so a demo backlog
+/// carrying this link has a coupling the heat sort can actually read
+/// ([`crate::views::issues::heat`]) rather than a path the graph has never
+/// heard of.
+pub fn demo_linked_work() -> LinkedWork {
+    LinkedWork {
+        plan: "r3".into(),
+        tasks_done: 2,
+        tasks_total: 6,
+        live_task: Some(3),
+        branch: "fix/token-race".into(),
+        touched_files: vec![
+            "stella-core/src/driver.rs".into(),
+            "stella-core/src/engine.rs".into(),
+        ],
+        tests_passed: 4,
+        tests_total: 4,
     }
 }
 

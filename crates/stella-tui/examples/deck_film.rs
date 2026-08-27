@@ -72,7 +72,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 
-use stella_tui::scenario::{demo_engine_config, demo_graph, demo_inbound};
+use stella_tui::scenario::{demo_engine_config, demo_graph, demo_inbound, demo_linked_work};
 use stella_tui::views::engine_panel::EngineTab;
 use stella_tui::{
     AgentScope, AgentVersionInfo, DeckTab, DeckUi, EngineRole, InstalledAgentEntry, IssueRow,
@@ -645,6 +645,7 @@ fn fixture_issues() -> Vec<IssueRow> {
             assignee: assignee.map(|s| s.to_string()),
             url: format!("https://github.com/example/repo/issues/{}", &key[1..]),
             updated_at: Some("2026-01-14T09:30:00Z".to_string()),
+            linked: None,
         };
     vec![
         issue(
@@ -654,13 +655,20 @@ fn fixture_issues() -> Vec<IssueRow> {
             &["enhancement", "area:tui"],
             Some("dev"),
         ),
-        issue(
-            "#826",
-            "run_deck event-loop pty harness",
-            "open",
-            &["enhancement"],
-            None,
-        ),
+        IssueRow {
+            // The one row this session claimed, so the film shows the inline
+            // plan tag, the detail pane's `linked` line, and the heat sort
+            // lifting it above the rest of the backlog. `driver.rs` is a file
+            // node in `demo_graph`, which is where its coupling comes from.
+            linked: Some(demo_linked_work()),
+            ..issue(
+                "#826",
+                "run_deck event-loop pty harness",
+                "in progress",
+                &["enhancement"],
+                None,
+            )
+        },
         issue(
             "#791",
             "Compaction drops the last tool result",
@@ -809,7 +817,9 @@ fn ui_for(scene: Scene, sel: usize, model: &WorkspaceModel, splash_ms: u64) -> D
                     ui.mcp.selected = sel;
                 }
                 DeckTab::Issues => {
-                    ui.issues.rows = fixture_issues();
+                    let graph = ui.graph.clone();
+                    ui.issues
+                        .adopt_rows(fixture_issues(), graph.as_ref(), model.now_ms);
                     ui.issues.loaded = true;
                     ui.issues.sel = sel;
                 }

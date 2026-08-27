@@ -541,6 +541,49 @@ pub struct IssueRow {
     pub assignee: Option<String>,
     pub url: String,
     pub updated_at: Option<String>,
+    /// The work this session started for the issue, once it has started any.
+    pub linked: Option<LinkedWork>,
+}
+
+/// The work one session claimed for an issue: what `w start work` opened, and
+/// what that claim's evidence ledger has recorded since (SPEC 9.4).
+///
+/// The ISSUES tab reads this three ways — the inline `plan r3 · task 3 live`
+/// tag on a row, the detail pane's `linked` line, and the
+/// [`touched_files`](Self::touched_files) the heat sort joins against the code
+/// graph (`crate::views::issues`).
+///
+/// **No producer fills it yet.** The deck's own start-work key is refused by
+/// name in `stella-cli`'s `command_deck::issues`'s `issues_act`, because the
+/// claim belongs to the self-driving loop's dispatch ledger rather than to a
+/// tracker status, and the plan-opening event that would name a round lost its
+/// producer when the staged pipeline was removed (#3865). #5197 is the read
+/// path from those ledgers to the deck. Until it lands, every row carries
+/// `None` here and the tab draws the tracker's own fields alone — which is why
+/// each field below is dropped from rendering when it is empty rather than
+/// printed as a zero.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LinkedWork {
+    /// The plan's round label, spelled as the plan panel spells it (`r3`).
+    /// Empty when the claim opened a branch before any plan existed.
+    pub plan: String,
+    /// Tasks that plan has finished.
+    pub tasks_done: usize,
+    /// Tasks that plan holds. Zero means "no plan to count", so the `2/6`
+    /// clause is dropped rather than rendered as `0/0`.
+    pub tasks_total: usize,
+    /// The 1-based task the loop is executing right now, when one is live.
+    pub live_task: Option<usize>,
+    /// The branch the claim opened. Empty when it has opened none.
+    pub branch: String,
+    /// Root-relative paths the evidence ledger recorded the work as touching.
+    /// The heat sort looks each one up in the code graph.
+    pub touched_files: Vec<String>,
+    /// Tests the evidence ledger holds passing.
+    pub tests_passed: usize,
+    /// Tests it ran. Zero drops the `4/4 tests` clause, for the same reason
+    /// [`tasks_total`](Self::tasks_total) does.
+    pub tests_total: usize,
 }
 
 /// One row of the create form's type-ahead popup. `kind` is a display type

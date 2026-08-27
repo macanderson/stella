@@ -6,39 +6,35 @@
 //! status, and start work — all without leaving the deck.
 //!
 //! ```text
-//!  backlog · 3 listed
+//!  backlog · 3 listed · heat sort
+//!    from the graph, not vibes
 //!   ⇢ #981 open · CI … running
 //!
-//!     ○ #874   Command-deck render golden tests   open · dev · enhancement
-//! ▸   ○ #826   run_deck event-loop pty harness     open · enhancement
+//! ▸   ▶ #826   run_deck event-loop pty harness   in progress · enhancement  plan r3 · task 3 live
+//!     ○ #874   Command-deck render golden tests  open · dev · enhancement
 //!
-//!  ○ #826  run_deck event-loop pty harness
-//!    open · enhancement · updated 2026-01-14T09:30:00Z
+//!  ▶ #826  run_deck event-loop pty harness
+//!    in progress · enhancement · updated 2026-01-14T09:30:00Z
+//!    linked plan r3 · 2/6 · branch fix/token-race · evidence 2 files · 4/4 tests
 //!    ↵ open · c comment · s status · p to prompt
 //! ```
 //!
-//! Renders from [`crate::deck_ui::IssuesPanel`] and the session's own PR — a
-//! pure fold over both, taking no `DeckUi` and mutating nothing, so a mode,
-//! a form field or a type-ahead window can be pinned in a test without a
-//! terminal. The driver services the [`crate::envelope::WorkspaceInput`]
-//! requests the key handlers emit and answers with out-of-band
-//! [`crate::envelope::Inbound::IssuesList`] / `IssueActDone` / `EntityHits`
-//! snapshots.
+//! A pure fold over [`crate::deck_ui::IssuesPanel`] and the session's own PR,
+//! taking no `DeckUi` and mutating nothing, so a mode, a form field or a
+//! type-ahead window can be pinned in a test without a terminal; the driver
+//! answers the key handlers' requests with out-of-band
+//! [`crate::envelope::Inbound::IssuesList`] snapshots. The row order is
+//! [`super::issues`]'s heat sort, applied as a list arrives
+//! ([`IssuesPanel::adopt_rows`](crate::deck_ui::IssuesPanel::adopt_rows)) and
+//! captioned here only while it is in force. The tab draws no frame: the tab
+//! row, hint row, pulse row and status bar are [`super::frame`]'s.
 //!
-//! The tab draws no frame of its own: the tab row, hint row, pulse row and
-//! status bar are [`super::frame`]'s, and the content fills the band they
-//! leave. The two popups below — the create form's type-ahead and the
-//! send-to-prompt confirmation — are floating cards over that band, not
-//! chrome around it.
-//!
-//! ## State glyphs
-//!
-//! SPEC 9.4 gives the tracker its own four-state alphabet — `▶` in progress,
-//! `○` open or triage, `✓` done, `◇` blocked — kept here as literals rather
-//! than mapped onto [`stella_tui_theme::glyph`]. Three of the four coincide
-//! with an agent-status glyph by shape alone: taking `glyph::GATE` for
-//! "blocked" would assert that a tracker state and an engine gate must move
-//! together, which is not true of either.
+//! SPEC 9.4's four tracker states — `▶` in progress, `○` open or triage, `✓`
+//! done, `◇` blocked — are literals here rather than
+//! [`stella_tui_theme::glyph`] entries. Three coincide with an agent-status
+//! glyph by shape alone, and taking `glyph::GATE` for "blocked" would assert
+//! that a tracker state and an engine gate must move together, which is true
+//! of neither.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -94,7 +90,19 @@ pub fn render(
             muted,
         ));
     }
+    if issues.heat_sorted {
+        head.push(Span::styled(" · heat sort", muted));
+    }
     let mut lines: Vec<Line<'static>> = vec![Line::from(head)];
+    // The caption only exists while the ordering it describes does: a backlog
+    // the graph could not rank is in the tracker's order, and captioning that
+    // `from the graph` would be the claim SPEC 9.4 wrote the caption against.
+    if issues.heat_sorted {
+        lines.push(Line::from(Span::styled(
+            format!("   {}", super::issues::HEAT_CAPTION),
+            dim,
+        )));
+    }
     // The session's own PR, above whatever mode the tab is in — it is a fact
     // about this session, not about the list, so a search or a half-filled
     // create form must not hide it.
@@ -344,11 +352,23 @@ fn render_list(issues: &IssuesPanel, accessible: bool, area: Rect, lines: &mut V
 /// bare trailing `· octocat · bug, p1` has the same problem: two lists with no
 /// indication of which is which.
 fn issue_record(row: &IssueRow, selected: bool, width: usize) -> Line<'static> {
+    let linked = row.linked.as_ref();
     let fields = [
         ("state", row.state.clone()),
         ("title", row.title.clone()),
         ("assignee", row.assignee.clone().unwrap_or_default()),
         ("labels", row.labels.join(", ")),
+        // The plan and its live task as two labelled values rather than the
+        // sighted row's `plan r3 · task 3 live` tag, which read aloud after a
+        // `plan` label would say the word twice.
+        ("plan", linked.map(|l| l.plan.clone()).unwrap_or_default()),
+        (
+            "task",
+            linked
+                .and_then(|l| l.live_task)
+                .map(|task| format!("{task} live"))
+                .unwrap_or_default(),
+        ),
     ];
     super::record::record_line(
         super::record::identity(row.key.clone(), selected, token::GOLD),
@@ -357,9 +377,14 @@ fn issue_record(row: &IssueRow, selected: bool, width: usize) -> Line<'static> {
     )
 }
 
-/// One issue row: `▸ ▶ KEY  title   state   assignee · labels   age` — the
-/// state's glyph beside the key, `●` marking a multiselect pick, `▸` the
-/// cursor.
+/// One issue row: `▸ ▶ KEY  title   state   assignee · labels  plan r3 · task
+/// 3 live   age` — the state's glyph beside the key, `●` marking a multiselect
+/// pick, `▸` the cursor.
+///
+/// The plan tag appears only on a row whose work this session claimed (SPEC
+/// 9.4's inline linked plan), and it is gold while a task is live: the word
+/// `live` carries the same claim, so the tone is never the only thing saying
+/// so (SPEC 2).
 fn issue_line(row: &IssueRow, selected: bool, picked: bool, width: usize) -> Line<'static> {
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
@@ -388,12 +413,32 @@ fn issue_line(row: &IssueRow, selected: bool, picked: bool, width: usize) -> Lin
     let head = format!("{marker}{pick}");
     let key = format!("{:<10}", row.key);
     let state = format!("  {}", row.state);
+    let (plan, plan_style) = match &row.linked {
+        Some(linked) => {
+            let tag = super::issues::plan_tag(linked);
+            let style = if linked.live_task.is_some() {
+                Style::new().fg(token::GOLD)
+            } else {
+                muted
+            };
+            (
+                if tag.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {tag}")
+                },
+                style,
+            )
+        }
+        None => (String::new(), muted),
+    };
     let budget = width
         .saturating_sub(
             head.chars().count()
                 + 2
                 + key.chars().count()
                 + state.chars().count()
+                + plan.chars().count()
                 + tail.chars().count()
                 + age.chars().count()
                 + 3,
@@ -407,6 +452,10 @@ fn issue_line(row: &IssueRow, selected: bool, picked: bool, width: usize) -> Lin
         Span::styled(title.clone(), body_style),
         Span::styled(state, glyph_style),
         Span::styled(tail, muted),
+        // After the tracker's own fields, not among them: the tail is a run of
+        // `·`-joined clauses, and a plan dropped into the middle of it reads as
+        // one more label.
+        Span::styled(plan, plan_style),
     ];
     if !age.is_empty() {
         let used: usize = spans.iter().map(Span::width).sum();
@@ -438,12 +487,21 @@ fn state_mark(state: &str) -> (char, Style) {
 }
 
 /// Rows the detail pane spends under the list.
-const DETAIL_ROWS: usize = 5;
+const DETAIL_ROWS: usize = 6;
 
 /// The selected issue, in full: key and title, then assignee, labels, the
-/// tracker URL and when it last moved — the fields the one-line row
-/// truncates. SPEC 9.4's linked-plan and evidence lines have no producer
-/// yet (#4336).
+/// tracker URL, when it last moved, and the `linked` line naming the work this
+/// session claimed for it — the fields the one-line row truncates.
+///
+/// SPEC 9.4 pairs that `linked` line with a sync rule reading `status syncs
+/// back to <tracker> on gate green · no manual updates`. **The rule is not
+/// drawn here, because nothing in this workspace keeps it.** No outbound
+/// update writes a tracker status when a gate goes green: `stella-cli`'s
+/// `command_deck::issues`'s `issues_act` reaches the tracker only for a
+/// comment, a close and a re-open, each on a keypress a human made, and it
+/// refuses `IssueAction::SetStatus` outright. Printing the sentence anyway
+/// would promise a reader that closing their terminal still moves the ticket.
+/// #5195 is the outbound update; the line lands with it.
 fn render_detail(issues: &IssuesPanel, width: usize, lines: &mut Vec<Line<'static>>) {
     let Some(row) = issues.selected() else {
         return;
@@ -481,6 +539,15 @@ fn render_detail(issues: &IssuesPanel, width: usize, lines: &mut Vec<Line<'stati
             Span::raw("   "),
             Span::styled(truncate(&row.url, width.saturating_sub(4)), dim),
         ]));
+    }
+    if let Some(linked) = &row.linked {
+        let summary = super::issues::linked_summary(linked);
+        if !summary.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("   linked ", muted),
+                Span::styled(truncate(&summary, width.saturating_sub(11)), text),
+            ]));
+        }
     }
     lines.push(Line::from(vec![
         Span::styled("   ↵", muted),
@@ -812,6 +879,23 @@ mod tests {
             assignee: Some("mona@example.com".into()),
             url: String::new(),
             updated_at: None,
+            linked: None,
+        }
+    }
+
+    /// SPEC 9.4's claim: plan `r3`, two of six tasks done with the third live,
+    /// a branch, and an evidence ledger holding two files and four passing
+    /// tests.
+    fn claimed() -> crate::envelope::LinkedWork {
+        crate::envelope::LinkedWork {
+            plan: "r3".into(),
+            tasks_done: 2,
+            tasks_total: 6,
+            live_task: Some(3),
+            branch: "fix/token-race".into(),
+            touched_files: vec!["src/token.rs".into(), "src/race.rs".into()],
+            tests_passed: 4,
+            tests_total: 4,
         }
     }
 
@@ -852,5 +936,119 @@ mod tests {
         assert!(drawn.contains("backlog · 1 listed"), "{drawn}");
         assert!(drawn.contains("ENG-42"), "{drawn}");
         assert!(drawn.contains("start work"), "{drawn}");
+    }
+
+    /// Render the whole tab and return its character grid, one string.
+    fn drawn(issues: &IssuesPanel, accessible: bool) -> String {
+        let area = Rect::new(0, 0, 120, 24);
+        let mut buf = Buffer::empty(area);
+        render(None, issues, accessible, area, &mut buf);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The witness for SPEC 9.4's linked plan and evidence summary: a row whose
+    /// work this session claimed carries the plan and its live task inline, and
+    /// the detail pane spells the whole claim out on its `linked` line. Both
+    /// assertions read rendered cells, so a tab that holds the link and draws
+    /// none of it fails here.
+    #[test]
+    fn a_claimed_row_draws_its_plan_inline_and_its_evidence_in_the_detail_pane() {
+        let mut issues = IssuesPanel::default();
+        issues.rows = vec![IssueRow {
+            linked: Some(claimed()),
+            ..eng_42()
+        }];
+        issues.loaded = true;
+        let frame = drawn(&issues, false);
+
+        assert!(frame.contains("plan r3 · task 3 live"), "{frame}");
+        assert!(
+            frame.contains(
+                "linked plan r3 · 2/6 · branch fix/token-race · evidence 2 files · 4/4 tests"
+            ),
+            "{frame}"
+        );
+    }
+
+    /// The sync rule SPEC 9.4 pairs with the `linked` line is not drawn: no
+    /// outbound update writes a tracker status when a gate goes green (#5195),
+    /// and a promise the code cannot keep is worse than a missing line.
+    #[test]
+    fn the_detail_pane_promises_no_sync_it_cannot_perform() {
+        let mut issues = IssuesPanel::default();
+        issues.rows = vec![IssueRow {
+            linked: Some(claimed()),
+            ..eng_42()
+        }];
+        issues.loaded = true;
+        let frame = drawn(&issues, false);
+        assert!(!frame.contains("syncs back"), "{frame}");
+        assert!(!frame.contains("gate green"), "{frame}");
+    }
+
+    /// A row nobody claimed draws exactly what it drew before — no keyword
+    /// with nothing after it, and no caption over a tracker-ordered list.
+    #[test]
+    fn an_unclaimed_backlog_draws_no_linked_line_and_no_heat_caption() {
+        let mut issues = IssuesPanel::default();
+        issues.rows = vec![eng_42()];
+        issues.loaded = true;
+        let frame = drawn(&issues, false);
+        assert!(!frame.contains("linked"), "{frame}");
+        assert!(
+            !frame.contains(crate::views::issues::HEAT_CAPTION),
+            "{frame}"
+        );
+        assert!(!frame.contains("heat sort"), "{frame}");
+    }
+
+    /// The caption is a claim about where the ordering came from, so it is
+    /// drawn only while the heat sort is the ordering in force.
+    #[test]
+    fn a_heat_sorted_backlog_says_where_the_order_came_from() {
+        let mut issues = IssuesPanel::default();
+        issues.rows = vec![IssueRow {
+            linked: Some(claimed()),
+            ..eng_42()
+        }];
+        issues.loaded = true;
+        issues.heat_sorted = true;
+        let frame = drawn(&issues, false);
+        assert!(frame.contains("heat sort"), "{frame}");
+        assert!(
+            frame.contains(crate::views::issues::HEAT_CAPTION),
+            "{frame}"
+        );
+    }
+
+    #[test]
+    fn a_claimed_row_names_its_plan_and_live_task_as_labelled_values() {
+        let row = IssueRow {
+            linked: Some(claimed()),
+            ..eng_42()
+        };
+        let record = text(issue_record(&row, false, 200));
+        assert!(record.contains("· plan r3"), "{record}");
+        assert!(record.contains("· task 3 live"), "{record}");
+        // A claim with no plan drops both labels rather than speaking them
+        // with nothing after.
+        let bare = IssueRow {
+            linked: Some(crate::envelope::LinkedWork {
+                plan: String::new(),
+                live_task: None,
+                ..claimed()
+            }),
+            ..eng_42()
+        };
+        let record = text(issue_record(&bare, false, 200));
+        assert!(!record.contains("plan"), "{record}");
+        assert!(!record.contains("task"), "{record}");
     }
 }

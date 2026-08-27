@@ -399,8 +399,14 @@ impl TypeAhead {
 /// split as [`InstalledPanel`].
 #[derive(Debug, Clone)]
 pub struct IssuesPanel {
-    /// Newest driver snapshot of the issue list.
+    /// Newest driver snapshot of the issue list, in heat order once
+    /// [`IssuesPanel::adopt_rows`] has been able to compute one.
     pub rows: Vec<IssueRow>,
+    /// Whether [`rows`](Self::rows) is in heat order rather than the
+    /// tracker's. The tab captions the ordering from this, so it is false
+    /// whenever the graph could rank nothing — a caption over an unsorted
+    /// backlog would name a source the order does not have.
+    pub heat_sorted: bool,
     /// Selected row in the browse list.
     pub sel: usize,
     /// True once the first [`Inbound::IssuesList`] arrived.
@@ -455,6 +461,7 @@ impl Default for IssuesPanel {
     fn default() -> Self {
         Self {
             rows: Vec::new(),
+            heat_sorted: false,
             sel: 0,
             loaded: false,
             busy: false,
@@ -483,6 +490,26 @@ impl IssuesPanel {
     /// The browse list's selected row, if any.
     pub fn selected(&self) -> Option<&IssueRow> {
         self.rows.get(self.sel)
+    }
+
+    /// Adopt a fresh list of rows, in SPEC 9.4's heat order
+    /// ([`crate::views::issues::sort_by_heat`]).
+    ///
+    /// The ordering happens once, as the rows arrive — not per frame, and not
+    /// again when a later [`Inbound::GraphSnapshot`] lands. A list that
+    /// re-sorted under a reader mid-browse would move the cursor off the row
+    /// they were looking at, and the graph is re-queried on the Graph tab's
+    /// own schedule; `r` re-fetches the backlog against whatever graph the
+    /// deck holds by then.
+    ///
+    /// The selection is clamped rather than kept on its key, matching what a
+    /// refresh already did: the rows are a new page from the tracker, and the
+    /// row that was selected may not be among them.
+    pub fn adopt_rows(&mut self, rows: Vec<IssueRow>, graph: Option<&GraphSnapshot>, now_ms: u64) {
+        self.rows = rows;
+        self.heat_sorted = crate::views::issues::sort_by_heat(&mut self.rows, graph, now_ms);
+        self.sel = self.sel.min(self.rows.len().saturating_sub(1));
+        self.prune_picks();
     }
 
     /// The next request seq (monotonic; starts at 1 so the `0` defaults of
@@ -1380,9 +1407,10 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
         ui.issues.loaded = true;
         match outcome {
             Ok(rows) => {
-                ui.issues.rows = rows.clone();
-                ui.issues.sel = ui.issues.sel.min(rows.len().saturating_sub(1));
-                ui.issues.prune_picks();
+                // Split the borrow by hand: the sort reads the graph snapshot
+                // while it writes the panel, and both hang off `ui`.
+                let (issues, graph) = (&mut ui.issues, ui.graph.as_ref());
+                issues.adopt_rows(rows.clone(), graph, model.now_ms);
                 // The title reads from this, never from `page`: `page` is what
                 // was *asked for* and moves on the keypress, so a fetch that
                 // failed would leave the header naming a page whose rows are

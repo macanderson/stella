@@ -21,6 +21,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 use stella_protocol::AgentEvent;
+use stella_tui::scenario::demo_linked_work;
 use stella_tui::{
     AgentMeta, AgentScope, DeckTab, DeckUi, Inbound, InstalledAgentEntry, IssueRow, SettingsPane,
     ToolPolicyState, ToolRow, WorkspaceModel, ingest_inbound, render_deck,
@@ -149,6 +150,7 @@ fn the_issues_list_reads_as_labelled_records() {
                 assignee: Some("macanderson".into()),
                 url: "https://example.invalid/1258".into(),
                 updated_at: None,
+                linked: Some(demo_linked_work()),
             }]),
         },
         &mut model,
@@ -156,7 +158,18 @@ fn the_issues_list_reads_as_labelled_records() {
     );
 
     let row = record_row(&frame(&model, &mut ui), "make the command deck accessible");
-    assert_labelled(&row, &["state", "title", "assignee", "labels"]);
+    // The linked plan and its live task are labelled values here, never the
+    // sighted row's `plan r3 · task 3 live` tag: a `plan` label in front of
+    // that tag says the word twice, and the bare `3` after it is a number a
+    // reader has to guess the meaning of.
+    assert_labelled(
+        &row,
+        &["state", "title", "assignee", "labels", "plan", "task"],
+    );
+    assert!(
+        !row.contains("plan plan"),
+        "the label carries the word, the value does not repeat it: {row:?}"
+    );
     assert!(
         !row.contains("[open]"),
         "the state chip's brackets are punctuation read aloud: {row:?}"
