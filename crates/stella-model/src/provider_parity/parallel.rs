@@ -87,16 +87,69 @@
 /// server defaults `parallel_tool_calls` to true" is a plausible sentence that
 /// would make eight rows green without a single observation behind them,
 /// which is the shape of claim AGENTS.md #8 exists to refuse.
+/// Where a parallel-tool-call census was counted.
+///
+/// The distinction is the point: a census run against a store any clone
+/// produces can be re-run by the next reader, and one run against a single
+/// machine's store cannot. Both are legitimate evidence — the `anthropic`
+/// route has no traffic in this repository's own store, so the only place it
+/// could be counted was a workspace that ran it — but they must not read the
+/// same, which is what #5106 found.
+#[derive(Debug)]
+pub enum CensusSource {
+    /// This repository's own `.stella/private/store.db`. Not in CI, but a path
+    /// anybody cloning this repo and running Stella will have.
+    ThisWorkspace,
+    /// A store outside this repository, on one machine. Names the path so a
+    /// reader can see at a glance that the census is not one they can re-run,
+    /// and why the row had to reach outside.
+    ForeignStore {
+        path: &'static str,
+        /// Why this route could not be counted in this repository's store.
+        because: &'static str,
+    },
+}
+
+/// What one census counted, as counts.
+///
+/// `max_calls_in_one_message >= 2` is the row's actual claim; the rest is the
+/// context that makes it checkable, plus the internal consistency a fabricated
+/// set of numbers would have to fake.
+#[derive(Debug)]
+pub struct Census {
+    /// Assistant messages that carried at least one tool call.
+    pub tool_bearing_messages: u32,
+    /// Tool calls across those messages.
+    pub tool_calls: u32,
+    /// The most calls observed on a single assistant message.
+    pub max_calls_in_one_message: u32,
+    /// How many messages carried two or more.
+    pub messages_with_two_or_more: u32,
+}
+
 #[derive(Debug)]
 pub enum ParallelAdmission {
     /// Several tool calls per assistant message are admitted with nothing
     /// sent, and that was *observed* on this provider — not inferred from a
     /// vendor's documentation and not assumed from a sibling dialect.
     DefaultOn {
-        /// What was observed and where, in enough detail to re-run. Prose,
-        /// checked by a reviewer rather than by a test — the observation is
-        /// a fact about a past run, and no test can re-establish it.
-        evidence: &'static str,
+        /// Where the census was counted, and whether anybody else can count
+        /// it again. A store outside this repository is a different kind of
+        /// citation from one a clone produces, and used to read identically
+        /// (#5106).
+        source: CensusSource,
+        /// What the census found. Numbers rather than prose, so the row's
+        /// own claim — that several calls ride one assistant message — is
+        /// something a test can check rather than something a reviewer has
+        /// to read for.
+        census: Census,
+        /// Which route was counted: model, executions, role. The narrowing a
+        /// reader needs to re-run the same query against the same store.
+        scope: &'static str,
+        /// What the adapter did *not* send to ask for this. The claim is that
+        /// parallelism is admitted with nothing sent, so the absent request
+        /// field is half of it.
+        nothing_sent: &'static str,
     },
     /// The adapter must send an explicit opt-in or this provider emits at
     /// most one tool call per assistant message.
@@ -162,13 +215,17 @@ pub static PARALLEL_TOOL_CALL_POSTURE: &[(&str, ParallelToolCallPosture)] = &[
         "openrouter",
         ParallelToolCallPosture {
             admission: ParallelAdmission::DefaultOn {
-                evidence: "observed on this repository's own store.db: grouping tool_start \
-                           events by the preceding step_manifest (one step_manifest is one \
-                           model call, so one group is one assistant message) over executions \
-                           140–177 on moonshotai/kimi-k3 gives 891 tool calls across 648 \
-                           tool-bearing messages, 92 of which carry two or more and one of \
-                           which carries nine — with parallel_tool_calls never sent, because \
-                           it appears nowhere in this tree",
+                source: CensusSource::ThisWorkspace,
+                census: Census {
+                    tool_bearing_messages: 648,
+                    tool_calls: 891,
+                    max_calls_in_one_message: 9,
+                    messages_with_two_or_more: 92,
+                },
+                scope: "moonshotai/kimi-k3 over executions 140–177, grouping tool_start \
+                        events by the preceding step_manifest — one step_manifest is one \
+                        model call, so one group is one assistant message",
+                nothing_sent: "parallel_tool_calls, which appears nowhere in this tree",
             },
             fan_in_witness: "several_tool_calls_in_one_message_fan_in_as_several_calls",
         },
@@ -177,9 +234,15 @@ pub static PARALLEL_TOOL_CALL_POSTURE: &[(&str, ParallelToolCallPosture)] = &[
         "zai",
         ParallelToolCallPosture {
             admission: ParallelAdmission::DefaultOn {
-                evidence: "same census, same store, glm-5.2 across every zai execution: 496 \
-                           tool calls across 382 tool-bearing messages, 79 carrying two or \
-                           more, most-in-one five — with nothing sent to ask for it",
+                source: CensusSource::ThisWorkspace,
+                census: Census {
+                    tool_bearing_messages: 382,
+                    tool_calls: 496,
+                    max_calls_in_one_message: 5,
+                    messages_with_two_or_more: 79,
+                },
+                scope: "glm-5.2 across every zai execution, same grouping as openrouter",
+                nothing_sent: "nothing — the dialect has no admission field this adapter sets",
             },
             fan_in_witness: "several_tool_calls_in_one_message_fan_in_as_several_calls",
         },
@@ -226,16 +289,22 @@ pub static PARALLEL_TOOL_CALL_POSTURE: &[(&str, ParallelToolCallPosture)] = &[
         "anthropic",
         ParallelToolCallPosture {
             admission: ParallelAdmission::DefaultOn {
-                evidence: "same census, counted in the store of a workspace that ran the \
-                           route (~/Projects/oxagen-platform/.stella/private/store.db, \
-                           pragma quick_check ok) rather than this repository's own, whose \
-                           two anthropic-direct executions record no tool use at all: \
-                           claude-fable-5 over executions 25–33 gives 199 tool calls across \
-                           132 tool-bearing messages, 60 carrying two or more, most-in-one \
-                           three, every step_manifest declaring provider anthropic and role \
-                           worker. The request-side control here is an opt-*out* \
-                           (tool_choice.disable_parallel_tool_use) which this adapter never \
-                           sends, so nothing was asked for and nothing needs adding",
+                source: CensusSource::ForeignStore {
+                    path: "~/Projects/oxagen-platform/.stella/private/store.db",
+                    because: "this repository's own store has two anthropic-direct \
+                              executions and they record no tool use at all, so the route \
+                              could not be counted here",
+                },
+                census: Census {
+                    tool_bearing_messages: 132,
+                    tool_calls: 199,
+                    max_calls_in_one_message: 3,
+                    messages_with_two_or_more: 60,
+                },
+                scope: "claude-fable-5 over executions 25–33, every step_manifest declaring \
+                        provider anthropic and role worker; pragma quick_check ok",
+                nothing_sent: "tool_choice.disable_parallel_tool_use — the control here is an \
+                               opt-*out*, which this adapter never sends",
             },
             fan_in_witness: "several_tool_use_blocks_fan_in_as_several_calls",
         },
@@ -374,21 +443,88 @@ mod tests {
         assert!(parallel_tool_call_posture("no-such-provider").is_none());
     }
 
-    /// A `DefaultOn` row's evidence must actually say something. The case
-    /// is the only one on this axis that makes a positive claim about a
-    /// vendor's live behavior, and the claim is unfalsifiable unless the row
-    /// says what was counted — so an empty or hand-wavy string is the one
-    /// thing that must not compile past review unnoticed.
+    /// **The witness (#5106).** A `DefaultOn` row's census has to show the
+    /// parallelism the row claims.
+    ///
+    /// This replaced `evidence.len() > 80`. A length check cannot tell a
+    /// census from a paragraph, and this is the one axis with no in-tree
+    /// referent — `ParallelAdmission` is settled by observing a live provider
+    /// run, so unlike `fan_in_witness` there is no test name the tree can look
+    /// for. Counting the numbers instead means the row states its claim in a
+    /// form that can be wrong.
     #[test]
-    fn every_default_on_row_cites_what_was_counted() {
+    fn every_default_on_row_counts_actual_parallelism() {
         for (id, posture) in PARALLEL_TOOL_CALL_POSTURE {
-            let ParallelAdmission::DefaultOn { evidence } = &posture.admission else {
+            let ParallelAdmission::DefaultOn { census, scope, .. } = &posture.admission else {
+                continue;
+            };
+
+            // The row's claim, stated as the number that carries it. One call
+            // per message is what `DefaultOn` says did *not* happen.
+            assert!(
+                census.max_calls_in_one_message >= 2,
+                "`{id}` claims parallel calls are admitted by default, and its census \
+                 counted at most {} call(s) on one message — which is the opposite claim",
+                census.max_calls_in_one_message
+            );
+            assert!(
+                census.messages_with_two_or_more > 0,
+                "`{id}` counted no message carrying two or more calls"
+            );
+
+            // Internal consistency. These cannot all hold for a set of numbers
+            // nobody counted, which is the point of asking for four of them
+            // rather than one.
+            assert!(
+                census.tool_calls >= census.tool_bearing_messages,
+                "`{id}`: {} calls across {} tool-bearing messages — a message carries at \
+                 least one call",
+                census.tool_calls,
+                census.tool_bearing_messages
+            );
+            assert!(
+                census.messages_with_two_or_more <= census.tool_bearing_messages,
+                "`{id}`: {} messages with two or more, out of {} tool-bearing",
+                census.messages_with_two_or_more,
+                census.tool_bearing_messages
+            );
+            assert!(
+                census.tool_calls >= census.max_calls_in_one_message,
+                "`{id}`: one message carried {} calls out of {} total",
+                census.max_calls_in_one_message,
+                census.tool_calls
+            );
+
+            assert!(
+                !scope.trim().is_empty(),
+                "`{id}` counted a census without saying which route it counted"
+            );
+        }
+    }
+
+    /// A census counted outside this repository says so, and says why.
+    ///
+    /// The `anthropic` row cites a store on one machine, because this
+    /// repository's own has no anthropic-direct tool use to count. That is
+    /// legitimate and it is not the same kind of citation as the other two —
+    /// it used to read identically, which is what #5106 was filed about.
+    #[test]
+    fn a_foreign_census_names_its_store_and_why_it_had_to_reach_outside() {
+        for (id, posture) in PARALLEL_TOOL_CALL_POSTURE {
+            let ParallelAdmission::DefaultOn { source, .. } = &posture.admission else {
+                continue;
+            };
+            let CensusSource::ForeignStore { path, because } = source else {
                 continue;
             };
             assert!(
-                evidence.len() > 80,
-                "`{id}` claims parallel calls are admitted by default but its evidence is \
-                 too thin to re-run: {evidence:?}"
+                path.contains(".db"),
+                "`{id}` cites a store outside this repository without naming the file: \
+                 {path:?}"
+            );
+            assert!(
+                !because.trim().is_empty(),
+                "`{id}` counted outside this repository without saying why it had to"
             );
         }
     }
