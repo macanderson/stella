@@ -838,6 +838,7 @@ impl WorkspaceModel {
             | Inbound::ToolPolicy { .. }
             | Inbound::IssuesList { .. }
             | Inbound::IssueActDone { .. }
+            | Inbound::IssueDraft { .. }
             | Inbound::EntityHits { .. }
             | Inbound::RecordedCalls(_)
             | Inbound::InspectedCall(_)

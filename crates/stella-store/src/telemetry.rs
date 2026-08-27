@@ -1,5 +1,7 @@
 //! Per-call telemetry persistence and its execution-level trust boundary.
 
+pub mod model_rates;
+
 use rusqlite::OptionalExtension as _;
 use rusqlite::params;
 

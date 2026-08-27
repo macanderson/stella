@@ -88,6 +88,10 @@ mod attribution;
 #[path = "deck_render_snapshots/task_zoom.rs"]
 mod task_zoom;
 
+/// See [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/start_work.rs"]
+mod start_work;
+
 /// The MCP tab's golden fixture. See [`graph`]'s doc for why this is
 /// `#[path]` rather than a plain `mod`.
 #[path = "deck_render_snapshots/mcp.rs"]

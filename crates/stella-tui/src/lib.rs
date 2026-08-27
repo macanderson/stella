@@ -82,6 +82,7 @@ pub mod plugin_panel;
 pub mod resource;
 pub mod scenario;
 pub mod splash;
+pub mod start_work;
 pub mod syntax;
 pub mod theme;
 pub mod tool_class;
@@ -130,4 +131,7 @@ pub use fleet_dashboard::{
 pub use graph::{FileTouch, GraphEdge, GraphNode, GraphSnapshot, SessionTouch};
 pub use resource::ResourceMonitor;
 pub use splash::SplashState;
+pub use start_work::{
+    DraftContract, DraftEstimate, DraftRule, DraftSources, DraftTask, StartWork, StartWorkDraft,
+};
 pub use views::settings::SettingsPane;

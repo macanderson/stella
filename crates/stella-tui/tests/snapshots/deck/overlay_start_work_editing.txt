@@ -1,0 +1,45 @@
+# deck golden · overlay_start_work_editing
+# the start-work draft with the task list open for editing
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION AGENTS TRACES GRAPH FILES SKILLS MCP   ISSUES   SETTINGS                                                                                       stella*
+ backlog · 3 listed · heat sort
+   from the graph, not vibes
+  ⇢ #981 open · CI … running
+
+▸   ▶ #826      run_deck event-loop pty harness  in progress · enhancement  plan r3 · task 3 live                                                    2026-01-14
+    ○ #874      Command-deck render golden tests  open · dev · enhancement, area:tui                                                                 2026-01-14
+    ✓ #689      Surface per-server MCP tool truncation  closed · dev · bug                                                                           2026-01-14
+
+ esc cancel                   ┌ w start work ────────────────────────────────────────────────────────────────────────────────────┐
+                              │ w start work #151 dedup digest persists across CI runs                                           │
+                              │ draft plan r1 · built from issue text + graph + memory                                           │
+                              │──────────────────────────────────────────────────────────────────────────────────────────────────│
+                              │ sources  issue #151 · graph: 2 coupled files                                                     │
+                              │          crates/stella-store/src/seen.rs                                                         │
+                              │          crates/stella-cli/src/ci.rs                                                             │
+                              │          RULE dedup-keys "dedup keys must be stable across runs"                                 │
+                              │──────────────────────────────────────────────────────────────────────────────────────────────────│
+                              │▸○ 1 read the seen-set write path                                         read only · no contract │
+                              │ ○ 2 persist the digest set to .stella/seen — taken out                           not in the plan │
+                              │ ○ 3 restore the digest set on start                                                   unit · det │
+                              │    done means: a test over this fails before the change and passes after                         │
+                              │ ◇ 4 verify · 5 gates                                                                blocks merge │
+                              │──────────────────────────────────────────────────────────────────────────────────────────────────│
+                              │ estimate  ~$0.40  ~60k tok  ~8 min                                                               │
+                              │ a approve and start   e done editing   ↑↓ task   space take out   x cancel                       │
+                              │ nothing runs before approval                                                                     │
+                              └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+ ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

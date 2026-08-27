@@ -39,6 +39,7 @@ pub mod session;
 pub mod sessions;
 pub mod settings;
 pub mod skills;
+pub mod start_work;
 pub mod status_bar;
 pub mod status_source;
 pub mod subagents;

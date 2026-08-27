@@ -150,9 +150,8 @@ pub fn render(
             render_list(issues, accessible, area, &mut lines);
             render_detail(issues, area.width as usize, &mut lines);
         }
-        // The confirmation is a floating popup rendered after the base view —
-        // the browse list stays visible behind it.
-        IssuesMode::ConfirmSend => {
+        // Both float above the browse list, rendered after the base view.
+        IssuesMode::ConfirmSend | IssuesMode::StartWork => {
             render_list(issues, accessible, area, &mut lines);
         }
     }
@@ -188,6 +187,13 @@ pub fn render(
     // The send-to-prompt confirmation floats above the browse list.
     if issues.mode == IssuesMode::ConfirmSend {
         render_confirm_send(issues, area, buf);
+    }
+
+    // So does the start-work draft (SPEC 8.2) — its own module, because it is
+    // the tab's largest surface and this file already carries the form, the
+    // list, the detail pane and two popups.
+    if issues.mode == IssuesMode::StartWork {
+        super::start_work::render(&issues.start_work, area, buf);
     }
 }
 
@@ -771,6 +777,9 @@ fn footer(mode: IssuesMode) -> Line<'static> {
             &[("type", "text"), ("↵", "send"), ("esc", "cancel")]
         }
         IssuesMode::ConfirmSend => &[("↵", "send & go to transcript"), ("esc", "cancel")],
+        // The overlay carries its own action row, so the footer says only what
+        // the row does not: the way out that is not a listed verb.
+        IssuesMode::StartWork => &[("esc", "cancel")],
     };
     let key = Style::new().fg(token::MUTED);
     let dim = Style::new().fg(token::DIM);

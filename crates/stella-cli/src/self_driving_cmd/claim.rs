@@ -75,7 +75,7 @@ const STOP_POLL: Duration = Duration::from_millis(250);
 
 /// The answer to asking for an issue.
 #[derive(Debug)]
-pub(super) enum Claim {
+pub(crate) enum Claim {
     /// This run holds it. Dropping the [`Lease`] releases the key.
     Granted(Lease),
     /// A live peer holds it, named so the audit line can say who.
@@ -98,7 +98,7 @@ pub(super) enum Claim {
 /// an early `continue`, the run reaching its bound, a `?` — drops this, and
 /// the key is free for the next pass rather than waiting out [`LEASE_TTL`].
 #[derive(Debug)]
-pub(super) struct Lease {
+pub(crate) struct Lease {
     /// The grant: key, owner and fence, which is what renew and release are
     /// conditional on.
     lease: DispatchLease,
@@ -144,7 +144,7 @@ pub(super) fn acquire(root: &Path, key: &str) -> Claim {
 /// own owner string would be testing the loop against itself — which
 /// [`super::contention::claims_naming`] deliberately treats as no contention
 /// at all.
-pub(super) fn acquire_as(root: &Path, key: &str, owner: &str) -> Claim {
+pub(crate) fn acquire_as(root: &Path, key: &str, owner: &str) -> Claim {
     acquire_with(root, key, owner, LEASE_TTL)
 }
 

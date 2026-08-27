@@ -134,6 +134,9 @@ mod steer;
 /// ISSUES-tab requests, served by the workspace's issue provider.
 mod issues;
 
+/// The ISSUES tab's start-work draft and its approval (SPEC 8.2).
+mod start_work;
+
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
 
@@ -2227,6 +2230,8 @@ pub async fn run_deck_session(
                             input @ (WorkspaceInput::IssuesRefresh { .. }
                             | WorkspaceInput::IssueCreate { .. }
                             | WorkspaceInput::IssueAct { .. }
+                            | WorkspaceInput::IssueDraftPlan { .. }
+                            | WorkspaceInput::IssueStartWork { .. }
                             | WorkspaceInput::EntitySearch { .. }),
                         ) => {
                             issues::handle_issues_input(&input, cfg, &in_tx);

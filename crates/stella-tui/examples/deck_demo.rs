@@ -328,6 +328,8 @@ async fn main() -> std::io::Result<()> {
                 }
                 WorkspaceInput::IssueCreate { .. }
                 | WorkspaceInput::IssueAct { .. }
+                | WorkspaceInput::IssueDraftPlan { .. }
+                | WorkspaceInput::IssueStartWork { .. }
                 | WorkspaceInput::EntitySearch { .. } => {}
                 // The session model switch needs the real driver (provider
                 // resolution + prompt rebuild); inert here.

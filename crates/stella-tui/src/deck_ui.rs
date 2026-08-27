@@ -325,6 +325,8 @@ pub enum IssuesMode {
     /// The send-to-prompt confirmation (`p`): lists the issues about to be
     /// submitted; ⏎ submits and forwards to the Session tab, Esc cancels.
     ConfirmSend,
+    /// The start-work overlay (`w`): the drafted plan, awaiting approval.
+    StartWork,
 }
 
 /// The create form's focusable fields, in Tab order.
@@ -455,6 +457,8 @@ pub struct IssuesPanel {
     pub loaded_page: usize,
     /// The query the current page was fetched with — paging re-issues it.
     pub active_query: Option<String>,
+    /// The start-work overlay's own state (SPEC 8.2).
+    pub start_work: crate::start_work::StartWork,
 }
 
 impl Default for IssuesPanel {
@@ -482,6 +486,7 @@ impl Default for IssuesPanel {
             page: 0,
             loaded_page: 0,
             active_query: None,
+            start_work: crate::start_work::StartWork::default(),
         }
     }
 }
@@ -1046,7 +1051,7 @@ impl DeckUi {
                 },
                 // The confirmation holds no text — swallow the paste, never
                 // leak it to the composer behind the popup.
-                IssuesMode::ConfirmSend | IssuesMode::Browse => {}
+                IssuesMode::ConfirmSend | IssuesMode::StartWork | IssuesMode::Browse => {}
             }
             return;
         }
@@ -1433,6 +1438,9 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
             Err(e) => format!("{key}: {e}"),
         });
         return;
+    }
+    if let Inbound::IssueDraft { seq, outcome } = inbound {
+        return issues_keys::ingest_draft(ui, *seq, outcome);
     }
     if let Inbound::EntityHits {
         field,
@@ -2501,6 +2509,7 @@ fn handle_issues_modal_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckU
         IssuesMode::Create => handle_issue_form_key(key, ui),
         IssuesMode::Comment | IssuesMode::SetStatus => handle_issue_prompt_key(key, ui),
         IssuesMode::ConfirmSend => handle_issue_confirm_send_key(key, model, ui),
+        IssuesMode::StartWork => handle_start_work_key(key, ui),
         // Unreachable — the gate only fires for non-Browse modes.
         IssuesMode::Browse => DeckAction::Ignored,
     }
@@ -3658,7 +3667,9 @@ mod skills_keys;
 
 /// ISSUES-tab browse keys and the multiselect they drive.
 mod issues_keys;
-use issues_keys::{handle_issues_browse_key, issues_page_request, issues_prompt_text};
+use issues_keys::{
+    handle_issues_browse_key, handle_start_work_key, issues_page_request, issues_prompt_text,
+};
 
 #[cfg(test)]
 mod tests;

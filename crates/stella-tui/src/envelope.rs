@@ -22,6 +22,7 @@ use stella_tools::search::readiness::IndexReadiness;
 
 use crate::graph::GraphSnapshot;
 use crate::input::UserInput;
+use crate::start_work::StartWorkDraft;
 
 /// Stable identifier for one agent/run within the workspace. Human-meaningful
 /// where possible (`"lead"`, `"sub:auth-refactor"`) — it is shown on screen, so
@@ -505,6 +506,15 @@ pub enum Inbound {
         key: String,
         outcome: Result<String, String>,
     },
+    /// The answer to an ISSUES-tab [`WorkspaceInput::IssueDraftPlan`]: the
+    /// drafted plan the start-work overlay renders, or what stopped it.
+    /// Out-of-band and seq-guarded like [`Inbound::IssuesList`]; boxed because
+    /// the draft carries the issue's sources and every task's contract, far
+    /// more than any sibling payload on this channel.
+    IssueDraft {
+        seq: u64,
+        outcome: Result<Box<StartWorkDraft>, String>,
+    },
     /// The answer to a type-ahead [`WorkspaceInput::EntitySearch`]: the merged
     /// hit list for the create form's Assignee/Labels popup. `query` echoes
     /// the text searched (display only); `seq` echoes the request so the
@@ -633,8 +643,6 @@ pub enum IssueAction {
     /// `SetStatus("closed")`, and why the port grew
     /// `IssueProvider::reopen` rather than a status setter.
     Reopen,
-    /// Start work: the driver moves the issue to in-progress (`w`).
-    StartWork,
 }
 
 /// The session-registry lifecycle phase, exactly the grouping the SESSIONS
@@ -1122,6 +1130,27 @@ pub enum WorkspaceInput {
     IssueAct {
         key: String,
         action: IssueAction,
+        seq: u64,
+    },
+    /// ISSUES tab: draft a plan for one issue (`w`), from the issue's text,
+    /// the files the code graph couples to it, and the memory RULEs that
+    /// apply. Answered with [`Inbound::IssueDraft`].
+    ///
+    /// Reads only. The draft is what the human approves, so nothing on this
+    /// path may create a branch, take a claim, or spend a model call — see
+    /// [`WorkspaceInput::IssueStartWork`], which is the one request that does.
+    IssueDraftPlan { key: String, seq: u64 },
+    /// ISSUES tab: approve a drafted plan and start work on it (`a` in the
+    /// start-work overlay). `tasks` is the draft's task list **after** the
+    /// human's edits, in plan order.
+    ///
+    /// This is the only ISSUES-tab request that changes anything outside the
+    /// tracker: the driver takes the workspace's `issue:<n>` dispatch claim,
+    /// opens the branch under it, and authors the plan's first revision.
+    /// Answered with [`Inbound::IssueActDone`].
+    IssueStartWork {
+        key: String,
+        tasks: Vec<String>,
         seq: u64,
     },
     /// ISSUES tab: one per-keystroke type-ahead query from the create form's
