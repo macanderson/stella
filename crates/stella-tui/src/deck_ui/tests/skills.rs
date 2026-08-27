@@ -22,6 +22,7 @@ fn a_row(name: &str, scope: SkillScope, enabled: bool) -> SkillRow {
         body: "b".to_string(),
         origin: "workspace".to_string(),
         evidence_grade: None,
+        learned: None,
         enabled,
         version: 1,
         latest: 1,
@@ -280,13 +281,16 @@ fn skills_manage_hotkeys_yield_to_a_nonempty_composer() {
         created: None,
     };
 
-    // 'r' is not a hotkey → it falls through to the composer, so the
-    // composer is now non-empty.
-    handle_deck_key(ch('r'), &model, &mut ui);
-    assert_eq!(ui.composer.buffer(), "r");
+    // 'z' is not a hotkey → it falls through to the composer, so the
+    // composer is now non-empty. (This seed used to be 'r', which #5046
+    // promoted to the learned-skill rename; it only has to be a character the
+    // tab does not claim.)
+    handle_deck_key(ch('z'), &model, &mut ui);
+    assert_eq!(ui.composer.buffer(), "z");
 
-    // Now the manage-hotkey characters type into the composer, not fire.
-    for c in "enp e".chars() {
+    // Now the manage-hotkey characters type into the composer, not fire —
+    // including #5046's `r` and `x`.
+    for c in "enprx e".chars() {
         handle_deck_key(ch(c), &model, &mut ui);
     }
     assert!(
@@ -297,7 +301,11 @@ fn skills_manage_hotkeys_yield_to_a_nonempty_composer() {
         ui.skills.view.rows[0].enabled,
         "space must not toggle the skill mid-prompt"
     );
-    assert_eq!(ui.composer.buffer(), "renp e");
+    assert!(
+        !ui.skills.reject_armed,
+        "and `x` must not arm a rejection mid-prompt"
+    );
+    assert_eq!(ui.composer.buffer(), "zenprx e");
 
     // From an EMPTY composer, 'e' still opens the edit overlay as designed —
     // the gate only defers to a prompt in progress, it doesn't disable the
@@ -566,4 +574,235 @@ fn skills_a_typed_query_holds_on_to_the_right_arrow() {
     handle_deck_key(key(KeyCode::Right), &model, &mut ui);
     assert_eq!(ui.tab, DeckTab::Skills, "the tab did not move");
     assert_eq!(ui.skills.query, "p");
+}
+
+// ── The learned-skill lifecycle (#5046, SPEC 9.2) ───────────────────────
+
+/// A learned row as the driver hands it over: `origin: auto`, with the
+/// provenance assembled from its file and its scope sidecar.
+fn a_learned_row(name: &str, was: &str) -> SkillRow {
+    SkillRow {
+        origin: "auto".to_string(),
+        learned: Some(crate::envelope::LearnedProvenance {
+            traces: 3,
+            turn: Some(37),
+            was: was.to_string(),
+            sources: vec![crate::envelope::LearnedSource {
+                reference: "reflection:1787462110".into(),
+                observed_at: 1_787_462_110,
+                snippet: "money amounts must be stored as minor units".into(),
+            }],
+        }),
+        ..a_row(name, SkillScope::Project, true)
+    }
+}
+
+/// `r` opens the rename dialog pre-filled with the current name and carrying
+/// the `was <hash>` it promises to keep; ⏎ dispatches the rename.
+#[test]
+fn skills_r_renames_a_learned_skill_and_keeps_its_provenance() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rows = vec![a_learned_row("money-is-minor-units-a1b2c3d4", "a1b2c3d4")];
+
+    handle_deck_key(ch('r'), &model, &mut ui);
+    assert_eq!(
+        ui.skills.prompt,
+        Some(SkillPrompt::Rename {
+            scope: SkillScope::Project,
+            name: "money-is-minor-units-a1b2c3d4".into(),
+            buffer: "money-is-minor-units-a1b2c3d4".into(),
+            was: "a1b2c3d4".into(),
+        }),
+        "the dialog opens on the current name, carrying the hash"
+    );
+
+    // Retype the name: a rename is an edit of what is already there.
+    for _ in 0..9 {
+        handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::Skill(SkillOp::Rename {
+            scope: SkillScope::Project,
+            from: "money-is-minor-units-a1b2c3d4".into(),
+            to: "money-is-minor-units".into(),
+        }))
+    );
+    assert!(ui.skills.prompt.is_none(), "the dialog closed");
+    assert!(
+        ui.composer.is_empty(),
+        "the typing never reached the composer"
+    );
+}
+
+/// The rename dialog is fully modal and esc abandons it — nothing is sent and
+/// nothing typed leaks into the composer behind it.
+#[test]
+fn skills_rename_is_modal_and_esc_abandons_it() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rows = vec![a_learned_row("mined-a1b2c3d4", "a1b2c3d4")];
+    handle_deck_key(ch('r'), &model, &mut ui);
+    for c in "xyz".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert!(ui.skills.prompt.is_none());
+    assert!(ui.composer.is_empty(), "no keystroke reached the composer");
+}
+
+/// `r` on a skill a human wrote refuses, and says why — a name its author
+/// chose is not a hash suffix waiting to be replaced.
+#[test]
+fn skills_r_refuses_a_skill_nobody_learned() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rows = vec![a_row("rust-review", SkillScope::Project, true)];
+    handle_deck_key(ch('r'), &model, &mut ui);
+    assert!(ui.skills.prompt.is_none(), "no dialog opened");
+    assert!(
+        ui.skills
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("not learned from traces")),
+        "{:?}",
+        ui.skills.status
+    );
+}
+
+/// **The witness, deck-side (#5046).** `x` twice on a learned row dispatches a
+/// `Reject`, not an `Uninstall` — the op that carries the negative signal.
+/// One press only arms it, and says what the second press will do.
+#[test]
+fn skills_x_twice_rejects_a_learned_skill() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rows = vec![a_learned_row("money-is-minor-units-a1b2c3d4", "a1b2c3d4")];
+
+    let first = handle_deck_key(ch('x'), &model, &mut ui);
+    assert_eq!(first, DeckAction::Handled, "one press only arms it");
+    assert!(ui.skills.reject_armed);
+    assert!(
+        ui.skills
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("REJECT") && s.contains("learner")),
+        "the arming line says what the second press costs: {:?}",
+        ui.skills.status
+    );
+
+    let second = handle_deck_key(ch('x'), &model, &mut ui);
+    assert_eq!(
+        second,
+        DeckAction::Send(WorkspaceInput::Skill(SkillOp::Reject {
+            scope: SkillScope::Project,
+            name: "money-is-minor-units-a1b2c3d4".into(),
+        })),
+        "reject, not uninstall — the signal is the point"
+    );
+}
+
+/// The two destructive verbs cannot complete each other: `ctrl+x` then `x` is
+/// a user changing their mind, and must arm rather than fire.
+#[test]
+fn skills_a_ctrl_x_does_not_confirm_a_pending_reject() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rows = vec![a_learned_row("mined-a1b2c3d4", "a1b2c3d4")];
+
+    handle_deck_key(ch('x'), &model, &mut ui);
+    assert!(ui.skills.reject_armed);
+    let action = handle_deck_key(ctrl('x'), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert!(!ui.skills.reject_armed, "the rejection was disarmed");
+    assert!(
+        ui.skills.uninstall_armed,
+        "and ctrl+x armed its own verb instead"
+    );
+
+    // And the other direction.
+    let action = handle_deck_key(ch('x'), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert!(!ui.skills.uninstall_armed);
+    assert!(ui.skills.reject_armed);
+}
+
+/// `x` on a skill a human wrote has no learner to teach, so it refuses and
+/// names the key that does delete it.
+#[test]
+fn skills_x_refuses_a_skill_nobody_learned() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rows = vec![a_row("rust-review", SkillScope::Project, true)];
+    handle_deck_key(ch('x'), &model, &mut ui);
+    handle_deck_key(ch('x'), &model, &mut ui);
+    assert!(!ui.skills.reject_armed);
+    assert!(
+        ui.skills
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("ctrl+x twice")),
+        "{:?}",
+        ui.skills.status
+    );
+}
+
+/// `ctrl+o` on a learned row opens on its **source traces** (SPEC 9.2), with
+/// the provenance as the sub-line and the body still reachable below.
+#[test]
+fn skills_ctrl_o_on_a_learned_row_lists_its_source_traces() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rows = vec![a_learned_row("money-is-minor-units-a1b2c3d4", "a1b2c3d4")];
+    handle_deck_key(ctrl('o'), &model, &mut ui);
+    let preview = ui.skills.preview.as_ref().expect("preview opened");
+    let body = preview.body.as_deref().expect("local body");
+    assert!(body.starts_with("## Source traces"), "{body}");
+    assert!(body.contains("reflection:1787462110"), "{body}");
+    assert!(
+        body.contains("## The skill"),
+        "the body is still reachable below the traces: {body}"
+    );
+    assert_eq!(
+        preview.subtitle, "from 3 traces · turn 37 · was a1b2c3d4",
+        "the provenance is the sub-line"
+    );
+}
+
+/// A learned skill whose file kept no evidence says so, rather than showing an
+/// empty heading that reads as a rendering bug.
+#[test]
+fn skills_ctrl_o_says_so_when_a_learned_skill_kept_no_traces() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    let mut row = a_learned_row("mined-a1b2c3d4", "a1b2c3d4");
+    if let Some(learned) = row.learned.as_mut() {
+        learned.traces = 0;
+        learned.sources.clear();
+    }
+    ui.skills.view.rows = vec![row];
+    handle_deck_key(ctrl('o'), &model, &mut ui);
+    let body = ui
+        .skills
+        .preview
+        .as_ref()
+        .and_then(|p| p.body.clone())
+        .expect("body");
+    assert!(body.contains("records no traces"), "{body}");
+}
+
+/// `ctrl+o` on an ordinary skill is unchanged: the `SKILL.md` body, no trace
+/// section invented for a skill that has none.
+#[test]
+fn skills_ctrl_o_on_an_authored_row_still_previews_the_body() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rows = vec![a_row("rust-review", SkillScope::Project, true)];
+    handle_deck_key(ctrl('o'), &model, &mut ui);
+    let preview = ui.skills.preview.as_ref().expect("preview opened");
+    assert_eq!(preview.body.as_deref(), Some("b"));
+    assert!(!preview.subtitle.contains("traces"), "{preview:?}");
 }

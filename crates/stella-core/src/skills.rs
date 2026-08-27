@@ -33,9 +33,9 @@
 //!      — mining recurring observations (style preferences, reflection
 //!      lessons) into candidates once something has been "observed enough",
 //!      capped so it feels magical, not spammy. Since #1067 "observed enough"
-//!      is necessary but no longer sufficient: promotion also needs a measured
-//!      lift from [`appraisal`], which is likewise the module that decides
-//!      when a skill has stopped helping and should leave selection.
+//!      is necessary but no longer sufficient: promotion needs a measured lift
+//!      from [`appraisal`], which likewise decides when a skill should leave
+//!      selection, and a [`SkillRejection`] stops a rejected one re-mining.
 //!   5. **Install vocabulary** ([`SkillInstallProposal`], [`InstallDecision`])
 //!      — the typed shape the registry-search/install glue and a future TUI
 //!      speak, so both sides agree on one contract.
@@ -791,15 +791,102 @@ pub struct SkillCandidate {
     pub score: f64,
 }
 
+/// A learned skill the user rejected — the **negative** half of the mining
+/// signal, and the fact [`mine_skill_candidates`] reads so that a rejection
+/// means something beyond one row leaving one list.
+///
+/// Promotion has only ever had positive evidence: a lesson recurred, so a
+/// skill was written. Nothing ever told the miner it had been *wrong*, so
+/// deleting an auto-created file removed the row and changed nothing about
+/// what the loop believed — the next pass re-clustered the same observations,
+/// minted the same [`candidate_id`], and wrote the file straight back. This
+/// record is what closes that loop (SPEC 9.2, `x reject teaches the learner`).
+///
+/// **Not** a tombstone on the lesson
+/// (`stella_store::ContextSurface::Skill`, which the loop already sweeps).
+/// The two are different claims and the narrower one deserves the narrower
+/// record: forgetting a lesson says the observation should never steer
+/// anything again — it stops being recalled as a memory too — while rejecting
+/// a skill says the observations genuinely happened and the *procedure
+/// synthesised from them* is not worth injecting. A user who rejects a badly
+/// generalised skill has not asked to forget the turns it generalised from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillRejection {
+    /// The [`candidate_id`] the rejected skill was mined under.
+    ///
+    /// The mined identity, never whatever the file is called now: a learned
+    /// skill can be renamed to something a human can read (SPEC 9.2) and the
+    /// miner only ever re-derives the mined one, so a rejection keyed on the
+    /// display name would be invisible to the very pass it exists to stop.
+    pub mined_as: String,
+    /// The body the skill carried when it was rejected — the representative
+    /// lesson its cluster minted.
+    ///
+    /// Kept for the same reason a tombstone keeps the forgotten text: the loop
+    /// re-learns paraphrases, and a re-worded cluster mints a *different*
+    /// `<hash8>`, so identity alone would let the same rejected procedure walk
+    /// back in under a new name a week later.
+    pub lesson: String,
+    /// When the user rejected it, unix seconds. Never consulted by the miner;
+    /// it is what makes this an auditable record rather than a bare denylist.
+    pub rejected_at: u64,
+}
+
+/// The deterministic `<slug>-<hash8>` identity a lesson mines to.
+///
+/// One function rather than an expression inlined per site, because this
+/// string is three things at once: the candidate's name, the `SKILL.md`
+/// filename stem on disk, and the key a [`SkillRejection`] is recorded
+/// against. Those three must agree byte-for-byte or a rejection silently
+/// misses — and `migration_contract::candidate_identity_is_pinned_to_a_literal`
+/// is the literal all three are pinned to.
+pub fn candidate_id(text: &str) -> String {
+    format!(
+        "{}-{}",
+        crate::mining::slugify(text, "skill"),
+        crate::mining::hash8(text)
+    )
+}
+
+/// Does `text` mine to something the user already rejected?
+///
+/// Two keys, and both are needed. Identity catches the ordinary case exactly
+/// and cheaply, including a skill whose body was emptied before it was
+/// rejected. Restatement catches what identity cannot see: the cluster
+/// re-forms around slightly different wording, mints a fresh `<hash8>`, and
+/// is a brand-new candidate as far as the miner is concerned. It is the same
+/// predicate, at the same threshold, that [`crate::mining::already_captured`]
+/// applies to skills that *do* exist — "we already have this" and "we already
+/// declined this" are one question asked with opposite signs, so they are
+/// asked the same way.
+fn is_rejected(text: &str, rejected: &[SkillRejection], min_similarity: f64) -> bool {
+    if rejected.is_empty() {
+        return false;
+    }
+    let id = candidate_id(text);
+    rejected.iter().any(|r| r.mined_as == id)
+        || crate::mining::already_captured(
+            text,
+            rejected
+                .iter()
+                .map(|r| r.lesson.as_str())
+                .filter(|lesson| !lesson.trim().is_empty()),
+            min_similarity,
+        )
+}
+
 /// Mine observations into ranked auto-creation candidates. A cluster of
 /// similar-enough observations (Jaccard ≥ `config.min_similarity`) qualifies
 /// when either it recurred at least `config.min_occurrences` times, or any
 /// occurrence is salient (a single strong signal — e.g. an explicit user
 /// preference — is enough). Candidates whose text already matches an existing
-/// skill are dropped. Deterministic across reruns on identical input.
+/// skill are dropped, and so are candidates the user has **rejected**
+/// (`rejected` — see [`SkillRejection`]). Deterministic across reruns on
+/// identical input.
 pub fn mine_skill_candidates(
     observations: Vec<SkillObservation>,
     existing: &[Skill],
+    rejected: &[SkillRejection],
     config: &SkillMineConfig,
 ) -> Vec<SkillCandidate> {
     let clusters =
@@ -823,6 +910,14 @@ pub fn mine_skill_candidates(
         ) {
             continue;
         }
+        // The negative signal, checked beside the positive one: a candidate
+        // the user rejected is not re-minted, however many times its
+        // observations recur. Without this the loop would re-write the file
+        // on the very next reflection turn, which is what made rejecting a
+        // learned skill a purely cosmetic act.
+        if is_rejected(&text, rejected, config.min_similarity) {
+            continue;
+        }
 
         let domains = union_domains(&cluster);
         let mut sorted = cluster;
@@ -843,14 +938,8 @@ pub fn mine_skill_candidates(
         } else {
             ""
         };
-        let name = format!(
-            "{}-{}",
-            crate::mining::slugify(&text, "skill"),
-            crate::mining::hash8(&text)
-        );
-
         candidates.push(SkillCandidate {
-            name,
+            name: candidate_id(&text),
             description: format!("Learned from {occurrences} observation{plural}{salience_note}."),
             domains,
             occurrences,

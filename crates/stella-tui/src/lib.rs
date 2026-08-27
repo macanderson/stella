@@ -117,10 +117,11 @@ pub use envelope::{
     AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, EngineAgentState,
     EngineConfigState, EngineRole, EntityField, EntityHit, GRAPH_SERVER, Inbound, InspectMessage,
     InspectSection, InspectView, InstalledAgentEntry, IssueAction, IssueRow, JournalEra,
-    McpLiveIdentity, McpLookupState, McpSearchItem, McpSearchOutcome, McpServerDetail,
-    McpServerInfo, McpSignature, McpSourceTier, McpToolRow, NotificationInfo, RecordedCallInfo,
-    SeatRow, Secret, SessionInfo, SessionPhase, SkillOp, SkillRow, SkillScope, SkillSearchHit,
-    SkillsView, SplashCue, ToolDenial, ToolPolicyState, ToolRow, ToolScope, WorkspaceInput,
+    LearnedProvenance, LearnedSource, McpLiveIdentity, McpLookupState, McpSearchItem,
+    McpSearchOutcome, McpServerDetail, McpServerInfo, McpSignature, McpSourceTier, McpToolRow,
+    NotificationInfo, RecordedCallInfo, SeatRow, Secret, SessionInfo, SessionPhase, SkillOp,
+    SkillRow, SkillScope, SkillSearchHit, SkillsView, SplashCue, ToolDenial, ToolPolicyState,
+    ToolRow, ToolScope, WorkspaceInput,
 };
 pub use fleet_dashboard::{
     FleetControl, FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,

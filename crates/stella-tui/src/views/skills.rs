@@ -10,7 +10,7 @@
 //! │▸ [x] rust-review              v2/4 · user   Review Rust diffs for ownership.    │
 //! │  [ ] sql-tuning               v1 · user     Read a query plan and propose …     │
 //! │ learned from traces · 1   stella wrote these after repeated wins                │
-//! │  [x] bench-rig-access         learned       Reach the rig and read a reward.    │
+//! │  [x] bench-rig-access         learned   from 4 traces · turn 37 · was a1b2c3d4  │
 //! ╰────────────────────────────────────────────────────────────────────────────────╯
 //! registry · web · 3 results
 //! ╭────────────────────────────────────────────────────────────────────────────────╮
@@ -21,14 +21,14 @@
 //! ```
 //!
 //! One search box over two sources: the **installed** list (activate, disable,
-//! uninstall, edit, pin — with the skills stella learned from its own traces in
-//! their own section) and the **registry** (`npx skills find` → install). ←/→
-//! move the keyboard between the two. The driver owns the skills on disk (both
-//! scopes), their enabled/version/pin state, and the npx registry; this module
-//! renders the [`crate::envelope::SkillsView`] read-model it pushes, and
-//! [`overlays`] draws the scope / create / edit / pin dialogs and the `ctrl+o`
-//! preview over the top. The content is a deterministic function of
-//! `(ui.skills)`, so buffer tests stay byte-stable.
+//! uninstall, edit, pin — plus the skills stella learned from its own traces,
+//! in a section of their own showing `from N traces · turn M · was <hash>` and
+//! answering `r` rename, `ctrl+o` source traces, `x` reject) and the
+//! **registry** (`npx skills find` → install). ←/→ move the keyboard between
+//! the two. The driver owns the skills on disk, their state, and the registry;
+//! this module renders the [`crate::envelope::SkillsView`] read-model it
+//! pushes, and [`overlays`] draws the dialogs and the `ctrl+o` preview over the
+//! top. Content is a function of `(ui.skills)`, so buffer tests stay stable.
 //!
 //! The two source boxes stack on every frame rather than sitting side by side,
 //! so a read-aloud row carries one source and never a slice of each — accessible
@@ -230,8 +230,17 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
             + name.chars().count()
             + meta.chars().count();
         let desc_room = width.saturating_sub(used + 3);
-        let desc = if desc_room >= 6 && !row.description.is_empty() {
-            format!("  {}", truncate(&row.description, desc_room))
+        // A learned row spends its last column on **provenance** rather than
+        // on a description (SPEC 9.2). Nothing is lost: the description a
+        // mined skill carries is `Learned from N observations.`, which is the
+        // trace count already — said less precisely, and without the turn or
+        // the identity `r rename` has to keep. The real prose is in the body,
+        // one `ctrl+o` away. *This* column and not a right-aligned one: the
+        // right edge of an installed row is where per-skill economics land
+        // (#4337).
+        let tail = provenance(row).unwrap_or_else(|| row.description.clone());
+        let desc = if desc_room >= 6 && !tail.is_empty() {
+            format!("  {}", truncate(&tail, desc_room))
         } else {
             String::new()
         };
@@ -284,6 +293,29 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         }
     }
     Paragraph::new(lines).render(inner, buf);
+}
+
+/// SPEC 9.2's learned-skill provenance line — `from N traces · turn M ·
+/// was <hash>` — or `None` for a row that is not a learned skill.
+///
+/// Every segment is dropped when the fact behind it is missing, rather than
+/// printed with a placeholder: a skill mined before the turn was recorded has
+/// no turn, and inventing one would make the line a worse answer than the
+/// shorter true one. The order never changes, so the eye learns one shape.
+pub(crate) fn provenance(row: &SkillRow) -> Option<String> {
+    let learned = row.learned.as_ref()?;
+    let mut parts: Vec<String> = Vec::with_capacity(3);
+    if learned.traces > 0 {
+        let plural = if learned.traces == 1 { "" } else { "s" };
+        parts.push(format!("from {} trace{plural}", learned.traces));
+    }
+    if let Some(turn) = learned.turn {
+        parts.push(format!("turn {turn}"));
+    }
+    if !learned.was.is_empty() {
+        parts.push(format!("was {}", learned.was));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// The registry section: the last search's hits, each with its install count,
@@ -401,7 +433,30 @@ fn popularity_bar(rank: u64, peak: u64) -> String {
 fn render_status(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
+    // The learned lifecycle's verbs (SPEC 9.2) belong to learned rows and to
+    // nothing else, so the hint line follows the selection rather than listing
+    // every key the tab has ever had. That also keeps it on one line: `r` and
+    // `x` are two more keys, and the installed line was already full.
+    //
+    // Keyed on the provenance and not on `origin == "auto"`, because that is
+    // what the verbs themselves are keyed on: a hand-written `origin: auto`
+    // file with no mined identity and no evidence gets no provenance, and `r`
+    // and `x` refuse it — so advertising them here would be a hint that lies.
+    let on_learned = ui
+        .skills
+        .view
+        .rows
+        .get(ui.skills.sel)
+        .is_some_and(|row| row.learned.is_some());
     let keys: &[(&str, &str)] = match ui.skills.focus {
+        SkillsFocus::Installed if on_learned => &[
+            ("space", "on/off"),
+            ("ctrl+o", "source traces"),
+            ("r", "rename"),
+            ("x", "reject"),
+            ("e", "edit"),
+            ("→", "search"),
+        ],
         SkillsFocus::Installed => &[
             ("space", "on/off"),
             ("ctrl+o", "preview"),
@@ -501,7 +556,9 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use crate::deck_ui::{ScopeAction, SkillPreview, SkillPrompt};
-    use crate::envelope::{SkillRow, SkillScope, SkillSearchHit, SkillsView};
+    use crate::envelope::{
+        LearnedProvenance, LearnedSource, SkillRow, SkillScope, SkillSearchHit, SkillsView,
+    };
     use crate::theme;
 
     fn buffer_text(buf: &Buffer) -> String {
@@ -541,6 +598,7 @@ mod tests {
             body: format!("body of {name}"),
             origin: "workspace".to_string(),
             evidence_grade: None,
+            learned: None,
             enabled,
             version,
             latest,
@@ -559,11 +617,32 @@ mod tests {
             body: format!("body of {name}"),
             origin: "auto".to_string(),
             evidence_grade: evidence_grade.map(str::to_string),
+            learned: None,
             enabled: true,
             version: 1,
             latest: 1,
             removable: true,
             contributed_by: None,
+        }
+    }
+
+    /// The same, carrying the provenance the driver assembles for it (#5046):
+    /// `traces` source traces, learned on `turn`, minted as `<slug>-<was>`.
+    fn traced_row(name: &str, traces: u32, turn: Option<u64>, was: &str) -> SkillRow {
+        SkillRow {
+            learned: Some(LearnedProvenance {
+                traces,
+                turn,
+                was: was.to_string(),
+                sources: (0..traces)
+                    .map(|i| LearnedSource {
+                        reference: format!("reflection:{}", 1000 + i),
+                        observed_at: u64::from(1000 + i),
+                        snippet: format!("the number {i} time this happened"),
+                    })
+                    .collect(),
+            }),
+            ..learned_row(name, None)
         }
     }
 
@@ -619,6 +698,193 @@ mod tests {
         let text = buffer_text(&buf);
         assert!(text.contains("learned · environment_observation"), "{text}");
         assert!(text.contains("learned · model_critique"), "{text}");
+    }
+
+    /// **Witness (#5046).** SPEC 9.2's provenance reaches the screen whole:
+    /// the trace count, the turn it was learned on, and the mined `<hash>` a
+    /// rename has to keep — in that order, on the learned row itself.
+    #[test]
+    fn a_learned_row_shows_its_traces_turn_and_mined_hash() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.view = SkillsView {
+            rows: vec![traced_row("money-is-minor-units", 4, Some(37), "a1b2c3d4")],
+            status: None,
+            busy: false,
+            created: None,
+        };
+        let area = Rect::new(0, 0, 120, 20);
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(
+            text.contains("from 4 traces · turn 37 · was a1b2c3d4"),
+            "the whole provenance line, in SPEC 9.2's order:\n{text}"
+        );
+    }
+
+    /// Each segment is dropped when the fact behind it is missing rather than
+    /// filled with a placeholder — a skill mined before the turn was recorded
+    /// has no turn, and `turn 0` would be a turn that never happened.
+    #[test]
+    fn provenance_omits_the_segments_it_has_no_answer_for() {
+        let no_turn = traced_row("mined-before-turns", 2, None, "deadbeef");
+        assert_eq!(
+            provenance(&no_turn).as_deref(),
+            Some("from 2 traces · was deadbeef")
+        );
+        let one = traced_row("single-trace", 1, Some(3), "0badcafe");
+        assert_eq!(
+            provenance(&one).as_deref(),
+            Some("from 1 trace · turn 3 · was 0badcafe"),
+            "one trace is not `1 traces`"
+        );
+        let no_traces = traced_row("evidence-was-edited-away", 0, Some(9), "12345678");
+        assert_eq!(
+            provenance(&no_traces).as_deref(),
+            Some("turn 9 · was 12345678")
+        );
+        assert_eq!(
+            provenance(&row("hand-written", SkillScope::Project, true, 1, 1)),
+            None,
+            "a skill nobody mined has no provenance to show"
+        );
+    }
+
+    /// The provenance takes the description column, and the row keeps
+    /// everything else it had — the enabled box, the name, and the `learned`
+    /// tag that puts it in this section at all.
+    #[test]
+    fn provenance_replaces_the_description_only_on_learned_rows() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.view = SkillsView {
+            rows: vec![
+                row("sql-style", SkillScope::Project, true, 1, 1),
+                traced_row("money-is-minor-units", 4, Some(37), "a1b2c3d4"),
+            ],
+            status: None,
+            busy: false,
+            created: None,
+        };
+        let area = Rect::new(0, 0, 120, 20);
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(
+            text.contains("sql-style does a thing"),
+            "an authored row keeps its description:\n{text}"
+        );
+        assert!(
+            !text.contains("money-is-minor-units does a thing"),
+            "a learned row spends that column on provenance instead:\n{text}"
+        );
+        assert!(text.contains("learned"), "still tagged learned:\n{text}");
+        assert!(text.contains("[x]"), "still has its enabled box:\n{text}");
+    }
+
+    /// The hint line follows the selection: a learned row is the only place
+    /// `r` and `x` do anything, so it is the only place they are advertised.
+    #[test]
+    fn the_key_hints_name_the_learned_verbs_only_on_a_learned_row() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.view = SkillsView {
+            rows: vec![
+                row("sql-style", SkillScope::Project, true, 1, 1),
+                traced_row("money-is-minor-units", 4, Some(37), "a1b2c3d4"),
+            ],
+            status: None,
+            busy: false,
+            created: None,
+        };
+        let area = Rect::new(0, 0, 120, 20);
+
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let authored = buffer_text(&buf);
+        assert!(
+            authored.contains("ctrl+x ctrl+x delete"),
+            "an authored row offers delete:\n{authored}"
+        );
+        assert!(
+            !authored.contains("r rename"),
+            "and not the learned verbs:\n{authored}"
+        );
+
+        ui.skills.sel = 1;
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let learned = buffer_text(&buf);
+        assert!(learned.contains("r rename"), "{learned}");
+        assert!(learned.contains("x reject"), "{learned}");
+        assert!(
+            learned.contains("ctrl+o source traces"),
+            "ctrl+o is renamed on a learned row, because that is what it \
+             opens on:\n{learned}"
+        );
+    }
+
+    /// The hints key off the provenance, not off `origin == "auto"`. A
+    /// hand-written `origin: auto` file with no mined identity and no evidence
+    /// is a row `r` and `x` both refuse, so neither may be advertised on it —
+    /// the hint line and the verbs have to agree about what a learned row is.
+    #[test]
+    fn a_row_with_no_provenance_is_not_offered_the_learned_verbs() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.view = SkillsView {
+            // `origin: auto`, but nothing ever mined it: no traces, no sidecar.
+            rows: vec![learned_row("hand-written-auto", None)],
+            status: None,
+            busy: false,
+            created: None,
+        };
+        let area = Rect::new(0, 0, 120, 20);
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert_eq!(ui.skills.view.rows[0].origin, "auto", "the premise");
+        assert!(
+            !text.contains("r rename") && !text.contains("x reject"),
+            "verbs that would refuse this row must not be advertised on \
+             it:\n{text}"
+        );
+    }
+
+    #[test]
+    fn rename_overlay_promises_the_provenance_survives() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.prompt = Some(SkillPrompt::Rename {
+            scope: SkillScope::Project,
+            name: "money-is-minor-units-a1b2c3d4".into(),
+            buffer: "money-is-minor-units".into(),
+            was: "a1b2c3d4".into(),
+        });
+        let area = Rect::new(0, 0, 90, 16);
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("rename learned skill"), "{text}");
+        assert!(
+            text.contains("keeps its provenance · was a1b2c3d4"),
+            "the dialog says the hash survives, on screen:\n{text}"
+        );
+        assert!(
+            text.contains("⏎ rename · esc cancel"),
+            "the keys ride the bottom rule:\n{text}"
+        );
     }
 
     #[test]

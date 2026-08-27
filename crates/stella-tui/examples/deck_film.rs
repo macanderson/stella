@@ -524,6 +524,7 @@ fn fixture_skills() -> SkillsView {
             body: format!("# {name}\n\n{description}\n"),
             origin: origin.to_string(),
             evidence_grade: None,
+            learned: None,
             enabled,
             version,
             latest,

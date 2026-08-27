@@ -100,11 +100,19 @@ pub(crate) fn induce_proposals(
     store: &ContextStore,
     observations: &[ObservationRecord],
     existing: &[Skill],
+    rejected: &[skills::SkillRejection],
     config: &SkillMineConfig,
 ) -> Vec<InducedProposal> {
     let task_index = tasks_by_evidence(observations);
-    let candidates =
-        skills::mine_skill_candidates(as_skill_observations(observations), existing, config);
+    // A rejected candidate is dropped by the miner, so no proposal is recorded
+    // for it either — which is right: a proposal is a thing a reviewer is
+    // asked about, and the user has already answered this one.
+    let candidates = skills::mine_skill_candidates(
+        as_skill_observations(observations),
+        existing,
+        rejected,
+        config,
+    );
 
     let mut induced = Vec::new();
     for candidate in candidates {
