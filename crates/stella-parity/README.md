@@ -53,7 +53,7 @@ everywhere at once. The embedding story the matrix serves is
 Two ledgers, one discipline. `src/lib.rs` holds the CLI-vs-API capability
 matrix: the posture types, the matrix rows, and the tests (inline `mod
 tests`) that keep the rows true. `src/evolution.rs` holds the evolution
-ledger (AGENTS.md invariant #11): one row per surface Stella changes itself
+ledger (AGENTS.md rule 11): one row per surface Stella changes itself
 through — framework, memory, skill, tool, workflow, model — each declaring a
 posture, timing, impact class, rollback artifact, and, for a live posture,
 the witness test proving the surface can be changed; its rows and the
