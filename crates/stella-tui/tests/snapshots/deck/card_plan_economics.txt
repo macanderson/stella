@@ -1,9 +1,9 @@
-# deck golden · card_plan
-# the /plan card over SESSION — every step, then the envelope
+# deck golden · card_plan_economics
+# SPEC 7.3: per-task economics, the running-task card, a drift row, the drift footer
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
- SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
+ SESSION  ▸ plan · task 2 move hooks · 1/4                                                                                                    ⌃S plan   stella*
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
@@ -16,16 +16,16 @@
 
 ☰  plan  4/7  ·  Wire the triggers API
 
- │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
- │   irreducible generation
-
-── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                                                    ╭ plan  pending approval · 3 steps ────────────────────╮
- │ ⊙ apps/app/automations/page.tsx                  │Refactor the automations store into a shared worksp…  │                                              ⚡ 42ms
- │ ⎿ 312 lines                                      │                                                      │                                 42ms
-                                                    │▸ ○ 1. extract types                               —  │
- │ ● edit apps/app/automations/page.tsx +4 -1       │  ○ 2. move hooks                                  —  │                                              ⚡ 18ms
- │ ⎿                                                │  ○ 3. update 9 imports                            —  │                         +4 −1 · 18ms
+ │ ◐ model worker · 349 tok/s                       ╭ plan  working 1/4 ───────────────────────────────────╮                                            ⚡ 1830ms
+ │   irreducible generation                         │Refactor the automations store into a shared worksp…  │
+                                                    │                                                      │
+── EXECUTE ─────────────────────────────────────────│▸ ✓ 1. extract types                        9.1k tok  │────────────────────────────────────────────────────
+                                                    │  ◐ 2. move hooks                           4.2k tok  │
+ │ ⊙ apps/app/automations/page.tsx                  │     │ contract  — · the board stated no contract     │                                              ⚡ 42ms
+ │ ⎿ 312 lines                                      │     │ evidence  1 row                                │                                 42ms
+                                                    │     │ cost      $0.12 · 3:04                         │
+ │ ● edit apps/app/automations/page.tsx +4 -1       │  ○ 3. update 9 imports                            —  │                                              ⚡ 18ms
+ │ ⎿                                                │  ⌥ 4. repair the failing tests gate  (inserted)   —  │                         +4 −1 · 18ms
  │     10 -  const items = []                       │                                                      │
  │     10 +  const items = useAutomations()         │repo      macanderson/web-app ⎇ feat/automations-store│
  │     11 +  const [q, setQ] = useState("")         │write     packages/automations/** · apps/app/automatio│
@@ -34,9 +34,9 @@
                                                     │models    think — · work glm-5.2-air · verify —       │
  │ ◐ model worker · 428 tok/s                       │shell     allowlisted                                 │                                            ⚡ 2100ms
  │   irreducible generation                         │                                                      │
-                                                    │planned 3 · actual — · ⌥ — drift                      │
+                                                    │planned 3 · actual 3 · ⌥ 1 drift                      │
 ☰  plan  5/7  ·  Workflows canvas                   │drift is recorded, not hidden. it trains your model.  │
-                                                    ╰────────────────────────────────── x skip · esc close ╯
+                                                    ╰───────────────────────── e edit · locked · esc close ╯
 ⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
  ✓ plan ▸ execute ████░░░░ 50% · verify

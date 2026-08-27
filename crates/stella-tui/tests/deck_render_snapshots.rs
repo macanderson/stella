@@ -112,6 +112,16 @@ mod mcp;
 #[path = "deck_render_snapshots/tab_row.rs"]
 mod tab_row;
 
+/// SPEC 7.3's plan-panel economics. See [`graph`]'s doc for why this is
+/// `#[path]` rather than a plain `mod`.
+///
+/// Appended rather than filed in the list's order. Every branch that adds a
+/// golden adds one line here, and they all reach for the same insertion point;
+/// two that pick the same one conflict on the only file they otherwise share
+/// nothing in. Appending makes that a merge nobody has to resolve.
+#[path = "deck_render_snapshots/plan_economics.rs"]
+mod plan_economics;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.
