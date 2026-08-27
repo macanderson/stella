@@ -39,7 +39,7 @@ pub use diff_budget::DIFF_TEXT_BUDGET;
 // split moved no call site — same discipline as `file_state` and `turn` below
 // (#4217). `entry`'s module doc carries why the seam is declarations-vs-logic.
 pub use entry::{
-    AskUserPrompt, InlineDiffRef, OpenPark, ReadSize, SubAgentSummary, TranscriptEntry,
+    AskUserPrompt, GraphFact, InlineDiffRef, OpenPark, ReadSize, SubAgentSummary, TranscriptEntry,
 };
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
 // The renderer's, not the fold's: the count a multi-path row states is decided
@@ -519,6 +519,7 @@ impl SessionModel {
                         _ => None,
                     })
                     .unwrap_or_else(|| ("tool".to_string(), None, None));
+                let graph = entry::GraphFact::for_result(output, path.as_deref());
                 // The announcement is where the row learns whose call it was
                 // (same precedence as the store's `project_tool_result`,
                 // `stella-store::tool_calls`); this result's own field is only
@@ -625,6 +626,7 @@ impl SessionModel {
                     speculated: *speculated,
                     diff,
                     read_size,
+                    graph,
                     sub_agent_id,
                 });
                 // The answer to an `ask_user` question comes back as this very

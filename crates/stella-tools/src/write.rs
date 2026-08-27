@@ -27,6 +27,14 @@
 //!   produced.
 //! * **`edit_file` is untouched.** It replaces a needle it had to know to
 //!   name, and it is the escape hatch the refusal points at.
+//!
+//! # Registering what was created (#5034)
+//!
+//! A write that creates a file registers it in the workspace code graph and
+//! publishes a [`crate::graph_fact::GraphFact`] saying so, which is what
+//! makes the transcript's `registered in graph as module node` footer a
+//! statement about work that happened rather than about work the watcher may
+//! get to. An overwrite registers nothing: the node was already there.
 
 use std::sync::Arc;
 
@@ -37,15 +45,63 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use crate::read::ReadLedger;
 use crate::registry::Tool;
 
-#[derive(Default)]
 pub struct WriteFile {
     ledger: Arc<ReadLedger>,
+    /// The index a created file is registered in. Injected for the same
+    /// reason `delete_file`'s is — see [`crate::graph_fact`]'s header.
+    graph: Arc<dyn crate::graph_fact::WorkspaceGraph>,
+}
+
+impl Default for WriteFile {
+    fn default() -> Self {
+        Self::with_ledger(Arc::default())
+    }
 }
 
 impl WriteFile {
     /// Construct sharing the registry's read-state ledger.
     pub fn with_ledger(ledger: Arc<ReadLedger>) -> Self {
-        Self { ledger }
+        Self {
+            ledger,
+            graph: Arc::new(crate::graph_fact::Codegraph),
+        }
+    }
+
+    /// Construct against `graph` instead of the workspace's own index.
+    #[cfg(test)]
+    fn with_graph(graph: Arc<dyn crate::graph_fact::WorkspaceGraph>) -> Self {
+        Self {
+            ledger: Arc::default(),
+            graph,
+        }
+    }
+
+    /// The fact a created file earns, or none.
+    ///
+    /// Only a creation: `previous` being `Some` means the path already had a
+    /// node, and "registered" would then describe nothing this call did.
+    /// Run on a blocking worker — indexing parses the file.
+    async fn registered(
+        &self,
+        root: &std::path::Path,
+        scope_root: &std::path::Path,
+        requested: &str,
+        path: &str,
+        previous: Option<&str>,
+    ) -> Option<crate::graph_fact::GraphFact> {
+        if previous.is_some() {
+            return None;
+        }
+        let graph = Arc::clone(&self.graph);
+        let (root, file) = (root.to_path_buf(), scope_root.join(path));
+        let registered = tokio::task::spawn_blocking(move || graph.register(&root, &file))
+            .await
+            .ok()??;
+        registered.then(|| crate::graph_fact::GraphFact::Registered {
+            // Keyed by the path the caller asked for: the transcript row
+            // knows the call's own argument and nothing else.
+            path: requested.to_string(),
+        })
     }
 }
 
@@ -173,13 +229,20 @@ impl WriteFile {
                     ),
                 );
             }
-            planned.push((handle, scope_root, path, target.content.as_str()));
+            planned.push((
+                handle,
+                scope_root,
+                path,
+                target.content.as_str(),
+                target.path.clone(),
+            ));
         }
 
         // Pass two: every check passed, so commit.
         let mut report = Vec::with_capacity(planned.len());
         let mut changes = Vec::with_capacity(planned.len());
-        for (handle, scope_root, path, content) in planned {
+        let mut facts = Vec::with_capacity(planned.len());
+        for (handle, scope_root, path, content, requested) in planned {
             let previous = before(&handle, &path);
             match crate::durable_write::write_file_durably_at(
                 handle,
@@ -198,6 +261,10 @@ impl WriteFile {
                         previous.as_deref(),
                         content,
                     ));
+                    facts.extend(
+                        self.registered(root, &scope_root, &requested, &path, previous.as_deref())
+                            .await,
+                    );
                 }
                 Err(e) => {
                     return ToolOutput::classified_error(
@@ -207,13 +274,16 @@ impl WriteFile {
                 }
             }
         }
-        crate::own_change::attach(
-            ToolOutput::ok(format!(
-                "wrote {} file(s):\n{}",
-                report.len(),
-                report.join("\n")
-            )),
-            &changes,
+        crate::graph_fact::attach(
+            crate::own_change::attach(
+                ToolOutput::ok(format!(
+                    "wrote {} file(s):\n{}",
+                    report.len(),
+                    report.join("\n")
+                )),
+                &changes,
+            ),
+            &facts,
         )
     }
 
@@ -231,6 +301,7 @@ impl WriteFile {
                 return ToolOutput::from(err);
             }
         };
+        let requested = path.to_string();
 
         // Which directory this write is allowed to land in, and where inside
         // it. Decided before anything is opened: a refusal that arrives after
@@ -302,9 +373,15 @@ impl WriteFile {
                     previous.as_deref(),
                     content,
                 );
-                crate::own_change::attach(
-                    ToolOutput::ok(format!("wrote {bytes} bytes to {path}")),
-                    &[change],
+                let fact = self
+                    .registered(root, &scope_root, &requested, path, previous.as_deref())
+                    .await;
+                crate::graph_fact::attach(
+                    crate::own_change::attach(
+                        ToolOutput::ok(format!("wrote {bytes} bytes to {path}")),
+                        &[change],
+                    ),
+                    &fact.into_iter().collect::<Vec<_>>(),
                 )
             }
             Err(e) if e.is_escape() => ToolOutput::classified_error(
@@ -679,6 +756,104 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("existing.rs")).unwrap(),
             "original\n"
+        );
+    }
+
+    /// An index that takes a node for everything it is handed, and counts
+    /// how often it was asked.
+    struct AlwaysRegisters {
+        asked: std::sync::Mutex<Vec<std::path::PathBuf>>,
+    }
+
+    impl AlwaysRegisters {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                asked: std::sync::Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    impl crate::graph_fact::WorkspaceGraph for AlwaysRegisters {
+        fn inbound_refs(&self, _root: &std::path::Path, _file: &std::path::Path) -> Option<u32> {
+            None
+        }
+
+        fn register(&self, _root: &std::path::Path, file: &std::path::Path) -> Option<bool> {
+            self.asked.lock().unwrap().push(file.to_path_buf());
+            Some(true)
+        }
+    }
+
+    /// The #5034 write half: a created file is registered, and says so under
+    /// the path the caller asked for — the only spelling the transcript row
+    /// rendering it knows.
+    #[tokio::test]
+    async fn a_created_file_publishes_the_node_it_registered() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = AlwaysRegisters::new();
+
+        let out = WriteFile::with_graph(graph.clone())
+            .execute(
+                &serde_json::json!({"path": "src/fresh.rs", "content": "pub fn fresh() {}\n"}),
+                &cx(dir.path()),
+            )
+            .await;
+
+        let ToolOutput::Ok { content, .. } = &out else {
+            panic!("{out:?}");
+        };
+        assert_eq!(content, "wrote 18 bytes to src/fresh.rs");
+        assert_eq!(
+            crate::graph_fact::from_output(&out),
+            vec![crate::graph_fact::GraphFact::Registered {
+                path: "src/fresh.rs".into(),
+            }]
+        );
+    }
+
+    /// An overwrite registers nothing: the node was already there, and
+    /// "registered" would then describe work this call did not do.
+    #[tokio::test]
+    async fn an_overwrite_publishes_no_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = AlwaysRegisters::new();
+        // One tool, so the first write's coverage is what lets the second
+        // past the no-clobber guard.
+        let tool = WriteFile::with_graph(graph.clone());
+
+        for (nth, content) in ["pub fn a() {}\n", "pub fn b() {}\n"].iter().enumerate() {
+            let out = tool
+                .execute(
+                    &serde_json::json!({"path": "a.rs", "content": content}),
+                    &cx(dir.path()),
+                )
+                .await;
+            assert!(!out.is_error(), "{out:?}");
+            if nth == 1 {
+                assert!(crate::graph_fact::from_output(&out).is_empty(), "{out:?}");
+            }
+        }
+        assert_eq!(graph.asked.lock().unwrap().len(), 1);
+    }
+
+    /// A workspace nobody has indexed publishes no registration, rather
+    /// than a node it never made.
+    #[tokio::test]
+    async fn a_write_with_no_code_graph_publishes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let out = WriteFile::default()
+            .execute(
+                &serde_json::json!({"path": "lonely.rs", "content": "pub fn lonely() {}\n"}),
+                &cx(dir.path()),
+            )
+            .await;
+
+        assert!(!out.is_error(), "{out:?}");
+        assert!(crate::graph_fact::from_output(&out).is_empty(), "{out:?}");
+        assert!(
+            !dir.path().join(".stella").exists(),
+            "a write must not create an index"
         );
     }
 }

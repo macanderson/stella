@@ -37,6 +37,7 @@ fn tool_result(name: &str, ok: bool, path: Option<&str>, body: &str) -> Transcri
         speculated: false,
         diff: Vec::new(),
         read_size: None,
+        graph: None,
         sub_agent_id: None,
     }
 }
@@ -58,6 +59,7 @@ fn result_for(path: Option<&str>, body: &str) -> TranscriptEntry {
         speculated: false,
         diff: Vec::new(),
         read_size: None,
+        graph: None,
         sub_agent_id: None,
     }
 }

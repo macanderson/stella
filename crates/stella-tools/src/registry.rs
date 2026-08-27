@@ -192,7 +192,7 @@ impl ToolRegistry {
             Arc::new(crate::read::ReadFile::with_ledger(read_ledger.clone())),
             Arc::new(crate::write::WriteFile::with_ledger(read_ledger.clone())),
             Arc::new(crate::edit::EditFile::with_ledger(read_ledger)),
-            Arc::new(crate::delete::DeleteFile),
+            Arc::new(crate::delete::DeleteFile::default()),
             Arc::new(crate::search::Search::from_env()),
             Arc::new(crate::tasks::TaskCreate(task_board.clone())),
             Arc::new(crate::tasks::TaskList(task_board.clone())),

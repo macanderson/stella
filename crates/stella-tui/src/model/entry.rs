@@ -175,6 +175,15 @@ pub enum TranscriptEntry {
         /// reports no coverage, which is every result written before the
         /// payload existed.
         read_size: Option<ReadSize>,
+        /// What the workspace code graph said about this call's own path,
+        /// off the same structured `data` half of the wire (#5034).
+        ///
+        /// `None` whenever nothing measured it — a tool that publishes no
+        /// graph fact, a workspace with no index, a result written before the
+        /// payload existed. The row renders nothing in that case rather than
+        /// a plausible zero: a deletion claiming a clean graph check it never
+        /// ran is worse than a deletion that says nothing.
+        graph: Option<GraphFact>,
         /// Resolved the same way as `name` and `path`: from the matching
         /// `ToolStart` when one is on the transcript, else this result's own
         /// `AgentEvent::ToolResult.sub_agent_id` — the fallback a consumer
@@ -416,6 +425,63 @@ pub struct ReadSize {
     pub shown: u32,
     /// Lines in the file at read time.
     pub total: u32,
+}
+
+/// What the workspace code graph said about a mutated path (#5034).
+///
+/// The producer publishes one fact per path it touched
+/// (`stella_tools::graph_fact`), so a batch carries several and the row
+/// rendering one path picks its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphFact {
+    /// Files whose imports resolved to the path, counted while it still
+    /// existed. Absent rather than zero when the index had never seen it.
+    InboundRefs(u32),
+    /// The write that created the path registered it as a module node.
+    RegisteredModule,
+}
+
+impl GraphFact {
+    /// The fact a tool result reported for its own `path`, or `None` when it
+    /// reported none.
+    ///
+    /// Resolved against the path rather than taken wholesale, because the
+    /// payload is keyed by path so one batch call can carry a fact per file —
+    /// which also means a result whose path the fold could not recover has no
+    /// fact to render, and states none.
+    #[must_use]
+    pub fn for_result(output: &stella_protocol::ToolOutput, path: Option<&str>) -> Option<Self> {
+        let stella_protocol::ToolOutput::Ok {
+            data: Some(data), ..
+        } = output
+        else {
+            return None;
+        };
+        Self::from_data(data, path?)
+    }
+
+    /// The fact this result reported for `path`, out of its structured
+    /// `data`, or `None` when it reported none for that path.
+    ///
+    /// Lenient like the producer's own reader: a payload in a shape this
+    /// version does not parse is a call with nothing to report, never an
+    /// error at the seam that renders it.
+    #[must_use]
+    pub fn from_data(data: &serde_json::Value, path: &str) -> Option<Self> {
+        data.get("graph_facts")?
+            .as_array()?
+            .iter()
+            .find(|fact| fact.get("path").and_then(serde_json::Value::as_str) == Some(path))
+            .and_then(
+                |fact| match fact.get("fact").and_then(serde_json::Value::as_str)? {
+                    "inbound_refs" => u32::try_from(fact.get("inbound")?.as_u64()?)
+                        .ok()
+                        .map(GraphFact::InboundRefs),
+                    "registered" => Some(GraphFact::RegisteredModule),
+                    _ => None,
+                },
+            )
+    }
 }
 
 impl ReadSize {
