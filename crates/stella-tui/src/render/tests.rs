@@ -108,6 +108,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             raw: "{}".into(),
             path: None,
             sub_agent_id: None,
+            task: None,
         },
         TranscriptEntry::ToolResult {
             call_id: "c1".into(),

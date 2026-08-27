@@ -76,6 +76,10 @@ pub struct CallFacts {
     /// folded until they do; every other kind ignores it here (its reveal is
     /// the argument body the caller hangs beneath).
     pub expanded: bool,
+    /// The board task the call was tagged with, rendered `→ task 3` (SPEC
+    /// 6.2). Carried straight from `TranscriptEntry::ToolStart`, which is
+    /// where the protocol tag is read; `None` draws no tag (#5030).
+    pub task: Option<u32>,
 }
 
 /// The metal-bearing head of a dispatched call (SPEC 6.2).
@@ -100,6 +104,7 @@ pub fn head_rows(
     // the one place a read never folded (#5030).
     event.collapsed = Some(matches!(event.kind, EventKind::Read { .. }) && !facts.expanded);
     event.duration_ms = facts.duration_ms.unwrap_or(0);
+    event.task = facts.task;
     event.sub_agent_id = facts.sub_agent_id;
     match facts.graph {
         // SPEC 6.3's write footer. A dim trailing line, because it reports

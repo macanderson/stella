@@ -217,6 +217,18 @@ pub(super) fn truncate_field(s: &str, max: usize) -> String {
     format!("{}…", s[..head_end].replace(['\n', '\r'], " "))
 }
 
+/// The board ordinal an event is tagged with, for SPEC 6.2's `→ task 3`.
+///
+/// `AgentEvent::task_id` is the declared carrier
+/// (`stella_protocol::event::task_tag`), and the board spells its ids as
+/// per-session ordinals — `"1"`, `"2"`. The tag renders that ordinal, so an id
+/// that is not one carries **no tag** rather than a tag the reader cannot act
+/// on: the board has no row to jump to for it, and a head claiming a task the
+/// board cannot show is worse than a head claiming none.
+pub(super) fn task_ordinal(event: &stella_protocol::AgentEvent) -> Option<u32> {
+    event.task_id()?.as_str().parse().ok()
+}
+
 /// The workspace-relative path a file tool targets. Conventionally-shaped
 /// file tools take their path under the `path` key, and a `FileChange` event
 /// carries that same path — so this is the join key between a tool result

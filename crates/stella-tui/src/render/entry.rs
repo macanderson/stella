@@ -216,6 +216,7 @@ fn projected_rows(
             raw,
             path,
             sub_agent_id,
+            task,
         } => {
             out.extend(source::head_rows(
                 name,
@@ -228,6 +229,7 @@ fn projected_rows(
                     sub_agent_id: sub_agent_id.clone(),
                     graph: source::graph_fact(call_id, view.following),
                     expanded,
+                    task: *task,
                 },
                 width,
             ));

@@ -543,6 +543,7 @@ mod tests {
             raw: r#"{"path":"src/auth.rs"}"#.into(),
             path: Some("src/auth.rs".into()),
             sub_agent_id: None,
+            task: None,
         };
         assert_eq!(
             entry_fields(&start),
@@ -649,6 +650,7 @@ mod tests {
                 raw: "{}".into(),
                 path: Some("a.rs".into()),
                 sub_agent_id: None,
+                task: None,
             },
             edit("a.rs", 1),
             edit("a.rs", 2),

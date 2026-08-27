@@ -1019,3 +1019,56 @@ fn a_tool_classs_glyph_spends_no_colour() {
         }
     }
 }
+
+/// **The witness (#5030).** A call tagged with a board task renders SPEC 6.2's
+/// `→ task 3` on its head.
+///
+/// `AgentEvent::ToolStart` is a declared task-tag carrier
+/// (`stella_protocol::event::task_tag`), and the tag was being stamped by the
+/// engine and dropped by the deck: nothing in this crate read `task_id`, so
+/// `Event::task` stayed `None` and the head had nothing to render. The metric
+/// group has drawn the tag all along — `views::transcript::metric_group` — and
+/// only fixture tests ever reached it.
+#[test]
+fn a_call_tagged_with_a_task_renders_the_tag_on_its_head() {
+    let rows = head_rows(
+        "edit_file",
+        Some("crates/stella-cli/src/self_driving_cmd.rs"),
+        "self_driving_cmd.rs",
+        CallFacts {
+            duration_ms: Some(2),
+            task: Some(3),
+            ..CallFacts::default()
+        },
+        120,
+    );
+    let text = text_of_rows(&rows);
+    assert!(
+        text.contains("→ task 3"),
+        "the head carries its task tag:\n{text}"
+    );
+    assert!(
+        text.contains("⚡2ms"),
+        "and still carries the metric beside it:\n{text}"
+    );
+}
+
+/// An untagged call draws no tag — the ordinary case, and the one that must
+/// not gain a `→ task` the board cannot jump to.
+#[test]
+fn an_untagged_call_renders_no_task_tag() {
+    let rows = head_rows(
+        "edit_file",
+        Some("src/lib.rs"),
+        "lib.rs",
+        CallFacts {
+            duration_ms: Some(2),
+            task: None,
+            ..CallFacts::default()
+        },
+        120,
+    );
+    let text = text_of_rows(&rows);
+    assert!(!text.contains("→ task"), "no tag was stamped:\n{text}");
+    assert!(text.contains("⚡2ms"), "the metric is unaffected:\n{text}");
+}

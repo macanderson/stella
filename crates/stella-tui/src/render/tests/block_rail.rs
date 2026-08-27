@@ -40,6 +40,7 @@ fn start(name: &str, input: &str, path: Option<&str>) -> TranscriptEntry {
         raw: "{}".into(),
         path: path.map(str::to_owned),
         sub_agent_id: None,
+        task: None,
     }
 }
 
@@ -263,6 +264,7 @@ fn call_with_args() -> TranscriptEntry {
         raw: r#"{"path":"src/lib.rs","old_string":"alpha","new_string":"bravo"}"#.into(),
         path: Some("src/lib.rs".into()),
         sub_agent_id: None,
+        task: None,
     }
 }
 
@@ -336,6 +338,7 @@ fn revealed_arguments_ride_the_heads_own_rail() {
             raw: r#"{"path":"src/lib.rs","limit":40}"#.into(),
             path: Some("src/lib.rs".into()),
             sub_agent_id: None,
+            task: None,
         };
         let mut lines = Vec::new();
         entry_lines(
@@ -384,6 +387,7 @@ fn an_unparseable_argument_object_is_still_shown() {
         raw: r#"{"command":"echo hello","cwd":"/tm"#.into(),
         path: None,
         sub_agent_id: None,
+        task: None,
     };
     let rendered = render(&call, true);
     assert!(

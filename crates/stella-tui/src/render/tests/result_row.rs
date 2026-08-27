@@ -33,6 +33,7 @@ fn start(name: &str, path: Option<&str>) -> TranscriptEntry {
         raw: "{\"path\":\"src/lib.rs\"}".into(),
         path: path.map(str::to_owned),
         sub_agent_id: None,
+        task: None,
     }
 }
 
