@@ -20,7 +20,7 @@
 //! | Submodule | Steps | What they have in common |
 //! |---|---|---|
 //! | [`legacy_rebuild`] | v0 → v2 | §7 rebuilds retrofitting UNIQUE keys onto pre-versioning files |
-//! | [`additive_tables`] | v2 → v7, v13 → v14, v19 → v21 | a new table appears; nothing existing changes shape |
+//! | [`additive_tables`] | v2 → v7, v13 → v14, v19 → v21, v39 → v40 | a new table appears; nothing existing changes shape |
 //! | [`execution_plane`] | v7 → v10, v21 → v23 | new columns on `executions` and its per-execution facts |
 //! | [`receipts`] | v10 → v13, v14 → v16 | the `context_blocks`/`step_manifest`/`step_receipt` plane |
 //! | [`schema_removal`] | v16 → v17 | the one pure removal |
@@ -41,10 +41,10 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::ddl::{
     AGENT_USES_DDL, CONTEXT_BLOCKS_DDL, EXECUTION_REFLECTION_DDL, EXECUTIONS_DDL, FORGOTTEN_DDL,
-    FOUNDRY_TOOLS_DDL, MCP_USAGE_DDL, MEMORY_CITATIONS_DDL, PULL_REQUESTS_DDL, REFLECTIONS_DDL,
-    RULES_TABLE, SESSION_TURN_DIFFS_DDL, SKILL_USAGE_DDL, STEP_MANIFEST_DDL, STEP_RECEIPT_DDL,
-    TABLES, TASKS_DDL, TELEMETRY_INDEX, TOOL_CALLS_INDEXES, UNCHANGED_TABLES, events_ddl,
-    files_touched_ddl, telemetry_ddl, tool_calls_ddl,
+    FOUNDRY_TOOLS_DDL, MCP_USAGE_DDL, MEMORY_CITATIONS_DDL, PLAN_EDGES_DDL, PLAN_REVISIONS_DDL,
+    PULL_REQUESTS_DDL, REFLECTIONS_DDL, RULES_TABLE, SESSION_TURN_DIFFS_DDL, SKILL_USAGE_DDL,
+    STEP_MANIFEST_DDL, STEP_RECEIPT_DDL, TABLES, TASKS_DDL, TELEMETRY_INDEX, TOOL_CALLS_INDEXES,
+    UNCHANGED_TABLES, events_ddl, files_touched_ddl, telemetry_ddl, tool_calls_ddl,
 };
 use crate::{Result, StoreError};
 
@@ -79,7 +79,7 @@ pub(crate) use pragmas::initialize_store_pragmas;
 
 use additive_tables::{
     migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v6, migrate_v6_to_v7,
-    migrate_v13_to_v14, migrate_v19_to_v20, migrate_v20_to_v21,
+    migrate_v13_to_v14, migrate_v19_to_v20, migrate_v20_to_v21, migrate_v39_to_v40,
 };
 use error_class::migrate_v24_to_v25;
 use execution_plane::{
@@ -107,7 +107,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 39] = [
+pub(crate) const MIGRATIONS: [Migration; 40] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -323,6 +323,14 @@ pub(crate) const MIGRATIONS: [Migration; 39] = [
     // every row a pre-#5039 build wrote, and nothing in those payloads can
     // supply a tag they never carried. See the module's own doc.
     task_events::migrate_v38_to_v39,
+    // v39 → v40: the additive `plan_revisions` and `plan_edges` tables — the
+    // plan graph SPEC §7.4 specifies and nothing in the tree had: `[:NEXT]`
+    // edges for the planned path, `[:THEN]` for the actual one, and one plan
+    // node per revision so an inserted task authors r{n+1} beside its
+    // predecessor instead of over it (#5037). Purely additive; no existing
+    // table changes shape, and nothing is backfilled because nothing recorded
+    // either lane before now. See the module's own doc.
+    migrate_v39_to_v40,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -377,7 +385,9 @@ pub(crate) const MIGRATIONS: [Migration; 39] = [
     //              columns (#4924).
     //   v37 → v38: CLAIMED above by `executions.delivery` (#2808).
     //   v38 → v39: CLAIMED above by `events.task_id` (#5039).
-    // Nothing is reserved now: take v39 → v40 and add your own line here.
+    //   v39 → v40: CLAIMED above by the plan graph's `plan_revisions` and
+    //              `plan_edges` tables (#5037).
+    // Nothing is reserved now: take v40 → v41 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
@@ -416,6 +426,8 @@ pub(crate) fn create_latest_schema(tx: &rusqlite::Transaction<'_>) -> Result<()>
     tx.execute_batch(FORGOTTEN_DDL)?;
     tx.execute_batch(FOUNDRY_TOOLS_DDL)?;
     tx.execute_batch(SESSION_TURN_DIFFS_DDL)?;
+    tx.execute_batch(PLAN_REVISIONS_DDL)?;
+    tx.execute_batch(PLAN_EDGES_DDL)?;
     Ok(())
 }
 

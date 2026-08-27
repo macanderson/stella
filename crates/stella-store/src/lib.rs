@@ -160,6 +160,7 @@ pub mod identity;
 pub mod integrity;
 pub mod journal;
 pub mod notify;
+pub mod plan_graph;
 pub mod prune;
 pub mod reflection;
 pub mod rules_peek;

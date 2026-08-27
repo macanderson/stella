@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! The plan gate: the driver approves the task board before its first step
-//! runs, and `AgentEvent::ScopeReview` is what says so on the wire (#4594).
+//! runs, `AgentEvent::ScopeReview` says so on the wire (#4594), and the turn's
+//! [`PlanGraph`] records what was agreed and what happened (#5037).
 //!
 //! # Why the board is the scope
 //!
@@ -64,9 +65,11 @@
 
 use std::sync::Mutex;
 
+use stella_core::plan_graph::PlanGraph;
 use stella_protocol::{
-    AgentEvent, CompletionMessage, MessageRole, Question, QuestionOption, QuestionOutcome,
-    QuestionRequest, ScopeProposal, StageKind, StageScope, TaskItem, ToolOutput,
+    AgentEvent, CompletionMessage, DivergenceCause, MessageRole, PlanRevision, Question,
+    QuestionOption, QuestionOutcome, QuestionRequest, ScopeProposal, StageKind, StageScope,
+    TaskItem, TaskNode, ToolOutput,
 };
 use stella_tools::registry::question::QuestionBroker;
 
@@ -85,6 +88,21 @@ const CHANGE_REQUESTED: &str = "the plan was not approved — the person driving
      Revise the task board (task_create / task_cancel) to match what they asked for, then \
      start the revised plan. Do not run the plan you just proposed.";
 
+/// The cause a revision records when the board grew after the plan was agreed
+/// to and nothing failed to explain it. Factual rather than a placeholder: the
+/// plan really did change, and a [`DivergenceCause`] may not be blank.
+const PLAN_CHANGED: &str = "the plan changed after it was approved";
+
+/// The cause a re-proposal records when the driver declined without saying
+/// anything — a card that timed out, an empty submission — and the model put
+/// the same plan up again.
+const RE_PROPOSED: &str = "the plan was put to the person driving again";
+
+/// How much of a failing tool's message becomes the cause of the revision it
+/// provokes. One line, cut, because the cause rides a breadcrumb and a plan
+/// card, not a log — the full text is already on the failing tool's own row.
+const CAUSE_CHARS: usize = 120;
+
 /// One session's plan gate.
 ///
 /// Lives as long as the [`super::TaskTap`] that owns it, which is one engine
@@ -101,6 +119,12 @@ pub(crate) struct PlanGate {
     /// into `install`, so the number the gate applies is the one a reader can
     /// see beside the comparison.
     min_steps: usize,
+    /// The cause a revision records when the plan changed and nothing failed
+    /// to explain it, resolved once at install so no write path has to handle
+    /// a blank one (a [`DivergenceCause`] may not be blank).
+    plan_changed: DivergenceCause,
+    /// The same, for a plan put up again unchanged.
+    re_proposed: DivergenceCause,
     state: Mutex<GateState>,
 }
 
@@ -136,14 +160,36 @@ impl PlanSetup {
 
 #[derive(Default)]
 struct GateState {
-    /// Whether a plan has already been put to the driver and accepted this
-    /// turn. Set only on the approve path, so a refused plan re-gates on the
-    /// model's next attempt to start one.
-    approved: bool,
-    /// How many proposals this turn has raised. Stamped onto
-    /// [`ScopeProposal::revision`] so a re-proposal after a refusal reads as
-    /// `r2` rather than as a second `r1` (#4333).
-    proposals: u32,
+    /// This turn's plan graph, from the moment a first plan is put up. `None`
+    /// until then: a graph cannot exist before somebody has been asked to
+    /// approve a plan.
+    graph: Option<PlanGraph>,
+    /// The revision the driver last said yes to. Compared against the graph's
+    /// current revision, so a plan that has changed since the yes is asked
+    /// about again and one that has not is left alone.
+    approved: Option<PlanRevision>,
+    /// What the driver said when they turned the last draft down. Consumed by
+    /// the next revision, because their words are the best cause there is.
+    refusal: Option<DivergenceCause>,
+    /// The most recent tool failure this turn — SPEC 8.1's "linked cause", the
+    /// compiler error or failing gate that a repair step answers. Consumed by
+    /// the next revision.
+    failure: Option<DivergenceCause>,
+}
+
+impl GateState {
+    /// Why this revision is being authored, best source first, falling back to
+    /// `stated`.
+    ///
+    /// Taken rather than read: a cause explains one revision, and leaving it
+    /// in place would attach the same compiler error to every later draft of
+    /// the plan.
+    fn take_cause(&mut self, stated: &DivergenceCause) -> DivergenceCause {
+        self.refusal
+            .take()
+            .or_else(|| self.failure.take())
+            .unwrap_or_else(|| stated.clone())
+    }
 }
 
 impl PlanGate {
@@ -158,30 +204,92 @@ impl PlanGate {
         events: UnboundedSender<AgentEvent>,
         plan: PlanSetup,
     ) -> Option<Self> {
+        // Resolved here rather than at each write: `DivergenceCause` refuses a
+        // blank string, and `install` is already the one place that answers
+        // "is there a gate at all?" in `Option`, so the two non-empty literals
+        // above are checked once and every later use is infallible without a
+        // panic (AGENTS.md #5).
+        let plan_changed = DivergenceCause::new(PLAN_CHANGED)?;
+        let re_proposed = DivergenceCause::new(RE_PROPOSED)?;
         (plan.policy.enabled && questions.is_attached()).then_some(Self {
             questions,
             events,
             goal: plan.goal,
             min_steps: plan.policy.min_steps,
+            plan_changed,
+            re_proposed,
             state: Mutex::new(GateState::default()),
         })
     }
 
     /// Put `board` to the driver if this is the first step of an unapproved
-    /// plan. `None` proceeds; `Some` is the refusal the calling tool returns
-    /// instead of running.
+    /// plan, or of one that has changed since they agreed to it. `None`
+    /// proceeds; `Some` is the refusal the calling tool returns instead of
+    /// running.
     ///
     /// Called **before** the tool runs, which is what keeps AGENTS.md rule #6 —
     /// abort at safe boundaries, never mid-tool — true of the park.
+    ///
+    /// # The plan graph decides which revision this is (#5037)
+    ///
+    /// The graph, not a counter, answers "which draft is this?". The first
+    /// plan of the turn is `r1` and its `[:NEXT]` chain is that approval
+    /// written down; every later proposal authors `r{n+1}` beside the plan it
+    /// supersedes, so `r1` is still readable at `r4`. A board that changed
+    /// since the driver agreed to it goes back to them at the new number,
+    /// which is SPEC 8.1's *a proposed plan revision, never a silent fix* —
+    /// before #5037 the gate latched on its first yes, so a task inserted
+    /// after a gate failure ran unasked and the breadcrumb stayed on `r1`.
+    ///
+    /// The comparison is against the current revision's whole task list, so a
+    /// step *finishing* is not a plan change and nobody is asked about it.
+    ///
+    /// Every revision after the first carries a [`DivergenceCause`], taken
+    /// from the driver's own refusal, then from the turn's most recent tool
+    /// failure (SPEC 8.1's linked cause — the compiler error that demanded the
+    /// repair step), then from a plain statement of what happened. There is no
+    /// fourth source, because a `DivergenceCause` cannot be blank.
     pub(crate) async fn review(&self, board: &[TaskItem]) -> Option<ToolOutput> {
         let steps = plan_steps(board);
+        let tasks = plan_tasks(board);
         let revision = {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if state.approved || steps.len() < self.min_steps {
-                return None;
+            // Where the plan stands against the board: `None` means no plan
+            // has been put up at all this turn.
+            let standing = state
+                .graph
+                .as_ref()
+                .map(|graph| (graph.revision(), graph.planned(graph.revision()) != tasks));
+            match standing {
+                // The first plan of the turn is `r1` — if the board is long
+                // enough to be worth asking about at all.
+                None => {
+                    if steps.len() < self.min_steps {
+                        return None;
+                    }
+                    let graph = PlanGraph::approve(tasks).ok()?;
+                    let revision = graph.revision();
+                    state.graph = Some(graph);
+                    revision
+                }
+                // A plan is already on the graph. Either it has changed since
+                // the driver last saw it, or they have not agreed to this
+                // draft yet — both are a new revision, and one worth asking
+                // about (SPEC 8.1). A plan they already approved, unchanged,
+                // is not asked about again.
+                Some((current, changed)) => {
+                    if !changed && state.approved == Some(current) {
+                        return None;
+                    }
+                    let stated = if changed {
+                        self.plan_changed.clone()
+                    } else {
+                        self.re_proposed.clone()
+                    };
+                    let cause = state.take_cause(&stated);
+                    state.graph.as_mut()?.revise(tasks, cause).ok()?
+                }
             }
-            state.proposals += 1;
-            state.proposals
         };
 
         // Emit before parking, the same ordering rule the approval flow
@@ -194,15 +302,22 @@ impl PlanGate {
 
         let outcome = self.questions.ask(&request(&proposal)).await;
         match refusal(&outcome) {
-            Some(refusal) => Some(ToolOutput::classified_error(
-                stella_protocol::ErrorClass::InvalidInput,
-                refusal,
-            )),
+            Some(refusal) => {
+                // The driver's own words are the best cause a plan revision
+                // can carry, so the next draft records them rather than the
+                // gate's own flat statement that something changed.
+                self.state.lock().unwrap_or_else(|p| p.into_inner()).refusal =
+                    DivergenceCause::new(refusal.clone());
+                Some(ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    refusal,
+                ))
+            }
             None => {
                 self.state
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .approved = true;
+                    .approved = Some(revision);
                 // The deck infers approval from the next run-scoped stage
                 // that is not the gate itself (`stella_tui::model`, #3398) —
                 // there is no decision event, by design. Without this the
@@ -218,19 +333,90 @@ impl PlanGate {
         }
     }
 
+    /// Record a `[:THEN]` edge: this task actually ran.
+    ///
+    /// Best-effort and silent. A refusal here would mean the graph and the
+    /// board had drifted apart — structurally unreachable, because
+    /// [`Self::review`] synchronises the plan with the board immediately
+    /// before the step runs — and a bookkeeping slip must not fail a tool
+    /// call the driver approved.
+    pub(crate) fn record_run(&self, task_id: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(graph) = state.graph.as_mut() {
+            let _ = graph.ran(task_id);
+        }
+    }
+
+    /// Remember a failing tool call as the cause of whatever plan revision it
+    /// provokes — SPEC 8.1's "linked cause".
+    ///
+    /// Any tool, not just the board's: the compiler error that demands a
+    /// repair step comes from `bash` or `edit_file`, never from `task_create`.
+    pub(crate) fn observe(&self, output: &ToolOutput) {
+        let ToolOutput::Error { message, .. } = output else {
+            return;
+        };
+        let Some(cause) = DivergenceCause::new(cause_line(message)) else {
+            return;
+        };
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).failure = Some(cause);
+    }
+
+    /// This turn's plan graph, for the store. `None` when no plan was ever put
+    /// up, which is every turn whose board never reached the threshold.
+    pub(crate) fn plan_graph(&self) -> Option<PlanGraph> {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .graph
+            .clone()
+    }
+
     /// The board as a proposal. `estimated_files` is `0` — *not stated* — and
     /// deliberately not guessed: the board says what the work is, never how
     /// many files it lands in, and a fabricated magnitude would be compared
     /// against thresholds as though somebody had measured it.
-    fn proposal(&self, steps: Vec<String>, revision: u32) -> ScopeProposal {
+    fn proposal(&self, steps: Vec<String>, revision: PlanRevision) -> ScopeProposal {
         ScopeProposal {
             summary: self.goal.clone(),
             steps,
             estimated_files: 0,
-            revision: Some(revision),
+            revision: Some(revision.get()),
             ..ScopeProposal::default()
         }
     }
+}
+
+/// The plan as the graph holds it: **every** board row, in board order.
+///
+/// Not [`plan_steps`]'s open subset, and the difference matters in both
+/// directions. The graph's `[:NEXT]` chain is the plan, and a plan that shed
+/// its finished steps would look like a changed plan after every completion —
+/// which would put a card up between every pair of steps. Terminal rows also
+/// stay on the board forever (a cancelled task keeps its row as an audit
+/// trail, and ids are never reused), so a plan only ever grows, and a change
+/// to it is an insertion somebody made.
+fn plan_tasks(board: &[TaskItem]) -> Vec<TaskNode> {
+    board
+        .iter()
+        .map(|item| TaskNode::new(item.id.clone(), item.subject.clone()))
+        .collect()
+}
+
+/// A failing tool's message as a plan-revision cause: its first non-empty
+/// line, cut to [`CAUSE_CHARS`].
+///
+/// One line because a cause rides a breadcrumb and a plan card — the full text
+/// is already on the failing tool's own row, and a cause that spilled a stack
+/// trace into the plan panel would be unreadable exactly when it matters.
+fn cause_line(message: &str) -> String {
+    let line = message.lines().map(str::trim).find(|l| !l.is_empty());
+    line.map_or_else(String::new, |line| {
+        match line.char_indices().nth(CAUSE_CHARS) {
+            Some((cut, _)) => format!("{}…", line[..cut].trim_end()),
+            None => line.to_string(),
+        }
+    })
 }
 
 /// The steps a plan gate presents: the board's open rows, in board order.

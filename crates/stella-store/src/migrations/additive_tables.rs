@@ -16,8 +16,8 @@
 use crate::Result;
 use crate::ddl::{
     AGENT_USES_DDL, EXECUTION_REFLECTION_DDL, FORGOTTEN_DDL, FOUNDRY_TOOLS_DDL, MCP_USAGE_DDL,
-    MEMORY_CITATIONS_DDL, REFLECTIONS_DDL, RULES_TABLE, SESSION_TURN_DIFFS_DDL, SKILL_USAGE_DDL,
-    TOOL_CALLS_INDEXES, tool_calls_ddl,
+    MEMORY_CITATIONS_DDL, PLAN_EDGES_DDL, PLAN_REVISIONS_DDL, REFLECTIONS_DDL, RULES_TABLE,
+    SESSION_TURN_DIFFS_DDL, SKILL_USAGE_DDL, TOOL_CALLS_INDEXES, tool_calls_ddl,
 };
 
 /// v2 → v3: the `memory_citations` table. Purely additive — no existing
@@ -82,5 +82,21 @@ pub(super) fn migrate_v19_to_v20(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 /// table changes shape.
 pub(super) fn migrate_v20_to_v21(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     tx.execute_batch(SESSION_TURN_DIFFS_DDL)?;
+    Ok(())
+}
+
+/// v39 → v40: the additive `plan_revisions` and `plan_edges` tables — the plan
+/// graph's two lanes and the revisions that authored them (#5037). Purely
+/// additive, mirroring [`migrate_v3_to_v4`]; the two arrive together because
+/// neither is a graph without the other, and a file carrying only one of them
+/// would read back as a plan with no revisions or revisions with no plan.
+///
+/// Nothing is backfilled and nothing could be: a plan graph is written as a
+/// turn is approved and as its tasks run, and no journal recorded either fact
+/// before this schema existed. A workspace upgrading into it therefore has no
+/// plan graphs, which is the truthful starting state rather than a gap.
+pub(super) fn migrate_v39_to_v40(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    tx.execute_batch(PLAN_REVISIONS_DDL)?;
+    tx.execute_batch(PLAN_EDGES_DDL)?;
     Ok(())
 }

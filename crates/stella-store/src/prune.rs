@@ -93,7 +93,7 @@ use crate::{Result, Store};
 /// export audit trail keyed by `(sink_fingerprint, execution_id)`, and
 /// `executions.id` is `AUTOINCREMENT` (ids are never reused), so a retained
 /// ledger row can never be mistaken for a different execution.
-pub const DEPENDENT_TABLES: [&str; 14] = [
+pub const DEPENDENT_TABLES: [&str; 16] = [
     "events",
     "telemetry",
     "files_touched",
@@ -113,6 +113,11 @@ pub const DEPENDENT_TABLES: [&str; 14] = [
     // the execution-keyed cascade and survive, which is honest — nothing
     // proves which execution they belonged to.
     "session_turn_diffs",
+    // The plan graph is replay material too (#5037): pruning a turn reclaims
+    // the record of what it planned and what it did, because that record is
+    // only meaningful beside the execution it belongs to.
+    "plan_revisions",
+    "plan_edges",
 ];
 
 /// A prune that deletes at least this many rows triggers an automatic

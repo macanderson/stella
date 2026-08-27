@@ -85,6 +85,11 @@
       "status": "implemented",
       "title": "ADR 0015: The task tag rides the event"
     },
+    "adr/0017-plan-graph-persistence": {
+      "path": "docs/adr/0017-plan-graph-persistence.md",
+      "status": "proposed",
+      "title": "ADR 0017: The plan graph is persisted in the store, not the context plane"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

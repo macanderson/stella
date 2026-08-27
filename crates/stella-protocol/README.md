@@ -131,6 +131,7 @@ tests with them.
 | [`src/role.rs`](src/role.rs) | `Role` (worker/triage/plan/research/verifier/embed/vision/image/video) and `ModelRef`. |
 | [`src/error.rs`](src/error.rs) | `ProviderError` and its retry classification. |
 | [`src/cache.rs`](src/cache.rs) | `CacheCause` and the one-line hint each carries, so the CLI receipt and the deck panel print identical wording. |
+| [`src/plan_graph.rs`](src/plan_graph.rs) | The plan graph (SPEC §7.4): `PlanNode`, `TaskNode`, `PlanEdge` with its `[:NEXT]`/`[:THEN]` `PlanEdgeKind`, the one-based `PlanRevision`, and the never-blank `DivergenceCause` a `Divergence` carries. The rules are the types — there is no `r0`, and a cause that says nothing is refused on the wire. `stella_core::plan_graph` owns every decision made with them. |
 
 ## Key concepts
 

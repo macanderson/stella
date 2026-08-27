@@ -1061,8 +1061,12 @@ fn skill_usage_records_per_execution_version_rows() {
     //       from how it ended; NULL is "nobody looked", not "shipped
     //       nothing". v39 `events.task_id` (#5039) — which board task an
     //       event is evidence for, so a task's ledger and its cost are one
-    //       `WHERE` clause instead of a decode of the whole session.
-    assert_eq!(SCHEMA_VERSION, 39);
+    //       `WHERE` clause instead of a decode of the whole session. v40
+    //       `plan_revisions` + `plan_edges` (#5037) — the plan graph SPEC
+    //       §7.4 specifies: `[:NEXT]` for the planned path, `[:THEN]` for the
+    //       actual one, and one plan node per revision so an inserted task
+    //       authors r{n+1} beside its predecessor.
+    assert_eq!(SCHEMA_VERSION, 40);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
