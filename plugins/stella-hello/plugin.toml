@@ -1,0 +1,37 @@
+# stella-hello — the smallest plugin that draws something.
+#
+# It exists to be read, not to be useful: every field below is the minimum a
+# plugin needs to put pixels on a person's screen, and nothing here is
+# decoration. Copy this directory to start a plugin with a face.
+#
+# What it does: answers one frame per tick with a greeting, the rectangle it
+# was leased, and a block-glyph meter. It reads no file, opens no socket, and
+# asks the host for nothing.
+
+name = "hello"
+description = "Draws a greeting in a fenced panel — the reference plugin for the panel protocol."
+
+# The panel grant (`design/tui-v2/SPEC.md` §12). Everything a panel may not do
+# is spelled here rather than assumed, because the manifest is the document a
+# human reads at install and a limit that lives only in the host's build is a
+# limit the reader's copy does not carry.
+[panel]
+denies = ["network", "write-outside-sandbox"]
+
+# Where this plugin draws. Three surfaces, one frame protocol:
+#   settings — a pane in the SETTINGS tab, where a plugin configures itself
+#   overlay  — a fenced block in the SESSION transcript
+#   command  — a centred popup, opened by `/hello`
+surfaces = ["settings", "overlay", "command"]
+# The slash name. Defaults to the plugin's own name, so this line is here to be
+# read rather than because it changes anything.
+command = "hello"
+
+# The program the host starts to draw a frame, and the exact slice of the
+# environment it may see. `env` is empty: this plugin needs nothing from the
+# operator's shell, and an empty allowlist is the strongest thing a manifest
+# can say about that.
+[panel.process]
+argv = ["python3", "${plugin_dir}/panel.py"]
+timeout_secs = 2
+env = []

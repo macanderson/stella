@@ -75,6 +75,7 @@
 //! ```
 
 pub mod error;
+pub mod panel_host;
 pub mod parts;
 pub mod session;
 pub mod spec;
