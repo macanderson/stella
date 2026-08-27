@@ -50,6 +50,90 @@ pub(super) struct Seating {
     pub(super) refusals: Vec<String>,
 }
 
+/// The panel routes this session is driving, and which composition of the
+/// roster they came from.
+///
+/// # Why the driver holds a generation at all (#5253)
+///
+/// The panels are seated from the roster, and the roster changes under a live
+/// session: a plugin is installed, removed, or retracted with
+/// `plugins.<name> = "off"`, and `/reload` is the command whose whole job is to
+/// pick that up. Reseating is wholesale — `PanelDeck::reseat` replaces every
+/// slot — so a slot index means one plugin before a reseat and another after
+/// it.
+///
+/// That is survivable on the **answer** leg, which `PanelSlot::settle` already
+/// handles by checking the surface and the tick a frame carries. It is not
+/// survivable on the **request** leg: a `PanelFrameWanted` raised before a
+/// reseat and handled after one names a slot that still resolves, and starting
+/// the program it now resolves to is a third party's code running against a
+/// lease nobody granted it. So the seating rides on the request, the driver
+/// refuses a mismatch, and the two lists cannot be read against each other at
+/// all.
+#[derive(Default)]
+pub(super) struct PanelPlane {
+    /// Which composition these routes came from. Counted up by
+    /// [`PanelPlane::reseat`] and never reused, so a wrapped or repeated value
+    /// cannot make a stale request look current.
+    generation: u64,
+    /// Every panel a host may ask for a frame, in the order the deck seats
+    /// them.
+    routes: Vec<PluginPanelRoute>,
+}
+
+/// Everything one reseat owes the session: the seats, the refusals, the
+/// handshakes, and which seating they belong to.
+pub(super) struct Reseated {
+    pub(super) generation: u64,
+    pub(super) seats: Vec<PanelSeat>,
+    pub(super) refusals: Vec<String>,
+    pub(super) handshakes: Vec<String>,
+}
+
+impl PanelPlane {
+    /// Recompose the roster from disk and replace the plane with what it
+    /// admits.
+    ///
+    /// The whole panel half of a session's boot, and of every `/reload`, in one
+    /// call — so the two paths cannot come to differ, which is the shape #5253
+    /// found: the seating existed in exactly one place, and `/reload` had no
+    /// way to reach it.
+    ///
+    /// Through `PluginRoster::load` and nowhere else: that is where the #3509
+    /// project-tier trust gate lives (`plugin_hooks`'s
+    /// `no_other_production_site_reads_the_plugins_tier`), and a second reader
+    /// would be a second place it can be forgotten.
+    pub(super) fn reseat(&mut self, workspace_root: &std::path::Path) -> Reseated {
+        let settings = crate::settings::Settings::load(workspace_root).unwrap_or_default();
+        let (roster, _) = crate::plugin_cmd::roster::PluginRoster::load(workspace_root, &settings);
+        let routes = roster.panel_routes();
+        let seating = seat(&routes);
+        let handshakes = handshakes(&roster);
+        self.generation = self.generation.saturating_add(1);
+        self.routes = routes;
+        Reseated {
+            generation: self.generation,
+            seats: seating.seats,
+            refusals: seating.refusals,
+            handshakes,
+        }
+    }
+}
+
+#[cfg(test)]
+impl PanelPlane {
+    /// A plane over routes a test composed, at a stated seating.
+    ///
+    /// `#[cfg(test)]` rather than a `pub(super)` constructor: production has
+    /// exactly one way to build a plane, and that is
+    /// [`PanelPlane::reseat`] reading the roster off disk. A second door in the
+    /// shipping binary would be a second place the trust gate can be bypassed
+    /// (CLAUDE.md, "`#[cfg(test)]` is the better answer").
+    fn at(generation: u64, routes: Vec<PluginPanelRoute>) -> Self {
+        Self { generation, routes }
+    }
+}
+
 /// Decide which of `routes` may draw, and refuse every slash name that
 /// collides with one of the deck's own commands.
 ///
@@ -201,15 +285,27 @@ pub(super) fn handshakes(roster: &crate::plugin_cmd::roster::PluginRoster) -> Ve
 /// the route list are built from the same `panel_routes()` in the same order,
 /// so an index outside it is a message from a deck that has been reseated and
 /// there is no plugin it could mean.
+///
+/// **A `generation` naming an earlier seating is the same refusal, for the case
+/// the index check cannot see** (#5253). A request minted before a reseat and
+/// answered after one carries a slot index that still resolves — to a
+/// *different plugin's* route — so an index-only check would start somebody
+/// else's program against a lease the operator never granted it. The deck
+/// stamps the seating on the request and this drops any that is not the one
+/// in force.
 pub(super) fn spawn_tick(
-    routes: &[PluginPanelRoute],
+    plane: &PanelPlane,
+    generation: u64,
     slot: usize,
     tick: u64,
     cols: u16,
     rows: u16,
     tx: &tokio::sync::mpsc::UnboundedSender<stella_tui::envelope::Inbound>,
 ) {
-    let Some(route) = routes.get(slot) else {
+    if generation != plane.generation {
+        return;
+    }
+    let Some(route) = plane.routes.get(slot) else {
         return;
     };
     let lease = PanelLease::new(
@@ -506,7 +602,7 @@ mod tests {
         // produced is exactly what a stale deck sends — and the driver starts
         // nothing.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        spawn_tick(&routes, 0, 1, 40, 8, &tx);
+        spawn_tick(&PanelPlane::at(1, routes.clone()), 1, 0, 1, 40, 8, &tx);
         drop(tx);
         assert!(rx.recv().await.is_none(), "nothing was even answered");
 
@@ -529,7 +625,7 @@ mod tests {
         let routes = panel_routes_of(&tier);
         assert_eq!(routes.len(), 1, "a granted plugin's panel routes");
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        spawn_tick(&routes, 0, 1, 40, 8, &tx);
+        spawn_tick(&PanelPlane::at(1, routes.clone()), 1, 0, 1, 40, 8, &tx);
         // The fixture draws no frame, so the answer is whichever of the two
         // no-frame envelopes the exchange earned. **Both are correct here and
         // pinning one is a race**: the fixture starts a real process, and a
@@ -596,7 +692,7 @@ mod tests {
         // roster never produced is exactly what a stale deck sends.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         for slot in [0, 1] {
-            spawn_tick(&routes, slot, 1, 40, 8, &tx);
+            spawn_tick(&PanelPlane::at(1, routes.clone()), 1, slot, 1, 40, 8, &tx);
         }
         drop(tx);
         // Drained before anything is asserted, and that is the synchronisation
@@ -631,7 +727,7 @@ mod tests {
         assert_eq!(routes.len(), 1, "only the allowed panel is routed");
         assert_eq!(routes[0].plugin, "allowed");
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        spawn_tick(&routes, 0, 1, 40, 8, &tx);
+        spawn_tick(&PanelPlane::at(1, routes.clone()), 1, 0, 1, 40, 8, &tx);
         // Either no-frame envelope, on the sibling witness's measured reason:
         // the fixture starts a real process and a loaded machine overruns the
         // 33ms budget often enough that pinning one of them is a race.
@@ -647,6 +743,157 @@ mod tests {
             "a frameless tick still rearms the seat: {got:?}"
         );
         assert!(marker.exists(), "the allowed plugin's process did run");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **The `/reload` witness (#5253).** A reseat composes the roster again
+    /// from disk, so a plugin retracted since the last one loses its seat and
+    /// its route — and the seating moves, which is what tells the two apart.
+    ///
+    /// Driven through [`PanelPlane::reseat`] rather than through the driver
+    /// loop, because that function is the whole of what `/reload` now does to
+    /// the panels: `DeckCommand::Reloaded` calls it and hands what it returns
+    /// to `announce_panels`. What is under test is that composing twice gives
+    /// two different answers, which is the thing that used to be impossible —
+    /// the seating happened once, at session open, and nothing could reach it
+    /// again.
+    #[cfg(unix)]
+    #[test]
+    fn a_reseat_drops_a_plugin_retracted_since_the_last_one() {
+        use crate::plugin_cmd::panel_grant::PanelVerdict;
+
+        let root = std::env::temp_dir().join(format!("stella-panel-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let workspace = root.join("ws");
+        std::fs::create_dir_all(&workspace).expect("temp workspace");
+        // The user tier, moved wholesale by `test_user_home` — which takes the
+        // process-wide env lock, so nothing here reads the developer's own
+        // `~/.stella/plugins` and nothing concurrent sees a half-moved home.
+        // The project tier would need `STELLA_TRUST_PROJECT` as well, and a
+        // retraction that could be confused with that gate is a worse witness.
+        let _home = crate::paths::test_user_home(root.join("home"));
+        let tier = stella_home::resolve_user_plugins_dir(crate::paths::user_extension_root())
+            .expect("the redirected home resolves its plugins tier");
+        std::fs::create_dir_all(&tier).expect("user tier");
+        let marker = root.join("unused");
+        plant_panel(&tier, "alpha", &marker, true, Some(PanelVerdict::Allow));
+
+        let mut plane = PanelPlane::default();
+        let first = plane.reseat(&workspace);
+        assert_eq!(first.generation, 1);
+        let seated: Vec<&str> = first
+            .seats
+            .iter()
+            .map(|seat| seat.plugin.as_str())
+            .collect();
+        assert_eq!(seated, vec!["alpha"], "the installed panel is seated");
+
+        // The retraction an operator writes by hand, and the whole reason
+        // `/reload` exists: withdraw the panel without deleting anything.
+        std::fs::create_dir_all(workspace.join(".stella")).expect("settings dir");
+        std::fs::write(
+            workspace.join(".stella").join("settings.json"),
+            "{\"plugins\": {\"alpha\": \"off\"}}",
+        )
+        .expect("settings");
+
+        let second = plane.reseat(&workspace);
+        assert!(
+            second.seats.is_empty(),
+            "the retracted plugin lost its seat: {:?}",
+            second.seats
+        );
+        assert_eq!(
+            second.generation, 2,
+            "and the seating moved, so a request raised against the first one is \
+             refusable rather than merely out of range"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **The reseat witness (#5253).** A frame request minted before a reseat
+    /// starts nothing after one — asserted on the *process*, because that is
+    /// what the seating generation exists to stop.
+    ///
+    /// `PanelSlot::settle` already refuses a stale *frame*
+    /// (`a_frame_in_flight_across_a_reseat_lands_nowhere`), and that is a
+    /// different property one leg later: by the time there is a frame to
+    /// refuse, the plugin that now holds the slot index has already been
+    /// started, with its environment resolved and its argv run. A slot index is
+    /// all a request carries otherwise, and after a reseat slot 0 is somebody
+    /// else — so an index-only check cannot tell "the panel you asked for" from
+    /// "the panel that inherited its number".
+    ///
+    /// Two plugins with **separate markers**, so a green run says which program
+    /// ran rather than that something did.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_frame_request_from_a_previous_seating_starts_nothing() {
+        use crate::plugin_cmd::panel_grant::PanelVerdict;
+
+        let _env = crate::test_env::lock();
+        let root = std::env::temp_dir().join(format!("stella-panel-reseat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp root");
+        let tier = stella_home::resolve_user_plugins_dir(Some(root.join(".stella")))
+            .expect("an explicit stella root resolves its plugins tier");
+        let alpha_ran = root.join("alpha-ran");
+        let beta_ran = root.join("beta-ran");
+
+        plant_panel(&tier, "alpha", &alpha_ran, true, Some(PanelVerdict::Allow));
+        plant_panel(&tier, "beta", &beta_ran, true, Some(PanelVerdict::Allow));
+
+        // Seating 1 holds both, in name order, so `alpha` is slot 0.
+        let both = panel_routes_of(&tier);
+        assert_eq!(both.len(), 2, "{both:?}");
+        assert_eq!(both[0].plugin, "alpha");
+
+        // `alpha` is retracted and the driver reseats: seating 2 holds `beta`
+        // alone, which makes `beta` slot 0.
+        let plane = PanelPlane::at(2, vec![both[1].clone()]);
+        assert_eq!(plane.routes[0].plugin, "beta");
+
+        // The request the deck raised under seating 1, arriving now.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_tick(&plane, 1, 0, 1, 40, 8, &tx);
+        drop(tx);
+        let answered = rx.recv().await;
+
+        assert!(
+            !beta_ran.exists(),
+            "a stale request started the plugin that inherited its slot: {}",
+            beta_ran.display()
+        );
+        assert!(
+            !alpha_ran.exists(),
+            "and it did not resurrect the retracted one either: {}",
+            alpha_ran.display()
+        );
+        assert!(
+            answered.is_none(),
+            "a request naming a seating that is gone is answered by nobody, because \
+             there is no seat left to rearm: {answered:?}"
+        );
+
+        // Anti-vacuity: the same slot, under the seating that is in force, does
+        // start `beta` and only `beta`.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_tick(&plane, 2, 0, 1, 40, 8, &tx);
+        let got = rx.recv().await;
+        assert!(
+            matches!(
+                got,
+                Some(
+                    stella_tui::envelope::Inbound::PanelSilent { slot: 0 }
+                        | stella_tui::envelope::Inbound::PanelThrottled { slot: 0, .. }
+                )
+            ),
+            "a frameless tick still rearms the seat: {got:?}"
+        );
+        assert!(beta_ran.exists(), "beta drew under its own seating");
+        assert!(!alpha_ran.exists(), "and alpha stayed retracted");
 
         let _ = std::fs::remove_dir_all(&root);
     }

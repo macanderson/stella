@@ -173,6 +173,50 @@ pub(crate) fn chrome_note(text: String) -> Inbound {
     }
 }
 
+/// Tell the session what one panel reseat decided: the refused slash names,
+/// SPEC 12.4's handshakes, and the seats themselves.
+///
+/// One function because boot and `/reload` owe the operator the same three
+/// things in the same order, and #5253 is what happens when the two paths are
+/// written separately — the second one was never written at all.
+///
+/// The handshakes go in the **transcript**, which is where SPEC 12.4 asks for
+/// them and where a consent document belongs: it has to be scrollable and still
+/// there after the transient boot dialog is gone.
+///
+/// On `deck_tx`, so they are not journaled — [`chrome_note`]'s own contract,
+/// and sharper here than at boot: this runs again at every `/reload`, so a
+/// journaled copy would stack one handshake per reload on top of every resumed
+/// transcript. It costs the audit nothing, because what a person answered is
+/// durable in the grant file beside the package with the moment they answered
+/// it; these blocks are the reminder, not the record.
+///
+/// `chrome_note` folds the lead to `Running`, so the idle status this file
+/// asserts at startup is re-asserted after them rather than left contradicted.
+fn announce_panels(
+    reseated: plugin_panels::Reseated,
+    deck_tx: &UnboundedSender<Inbound>,
+    in_tx: &UnboundedSender<Inbound>,
+) {
+    for refusal in reseated.refusals {
+        let _ = deck_tx.send(system_notice(refusal));
+    }
+    let spoke = !reseated.handshakes.is_empty();
+    for handshake in reseated.handshakes {
+        let _ = deck_tx.send(chrome_note(handshake));
+    }
+    if spoke {
+        let _ = in_tx.send(Inbound::Status {
+            agent: LEAD.to_string(),
+            status: AgentStatus::WaitingInput,
+        });
+    }
+    let _ = in_tx.send(Inbound::PanelsSeated {
+        generation: reseated.generation,
+        seats: reseated.seats,
+    });
+}
+
 /// A **session-startup system notification**: the deck talking about the
 /// session itself — a resumable predecessor, what the code-graph pass
 /// indexed, an `mcp.toml` that went untrusted. Shown in a transient dialog
@@ -727,49 +771,14 @@ pub async fn run_deck_session(
         None,
     ));
 
-    // Seat the plugin panels (SPEC 12.2). The roster is the install grant:
-    // `PluginRoster::load` drops every package whose consent receipt no longer
-    // matches, and `panel_routes` emits nothing for a plugin that is not in
-    // it — so a panel that was never granted is never leased a rectangle and
-    // never asked for a frame. A slash name colliding with one of the deck's
-    // own is refused here, out loud, and only that popup is lost.
-    // Through `PluginRoster::load` and nowhere else — that is where the #3509
-    // project-tier trust gate lives (`plugin_hooks`'s
-    // `no_other_production_site_reads_the_plugins_tier`).
-    let panel_settings = crate::settings::Settings::load(&cfg.workspace_root).unwrap_or_default();
-    let (panel_roster, _) =
-        crate::plugin_cmd::roster::PluginRoster::load(&cfg.workspace_root, &panel_settings);
-    let panel_routes = panel_roster.panel_routes();
-    let seating = plugin_panels::seat(&panel_routes);
-    for refusal in seating.refusals {
-        let _ = deck_tx.send(system_notice(refusal));
-    }
-    // SPEC 12.4's handshake, before anything is seated (#5056). In the
-    // **transcript**, which is what the spec asks for and where a consent
-    // document belongs: it has to be scrollable and still there after the boot
-    // dialog is gone, which the transient notice above is not.
-    //
-    // Through `deck_tx`, so it is not journaled. That is `chrome_note`'s own
-    // contract — boot narration that re-runs every launch must not replay and
-    // pile up on a resumed transcript — and it costs the audit nothing here:
-    // what a person answered is durable in the grant file beside the package,
-    // with the moment they answered it, and this block is the reminder rather
-    // than the record.
-    //
-    // `chrome_note` folds the lead to `Running`, so the idle assert this file
-    // already makes at startup is repeated below rather than left contradicted.
-    let handshakes = plugin_panels::handshakes(&panel_roster);
-    let spoke = !handshakes.is_empty();
-    for handshake in handshakes {
-        let _ = deck_tx.send(chrome_note(handshake));
-    }
-    if spoke {
-        let _ = in_tx.send(Inbound::Status {
-            agent: LEAD.to_string(),
-            status: AgentStatus::WaitingInput,
-        });
-    }
-    let _ = in_tx.send(Inbound::PanelsSeated(seating.seats));
+    // Seat the plugin panels (SPEC 12.2), and keep the plane so `/reload` can
+    // seat them again from a freshly composed roster (#5253). The roster is the
+    // grant: `PluginRoster::load` drops every package whose consent receipt no
+    // longer matches, `panel_routes` emits nothing for a plugin whose panel
+    // handshake was not answered `allow`, and a slash name colliding with one
+    // of the deck's own is refused out loud with only that popup lost.
+    let mut panels = plugin_panels::PanelPlane::default();
+    announce_panels(panels.reseat(&cfg.workspace_root), &deck_tx, &in_tx);
 
     // Honour the persisted colour theme (`ui.theme`) before the deck spawns its
     // render task, so the very first frame — the launch cinematic — is already
@@ -1176,12 +1185,15 @@ pub async fn run_deck_session(
                     // spawned rather than awaited so the driver's own loop is
                     // no more blocked on a plugin's process than the draw is.
                     Some(WorkspaceInput::PanelFrameWanted {
+                        generation,
                         slot,
                         tick,
                         cols,
                         rows,
                     }) => {
-                        plugin_panels::spawn_tick(&panel_routes, slot, tick, cols, rows, &in_tx);
+                        plugin_panels::spawn_tick(
+                            &panels, generation, slot, tick, cols, rows, &in_tx,
+                        );
                         continue 'session;
                     }
                     // SKILLS-tab ops work whether or not a turn is running — handled
@@ -1617,7 +1629,10 @@ pub async fn run_deck_session(
         };
         if matches!(
             command,
-            DeckCommand::Handled | DeckCommand::InitCompleted | DeckCommand::SessionModel(_)
+            DeckCommand::Handled
+                | DeckCommand::InitCompleted
+                | DeckCommand::Reloaded
+                | DeckCommand::SessionModel(_)
         ) {
             // A handled command emits its answer as `Text`, which flips the
             // lead to `Running` in the deck's fold — but no turn is in flight.
@@ -1657,6 +1672,22 @@ pub async fn run_deck_session(
                     &mut lead_meta,
                     &in_tx,
                 );
+                continue 'session;
+            }
+            DeckCommand::Reloaded => {
+                // `/reload`'s whole job is "refresh your stella
+                // configurations", and the panel seats were the one
+                // configuration it did not reach (#5253): a plugin installed,
+                // removed, or retracted with `plugins.<name> = "off"` kept
+                // whatever seats the session opened with until it restarted —
+                // and a retraction that does not take effect until restart is
+                // a grant that outlived the decision to revoke it.
+                //
+                // Wholesale, which is why the plane carries a generation: the
+                // route list `spawn_tick` indexes is replaced here, so a
+                // request the deck raised against the old seats names a
+                // seating that no longer exists and starts nothing.
+                announce_panels(panels.reseat(&cfg.workspace_root), &deck_tx, &in_tx);
                 continue 'session;
             }
             DeckCommand::InitCompleted => {
@@ -1906,18 +1937,14 @@ pub async fn run_deck_session(
                         }
                         // A panel's next frame, mid-turn — see the idle arm.
                         Some(WorkspaceInput::PanelFrameWanted {
+                            generation,
                             slot,
                             tick,
                             cols,
                             rows,
                         }) => {
                             plugin_panels::spawn_tick(
-                                &panel_routes,
-                                slot,
-                                tick,
-                                cols,
-                                rows,
-                                &in_tx,
+                                &panels, generation, slot, tick, cols, rows, &in_tx,
                             );
                         }
                         // A queue-free command runs beside the turn — the

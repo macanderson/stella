@@ -458,7 +458,8 @@ pub enum Inbound {
     /// touches the transcript, so nothing here can be mistaken for the model
     /// speaking.
     Notice(String),
-    /// The plugin panels this session may draw, seated once at session open.
+    /// The plugin panels this session may draw, as of one composition of the
+    /// roster.
     ///
     /// **A seat is the install grant crossing into the deck.** The driver
     /// composes the roster, drops every package whose grant is not in force,
@@ -467,9 +468,27 @@ pub enum Inbound {
     /// So an ungranted plugin is never leased a rectangle — not because the
     /// renderer declines to draw one, but because no slot for it exists.
     ///
+    /// Sent at session open **and again whenever the roster could have
+    /// changed** (`/reload`), replacing every seat wholesale — a seat is the
+    /// grant's shadow, so a plugin retracted between two of these has to lose
+    /// its rectangle, and merging would leave it drawing from a slot nobody
+    /// renewed (#5253).
+    ///
     /// Out-of-band view state, applied to `DeckUi::panels` and ignored by the
     /// model fold, like [`Inbound::Notice`] above.
-    PanelsSeated(Vec<PanelSeat>),
+    PanelsSeated {
+        /// Which composition these seats came from, counted up by the driver.
+        ///
+        /// Stamped onto every [`WorkspaceInput::PanelFrameWanted`] the deck
+        /// raises against them, so a request still in flight when the next
+        /// reseat lands names a seating that no longer exists and starts no
+        /// process. Without it a stale request reaches the driver as a bare
+        /// slot index, and an index means whatever the *route* list says it
+        /// means when it arrives — which is a different plugin's program.
+        generation: u64,
+        /// The panels that may draw, in seating order.
+        seats: Vec<PanelSeat>,
+    },
     /// One frame a plugin drew inside its budget, for the seat at `slot`.
     ///
     /// The tick that produced it ran as a task off the draw path
@@ -1167,6 +1186,16 @@ pub enum WorkspaceInput {
     /// state: a plugin addresses cells inside a rectangle the host measured,
     /// and the driver has never seen the terminal.
     PanelFrameWanted {
+        /// The seating this request belongs to, echoed from
+        /// [`Inbound::PanelsSeated`].
+        ///
+        /// The driver refuses a request naming any other, which is what stops
+        /// a request minted before a reseat from starting the plugin that now
+        /// holds its slot. `PanelSlot::settle` is the same rule on the return
+        /// leg and does not subsume this one: that one keeps a stale *frame*
+        /// off the screen, and by the time a frame exists somebody's program
+        /// has already run.
+        generation: u64,
         /// Which seat, as an index into [`Inbound::PanelsSeated`].
         slot: usize,
         /// The host's counter for this frame, echoed on the frame that

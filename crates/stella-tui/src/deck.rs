@@ -862,7 +862,7 @@ impl WorkspaceModel {
             // state rather than a record: the frame on screen is the last one
             // its plugin drew, and a transcript row per tick would fill the
             // conversation with somebody else's repaints.
-            | Inbound::PanelsSeated(_)
+            | Inbound::PanelsSeated { .. }
             | Inbound::PanelFrame { .. }
             | Inbound::PanelSilent { .. }
             | Inbound::PanelThrottled { .. } => {}
