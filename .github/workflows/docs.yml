@@ -212,22 +212,23 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          role-to-assume: arn:aws:iam::578673726240:role/gha-deploy-stella
+          role-to-assume: arn:aws:iam::916294258235:role/gha-deploy-stella
           aws-region: us-east-1
 
       # The role may write exactly this one object and send exactly one SSM
-      # document. It has no shell on the instance — which also runs Postgres,
-      # Neo4j and ClickHouse — and the document's only argument is a service
-      # name constrained by `allowedPattern` at the API.
+      # document. It has no shell on the instance — which also runs Neo4j and
+      # ClickHouse (Postgres moved to Aurora Serverless v2 in this account) —
+      # and the document's only argument is a service name constrained by
+      # `allowedPattern` at the API.
       - name: publish and restart
         run: |
           set -euo pipefail
           aws s3 cp /tmp/stella-standalone.tgz \
-            s3://oxagen-deploy-578673726240/_deploy/stella-standalone.tgz \
+            s3://oxagen-deploy-916294258235/_deploy/stella-standalone.tgz \
             --only-show-errors
 
           command_id=$(aws ssm send-command \
-            --instance-ids i-023d002d6e44f8f84 \
+            --instance-ids i-094fcb34c7e715cf8 \
             --document-name oxagen-deploy-service \
             --parameters 'service=stella' \
             --query 'Command.CommandId' --output text)
@@ -239,15 +240,15 @@ jobs:
           status=Pending
           for _ in $(seq 1 60); do
             status=$(aws ssm get-command-invocation \
-              --command-id "$command_id" --instance-id i-023d002d6e44f8f84 \
+              --command-id "$command_id" --instance-id i-094fcb34c7e715cf8 \
               --query Status --output text 2>/dev/null || echo Pending)
             case "$status" in InProgress|Pending|Delayed) sleep 10 ;; *) break ;; esac
           done
 
           aws ssm get-command-invocation --command-id "$command_id" \
-            --instance-id i-023d002d6e44f8f84 --query StandardOutputContent --output text || true
+            --instance-id i-094fcb34c7e715cf8 --query StandardOutputContent --output text || true
           aws ssm get-command-invocation --command-id "$command_id" \
-            --instance-id i-023d002d6e44f8f84 --query StandardErrorContent --output text || true
+            --instance-id i-094fcb34c7e715cf8 --query StandardErrorContent --output text || true
 
           if [ "$status" != "Success" ]; then
             echo "::error::deploy finished as $status — the node rolls back to the previous release on a failed health check, so stella.oxagen.sh should still be serving the last good build."
