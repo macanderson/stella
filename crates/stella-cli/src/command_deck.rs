@@ -1648,12 +1648,18 @@ pub async fn run_deck_session(
             // keep the boundary snapshot current before the next dispatch.
             let _ = crate::session_persist::snapshot_history(&sidecar_dir, &messages);
         }
+        // Set by a `/slug` skill invocation, and handed to this turn's recall
+        // below so the skill is recorded as used (#5232).
+        let mut invoked_skill = None;
         let prompt = match command {
             DeckCommand::Prompt => prompt,
             // A custom command/skill invocation: the transcript already shows
             // what was typed (`PromptStarted` above); the model runs the
             // expanded template.
-            DeckCommand::Expanded(text) => text,
+            DeckCommand::Expanded(expansion) => {
+                invoked_skill = expansion.skill;
+                expansion.prompt
+            }
             DeckCommand::Handled => continue 'session,
             DeckCommand::SessionModel(id) => {
                 session_override::apply_model_override(
@@ -1763,6 +1769,7 @@ pub async fn run_deck_session(
             let recalled = m.recall_block_reported(&prompt, &touched).await;
             recall = crate::memory::inject_opening_recall(&mut messages, recalled);
         }
+        recall.note_invoked_skill(invoked_skill);
         let turn_base = messages.len();
         // Attach any media files the prompt names (including `⌃V`
         // clipboard images, which arrive as their stored payload path).
@@ -1799,6 +1806,7 @@ pub async fn run_deck_session(
             memory.as_mut(),
             &prompt,
             &cfg.workspace_root,
+            &recall.invoked_skills(),
         );
         let started_unix = crate::memory::unix_now_secs();
 

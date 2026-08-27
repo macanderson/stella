@@ -240,8 +240,9 @@ fn projected_rows(
             name,
             summary,
             tokens,
+            trigger,
         } => {
-            out.extend(source::skill_rows(name, summary, *tokens, width));
+            out.extend(source::skill_rows(name, summary, *tokens, *trigger, width));
             true
         }
         TranscriptEntry::Model {

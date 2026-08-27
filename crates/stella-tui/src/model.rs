@@ -755,11 +755,13 @@ impl SessionModel {
                 name,
                 summary,
                 tokens,
+                trigger,
             } => {
                 self.transcript.push(TranscriptEntry::Skill {
                     name: name.clone(),
                     summary: summary.clone(),
                     tokens: *tokens,
+                    trigger: *trigger,
                 });
             }
             AgentEvent::MediaProgress {

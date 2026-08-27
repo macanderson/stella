@@ -285,6 +285,8 @@ pub enum TranscriptEntry {
         summary: String,
         /// What the injected block cost.
         tokens: u32,
+        /// Which channel put it in the prompt — the head's `auto|/cmd`.
+        trigger: stella_protocol::SkillTrigger,
     },
     /// Context recall completed; frames are cited by human label, never raw
     /// id (L-C4).

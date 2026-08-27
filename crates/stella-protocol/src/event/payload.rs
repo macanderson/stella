@@ -34,6 +34,46 @@ use super::AgentEvent;
 #[cfg(doc)]
 use crate::TaskContract;
 
+/// Which channel put a skill into the prompt (SPEC 6.3, whose head reads
+/// `auto|/cmd`).
+///
+/// The two channels are genuinely different events and were indistinguishable
+/// until #5232: auto-selection is the turn's steering block choosing a skill,
+/// and an invocation is a person typing its slug. Collapsing them cost more
+/// than a label — `skill_usage` is written from a re-run of *auto* selection,
+/// so an explicitly invoked skill recorded no use at all and appraisal could
+/// retire it for being unused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum SkillTrigger {
+    /// The turn's steering block selected it and the section's token budget
+    /// admitted it.
+    Auto,
+    /// A person typed the skill's slug and the expansion inlined its body.
+    Command,
+}
+
+impl SkillTrigger {
+    /// What a `SkillInjected` with no `trigger` field meant.
+    ///
+    /// Auto-selection was the only producer before #5232, so an older
+    /// journal's silence is a statement rather than a gap.
+    #[must_use]
+    pub fn auto() -> Self {
+        Self::Auto
+    }
+
+    /// How the transcript head spells it (SPEC 6.3).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Command => "/cmd",
+        }
+    }
+}
+
 /// What happened to a file in a [`AgentEvent::FileChange`] event.
 ///
 /// Both live producers measure a tree against a tree, so every kind emitted

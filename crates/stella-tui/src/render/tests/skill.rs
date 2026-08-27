@@ -11,13 +11,19 @@
 //! and that the summary is elided rather than faked when a skill has none.
 
 use super::*;
+use stella_protocol::SkillTrigger;
 use stella_tui_theme::glyph;
 
 fn injected(name: &str, summary: &str, tokens: u32) -> AgentEvent {
+    triggered(name, summary, tokens, SkillTrigger::Auto)
+}
+
+fn triggered(name: &str, summary: &str, tokens: u32, trigger: SkillTrigger) -> AgentEvent {
     AgentEvent::SkillInjected {
         name: name.to_string(),
         summary: summary.to_string(),
         tokens,
+        trigger,
     }
 }
 
@@ -59,6 +65,27 @@ fn an_injected_skill_renders_the_spec_head_and_its_summary() {
     assert!(
         text.contains("injected the 10-layer feature contract"),
         "{text}"
+    );
+}
+
+/// **The witness (#5232).** An invoked skill's head reads `/cmd`, not `auto`.
+///
+/// The trigger column was a literal `"auto"` in the renderer for as long as
+/// only one channel produced the event, so a `/slug` invocation — once it
+/// produced one at all — would have rendered as an auto-selection, which is
+/// the one thing the column exists to distinguish.
+#[test]
+fn an_invoked_skill_renders_the_command_trigger() {
+    let text = rows(&triggered(
+        "reviewer",
+        "database review",
+        40,
+        SkillTrigger::Command,
+    ));
+    assert!(text.contains("/cmd"), "the trigger column: {text}");
+    assert!(
+        !text.contains("auto"),
+        "still reads as auto-selected: {text}"
     );
 }
 

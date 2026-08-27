@@ -68,6 +68,7 @@ impl RecalledBlock {
                     name: s.name.clone(),
                     summary: s.summary.clone(),
                     tokens: s.tokens,
+                    trigger: stella_protocol::SkillTrigger::Auto,
                 }
             }))
             .collect()
@@ -95,6 +96,49 @@ pub(crate) struct OpeningRecall {
     /// The frames, skills and records the opening block rendered, by steering
     /// handle — the re-query adapter's seed.
     pub(crate) produced: super::steering::ProducedSteering,
+}
+
+impl OpeningRecall {
+    /// Report a skill the user invoked by name, on the same channel the
+    /// auto-selected ones ride (#5232).
+    ///
+    /// A `/slug` expansion happens before this turn's recall and outside it —
+    /// the skill's body is the prompt rather than a section of the steering
+    /// block — so it has no [`RecalledBlock`] to be carried by, and until it
+    /// had one of these it reached the prompt without producing an event at
+    /// all. It goes after the block's own skills so every `✦ skill` row of a
+    /// turn stays contiguous.
+    pub(crate) fn note_invoked_skill(&mut self, skill: Option<crate::extensions::InvokedSkill>) {
+        if let Some(skill) = skill {
+            self.events
+                .push(stella_protocol::AgentEvent::SkillInjected {
+                    name: skill.name,
+                    summary: skill.summary,
+                    tokens: skill.tokens,
+                    trigger: stella_protocol::SkillTrigger::Command,
+                });
+        }
+    }
+
+    /// The skills this turn was asked for by name, for the usage recorder.
+    ///
+    /// Read back off the events rather than kept as a second field, so the
+    /// two answers cannot disagree: what the transcript shows as invoked and
+    /// what `skill_usage` counts as invoked are the same list by
+    /// construction.
+    pub(crate) fn invoked_skills(&self) -> Vec<&str> {
+        self.events
+            .iter()
+            .filter_map(|event| match event {
+                stella_protocol::AgentEvent::SkillInjected {
+                    name,
+                    trigger: stella_protocol::SkillTrigger::Command,
+                    ..
+                } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// Inject `recalled`'s block ([`inject_recall_block`]) and keep what the turn

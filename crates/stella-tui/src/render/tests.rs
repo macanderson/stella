@@ -194,6 +194,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             name: "reviewer".into(),
             summary: "database review".into(),
             tokens: 1200,
+            trigger: stella_protocol::SkillTrigger::Auto,
         },
         TranscriptEntry::MediaProgress {
             artifact_id: "m1".into(),

@@ -547,12 +547,17 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         // reach a custom definition, so the REPL vocabulary above cannot be
         // shadowed even in argument-carrying forms the exact-match handlers
         // let through (e.g. `/help topic`).
-        let expanded = if input.starts_with('/') {
-            custom.expand(input, REPL_RESERVED)
+        let mut expanded = if input.starts_with('/') {
+            custom.expansion(input, REPL_RESERVED)
         } else {
             None
         };
-        let input = expanded.as_deref().unwrap_or(input);
+        // Kept beside the prompt until recall exists to carry its event
+        // (#5232): a `/slug` expansion used to reach the model with nothing
+        // recording that the skill had been used, which is what appraisal
+        // reads before retiring one.
+        let invoked_skill = expanded.as_mut().and_then(|e| e.skill.take());
+        let input = expanded.as_ref().map_or(input, |e| e.prompt.as_str());
 
         messages.push(crate::attachments::user_message_in(
             input,
@@ -572,6 +577,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             let recalled = m.recall_block_reported(input, &touched).await;
             recall = crate::memory::inject_opening_recall(&mut messages, recalled);
         }
+        recall.note_invoked_skill(invoked_skill);
 
         // Everything `run_turn` appends past here is this turn's work; the
         // reflection gate reads only that slice (see `turn_warrants_reflection`).
@@ -1207,6 +1213,7 @@ pub(crate) async fn run_turn(
         session_memory.as_deref_mut(),
         prompt,
         &cfg.workspace_root,
+        &recall.invoked_skills(),
     );
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = output::raw_event_sender_for_run(raw_tx, format, &door);

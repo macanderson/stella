@@ -464,12 +464,20 @@ pub fn context_write(provider: &str, upserts: u32, superseded: u32) -> EventLine
 /// The summary rides `detail` rather than the body so a narrow terminal drops
 /// the description and keeps the two facts a reader acts on — which skill, and
 /// what it cost.
-pub fn skill_injected(name: &str, summary: &str, tokens: u32) -> EventLine {
+pub fn skill_injected(
+    name: &str,
+    summary: &str,
+    tokens: u32,
+    trigger: stella_protocol::SkillTrigger,
+) -> EventLine {
     EventLine {
         glyph: "✦",
         tone: Tone::Muted,
         strong: false,
-        body: format!("skill {name} injected · {tokens} tok"),
+        body: format!(
+            "skill {name} injected · {} · {tokens} tok",
+            trigger.as_str()
+        ),
         detail: (!summary.is_empty()).then(|| summary.to_string()),
     }
 }
@@ -791,7 +799,8 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             name,
             summary,
             tokens,
-        } => Some(skill_injected(name, summary, *tokens)),
+            trigger,
+        } => Some(skill_injected(name, summary, *tokens, *trigger)),
         AgentEvent::MediaProgress {
             artifact_id,
             kind,

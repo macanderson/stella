@@ -33,22 +33,31 @@ use super::*;
 /// turn: selection honours the A/B recall control, so a control turn that
 /// injects no skills records no usage. A missing store, execution, or memory
 /// is a quiet no-op — those paths inject no skills either.
+///
+/// `invoked` names the skills the user asked for by slug this turn
+/// ([`crate::memory::OpeningRecall::invoked_skills`]). They are recorded
+/// beside the selected ones because selection is what the row set was built
+/// from and selection never runs for a `/slug` — so an invoked skill used
+/// daily counted zero uses, and appraisal reads this table before retiring
+/// one (#5232, the same phantom-non-usage failure #1872 fixed for the
+/// non-interactive paths).
 pub(crate) fn stamp_and_record_skill_usage(
     execution: &Option<(Arc<Store>, i64)>,
     memory: Option<&mut SessionMemory>,
     prompt: &str,
     workspace_root: &Path,
+    invoked: &[&str],
 ) {
     let (Some((store, id)), Some(memory)) = (execution, memory) else {
         return;
     };
     memory.set_execution_id(*id);
     let selected = memory.selected_skills(prompt);
-    if selected.is_empty() {
+    if selected.is_empty() && invoked.is_empty() {
         return;
     }
     let versions = crate::skill_manager::pinned_versions(workspace_root);
-    let rows: Vec<stella_store::SkillUsageRow> = selected
+    let mut rows: Vec<stella_store::SkillUsageRow> = selected
         .into_iter()
         .map(|(skill, reason)| stella_store::SkillUsageRow {
             version: versions.get(&skill).copied().unwrap_or(1),
@@ -56,6 +65,18 @@ pub(crate) fn stamp_and_record_skill_usage(
             reason,
         })
         .collect();
+    // A skill both selected and invoked is one use of one skill, and the
+    // selection's reason is the more informative of the two.
+    for skill in invoked {
+        if rows.iter().any(|row| row.skill == *skill) {
+            continue;
+        }
+        rows.push(stella_store::SkillUsageRow {
+            version: versions.get(*skill).copied().unwrap_or(1),
+            skill: (*skill).to_string(),
+            reason: "invoked by name".to_string(),
+        });
+    }
     let _ = store.record_skill_usage(*id, &rows);
 }
 
@@ -111,6 +132,7 @@ mod tests {
             Some(&mut memory),
             "review the database",
             dir.path(),
+            &[],
         );
 
         let json = store
@@ -133,6 +155,76 @@ mod tests {
         );
     }
 
+    /// **The witness (#5232).** A skill the user invoked by name records a
+    /// use, on a prompt selection does not match.
+    ///
+    /// The prompt is the skill's own expanded body, which selects nothing —
+    /// so before this the count for an explicitly invoked skill was zero no
+    /// matter how often it was used, and skill appraisal reads exactly this
+    /// table before retiring one for non-use. The same phantom-non-usage
+    /// failure as #1872, one channel over.
+    #[test]
+    fn a_skill_invoked_by_name_records_a_use_selection_would_have_missed() {
+        let dir = workspace_with_reviewer_skill();
+        let mut memory = session_memory(dir.path());
+        let store = Arc::new(Store::in_memory().expect("store"));
+        let id = store
+            .begin_execution("chat", "Apply the following skill.", "anthropic", "claude")
+            .expect("begin");
+
+        // The control: this prompt selects nothing, so any row below is the
+        // invocation's and not selection's.
+        assert!(
+            memory
+                .selected_skills("Apply the following skill.")
+                .is_empty(),
+            "the fixture must not select the skill, or the assertion proves nothing"
+        );
+
+        stamp_and_record_skill_usage(
+            &Some((store.clone(), id)),
+            Some(&mut memory),
+            "Apply the following skill.",
+            dir.path(),
+            &["reviewer"],
+        );
+
+        let json = store
+            .export_all_json()
+            .expect("export")
+            .into_iter()
+            .find_map(|(table, json)| (table == "skill_usage").then_some(json))
+            .expect("skill_usage export");
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&json).expect("rows");
+        assert_eq!(rows.len(), 1, "the invoked skill recorded no use: {rows:?}");
+        assert_eq!(rows[0]["skill"], "reviewer");
+        assert_eq!(rows[0]["reason"], "invoked by name");
+    }
+
+    /// A skill both selected and invoked is one use, under selection's reason.
+    ///
+    /// Two rows would double-count it for every reader of the table, and the
+    /// invocation's reason is the less informative of the two.
+    #[test]
+    fn a_skill_both_selected_and_invoked_records_one_use() {
+        let dir = workspace_with_reviewer_skill();
+        let mut memory = session_memory(dir.path());
+        let store = Arc::new(Store::in_memory().expect("store"));
+        let id = store
+            .begin_execution("chat", "review the database", "anthropic", "claude")
+            .expect("begin");
+
+        stamp_and_record_skill_usage(
+            &Some((store.clone(), id)),
+            Some(&mut memory),
+            "review the database",
+            dir.path(),
+            &["reviewer"],
+        );
+
+        assert_eq!(store.count("skill_usage").expect("count"), 1);
+    }
+
     /// The seam subsumes the per-path execution-id stamp it replaced: a
     /// reflection following the turn can still name its execution row.
     #[test]
@@ -149,6 +241,7 @@ mod tests {
             Some(&mut memory),
             "unrelated prompt",
             dir.path(),
+            &[],
         );
 
         assert_eq!(memory.execution_id_for_test(), Some(id));
@@ -174,9 +267,10 @@ mod tests {
             None,
             "review the database",
             dir.path(),
+            &[],
         );
         let mut memory = session_memory(dir.path());
-        stamp_and_record_skill_usage(&None, Some(&mut memory), "review", dir.path());
+        stamp_and_record_skill_usage(&None, Some(&mut memory), "review", dir.path(), &[]);
 
         assert_eq!(store.count("skill_usage").expect("count"), 0);
     }

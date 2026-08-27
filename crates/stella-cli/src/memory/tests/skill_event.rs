@@ -60,7 +60,15 @@ async fn an_injected_skill_reaches_the_turn_stream_as_its_own_event() {
                 name,
                 summary,
                 tokens,
-            } => Some((name, summary, tokens)),
+                trigger,
+            } => {
+                assert_eq!(
+                    trigger,
+                    stella_protocol::SkillTrigger::Auto,
+                    "a skill the steering block selected is not a `/slug` invocation"
+                );
+                Some((name, summary, tokens))
+            }
             _ => None,
         })
         .collect();
@@ -95,4 +103,50 @@ async fn a_turn_with_steering_off_announces_no_skill() {
         .recall_block_reported("review the database migrations", &[])
         .await;
     assert!(block.telemetry_events().is_empty(), "{:?}", block.text);
+}
+
+/// **The witness (#5232).** An invoked skill reaches the turn's event channel,
+/// carrying the trigger that says a person asked for it.
+///
+/// Two failures this pins, both of which the tests above miss because they only
+/// ever exercise auto-selection. That the invoked skill is reported at all —
+/// `extensions::expand` produced prompt text and emitted nothing, so a `/slug`
+/// left no `SkillInjected` on any channel and `skill_usage` counted no use,
+/// which is what appraisal reads before retiring a skill. And that it is
+/// reported as an *invocation*: an event carrying `Auto` would say the
+/// steering block chose a skill nobody selected.
+#[test]
+fn an_invoked_skill_reaches_the_channel_as_a_command() {
+    let mut recall = OpeningRecall::default();
+    recall.note_invoked_skill(Some(crate::extensions::InvokedSkill {
+        name: "reviewer".to_string(),
+        summary: "database review".to_string(),
+        tokens: 40,
+    }));
+
+    match recall.events.as_slice() {
+        [
+            stella_protocol::AgentEvent::SkillInjected {
+                name,
+                summary,
+                tokens,
+                trigger,
+            },
+        ] => {
+            assert_eq!(name, "reviewer");
+            assert_eq!(summary, "database review");
+            assert_eq!(*tokens, 40);
+            assert_eq!(*trigger, stella_protocol::SkillTrigger::Command);
+        }
+        other => panic!("a `/slug` invocation announced nothing: {other:?}"),
+    }
+}
+
+/// A turn that invoked nothing adds nothing — the seam cannot manufacture a
+/// use out of an ordinary prompt.
+#[test]
+fn a_turn_that_invoked_no_skill_adds_no_event() {
+    let mut recall = OpeningRecall::default();
+    recall.note_invoked_skill(None);
+    assert!(recall.events.is_empty());
 }

@@ -643,9 +643,17 @@ export type AgentEvent = {
   summary: string;
   /**
    * What this skill's rendered block cost, estimated over the exact
-   * bytes the section carried.
+   * bytes the prompt carried.
    */
   tokens: number;
+  /**
+   * Which channel put it there.
+   *
+   * Absent on a journal written before #5232, where the only producer
+   * was auto-selection — so the default is the value those events
+   * meant.
+   */
+  trigger?: SkillTrigger;
   type: "skill_injected";
 } | {
   /**
@@ -2289,6 +2297,19 @@ export interface ScopeProposal {
  * providers that support tiered service; others use their default tier.
  */
 export type ServiceTier = "auto" | "default" | "flex" | "priority";
+
+/**
+ * Which channel put a skill into the prompt (SPEC 6.3, whose head reads
+ * `auto|/cmd`).
+ *
+ * The two channels are genuinely different events and were indistinguishable
+ * until #5232: auto-selection is the turn's steering block choosing a skill,
+ * and an invocation is a person typing its slug. Collapsing them cost more
+ * than a label — `skill_usage` is written from a re-run of *auto* selection,
+ * so an explicitly invoked skill recorded no use at all and appraisal could
+ * retire it for being unused.
+ */
+export type SkillTrigger = "auto" | "command";
 
 /**
  * The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.
