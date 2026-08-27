@@ -777,19 +777,23 @@ mod tests {
                     env = []\n";
         std::fs::write(dir.join(crate::plugin_cmd::roster::MANIFEST_FILE), text)
             .expect("fixture manifest");
-        for scope in [PluginScope::User] {
-            crate::plugin_cmd::receipt::record(&tier, scope, "hooked", "hooked", text.as_bytes())
-                .expect("fixture receipt");
-            crate::plugin_cmd::panel_grant::record(
-                &tier,
-                scope,
-                "hooked",
-                "hooked",
-                text.as_bytes(),
-                PanelVerdict::Deny,
-            )
-            .expect("fixture panel grant");
-        }
+        crate::plugin_cmd::receipt::record(
+            &tier,
+            PluginScope::User,
+            "hooked",
+            "hooked",
+            text.as_bytes(),
+        )
+        .expect("fixture receipt");
+        crate::plugin_cmd::panel_grant::record(
+            &tier,
+            PluginScope::User,
+            "hooked",
+            "hooked",
+            text.as_bytes(),
+            PanelVerdict::Deny,
+        )
+        .expect("fixture panel grant");
 
         let roster = PluginRoster::compose(
             crate::plugin_cmd::roster::read_tier(&tier, PluginScope::User, &mut Vec::new()),
