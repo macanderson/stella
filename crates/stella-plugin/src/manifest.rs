@@ -552,20 +552,7 @@ impl PluginManifest {
         if self.name.trim().is_empty() {
             return Err(ManifestError::EmptyName);
         }
-        // The name is the one string Stella *composes into its own chrome*: the
-        // `◳ panel · <plugin>` label, the install prompt, a popup's heading, the
-        // rules panel. `PanelText` makes a plugin's own glyphs unable to carry
-        // an escape sequence, and that guarantee is worth nothing while the
-        // label around them can — a plugin named "\x1b[2J" clears the screen
-        // from inside Stella's own border, through a path no panel frame
-        // touches. Checked once here rather than at each consumer, because
-        // every consumer is a place someone can forget (#5203).
-        if let Some((index, found)) = crate::panel::first_control_character(&self.name) {
-            return Err(ManifestError::NameNotDrawable {
-                index,
-                code: found as u32,
-            });
-        }
+        crate::panel::validate_plugin_name(&self.name)?;
 
         let grant = &self.loop_grant;
         let participation = grant.participation;

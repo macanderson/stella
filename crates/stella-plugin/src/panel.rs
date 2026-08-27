@@ -184,7 +184,8 @@ pub const MAX_PANEL_COMMAND_CHARS: usize = 32;
 /// `stella*`, which is the one thing chrome a user trusts must not be able to
 /// say about itself. The host writes [`crate::PluginManifest::name`] into that
 /// label, so the label is the identity a human already consented to — and
-/// [`crate::PluginManifest::validate`] refuses a name that is not drawable, so
+/// [`PluginManifest::validate`](crate::PluginManifest) refuses a name that is
+/// not drawable, so
 /// the identity cannot carry an escape sequence into the chrome either.
 ///
 /// A caption field was written and removed while #5203 was in review. Printing
@@ -779,7 +780,8 @@ impl PanelLine {
 /// The first control character in `text`, as `(index in chars, character)`.
 ///
 /// One definition of "drawable", read in two places: [`PanelText::new`] holds
-/// it for a panel's own glyphs, and [`crate::PluginManifest::validate`] holds it
+/// it for a panel's own glyphs, and
+/// [`PluginManifest::validate`](crate::PluginManifest) holds it
 /// for the name Stella composes into chrome. A second copy of the predicate
 /// would drift, and the two are the same question — whether a string can reach
 /// a terminal without carrying an escape sequence into it.
@@ -787,6 +789,32 @@ pub(crate) fn first_control_character(text: &str) -> Option<(usize, char)> {
     text.chars()
         .enumerate()
         .find(|(_, found)| found.is_control())
+}
+
+/// Whether a plugin's name is one Stella can print inside its own chrome.
+///
+/// The name is the one string Stella **composes into chrome it owns**: the
+/// `◳ panel · <plugin>` label, the install prompt, a popup's heading, the rules
+/// panel. [`PanelText`] makes a plugin's own glyphs unable to carry an escape
+/// sequence, and that guarantee is worth nothing while the label around them
+/// can — a plugin named `"\x1b[2J"` clears the screen from inside Stella's own
+/// border, through a path no panel frame touches.
+///
+/// Asked once, at load, rather than at each consumer, because every consumer is
+/// a place someone can forget. Here rather than in `manifest.rs` so it sits
+/// beside the predicate it shares with [`PanelText::new`] (#5203).
+///
+/// # Errors
+///
+/// [`ManifestError::NameNotDrawable`], naming the character and where it sits.
+pub(crate) fn validate_plugin_name(name: &str) -> Result<(), ManifestError> {
+    match first_control_character(name) {
+        Some((index, found)) => Err(ManifestError::NameNotDrawable {
+            index,
+            code: found as u32,
+        }),
+        None => Ok(()),
+    }
 }
 
 /// One run of text in a row, drawn in one style.
