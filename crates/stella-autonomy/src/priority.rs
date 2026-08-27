@@ -27,6 +27,31 @@
 //! [`Unassessed`] hands to the caller.
 
 use crate::QueueIssue;
+use std::cmp::Ordering;
+
+/// Order two tracker timestamps oldest-first, with an unknown stamp **last**.
+///
+/// `stella_protocol::issue::Issue::created_at` reserves the empty string for
+/// "this provider could not produce one", rather than fabricating an instant —
+/// and the field is `#[serde(default)]`, so a query that does not select it
+/// yields the same empty string. Lexically that string is the *smallest* of
+/// all, so comparing two stamps directly reads "nobody knows when this was
+/// filed" as "it was filed before everything else" and moves the issue to the
+/// front of its rung, ahead of every issue whose age is actually known.
+///
+/// Unknown sorts last instead. The issue is still worked — it is not dropped,
+/// and an unranked one is still a question rather than an answer — it simply
+/// does not overtake issues whose age is evidence rather than an artefact of
+/// the empty string standing in for a measurement nobody took.
+#[must_use]
+pub fn by_age(a: &str, b: &str) -> Ordering {
+    match (a.trim().is_empty(), b.trim().is_empty()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+        (false, false) => a.cmp(b),
+    }
+}
 
 /// The operator's priority labels, most urgent first.
 ///
@@ -126,10 +151,11 @@ impl Queue {
 
 /// Split a queue into ranked work and issues awaiting a judgement.
 ///
-/// Sorting is by rung, then by age within a rung, so a P0 filed today is taken
-/// before a P0 filed last month and both are taken before any P1. Age is
-/// compared as the tracker's own timestamp string, which is ISO-8601 and
-/// therefore sorts correctly as text.
+/// Sorting is by rung, then by age within a rung, so a P0 filed last month is
+/// taken before a P0 filed today and both are taken before any P1. Age is
+/// compared as the tracker's own timestamp string, which is RFC3339 and
+/// therefore sorts correctly as text — except for the empty string a provider
+/// supplies when it cannot say, which [`by_age`] sorts last rather than first.
 #[must_use]
 pub fn partition(issues: Vec<QueueIssue>, ladder: &PriorityLadder) -> Queue {
     let mut ranked = Vec::new();
@@ -150,9 +176,9 @@ pub fn partition(issues: Vec<QueueIssue>, ladder: &PriorityLadder) -> Queue {
     ranked.sort_by(|a, b| {
         rank_of(a, ladder)
             .cmp(&rank_of(b, ladder))
-            .then_with(|| a.created_at.cmp(&b.created_at))
+            .then_with(|| by_age(&a.created_at, &b.created_at))
     });
-    unassessed.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    unassessed.sort_by(|a, b| by_age(&a.created_at, &b.created_at));
 
     Queue { ranked, unassessed }
 }
@@ -237,7 +263,7 @@ pub fn triage(issues: Vec<QueueIssue>, policy: &TriagePolicy) -> Queue {
     queue.ranked = ranked.ranked;
     queue
         .unassessed
-        .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        .sort_by(|a, b| by_age(&a.created_at, &b.created_at));
     queue
 }
 
@@ -287,6 +313,61 @@ mod tests {
             "the unlabelled one is a question"
         );
         assert_eq!(queue.unassessed[0].key, "2");
+    }
+
+    /// An issue whose creation stamp the provider could not supply does not
+    /// become the oldest issue in its rung.
+    ///
+    /// The protocol reserves the empty string for "this provider could not
+    /// say" and refuses to fabricate an instant
+    /// (`stella_protocol::issue::Issue::created_at`). Lexically that string is
+    /// the smallest, so the direct comparison read the refusal as the
+    /// beginning of time and worked the issue first — a position nobody has
+    /// evidence for, taken ahead of two issues whose age is known.
+    #[test]
+    fn a_missing_creation_stamp_does_not_jump_the_rung() {
+        let ladder = PriorityLadder::default();
+        let queue = partition(
+            vec![
+                issue(1, "", &["P1"]),
+                issue(2, "2026-08-01T00:00:00Z", &["P1"]),
+                issue(3, "2026-03-01T00:00:00Z", &["P1"]),
+            ],
+            &ladder,
+        );
+
+        let order: Vec<u64> = queue.ranked.iter().map(|i| i.number).collect();
+        assert_eq!(
+            order,
+            vec![3, 2, 1],
+            "known ages sort oldest-first among themselves; the unknown one goes last"
+        );
+    }
+
+    /// The same rule for the unassessed half, which is sorted separately.
+    #[test]
+    fn a_missing_creation_stamp_does_not_jump_the_triage_queue() {
+        let ladder = PriorityLadder::default();
+        let queue = partition(
+            vec![issue(1, "", &[]), issue(2, "2026-08-01T00:00:00Z", &[])],
+            &ladder,
+        );
+
+        let order: Vec<String> = queue.unassessed.iter().map(|u| u.key.clone()).collect();
+        assert_eq!(order, vec!["2".to_owned(), "1".to_owned()]);
+    }
+
+    /// Whitespace is as empty as empty, and two unknowns tie rather than
+    /// ordering on invisible characters.
+    #[test]
+    fn by_age_treats_blank_as_unknown_and_ties_two_of_them() {
+        assert_eq!(by_age("   ", "2026-08-01T00:00:00Z"), Ordering::Greater);
+        assert_eq!(by_age("", "  "), Ordering::Equal);
+        assert_eq!(
+            by_age("2026-03-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+            Ordering::Less,
+            "known stamps still order oldest-first"
+        );
     }
 
     /// The rungs come from the operator, not from this crate.
