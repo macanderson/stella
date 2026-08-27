@@ -223,6 +223,33 @@ pub(super) fn service_reject_memory(
     true
 }
 
+/// Service `r rerun gate` on a failed gate board (SPEC 8.1). Returns `true` if
+/// `input` was that verb.
+///
+/// **It answers; it does not re-run.** A gate belongs to the verification
+/// plugin that reported the evidence behind it — stella evaluates that evidence
+/// against the plugin's declared rule and never re-runs or re-checks it
+/// (AGENTS.md's opening). The deck drives the raw step loop with no wrapper
+/// bound (`command_deck` opens every turn's execution with a pipeline of `None`
+/// since #3865), so there is no plugin here to ask, and the answer is to say so
+/// and name what would.
+///
+/// A refusal rather than a silence, on `service_undo_delete`'s rule above: a
+/// key that says nothing leaves the reader waiting for a re-run that is never
+/// coming. Wiring the request to a bound wrapper's next round — the deck has no
+/// door that binds one today — is #5266.
+pub(super) fn service_rerun_gate(input: &WorkspaceInput, in_tx: &UnboundedSender<Inbound>) -> bool {
+    let WorkspaceInput::RerunGate { gate } = input else {
+        return false;
+    };
+    let _ = in_tx.send(Inbound::Notice(format!(
+        "rerun gate \"{gate}\": this session has no verification plugin bound, and stella never \
+         runs a gate itself — start the run with `stella run --pipeline <plugin-id>` for a plugin \
+         to evaluate its gates"
+    )));
+    true
+}
+
 /// Service a session-registry / inbox verb from the deck. Returns `true` if
 /// `input` was one (so the caller skips its own dispatch). All of these are
 /// cheap local file ops, serviced identically idle or mid-turn.

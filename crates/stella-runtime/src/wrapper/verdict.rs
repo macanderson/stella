@@ -55,6 +55,7 @@ use stella_plugin::{
     Oracle, Outcome, Participation, RoundState, StopReason, TamperFinding, TamperPolicy,
     UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext,
 };
+use stella_protocol::{GateBoard, GateRow, GateState};
 
 /// Turn evidence into a verdict, by the rule the plugin declared.
 ///
@@ -200,6 +201,73 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
         // finding and the measurements alone (#3513).
         None => Verdict::Met {
             evidence: evidence.provenance,
+        },
+    }
+}
+
+/// The verdict as a board a reader can look at — SPEC 8.1's `gate board`.
+///
+/// One row per requirement the rule declares, which is why this takes the rule
+/// and not only the verdict: a [`Verdict::Unmet`] lists what failed and says
+/// nothing about what held, so a board built from the verdict alone would have
+/// as many rows as there were failures and would report `0/0 green` on a
+/// perfect run.
+///
+/// Pure and total, like [`judge`] above and for the same reason: nothing about
+/// drawing a board may reach for a model, a process or a clock. It re-decides
+/// nothing either — every row is read out of the verdict [`judge`] already
+/// reached, so the board and the verdict cannot disagree.
+///
+/// # Which rows are red
+///
+/// A requirement named in [`Verdict::Unmet`] failed. Everything else on an
+/// `Unmet` verdict held: [`judge`] reports a determinate failure in preference
+/// to an abstention, so a run with both lands here with the abstention
+/// invisible — and a row that quietly says "green" for a clause nobody could
+/// decide is the flattering claim this whole path exists to prevent. That is
+/// exactly what [`Verdict::Undecided`] costs, and it is why an undecided
+/// verdict paints **every** row undecided rather than guessing which clause the
+/// single reported reason belongs to. Sharpening this needs `judge` to carry
+/// per-requirement abstentions, which is #5267.
+///
+/// `deterministic` is `true` on every row: [`judge`] is synchronous and
+/// I/O-free, so no model was asked and the decision cost nothing.
+#[must_use]
+pub fn gate_board(rule: &VerdictRule, verdict: &Verdict, patch: Option<String>) -> GateBoard {
+    let gates = rule
+        .requirements
+        .iter()
+        .map(|(name, statement)| GateRow {
+            name: name.clone(),
+            state: gate_state(name, statement, verdict),
+            deterministic: true,
+        })
+        .collect();
+    GateBoard { patch, gates }
+}
+
+/// One requirement's row, read out of the verdict.
+fn gate_state(name: &str, statement: &str, verdict: &Verdict) -> GateState {
+    match verdict {
+        Verdict::Met { .. } => GateState::Green,
+        Verdict::Undecided { reason } => GateState::Undecided {
+            reason: reason.to_string(),
+        },
+        Verdict::Unmet { unmet } => match unmet.iter().find(|clause| clause.requirement == name) {
+            // `because` is the failing case — the check the manifest wrote, or
+            // the flip that was not observed — and `detail` is the wrapper's
+            // own account of it, which is the excerpt the block shows. The
+            // statement stands in when the plugin reported no detail: it is the
+            // clause the reader is being told went red, and an empty block
+            // under a red row reads as evidence nobody kept.
+            Some(clause) => GateState::Failed {
+                case: clause.because.to_string(),
+                log: clause
+                    .detail
+                    .clone()
+                    .unwrap_or_else(|| statement.to_owned()),
+            },
+            None => GateState::Green,
         },
     }
 }

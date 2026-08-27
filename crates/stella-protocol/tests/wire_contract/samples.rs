@@ -15,9 +15,9 @@ use stella_protocol::completion::{
 };
 use stella_protocol::delivery_event::{DeliveryDecline, DeliveryOutcome};
 use stella_protocol::event::{
-    BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, MemoryClass,
-    ModelCallRole, PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind,
-    SteerCause, TaskItem, TaskStatus, UsageIncompleteReason,
+    BudgetMode, BudgetScope, CiStatus, FileChangeKind, GateBoard, GateRow, GateState,
+    MediaJobState, MediaKind, MemoryClass, ModelCallRole, PolicyKind, PrStatus, ProofStep,
+    ProofTree, ScopeProposal, StageKind, SteerCause, TaskItem, TaskStatus, UsageIncompleteReason,
 };
 use stella_protocol::ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation};
 use stella_protocol::receipt::{
@@ -166,6 +166,22 @@ pub(crate) fn all_memory_classes() -> Vec<MemoryClass> {
     MemoryClass::LADDER.to_vec()
 }
 
+/// Every answer a gate board's row can carry (SPEC 8.1), each with the fields
+/// its arm actually holds — an arm sampled with an empty payload proves the
+/// discriminant and nothing about the shape under it.
+pub(crate) fn all_gate_states() -> Vec<GateState> {
+    vec![
+        GateState::Green,
+        GateState::Failed {
+            case: "no fail→pass flip (NotAttempted)".into(),
+            log: "witness_authored: false".into(),
+        },
+        GateState::Undecided {
+            reason: "the oracle reported no value for \"p50\"".into(),
+        },
+    ]
+}
+
 pub(crate) fn all_media_kinds() -> Vec<MediaKind> {
     vec![MediaKind::Image, MediaKind::Svg, MediaKind::Video]
 }
@@ -182,7 +198,7 @@ pub(crate) fn all_ci_statuses() -> Vec<CiStatus> {
 
 pub(crate) fn all_task_statuses() -> Vec<TaskStatus> {
     use TaskStatus::*;
-    vec![Pending, InProgress, Completed, Cancelled]
+    vec![Pending, InProgress, Completed, Cancelled, Verify, Blocked]
 }
 
 pub(crate) fn all_block_kinds() -> Vec<BlockKind> {
@@ -567,6 +583,24 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 deterministic: false,
                 evidence_refs: vec![],
                 ladder: None,
+            },
+        },
+        // Every gate state on one board, walked from `all_gate_states` rather
+        // than written out here: the enum-arm sweep counts discriminants, so a
+        // state added without a sample is a schema arm nothing proves
+        // validates.
+        AgentEvent::GateBoard {
+            board: GateBoard {
+                patch: Some("patch-7".into()),
+                gates: all_gate_states()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, state)| GateRow {
+                        name: format!("gate-{i}"),
+                        state,
+                        deterministic: true,
+                    })
+                    .collect(),
             },
         },
         AgentEvent::ScopeReview {

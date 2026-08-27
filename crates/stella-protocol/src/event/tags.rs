@@ -477,6 +477,18 @@ agent_event_tags! {
     Verdict => "verdict",
         ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];
+    // The verdict's per-gate breakdown (SPEC 8.1). `RecordedOnly` for the row
+    // above's reason and by the same test: the deck folds it into a transcript
+    // entry and paints the board, which is rendering with no branch, and no
+    // `Surface` selects the tag — the Observatory's journal query and its
+    // `TENDENCY_EVENT_TYPES` both name explicit `event_type` lists that omit it.
+    // The deck's `l` / `r` keys read the folded entry rather than this event,
+    // and a key that claims a keystroke is a UI decision, not something the
+    // engine does — the same line `ContextWrite`'s row draws. Giving a
+    // selecting surface a reason to name it is #5261.
+    GateBoard => "gate_board",
+        ConsumerPosture::RecordedOnly { issue: "#5261" },
+        &[];
     // `Behavioral`, and the producer is the deck's own plan gate since #4594:
     // `command_deck/task_tap/plan_gate.rs` raises the board as a proposal on
     // the first `task_start` and parks the call on the driver's answer. So the

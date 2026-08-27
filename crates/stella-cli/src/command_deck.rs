@@ -114,8 +114,8 @@ mod theme_cmd;
 mod whistle;
 mod worker_control;
 use driver_support::{
-    handle_supervisor_msg, service_registry_action, service_reject_memory, service_undo_delete,
-    spawn_mcp_connect, spawn_notification_poller, spawn_pr_monitor,
+    handle_supervisor_msg, service_registry_action, service_reject_memory, service_rerun_gate,
+    service_undo_delete, spawn_mcp_connect, spawn_notification_poller, spawn_pr_monitor,
 };
 use lead_turn::run_lead_turn;
 use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
@@ -2211,6 +2211,12 @@ pub async fn run_deck_session(
                         // reader is watching.
                         Some(input @ WorkspaceInput::RejectMemory { .. }) => {
                             service_reject_memory(&input, &workspace_path, &in_tx);
+                        }
+                        // `r rerun gate` likewise: it answers in words rather
+                        // than running anything (`service_rerun_gate`), so
+                        // there is nothing for a busy lane to contend with.
+                        Some(input @ WorkspaceInput::RerunGate { .. }) => {
+                            service_rerun_gate(&input, &in_tx);
                         }
                         // INSPECT is answered mid-turn too: the receipts of
                         // earlier steps are already durable, and watching the

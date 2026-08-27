@@ -95,6 +95,9 @@ fn models_value(model: &WorkspaceModel) -> Vec<Span<'static>> {
 /// Returns the rows and the *row index* of `selected` (a step index), which the
 /// caller needs for the selection tint — a step can occupy several rows once
 /// its detail wraps, so the two indices are not the same number.
+///
+/// [`step_row`] draws one row; this walks the plan and adds the detail rows
+/// under it.
 pub fn step_rows(
     plan: &Plan,
     width: usize,
@@ -122,20 +125,7 @@ pub fn step_rows(
         if Some(i) == selected {
             selected_row = Some(rows.len());
         }
-        let v = step_style::step_visual(step.state, now_ms, animate);
-        let mut spans = vec![
-            cards::marker(Some(i) == selected),
-            Span::styled(v.glyph, v.ring),
-            Span::styled(" ", v.gap),
-            Span::styled(format!("{:<3}", format!("{}.", step.id)), v.num),
-            Span::styled(step.title.clone(), v.text),
-        ];
-        if let Some(note) = &step.note {
-            spans.push(Span::styled(format!("  ({note})"), v.meta));
-        } else if let Some(owner) = &step.owner {
-            spans.push(Span::styled(format!("  ({owner})"), v.meta));
-        }
-        rows.push(Line::from(spans));
+        rows.push(step_row(step, Some(i) == selected, now_ms, animate));
         // The elaboration, wrapped under the title at the title's indent.
         if let Some(detail) = &step.detail {
             let indent = 7usize;
@@ -148,6 +138,36 @@ pub fn step_rows(
         }
     }
     (rows, selected_row)
+}
+
+/// One step's own row: selection marker, state glyph, ordinal, title, and the
+/// trailing `(note)` / `(owner)` tag.
+///
+/// Split out of [`step_rows`] so a state can be goldened as the row it draws
+/// rather than as the styles behind it — [`Plan`] folds five of the six states
+/// from the board and cannot produce
+/// [`crate::plan::PlanStepState::DriftInserted`] at all, so the whole
+/// vocabulary is only reachable a step at a time.
+pub fn step_row(
+    step: &crate::plan::PlanStep,
+    selected: bool,
+    now_ms: u64,
+    animate: bool,
+) -> Line<'static> {
+    let v = step_style::step_visual(step.state, now_ms, animate);
+    let mut spans = vec![
+        cards::marker(selected),
+        Span::styled(v.glyph.to_string(), v.ring),
+        Span::styled(" ", v.gap),
+        Span::styled(format!("{:<3}", format!("{}.", step.id)), v.num),
+        Span::styled(step.title.clone(), v.text),
+    ];
+    if let Some(note) = &step.note {
+        spans.push(Span::styled(format!("  ({note})"), v.meta));
+    } else if let Some(owner) = &step.owner {
+        spans.push(Span::styled(format!("  ({owner})"), v.meta));
+    }
+    Line::from(spans)
 }
 
 /// The operating-envelope grid: where the plan may write, what it may spend,
@@ -288,7 +308,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::Plan;
+    use crate::plan::{Plan, PlanStep, PlanStepState};
     use stella_protocol::{TaskItem, TaskStatus};
 
     fn proposal(steps: &[&str]) -> ScopeProposal {
@@ -375,6 +395,70 @@ mod tests {
                 text_of(row)
             );
         }
+    }
+
+    /// **The golden row per state (SPEC 7.2).** Six states, six rows, spelled
+    /// out as the text a reader sees rather than as the styles behind it.
+    ///
+    /// A `contains` assertion would not have caught what this is for: `✗` used
+    /// to be the whole story for a step that ended badly, and `●` stood where
+    /// SPEC 4 asks for `◐`. Both read fine one row at a time and wrong side by
+    /// side.
+    #[test]
+    fn every_state_draws_its_specced_row() {
+        let step = |id: &str, title: &str, state: PlanStepState, note: Option<&str>| PlanStep {
+            id: id.into(),
+            title: title.into(),
+            detail: None,
+            state,
+            owner: None,
+            note: note.map(str::to_string),
+            contract: None,
+        };
+        let rows = [
+            (
+                step("1", "extract types", PlanStepState::Complete, None),
+                "  ✓ 1. extract types",
+            ),
+            (
+                step("2", "move hooks", PlanStepState::Started, None),
+                "  ◐ 2. move hooks",
+            ),
+            (
+                step("3", "update imports", PlanStepState::Planned, None),
+                "  ○ 3. update imports",
+            ),
+            (
+                step("4", "run the gates", PlanStepState::Verify, None),
+                "  ◇ 4. run the gates",
+            ),
+            (
+                step("5", "ship it", PlanStepState::Blocked, None),
+                "  ✗ 5. ship it",
+            ),
+            (
+                step(
+                    "6",
+                    "fix borrow err",
+                    PlanStepState::DriftInserted,
+                    Some("inserted"),
+                ),
+                "  ⌥ 6. fix borrow err  (inserted)",
+            ),
+        ];
+        for (step, expected) in rows {
+            assert_eq!(text_of(&step_row(&step, false, 0, false)), expected);
+        }
+        // And the one row the glyph cannot disambiguate says it in words.
+        assert_eq!(
+            text_of(&step_row(
+                &step("7", "drop it", PlanStepState::Blocked, Some("cancelled")),
+                false,
+                0,
+                false
+            )),
+            "  ✗ 7. drop it  (cancelled)"
+        );
     }
 
     #[test]

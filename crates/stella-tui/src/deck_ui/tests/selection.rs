@@ -155,6 +155,125 @@ fn u_on_a_highlighted_delete_sends_the_undo_and_otherwise_types() {
     );
 }
 
+/// A verify turn's gate board on `agent`, one gate red.
+fn with_failed_gate_board(m: &mut WorkspaceModel, agent: &str) {
+    use stella_protocol::{GateBoard, GateRow, GateState};
+    m.apply_inbound(&Inbound::Event {
+        agent: agent.into(),
+        event: AgentEvent::GateBoard {
+            board: GateBoard {
+                patch: Some("patch-7".into()),
+                gates: vec![
+                    GateRow {
+                        name: "fmt".into(),
+                        state: GateState::Green,
+                        deterministic: true,
+                    },
+                    GateRow {
+                        name: "tests".into(),
+                        state: GateState::Failed {
+                            case: "a_short_cycle_is_detected".into(),
+                            log: "left: 3\nright: 2\nbacktrace elided".into(),
+                        },
+                        deterministic: true,
+                    },
+                ],
+            },
+        },
+    });
+}
+
+/// SPEC 8.1's `l full log`: with a failed gate board highlighted, `l` opens
+/// its failure block to the whole log and closes it again; with anything else
+/// highlighted the same key stays typing. The row has rendered `l full log`
+/// since the board landed; this is the half that makes the label true.
+#[test]
+fn l_on_a_failed_gate_board_opens_the_log_and_otherwise_types() {
+    let mut model = model_with(&["lead"]);
+    with_failed_gate_board(&mut model, "lead");
+    let mut ui = ready_ui();
+
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    let sel = ui.session_selected.expect("up highlights the board");
+    let action = handle_deck_key(key(KeyCode::Char('l')), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "l did not claim the keystroke");
+    assert!(
+        ui.expanded
+            .get("lead")
+            .is_some_and(|set| set.contains(&sel)),
+        "l did not open the failure block"
+    );
+    // And closes it: every way in has a way out, which is what the block's own
+    // `l fold log` row promises once it is open.
+    handle_deck_key(key(KeyCode::Char('l')), &model, &mut ui);
+    assert!(
+        ui.expanded
+            .get("lead")
+            .is_none_or(|set| !set.contains(&sel)),
+        "l did not close the failure block again"
+    );
+    assert!(
+        ui.composer.is_blank(),
+        "l reached the composer while claiming the keystroke"
+    );
+
+    // A non-board highlight leaves `l` to the composer: it types.
+    let mut model = model_with(&["lead"]);
+    with_tool_exchange(&mut model, "lead");
+    let mut ui = ready_ui();
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char('l')), &model, &mut ui);
+    assert_eq!(
+        ui.composer.buffer(),
+        "l",
+        "l with a non-board highlight falls through to typing"
+    );
+}
+
+/// SPEC 8.1's `r rerun gate`: with a failed gate board highlighted, `r` sends
+/// [`WorkspaceInput::RerunGate`] naming the failed gate — not the green one
+/// above it — and with anything else highlighted the same key types.
+#[test]
+fn r_on_a_failed_gate_board_re_requests_the_gate_and_otherwise_types() {
+    let mut model = model_with(&["lead"]);
+    with_failed_gate_board(&mut model, "lead");
+    let mut ui = ready_ui();
+
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Char('r')), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::RerunGate {
+            gate: "tests".into()
+        }),
+        "r must name the gate that failed, never the first gate on the board"
+    );
+
+    // A board with nothing red has no gate to re-request, so `r` types.
+    let mut model = model_with(&["lead"]);
+    model.apply_inbound(&Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::GateBoard {
+            board: stella_protocol::GateBoard {
+                patch: None,
+                gates: vec![stella_protocol::GateRow {
+                    name: "fmt".into(),
+                    state: stella_protocol::GateState::Green,
+                    deterministic: true,
+                }],
+            },
+        },
+    });
+    let mut ui = ready_ui();
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char('r')), &model, &mut ui);
+    assert_eq!(
+        ui.composer.buffer(),
+        "r",
+        "r on an all-green board falls through to typing"
+    );
+}
+
 #[test]
 fn up_selects_the_last_message_and_ctrl_o_toggles_it() {
     let mut model = model_with(&["lead"]);

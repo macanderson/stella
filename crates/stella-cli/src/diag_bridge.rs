@@ -56,6 +56,8 @@ use stella_protocol::{
     PolicyKind, StageKind, ToolOutput, UsageIncompleteReason,
 };
 
+mod memory;
+
 /// This module's `module_path!()`, so every record it emits filters under the
 /// same target regardless of which helper built it.
 const TARGET: &str = "stella::diag_bridge";
@@ -638,6 +640,38 @@ impl DomainBridge {
                     self.at_seq().with("passed", *passed),
                 );
             }
+            // The verdict's per-gate tally. Counts only: a gate's name is the
+            // plugin author's string and its log is process output, and §7
+            // forbids either as a field value — which is the whole reason this
+            // records three numbers and not the board. `undecided` is its own
+            // count rather than `total - green - failed`, so a reader of the
+            // record does not have to reconstruct an abstention by subtraction.
+            AgentEvent::GateBoard { board } => {
+                self.emit(
+                    Level::Info,
+                    "agent.verifier.gate_board",
+                    self.at_seq()
+                        .with("gates", board.total() as u64)
+                        .with("green", board.green() as u64)
+                        .with(
+                            "failed",
+                            board.gates.iter().filter(|gate| gate.failed()).count() as u64,
+                        )
+                        .with(
+                            "undecided",
+                            board
+                                .gates
+                                .iter()
+                                .filter(|gate| {
+                                    matches!(
+                                        gate.state,
+                                        stella_protocol::GateState::Undecided { .. }
+                                    )
+                                })
+                                .count() as u64,
+                        ),
+                );
+            }
             // Whether the run's work reached the tree, and why not when it did
             // not (#2942). `Info`, with the verdict: these are the two records
             // a reader joins to tell "we judged it red" from "we threw it away".
@@ -725,47 +759,21 @@ impl DomainBridge {
                         .with("superseded", *superseded),
                 );
             }
-            // No id and no text: `stella-diag` field values cannot hold a
-            // `String`, which is the rule that keeps a lesson the model wrote
-            // about the user's code out of the diagnostic stream. The shape of
-            // the write is what a diagnostic reader needs — which rung, how
-            // confident, how far from promoting.
+            // SPEC 6.3's two memory records live in `memory`, which also
+            // carries why neither one states the memory's id or its text.
             AgentEvent::MemoryLogged {
                 class,
                 confidence,
                 decays,
                 promotes_at,
                 ..
-            } => {
-                self.emit(
-                    Level::Debug,
-                    "agent.memory.logged",
-                    self.at_seq()
-                        .with("class", class.as_str())
-                        .with("confidence", u32::from(*confidence))
-                        .with("decays", *decays)
-                        .with("promotes_at", u32::from(*promotes_at)),
-                );
-            }
-            // `Info`, unlike the log above: a promotion is when an inferred
-            // lesson starts being injected into the prompt as an instruction,
-            // which is a thing an operator reading diagnostics at the default
-            // level needs to see happen.
+            } => memory::logged(self, *class, *confidence, *decays, *promotes_at),
             AgentEvent::MemoryPromoted {
                 from,
                 to,
                 confidence,
                 ..
-            } => {
-                self.emit(
-                    Level::Info,
-                    "agent.memory.promoted",
-                    self.at_seq()
-                        .with("from", from.as_str())
-                        .with("to", to.as_str())
-                        .with("confidence", u32::from(*confidence)),
-                );
-            }
+            } => memory::promoted(self, *from, *to, *confidence),
             // The cost only. A skill's slug is workspace-authored text, which
             // a diagnostic field cannot hold at all (`stella-diag`'s field
             // types), and the transcript is where a reader learns *which*

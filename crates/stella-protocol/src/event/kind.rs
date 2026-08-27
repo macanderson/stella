@@ -1208,6 +1208,27 @@ pub enum AgentEvent {
         passed: bool,
         evidence: VerdictEvidence,
     },
+    /// The gate board a verify turn draws — SPEC 8.1, one row per clause of
+    /// the definition of done an installed verification plugin declared.
+    ///
+    /// A sibling of [`AgentEvent::Verdict`] at a different granularity, and
+    /// that is what earns it its own case rather than a field on that one: a
+    /// verdict is the run's single answer, and this is the per-gate breakdown
+    /// the answer was composed from. A reader wanting to know *which* gate went
+    /// red had to parse the verdict's prose summary, which is a scraper
+    /// guessing at a harness rather than a reading.
+    ///
+    /// The whole board rides one event rather than one event per gate. A board
+    /// header states `4/5 green`, and a stream of per-gate events cannot say
+    /// that until the last one lands — so a per-gate stream would either draw a
+    /// header that is wrong for as long as the gates are arriving, or hold every
+    /// row back until it can be right. The board is a snapshot for the reason
+    /// [`AgentEvent::TaskUpdate`]'s is.
+    ///
+    /// Stella never re-runs a gate: the evidence is the plugin's self-report and
+    /// the host only evaluates it against the plugin's declared rule
+    /// (AGENTS.md's opening). This event carries the outcome of that evaluation.
+    GateBoard { board: GateBoard },
     /// Interactive gate before large plans execute (L-E5): the pipeline
     /// pauses on this event and waits for approval above configured
     /// thresholds; a non-interactive run requires a flag to bypass.
