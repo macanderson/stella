@@ -22,7 +22,7 @@
 ── EXECUTE ─────────────────────────────────────────│▸ ✓ 1. extract types                        9.1k tok  │────────────────────────────────────────────────────
                                                     │  ◐ 2. move hooks                           4.2k tok  │
  │ ⊙ apps/app/automations/page.tsx                  │     │ contract  — · the board stated no contract     │                                              ⚡ 42ms
- │ ⎿ 312 lines                                      │     │ evidence  1 recorded this task                 │                                 42ms
+ │ ⎿ 312 lines                                      │     │ evidence  1 row                                │                                 42ms
                                                     │     │ cost      $0.12 · 3:04                         │
  │ ● edit apps/app/automations/page.tsx +4 -1       │  ○ 3. update 9 imports                            —  │                                              ⚡ 18ms
  │ ⎿                                                │  ⌥ 4. repair the failing tests gate  (inserted)   —  │                         +4 −1 · 18ms

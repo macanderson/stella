@@ -121,7 +121,13 @@ pub fn running_card(
         .filter(|rows| *rows > 0)
         .map_or_else(
             || ELIDED.to_owned(),
-            |rows| format!("{rows} recorded this task"),
+            |rows| {
+                if rows == 1 {
+                    "1 row".to_owned()
+                } else {
+                    format!("{rows} rows")
+                }
+            },
         );
     let cost = format!(
         "${:.2} · {}",
