@@ -102,6 +102,11 @@ mod start_work;
 #[path = "deck_render_snapshots/mcp.rs"]
 mod mcp;
 
+/// The tab row's width ladder (#5072). See [`graph`]'s doc for why this is
+/// `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/tab_row.rs"]
+mod tab_row;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.

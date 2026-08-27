@@ -79,10 +79,21 @@ fn deck_renders_every_tab_with_real_content() {
             text.contains(needle),
             "the {tab:?} tab should show {needle:?}, got:\n{text}"
         );
-        // The comfy-tabs bar labels are always present — UPPERCASE by the
-        // deck's tab-label convention. (Assert on a left-anchored label: at
-        // 120 cols the 9-tab bar overflows, so the rightmost SETTINGS clips.)
+        // The tab-bar labels are always present — UPPERCASE by the deck's
+        // tab-label convention.
+        //
+        // The parenthetical here used to claim the bar overflowed at 120
+        // columns and clipped SETTINGS, which is why #5072 was filed against
+        // a width that renders the list whole. It was true of v1's padded
+        // comfy-tabs bar and was left behind when #4822 replaced that widget
+        // with the 65-column list; the widths where the row actually gives
+        // something up are golden-tested in `deck_render_snapshots/tab_row.rs`.
         assert!(text.contains("SESSION"), "tab bar should render on {tab:?}");
+        // SESSION is excluded because this model has a plan, so its row is the
+        // breadcrumb and names no other tab (#5049).
+        if tab != DeckTab::Session {
+            assert!(text.contains("SETTINGS"), "the last tab draws on {tab:?}");
+        }
     }
 
     // The redesigned chrome, on the same scripted session (D1/D2/D5): the
