@@ -402,6 +402,9 @@ async fn main() -> std::io::Result<()> {
                 }
                 // The demo has no store, so INSPECT answers an empty index —
                 // exactly what the real driver does when receipts are absent.
+                // No plugins are installed in the demo, so nothing seats a
+                // panel and nothing can ask for a frame.
+                WorkspaceInput::PanelFrameWanted { .. } => {}
                 WorkspaceInput::InspectRefresh | WorkspaceInput::InspectCall { .. } => {
                     let _ = react_tx.send(Inbound::RecordedCalls(Vec::new()));
                 }

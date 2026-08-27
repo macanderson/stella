@@ -45,7 +45,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use stella_core::ports::Principal;
-use stella_plugin::{HookEvent, PluginManifest};
+use stella_plugin::{HookEvent, PanelSurface, PluginManifest, Runtime};
 
 use super::receipt::{self, ConsentState};
 use crate::settings::{Settings, Toggle};
@@ -313,6 +313,86 @@ impl PluginRoster {
         }
         routes
     }
+
+    /// Every panel the deck is permitted to draw, in a deterministic order
+    /// (plugin name, then [`PanelSurface::all`] order).
+    ///
+    /// **This is the authoritative panel filter, and it is what "no frame
+    /// before the grant" means.** A route exists only where the manifest
+    /// declared the surface *and* a `[panel.process]` to draw it with, and only
+    /// for a plugin already in the roster — which is to say one whose install
+    /// grant is in force, since [`PluginRoster::compose`] drops every package
+    /// that fails [`InstalledPlugin::admitted`]. Nothing downstream re-checks
+    /// the grant, so nothing here may emit a route the manifest did not declare
+    /// or the operator did not consent to.
+    ///
+    /// A grant with surfaces and no process yields nothing, which is
+    /// [`hook_routes`](PluginRoster::hook_routes)'s rule restated: the
+    /// declaration is a complete consent document, and installing it still runs
+    /// nothing.
+    pub(crate) fn panel_routes(&self) -> Vec<PluginPanelRoute> {
+        let mut routes = Vec::new();
+        for plugin in &self.plugins {
+            let Some(panel) = &plugin.manifest.panel else {
+                continue;
+            };
+            let Some(process) = &panel.process else {
+                // A panel grant with no `[panel.process]` has nothing to ask
+                // for a frame.
+                continue;
+            };
+            for surface in PanelSurface::all().iter().copied() {
+                if !panel.draws(surface) {
+                    continue;
+                }
+                routes.push(PluginPanelRoute {
+                    plugin: plugin.manifest.name.clone(),
+                    principal: plugin.principal(),
+                    surface,
+                    command: (surface == PanelSurface::Command)
+                        .then(|| panel.command_or(&plugin.manifest.name).map(str::to_string))
+                        .flatten(),
+                    process: Runtime {
+                        argv: process
+                            .argv
+                            .iter()
+                            .map(|arg| stella_plugin::expand_plugin_dir(arg, &plugin.dir))
+                            .collect(),
+                        ..process.clone()
+                    },
+                });
+            }
+        }
+        routes
+    }
+}
+
+/// One panel a host is permitted to lease a rectangle to.
+///
+/// The panel analogue of [`PluginHookRoute`], and separate from it because the
+/// two are leased on different clocks: a hook fires at a point in a turn, and a
+/// panel is asked for a frame between draws whether a turn is running or not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PluginPanelRoute {
+    /// The manifest name, which is also the label the host stamps on the
+    /// chrome (SPEC 12.3).
+    pub(crate) plugin: String,
+    /// The caller a gate sees — always [`Principal::Plugin`].
+    pub(crate) principal: Principal,
+    /// Which of SPEC 12.2's placements this route draws.
+    pub(crate) surface: PanelSurface,
+    /// The bare slash name a [`PanelSurface::Command`] route wants, resolved
+    /// through [`stella_plugin::PanelGrant::command_or`] so an undeclared name
+    /// is the plugin's own id.
+    ///
+    /// **Wanted, not granted.** Whether it collides with one of the deck's own
+    /// commands is asked by `command_deck::plugin_panels`, which is where the
+    /// built-in table lives.
+    pub(crate) command: Option<String>,
+    /// The program the host starts to draw a frame, with `${plugin_dir}`
+    /// already interpolated. `env` is the allowlist the manifest named and the
+    /// only environment the panel process sees.
+    pub(crate) process: Runtime,
 }
 
 /// Read the project tier — or refuse to, because this workspace has not been

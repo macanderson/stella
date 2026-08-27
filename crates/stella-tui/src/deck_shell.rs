@@ -636,6 +636,16 @@ pub async fn run_deck(
             let _ = submissions.send(input);
         }
 
+        // The panel loop's outbound half (SPEC 12.4): each seated panel that
+        // has been drawn once and has no request outstanding asks the driver
+        // for its next frame, against the rectangle the last draw measured.
+        // Here rather than inside the draw because the draw is a pure
+        // projection — the ask is a message, and the answer arrives as an
+        // ordinary `Inbound` on the next turn of this loop.
+        for input in ui.panels.requests() {
+            let _ = submissions.send(input);
+        }
+
         // Settled history leaves the repainting viewport and becomes ordinary
         // terminal output BEFORE the draw, so the pane never paints a line
         // that is already in scrollback. No-op unless an inline viewport was

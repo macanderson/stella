@@ -147,6 +147,26 @@ impl AgentStatus {
     }
 }
 
+/// One plugin panel the deck is permitted to draw, and everything the deck
+/// needs to place it (SPEC 12.2).
+///
+/// It carries no process and no manifest. A seat is the *result* of a grant,
+/// so the deck holds no way to start a plugin and no way to decide that it
+/// may: the driver owns both, and the deck owns the rectangle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PanelSeat {
+    /// The manifest name, which the host stamps on the chrome and nothing else
+    /// supplies (SPEC 12.3 — a plugin cannot caption its own border).
+    pub plugin: String,
+    /// Which of the three placements this seat is.
+    pub surface: stella_plugin::PanelSurface,
+    /// The bare slash name this panel's popup opens under, for a
+    /// [`stella_plugin::PanelSurface::Command`] seat whose name the driver
+    /// admitted. `None` on every other surface, and on a name that collided
+    /// with a built-in — a refused name is a notice, never a quiet seat.
+    pub command: Option<String>,
+}
+
 /// One item on the workspace inbound channel — the multi-agent envelope the
 /// deck folds. `--output-format stream-json` remains one `AgentEvent` per line
 /// per agent; the envelope only adds the routing tag the deck needs.
@@ -437,6 +457,54 @@ pub enum Inbound {
     /// touches the transcript, so nothing here can be mistaken for the model
     /// speaking.
     Notice(String),
+    /// The plugin panels this session may draw, seated once at session open.
+    ///
+    /// **A seat is the install grant crossing into the deck.** The driver
+    /// composes the roster, drops every package whose grant is not in force,
+    /// refuses every slash name that collides with a built-in, and sends what
+    /// survives; the deck seats exactly these and can add nothing of its own.
+    /// So an ungranted plugin is never leased a rectangle — not because the
+    /// renderer declines to draw one, but because no slot for it exists.
+    ///
+    /// Out-of-band view state, applied to `DeckUi::panels` and ignored by the
+    /// model fold, like [`Inbound::Notice`] above.
+    PanelsSeated(Vec<PanelSeat>),
+    /// One frame a plugin drew inside its budget, for the seat at `slot`.
+    ///
+    /// The tick that produced it ran as a task off the draw path
+    /// (`stella_runtime::panel_host::ask`), and the lease it answered was
+    /// checked with `PanelLease::admits` before this was sent — so the deck
+    /// stores the frame rather than re-deciding whether it belongs.
+    PanelFrame {
+        /// Which seat drew it, as an index into [`Inbound::PanelsSeated`].
+        slot: usize,
+        /// The frame, boxed because it is much the largest thing an `Inbound`
+        /// carries and every other `Inbound` would pay for it in the enum.
+        frame: Box<stella_plugin::PanelFrame>,
+    },
+    /// A tick that produced no frame at all — the process did not start, wrote
+    /// nothing readable, or answered a lease the host had moved past.
+    ///
+    /// Distinct from [`Inbound::PanelThrottled`], which draws a tag: this one
+    /// draws nothing new and says nothing, because a plugin that failed is not
+    /// a plugin that was slow, and only the second is a fact about the frame on
+    /// screen. It exists so the deck can rearm the seat — a request with no
+    /// answer would leave the panel waiting on a tick that will never land.
+    PanelSilent {
+        /// Which seat produced nothing, as an index into
+        /// [`Inbound::PanelsSeated`].
+        slot: usize,
+    },
+    /// A tick that overran its budget: the seat keeps whatever frame is on
+    /// screen and the host tags it (SPEC 12.4).
+    PanelThrottled {
+        /// Which seat overran, as an index into [`Inbound::PanelsSeated`].
+        slot: usize,
+        /// What the tick actually cost.
+        elapsed_ms: u64,
+        /// What it was leased, so the tag reports rather than complains.
+        budget_ms: u32,
+    },
     /// A refreshed snapshot of the **cross-process session registry** for the
     /// SESSIONS overlay (empty-prompt `←`). Every running stella session on
     /// this machine, grouped by [`SessionPhase`]. Out-of-band view state like
@@ -1076,6 +1144,31 @@ pub enum WorkspaceInput {
     /// ENGINE overlay opened (or wants a reload): re-read the settings
     /// scope chain and answer with a fresh [`Inbound::EngineConfig`].
     EngineConfigRefresh,
+    /// One seated panel wants its next frame, against the rectangle the deck
+    /// has just drawn it into.
+    ///
+    /// **This is what makes the panel loop run off the draw path** (SPEC 12.4).
+    /// The deck cannot ask a plugin for a frame itself — a repaint that waits
+    /// on somebody else's process is a frozen terminal — so it asks the
+    /// driver, which spawns the exchange as a task and answers with
+    /// [`Inbound::PanelFrame`], [`Inbound::PanelThrottled`] or
+    /// [`Inbound::PanelSilent`]. Exactly one of the three comes back for every
+    /// one of these, which is how the seat knows to ask again.
+    ///
+    /// The geometry rides on the request because the lease is the deck's to
+    /// state: a plugin addresses cells inside a rectangle the host measured,
+    /// and the driver has never seen the terminal.
+    PanelFrameWanted {
+        /// Which seat, as an index into [`Inbound::PanelsSeated`].
+        slot: usize,
+        /// The host's counter for this frame, echoed on the frame that
+        /// answers so a late one is discardable.
+        tick: u64,
+        /// The columns the deck leased it, inside the host's chrome.
+        cols: u16,
+        /// The rows the deck leased it, inside the host's chrome.
+        rows: u16,
+    },
     /// TOOLS panel: persist the operator's tool switches into `settings.json`
     /// at `scope`, answered with a fresh [`Inbound::ToolPolicy`].
     ///

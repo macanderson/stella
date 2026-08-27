@@ -271,6 +271,15 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         });
     }
 
+    // A plugin's command popup (`/<plugin-name>`, SPEC 12.2): a modal card
+    // like the pickers above, and below the parked asks for the same reason
+    // they are — a gate waiting on an answer outranks a panel a reader opened.
+    if ui.panels.open_popup().is_some() {
+        guarded_overlay(buf, area, "plugin panel popup", |b| {
+            crate::panel_deck::render_command_popup(&mut ui.panels, content, b)
+        });
+    }
+
     // The parked asks (#4220, #4240) — see `parked` for the stacking rule.
     parked::render(ui, area, buf);
 

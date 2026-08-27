@@ -856,7 +856,15 @@ impl WorkspaceModel {
             // The whole point of `Notice`: a system notification is not agent
             // or user speech, so the fold must NOT give it a transcript row.
             // It is view state only (`DeckUi::notice`).
-            | Inbound::Notice(_) => {}
+            | Inbound::Notice(_)
+            // A plugin's rectangle is not speech either, and a panel is live
+            // state rather than a record: the frame on screen is the last one
+            // its plugin drew, and a transcript row per tick would fill the
+            // conversation with somebody else's repaints.
+            | Inbound::PanelsSeated(_)
+            | Inbound::PanelFrame { .. }
+            | Inbound::PanelSilent { .. }
+            | Inbound::PanelThrottled { .. } => {}
         }
     }
 
