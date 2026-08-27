@@ -152,6 +152,7 @@ step_command() {
   # it must not be 'cargo clippy' — that is `lint`'s alias (#4949).
   lint-schema) echo 'make lint-schema' ;;
   # The Python guards, whose scripts the `.sh` default below does not fit.
+  adr-numbering) echo 'check-adr-numbering' ;;
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;

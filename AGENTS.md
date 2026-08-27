@@ -81,6 +81,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + action-pins + cargo-install-pins
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
+                         #   + adr-numbering
                          #   + command-docs + brand-case + file-size
                          #   + website-inputs (a Rust test's website/ inputs
                          #     are declared, and ci.yml's filter is built

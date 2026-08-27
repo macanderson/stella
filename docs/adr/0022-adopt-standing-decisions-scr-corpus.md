@@ -1,4 +1,10 @@
-# ADR 0015: Adopt org standing decisions as a Steering Context Record corpus
+---
+id: adr/0022-adopt-standing-decisions-scr-corpus
+title: "ADR 0022: Adopt org standing decisions as a Steering Context Record corpus"
+status: implemented
+---
+
+# ADR 0022: Adopt org standing decisions as a Steering Context Record corpus
 
 - Status: accepted
 - Date: 2026-08-26

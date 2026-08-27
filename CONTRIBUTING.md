@@ -75,6 +75,7 @@ A red gate is an automatic "not yet":
 make shellcheck
 ./scripts/check-invariants.sh
 python3 ./scripts/check-doc-links.py check
+python3 ./scripts/check-adr-numbering.py
 ./scripts/check-command-docs.sh
 ./scripts/check-website-inputs.sh
 ./scripts/check-brand-case.sh

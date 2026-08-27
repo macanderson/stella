@@ -82,9 +82,12 @@ open; nothing before Phase 3 forces it.
 | [0013](0013-session-artifact-boundary.md) | The Session Artifact Boundary | **Proposed** — awaiting ratification |
 | [0014](0014-memories-join-the-record-control-plane.md) | Memories Join the Context-Record Control Plane | **Proposed** — awaiting ratification |
 | [0015](0015-the-task-tag-rides-the-event.md) | The Task Tag Rides the Event | Implemented — landed with #5039 |
+| [0016](0016-guard-exceptions-are-a-field-not-a-pattern.md) | A Guard Exception Is a Field, Not a Pattern | Accepted |
 | [0017](0017-plan-graph-persistence.md) | The Plan Graph Is Persisted in the Store, Not the Context Plane | **Proposed** — awaiting ratification |
 | [0018](0018-mcp-capability-grants.md) | MCP Servers Are Withheld Until Their Handshake Is Granted | **Proposed** — awaiting ratification |
-| [0019](0019-a-memory-event-names-one-memory.md) | A Memory Event Names One Memory | Implemented — landed with #5032 |
+| [0019](0019-graph-session-touch-tags.md) | A Graph Node's Touch Tag Comes from the Session's File Ledger | Implemented — landed with #5211 |
+| [0022](0022-adopt-standing-decisions-scr-corpus.md) | Adopt Org Standing Decisions as a Steering Context Record Corpus | Accepted |
+| [0021](0021-a-memory-event-names-one-memory.md) | A Memory Event Names One Memory | Implemented — landed with #5032 |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible

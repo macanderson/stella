@@ -102,6 +102,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-action-pins.sh
 
+      - name: the ADR-numbering guard can still fail
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-adr-numbering.sh
+
       - name: arena start/stop/reap/local scripts
         if: ${{ !cancelled() }}
         run: ./scripts/test-arena-scripts.sh

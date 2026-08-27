@@ -95,15 +95,15 @@
       "status": "proposed",
       "title": "ADR 0018: MCP servers are withheld until their handshake is granted"
     },
-    "adr/0019-a-memory-event-names-one-memory": {
-      "path": "docs/adr/0019-a-memory-event-names-one-memory.md",
-      "status": "implemented",
-      "title": "ADR 0019: A memory event names one memory"
-    },
     "adr/0019-graph-session-touch-tags": {
       "path": "docs/adr/0019-graph-session-touch-tags.md",
       "status": "proposed",
       "title": "ADR 0019: The Graph tab's session tags are stamped by the deck, not by the producer"
+    },
+    "adr/0021-a-memory-event-names-one-memory": {
+      "path": "docs/adr/0021-a-memory-event-names-one-memory.md",
+      "status": "implemented",
+      "title": "ADR 0021: A memory event names one memory"
     },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",

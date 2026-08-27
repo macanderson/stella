@@ -100,6 +100,7 @@ on:
       - "**/*.md"
       - "**/*.rs"
       - "scripts/check-doc-links.py"
+      - "scripts/check-adr-numbering.py"
       - "scripts/check-invariants.sh"
       - "website/**"
       - "scripts/check-command-docs.sh"
@@ -130,6 +131,7 @@ on:
       - "**/*.md"
       - "**/*.rs"
       - "scripts/check-doc-links.py"
+      - "scripts/check-adr-numbering.py"
       - "scripts/check-invariants.sh"
       - "website/**"
       - "scripts/check-command-docs.sh"
@@ -176,6 +178,10 @@ jobs:
       - name: every doc citation resolves to an identified document
         if: ${{ !cancelled() }}
         run: python3 scripts/check-doc-links.py check
+
+      - name: every ADR number identifies exactly one indexed record
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-adr-numbering.py
 
       - name: the architectural invariants have one home and stable numbering
         if: ${{ !cancelled() }}
