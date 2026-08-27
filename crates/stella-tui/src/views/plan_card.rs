@@ -162,10 +162,10 @@ pub fn step_rows(
 /// trailing `(note)` / `(owner)` tag.
 ///
 /// Split out of [`step_rows`] so a state can be goldened as the row it draws
-/// rather than as the styles behind it — [`Plan`] folds five of the six states
-/// from the board and cannot produce
-/// [`crate::plan::PlanStepState::DriftInserted`] at all, so the whole
-/// vocabulary is only reachable a step at a time.
+/// rather than as the styles behind it: five of the six come off a board
+/// status and the sixth, [`crate::plan::PlanStepState::DriftInserted`], is
+/// derived from the plan's two lanes disagreeing — so no single fixture puts
+/// the whole vocabulary on screen at once.
 pub fn step_row(
     step: &crate::plan::PlanStep,
     selected: bool,

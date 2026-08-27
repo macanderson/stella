@@ -108,13 +108,13 @@ pub fn token_cell(spend: Option<&StepSpend>) -> String {
 pub fn running_card(
     step: &PlanStep,
     running: Option<&RunningTask>,
-    ledger: &Plan,
+    plan: &Plan,
     width: usize,
 ) -> Vec<Line<'static>> {
     let Some(running) = running.filter(|r| r.id == step.id) else {
         return Vec::new();
     };
-    let evidence = ledger
+    let evidence = plan
         .ledger
         .get(&step.id)
         .map(|entry| entry.evidence.len())
