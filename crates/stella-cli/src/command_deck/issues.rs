@@ -797,6 +797,36 @@ mod tests {
         }
     }
 
+    /// [`IssueProvider::get`]'s default keeps an **exact** key and nothing
+    /// else. `FakeTracker` implements no `get`, so this drives the default —
+    /// and its `search` ignores the query and hands back every row, which is
+    /// exactly the tracker this default has to be safe against: a relevance
+    /// ranker must never be able to answer an identity question with a
+    /// neighbour.
+    #[test]
+    fn the_default_issue_read_keeps_an_exact_key_and_refuses_a_near_miss() {
+        let tracker = FakeTracker {
+            rows: vec![
+                an_issue(87, IssueState::Open),
+                an_issue(874, IssueState::Open),
+                an_issue(8740, IssueState::Open),
+            ],
+            ..FakeTracker::default()
+        };
+        let found = block_on(tracker.get(&IssueKey::from("874")))
+            .expect("runtime")
+            .expect("the exact key");
+        assert_eq!(found.key, IssueKey::from("874"));
+
+        let missed = block_on(tracker.get(&IssueKey::from("9999")))
+            .expect("runtime")
+            .expect_err("no such issue");
+        assert!(
+            matches!(missed, IssueError::NotFound { ref key } if key.as_str() == "9999"),
+            "{missed:?}"
+        );
+    }
+
     /// A row's key is the display spelling; the tracker gets the bare one.
     #[test]
     fn the_row_key_carries_a_hash_and_the_tracker_never_sees_it() {
