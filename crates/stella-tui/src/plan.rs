@@ -70,12 +70,17 @@ pub enum PlanStepState {
     Verify,
     /// A step the approved plan did not contain — `⌥ drift-inserted`.
     ///
-    /// Nothing folds into this state yet: drift lives on the plan graph's
-    /// `[:THEN]` lane ([`PlanLanes`]), which #5037 landed as
-    /// `stella_protocol::plan_graph::DivergenceKind::Inserted`, and no
-    /// [`TaskStatus`] asserts it. Until something joins those divergences to
-    /// this fold, a step reaches this state only from a caller that builds the
-    /// [`PlanStep`] itself — the tests below and the scenario fixture.
+    /// Reached from [`PlanLanes`] and from nowhere else. No [`TaskStatus`]
+    /// asserts drift and none ever should: a board status is a claim its own
+    /// producer makes, and the producer with the strongest reason not to
+    /// report drift is the one that drifted. [`Plan::steps`] therefore reads
+    /// it off the two lanes disagreeing (`mark_drift`), which is the same
+    /// discipline `stella_core::plan_graph::PlanGraph::divergences` applies on
+    /// the engine side.
+    ///
+    /// [`Plan::lanes`] has no producer today, so no live session reaches this
+    /// state — #5270 is that wiring. What is built here is the fold that will
+    /// consume it.
     DriftInserted,
 }
 
@@ -505,7 +510,22 @@ impl Plan {
                 }),
             }
         }
+        mark_drift(&mut steps, self.lanes.as_ref());
         steps
+    }
+
+    /// How many steps the plan was approved with — SPEC 7.3's `planned 6`.
+    ///
+    /// The *approved* count, not [`Self::steps`]'s length: the board grows as
+    /// work is inserted, and a `planned` that grew with it could never differ
+    /// from `actual`, which is the whole point of stating both.
+    ///
+    /// `None` for a board-only plan (the worker planned as it went), which has
+    /// no approved list to count. That renders as an elision rather than as a
+    /// zero somebody could read as "nothing was planned".
+    #[must_use]
+    pub fn planned_count(&self) -> Option<usize> {
+        (!self.proposed.is_empty()).then(|| self.proposed.len())
     }
 
     /// `(complete, total)` — the rail's fraction.
@@ -525,6 +545,47 @@ impl Plan {
         self.steps()
             .into_iter()
             .find(|s| s.state == PlanStepState::Started)
+    }
+}
+
+/// Repaint every step the approved plan did not contain as
+/// [`PlanStepState::DriftInserted`] — SPEC 7.3's `⌥` in gold-bright with an
+/// `inserted` tag.
+///
+/// The lanes are the only thing that can say so, and that is why no arm of
+/// [`Plan::steps`]'s board match reaches this state: a board `status` is a
+/// claim its own producer makes, and drift is exactly the claim a producer
+/// that drifted has an incentive not to make. `PlanLanes::actual` is derived
+/// from `[:THEN]` edges against `[:NEXT]` ones, so a step is drift because the
+/// two lanes disagree, never because something said it was.
+///
+/// The drift mark replaces the lifecycle glyph rather than sitting beside it,
+/// which is what SPEC 7.3 asks for: a reader scanning the panel is looking for
+/// what the plan did not contain, and a `✓` on an inserted step buries that
+/// under the news that it finished. An existing note is kept and the tag is
+/// appended to it, so a step that was both cancelled and inserted says both.
+///
+/// Matched on title because that is the only key the two lanes share —
+/// `PlanLanes::actual` is `ActualStep { title, cause }` and carries no board
+/// id. A plan with two steps of the same title marks both; giving the lanes
+/// their own ids is #5270's business, not this fold's.
+fn mark_drift(steps: &mut [PlanStep], lanes: Option<&PlanLanes>) {
+    let Some(lanes) = lanes else {
+        return;
+    };
+    for step in steps.iter_mut() {
+        if !lanes
+            .actual
+            .iter()
+            .any(|actual| actual.is_drift() && actual.title == step.title)
+        {
+            continue;
+        }
+        step.state = PlanStepState::DriftInserted;
+        step.note = Some(match step.note.take() {
+            Some(note) => format!("{note} · inserted"),
+            None => "inserted".to_owned(),
+        });
     }
 }
 
@@ -911,6 +972,59 @@ mod tests {
             plan.apply_board(&[item("1", "one", status)]);
             assert_ne!(plan.steps()[0].state, PlanStepState::DriftInserted);
         }
+    }
+
+    /// The lanes are the one thing that *can* reach it — SPEC 7.3's drift row,
+    /// derived from the two lanes disagreeing rather than from a status
+    /// somebody set.
+    #[test]
+    fn a_step_the_plan_did_not_contain_renders_as_drift_with_its_tag() {
+        let mut plan = Plan::default();
+        plan.apply_board(&[
+            item("1", "read the routes", TaskStatus::Completed),
+            item("2", "repair the tests gate", TaskStatus::Completed),
+        ]);
+        plan.lanes = Some(PlanLanes {
+            planned: vec!["read the routes".into()],
+            actual: vec![
+                ActualStep {
+                    title: "read the routes".into(),
+                    cause: None,
+                },
+                ActualStep {
+                    title: "repair the tests gate".into(),
+                    cause: Some("E0432: unresolved import".into()),
+                },
+            ],
+        });
+
+        let steps = plan.steps();
+        assert_eq!(
+            steps[0].state,
+            PlanStepState::Complete,
+            "planned work is not drift"
+        );
+        assert_eq!(steps[1].state, PlanStepState::DriftInserted);
+        assert_eq!(steps[1].note.as_deref(), Some("inserted"));
+    }
+
+    /// A step that was both cancelled and inserted says both — the tag is
+    /// appended rather than written over the note that was already there.
+    #[test]
+    fn a_drift_step_keeps_the_note_it_already_had() {
+        let mut plan = Plan::default();
+        plan.apply_board(&[item("1", "drop it", TaskStatus::Cancelled)]);
+        plan.lanes = Some(PlanLanes {
+            planned: Vec::new(),
+            actual: vec![ActualStep {
+                title: "drop it".into(),
+                cause: Some("the driver asked for it".into()),
+            }],
+        });
+        assert_eq!(
+            plan.steps()[0].note.as_deref(),
+            Some("cancelled · inserted")
+        );
     }
 
     #[test]

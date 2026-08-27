@@ -93,6 +93,11 @@ mod task_zoom;
 #[path = "deck_render_snapshots/gate_board.rs"]
 mod gate_board;
 
+/// SPEC 7.3's plan-panel economics. See [`graph`]'s doc for why this is
+/// `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/plan_economics.rs"]
+mod plan_economics;
+
 /// See [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
 #[path = "deck_render_snapshots/start_work.rs"]
 mod start_work;

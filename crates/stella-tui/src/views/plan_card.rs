@@ -30,6 +30,7 @@
 //! labeled slots `think` / `work` / `verify`; the internal pipeline role
 //! identifiers never reach a rendered string.
 
+pub mod economics;
 pub(crate) mod step_style;
 
 use ratatui::buffer::Buffer;
@@ -104,6 +105,7 @@ pub fn step_rows(
     selected: Option<usize>,
     now_ms: u64,
     animate: bool,
+    running: Option<&economics::RunningTask>,
 ) -> (Vec<Line<'static>>, Option<usize>) {
     let dim = Style::new().fg(token::MUTED);
     let steps = plan.steps();
@@ -125,7 +127,18 @@ pub fn step_rows(
         if Some(i) == selected {
             selected_row = Some(rows.len());
         }
-        rows.push(step_row(step, Some(i) == selected, now_ms, animate));
+        let spend = plan
+            .ledger
+            .get(&step.id)
+            .and_then(|entry| entry.spend.as_ref());
+        rows.push(priced_step_row(
+            step,
+            Some(i) == selected,
+            now_ms,
+            animate,
+            spend,
+            width,
+        ));
         // The elaboration, wrapped under the title at the title's indent.
         if let Some(detail) = &step.detail {
             let indent = 7usize;
@@ -136,6 +149,11 @@ pub fn step_rows(
                 ]));
             }
         }
+        // SPEC 7.3's running-task card, under the step it belongs to rather
+        // than at the top of the list: the reader's eye is already on the row
+        // that is moving, and a card pinned elsewhere would make them find it
+        // twice.
+        rows.extend(economics::running_card(step, running, plan, width));
     }
     (rows, selected_row)
 }
@@ -168,6 +186,34 @@ pub fn step_row(
         spans.push(Span::styled(format!("  ({owner})"), v.meta));
     }
     Line::from(spans)
+}
+
+/// [`step_row`] with SPEC 7.3's economics column right-aligned onto it.
+///
+/// A wrapper rather than two more parameters on `step_row`, because that
+/// function's job is to be goldenable one *state* at a time (see its doc), and
+/// a trailing measurement is the same on every state — folding it in would
+/// make every state's golden carry a column that is not about the state.
+///
+/// Right-aligned against the card's interior rather than the frame, through
+/// `cards::pad_right`, which measures display width: a title carrying a wide
+/// glyph still lines the column up. Muted, because a token count is a
+/// measurement beside a title and money is the only number that takes the
+/// accent (SPEC 5).
+fn priced_step_row(
+    step: &crate::plan::PlanStep,
+    selected: bool,
+    now_ms: u64,
+    animate: bool,
+    spend: Option<&crate::plan::StepSpend>,
+    inner_w: usize,
+) -> Line<'static> {
+    let row = step_row(step, selected, now_ms, animate);
+    Line::from(cards::pad_right(
+        row.spans,
+        Span::styled(economics::token_cell(spend), Style::new().fg(token::MUTED)),
+        inner_w,
+    ))
 }
 
 /// The operating-envelope grid: where the plan may write, what it may spend,
@@ -236,6 +282,26 @@ pub fn grid_rows(
     rows
 }
 
+/// What the in-flight task has cost and how long it has been going, as the
+/// fold knows it — the subtraction [`economics::RunningTask`] describes.
+///
+/// `AgentEntry::active_task` is the only source with a real number in it
+/// today: the board says which task is in progress, and the fold stamps the
+/// session's spend and the deck clock at the moment it flipped. That makes
+/// *this* task's cost the difference, which is a fact about one task rather
+/// than the session total wearing a task's name.
+///
+/// `None` when no task is active, which is every idle session and every turn
+/// whose board has nothing in progress.
+fn running_task(agent: &AgentEntry, now_ms: u64) -> Option<economics::RunningTask> {
+    let stamp = agent.active_task.as_ref()?;
+    Some(economics::RunningTask {
+        id: stamp.id.clone(),
+        elapsed_ms: now_ms.saturating_sub(stamp.started_ms),
+        cost_usd: (agent.cost_usd - stamp.cost_at_start_usd).max(0.0),
+    })
+}
+
 /// Render the plan card over `frame` for the focused agent.
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer) {
     let Some(agent) = model.agents.get(ui.focused) else {
@@ -256,7 +322,15 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     let step_count = plan.steps().len();
     let selected = (step_count > 0).then(|| ui.cards.plan_sel.min(step_count - 1));
     let offset = rows.len();
-    let (step_lines, selected_row) = step_rows(plan, inner_w, selected, model.now_ms, !ui.no_anim);
+    let running = running_task(agent, model.now_ms);
+    let (step_lines, selected_row) = step_rows(
+        plan,
+        inner_w,
+        selected,
+        model.now_ms,
+        !ui.no_anim,
+        running.as_ref(),
+    );
     rows.extend(step_lines);
     let selected_row = selected_row.map(|r| r + offset);
 
@@ -270,6 +344,13 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     if let Some(proposal) = envelope {
         rows.push(Line::default());
         rows.extend(grid_rows(model, agent, proposal, ui.accessible));
+    }
+
+    // SPEC 7.3's footer, last: it is about the plan as a whole, so it closes
+    // the card rather than sitting between the steps and their envelope.
+    if !plan.is_empty() {
+        rows.push(Line::default());
+        rows.extend(economics::footer_rows(plan));
     }
 
     let (done, total) = plan.progress();
@@ -342,7 +423,7 @@ mod tests {
             owner: None,
             contract: None,
         }]);
-        let text: String = step_rows(&plan, 52, None, 0, false)
+        let text: String = step_rows(&plan, 52, None, 0, false, None)
             .0
             .iter()
             .map(text_of)
@@ -371,7 +452,7 @@ mod tests {
             owner: None,
             contract: None,
         }]);
-        let (rows, _) = step_rows(&plan, 40, None, 0, false);
+        let (rows, _) = step_rows(&plan, 40, None, 0, false, None);
         assert!(rows.len() > 2, "the detail wrapped onto its own rows");
         // Re-joined on single spaces: the wrap indents every continuation row,
         // so a phrase that survived the break is only recognizable once the
@@ -463,7 +544,7 @@ mod tests {
 
     #[test]
     fn an_unproposed_plan_says_so_rather_than_showing_an_empty_list() {
-        let text = text_of(&step_rows(&Plan::default(), 52, None, 0, false).0[0]);
+        let text = text_of(&step_rows(&Plan::default(), 52, None, 0, false, None).0[0]);
         assert!(text.contains("no plan has been proposed"), "{text}");
     }
 
@@ -474,7 +555,7 @@ mod tests {
         let mut plan = Plan::default();
         plan.propose(&proposal(&["one"]));
         plan.approve();
-        let text: String = step_rows(&plan, 52, None, 0, false)
+        let text: String = step_rows(&plan, 52, None, 0, false, None)
             .0
             .iter()
             .map(text_of)
