@@ -747,13 +747,21 @@ pub async fn run_deck_session(
     // SPEC 12.4's handshake, before anything is seated (#5056). In the
     // **transcript**, which is what the spec asks for and where a consent
     // document belongs: it has to be scrollable and still there after the boot
-    // dialog is gone, which the transient notice above is not. `chrome_note`
-    // folds the lead to `Running`, so the idle assert this file already makes
-    // at startup is repeated below rather than left contradicted.
+    // dialog is gone, which the transient notice above is not.
+    //
+    // Through `deck_tx`, so it is not journaled. That is `chrome_note`'s own
+    // contract — boot narration that re-runs every launch must not replay and
+    // pile up on a resumed transcript — and it costs the audit nothing here:
+    // what a person answered is durable in the grant file beside the package,
+    // with the moment they answered it, and this block is the reminder rather
+    // than the record.
+    //
+    // `chrome_note` folds the lead to `Running`, so the idle assert this file
+    // already makes at startup is repeated below rather than left contradicted.
     let handshakes = plugin_panels::handshakes(&panel_roster);
     let spoke = !handshakes.is_empty();
     for handshake in handshakes {
-        let _ = in_tx.send(chrome_note(handshake));
+        let _ = deck_tx.send(chrome_note(handshake));
     }
     if spoke {
         let _ = in_tx.send(Inbound::Status {
