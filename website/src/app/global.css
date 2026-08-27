@@ -604,8 +604,8 @@ figure.shiki ::selection,
  * surface on ink. It is the alternation that does the work, so which sections
  * carry the class is positional: inserting a section flips the parity of
  * every one after it, and two banded sections in a row merge into one panel,
- * which is the failure this is meant to prevent. Today: the run and the
- * providers are banded; the tour, the doors, and the hero are not. */
+ * which is the failure this is meant to prevent. Today: the run, the tour and
+ * the doors are banded; the hero, the deck and the providers are not. */
 .lp-band {
   background: var(--color-fd-muted);
 }
@@ -845,6 +845,73 @@ html[data-home-nav="hidden"] #nd-nav {
   line-height: 1.7;
   white-space: pre;
   overflow-x: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Deck shots — the Command Deck, rendered.
+ *
+ * The only `<img>` on this site. The SVG already draws the terminal — ink
+ * ground, hairline border, rounded corners, all from the same tokens this
+ * sheet reads — so the rules here add depth and a caption and nothing else.
+ * A second border around it would read as a screenshot of a screenshot.
+ *
+ * The frame keeps its ink in both themes, on the same argument as `.term`
+ * above: the deck lives in a dark terminal, and the figure is a window into
+ * it rather than a panel of the page.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.deck-shot {
+  margin: 0;
+}
+
+.deck-shot-img {
+  display: block;
+  width: 100%;
+  /* The record's intrinsic height reserves the box; once the file lands the
+     aspect ratio governs, so the frame scales to whatever column holds it. */
+  height: auto;
+  border-radius: 0.5rem;
+  box-shadow: var(--stella-shadow-card);
+  /* These load lazily, so the reserved box is on screen before the SVG is.
+     Painting it the deck's own ground means what appears is an unlit terminal
+     rather than a page-coloured hole — and on the light page, that hole was
+     the brightest rectangle on screen. */
+  background: var(--stella-canvas);
+}
+
+.deck-shot-cap {
+  margin-top: 0.75rem;
+  max-width: var(--stella-measure);
+  font-size: var(--stella-type-sm);
+  line-height: 1.6;
+  color: var(--color-fd-muted-foreground);
+}
+
+/* The wordmark, chipped onto every frame: these travel — a caption gets
+ * screenshotted away from its page — and the name is what should ride with
+ * them. Lowercase mono per the brand, and a chip rather than running text so
+ * it cannot be misread as the caption's first word. */
+.deck-shot-tag {
+  display: inline-block;
+  margin-inline-end: 0.55em;
+  padding: 0.1em 0.45em;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.25rem;
+  font-family: var(--font-mono);
+  font-size: var(--stella-type-xs);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+  white-space: nowrap;
+  color: var(--stella-accent-text);
+  vertical-align: 0.08em;
+}
+
+/* In docs prose the figure needs the vertical rhythm the surrounding block
+ * elements have; on the landing page and the engine tour the caller spaces it. */
+.fd-prose .deck-shot,
+article .deck-shot {
+  margin: 1.5rem 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

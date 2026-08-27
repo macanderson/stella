@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DeckShot } from "@/components/deck-shot";
 import { InstallBlock } from "@/components/install-block";
 import { REPO_URL } from "@/lib/site";
 import {
@@ -184,6 +185,13 @@ export function VeraStation() {
       </blockquote>
 
       <EventFeed lines={VERA_FEED} />
+
+      {/* A verdict nobody can argue with, from the driver's seat. Red is the
+          rarest colour on the deck, which is what lets one red row read as an
+          alarm without anything blinking. */}
+      <div className="eng-deck">
+        <DeckShot id="gate" />
+      </div>
     </Station>
   );
 }
@@ -395,6 +403,13 @@ export function EvolutionStation() {
             secrets or PII.
           </li>
         </ul>
+      </div>
+
+      {/* What a trace turns into, once it has earned it: the learned rows in
+          the deck's skills tab are the ones stella wrote from its own
+          successful runs, and they carry the trace count that promoted them. */}
+      <div className="eng-deck">
+        <DeckShot id="skills" />
       </div>
 
       <p className="eng-evo-honest">

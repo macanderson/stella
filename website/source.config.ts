@@ -9,13 +9,15 @@ export const docs = defineDocs({
     postprocess: {
       // Export each page's rendered markdown as `_markdown` (see
       // src/lib/page-markdown.ts — the Copy page menu and /llms.mdx serve it).
-      // The three component kinds whose meaning lives outside their children
-      // are emitted as placeholders and re-rendered to markdown there.
+      // A component whose meaning lives outside its children is emitted as a
+      // placeholder and re-rendered to markdown there; the ones listed below
+      // are those.
       includeProcessedMarkdown: {
         mdxAsPlaceholder: [
           ...DIAGRAM_PLACEHOLDER_NAMES,
           "ProviderGrid",
           "CommandDeckExplorer",
+          "DeckShot",
         ],
         // The default stringifier keeps unknown JSX elements as literal tags
         // in the output (only their children are dropped) — so a page full of

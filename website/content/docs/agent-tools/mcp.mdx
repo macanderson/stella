@@ -36,6 +36,13 @@ Because the tools are added at session start, connecting a new server takes effe
 
 <McpTopologyDiagram />
 
+The MCP tab is where that review happens. Each server shows its transport,
+tool count, handshake latency and auth state, and a new one arrives disabled
+with its capabilities on show. The code graph sits pinned at the top because
+it is the product rather than an integration.
+
+<DeckShot id="mcp" />
+
 <Callout type="warn">
 `stella tools` does **not** enumerate MCP tools — it prints a note that MCP servers merge more tools at session start. Confirm a server is wired up with `stella mcp list`, or verify its tools from inside a session (the deck's MCP tab, `/mcp`).
 </Callout>

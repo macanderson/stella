@@ -109,6 +109,18 @@ const nextConfig = {
         source: "/icons/:path*",
         headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
       },
+      // The deck renderings share the un-hashed URLs above but not their
+      // stability: they track a design that is still being built, and a
+      // re-render lands at the same filename. `immutable` would pin a
+      // superseded frame in every visitor's browser for a year with no way
+      // to reach it, so these revalidate — quickly enough that a redraw is
+      // picked up, slowly enough that a scrolled page does not refetch them.
+      {
+        source: "/tui/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=300, stale-while-revalidate=604800" },
+        ],
+      },
     ];
   },
   async redirects() {

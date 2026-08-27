@@ -5,6 +5,7 @@ import type { ComponentProps } from "react";
 
 import { Badge, CardGrid, OptionCard, SpecCard, ToolCard } from "@/components/cards";
 import { CommandDeckExplorer } from "@/components/command-deck-explorer";
+import { DeckShot } from "@/components/deck-shot";
 import { DocsCodeBlock } from "@/components/docs-code-block";
 import {
   BudgetGuardDiagram,
@@ -79,6 +80,9 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     CostChainDiagram,
     ClaimLockDiagram,
     CommandDeckExplorer,
+    // The interactive deck, rendered — see components/deck-shots.ts for why
+    // these are files under public/ rather than inline SVG like the diagrams.
+    DeckShot,
     // Cards — the mobile-first replacement for reference tables
     CardGrid,
     SpecCard,

@@ -492,6 +492,17 @@
  * Telemetry feed — the shape of stella-events.jsonl, typed on
  * ═════════════════════════════════════════════════════════════════════════ */
 
+/* A deck rendering on the tour, on the same rhythm as the telemetry strip
+ * below it. The figure paints its own frame (see .deck-shot in global.css),
+ * so this only places it and sets the caption's measure. */
+.eng-deck {
+  margin: 2.5rem 0 0;
+}
+
+.eng-deck .deck-shot-cap {
+  max-width: 62ch;
+}
+
 .eng-feed {
   margin: 2.5rem 0 0;
   border: 1px solid var(--eng-rule);

@@ -273,6 +273,13 @@ a native **tree-sitter** index of your code:
   [`stella search`](/docs/commands/search) is the door onto the index:
   a single ranked query rather than seven individual operations.
 
+The deck puts the whole index behind one tab. Every answer on it is computed
+rather than asked for, which is why it prices at `$0.00`; the coupling ranking
+at the bottom is the useful one, because it is the blast radius if you edit
+the file you are looking at.
+
+<DeckShot id="graph" />
+
 The index builds automatically: [`stella init`](/docs/getting-started/initialization)
 builds it eagerly, and recall's graph-backed retrieval refreshes it as it
 reads. An in-process file watcher (200 ms debounce, no daemon) keeps it
