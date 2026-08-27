@@ -185,6 +185,16 @@ pub struct Issue {
     /// one supplies an empty string rather than a fabricated instant.
     #[serde(default)]
     pub created_at: String,
+    /// When the tracker says it last changed, RFC3339.
+    ///
+    /// Same contract as [`created_at`](Self::created_at) — a string, compared
+    /// lexically, empty when the provider cannot produce one. It is a separate
+    /// field rather than a fallback onto the creation stamp because the two
+    /// answer different questions: an issue filed in June and commented on
+    /// yesterday is old by one and fresh by the other, and a surface that
+    /// sorts by staleness needs the second.
+    #[serde(default)]
+    pub updated_at: String,
     /// Where a human would go to read it.
     #[serde(default)]
     pub url: String,
@@ -474,6 +484,7 @@ mod tests {
             class: IssueClass::Bug,
             labels: vec![IssueLabel::from("P1"), IssueLabel::from("area:core")],
             created_at: "2026-08-19T05:00:00Z".into(),
+            updated_at: "2026-08-24T11:30:00Z".into(),
             url: "https://github.com/macanderson/stella/issues/1234".into(),
             parent: Some(IssueKey::from("1200")),
         }
