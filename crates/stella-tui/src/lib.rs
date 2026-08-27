@@ -93,9 +93,14 @@ pub use ansi::strip_ansi;
 pub use attach::probe_path_attachment;
 pub use clipboard::{ClipboardPaste, default_attachments_dir};
 pub use composer::{
-    Composer, ComposerEntry, DEFAULT_PASTE_LINE_THRESHOLD, PaletteState, SlashCommand, SlashDomain,
-    SlashKind, SlashMenu, Submission,
+    Composer, ComposerEntry, DEFAULT_PASTE_LINE_THRESHOLD, NameMatch, PaletteState, SlashCommand,
+    SlashDomain, SlashKind, SlashMatch, SlashMenu, Submission, Tier,
 };
+// The palette's `recent` rule, re-exported for the driver that persists the
+// list (#5048). The deck applies it optimistically on the keystroke and the
+// driver applies it to the file it writes; sharing the one function is what
+// stops the two disagreeing about what "recent" means.
+pub use composer::palette::{RECENT_LIMIT as PALETTE_RECENT_LIMIT, remember as palette_remember};
 pub use debug_log::DebugLog;
 pub use input::UserInput;
 pub use model::{FileState, Hud, SessionModel, TranscriptEntry};

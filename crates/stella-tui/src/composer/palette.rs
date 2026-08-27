@@ -71,18 +71,24 @@ impl SlashDomain {
     }
 }
 
-/// What the session is doing, as the palette needs to see it.
+/// What the session is doing and what has been run here before, as the
+/// palette needs to see it.
 ///
-/// A flat copy of six facts rather than a borrow of the deck: the rule below
+/// A flat copy of the facts rather than a borrow of the deck: the rule below
 /// is a pure function over owned data, which is what lets it be a table of
 /// cases in a test instead of a screenshot. The deck fills it at render time
 /// (`deck_render::palette_state`); nothing is cached.
 ///
 /// The default is the quiet session — no turn, no plan, no lanes, nothing
-/// unread, nothing changed, and an index that is present. Every field is
-/// phrased so that its zero value fires no rule, so
-/// `relevant_now(&PaletteState::default())` is `None`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// unread, nothing changed, an index that is present, and no history. Every
+/// field is phrased so that its zero value fires no rule and adds no section,
+/// so `relevant_now(&PaletteState::default())` is `None` and a browse list
+/// built from it is the domain groups alone.
+///
+/// The six session fields were `Copy` until [`Self::recent`] joined them
+/// (#5048). The type is passed by reference everywhere it is read, so the
+/// clone is paid once per frame in `palette_state` and nowhere else.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PaletteState {
     /// A turn is in flight on the focused agent.
     pub turn_running: bool,
@@ -97,6 +103,19 @@ pub struct PaletteState {
     /// The code graph has not been built — `stella init` has not run here.
     /// Phrased as the *absence* so a default state claims nothing.
     pub graph_missing: bool,
+    /// Commands run from this palette in this workspace, **newest first** and
+    /// already deduplicated — the `recent` section SPEC 10 asks for, and the
+    /// one field here that outlives the session (#5048; the remainder of
+    /// #4338, whose doc comment said the deck had no store for it).
+    ///
+    /// The deck does not read or write the file: the driver owns the
+    /// workspace's private state directory and pushes this list in, exactly
+    /// as it pushes the command vocabulary itself
+    /// (`Inbound::PaletteRecents`). Names, not commands — a history entry for
+    /// a command the vocabulary no longer offers simply matches nothing and
+    /// disappears from the menu, which is the right behaviour for a plugin
+    /// that was uninstalled.
+    pub recent: Vec<String>,
 }
 
 /// The commands the session's state makes worth reaching for, and why.
@@ -158,6 +177,32 @@ const RULES: &[Rule] = &[
         commands: &["/init", "/graph"],
     },
 ];
+
+/// How many commands the `recent` section remembers.
+///
+/// Small on purpose. `recent` is a shortcut back to what you were just doing,
+/// not a log: the browse list already offers the whole vocabulary a few rows
+/// below, and a `recent` block long enough to need scrolling would push the
+/// domain groups off the popup it is supposed to shorten. Five is also what
+/// fits above the slash popup's visible-row cap (`SLASH_POPUP_MAX_ROWS` in
+/// `crate::render`) without the section alone filling the window.
+pub const RECENT_LIMIT: usize = 5;
+
+/// Record `name` as the most recently run command, newest first.
+///
+/// Move-to-front rather than append: running a command you ran before should
+/// move it up, not leave a stale copy behind it and a duplicate row in the
+/// menu. Capped at [`RECENT_LIMIT`].
+///
+/// Pure, and shared by both ends on purpose — the deck calls it so the
+/// section reorders on the keystroke rather than a round-trip later, and the
+/// driver calls it on the list it is about to persist. One rule, so the two
+/// cannot disagree about what "recent" means.
+pub fn remember(recent: &mut Vec<String>, name: &str) {
+    recent.retain(|existing| existing != name);
+    recent.insert(0, name.to_string());
+    recent.truncate(RECENT_LIMIT);
+}
 
 /// Every command name any rule can name — the input to the guard that keeps
 /// this module honest about the vocabulary. A name here that no command
@@ -289,6 +334,28 @@ mod tests {
                 relevant_now(&state).unwrap_or_else(|| panic!("{state:?} fires nothing"));
             assert_eq!(relevant.reason, reason, "{state:?}");
         }
+    }
+
+    /// Move-to-front, deduplicated, capped — the three properties the
+    /// `recent` section rests on, asserted together because a regression in
+    /// any one of them prints a duplicate or a stale row.
+    #[test]
+    fn remembering_a_command_moves_it_to_the_front_without_duplicating_it() {
+        let mut recent = Vec::new();
+        for name in ["/plan", "/diff", "/plan"] {
+            remember(&mut recent, name);
+        }
+        assert_eq!(recent, vec!["/plan", "/diff"], "one entry, at the front");
+
+        // Past the cap, the oldest falls off the end rather than the newest
+        // failing to land.
+        let mut recent = Vec::new();
+        for i in 0..(RECENT_LIMIT + 3) {
+            remember(&mut recent, &format!("/c{i}"));
+        }
+        assert_eq!(recent.len(), RECENT_LIMIT);
+        assert_eq!(recent[0], format!("/c{}", RECENT_LIMIT + 2), "newest first");
+        assert!(!recent.contains(&"/c0".to_string()), "oldest dropped");
     }
 
     #[test]

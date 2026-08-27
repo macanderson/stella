@@ -198,7 +198,13 @@ async fn main() -> std::io::Result<()> {
                 // Queue edits are already reflected in the deck's local queue
                 // (the shell's out-of-band echo); a real engine would also
                 // drop the prompt from its own backlog here.
-                WorkspaceInput::QueueRemove { .. } | WorkspaceInput::QueueClear => {}
+                // The palette's `recent` history needs a workspace to write to
+                // and the demo has none, so the section stays empty here —
+                // which is exactly what a driver that ignores the input owes
+                // (the deck still reorders its own copy on the keystroke).
+                WorkspaceInput::QueueRemove { .. }
+                | WorkspaceInput::QueueClear
+                | WorkspaceInput::PaletteRan { .. } => {}
                 // `/clear`: play the driver's part — blank the lead pane the
                 // way the real reset does.
                 WorkspaceInput::SessionClear => {

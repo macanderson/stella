@@ -22,7 +22,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
-use crate::composer::SlashMenu;
+use crate::composer::{NameMatch, SlashMenu};
 use crate::model::{AskUserPrompt, FileState, InlineDiffRef};
 
 mod entry;
@@ -253,6 +253,28 @@ pub(crate) const SLASH_POPUP_MAX_ROWS: usize = 8;
 /// `rows` counts group headings as well as matches ([`display_rows`]): a
 /// sectioned browse list that sized itself on matches alone would clip its
 /// last commands behind their own captions.
+///
+/// # Anchored, not centered — the recorded deviation (#5048)
+///
+/// SPEC 10 asked for a **centered** `Rect`, and this is the amendment: the
+/// spec bullet now reads "anchored to the composer, opening upward", and
+/// `spec_10_anchors_the_palette_to_the_composer` (in `render::tests::slash`)
+/// fails if the two ever
+/// disagree again — the same guard shape `keymap` uses for SPEC 11's plan
+/// chord (#4341).
+///
+/// The palette has no input line of its own. Unlike every centered palette it
+/// resembles, the query is typed into the **composer**, which is pinned to
+/// the bottom of the frame — so a centered box would put the letters being
+/// typed and the list they filter in two different places, and the caret
+/// would be nowhere near the rows moving under it. Growing the list upward
+/// out of the text that produced it is the completion-popup shape, and it is
+/// what the surface actually is.
+///
+/// The other half of the spec bullet was right and is now honoured:
+/// [`render_slash_popup`] paints `token::PANEL` under the overlay, so it
+/// reads as a surface lifted off the transcript rather than a bordered hole
+/// punched in it.
 pub(crate) fn slash_popup_area(root: Rect, composer: Rect, rows: usize) -> Rect {
     let h = ((rows.min(SLASH_POPUP_MAX_ROWS) as u16) + 3).min(root.height);
     let w = root.width.saturating_sub(2).min(96);
@@ -316,12 +338,18 @@ pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -
 /// ╰────────────────────────────────────────────────────────────────╯
 /// ```
 ///
-/// Each row is the command in gold — the typed prefix lit bright, the rest
-/// gold — its one-line effect dim, and a live value on the right when the
-/// model has one (`/inbox · 3 unread`). The selected row carries the `▸`
-/// marker *plus* the highlight ground: the golden suite strips style, so a
-/// style-only selection would be invisible to it. User-authored commands keep
-/// their `SlashKind` glyph.
+/// Each row is the command in gold — **every matched letter lit bright,
+/// wherever it sits in the name**, the rest gold — its one-line effect dim,
+/// and a live value on the right when the model has one (`/inbox · 3
+/// unread`). The lit set is decided by the matcher
+/// ([`crate::composer::fuzzy`]) and travels on the match, so `ga` lights the
+/// `g` and the `a` inside `/graph query` rather than lighting nothing at all
+/// (#5048); this used to re-derive a *prefix* here, which is why a
+/// mid-name match had no visible reason for appearing.
+///
+/// The selected row carries the `▸` marker *plus* the highlight ground: the
+/// golden suite strips style, so a style-only selection would be invisible to
+/// it. User-authored commands keep their `SlashKind` glyph.
 ///
 /// `live` overrides descriptions with values read from the model at render
 /// time, keyed by command name — computed by the caller each frame, never
@@ -334,12 +362,12 @@ pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -
 /// With no query typed, the list is sectioned: [`SlashMenu::sections`] puts
 /// `relevant now · <why>` over the commands the session's own state makes
 /// worth reaching for, then a heading per [`crate::composer::SlashDomain`]
-/// group (#4338). A typed query drops the headings — grouping a three-row
-/// result buries the rows under their own captions — and keeps the flat
-/// ranking, in which a relevant command still leads its rank.
-///
-/// The renderings' `recent` section is still absent: it needs per-workspace
-/// persistence, which the deck has no store for (#4338).
+/// group (#4338), and last a `recent` heading over the commands run in this
+/// workspace before — the section SPEC 10 asks for, fed by the driver's
+/// workspace-private history (#5048). A typed query drops the headings —
+/// grouping a three-row result buries the rows under their own captions —
+/// and keeps the flat ranking, in which a relevant command still leads its
+/// tier.
 pub(crate) fn render_slash_popup(
     menu: &SlashMenu,
     selected: usize,
@@ -348,7 +376,16 @@ pub(crate) fn render_slash_popup(
     buf: &mut Buffer,
 ) {
     use stella_tui_theme::token;
+    // `Clear` frees the cells; `panel` is the ground that makes the overlay a
+    // *surface* rather than a bordered hole punched in the transcript —
+    // SPEC 10's `panel` bg. It is set once, on the widget, so it covers the
+    // border, the title, and the run of each row past its last character.
+    //
+    // It is not folded into the span styles below, because a span's own `bg`
+    // would win over the selected line's `token::HL` — and the highlight is
+    // the one thing on this overlay that must survive.
     ratatui::widgets::Clear.render(area, buf);
+    let panel = Style::new().bg(token::PANEL);
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
     let gold = Style::new().fg(token::GOLD);
@@ -371,7 +408,6 @@ pub(crate) fn render_slash_popup(
     let first = scroll_window_start(rows.len(), selected_row, visible);
     let last = (first + visible).min(rows.len());
     let inner_w = inner_width(area);
-    let query = menu.query.trim_start_matches('/').to_ascii_lowercase();
 
     let mut lines: Vec<Line<'static>> = rows[first..last]
         .iter()
@@ -384,7 +420,8 @@ pub(crate) fn render_slash_popup(
                 }
                 PopupRow::Command(index) => *index,
             };
-            let c = menu.matches[index];
+            let m = &menu.matches[index];
+            let c = m.command;
             let is_sel = index == selected;
             let marker = if is_sel { "▸ " } else { "  " };
             let live_value = live
@@ -392,24 +429,19 @@ pub(crate) fn render_slash_popup(
                 .find(|(name, _)| *name == c.name)
                 .map(|(_, v)| v.clone());
             let description = c.description.clone();
-            // The typed prefix lights up inside the name — `/ga` → `/ga`tes.
-            let name = c.name.clone();
-            let bare = name.trim_start_matches('/').to_ascii_lowercase();
-            let (head, tail) = if !query.is_empty() && bare.starts_with(&query) {
-                let cut = 1 + query.len();
-                (name[..cut].to_string(), name[cut..].to_string())
-            } else {
-                (String::new(), name.clone())
-            };
             let mut spans = vec![Span::styled(marker.to_string(), gold)];
             if c.kind != crate::composer::SlashKind::Builtin {
                 spans.push(Span::styled(format!("{} ", c.kind.glyph()), muted));
             }
-            if !head.is_empty() {
-                spans.push(Span::styled(head.clone(), lit));
+            // The matched letters light up wherever they sit in the name —
+            // `ga` → `/`**g**`r`**a**`ph query` (SPEC 10). The matcher decided
+            // which ones; this only groups the name into alternating runs so
+            // adjacent letters share a span instead of one span per character.
+            spans.extend(name_spans(&c.name, &m.matched, gold, lit));
+            let pad = 16usize.saturating_sub(c.name.chars().count());
+            if pad > 0 {
+                spans.push(Span::styled(" ".repeat(pad), gold));
             }
-            let pad = 16usize.saturating_sub(head.chars().count() + tail.chars().count());
-            spans.push(Span::styled(format!("{tail}{}", " ".repeat(pad)), gold));
             spans.push(Span::styled(format!(" {description}"), dim));
             if let Some(value) = live_value {
                 let used: usize = spans.iter().map(Span::width).sum();
@@ -457,8 +489,37 @@ pub(crate) fn render_slash_popup(
         ]))
         .title(Line::from(Span::styled(" ↑↓ move · ↵ run · esc ", dim)).right_aligned());
     Paragraph::new(Text::from(lines))
+        .style(panel)
         .block(block)
         .render(area, buf);
+}
+
+/// One command name, split into the fewest spans that carry its highlighting:
+/// runs of matched characters in `lit`, runs of unmatched ones in `plain`.
+///
+/// The matcher reports one offset per lit character, and a name emitted one
+/// span per character would be correct and unreadable in a buffer dump — the
+/// snapshot tests read these rows as text. Grouping is purely cosmetic to the
+/// buffer and structural to anything reading `Line::spans`.
+fn name_spans(name: &str, matched: &NameMatch, plain: Style, lit: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut run = String::new();
+    let mut run_lit = false;
+    for (at, ch) in name.char_indices() {
+        let is_lit = matched.lights(at);
+        if !run.is_empty() && is_lit != run_lit {
+            spans.push(Span::styled(
+                std::mem::take(&mut run),
+                if run_lit { lit } else { plain },
+            ));
+        }
+        run_lit = is_lit;
+        run.push(ch);
+    }
+    if !run.is_empty() {
+        spans.push(Span::styled(run, if run_lit { lit } else { plain }));
+    }
+    spans
 }
 
 /// The `/model` argument menu ([`crate::composer::args`]): the palette's

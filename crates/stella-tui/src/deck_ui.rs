@@ -651,6 +651,13 @@ pub struct DeckUi {
     /// The slash-command vocabulary offered by the `/` popup (an input — the
     /// caller owns the real list, exactly like the single-session shell).
     pub slash_commands: Vec<SlashCommand>,
+    /// Commands run from the palette in this workspace, newest first — the
+    /// `recent` section (SPEC 10, #5048). An input like the vocabulary above:
+    /// the driver reads it out of the workspace's private state
+    /// ([`Inbound::PaletteRecents`]) and this crate touches no file. Updated
+    /// locally on submit too, so the section reorders on the keystroke rather
+    /// than on the driver's echo.
+    pub palette_recent: Vec<String>,
     /// Selected row in the slash popup (clamped to the matches at use time).
     pub slash_selected: usize,
     /// Whether reasoning renders in full on the Session tab. Off by default —
@@ -884,6 +891,7 @@ impl Default for DeckUi {
             files_diff_scroll: ScrollState::default(),
             metrics: DeckMetrics::default(),
             slash_commands: Vec::new(),
+            palette_recent: Vec::new(),
             slash_selected: 0,
             thinking_expanded: false,
             queue_open: false,
@@ -1164,6 +1172,12 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     if let Inbound::SlashCommands(commands) = inbound {
         ui.slash_commands = commands.clone();
         ui.slash_selected = 0;
+        return;
+    }
+    // Applied whole rather than merged: the driver's copy is the durable one
+    // and `palette::remember_command_run` is only an optimistic echo of it.
+    if let Inbound::PaletteRecents(recent) = inbound {
+        ui.palette_recent = recent.clone();
         return;
     }
     // The installed-agents list is out-of-band view state too — the driver
@@ -1629,6 +1643,7 @@ pub(crate) mod graph;
 pub mod list_nav;
 mod local;
 mod overlays;
+mod palette;
 mod parked;
 /// The session-override pickers' key routing (`/model`, `/agent`).
 pub(crate) mod pickers;
@@ -2141,6 +2156,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
 /// where it belongs. A held dispatch skips the card: the double-Esc already
 /// *was* the user saying "run mine next".
 fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckAction {
+    palette::remember_command_run(ui, &text);
     // A deck-local command acts on the view whether it arrived from the
     // slash popup or was typed out and submitted — see `local`.
     if let Some(action) = local::deck_local_command(text.trim(), ui) {

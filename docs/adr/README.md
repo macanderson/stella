@@ -84,6 +84,7 @@ open; nothing before Phase 3 forces it.
 | [0015](0015-the-task-tag-rides-the-event.md) | The Task Tag Rides the Event | Implemented — landed with #5039 |
 | [0017](0017-plan-graph-persistence.md) | The Plan Graph Is Persisted in the Store, Not the Context Plane | **Proposed** — awaiting ratification |
 | [0018](0018-mcp-capability-grants.md) | MCP Servers Are Withheld Until Their Handshake Is Granted | **Proposed** — awaiting ratification |
+| [0019](0019-command-palette-matching-and-recents.md) | Command-Palette Matching, History, and Position | **Proposed** — awaiting ratification |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -116,3 +117,10 @@ editing `mcp.toml`. Only the middle one withholds, and `CapabilityGrants` then
 keeps an ungranted server out of `schemas()` and refuses its calls before the
 transport — on both hosts, so the property does not depend on which surface is
 driving.
+
+ADR 0019 records the three calls SPEC 10's command palette forced: the fuzzy
+matcher stays in-tree rather than becoming a `nucleo` dependency, the `recent`
+history persists in the existing workspace-private state tier rather than in a
+new store, and the anchored overlay position wins over the spec's centered one
+— with the spec amended in the same change so the document and the deck cannot
+diverge in silence. Shipped in #5048.

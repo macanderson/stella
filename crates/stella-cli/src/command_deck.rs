@@ -97,6 +97,7 @@ mod inspect_service;
 mod lead_control;
 mod lead_turn;
 mod model_cmd;
+mod palette_recents;
 mod panel_snapshots;
 mod pr_observe;
 mod profile_cmd;
@@ -716,6 +717,14 @@ pub async fn run_deck_session(
     // in the chosen theme. Best-effort: an unset/unknown value keeps the
     // default (`stella-dark`).
     theme_cmd::apply_persisted(cfg);
+
+    // The palette's `recent` section, read out of this workspace's private
+    // state (#5048). Sent beside the vocabulary above rather than carried in
+    // `DeckOptions`, because the driver re-sends it after every recorded run
+    // and one path for a value is better than two.
+    let _ = in_tx.send(palette_recents::inbound(palette_recents::load(
+        &cfg.workspace_root,
+    )));
 
     let opts = DeckOptions {
         debug_log_path: debug_log_path(),
@@ -1467,6 +1476,7 @@ pub async fn run_deck_session(
                                 &in_tx,
                             )
                             && !service_undo_delete(&other, &workspace_path, &in_tx)
+                            && !palette_recents::service(&other, &cfg.workspace_root, &in_tx)
                             && !inspect_service::service_inspect_action(
                                 &other,
                                 &store,
@@ -2132,6 +2142,14 @@ pub async fn run_deck_session(
                                 },
                                 &in_tx,
                             );
+                        }
+                        // The palette's history is recorded mid-turn too, and
+                        // for the same reason: one small local write, and a
+                        // user who ran a command while an agent worked should
+                        // not have to wait for the turn to end before their
+                        // palette remembers it (#5048).
+                        Some(input @ WorkspaceInput::PaletteRan { .. }) => {
+                            palette_recents::service(&input, &cfg.workspace_root, &in_tx);
                         }
                         // `u undo` on a delete row is serviced mid-turn too:
                         // restoring a file git already holds is the same

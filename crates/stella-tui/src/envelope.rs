@@ -239,6 +239,21 @@ pub enum Inbound {
     /// ignored by the model fold. The driver sends one after `/init` adopts
     /// custom commands/skills so the menu reflects them without a restart.
     SlashCommands(Vec<crate::composer::SlashCommand>),
+    /// The commands most recently run from the `/` palette **in this
+    /// workspace**, newest first and already deduplicated — SPEC 10's
+    /// `recent` section (#5048, the remainder of #4338, whose doc comment
+    /// said the deck had no store for it).
+    ///
+    /// Out-of-band view state exactly like [`Inbound::SlashCommands`] above,
+    /// and for the same reason: the driver owns the workspace's private state
+    /// directory, the deck owns no store at all, and the deck must not learn
+    /// where a workspace keeps its files. The driver sends one at startup
+    /// with what it read from disk, and one after each
+    /// [`WorkspaceInput::PaletteRan`] it records.
+    ///
+    /// A deck that never receives one shows no `recent` section, which is
+    /// exactly what every surface did before this existed.
+    PaletteRecents(Vec<String>),
     /// The session's resolved triage / worker / verifier pins, sent once at
     /// startup by the driver — which is the only side that can call
     /// `resolve_provider` — so the statline's MODEL cell and the `/models`
@@ -817,6 +832,21 @@ pub enum WorkspaceInput {
     /// lead finished. The turn-coupled exceptions (`/clear`, `/init`,
     /// `/reload`, custom expansions) never ride this route.
     Command { text: String },
+    /// A command was run **from the `/` palette** — record it in this
+    /// workspace's history so it comes back under `recent` next session
+    /// (#5048). `name` is the command name alone (`/graph`), never the typed
+    /// line with its arguments.
+    ///
+    /// It rides beside whatever the Enter actually did rather than being
+    /// derived from it, because a third of the vocabulary never reaches the
+    /// driver at all: `/files`, `/diff`, `/graph`, `/skills`, `/mcp` and
+    /// their neighbours are deck-local tab switches consumed in
+    /// `deck_ui::handle_slash_key`. A history folded from the prompt stream
+    /// would be a history of the commands that happened to need a turn.
+    ///
+    /// Advisory, and safe to drop: it mutates nothing but a menu's order, so
+    /// a driver that ignores it costs the user an ordering, not an action.
+    PaletteRan { name: String },
     /// The agents page's "describe a task for a new session": start a NEW
     /// sub-agent lane running `text`, whatever the lead is doing. The driver
     /// answers with the ordinary lane birth — [`Inbound::Register`], a

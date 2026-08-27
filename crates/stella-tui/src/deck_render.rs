@@ -357,6 +357,12 @@ pub(crate) fn palette_state(model: &WorkspaceModel, ui: &DeckUi) -> PaletteState
         unread: ui.notifications.iter().filter(|n| !n.read).count(),
         changed_files: model.ledger.records.len(),
         graph_missing: ui.graph.is_none(),
+        // The one field here the session did not produce: the driver read it
+        // out of this workspace's private state and pushed it in
+        // (`Inbound::PaletteRecents`). Cloned per frame like everything else
+        // in this struct — five short names, and caching it would be the
+        // staleness the doc above warns about.
+        recent: ui.palette_recent.clone(),
     }
 }
 

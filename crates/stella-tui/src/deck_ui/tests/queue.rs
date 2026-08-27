@@ -222,6 +222,93 @@ fn deck_slash_popup_selects_completes_and_dispatches() {
     );
 }
 
+/// **The `recent` history's producer (#5048).** Running a command records it
+/// locally — so the section reorders on this keystroke — and tells the
+/// driver, which is the only side that can make it outlive the session.
+///
+/// Asserted on a deck-local command on purpose: `/files` opens a tab and
+/// never reaches the driver as a prompt, so a history folded from the prompt
+/// stream would miss it and every other tab switch with it.
+#[test]
+fn running_a_palette_row_records_it_locally_and_tells_the_driver() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![
+        SlashCommand::new("/files", "open the Files tab"),
+        SlashCommand::new("/profile", "retune every role"),
+    ];
+    handle_deck_key(ch('/'), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+
+    assert_eq!(ui.palette_recent, vec!["/files".to_string()]);
+    assert_eq!(
+        ui.pending_inputs,
+        vec![WorkspaceInput::PaletteRan {
+            name: "/files".into()
+        }],
+        "the driver is told, so the entry survives the session"
+    );
+    assert_eq!(ui.tab, DeckTab::Files, "and the command still ran");
+
+    // …and the browse list now ends with it: `/files` has left the vocabulary
+    // order it was written in and become the `recent` block, so the row under
+    // the cursor is the one command that has NOT been run here.
+    ui.tab = DeckTab::Session;
+    ui.pending_inputs.clear();
+    handle_deck_key(ch('/'), &model, &mut ui);
+    assert_eq!(
+        slash_matches(&model, &ui),
+        vec!["/profile".to_string(), "/files".to_string()],
+        "the run command moved to the recent block at the tail"
+    );
+
+    // Running the un-run one puts it in front; the first stays behind it.
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        ui.palette_recent,
+        vec!["/profile".to_string(), "/files".to_string()],
+        "newest first"
+    );
+}
+
+/// A row completed with `⇥` can carry arguments, and the history must not
+/// follow them: `recent` is a list of commands, and one entry per argument
+/// would spend the whole list on one command.
+///
+/// This is also the route the popup's own key handler never sees — the popup
+/// closes the moment the space is typed — which is why the history is taken
+/// where every submission passes rather than where palette Enters do.
+#[test]
+fn the_palette_history_records_the_command_not_its_arguments() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![SlashCommand::new("/budget", "set the spend cap")];
+    handle_deck_key(ch('/'), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Tab), &model, &mut ui);
+    for c in " 5.00".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    assert_eq!(ui.composer.buffer(), "/budget 5.00");
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(ui.palette_recent, vec!["/budget".to_string()]);
+}
+
+/// A prompt that merely opens with a slash is prose, not a command — the
+/// history is short on purpose and must not be spent on entries no row can
+/// ever match.
+#[test]
+fn a_prompt_that_starts_with_a_slash_is_not_a_command_run() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![SlashCommand::new("/files", "open the Files tab")];
+    for c in "/tmp/scratch.rs is broken".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert!(ui.palette_recent.is_empty(), "{:?}", ui.palette_recent);
+    assert!(ui.pending_inputs.is_empty(), "{:?}", ui.pending_inputs);
+}
+
 #[test]
 fn slash_info_opens_the_routing_card_instead_of_enqueueing() {
     // `/info` (né `/models`) left the driver vocabulary's enqueue path:

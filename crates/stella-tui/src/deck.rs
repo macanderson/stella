@@ -823,6 +823,7 @@ impl WorkspaceModel {
             Inbound::GraphSnapshot(_)
             | Inbound::IndexReadiness(_)
             | Inbound::SlashCommands(_)
+            | Inbound::PaletteRecents(_)
             | Inbound::AgentsList { .. }
             | Inbound::AgentAssumed { .. }
             | Inbound::Skills(_)

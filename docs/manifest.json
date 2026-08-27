@@ -95,6 +95,11 @@
       "status": "proposed",
       "title": "ADR 0018: MCP servers are withheld until their handshake is granted"
     },
+    "adr/0019-command-palette-matching-and-recents": {
+      "path": "docs/adr/0019-command-palette-matching-and-recents.md",
+      "status": "proposed",
+      "title": "ADR 0019: Command-palette matching, history, and position"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
