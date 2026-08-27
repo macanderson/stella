@@ -71,6 +71,7 @@ pub mod issue;
 pub mod journal;
 pub mod ladder;
 pub mod lane;
+pub mod plan_graph;
 pub mod proof;
 pub mod provenance;
 pub mod provider;
@@ -123,6 +124,14 @@ pub use event::{
 // the closed set of boundaries this host emits; `StageName` is what the wire
 // carries, so a stage a plugin contributed can be named at all.
 pub use stage::StageName;
+// The plan graph's vocabulary (#5037). Re-exported flat like the task
+// contract beside it, because the store that persists a plan graph, the engine
+// that authors one, and the surfaces that render its two lanes all name these
+// constantly and none of them should have to spell the module path.
+pub use plan_graph::{
+    Divergence, DivergenceCause, DivergenceKind, PlanEdge, PlanEdgeKind, PlanEdgeSource, PlanNode,
+    PlanRevision, TaskNode,
+};
 pub use task_contract::{
     Check, CheckKind, CheckMechanism, CheckOutcome, Closure, DefinitionOfDone, Judge, TaskContract,
 };

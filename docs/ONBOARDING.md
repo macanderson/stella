@@ -166,6 +166,7 @@ from every project's own `store.db`.
 | `step_manifest`, `step_receipt` | Per-step bookkeeping: what was asked for, what came back. |
 | `foundry_tools` | Tools generated or registered dynamically. |
 | `session_turn_diffs` | The diff produced by each turn, for replay/review. |
+| `plan_revisions`, `plan_edges` | The plan graph: every revision of a turn's plan, the planned path (`[:NEXT]`) each authored, and the actual path (`[:THEN]`) of what ran. |
 
 #### `context.db` — retrieval tables (`crates/stella-context/src/store/schema.rs`)
 

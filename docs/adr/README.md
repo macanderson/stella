@@ -82,6 +82,7 @@ open; nothing before Phase 3 forces it.
 | [0013](0013-session-artifact-boundary.md) | The Session Artifact Boundary | **Proposed** — awaiting ratification |
 | [0014](0014-memories-join-the-record-control-plane.md) | Memories Join the Context-Record Control Plane | **Proposed** — awaiting ratification |
 | [0015](0015-the-task-tag-rides-the-event.md) | The Task Tag Rides the Event | Implemented — landed with #5039 |
+| [0017](0017-plan-graph-persistence.md) | The Plan Graph Is Persisted in the Store, Not the Context Plane | **Proposed** — awaiting ratification |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -101,3 +102,9 @@ ADR 0014 brings workspace memories under the context-record control plane —
 one enumeration, one lifecycle, one suppression trail — while keeping their
 Markdown document representation per ADR 0011's field/document line. It
 governs an existing surface rather than adding one; the epic is #2283.
+
+ADR 0017 answers the one question #5037 left open: which store owns the plan
+graph SPEC §7.4 specifies. It routes the record to `store.db` beside the
+execution it describes rather than to the retrieval plane in `context.db`, and
+argues the shape (edge rows, not a JSON column) from the auditability the
+issue asks for. Unlike 0013 it is implemented in the change that files it.

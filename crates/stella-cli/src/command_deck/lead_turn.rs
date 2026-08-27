@@ -138,7 +138,22 @@ pub(super) async fn run_lead_turn(
         if let Some(requery) = &requery {
             engine = engine.with_requery(requery); // #3243 Phase 3
         }
-        engine.run_turn_with_sender(messages, budget, &events).await
+        let outcome = engine.run_turn_with_sender(messages, budget, &events).await;
+        // The turn's plan graph, mirrored beside the board it was built from
+        // (#5037): every revision, the `[:NEXT]` chain each of them authored,
+        // and the `[:THEN]` chain of what actually ran. Written here rather
+        // than at the driver loop's board mirror because the graph belongs to
+        // the gate, which belongs to the tap, which does not outlive this
+        // scope. Silent and best-effort like every sibling mirror: a turn
+        // whose plan was never put to a driver has no graph at all, and an
+        // audit record that failed to write must not fail the turn it
+        // describes.
+        if let Some((store, id)) = execution.as_ref()
+            && let Some(graph) = tap.plan_graph()
+        {
+            let _ = store.record_plan_graph(*id, graph.nodes(), graph.edges(), super::now_ms());
+        }
+        outcome
     };
     crate::turn_files::close_turn_boundary_raw(cfg, registry, &tx, execution.as_ref(), &outcome);
     // The model is done and the deck already painted "done". Everything below is
