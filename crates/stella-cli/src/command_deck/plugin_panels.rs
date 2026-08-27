@@ -141,10 +141,19 @@ pub(super) fn spawn_tick(
         stella_plugin::PanelRect::new(cols, rows),
         FRAME_BUDGET_MS,
     );
+    // The child's whole environment, resolved here rather than inside the
+    // task. `stella-runtime` may not read process-global state — N sessions in
+    // one process would all see the same value, which is the property
+    // `no_ambient_reads` protects — so `resolve_env` applies the manifest's
+    // policy over a lookup its caller supplies, and this binary is the caller
+    // that owns the ambient world. Before the spawn, so the read happens at one
+    // stated point on one thread instead of on every panel task at once.
+    let env =
+        stella_runtime::panel_host::resolve_env(&route.process, |name| std::env::var(name).ok());
     let route = route.clone();
     let tx = tx.clone();
     tokio::spawn(async move {
-        let answer = tick_once(slot, &route, lease)
+        let answer = tick_once(slot, &route, lease, &env)
             .await
             .unwrap_or(stella_tui::envelope::Inbound::PanelSilent { slot });
         let _ = tx.send(answer);
@@ -168,11 +177,12 @@ async fn tick_once(
     slot: usize,
     route: &PluginPanelRoute,
     lease: PanelLease,
+    env: &[(String, String)],
 ) -> Option<stella_tui::envelope::Inbound> {
     use stella_tui::envelope::Inbound;
 
     let budget_ms = lease.budget_ms;
-    let outcome = stella_runtime::panel_host::ask(&route.process, lease.clone()).await;
+    let outcome = stella_runtime::panel_host::ask(&route.process, lease.clone(), env).await;
     let tick = match outcome {
         Ok(tick) => tick,
         // Every failure is the same thing to the deck: no new frame. The
@@ -358,14 +368,22 @@ mod tests {
     async fn no_panel_frame_is_requested_before_the_install_grant() {
         use crate::plugin_cmd::roster::{PluginRoster, PluginScope};
 
+        // The lock, but **not** `paths::test_user_home`: nothing here reads the
+        // ambient home — `read_tier`, `receipt::record` and
+        // `resolve_user_plugins_dir` are all handed the tier explicitly — and
+        // moving `HOME` for a test that does not need it moved is a collision
+        // waiting for whichever concurrent test does read it. This one did:
+        // `subsession`'s resumed-lane test failed three runs in eight beside
+        // it, minting `req:1` against a home that was not the operator's. The
+        // lock is still taken, because `spawn_tick` resolves the panel's
+        // environment with `std::env::var` and a concurrent `setenv` racing a
+        // `getenv` is UB on POSIX.
         let _env = crate::test_env::lock();
         let root = std::env::temp_dir().join(format!("stella-panel-grant-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("temp root");
-        let home = root.join("home");
-        let _paths = crate::paths::test_user_home(home.clone());
-        let tier = stella_home::resolve_user_plugins_dir(Some(home.join(".stella")))
-            .expect("a home was installed, so the user tier resolves");
+        let tier = stella_home::resolve_user_plugins_dir(Some(root.join(".stella")))
+            .expect("an explicit stella root resolves its plugins tier");
         let marker = root.join("the-panel-process-ran");
 
         // Planted, complete, and never consented to.
@@ -405,15 +423,23 @@ mod tests {
         assert_eq!(routes.len(), 1, "a granted plugin's panel routes");
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         spawn_tick(&routes, 0, 1, 40, 8, &tx);
-        // The fixture writes no frame, so the answer is `PanelSilent` — itself
-        // the contract, because a request that went unanswered would leave the
-        // seat waiting for the rest of the session.
+        // The fixture draws no frame, so the answer is whichever of the two
+        // no-frame envelopes the exchange earned. **Both are correct here and
+        // pinning one is a race**: the fixture starts a real process, and a
+        // loaded machine takes longer than the 33ms budget often enough to
+        // matter — one run in eight, measured. What the seat needs is that one
+        // of the three arrives at all, because an unanswered request would
+        // leave the panel waiting for the rest of the session.
+        let got = rx.recv().await;
         assert!(
             matches!(
-                rx.recv().await,
-                Some(stella_tui::envelope::Inbound::PanelSilent { slot: 0 })
+                got,
+                Some(
+                    stella_tui::envelope::Inbound::PanelSilent { slot: 0 }
+                        | stella_tui::envelope::Inbound::PanelThrottled { slot: 0, .. }
+                )
             ),
-            "a failed tick still rearms the seat"
+            "a frameless tick still rearms the seat: {got:?}"
         );
         assert!(marker.exists(), "the granted plugin's process did run");
 

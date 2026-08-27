@@ -128,17 +128,36 @@ impl PanelSlot {
         self.tick
     }
 
-    /// Land a frame the plugin drew inside its budget.
+    /// Land a frame the plugin drew inside its budget, or refuse it.
     ///
-    /// The frame is not checked here: `PanelLease::admits` is what refuses a
-    /// frame answering another surface or a tick the host has moved past, and
-    /// it is asked on the task's side, where the lease still exists. Landing a
-    /// frame clears any standing throttle, because the tag describes the frame
-    /// on screen and this is a new one.
-    pub fn settle(&mut self, frame: PanelFrame) {
+    /// **`PanelLease::admits`'s rule, applied where the frame lands.** The
+    /// driver already asks it against the lease it issued, and that is not
+    /// enough on its own: the answer travels back as a slot *index*, and an
+    /// index means whatever the seat list says it means when the answer
+    /// arrives. Reseating between the ask and the answer — a plugin installed
+    /// or retracted mid-session ([#5253]) — makes slot 0 a different plugin,
+    /// and a frame landed by index alone would render one plugin's pixels
+    /// inside another plugin's chrome. That is the wide-glyph breach by a
+    /// different door: a rectangle carrying a name its author did not earn.
+    ///
+    /// So a frame is accepted only when this seat asked for one, the frame
+    /// answers this seat's surface, and it carries the tick this seat is
+    /// waiting on. No seating generation is needed for it, because the frame
+    /// already names both things a stale answer gets wrong — a third
+    /// identifier would only be a second way to ask the same question.
+    ///
+    /// Landing a frame clears any standing throttle, because the tag describes
+    /// the frame on screen and this is a new one.
+    ///
+    /// [#5253]: https://github.com/macanderson/stella/issues/5253
+    pub fn settle(&mut self, frame: PanelFrame) -> bool {
+        if !self.awaiting || frame.surface != self.surface || frame.tick != self.tick {
+            return false;
+        }
         self.frame = Some(frame);
         self.overran_ms = None;
         self.awaiting = false;
+        true
     }
 
     /// Record a tick that overran, keeping whatever frame is already on screen.
@@ -334,7 +353,10 @@ pub fn ingest(deck: &mut PanelDeck, inbound: &crate::envelope::Inbound) -> bool 
         Inbound::PanelsSeated(seats) => deck.reseat(seats),
         Inbound::PanelFrame { slot, frame } => {
             if let Some(slot) = deck.slot_mut(*slot) {
-                slot.settle(frame.as_ref().clone());
+                // Refused frames are dropped rather than reported: a frame for
+                // a seat that has been reseated names nothing a reader could
+                // act on, and the seat asks again on the next draw.
+                let _ = slot.settle(frame.as_ref().clone());
             }
         }
         Inbound::PanelSilent { slot } => {
@@ -463,4 +485,212 @@ pub fn render_command_popup(deck: &mut PanelDeck, area: Rect, buf: &mut Buffer) 
     }
     Clear.render(rect, buf);
     slot.render(rect, buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::envelope::{Inbound, PanelSeat, WorkspaceInput};
+    use stella_plugin::{PanelLine, PanelPaint, PanelSpan, PanelStyle, PanelText};
+
+    fn seat(plugin: &str, surface: PanelSurface) -> PanelSeat {
+        PanelSeat {
+            plugin: plugin.to_string(),
+            surface,
+            command: None,
+        }
+    }
+
+    fn frame(surface: PanelSurface, tick: u64, text: &str) -> PanelFrame {
+        PanelFrame::new(
+            surface,
+            tick,
+            PanelPaint::Lines(vec![PanelLine::new(vec![PanelSpan::new(
+                PanelText::new(text).expect("plain text"),
+                PanelStyle::plain(),
+            )])]),
+        )
+    }
+
+    /// Draw one seat and read back what its rectangle holds.
+    fn painted(deck: &mut PanelDeck, index: usize) -> String {
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buf = Buffer::empty(area);
+        deck.slot_mut(index).expect("a seat").render(area, &mut buf);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Draw every seat, then ask, and report the `(slot, tick)` pairs the deck
+    /// opened — so a test answers with the tick the deck actually issued rather
+    /// than one it guessed.
+    fn drawn_then_asked(deck: &mut PanelDeck) -> Vec<(usize, u64)> {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 40));
+        for index in 0..deck.slots().len() {
+            let y = u16::try_from(index).unwrap_or(0) * 5;
+            let area = Rect::new(0, y, 40, 5);
+            deck.slot_mut(index).expect("a seat").render(area, &mut buf);
+        }
+        deck.requests()
+            .into_iter()
+            .filter_map(|input| match input {
+                WorkspaceInput::PanelFrameWanted { slot, tick, .. } => Some((slot, tick)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// **The breach witness.** A frame in flight when the seats are replaced
+    /// does not land in whatever plugin now holds its slot index.
+    ///
+    /// The answer travels back as an index, and an index means whatever the
+    /// seat list says it means when it arrives. Landing it by index alone puts
+    /// one plugin's pixels inside another plugin's chrome — the label a reader
+    /// trusts naming a rectangle its author did not draw, which is the
+    /// wide-glyph breach reached by a different door.
+    #[test]
+    fn a_frame_in_flight_across_a_reseat_lands_nowhere() {
+        let mut deck = PanelDeck::default();
+        deck.reseat(&[
+            seat("alpha", PanelSurface::Settings),
+            seat("beta", PanelSurface::Overlay),
+        ]);
+        let (slot, tick) = drawn_then_asked(&mut deck)
+            .into_iter()
+            .find(|(slot, _)| *slot == 0)
+            .expect("alpha asked for a frame");
+
+        // alpha is uninstalled while its frame is in flight, so slot 0 is beta.
+        deck.reseat(&[seat("beta", PanelSurface::Overlay)]);
+        assert_eq!(deck.slots()[0].plugin(), "beta", "slot 0 changed hands");
+
+        let landed = deck.slot_mut(slot).expect("a seat").settle(frame(
+            PanelSurface::Settings,
+            tick,
+            "alphas pixels",
+        ));
+
+        // The breach itself first, so a flip fails on the pixels rather than
+        // on the return value that is only evidence about them.
+        let shown = painted(&mut deck, 0);
+        assert!(
+            !shown.contains("alphas pixels"),
+            "alpha did not draw inside beta's chrome:\n{shown}"
+        );
+        assert!(
+            shown.contains("panel · beta"),
+            "and the chrome is still beta's:\n{shown}"
+        );
+        assert!(!landed, "and the frame said so");
+    }
+
+    /// Anti-vacuity: a frame answering the seat that asked for it, on the tick
+    /// it asked on, is drawn.
+    #[test]
+    fn a_frame_answering_its_own_lease_is_drawn() {
+        let mut deck = PanelDeck::default();
+        deck.reseat(&[seat("alpha", PanelSurface::Settings)]);
+        let (slot, tick) = drawn_then_asked(&mut deck)[0];
+
+        assert!(
+            deck.slot_mut(slot).expect("a seat").settle(frame(
+                PanelSurface::Settings,
+                tick,
+                "alphas pixels"
+            )),
+            "its own frame is accepted"
+        );
+        let shown = painted(&mut deck, 0);
+        assert!(shown.contains("alphas pixels"), "{shown}");
+    }
+
+    /// A frame for the wrong surface is refused with no reseat in sight: one
+    /// plugin drawing several surfaces gets several leases per tick, alike in
+    /// everything but this.
+    #[test]
+    fn a_frame_answering_another_surface_is_refused() {
+        let mut deck = PanelDeck::default();
+        deck.reseat(&[seat("alpha", PanelSurface::Settings)]);
+        let (slot, tick) = drawn_then_asked(&mut deck)[0];
+
+        assert!(
+            !deck.slot_mut(slot).expect("a seat").settle(frame(
+                PanelSurface::Overlay,
+                tick,
+                "wrong rectangle"
+            )),
+            "a frame for another surface is refused"
+        );
+    }
+
+    /// A frame arriving for a tick the host has moved past is refused, so a
+    /// slow answer cannot overwrite a newer one.
+    #[test]
+    fn a_frame_carrying_a_stale_tick_is_refused() {
+        let mut deck = PanelDeck::default();
+        deck.reseat(&[seat("alpha", PanelSurface::Settings)]);
+        let (slot, tick) = drawn_then_asked(&mut deck)[0];
+
+        assert!(
+            !deck.slot_mut(slot).expect("a seat").settle(frame(
+                PanelSurface::Settings,
+                tick.saturating_sub(1),
+                "stale"
+            )),
+            "a frame for an older tick is refused"
+        );
+    }
+
+    /// A seat that asked for nothing accepts nothing — an unsolicited frame is
+    /// an answer to a question the deck never put.
+    #[test]
+    fn a_seat_that_asked_for_nothing_accepts_nothing() {
+        let mut deck = PanelDeck::default();
+        deck.reseat(&[seat("alpha", PanelSurface::Settings)]);
+        assert!(
+            !deck
+                .slot_mut(0)
+                .expect("a seat")
+                .settle(frame(PanelSurface::Settings, 0, "unasked")),
+            "nothing was asked for"
+        );
+    }
+
+    /// Every panel envelope reaches the deck through one ingest arm, a refused
+    /// frame is dropped there, and nothing else is claimed.
+    #[test]
+    fn ingest_routes_every_panel_envelope_and_claims_nothing_else() {
+        let mut deck = PanelDeck::default();
+        assert!(ingest(
+            &mut deck,
+            &Inbound::PanelsSeated(vec![seat("alpha", PanelSurface::Settings)])
+        ));
+        assert!(ingest(&mut deck, &Inbound::PanelSilent { slot: 0 }));
+        assert!(ingest(
+            &mut deck,
+            &Inbound::PanelThrottled {
+                slot: 0,
+                elapsed_ms: 91,
+                budget_ms: 33,
+            }
+        ));
+        assert!(ingest(
+            &mut deck,
+            &Inbound::PanelFrame {
+                slot: 0,
+                frame: Box::new(frame(PanelSurface::Settings, 7, "unasked")),
+            }
+        ));
+        assert!(
+            !deck.slots()[0].has_frame(),
+            "the unasked frame was dropped"
+        );
+        assert!(!ingest(&mut deck, &Inbound::Notice("not a panel".into())));
+    }
 }

@@ -117,7 +117,8 @@ async fn pump(ui: &mut DeckUi, slot: usize, process: &Runtime, mut draw: impl Fn
         PanelRect::new(cols, rows),
         33,
     );
-    let answered = stella_runtime::panel_host::ask(process, lease.clone())
+    let env = stella_runtime::panel_host::resolve_env(process, |name| std::env::var(name).ok());
+    let answered = stella_runtime::panel_host::ask(process, lease.clone(), &env)
         .await
         .expect("the hello plugin answers a frame");
     let frame = answered.frame.expect("it drew one");
