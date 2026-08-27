@@ -19,7 +19,9 @@ the current state of any one component.
 
 Every component here answers the same question in a different place: *what would it take to make this improvement believable?* The failure mode being designed against is a system that reports its own progress — an agent that grades its own homework will always be improving.
 
-So the pattern repeats. A candidate change is generated cheaply, evaluated against a **held-out** set it did not train on, and promoted only on a measured lift. Nothing is promoted for being frequent, plausible, or recent.
+So the pattern repeats. A candidate change is generated cheaply, evaluated against a **held-out** set it did not train on, and promoted on a measured lift.
+
+That last clause is the design target, and it is not what ships today. The measured-lift gate exists and is **off by default** — `AutoCreateConfig::require_measured_lift` is `false` — so the shipped default promotes a skill on mining eligibility: frequency and recurrence, which is exactly what the target rules out. Turning the switch on is what closes the gap, and the section on skills below says which components still promote that way.
 
 ## The seven components
 
@@ -55,17 +57,21 @@ So the pattern repeats. A candidate change is generated cheaply, evaluated again
     tasks, attempt them in sandboxed worktrees under `verify`, and expand the *verified*
     capability set. Self-directed practice.
   </SpecCard>
-  <SpecCard title="Weight-space adapters (#836)">
-    The frontier item. Curate a redacted trajectory dataset, train and evaluate LoRA adapters
-    offline, and — gated by eval **and** human sign-off — promote one that measurably improves
-    behavior. Everything else improves the harness around a fixed model; this improves the
-    model.
+  <SpecCard title="Weight-space adapters (#836) — not planned">
+    **Dropped, not parked.** #836 is closed as not planned, and the evolution ledger records it
+    as `NotPursued` — a posture that exists so a surface nobody intends to build is not read as
+    upcoming work. It is kept here because the rest of the page is drawn against it: curate a
+    redacted trajectory dataset, train and evaluate LoRA adapters offline, and — gated by eval
+    **and** human sign-off — promote one that measurably improves behavior. Everything else
+    improves the harness around a fixed model; this would have improved the model.
   </SpecCard>
 </CardGrid>
 
 ## Dependency order
 
 Four of the seven form a spine, because each one needs the previous one's output to be judged at all. You cannot evaluate an adapter without an evaluator, and you cannot build an evaluator's training set without a dataset.
+
+The spine's last link is drawn dashed because it is not being built: #836 is closed as not planned, so the chain that ends in weight-space adapters stops at distillation. The dependency argument still holds for the three that remain — it is the reason they are ordered.
 
 ```text
   parallel — need nothing from the spine
@@ -77,10 +83,10 @@ Four of the seven form a spine, because each one needs the previous one's output
                 └──────── wins feed ─────────┤
                                              ▼
   the spine
-  ┌───────────────┐   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-  │ #872 dataset  │──▶│ #831 eval     │──▶│ #833 distill  │──▶│ #836 adapters │
-  │  trajectories │   │  A/B + gate   │   │ Skills/exemp. │   │  LoRA + eval  │
-  └───────────────┘   └───────────────┘   └───────────────┘   └───────────────┘
+  ┌───────────────┐   ┌───────────────┐   ┌───────────────┐   ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
+  │ #872 dataset  │──▶│ #831 eval     │──▶│ #833 distill  │┈ ▷│ #836 adapters │
+  │  trajectories │   │  A/B + gate   │   │ Skills/exemp. │   │  not planned  │
+  └───────────────┘   └───────────────┘   └───────────────┘   └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
                               ▲
                               │ the same gate promotes everything above
   ┌──────────────────────────────────────────────────────────────────────────┐
@@ -93,7 +99,7 @@ Four of the seven form a spine, because each one needs the previous one's output
   └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-The required edge is **dataset → eval**. #836's own stated first slice is "just the dataset + eval halves, no training" — prove you can *measure* an improvement before you try to *train* one. Every other promotion in the track reuses that same evaluator.
+The required edge is **dataset → eval**, and it outlived the component that motivated it. #836's stated first slice was "just the dataset + eval halves, no training" — prove you can *measure* an improvement before you try to *train* one. The training half is not being built. The measuring half is what every other promotion in the track reuses, so the edge stands without it.
 
 ## What is actually built today
 
