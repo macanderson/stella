@@ -121,6 +121,29 @@ fn gather(root: &Path, key: &str, own_root: Option<&Path>) -> Contention {
     contention
 }
 
+/// Whether `text` mentions `key` as an issue number, rather than as a run of
+/// digits sitting inside a longer one.
+///
+/// `contains` is the wrong test for a number. Issue 43 is not issue 4300, and a
+/// bare substring cannot tell them apart — so a loop asking about #43 read
+/// every branch, worktree and claim naming #430, #4300 and #1436 as somebody
+/// else working its issue, and deferred. The lower the issue number, the more
+/// of the backlog matched it.
+///
+/// A match counts only where neither neighbouring character is a digit, which
+/// is what makes `i-43` a mention and `i-4300` not one.
+#[must_use]
+fn names_issue(text: &str, key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    text.match_indices(key).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + key.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_digit()) && !after.is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
 /// Remote branch names carrying `key`, from `git ls-remote --heads` output.
 ///
 /// Remote only at both call sites: a *local* branch of the loop's own is not
@@ -130,8 +153,15 @@ fn gather(root: &Path, key: &str, own_root: Option<&Path>) -> Contention {
 pub(super) fn branches_naming(ls_remote: &str, key: &str) -> Vec<String> {
     ls_remote
         .lines()
-        .filter(|line| line.contains(key))
+        // The ref first, then the test. `git ls-remote` prints
+        // `<sha>\trefs/heads/<name>`, so testing the whole line tests the
+        // commit sha as well — and a sha is forty hex characters, which for a
+        // one-digit key contains it about nine times in ten. The loop then
+        // deferred on a branch whose name does not carry the key at all, and
+        // reported that name as its evidence.
         .filter_map(|line| line.split("refs/heads/").nth(1))
+        .map(str::trim)
+        .filter(|name| names_issue(name, key))
         .map(str::to_owned)
         .collect()
 }
@@ -152,7 +182,12 @@ pub(super) fn worktrees_naming(porcelain: &str, key: &str, own_root: Option<&Pat
         .lines()
         .filter_map(|line| line.strip_prefix("worktree "))
         .map(str::trim)
-        .filter(|path| path.contains(key))
+        // Still the whole path, not its last component: a peer laying its
+        // checkouts out differently must still be seen, and a false negative
+        // here is two loops on one issue where a false positive is only a
+        // deferral. [`names_issue`] removes the part that was simply wrong —
+        // #43 matching a worktree for #4300.
+        .filter(|path| names_issue(path, key))
         .filter(|path| own_root.is_none_or(|own| !Path::new(path).starts_with(own)))
         .map(str::to_owned)
         .collect()
@@ -470,6 +505,54 @@ mod tests {
         let out = "abc\trefs/heads/stella/4300-fix\ndef\trefs/heads/stella/9999-other\n";
 
         assert_eq!(branches_naming(out, "4300"), vec!["stella/4300-fix"]);
+    }
+
+    /// A commit sha is not a branch name, and must not be searched as one.
+    ///
+    /// `git ls-remote` prints `<sha>\trefs/heads/<name>`. Testing the whole
+    /// line for the key tested forty hex characters of sha as well: for a
+    /// one-digit key that is a match roughly nine times in ten, so nearly every
+    /// remote branch counted as contention and the loop stopped taking
+    /// low-numbered issues. The evidence it recorded was a branch name that did
+    /// not carry the key at all.
+    #[test]
+    fn a_sha_that_happens_to_contain_the_key_is_not_a_branch_naming_it() {
+        // Two real-shaped shas, both full of digits; neither branch names #7.
+        let out = "4a7b39c17d2e4f5061829304a5b6c7d8e9f00112\trefs/heads/main\n\
+                   77770000111122223333444455556666777788ab\trefs/heads/docs/typo\n";
+
+        assert!(
+            branches_naming(out, "7").is_empty(),
+            "no branch here names issue 7"
+        );
+    }
+
+    /// Issue 43 is not issue 4300.
+    #[test]
+    fn a_longer_issue_number_is_not_a_mention_of_its_prefix() {
+        let out = "abc\trefs/heads/self-driving/i-4300\n\
+                   def\trefs/heads/self-driving/i-43\n\
+                   fed\trefs/heads/self-driving/i-143\n";
+
+        assert_eq!(
+            branches_naming(out, "43"),
+            vec!["self-driving/i-43"],
+            "only the branch naming 43 itself"
+        );
+    }
+
+    /// The same rule for worktree paths.
+    #[test]
+    fn a_worktree_for_a_longer_issue_is_not_contention_for_its_prefix() {
+        let seen = porcelain(&[
+            "/w/.stella/private/self-driving/i-4300",
+            "/w/.stella/private/self-driving/i-43",
+        ]);
+
+        assert_eq!(
+            worktrees_naming(&seen, "43", None),
+            vec!["/w/.stella/private/self-driving/i-43".to_string()]
+        );
     }
 
     /// A payload with a row this build cannot read still yields the rest.
