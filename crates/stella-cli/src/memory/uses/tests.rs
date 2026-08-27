@@ -325,7 +325,7 @@ fn a_record_rendered_twice_in_one_turn_is_one_use() {
 /// turns run and are cited (D1/D2), the ledger is folded into health (D4), and
 /// the sweep acts on it (D5) under opportunity-aware rules (D3).
 #[test]
-fn the_loop_closes_a_repeatedly_unhelpful_record_is_retired_and_restorable() {
+fn citations_alone_never_retire_and_a_strong_verdict_retires_restorably() {
     use stella_core::context_record::SelectionHealthPolicy;
 
     let (_dir, store, context) = workspace();

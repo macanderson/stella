@@ -300,9 +300,14 @@ evolution_surfaces! {
     /// What Stella remembers between turns.
     Memory => "memory",
         EvolutionPosture::Shipped {
-            mechanism: "uses and citations are folded into selection health per record, and \
-                        the post-turn sweep retires one that keeps failing",
-            witness: "the_loop_closes_a_repeatedly_unhelpful_record_is_retired_and_restorable",
+            mechanism: "a memory whose every named path has vanished is retired by the \
+                        post-turn sweep, with the missing paths in the reason. The citation \
+                        fold is built and cannot fire: trace correlation records a neutral \
+                        verdict rather than `not_helpful` by design, so citations alone never \
+                        reach `failing`, and nothing writes `memory_citations` in the first \
+                        place (#4862). Path-anchor validation is the only evidence source \
+                        that retires anything today",
+            witness: "a_vanished_memory_is_retired_with_the_missing_paths_in_the_reason",
         },
         EvolutionTiming::BetweenTurns,
         ImpactClass::RecallBias,
@@ -386,11 +391,30 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// [`crate::CAPABILITIES`]'s sweep names its own: a file-size split moves tests
 /// out from under a parent module, and an explicit list fails loudly when that
 /// happens instead of silently sweeping less.
+///
+/// # What this sweep cannot tell you
+///
+/// It proves a witness **exists by that name**. It cannot read the test's
+/// assertions, so it cannot tell a witness that proves its row's claim from
+/// one that proves the negation of it — and both are green here.
+///
+/// That is not hypothetical. The `Memory` row named
+/// `the_loop_closes_a_repeatedly_unhelpful_record_is_retired_and_restorable`
+/// while that test's first half asserted `"nothing may be retired on citation
+/// evidence alone"` and its second reached retirement only by hand-building a
+/// `SelectionHealth { failing: true, .. }` literal that no production path can
+/// produce. The name matched, the sweep passed, and the ledger reported better
+/// than the tree for as long as nobody opened the test (#5198).
+///
+/// So the reviewer owns the half the compiler does not: **open the witness and
+/// check it asserts the row's own mechanism.** A row is a claim like any other
+/// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 5] {
+fn evolution_sources() -> [&'static str; 6] {
     [
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),
+        include_str!("../../stella-cli/src/memory/validation/tests.rs"),
         include_str!("../../stella-core/src/skills/appraisal/tests.rs"),
         include_str!("../../stella-cli/src/tool_foundry/adopt/tests.rs"),
         include_str!("../../stella-cli/src/memory/self_tuning.rs"),
