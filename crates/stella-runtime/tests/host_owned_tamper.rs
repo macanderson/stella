@@ -154,7 +154,7 @@ async fn the_hosts_finding_is_what_refuses_a_tampered_flip() {
     );
     let rule = VerdictRule::from_manifest(&manifest());
     match judge(&rule, &tampered) {
-        Verdict::Unmet { unmet } => assert!(
+        Verdict::Unmet { unmet, .. } => assert!(
             matches!(&unmet[..], [clause] if matches!(
                 &clause.because,
                 UnmetBecause::Tampered { artifact } if artifact == "tests/witness.rs"

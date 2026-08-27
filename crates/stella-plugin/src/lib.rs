@@ -183,9 +183,9 @@ pub use wire::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
     Continuation, Correction, EvidenceProvenance, EvidenceSet, FlipObservation, HOOK_FIELDS,
     HookField, Outcome, PROTOCOL_VERSION, PublishedSignal, RoundState, SignalValue, StopReason,
-    TamperFinding, TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UnmetBecause,
-    UnmetRequirement, Verdict, VerdictRule, VolatileContext, WIRE_FIELDS, WireField, WrapperPoint,
-    WrapperRequest, WrapperResponse, hook_disclosures_for,
+    TamperFinding, TestBaseline, TestPlan, TurnOutcome, UndecidedReason, UndecidedRequirement,
+    UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext, WIRE_FIELDS, WireField,
+    WrapperPoint, WrapperRequest, WrapperResponse, hook_disclosures_for,
 };
 pub use wrapper::{
     CompareOp, Condition, HostStage, MAX_CONTRIBUTED_STAGE_LEN, Signal, SignalKind, StageName,

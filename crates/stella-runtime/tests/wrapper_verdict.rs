@@ -188,6 +188,7 @@ fn a_flip_decided_requirement_answers_exactly_this() {
     };
 
     let unmet = |because: UnmetBecause| Verdict::Unmet {
+        undecided: Vec::new(),
         unmet: vec![stella_plugin::UnmetRequirement {
             requirement: REQUIREMENT.into(),
             statement: STATEMENT.into(),
@@ -195,7 +196,17 @@ fn a_flip_decided_requirement_answers_exactly_this() {
             detail: None,
         }],
     };
-    let undecided = |reason: UndecidedReason| Verdict::Undecided { reason };
+    // The per-requirement list #5267 added. These fixtures declare one
+    // requirement, so it is that clause carrying the same reason — blanking it
+    // would assert the collapse this issue removed.
+    let undecided = |reason: UndecidedReason| Verdict::Undecided {
+        undecided: vec![stella_plugin::UndecidedRequirement {
+            requirement: REQUIREMENT.into(),
+            statement: STATEMENT.into(),
+            reason: reason.clone(),
+        }],
+        reason,
+    };
     let no_flip = |observed| unmet(UnmetBecause::NoFlip { observed });
 
     let table: Vec<(FlipObservation, TamperFinding, Verdict)> = vec![
@@ -319,7 +330,15 @@ fn a_missing_measurement_abstains_rather_than_passing() {
             reason: UndecidedReason::MeasurementMissing {
                 requirement: REQUIREMENT.into(),
                 measurement: "p50".into(),
-            }
+            },
+            undecided: vec![stella_plugin::UndecidedRequirement {
+                requirement: REQUIREMENT.into(),
+                statement: STATEMENT.into(),
+                reason: UndecidedReason::MeasurementMissing {
+                    requirement: REQUIREMENT.into(),
+                    measurement: "p50".into(),
+                },
+            }],
         }
     );
 }
@@ -337,7 +356,10 @@ fn a_rule_that_never_passed_validation_still_cannot_be_silently_met() {
     assert_eq!(
         judge(&orphaned, &EvidenceSet::unobserved()),
         Verdict::Undecided {
-            reason: UndecidedReason::NoOracle
+            reason: UndecidedReason::NoOracle,
+            // Rule-wide: no requirement was looked at, so there is no clause
+            // to name. `gate_state` falls back to painting every row.
+            undecided: Vec::new(),
         }
     );
 
@@ -351,7 +373,14 @@ fn a_rule_that_never_passed_validation_still_cannot_be_silently_met() {
         Verdict::Undecided {
             reason: UndecidedReason::Undecidable {
                 requirement: REQUIREMENT.into()
-            }
+            },
+            undecided: vec![stella_plugin::UndecidedRequirement {
+                requirement: REQUIREMENT.into(),
+                statement: STATEMENT.into(),
+                reason: UndecidedReason::Undecidable {
+                    requirement: REQUIREMENT.into(),
+                },
+            }],
         }
     );
 
@@ -373,6 +402,7 @@ fn a_rule_that_never_passed_validation_still_cannot_be_silently_met() {
                 requirement,
                 reason,
             },
+        ..
     } = judge(&unreadable, &EvidenceSet::unobserved())
     else {
         panic!("an unparsable rule must not read as a satisfied one");
@@ -451,7 +481,7 @@ fn a_determinate_failure_outranks_an_undecidable_clause() {
             measurements: BTreeMap::from([("p50".to_string(), 118)]),
         },
     );
-    let Verdict::Unmet { unmet } = verdict else {
+    let Verdict::Unmet { unmet, .. } = verdict else {
         panic!("a measured failure must be reported, got {verdict:?}");
     };
     assert_eq!(unmet.len(), 1);
@@ -495,7 +525,7 @@ fn the_hold_allowance_is_the_ask_clamped_to_the_hosts_ceiling() {
         Continuation::Stop {
             outcome: Outcome::Unmet {
                 unmet: match &verdict {
-                    Verdict::Unmet { unmet } => unmet.clone(),
+                    Verdict::Unmet { unmet, .. } => unmet.clone(),
                     other => panic!("expected an unmet verdict, got {other:?}"),
                 },
                 stopped: StopReason::AllowanceSpent {
@@ -590,6 +620,7 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
     let rule = budget_rule_under(FlipPolicy::Required);
     let within_budget = BTreeMap::from([("p50".to_string(), 100)]);
     let unmet = |because: UnmetBecause| Verdict::Unmet {
+        undecided: Vec::new(),
         unmet: vec![stella_plugin::UnmetRequirement {
             requirement: REQUIREMENT.into(),
             statement: STATEMENT.into(),
@@ -648,7 +679,12 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
             }
         ),
         Verdict::Undecided {
-            reason: UndecidedReason::TamperUnchecked
+            reason: UndecidedReason::TamperUnchecked,
+            undecided: vec![stella_plugin::UndecidedRequirement {
+                requirement: REQUIREMENT.into(),
+                statement: STATEMENT.into(),
+                reason: UndecidedReason::TamperUnchecked,
+            }],
         }
     );
 
@@ -908,7 +944,7 @@ proptest! {
         };
 
         let budgets: BTreeSet<(String, u64)> = match judge(&rule, &evidence) {
-            Verdict::Unmet { unmet } => unmet
+            Verdict::Unmet { unmet, .. } => unmet
                 .into_iter()
                 .filter_map(|clause| match clause.because {
                     UnmetBecause::Budget { check, reported } => Some((check, reported)),

@@ -156,14 +156,39 @@ fn every_decision_type_round_trips_byte_for_byte() {
     round_trip(&Verdict::Met {
         evidence: EvidenceProvenance::PluginReported,
     });
+    // Both arms with their per-requirement abstentions populated (#5267): the
+    // fields are `#[serde(default, skip_serializing_if)]`, so an EMPTY list is
+    // the one shape a byte-for-byte round trip would pass without ever
+    // encoding them.
     round_trip(&Verdict::Unmet {
         unmet: vec![unmet()],
+        undecided: vec![stella_plugin::UndecidedRequirement {
+            requirement: "flips".into(),
+            statement: "the witness goes red then green".into(),
+            reason: UndecidedReason::FlipUnobservable,
+        }],
+    });
+    round_trip(&Verdict::Unmet {
+        unmet: vec![unmet()],
+        undecided: Vec::new(),
     });
     round_trip(&Verdict::Undecided {
         reason: UndecidedReason::MeasurementMissing {
             requirement: "within-budget".into(),
             measurement: "p50".into(),
         },
+        undecided: vec![stella_plugin::UndecidedRequirement {
+            requirement: "within-budget".into(),
+            statement: "p50 stays under budget".into(),
+            reason: UndecidedReason::MeasurementMissing {
+                requirement: "within-budget".into(),
+                measurement: "p50".into(),
+            },
+        }],
+    });
+    round_trip(&Verdict::Undecided {
+        reason: UndecidedReason::NoOracle,
+        undecided: Vec::new(),
     });
     round_trip(&RoundState {
         holds_spent: 1,
