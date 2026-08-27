@@ -130,10 +130,10 @@ impl Phase {
 /// What the row says, or `None` when the turn has announced no host stage and
 /// the row stays air.
 ///
-/// Reads [`crate::model::turn::Hud::host_stage`] rather than `Hud::stage` for
-/// the reason that field exists: a contributed stage leaves it alone, so a
-/// plugin boundary arriving mid-execute cannot make the meter snap back to
-/// `plan` and claim the turn regressed.
+/// Reads `Hud::host_stage` rather than `Hud::stage` for the reason that field
+/// exists: a contributed stage leaves it alone, so a plugin boundary arriving
+/// mid-execute cannot make the meter snap back to `plan` and claim the turn
+/// regressed.
 pub fn pipeline(model: &WorkspaceModel, ui: &DeckUi) -> Option<Phase> {
     if ui.tab != crate::deck::DeckTab::Session {
         return None;
