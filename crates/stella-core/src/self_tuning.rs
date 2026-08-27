@@ -286,14 +286,20 @@ pub fn select_winner(arms: &[ArmSamples], baseline_id: &str, config: &SelectionC
         }
     }
 
-    // Winner = highest mean. `partial_cmp` guards against NaN (treated equal),
-    // so a NaN mean can never win by accident.
+    // Winner = highest mean, with a NaN mean ordered below every finite one.
+    // Treating NaN as merely Equal was not enough: `max_by` keeps the later
+    // element on Equal, so a NaN in the middle of three arms handed the scan
+    // to whatever came after it — a 0.9 arm could lose to a 0.5 arm.
     let Some(winner) = stats
         .iter()
-        .max_by(|a, b| {
-            a.mean
+        .max_by(|a, b| match (a.mean.is_nan(), b.mean.is_nan()) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (false, false) => a
+                .mean
                 .partial_cmp(&b.mean)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .unwrap_or(std::cmp::Ordering::Equal),
         })
         .cloned()
     else {
@@ -456,6 +462,29 @@ mod tests {
             ..outcome
         };
         assert!(reward(&unsolved, &w) < reward(&outcome, &w));
+    }
+
+    /// Three arms with a NaN mean in the middle: `max_by` keeps the later
+    /// element on Equal, so a NaN treated as Equal handed the scan to
+    /// whatever followed it — here the 0.5 arm "beat" the 0.9 baseline, and
+    /// the decision read `BelowMinEffect` on a negative lift instead of
+    /// `BaselineIsBest`. The NaN arm itself must still never win.
+    #[test]
+    fn a_nan_mean_cannot_corrupt_the_winner_scan() {
+        let config = SelectionConfig {
+            min_samples_per_arm: 3,
+            ..SelectionConfig::default()
+        };
+        let arms = vec![
+            arm("baseline", "medium", &[0.9, 0.9, 0.9]),
+            arm("noise", "broken", &[f64::NAN, 0.5, 0.5]),
+            arm("worse", "low", &[0.5, 0.5, 0.5]),
+        ];
+        let decision = select_winner(&arms, "baseline", &config);
+        assert!(
+            matches!(decision, Decision::Keep(KeepReason::BaselineIsBest { .. })),
+            "the highest finite mean must win the scan, got {decision:?}"
+        );
     }
 
     #[test]

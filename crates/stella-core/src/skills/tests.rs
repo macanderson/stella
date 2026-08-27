@@ -544,6 +544,46 @@ fn auto_created_skill_wins_the_tie_break() {
     assert!(selected[0].score > selected[1].score);
 }
 
+/// The bonus's own contract: "never large enough to select a skill that is
+/// otherwise below `min_score`". Identical wording under two origins, with
+/// lexical coverage just under the floor — if the bonus reaches the
+/// threshold, the freshly-mined (least-vetted) skill gets a LOWER selection
+/// floor than the hand-authored one, the opposite of a tie-break.
+#[test]
+fn the_auto_created_bonus_cannot_lift_a_skill_over_the_floor() {
+    let config = SelectionConfig {
+        max_skills: 5,
+        min_score: 0.6,
+        domain_boost: 0.5,
+        auto_created_bonus: 0.2,
+    };
+    // Names reuse description terms so both skills score over the same
+    // four-term vocabulary: coverage = 2/4 = 0.5, below the 0.6 floor.
+    let skills = vec![
+        skill(
+            "quaxle-marlow",
+            "quaxle fenwick marlow jubilant",
+            &[],
+            SkillOrigin::Workspace,
+        ),
+        skill(
+            "quaxle-jubilant",
+            "quaxle fenwick marlow jubilant",
+            &[],
+            SkillOrigin::AutoCreated,
+        ),
+    ];
+    let selected = select_skills(&skills, "quaxle fenwick", &[], &config);
+    assert!(
+        selected.is_empty(),
+        "the bonus lifted a below-floor skill into selection: {:?}",
+        selected
+            .iter()
+            .map(|s| (&s.skill.name, s.score))
+            .collect::<Vec<_>>()
+    );
+}
+
 // ---- rendering ----
 
 #[test]

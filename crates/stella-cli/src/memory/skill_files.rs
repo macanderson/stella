@@ -16,8 +16,18 @@ impl SkillSource for FsSkillSource {
         for root in roots {
             // Flat layout: <root>/<slug>.md
             if let Ok(entries) = std::fs::read_dir(root) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
+                // Sorted per root: `read_dir` order is filesystem enumeration
+                // order, and the loader's merge is last-writer-wins — so two
+                // same-name entries in one root (flat `foo.md` beside
+                // `foo/SKILL.md`, or a frontmatter `name:` colliding with a
+                // sibling's slug) picked their winner per machine. The
+                // rendered prompt bytes must not depend on that (AGENTS.md
+                // rule 7, byte-stable prompts); root order still decides
+                // cross-root precedence.
+                let mut paths: Vec<std::path::PathBuf> =
+                    entries.flatten().map(|entry| entry.path()).collect();
+                paths.sort();
+                for path in paths {
                     if path.extension().is_some_and(|e| e == "md") {
                         if let Ok(content) = std::fs::read_to_string(&path) {
                             files.push(skills::SkillFile {
