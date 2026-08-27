@@ -356,10 +356,17 @@ pub async fn search(
 ///
 /// A NEW entry lands **ungranted**: nothing it advertises is offered to the
 /// model and every call to it is refused until its handshake is reviewed
-/// (SPEC §9.3, and `stella_mcp::McpServerEntry::granted`). Re-installing over
-/// an existing alias leaves the recorded decision alone — the operator granted
-/// *that alias*, and re-fetching the same publisher's transport is not a new
-/// question.
+/// (SPEC §9.3, and `stella_mcp::McpServerEntry::granted`). Re-installing the
+/// **same publisher** over an existing alias leaves the recorded decision
+/// alone — the operator granted *that alias*, and re-fetching the same
+/// publisher's transport is not a new question.
+///
+/// Pointing the alias at a **different** publisher withdraws the grant, so the
+/// handshake is shown again (#5178). `--alias <granted-alias>` on somebody
+/// else's registry entry is the case: without this, a grant made against one
+/// publisher's declared capabilities would cover another's `cmd` line with no
+/// prompt. `McpConfig::repoints_elsewhere` carries the rule and what it does
+/// when provenance is unknown.
 pub fn install(
     workspace_root: &Path,
     alias: &str,

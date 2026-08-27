@@ -102,6 +102,16 @@ them, and a run with no deck attached reads the same answer the deck wrote.
   the first handshake (`McpClient`'s existing contract), so the grant still
   describes what was read — but a *reinstall* under the same alias does not
   re-ask, and that is the seam to watch.
+- That seam was half a defect, and the half that was one is closed (#5178).
+  Re-installing the **same publisher** still keeps the grant, for the reason
+  above: it is not a new question, and re-asking every time trains an operator
+  to grant without reading. Pointing the alias at a **different** registry name
+  now withdraws it — `stella mcp install <other> --alias <granted-alias>` made
+  a grant given for one publisher's declared capabilities cover another's
+  transport with no prompt. `McpConfig::repoints_elsewhere` is the rule, and
+  states what it does when the recorded provenance is unknown.
+  Still not covered, and still the seam to watch: a hand edit to a granted
+  entry's `cmd` line. Nothing observes that write.
 
 ## Alternatives rejected
 
