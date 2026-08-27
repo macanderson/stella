@@ -122,6 +122,10 @@ mod tab_row;
 #[path = "deck_render_snapshots/plan_economics.rs"]
 mod plan_economics;
 
+/// Push-to-talk's recording row. See [`graph`]'s doc for the `#[path]`.
+#[path = "deck_render_snapshots/voice.rs"]
+mod voice;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.

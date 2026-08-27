@@ -185,13 +185,23 @@ fn running_model_with_queue() -> WorkspaceModel {
     m
 }
 
+/// The golden frames strip styling, so the caret's recording colour is held
+/// here instead: while the microphone is live the caret leaves the resting
+/// accent for [`theme::DANGER`] — the dictation feature's one always-visible
+/// cue (`caret_style`).
+#[test]
+fn the_caret_recolours_while_the_microphone_is_live() {
+    assert_ne!(caret_style(true), caret_style(false));
+    assert_eq!(caret_style(true).fg, Some(crate::theme::DANGER));
+}
+
 #[test]
 fn empty_composer_is_a_single_accent_prompt_line_with_the_caret() {
     let ui = DeckUi::default(); // blank composer
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4);
     let mut buf = Buffer::empty(area);
-    render_composer(&layout, area, &mut buf);
+    render_composer(&layout, area, &mut buf, false);
     let text = buffer_text(&buf);
     let rows: Vec<&str> = text.lines().collect();
     assert!(
@@ -228,7 +238,7 @@ fn a_multiline_paste_prefixes_every_row_and_scrolls_instead_of_chipping() {
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4); // capped at DECK_COMPOSER_MAX_ROWS
     let mut buf = Buffer::empty(area);
-    render_composer(&layout, area, &mut buf);
+    render_composer(&layout, area, &mut buf, false);
     let text = buffer_text(&buf);
     assert!(!text.contains("[pasted"), "not chipped:\n{text}");
     for (i, row) in text.lines().enumerate() {
@@ -253,7 +263,7 @@ fn the_prompt_prefix_is_a_steady_uniform_accent() {
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4);
     let mut buf = Buffer::empty(area);
-    render_composer(&layout, area, &mut buf);
+    render_composer(&layout, area, &mut buf, false);
     assert!(
         buffer_text(&buf)
             .lines()

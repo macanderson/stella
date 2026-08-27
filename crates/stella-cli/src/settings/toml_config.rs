@@ -323,6 +323,10 @@ pub struct TomlConfig {
     pub context_providers: ContextProviderSettings,
     #[serde(default)]
     pub ui: Option<UiSettings>,
+    /// `[voice]` — push-to-talk dictation (ADR 0020). Same shape in JSON and
+    /// TOML, so no lowering beyond the move.
+    #[serde(default)]
+    pub voice: Option<super::VoiceSettings>,
     /// `[plugins]` — the per-plugin retraction switches. Same shape in JSON
     /// and TOML (a table of `name = "on"|"off"`), so no lowering beyond the
     /// move. Carried here rather than left out because a TOML-migrated scope
@@ -614,6 +618,7 @@ impl TomlConfig {
             context,
             context_providers,
             ui,
+            voice,
             plugins,
             reward,
             plan_review,
@@ -659,6 +664,7 @@ impl TomlConfig {
             auto_trust_project: run.auto_trust_project,
             allowed_dirs: workspace.allowed_dirs,
             ui,
+            voice,
             reward,
             plan_review,
             context,

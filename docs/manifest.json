@@ -100,6 +100,11 @@
       "status": "implemented",
       "title": "ADR 0019: A memory event names one memory"
     },
+    "adr/0020-voice-dictation-push-to-talk": {
+      "path": "docs/adr/0020-voice-dictation-push-to-talk.md",
+      "status": "proposed",
+      "title": "ADR 0020: Voice dictation is a held spacebar, and transcription is BYOK"
+    },
     "adr/0019-graph-session-touch-tags": {
       "path": "docs/adr/0019-graph-session-touch-tags.md",
       "status": "proposed",

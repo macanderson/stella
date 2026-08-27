@@ -151,14 +151,19 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // twice because one of them widened would be a bug nothing here could
     // see. `the_two_row_claimants_are_disjoint` holds the disjointness itself.
     guarded_band(buf, bands[2], "pulse or pipeline", |b| {
-        if crate::views::pipeline::pipeline(model, ui).is_some() {
-            crate::views::pipeline::render_row(model, ui, bands[2], b);
-        } else {
-            crate::views::pulse::render_row(model, ui, bands[2], b);
+        // An in-progress dictation claims the row ahead of both: it is the
+        // one activity the user is driving with a held key right now, and it
+        // must show on SESSION, where the pulse otherwise stays air.
+        if !crate::views::pulse::render_voice_row(model, ui, bands[2], b) {
+            if crate::views::pipeline::pipeline(model, ui).is_some() {
+                crate::views::pipeline::render_row(model, ui, bands[2], b);
+            } else {
+                crate::views::pulse::render_row(model, ui, bands[2], b);
+            }
         }
     });
     guarded_band(buf, bands[3], "composer", |b| {
-        render_composer(&c_layout, bands[3], b)
+        render_composer(&c_layout, bands[3], b, ui.voice.recording())
     });
     guarded_band(buf, bands[4], "hints", |b| {
         crate::views::frame::render_hint_row(model, ui, bands[4], b)
@@ -1028,12 +1033,25 @@ const DECK_COMPOSER_MAX_ROWS: usize = 4;
 /// The caret is **steady**, not blinking: a blink carries no information the
 /// reversed cell doesn't already carry, and a terminal has no
 /// `prefers-reduced-motion` for a reader who needs it off.
-fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
+/// The caret's colour: the accent at rest, [`theme::DANGER`] while the
+/// microphone is live — "the cursor changes colour" is the dictation
+/// feature's one always-visible cue, wherever the eye happens to be. A pure
+/// decision so a test can hold it: the golden frames strip styling and
+/// cannot (`deck_render/tests.rs`).
+fn caret_style(recording: bool) -> Style {
+    if recording {
+        Style::default().fg(theme::DANGER)
+    } else {
+        theme::accent()
+    }
+}
+
+fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer, recording: bool) {
     let visible = (area.height as usize).max(1);
     let total = layout.rows.len();
     let first = composer_scroll_first(layout.cursor_row, visible);
 
-    let cursor_style = theme::accent().add_modifier(Modifier::REVERSED);
+    let cursor_style = caret_style(recording).add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, row) in layout.rows.iter().enumerate().skip(first).take(visible) {
         // The accent `>>> ` prefix rides every row and scrolls with it —

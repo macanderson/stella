@@ -204,13 +204,20 @@ impl TerminalGuard {
         }
         // The kitty keyboard protocol disambiguates modified keys, so a
         // modified `⌘⏎`/`⌃⏎` can insert a line break while a bare `⏎`
-        // submits (`composer::classify_enter`). Probing
-        // needs raw mode, so this comes last; best-effort (`false` on any
-        // probe error → legacy Enter semantics).
+        // submits (`composer::classify_enter`) — and, with
+        // `REPORT_EVENT_TYPES`, reports key release, which is what lets
+        // push-to-talk end a recording on the release itself instead of the
+        // repeat-gap fallback (`crate::voice`). One push carries both flags,
+        // so the one `kitty` bit tracks the acquisition and one Pop rolls it
+        // back. Probing needs raw mode, so this comes last; best-effort
+        // (`false` on any probe error → legacy Enter semantics).
         if matches!(supports_keyboard_enhancement(), Ok(true)) {
             execute!(
                 out,
-                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                )
             )?;
             guard.state.kitty.store(true, Ordering::SeqCst);
         }
@@ -222,7 +229,10 @@ impl TerminalGuard {
     /// textarea semantics; without it only `⌥⏎` survives, so the hint
     /// advertises that chord instead. Enter semantics themselves are
     /// unchanged either way — a bare `⏎` always submits
-    /// (see `crate::composer::classify_enter`).
+    /// (see `crate::composer::classify_enter`). The same push carries
+    /// `REPORT_EVENT_TYPES`, so this bit also means key release is
+    /// reported — push-to-talk reads it as `VoiceUi::release_events`
+    /// (`crate::voice`).
     pub(crate) fn kitty(&self) -> bool {
         self.state.kitty.load(Ordering::SeqCst)
     }
