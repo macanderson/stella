@@ -82,9 +82,8 @@
 <text x="16" y="450" font-size="11" fill="#777782">r re-run checks · s split task · b hand to worker · i promote to issue · ↯ diff plan</text>
 <text x="16" y="472" font-size="11" fill="#4B4B56">a task closes when its checks pass, not when the model says so.</text>
 <line x1="0" y1="486" x2="680" y2="486" stroke="#26262C" stroke-width="1"/>
-<text x="16" y="506" font-size="11" fill="#A9AAB5">det 88%</text>
-<text x="96" y="506" font-size="11" fill="#4B4B56">CONTEXT 70k/200k · SPEND</text>
-<text x="290" y="506" font-size="11" fill="#EFC53F">$0.45</text>
-<text x="342" y="506" font-size="11" fill="#4B4B56">· SAVED</text>
-<text x="404" y="506" font-size="11" fill="#EFC53F">$0.69</text>
+<text x="16" y="506" font-size="11" fill="#4B4B56">CONTEXT 70k/200k · SPEND</text>
+<text x="210" y="506" font-size="11" fill="#EFC53F">$0.45</text>
+<text x="262" y="506" font-size="11" fill="#4B4B56">· SAVED</text>
+<text x="324" y="506" font-size="11" fill="#EFC53F">$0.69</text>
 </svg>

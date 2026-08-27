@@ -39,18 +39,32 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DIR="design/tui-v2/renderings"
+# Both trees that hold a v2 rendering. website/public/tui/ is what the site
+# serves, and its copies differ from design/ in their own content: one says
+# `tab expand` where design says `^S expand`, and the command palette is a
+# different frame showing six results in a taller box rather than three. So
+# they are NOT held to byte-parity here — only to the same prose, which is the
+# fact this guard is about. Scoping to design/ alone left the public copies
+# drawing `det %` while the gate reported OK (#5276).
+DIRS=(design/tui-v2/renderings website/public/tui)
 
 # One entry per retired fact: the pattern, then where the prose retires it.
 # The pattern is a POSIX ERE, matched against the SVG source.
+#
+# The `det` pattern admits the qualified spellings, not just the bare one. It
+# was written as `det [0-9]+%` first and sailed straight past `det est 84%` on
+# the start-work estimate line — the exact cell SPEC §1 names when it strikes
+# the metric ("the receipt, the task card and the start-work estimate").
 BAN=(
-  "det [0-9]+%|SPEC.md §5 item 5: \"No \`det %\` here, or anywhere — see §1\""
+  "det( [a-z]+)* [0-9]+%|SPEC.md §1 and §5 item 5: \"No \`det %\` here, or anywhere\""
 )
 
-if [[ ! -d $DIR ]]; then
-  echo "check-rendering-facts: $DIR is missing — nothing to check" >&2
-  exit 1
-fi
+for dir in "${DIRS[@]}"; do
+  if [[ ! -d $dir ]]; then
+    echo "check-rendering-facts: $dir is missing — nothing to check" >&2
+    exit 1
+  fi
+done
 
 fail=0
 for entry in "${BAN[@]}"; do
@@ -58,7 +72,7 @@ for entry in "${BAN[@]}"; do
   why=${entry#*|}
   # `grep -E` and not rg: this runs in GATE_GUARDS_FAST, which ci.yml starts
   # before installing anything, and a bare runner has grep.
-  if hits=$(grep -REn --include='*.svg' -- "$pattern" "$DIR" 2>/dev/null); then
+  if hits=$(grep -REn --include='*.svg' -- "$pattern" "${DIRS[@]}" 2>/dev/null); then
     fail=1
     echo "check-rendering-facts: a rendering draws a fact the SPEC retired" >&2
     echo "  pattern: $pattern" >&2
