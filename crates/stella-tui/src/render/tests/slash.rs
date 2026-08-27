@@ -273,6 +273,48 @@ fn the_palette_floats_on_the_panel_ground() {
 /// section, listing the commands this workspace ran last. A recent row is a
 /// second appearance of a command a domain group already carries — that is
 /// what a shortcut is — so both are drawn.
+/// **The witness (#5214).** Every slash command SPEC 10's `relevant now`
+/// bullet names is one a relevance rule can actually surface.
+///
+/// The bullet used to name `/gates`, which is in no vocabulary and which no
+/// rule fires on — a sentence describing a palette row that could not exist.
+/// `every_command_a_relevance_rule_can_name_is_a_real_one` holds the rules
+/// against the deck vocabulary, and nothing held the *document* against the
+/// rules, which is the gap this closes. Reads SPEC.md the way
+/// `keymap.rs`'s `spec_11_names_the_chord_the_deck_binds_to_the_plan_panel`
+/// does.
+#[test]
+fn spec_10_names_a_relevant_now_command_a_rule_can_surface() {
+    const SPEC: &str = include_str!("../../../../../design/tui-v2/SPEC.md");
+    let bullet = SPEC
+        .lines()
+        .find(|line| line.contains("**Context section first**"))
+        .expect("SPEC 10's context-section bullet");
+
+    // The commands the bullet names, as `/slug` tokens inside backticks.
+    let named: Vec<String> = bullet
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|span| span.starts_with('/') && !span.contains('.') && !span.contains(' '))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        !named.is_empty(),
+        "the bullet is supposed to name an example command:\n{bullet}"
+    );
+
+    let surfaceable = crate::composer::palette::rule_command_names();
+    for name in named {
+        assert!(
+            surfaceable.contains(&name.as_str()),
+            "SPEC 10 names `{name}` in `relevant now`, but no relevance rule \
+             surfaces it — the rules offer {surfaceable:?}. Either add the rule \
+             and the command, or name an example the deck has."
+        );
+    }
+}
+
 /// **The witness (#5213).** A `recent` row says how long ago it ran, and the
 /// domain-group copy of the same command does not.
 ///
