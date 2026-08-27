@@ -10,7 +10,7 @@ For how MCP tools reach the agent, see [MCP servers](/docs/agent-tools/mcp). Thi
 ## Synopsis
 
 ```bash
-stella mcp <list|search|install|remove|login|logout|usage> [args]
+stella mcp <list|search|install|remove|grant|login|logout|usage> [args]
 ```
 
 ## What it does
@@ -23,7 +23,8 @@ stella mcp <list|search|install|remove|login|logout|usage> [args]
 
 List the MCP servers configured in `.stella/mcp.toml`. Each entry shows what it
 is — the publisher's name and description, recorded at install — with its local
-alias underneath. An entry installed by hand (or before descriptions were kept)
+alias underneath, and flags any server that is still withheld pending a
+capability grant. An entry installed by hand (or before descriptions were kept)
 falls back to its endpoint: the URL or the spawn command line.
 
 ```bash
@@ -44,6 +45,23 @@ stella mcp search filesystem
 stella mcp search github --limit 5
 ```
 
+Each row carries the three facts that decide whether the description under it
+is worth reading: the **source tier** the registry verified, the **install
+count** where the registry publishes one (`installs unknown` where it does
+not — never a fabricated `0`), and the **signature**.
+
+The tier is read from the entry's namespace, which is what a registry actually
+verifies when someone publishes: `official` is the registry operator's own
+namespace, `vendor` is a reverse-DNS namespace under a domain the publisher
+proved they control (`com.stripe/mcp`), and `community` is a code-host account
+(`io.github.acme/…`) or the registry's anonymous namespace.
+
+`signed` means the registry attributes the entry to a verified publisher and
+its lifecycle record says `active`. It does **not** mean stella verified a
+signature over the package bytes; no MCP registry publishes one to verify yet.
+Anything else — an entry the registry attributes to nobody, or one it has
+withdrawn — reads `blocked`, and `stella mcp install` refuses it.
+
 ### `stella mcp install <name>`
 
 Install a registry server (by the name shown in `stella mcp search`) into `.stella/mcp.toml`, so you don't hand-edit the file. `--alias` sets a local alias / tool-namespace segment (default: a sanitized form of the name). Installing overwrites any existing entry — MCP servers are not versioned.
@@ -53,6 +71,15 @@ stella mcp install filesystem
 stella mcp install github --alias gh
 ```
 
+An entry the registry does not vouch for is refused rather than installed: an
+install writes a command line this process later spawns, so the check is on the
+install path and not only in the search listing.
+
+**A newly installed server is withheld.** None of its tools are offered to the
+model and every call to it is refused until you review what it declares and
+grant it — see `stella mcp grant` below. Re-installing over an alias you
+already granted does not re-ask.
+
 ### `stella mcp remove <name>`
 
 Remove a configured server from `.stella/mcp.toml` by its local name.
@@ -60,6 +87,42 @@ Remove a configured server from `.stella/mcp.toml` by its local name.
 ```bash
 stella mcp remove filesystem
 ```
+
+### `stella mcp grant <name>`
+
+Connect to a configured server, print what it declares at handshake, and record
+whether its tools may be used. This is the scriptable half of the deck's
+first-enable handshake; `e` on an ungranted row in the MCP tab (`/mcp`) shows
+the same capabilities and asks the same question.
+
+```bash
+stella mcp grant github            # print the capabilities, then ask
+stella mcp grant github --yes      # record the grant without the prompt
+stella mcp grant github --revoke   # withdraw a grant given earlier
+```
+
+It connects because the capabilities being granted are what the process on the
+other end announces *now*, not what a registry card once said. The prompt
+declines on anything but an explicit `y`, closed stdin included.
+
+The decision is recorded as `granted` in `.stella/mcp.toml`, so it is read by
+every session — unlike enable/disable, which is per-session. Three states are
+distinguishable, and they mean different things:
+
+| In `mcp.toml` | Written by | The model can call it |
+| --- | --- | --- |
+| `granted = true` | a grant | yes |
+| `granted = false` | an install, or `--revoke` | no |
+| no `granted` key | you, editing the file | yes |
+
+An entry you wrote by hand carries no key and is usable: writing the transport
+yourself is already the review the gate is asking for. The gate exists for the
+other door — one keystroke on a registry search result, which adds a stranger's
+server. A server contributed by an installed plugin has no entry at all and is
+usable for the same reason.
+
+While a server is withheld it still connects (that is how its capabilities
+become knowable), and a call to it comes back as a refusal naming this command.
 
 ### `stella mcp login <name>` / `stella mcp logout <name>`
 

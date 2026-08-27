@@ -130,12 +130,27 @@ fn subtitle(detail: &McpServerDetail) -> Line<'static> {
     } else {
         Span::styled("not connected", Style::new().fg(token::RED))
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::raw(" "),
         Span::styled(detail.name.clone(), Style::new().fg(token::TEXT)),
         Span::styled(format!("  ·  {}  ·  ", detail.kind), muted),
         status,
-    ])
+    ];
+    // The same latency the list row shows, on the same terms: only while
+    // there is a live connection that measured it.
+    if let Some(ms) = detail
+        .latency_ms
+        .filter(|_| detail.connected && detail.enabled)
+    {
+        spans.push(Span::styled(format!("  ·  {ms}ms"), muted));
+    }
+    // A connected, healthy-looking server whose tools the model is never told
+    // about. The inspector is where an operator comes to ask why, so it must
+    // answer here as plainly as the row does.
+    if !detail.granted {
+        spans.push(Span::styled("  ·  ungranted", Style::new().fg(token::RED)));
+    }
+    Line::from(spans)
 }
 
 fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
@@ -210,6 +225,17 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
         Some(false) => lines.push(field("oauth", "not logged in (o on the list to log in)")),
         None => lines.push(field("oauth", "n/a — stdio server")),
     }
+    // The capability grant sits with auth because it answers the same
+    // question — what is this server allowed to do here — and because an
+    // ungranted server's empty effect on the model is otherwise unexplained.
+    lines.push(field(
+        "granted",
+        if detail.granted {
+            "yes — its tools are offered to the model"
+        } else {
+            "no — every call is refused (e on the list opens the handshake)"
+        },
+    ));
     if detail.candidate_safe {
         lines.push(field("candidates", "shared into Best-of-N workspaces"));
     }
@@ -404,6 +430,8 @@ mod tests {
     fn stripe() -> McpServerDetail {
         McpServerDetail {
             name: "mcp".into(),
+            granted: true,
+            latency_ms: Some(41),
             title: Some("Stripe".into()),
             description: Some("Payments, refunds, and balance reads.".into()),
             registry_name: Some("com.stripe/mcp".into()),
@@ -446,6 +474,20 @@ mod tests {
         assert!(text.contains("Refund a charge."), "tool summary: {text}");
         assert!(text.contains("3×"), "call count: {text}");
         assert!(text.contains("logged in"), "oauth state: {text}");
+    }
+
+    /// The inspector answers "why is the model not using this" as plainly as
+    /// the row does: an ungranted server says so, a granted one says the
+    /// opposite, and neither leaves it to be inferred from an empty tool list.
+    #[test]
+    fn the_inspector_says_whether_the_server_is_granted() {
+        assert!(rendered(&stripe()).contains("its tools are offered to the model"));
+
+        let mut ungranted = stripe();
+        ungranted.granted = false;
+        let text = rendered(&ungranted);
+        assert!(text.contains("every call is refused"), "{text}");
+        assert!(text.contains("opens the handshake"), "the remedy: {text}");
     }
 
     #[test]

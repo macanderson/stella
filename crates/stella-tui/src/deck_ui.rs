@@ -1094,8 +1094,9 @@ impl DeckUi {
                     // The secret value: NEVER the composer.
                     AuthStep::Value => push_single_line(&mut self.mcp.auth.value, text),
                 },
-                // Browse list owns no text input — start a prompt like any tab.
-                McpMode::Browse => self.composer.paste(text),
+                // Neither the browse list nor the handshake gate owns a text
+                // input — a paste starts a prompt, like any tab.
+                McpMode::Browse | McpMode::Handshake => self.composer.paste(text),
             }
             return;
         }

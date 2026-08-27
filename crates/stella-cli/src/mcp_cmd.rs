@@ -269,6 +269,73 @@ pub(crate) fn health_label(health: &[stella_mcp::ServerHealth], name: &str) -> O
     })
 }
 
+/// The measured `initialize` round trip for one server, in whole
+/// milliseconds — SPEC §9.3's latency column.
+///
+/// `None` when the server reported no health row or has no live connection
+/// that measured one. Never rounded up from zero: a sub-millisecond stdio
+/// server legitimately reads `0ms`, and that is a measurement, unlike the
+/// absent case beside it.
+pub(crate) fn latency_ms(health: &[stella_mcp::ServerHealth], name: &str) -> Option<u64> {
+    health
+        .iter()
+        .find(|h| h.name == name)
+        .and_then(|h| h.latency)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// The session's starting capability grants (SPEC §9.3's first-enable
+/// handshake): the names from `servers` whose recorded decision permits use.
+///
+/// Three sources reach `servers` and each answers the question differently,
+/// which is why this reads the decision rather than a flag:
+///
+/// - **A registry install** writes `granted = false`, so it starts withheld
+///   until its handshake is reviewed. That door is the one the gate exists
+///   for: a search result is a keystroke away from a `cmd` line this process
+///   spawns.
+/// - **A hand-written `mcp.toml` entry** records no decision, and is granted.
+///   Writing the transport by hand is already the review the gate asks for.
+/// - **A plugin-contributed server** is not in `mcp.toml` at all, and is
+///   granted for the same reason: installing the plugin was the decision, and
+///   there is no entry a grant could even be recorded in.
+///
+/// A config that will not parse yields an empty set — deny, because the
+/// alternative is granting everything on the strength of a file nobody could
+/// read.
+pub fn initial_grants(
+    workspace_root: &Path,
+    servers: &[stella_mcp::McpServerConfig],
+) -> stella_mcp::CapabilityGrants {
+    let cfg = load_config(workspace_root).unwrap_or_default();
+    let granted = servers
+        .iter()
+        .filter(|s| {
+            cfg.grant_decision(&s.name)
+                .is_none_or(|decision| decision.unwrap_or(true))
+        })
+        .map(|s| s.name.clone())
+        .collect();
+    std::sync::Arc::new(std::sync::Mutex::new(granted))
+}
+
+/// Record the operator's capability grant for a configured server (SPEC
+/// §9.3's first-enable handshake) and return whether the server existed to
+/// grant.
+///
+/// The decision persists in `.stella/mcp.toml`, so it survives the session it
+/// was made in — and so a run with no deck attached reads the same answer the
+/// deck recorded. The live session's grant set is the caller's to update; this is
+/// only the write to disk.
+pub fn set_granted(workspace_root: &Path, name: &str, granted: bool) -> Result<bool, String> {
+    let mut cfg = load_config(workspace_root)?;
+    if !cfg.set_granted(name, granted) {
+        return Ok(false);
+    }
+    save_config(workspace_root, &cfg)?;
+    Ok(true)
+}
+
 /// Search a registry over HTTP (async, non-blocking).
 pub async fn search(
     registry_url: &str,
@@ -286,6 +353,13 @@ pub async fn search(
 /// Install (or overwrite — MCP servers are not versioned) one server entry,
 /// recording the publisher's [`ServerCard`] beside the transport so the local
 /// alias is not the only thing the tab can show later.
+///
+/// A NEW entry lands **ungranted**: nothing it advertises is offered to the
+/// model and every call to it is refused until its handshake is reviewed
+/// (SPEC §9.3, and `stella_mcp::McpServerEntry::granted`). Re-installing over
+/// an existing alias leaves the recorded decision alone — the operator granted
+/// *that alias*, and re-fetching the same publisher's transport is not a new
+/// question.
 pub fn install(
     workspace_root: &Path,
     alias: &str,
@@ -480,8 +554,15 @@ pub fn usage_stats(workspace_root: &Path) -> Result<Vec<stella_store::McpUsageSt
 }
 
 /// Resolve a registry server name to `(alias, first install option)` — the
-/// non-interactive install path (`stella mcp install <name>`). Prefers an exact
-/// name match; a server with neither a runnable package nor a remote errors.
+/// non-interactive install path (`stella mcp install <name>` and the deck's
+/// `↵` on a search result). Prefers an exact name match; a server with neither
+/// a runnable package nor a remote errors.
+///
+/// **An entry the registry does not vouch for is refused here** (SPEC §9.3,
+/// "Unsigned blocked"). The check belongs on this path and not only in the
+/// paint: an install writes a `cmd` line that this process later spawns, and
+/// both callers reach it — so a row rendered red and a name typed at a shell
+/// get the same answer.
 pub async fn resolve_install(
     registry_url: &str,
     name: &str,
@@ -494,6 +575,9 @@ pub async fn resolve_install(
         .ok_or_else(|| {
             format!("no registry server named `{name}` — try `stella mcp search {name}`")
         })?;
+    if let Some(reason) = entry.signature.refusal() {
+        return Err(format!("`{name}`: {reason}"));
+    }
     let alias = entry.server.default_alias();
     let mut options = entry.server.install_options();
     if options.is_empty() {
@@ -521,6 +605,9 @@ pub fn run(cmd: &crate::McpCmd) -> Result<(), String> {
         ),
         crate::McpCmd::Install { name, alias } => run_install(&workspace_root, name, alias.clone()),
         crate::McpCmd::Remove { name } => run_remove(&workspace_root, name),
+        crate::McpCmd::Grant { name, yes, revoke } => {
+            run_grant(&workspace_root, name, *yes, *revoke)
+        }
         crate::McpCmd::Login { name } => run_login(&workspace_root, name),
         crate::McpCmd::Logout { name } => run_logout(&workspace_root, name),
         crate::McpCmd::Usage => run_usage(&workspace_root),
@@ -552,12 +639,20 @@ fn run_list(workspace_root: &Path) -> Result<(), String> {
         } else {
             "· no auth".dimmed()
         };
+        // Whether the model may use it at all comes before what it is: a
+        // withheld server is configured, connectable, and inert.
+        let grant = if cfg.is_granted(name) {
+            "".normal()
+        } else {
+            format!("· ungranted (stella mcp grant {name})").yellow()
+        };
         println!(
-            "  {} {} {} {}",
+            "  {} {} {} {} {}",
             "·".green(),
             card.display_name(name).bright_magenta(),
             format!("[{}]", transport.kind_label()).dimmed(),
-            auth
+            auth,
+            grant
         );
         // The alias is the routing token — the thing to type — so it stays
         // visible even when a title has taken the headline slot.
@@ -571,7 +666,8 @@ fn run_list(workspace_root: &Path) -> Result<(), String> {
     }
     println!(
         "\n  {}",
-        "enable/disable is per-session — toggle servers live in the deck's MCP tab (/mcp)."
+        "enable/disable is per-session — toggle servers live in the deck's MCP tab (/mcp). \
+         A grant is not: it is recorded in mcp.toml and read by every session."
             .dimmed()
     );
     Ok(())
@@ -596,11 +692,25 @@ fn run_search(workspace_root: &Path, query: &str, limit: u32) -> Result<(), Stri
     {
         let server = &entry.server;
         let kinds = install_kinds(server);
+        // Provenance beside the name, and in the same words the deck's MCP
+        // tab uses: tier, installs, signature — the three facts that decide
+        // whether the next line is worth reading (SPEC §9.3).
+        let signature = if entry.signature.installable() {
+            entry.signature.label().green()
+        } else {
+            entry.signature.label().red()
+        };
         println!(
-            "  {} {} {}",
+            "  {} {} {} {} {} {}",
             "·".green(),
             server.name.bright_magenta(),
-            format!("[{kinds}]").dimmed()
+            format!("[{kinds}]").dimmed(),
+            entry.tier.label().dimmed(),
+            match entry.installs {
+                Some(n) => format!("{n} installs").dimmed(),
+                None => "installs unknown".dimmed(),
+            },
+            signature
         );
         if let Some(desc) = &server.description {
             println!("      {}", truncate(desc, 100).dimmed());
@@ -609,7 +719,12 @@ fn run_search(workspace_root: &Path, query: &str, limit: u32) -> Result<(), Stri
     if page.next_cursor.is_some() {
         println!("\n  {}", "more results available (pagination)".dimmed());
     }
-    println!("\n  {}", "install with: stella mcp install <name>".dimmed());
+    println!(
+        "\n  {}",
+        "install with: stella mcp install <name> — a blocked entry is refused, then \
+         `stella mcp grant <name>` reviews what an installed one declares"
+            .dimmed()
+    );
     Ok(())
 }
 
@@ -676,6 +791,138 @@ fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
         oauth_store_path(workspace_root)?.display()
     );
     Ok(())
+}
+
+/// `stella mcp grant <name>` — SPEC §9.3's first-enable handshake for a shell
+/// rather than the deck, and the remedy every ungranted-server refusal names.
+///
+/// It connects, prints what the server declares, and records the decision.
+/// Connecting is the point: the capabilities being granted are what the
+/// process on the other end announces right now, not what a registry card once
+/// said, and nothing short of asking it can show them.
+///
+/// `--revoke` withdraws a grant. It writes `granted = false` rather than
+/// clearing the key, because "reviewed and declined" and "never asked" are
+/// different states and only the first should survive a re-read.
+fn run_grant(workspace_root: &Path, name: &str, yes: bool, revoke: bool) -> Result<(), String> {
+    let cfg = load_config(workspace_root)?;
+    let transport = cfg.get(name).cloned().ok_or_else(|| {
+        format!(
+            "no MCP server `{name}` in {}",
+            mcp_toml_path(workspace_root).display()
+        )
+    })?;
+    if revoke {
+        set_granted(workspace_root, name, false)?;
+        println!(
+            "  {} revoked {} — its tools are no longer offered to the model",
+            "◆".bright_cyan(),
+            name.bright_magenta()
+        );
+        return Ok(());
+    }
+
+    crate::plain::section_header(&format!("MCP handshake — {name}"));
+    let server = stella_mcp::McpServerConfig {
+        name: name.to_string(),
+        transport,
+        candidate_safe: cfg.is_candidate_safe(name),
+    };
+    let auth = oauth_manager(workspace_root)?;
+    // No grant set on this client: it never calls a tool, and gating the
+    // handshake would make the capabilities unreadable — which is the one
+    // thing this command exists to prevent.
+    let set = runtime()?.block_on(stella_mcp::McpToolSet::connect_with_auth(
+        std::slice::from_ref(&server),
+        crate::agent::MCP_CONNECT_TIMEOUT,
+        Some(auth),
+    ));
+    if let Some((_, reason)) = set.failed_servers().iter().find(|(s, _)| s == name) {
+        return Err(format!(
+            "`{name}` did not connect, so it has declared nothing to grant: {reason}"
+        ));
+    }
+    if let Some((_, reason)) = set.auth_required_servers().iter().find(|(s, _)| s == name) {
+        return Err(format!(
+            "`{name}` needs a login before it will declare anything: {reason} \
+             (run `stella mcp login {name}`)"
+        ));
+    }
+
+    if let Some(identity) = set.identity(name) {
+        let announced = identity
+            .title
+            .or(identity.name)
+            .unwrap_or_else(|| "(no name announced)".to_string());
+        println!(
+            "  {} announces itself as {} {}",
+            "·".green(),
+            announced.bright_magenta(),
+            format!("[{}]", identity.protocol_version).dimmed()
+        );
+    }
+    println!(
+        "  {} reached at {}",
+        "·".green(),
+        endpoint_summary(&server.transport).dimmed()
+    );
+    let tools = set.advertised_tools(name);
+    if tools.is_empty() {
+        println!("  {}", "it declares no tools at all".yellow());
+    } else {
+        println!(
+            "\n  {}",
+            format!(
+                "it declares {} tool(s), every one of which the model may call once granted:",
+                tools.len()
+            )
+            .bold()
+        );
+        for tool in tools {
+            println!("    {} {}", "·".green(), tool.name.bright_magenta());
+            let summary = tool
+                .description
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or_default();
+            if !summary.is_empty() {
+                println!("        {}", truncate(summary, 100).dimmed());
+            }
+        }
+    }
+    runtime()?.block_on(set.close_all());
+
+    if !yes && !confirm_grant(name)? {
+        println!("  {} not granted — `{}` stays withheld", "·".dimmed(), name);
+        return Ok(());
+    }
+    set_granted(workspace_root, name, true)?;
+    println!(
+        "\n  {} granted {} — its tools are offered to the model from the next session",
+        "◆".bright_cyan(),
+        name.bright_magenta()
+    );
+    Ok(())
+}
+
+/// The interactive half of `stella mcp grant`. Anything but an explicit `y`
+/// declines, including an unreadable or closed stdin: a grant is the one
+/// answer that must never be arrived at by default.
+fn confirm_grant(name: &str) -> Result<bool, String> {
+    use std::io::Write as _;
+    print!("\n  grant these capabilities to `{name}`? [y/N] ");
+    std::io::stdout()
+        .flush()
+        .map_err(|e| format!("cannot write to stdout: {e}"))?;
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return Ok(false);
+    }
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
 }
 
 fn run_logout(workspace_root: &Path, name: &str) -> Result<(), String> {
@@ -834,6 +1081,88 @@ mod tests {
         assert!(load_config(&dir).unwrap().names().is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **The witness (#5047, persistence).** A registry install lands
+    /// withheld and stays withheld across a reload; the grant survives the
+    /// same round trip. Without the on-disk half, every session would ask
+    /// again — which is how operators learn to grant without reading.
+    #[test]
+    fn an_installed_server_lands_ungranted_and_the_grant_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let transport = McpTransport::Stdio {
+            cmd: "npx".into(),
+            args: vec!["-y".into(), "some-mcp".into()],
+            env: BTreeMap::new(),
+        };
+        install(root, "some", transport.clone(), ServerCard::default()).unwrap();
+
+        assert!(
+            !load_config(root).unwrap().is_granted("some"),
+            "a registry install must not be usable before its handshake is read"
+        );
+        assert!(set_granted(root, "some", true).unwrap());
+        assert!(load_config(root).unwrap().is_granted("some"));
+
+        // Re-installing the same alias does not re-ask: the operator granted
+        // THAT alias, and re-fetching the publisher's transport is not a new
+        // question.
+        install(root, "some", transport, ServerCard::default()).unwrap();
+        assert!(load_config(root).unwrap().is_granted("some"));
+
+        // Revoking is a recorded "no", distinguishable from never having been
+        // asked — which is what a hand-written entry looks like.
+        assert!(set_granted(root, "some", false).unwrap());
+        assert_eq!(
+            load_config(root).unwrap().grant_decision("some"),
+            Some(Some(false))
+        );
+        assert!(!set_granted(root, "absent", true).unwrap());
+    }
+
+    /// Which of the three doors a server came through decides its starting
+    /// grant. A hand-written entry and a plugin's contribution were both
+    /// chosen by the operator; a registry install is one keystroke.
+    #[test]
+    fn the_session_grants_come_from_how_each_server_was_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let transport = || McpTransport::Stdio {
+            cmd: "npx".into(),
+            args: vec![],
+            env: BTreeMap::new(),
+        };
+        // Installed from the registry: a recorded "not yet".
+        install(root, "installed", transport(), ServerCard::default()).unwrap();
+        // Hand-written: no decision recorded at all.
+        let mut cfg = load_config(root).unwrap();
+        cfg.servers.insert(
+            "handwritten".to_string(),
+            stella_mcp::config::McpServerEntry {
+                transport: transport(),
+                candidate_safe: false,
+                granted: None,
+                card: ServerCard::default(),
+            },
+        );
+        save_config(root, &cfg).unwrap();
+
+        let plan: Vec<stella_mcp::McpServerConfig> = ["installed", "handwritten", "contributed"]
+            .into_iter()
+            .map(|name| stella_mcp::McpServerConfig {
+                name: name.to_string(),
+                transport: transport(),
+                candidate_safe: false,
+            })
+            .collect();
+        let grants = initial_grants(root, &plan);
+        let granted = grants.lock().unwrap();
+        assert!(!granted.contains("installed"), "{granted:?}");
+        assert!(granted.contains("handwritten"), "{granted:?}");
+        // Not in mcp.toml at all — a plugin shipped it, and installing the
+        // plugin was the decision.
+        assert!(granted.contains("contributed"), "{granted:?}");
     }
 
     #[cfg(unix)]

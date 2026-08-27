@@ -51,6 +51,7 @@ use crate::package::{
     McpContribution, RecordContribution, SkillContribution, ToolContribution,
     validate_contributions,
 };
+use crate::panel::PanelGrant;
 use crate::runtime::{ProcessBlock, Runtime};
 use crate::wire::WrapperPoint;
 use crate::wrapper::{StageName, Wrapper};
@@ -385,6 +386,17 @@ pub struct PluginManifest {
     /// grade buys no driver capability.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver: Option<DriverGrant>,
+    /// The `[panel]` registration — this plugin draws a rectangle of the
+    /// screen, and accepts the limits that come with one ([`PanelGrant`],
+    /// `design/tui-v2/SPEC.md` §12). **Absent = no panel**, as an absent
+    /// `[driver]` is no driver: the host leases no rectangle, so there is
+    /// nothing for a frame to be checked against.
+    ///
+    /// Independent of the ladder in both directions: drawing is not a say in a
+    /// turn, so no [`Participation`] grade buys a panel and holding one buys no
+    /// grade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel: Option<PanelGrant>,
     /// Arbiter only: the enumerable definition of done. Keys are the names
     /// a hold cites; values are the human-readable statement of each
     /// requirement. A `BTreeMap` so iteration order is deterministic
@@ -661,6 +673,14 @@ impl PluginManifest {
             if let Some(process) = &driver.process {
                 process.validate(ProcessBlock::DriverProcess)?;
             }
+        }
+
+        // The panel block's rules live on the grant itself, beside the type
+        // they govern (`PanelGrant::validate`), and there is no grade check
+        // among them: a panel is drawn between turns, so no standing inside one
+        // could be required of it.
+        if let Some(panel) = &self.panel {
+            panel.validate()?;
         }
 
         if grant.hooks.contains(&HookEvent::Stop) && !participation.includes(Participation::Arbiter)

@@ -42,6 +42,13 @@ pub struct McpServerInfo {
     pub connected: bool,
     /// Short health label when connected (e.g. `live`, `reconnecting`).
     pub health: Option<String>,
+    /// Round-trip time of the connect handshake's `initialize` request, in
+    /// whole milliseconds — SPEC §9.3's latency column.
+    ///
+    /// `None` for a server with no live connection to have measured, and the
+    /// row then shows nothing rather than `0ms`: an unmeasured server would
+    /// otherwise sort and read as the nearest one on the list.
+    pub latency_ms: Option<u64>,
     /// How many tools it advertises this session (0 when disabled/unconnected).
     pub tool_count: usize,
     /// Tools this server advertised that were **refused** past the per-server
@@ -77,7 +84,34 @@ pub struct McpServerInfo {
     /// The `candidate_safe = true` opt-in (issue #248 Phase 1) — this server's
     /// tools are shared into Best-of-N candidate workspaces.
     pub candidate_safe: bool,
+    /// Whether the operator has granted this server its declared capabilities
+    /// (SPEC §9.3's first-enable handshake). An ungranted server advertises no
+    /// tools to the model and answers every call with a refusal, so the row
+    /// says so and `e` opens the handshake instead of toggling.
+    ///
+    /// `true` for a hand-written `mcp.toml` entry that records no decision —
+    /// see `stella_mcp::McpServerEntry::granted` for why writing the transport
+    /// by hand is itself the grant.
+    pub granted: bool,
 }
+
+impl McpServerInfo {
+    /// Whether this row is the pinned graph server — SPEC §9.3's
+    /// `graph is pinned · it is the product, not an integration`.
+    ///
+    /// Matched on the alias, which is the tool-namespace segment: the graph's
+    /// tools are reachable as `mcp__graph__…` or they are not the graph's, so
+    /// the alias is the only name that can decide this. A row named `graph`
+    /// that is somebody else's server still pins, and correctly — that name is
+    /// what every tool call in the session will route through.
+    pub fn is_graph(&self) -> bool {
+        self.name == GRAPH_SERVER
+    }
+}
+
+/// The alias stella's own graph server is configured under. The MCP tab pins
+/// it above every third-party row.
+pub const GRAPH_SERVER: &str = "graph";
 
 /// The outcome of an MCP registry search requested from the tab.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,7 +125,80 @@ pub struct McpSearchOutcome {
     pub has_more: bool,
 }
 
+/// How far a registry's own publisher verification goes for one entry — SPEC
+/// §9.3's `official · vendor · community` column.
+///
+/// A display mirror of `stella_mcp::SourceTier`, which is where the derivation
+/// and its evidence live. This crate takes only leaf dependencies (see its
+/// `Cargo.toml`), and `stella-mcp` is not one; the driver maps across the seam
+/// with an exhaustive `match`, so a tier added there fails to compile here
+/// rather than rendering as something it is not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum McpSourceTier {
+    /// The registry operator's own namespace.
+    Official,
+    /// A namespace under a domain the publisher proved they control.
+    Vendor,
+    /// A code-host account's namespace, or the registry's anonymous one.
+    #[default]
+    Community,
+}
+
+impl McpSourceTier {
+    /// The one word the row renders.
+    pub fn label(self) -> &'static str {
+        match self {
+            McpSourceTier::Official => "official",
+            McpSourceTier::Vendor => "vendor",
+            McpSourceTier::Community => "community",
+        }
+    }
+}
+
+/// Whether the registry attributes an entry to a verified publisher and still
+/// stands behind it — SPEC §9.3's signature column, and the reason a row is
+/// blocked.
+///
+/// The display mirror of `stella_mcp::SignatureStatus`; see that type for what
+/// "signed" claims (the publisher's namespace was verified at publish time)
+/// and what it does not (nothing verifies the package bytes). `Unsigned` is
+/// the default so a row assembled without an answer is refused rather than
+/// installed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum McpSignature {
+    /// Attributed to a verified namespace, lifecycle `active`.
+    Signed,
+    /// Attributed to nobody.
+    #[default]
+    Unsigned,
+    /// Published, then withdrawn by the registry.
+    Withdrawn,
+}
+
+impl McpSignature {
+    /// Whether install may proceed. The driver enforces the same rule against
+    /// the `stella-mcp` value; this is what stops the row from *offering* it.
+    pub fn installable(self) -> bool {
+        matches!(self, McpSignature::Signed)
+    }
+
+    /// The label the row renders. The blocked states carry the word `blocked`
+    /// rather than relying on the red alone (SPEC §13).
+    pub fn label(self) -> &'static str {
+        match self {
+            McpSignature::Signed => "signed",
+            McpSignature::Unsigned => "unsigned · blocked",
+            McpSignature::Withdrawn => "withdrawn · blocked",
+        }
+    }
+}
+
 /// One registry search result row.
+///
+/// The three provenance fields are what SPEC §9.3 asks a registry row to carry
+/// before an operator spends a keystroke on it: who the registry says
+/// published this, how many people run it, and whether the registry vouches
+/// for it at all.
 #[derive(Clone, Debug, PartialEq)]
 pub struct McpSearchItem {
     pub name: String,
@@ -100,6 +207,24 @@ pub struct McpSearchItem {
     pub kinds: String,
     /// Whether a server of this name is already configured locally.
     pub installed: bool,
+    /// How far the registry's publisher verification goes for this entry.
+    pub tier: McpSourceTier,
+    /// Recorded installs, where the registry publishes a count. `None` renders
+    /// as unknown, never as `0` — a registry that counts nothing must not make
+    /// every server look unused.
+    pub installs: Option<u64>,
+    /// Whether the registry attributes and stands behind this entry. Anything
+    /// but [`McpSignature::Signed`] is refused by the install path, and the row
+    /// says so in words as well as colour (SPEC §13).
+    pub signature: McpSignature,
+}
+
+impl McpSearchItem {
+    /// Whether pressing install on this row can do anything — the row's own
+    /// copy of the policy the driver enforces.
+    pub fn installable(&self) -> bool {
+        self.signature.installable()
+    }
 }
 
 /// What the live server said about itself during the `initialize` handshake.
@@ -190,6 +315,12 @@ pub struct McpServerDetail {
     pub enabled: bool,
     pub connected: bool,
     pub health: Option<String>,
+    /// The connect handshake's `initialize` round trip in whole milliseconds —
+    /// see [`McpServerInfo::latency_ms`].
+    pub latency_ms: Option<u64>,
+    /// Whether the operator has granted this server its declared capabilities
+    /// — see [`McpServerInfo::granted`].
+    pub granted: bool,
     /// Tools refused past the per-server cap (a floor — see
     /// [`McpServerInfo::dropped_tools`]).
     pub dropped_tools: usize,

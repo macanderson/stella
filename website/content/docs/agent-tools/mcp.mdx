@@ -13,13 +13,24 @@ The quickest way to add a server is the [`stella mcp`](/docs/commands/mcp) comma
 
 ```bash
 stella mcp search github          # find one in the registry
-stella mcp install github         # write the .stella/mcp.toml entry
-stella mcp list                   # what's configured, and which have credentials
+stella mcp install github         # write the .stella/mcp.toml entry — withheld until granted
+stella mcp grant github           # read what it declares, then let the model call it
+stella mcp list                   # what's configured, which have credentials, which are withheld
 stella mcp usage                  # per-server, per-tool call counts from local telemetry
 stella mcp remove github          # drop one
 ```
 
 Enabling and disabling a server is deliberately *not* a CLI verb: it is session-scoped (it changes a running conversation's tool set), so it lives in the deck's MCP tab (`/mcp`).
+
+## An installed server is withheld until you grant it
+
+A server you install from a registry is a stranger's command line, and installing it takes one keystroke. So a newly installed server **connects but cannot act**: none of its tools are offered to the model, and any call to one comes back as a refusal.
+
+The handshake is what you review. Connecting is how a server's declared capabilities become knowable at all, so the gate sits between the handshake and the first tool call rather than before the connect: stella asks the server what it offers, shows you the list, and records your answer.
+
+Either surface asks the same question. `e` on an ungranted row in the deck's MCP tab (`/mcp`) shows the declared tools and grants them; [`stella mcp grant <name>`](/docs/commands/mcp) does the same from a shell, with `--yes` for provisioning and `--revoke` to withdraw.
+
+The answer is recorded as `granted` in `.stella/mcp.toml`, so it is read by every session — you are asked once, not every morning. An entry you wrote by hand carries no `granted` key and is usable without a grant: writing the transport yourself is already the review the gate is asking for.
 
 Because the tools are added at session start, connecting a new server takes effect on your next session. Each server gets a **10-second** connect budget, and connects are isolated per server — one that hangs or fails is recorded and skipped, it does not take the session down.
 
@@ -91,6 +102,12 @@ A server entry needs a `transport` discriminant — `stdio` or `http` — and th
   <OptionCard name="candidate_safe" defaultValue="false">
     Opt this server into Best-of-N candidate runs — see
     [below](#mcp-in-best-of-n-candidates). Never inferred, always human-set.
+  </OptionCard>
+  <OptionCard name="granted">
+    Whether the model may call this server's tools. Written by a grant, and by
+    an install (which writes `false`). Absent on an entry you wrote yourself,
+    which reads as granted — see
+    [above](#an-installed-server-is-withheld-until-you-grant-it).
   </OptionCard>
 </CardGrid>
 

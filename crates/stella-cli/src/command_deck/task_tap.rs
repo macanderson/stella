@@ -85,6 +85,19 @@ impl<'a> TaskTap<'a> {
         let guard = board.lock().unwrap_or_else(|p| p.into_inner());
         guard.items().to_vec()
     }
+
+    /// This turn's plan graph — every revision, the planned path each
+    /// authored, and what actually ran (#5037).
+    ///
+    /// `None` when no plan was ever put to a driver: an unattended run, a
+    /// worker lane, a board that never reached the threshold. That is an
+    /// answer rather than a gap — nothing was approved, so there is no planned
+    /// path for an actual one to be compared against.
+    pub(crate) fn plan_graph(&self) -> Option<stella_core::PlanGraph> {
+        self.plan_gate
+            .as_ref()
+            .and_then(plan_gate::PlanGate::plan_graph)
+    }
 }
 
 #[async_trait]
@@ -110,6 +123,20 @@ impl ToolExecutor for TaskTap<'_> {
             return refused;
         }
         let output = self.inner.execute(name, input).await;
+        if let Some(gate) = &self.plan_gate {
+            // Any tool, not only the board's: the compiler error that demands
+            // a repair step comes from `bash` or `edit_file`, and it is the
+            // cause the plan revision it provokes will carry (#5037).
+            gate.observe(&output);
+            // A `[:THEN]` edge — the actual path — written where the task
+            // actually started, and only on the success that started it.
+            if name == stella_tools::tasks::START
+                && matches!(output, ToolOutput::Ok { .. })
+                && let Some(id) = input.get("id").and_then(Value::as_str)
+            {
+                gate.record_run(id);
+            }
+        }
         if stella_tools::tasks::is_board_tool(name)
             && let Some(sup) = &self.supervisor
         {
@@ -233,6 +260,29 @@ mod tests {
         }
         async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
             self.0.store(true, Ordering::SeqCst);
+            ToolOutput::Ok {
+                content: "started".into(),
+                data: None,
+            }
+        }
+    }
+
+    /// An executor whose board calls succeed and whose `bash` reports the
+    /// compiler error that provokes a plan revision (SPEC 8.1).
+    struct FailingBash;
+
+    #[async_trait]
+    impl ToolExecutor for FailingBash {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
+            if name == "bash" {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    "error[E0432]: unresolved import `crate::plan`\n  --> src/lib.rs:3:5",
+                );
+            }
             ToolOutput::Ok {
                 content: "started".into(),
                 data: None,
@@ -504,6 +554,145 @@ mod tests {
             revisions,
             vec![Some(1), Some(2)],
             "a re-proposal after a refusal is r2, not a second r1"
+        );
+    }
+
+    /// **The #5037 witness.** A plan that gained a task after it was approved
+    /// is a *changed* plan, so it goes back to the driver as `r2` — SPEC 8.1's
+    /// "a proposed plan revision, never a silent fix", and the plan-graph
+    /// source SPEC 7.4 asks the breadcrumb's `r{n}` to come from.
+    ///
+    /// Fails before this change: the gate latched on its first yes, so the
+    /// second start returned without asking and without emitting, the inserted
+    /// task ran unannounced, and the revision number could only ever move by a
+    /// driver refusing a draft — which left the interesting half of #4333 with
+    /// no producer at all.
+    #[tokio::test]
+    async fn a_plan_that_grew_after_approval_is_re_proposed_at_the_next_revision() {
+        let (registry, ran, mut rx, events) = gated(3, Some(picked("Start work", None)));
+        let inner = Ran(ran.clone());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
+
+        tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
+            .await;
+
+        // A gate failed and the model inserted the repair step SPEC 8.1 is
+        // about. The plan is now four steps, not the three that were agreed.
+        {
+            let board = registry.task_board();
+            let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
+            guard.create("repair the unresolved import", None, None);
+        }
+
+        let out = tap
+            .execute(stella_tools::tasks::START, &serde_json::json!({"id": "4"}))
+            .await;
+        assert!(matches!(out, ToolOutput::Ok { .. }), "{out:?}");
+
+        let revisions: Vec<Option<u32>> = drain(&mut rx)
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ScopeReview { proposal } => Some(proposal.revision),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            revisions,
+            vec![Some(1), Some(2)],
+            "an inserted task authors r2 and is put to the driver before it runs"
+        );
+    }
+
+    /// The other half of the witness above, and the reason the comparison is
+    /// against the plan rather than against the open rows: a task *finishing*
+    /// is not a plan change, so nobody is asked about it.
+    #[tokio::test]
+    async fn finishing_a_step_is_not_a_plan_change() {
+        let (registry, ran, mut rx, events) = gated(3, Some(picked("Start work", None)));
+        let inner = Ran(ran.clone());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
+
+        tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
+            .await;
+        {
+            let board = registry.task_board();
+            let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .set_status("1", TaskStatus::Completed)
+                .expect("the board accepts a completion");
+        }
+        tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "2"}))
+            .await;
+
+        let reviews = drain(&mut rx)
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ScopeReview { .. }))
+            .count();
+        assert_eq!(reviews, 1, "the plan did not change, so nobody was asked");
+    }
+
+    /// The two lanes SPEC 7.4 names, recorded from one turn's board traffic:
+    /// approval writes `[:NEXT]`, each step that starts writes `[:THEN]`, and
+    /// the task inserted afterwards is the one divergence — carrying the cause
+    /// the failing tool before it supplied.
+    #[tokio::test]
+    async fn the_turns_plan_graph_records_both_lanes_and_the_drift_between_them() {
+        let (registry, _ran, _rx, events) = gated(3, Some(picked("Start work", None)));
+        let inner = FailingBash;
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
+
+        tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
+            .await;
+        tap.execute("bash", &serde_json::json!({"command": "cargo test"}))
+            .await;
+        {
+            let board = registry.task_board();
+            let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
+            guard.create("repair the unresolved import", None, None);
+        }
+        tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "4"}))
+            .await;
+
+        let graph = tap.plan_graph().expect("a plan was put to the driver");
+        assert_eq!(graph.planned_count(), 3, "the plan as approved");
+        assert_eq!(
+            graph
+                .actual()
+                .iter()
+                .map(|task| task.id.clone())
+                .collect::<Vec<_>>(),
+            vec!["1".to_string(), "4".to_string()],
+            "the actual path is what started, in the order it started"
+        );
+
+        let divergences = graph.divergences();
+        assert_eq!(divergences.len(), 1, "{divergences:?}");
+        assert_eq!(divergences[0].task.id, "4");
+        assert_eq!(
+            divergences[0].cause.as_str(),
+            "error[E0432]: unresolved import `crate::plan`",
+            "the failing tool before the insertion is its cause (SPEC 8.1)"
         );
     }
 

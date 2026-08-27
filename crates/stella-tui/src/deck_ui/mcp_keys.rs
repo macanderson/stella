@@ -1,11 +1,11 @@
-//! MCP-tab key handling: four modal layers over one tab.
+//! MCP-tab key handling: five modal layers over one tab.
 //!
 //! The inspector (ctrl+o) outranks everything — it is the topmost surface, so
 //! it claims keys before Browse's letter actions can fire on a row that is no
-//! longer visible. Below it, Search and Auth are modal in the same sense
-//! (every key is swallowed so nothing leaks into the composer), while Browse's
-//! letter actions gate on `composer_empty` so they never shadow the first
-//! character of a prompt.
+//! longer visible. Below it, Search, Auth and the first-enable Handshake are
+//! modal in the same sense (every key is swallowed so nothing leaks into the
+//! composer), while Browse's letter actions gate on `composer_empty` so they
+//! never shadow the first character of a prompt.
 //!
 //! Split from `deck_ui.rs` (#629's 1500-line ratchet).
 
@@ -13,12 +13,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{DeckAction, DeckUi};
 use crate::envelope::{Secret, WorkspaceInput};
-use crate::views::mcp_tab::{AuthPrompt, AuthStep, McpInspector, McpMode};
+use crate::views::mcp_tab::{AuthPrompt, AuthStep, HandshakeGate, McpInspector, McpMode};
 
-/// MCP tab keys. Three sub-modes: Browse (navigate the configured servers and
+/// MCP tab keys. Four sub-modes: Browse (navigate the configured servers and
 /// act on the selection), Search (type a registry query, then Enter to search
-/// and Enter again to install the highlighted result), and Auth (a two-step
-/// masked credential prompt). Search/Auth are modal — they claim every key so
+/// and Enter again to install the highlighted result), Auth (a two-step masked
+/// credential prompt), and Handshake (read one server's declared capabilities
+/// and grant or deny them). The last three are modal — they claim every key so
 /// typing never leaks into the composer — while Browse's letter actions gate on
 /// `composer_empty` so they don't shadow the first character of a prompt.
 pub(super) fn handle_mcp_key(
@@ -36,7 +37,48 @@ pub(super) fn handle_mcp_key(
         McpMode::Browse => handle_mcp_browse_key(key, ui, composer_empty),
         McpMode::Search => Some(handle_mcp_search_key(key, ui)),
         McpMode::Auth => Some(handle_mcp_auth_key(key, ui)),
+        McpMode::Handshake => Some(handle_mcp_handshake_key(key, ui)),
     }
+}
+
+/// Keys while the first-enable handshake is up: read it, grant it, or walk
+/// away.
+///
+/// Modal, and there is no toggle here — `e` from Browse is what opened this,
+/// and offering it again inside would give the operator a second way to enable
+/// the server that skips the page they were sent here to read.
+///
+/// `g` stands down until the detail has arrived: a grant is a decision about
+/// declared capabilities, and capabilities nobody has been shown cannot be
+/// granted. Anything else — Esc, or leaving the tab — denies by omission,
+/// which is the safe direction and needs no keystroke of its own.
+fn handle_mcp_handshake_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    if super::list_nav::closes(key) {
+        ui.mcp.handshake = None;
+        ui.mcp.mode = McpMode::Browse;
+        return DeckAction::Handled;
+    }
+    let Some(gate) = ui.mcp.handshake.as_mut() else {
+        // No gate to answer: fall back rather than swallow every key forever.
+        ui.mcp.mode = McpMode::Browse;
+        return DeckAction::Handled;
+    };
+    let mut top = usize::from(gate.scroll);
+    if super::list_nav::offset(key, &mut top, true) {
+        gate.scroll = u16::try_from(top).unwrap_or(u16::MAX);
+        return DeckAction::Handled;
+    }
+    if matches!(key.code, KeyCode::Char('g')) {
+        if gate.detail.is_none() {
+            return DeckAction::Handled;
+        }
+        let name = gate.server.clone();
+        ui.mcp.handshake = None;
+        ui.mcp.mode = McpMode::Browse;
+        ui.mcp.status = Some(format!("granted {name} — enabling"));
+        return DeckAction::Send(WorkspaceInput::McpGrant { name });
+    }
+    DeckAction::Handled
 }
 
 /// Keys while the ctrl+o inspector is up: scroll, ask the registry, close.
@@ -121,13 +163,30 @@ fn handle_mcp_browse_key(
             ui.mcp.status = None;
             Some(DeckAction::Handled)
         }
-        // Enable/disable the selected server (session-scoped, live).
+        // Enable/disable the selected server (session-scoped, live) — unless
+        // it has never been granted, in which case this is its FIRST enable
+        // and SPEC §9.3 says the handshake comes first. The toggle is not
+        // sent: enabling a server whose tools are withheld anyway would only
+        // flip a flag and leave the operator wondering why nothing happened.
         KeyCode::Char('e') | KeyCode::Char(' ') if composer_empty => {
-            ui.mcp.selected_server().map(|s| {
-                DeckAction::Send(WorkspaceInput::McpToggle {
-                    name: s.name.clone(),
-                })
-            })
+            let server = ui.mcp.selected_server()?;
+            let name = server.name.clone();
+            if !server.granted {
+                ui.mcp.handshake = Some(HandshakeGate {
+                    server: name.clone(),
+                    detail: None,
+                    scroll: 0,
+                });
+                ui.mcp.mode = McpMode::Handshake;
+                ui.mcp.status = None;
+                // `lookup: false` — reviewing what a server declares must not
+                // reach out to a third-party registry.
+                return Some(DeckAction::Send(WorkspaceInput::McpInspect {
+                    name,
+                    lookup: false,
+                }));
+            }
+            Some(DeckAction::Send(WorkspaceInput::McpToggle { name }))
         }
         // Enter the auth prompt for the selected server, prefilled with its
         // first configured credential field (if any).
@@ -199,6 +258,13 @@ fn handle_mcp_search_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             // Results already match the query → Enter installs the highlight;
             // otherwise Enter runs the search.
             if ui.mcp.results_match_query() {
+                // A blocked entry never becomes an install. The driver refuses
+                // it too — this arm is what stops the row from *offering* a
+                // spawn command the registry vouches for nobody on.
+                if let Some(refusal) = ui.mcp.selected_search_refusal() {
+                    ui.mcp.status = Some(refusal);
+                    return DeckAction::Handled;
+                }
                 match ui.mcp.selected_search_name().map(str::to_string) {
                     Some(name) => {
                         ui.mcp.status = Some(format!("installing {name}…"));

@@ -19,7 +19,7 @@
 /// ([`crate::enterprise_telemetry`]) — they are absent here, since
 /// the fresh-file probe must answer "has the versioned schema ever been
 /// created?" and those tables are created after it runs.
-pub(crate) const TABLES: [&str; 21] = [
+pub(crate) const TABLES: [&str; 23] = [
     "executions",
     "forgotten",
     "events",
@@ -41,6 +41,8 @@ pub(crate) const TABLES: [&str; 21] = [
     "step_receipt",
     "foundry_tools",
     "session_turn_diffs",
+    "plan_revisions",
+    "plan_edges",
 ];
 
 /// `executions` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the spine every other table
@@ -625,6 +627,47 @@ pub(crate) const TASKS_DDL: &str = "CREATE TABLE IF NOT EXISTS tasks (
        contract TEXT,
        updated_at INTEGER NOT NULL,
        UNIQUE(session_id, task_id)
+     );";
+
+/// `plan_revisions` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — one row per revision
+/// of one execution's plan, written by [`Store::record_plan_graph`](crate::Store::record_plan_graph)
+/// (`design/tui-v2/SPEC.md` §7.4). A revision is authored **beside** its
+/// predecessor rather than over it, so `r1` is still here after `r4` exists —
+/// which is what makes SPEC 7.3's `planned 6` recoverable at all.
+///
+/// `cause` is SQL NULL on revision 1 and only there: the plan as approved
+/// diverged from nothing, and every revision after it says why the plan left
+/// the path it was on. UNIQUE (execution_id, revision) is the upsert key, so
+/// re-writing a growing graph adds rows rather than duplicating them.
+pub(crate) const PLAN_REVISIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS plan_revisions (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       execution_id INTEGER NOT NULL,
+       revision INTEGER NOT NULL,
+       cause TEXT,
+       recorded_at INTEGER NOT NULL,
+       UNIQUE(execution_id, revision)
+     );";
+
+/// `plan_edges` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the two lanes of one
+/// execution's plan graph: `kind = 'next'` is the planned path at a revision,
+/// `kind = 'then'` is the actual path (`design/tui-v2/SPEC.md` §7.4).
+///
+/// `from_task` is SQL NULL for the head of a lane — the edge that follows the
+/// plan node itself, since there is no task before the first one. `to_subject`
+/// duplicates a column `tasks` already has: `/clear` deletes a session's board
+/// rows, and an audit trail whose lanes go blank when somebody resets their
+/// board is not one (see [`crate::plan_graph`]). UNIQUE
+/// (execution_id, kind, revision, position) is the upsert key.
+pub(crate) const PLAN_EDGES_DDL: &str = "CREATE TABLE IF NOT EXISTS plan_edges (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       execution_id INTEGER NOT NULL,
+       revision INTEGER NOT NULL,
+       kind TEXT NOT NULL,
+       position INTEGER NOT NULL,
+       from_task TEXT,
+       to_task TEXT NOT NULL,
+       to_subject TEXT NOT NULL,
+       UNIQUE(execution_id, kind, revision, position)
      );";
 
 /// `pull_requests` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — one row per tracked pull
