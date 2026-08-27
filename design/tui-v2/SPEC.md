@@ -434,10 +434,42 @@ Keep current information architecture (executions table, installed agents, agent
 
 ## 12. Plugin panel protocol
 
-- Plugins never emit raw ANSI. A plugin is leased a `Rect` and returns styled lines or a cell diff each tick; the host blits it into the buffer.
-- The host draws the panel border and title; plugin pixels cannot spoof stella chrome. Plugin panels use a distinct border treatment (host-owned, labeled `◳ panel · <plugin>`).
-- Handshake before any panel: manifest signature, declared capabilities, declared denials (no network, no write outside sandbox), then an explicit `[a]llow [d]eny` panel grant. Render the handshake in the transcript (silver rail).
-- Frame budget per panel (for example 30fps equivalent); over-budget panels are throttled with a visible tag.
+A plugin that installs tools and skills changes what stella can do. A plugin with a panel changes what a person **sees and touches** — so the panel is where a plugin becomes a piece of software with a face, and where the strongest limits belong.
+
+### 12.1 The frame
+
+- Plugins never emit raw ANSI. A plugin is leased a rectangle and returns styled lines or a cell diff; the host blits it into the buffer. `PanelText` refuses every control character at the type, so an escape sequence is a decode error on the frame that carries it rather than a string a host must remember to sanitize.
+- A plugin addresses cells **inside its lease and nowhere else**. `PanelRect` carries an extent and no origin, so there is no number a plugin could write that names a cell of stella's chrome.
+- Colour is a **token name**, never an RGB triple: `gold`, `silver`, `muted`. The host resolves each against the live theme, which is what lets a panel degrade to sixteen colours with everything else (§3.5) and what makes the hue clamp (§3.2) true of a plugin's pixels as well as stella's.
+- **Measured in display cells, not characters.** A double-width glyph occupies two columns and terminals advance by width; a host that counted characters would let a wide glyph in the last leased column paint the border beside it, and the terminal's own diff would never repaint over it. A glyph that does not fit whole is refused.
+- One frame is one line of JSON. The newline ends it, so a panel that starts a helper process still answers on time — a helper inherits stdout and would hold the pipe open past any read-to-end.
+
+### 12.2 The three surfaces
+
+One frame protocol, three placements. The surface decides where the host leases a rectangle and what chrome goes round it, never how a frame is written.
+
+| Surface | Where | What it is for |
+|---|---|---|
+| `settings` | a pane in the SETTINGS tab | the plugin configures itself — the place a person goes looking |
+| `overlay` | a fenced block in the SESSION transcript | the plugin says something in the flow of a turn |
+| `command` | a centred popup, opened by `/<plugin-name>` | the plugin's own screen, on demand |
+
+A plugin declares which it draws; naming none is a manifest error, because a panel that draws nowhere is a process declared for nothing. The install prompt names the three separately, because agreeing to a pane you open yourself is not agreeing to a block that appears in your transcript unbidden.
+
+The slash name is the plugin's own, and the colon form (`/plugin:name`) always resolves as an alias. A name colliding with one of the deck's own commands is refused **out loud** — a notice naming the plugin and the name — never dropped in silence, because a signed manifest a human read must not contain a line that quietly does nothing.
+
+### 12.3 The chrome is the host's, and there is no title field
+
+The host draws the border and the label `◳ panel · <plugin>`, where `<plugin>` is the name the person consented to at install. **A plugin cannot supply a caption**, and that absence is the anti-spoofing rule rather than an omission: a plugin-authored title could read `GATES` or `stella*`, and chrome a person trusts must not be able to name itself. Printing a caption *beside* the host's label rather than instead of it is not a fix — it makes the guarantee a property of one surface's layout, and any surface that later rendered the caption alone would hand a plugin the label.
+
+The manifest's own name is held to the same standard: it is composed into chrome, prompts and the palette, so it is refused at load if it carries a control character.
+
+### 12.4 Consent and the budget
+
+- Handshake before any panel: manifest signature, declared capabilities, declared denials (no network, no write outside sandbox), which surfaces are being asked for, and the slash name — then an explicit `[a]llow [d]eny` grant. Render the handshake in the transcript (silver rail).
+- The panel process sees `env_clear` plus the allowlist its manifest named, and `PATH`. "Draws a box" and "draws a box, with your `GITHUB_TOKEN`" are different things to agree to.
+- Frame budget per panel (for example 30fps equivalent); an over-budget panel keeps its last good frame and is tagged in host ink, so a slow plugin cannot hide that it is slow. A panel is asked for a frame **off the draw path** — the deck's repaint is a pure projection and must never wait on somebody else's process.
+- A panel's process group is reaped when its tick ends. EOF on stdout is not process exit, and a backgrounded grandchild is exactly what a direct-child kill cannot reach.
 
 ## 13. Accessibility
 
