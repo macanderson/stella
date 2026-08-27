@@ -47,6 +47,7 @@ use crate::error::ManifestError;
 use crate::host_call::HostCall;
 use crate::manifest::{Participation, PluginManifest};
 use crate::oracle::OracleProcessSource;
+use crate::panel::PanelDenial;
 use crate::runtime::Runtime;
 use crate::wire::{WIRE_FIELDS, WrapperPoint, hook_disclosures_for};
 
@@ -202,6 +203,7 @@ pub fn consent_text(manifest: &PluginManifest) -> String {
     lines.push(String::new());
     lines.extend(loop_say(manifest));
     lines.extend(driver_say(manifest));
+    lines.extend(panel_say(manifest));
     lines.extend(oracle_self_report(manifest));
     lines.extend(data_that_leaves_the_process(manifest));
     lines.push(String::new());
@@ -515,6 +517,56 @@ fn driver_say(manifest: &PluginManifest) -> Vec<String> {
          credential, no provider and no forge token of its own."
             .into(),
     );
+    lines
+}
+
+/// The "what it draws on your screen" half: that this plugin owns a rectangle
+/// of the interface, and every limit it accepts in exchange.
+///
+/// A paragraph of its own, for [`driver_say`]'s reason: a panel is a third
+/// dispatch context, and folding it into the grade would tell a reader that
+/// `none` means "no say and nothing on screen".
+///
+/// `design/tui-v2/SPEC.md` §12 puts the denials in the handshake, so they are
+/// printed here as sentences a person weighs — the mirror of
+/// [`crate::DriverFamily::consent_sentence`], which prints powers. The order is
+/// [`PanelDenial::all`]'s and not the manifest's, so two plugins that accept
+/// the same limits render the same lines whichever order their authors typed;
+/// the *content* is still the grant's own list, so a hand-built grant that
+/// names fewer cannot print a limit it never accepted.
+fn panel_say(manifest: &PluginManifest) -> Vec<String> {
+    let Some(panel) = &manifest.panel else {
+        return Vec::new();
+    };
+    let name = one_line(&manifest.name);
+    let mut lines = vec![
+        String::new(),
+        format!(
+            "Draws part of your screen: `{name}` is leased a rectangle of terminal cells and \
+             returns the glyphs to fill it, every tick. Stella draws the border and the title \
+             around it, and writes every escape sequence your terminal ever sees — a panel \
+             sends glyphs, so it cannot repaint anything outside the rectangle it was given."
+        ),
+    ];
+
+    // Before the limits, and before any early return: a panel's process is the
+    // thing a host starts, so a declaration accepting every limit still puts a
+    // program on the reader's machine. Absence is said too, on `driver_say`'s
+    // reasoning — a grant nothing starts is a different thing to agree to.
+    match &panel.process {
+        Some(process) => lines.extend(process_say(process)),
+        None => lines.push(
+            "  - is not started by Stella: this declares what such a panel accepts, and \
+             nothing here runs a program"
+                .into(),
+        ),
+    }
+
+    for denial in PanelDenial::all() {
+        if panel.denies(*denial) {
+            lines.push(format!("  - {}", denial.consent_sentence()));
+        }
+    }
     lines
 }
 

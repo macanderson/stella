@@ -83,7 +83,9 @@ use crate::{
     CandidateGrant, ChildTurnArgs, ChildTurnResult, DriveNext, DriveRequest, DriveResponse,
     DriverCall, DriverCallRequest, DriverCallResponse, DriverOk, FanoutCandidate, FlipObservation,
     HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest,
-    HostCallResponse, HostStage, ObservedEvidence, PROTOCOL_VERSION, PublishedSignal, RecallArgs,
+    HostCallResponse, HostStage, ObservedEvidence, PROTOCOL_VERSION, PanelDenial, PanelEmphasis,
+    PanelFrame, PanelInk, PanelLease, PanelLine, PanelPaint, PanelPatch, PanelPoint, PanelRect,
+    PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelText, PublishedSignal, RecallArgs,
     RecallFrame, RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName,
     TestBaseline, TestPlan, TestRunResult, TurnOutcome, VolatileContext, WrapperPoint,
     WrapperRequest, WrapperResponse,
@@ -97,8 +99,8 @@ const NOTE: &str = "GENERATED FILE — DO NOT EDIT. Every message the wrapper \
      socket carries, serialized by the same impls stella_runtime's subprocess \
      transport uses. Regenerate with `bash scripts/export-agentevent-schema.sh`; \
      guarded by `scripts/check-wire-schema.sh` (`make wire-schema`). Source of \
-     truth: crates/stella-plugin/src/wire.rs, src/host_call.rs and \
-     src/driver.rs. A message \
+     truth: crates/stella-plugin/src/wire.rs, src/host_call.rs, \
+     src/driver.rs and src/panel.rs. A message \
      with an optional member appears twice — `full` populates every optional \
      field, `minimal` omits every one that may be omitted — so a field \
      changing between required and optional is a diff here. This is a corpus, \
@@ -137,6 +139,8 @@ pub fn corpus() -> Result<Value, serde_json::Error> {
         "driver_session": driver_session()?,
         "driver_calls": driver_calls()?,
         "driver_results": driver_results()?,
+        "panel_leases": panel_leases()?,
+        "panel_frames": panel_frames()?,
         "parts": parts()?,
         "vocabulary": vocabulary()?,
     }))
@@ -344,6 +348,39 @@ fn driver_results() -> Result<Value, serde_json::Error> {
     ]))
 }
 
+/// The panel channel's request — the rectangle the interface leases a plugin
+/// for one tick (`design/tui-v2/SPEC.md` §12, #5054).
+///
+/// A third dispatch context, published beside the other two on the same terms:
+/// a renamed field here is a panel that draws nothing, and the corpus is where
+/// that lands on the author's screen. No `full`/`minimal` pair, because a lease
+/// has no omissible member — every one of its five fields is what a panel needs
+/// before it can draw a single cell.
+fn panel_leases() -> Result<Value, serde_json::Error> {
+    Ok(Value::Array(vec![case(
+        "frame",
+        &PanelRequest::new(panel_lease()),
+    )?]))
+}
+
+/// The two shapes a panel answers with.
+///
+/// Both, because §12 offers a panel styled lines or a cell diff and neither is
+/// the other's default: a host has to handle both, and a reader of this file
+/// learns the tags that tell them apart. The `lines` case appears twice, since
+/// a span's style is omitted from the wire when it asks for nothing — the
+/// `minimal` case is what makes that omission a diff if it stops happening.
+fn panel_frames() -> Result<Value, serde_json::Error> {
+    Ok(Value::Array(vec![
+        case("lines/full", &PanelResponse::new(panel_frame_lines_full()))?,
+        case(
+            "lines/minimal",
+            &PanelResponse::new(panel_frame_lines_minimal()),
+        )?,
+        case("diff", &PanelResponse::new(panel_frame_diff()))?,
+    ]))
+}
+
 /// The nested types, in the forms the four messages above do not reach.
 ///
 /// A message's `minimal` case omits its optional members entirely, so the
@@ -400,6 +437,13 @@ fn vocabulary() -> Result<Value, serde_json::Error> {
         // truth for the consent rendering, and a second walk would be a second
         // thing to keep exhaustive.
         "driver_call": values(DriverCall::all().to_vec())?,
+        "panel_point": values(enumerate(PanelPoint::Frame, panel_point_after))?,
+        // From `PanelDenial::all()`, for `DriverCall`'s reason: the manifest
+        // check and the consent rendering already read that list, so walking it
+        // twice would be a second thing to keep exhaustive.
+        "panel_denial": values(PanelDenial::all().to_vec())?,
+        "panel_ink": values(enumerate(PanelInk::Bg, panel_ink_after))?,
+        "panel_emphasis": values(enumerate(PanelEmphasis::Bold, panel_emphasis_after))?,
     }))
 }
 
@@ -544,6 +588,47 @@ fn host_call_refusal_after(refusal: HostCallRefusal) -> Option<HostCallRefusal> 
         R::AllowanceSpent => Some(R::Unavailable),
         R::Unavailable => Some(R::Failed),
         R::Failed => None,
+    }
+}
+
+fn panel_point_after(point: PanelPoint) -> Option<PanelPoint> {
+    match point {
+        PanelPoint::Frame => None,
+    }
+}
+
+/// The colours a panel may paint with — `design/tui-v2/SPEC.md` §3.1's `tui`
+/// surface. A token added there and not here would be a colour the deck has and
+/// no panel can ask for, which this chain turns into a compile error.
+fn panel_ink_after(ink: PanelInk) -> Option<PanelInk> {
+    use PanelInk as I;
+    match ink {
+        I::Bg => Some(I::Panel),
+        I::Panel => Some(I::Hl),
+        I::Hl => Some(I::Border),
+        I::Border => Some(I::Rule),
+        I::Rule => Some(I::Gold),
+        I::Gold => Some(I::GoldBright),
+        I::GoldBright => Some(I::Silver),
+        I::Silver => Some(I::SilverType),
+        I::SilverType => Some(I::Text),
+        I::Text => Some(I::Muted),
+        I::Muted => Some(I::Dim),
+        I::Dim => Some(I::Green),
+        I::Green => Some(I::Red),
+        I::Red => Some(I::DiffAddBg),
+        I::DiffAddBg => Some(I::DiffDelBg),
+        I::DiffDelBg => None,
+    }
+}
+
+fn panel_emphasis_after(emphasis: PanelEmphasis) -> Option<PanelEmphasis> {
+    use PanelEmphasis as E;
+    match emphasis {
+        E::Bold => Some(E::Dim),
+        E::Dim => Some(E::Italic),
+        E::Italic => Some(E::Underline),
+        E::Underline => None,
     }
 }
 
@@ -902,6 +987,85 @@ fn recall_frame_minimal() -> RecallFrame {
     }
 }
 
+/// The lease a host mints for one tick of an eight-by-two panel.
+fn panel_lease() -> PanelLease {
+    PanelLease {
+        protocol_version: PROTOCOL_VERSION,
+        panel: "gates".to_string(),
+        tick: 42,
+        rect: PanelRect { cols: 8, rows: 2 },
+        // 30fps, which is the equivalent §12 names as the example budget.
+        budget_ms: 33,
+    }
+}
+
+fn panel_frame_lines_full() -> PanelFrame {
+    PanelFrame {
+        protocol_version: PROTOCOL_VERSION,
+        tick: 42,
+        paint: PanelPaint::Lines(vec![PanelLine {
+            spans: vec![PanelSpan {
+                text: panel_text("3 green"),
+                style: PanelStyle {
+                    fg: Some(PanelInk::Green),
+                    bg: Some(PanelInk::Panel),
+                    emphasis: vec![PanelEmphasis::Bold],
+                },
+            }],
+        }]),
+    }
+}
+
+/// A frame that asks for no style at all, so the `style` key is absent from the
+/// span and the `spans` key from an empty row. A reader who started requiring
+/// either would show up as a diff here.
+fn panel_frame_lines_minimal() -> PanelFrame {
+    PanelFrame {
+        protocol_version: PROTOCOL_VERSION,
+        tick: 42,
+        paint: PanelPaint::Lines(vec![
+            PanelLine {
+                spans: vec![PanelSpan {
+                    text: panel_text("3 green"),
+                    style: PanelStyle {
+                        fg: None,
+                        bg: None,
+                        emphasis: Vec::new(),
+                    },
+                }],
+            },
+            PanelLine { spans: Vec::new() },
+        ]),
+    }
+}
+
+/// The other frame shape: two cells of the same lease, addressed from the
+/// panel's own top-left corner.
+fn panel_frame_diff() -> PanelFrame {
+    PanelFrame {
+        protocol_version: PROTOCOL_VERSION,
+        tick: 43,
+        paint: PanelPaint::Diff(vec![PanelPatch {
+            row: 1,
+            col: 6,
+            text: panel_text("ok"),
+            style: PanelStyle {
+                fg: Some(PanelInk::Silver),
+                bg: None,
+                emphasis: Vec::new(),
+            },
+        }]),
+    }
+}
+
+/// Built through the constructor because [`PanelText`]'s body is private: the
+/// only way to hold one is to have passed the check that refuses every control
+/// character, which is what keeps an escape sequence off this wire in any
+/// language (#5054).
+fn panel_text(glyphs: &str) -> PanelText {
+    PanelText::new(glyphs).expect("the corpus publishes drawable glyphs")
+}
+
 /// Built through the constructor rather than as a literal, because
 /// [`VolatileContext`]'s fields are private: the body is reachable only by
 /// spending the value as a user message, which is AGENTS.md #7 held by the
@@ -973,6 +1137,48 @@ mod tests {
                 message
             );
         }
+        for entry in doc["panel_leases"]
+            .as_array()
+            .expect("panel_leases is an array")
+        {
+            let message = &entry["message"];
+            let decoded: PanelRequest =
+                serde_json::from_value(message.clone()).expect("a published lease decodes");
+            assert_eq!(
+                &serde_json::to_value(&decoded).expect("re-encodes"),
+                message
+            );
+        }
+        for entry in doc["panel_frames"]
+            .as_array()
+            .expect("panel_frames is an array")
+        {
+            let message = &entry["message"];
+            let decoded: PanelResponse =
+                serde_json::from_value(message.clone()).expect("a published frame decodes");
+            assert_eq!(
+                &serde_json::to_value(&decoded).expect("re-encodes"),
+                message
+            );
+        }
+    }
+
+    /// Every frame the corpus publishes fits the lease it publishes beside it.
+    ///
+    /// A corpus of frames a host would refuse would teach a plugin author to
+    /// write one, which is the failure `every_published_message_is_one_the_
+    /// socket_would_accept` prevents for the other channels — a decode is not
+    /// the whole of what a panel frame has to pass.
+    #[test]
+    fn every_published_frame_fits_the_published_lease() {
+        let lease = panel_lease();
+        for frame in [
+            panel_frame_lines_full(),
+            panel_frame_lines_minimal(),
+            panel_frame_diff(),
+        ] {
+            assert_eq!(lease.admits(&frame), Ok(()), "{frame:?}");
+        }
     }
 
     /// The `minimal` half of each pair is what makes optionality visible, and
@@ -992,7 +1198,13 @@ mod tests {
     #[test]
     fn a_minimal_case_never_carries_a_key_its_full_case_omits() {
         let doc = corpus().expect("the corpus encodes");
-        for section in ["requests", "responses", "host_calls", "host_results"] {
+        for section in [
+            "requests",
+            "responses",
+            "host_calls",
+            "host_results",
+            "panel_frames",
+        ] {
             let cases = doc[section].as_array().expect("a section is an array");
             // Paired by name rather than by position. A `chunks(2)` walk was
             // enough while every message had exactly two cases; the host-call

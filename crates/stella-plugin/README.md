@@ -266,6 +266,14 @@ before it crosses.
 - `src/driver.rs` — the `[driver]` block and the drive-session wire shapes
   (`DriverGrant`, `DriverCall`, `DriveRequest`/`DriveResponse`): a plugin that
   starts turns rather than taking part in one.
+- `src/panel.rs` — the `[panel]` block and the panel channel's wire shapes
+  (`PanelGrant`, `PanelDenial`, `PanelLease`, `PanelFrame`): a plugin leased a
+  rectangle of the screen, returning styled lines or a cell diff each tick
+  (`design/tui-v2/SPEC.md` §12). Two of that section's rules are the types
+  rather than a host's care — `PanelText` wraps a private `String` that refuses
+  every control character, so no plugin emits an escape sequence in any
+  language, and `PanelRect` carries an extent with no origin, so a frame cannot
+  name a cell of Stella's own chrome.
 - `src/error.rs` — `ManifestError`, typed per rule (AGENTS.md #5).
 - `tests/manifest_grades.rs` + `tests/fixtures/*.toml` — slice A's
   acceptance: one fixture per grade, round-tripped through both TOML and

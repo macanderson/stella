@@ -258,7 +258,99 @@
       }
     }
   ],
-  "note": "GENERATED FILE — DO NOT EDIT. Every message the wrapper socket carries, serialized by the same impls stella_runtime's subprocess transport uses. Regenerate with `bash scripts/export-agentevent-schema.sh`; guarded by `scripts/check-wire-schema.sh` (`make wire-schema`). Source of truth: crates/stella-plugin/src/wire.rs, src/host_call.rs and src/driver.rs. A message with an optional member appears twice — `full` populates every optional field, `minimal` omits every one that may be omitted — so a field changing between required and optional is a diff here. This is a corpus, not a JSON Schema; wrapper.schema.json is the derived schema beside it, and neither subsumes the other — see crates/stella-plugin/src/wire_corpus.rs and src/wire_schema.rs for what each does and does not catch (#3532).",
+  "note": "GENERATED FILE — DO NOT EDIT. Every message the wrapper socket carries, serialized by the same impls stella_runtime's subprocess transport uses. Regenerate with `bash scripts/export-agentevent-schema.sh`; guarded by `scripts/check-wire-schema.sh` (`make wire-schema`). Source of truth: crates/stella-plugin/src/wire.rs, src/host_call.rs, src/driver.rs and src/panel.rs. A message with an optional member appears twice — `full` populates every optional field, `minimal` omits every one that may be omitted — so a field changing between required and optional is a diff here. This is a corpus, not a JSON Schema; wrapper.schema.json is the derived schema beside it, and neither subsumes the other — see crates/stella-plugin/src/wire_corpus.rs and src/wire_schema.rs for what each does and does not catch (#3532).",
+  "panel_frames": [
+    {
+      "case": "lines/full",
+      "message": {
+        "body": {
+          "paint": {
+            "lines": [
+              {
+                "spans": [
+                  {
+                    "style": {
+                      "bg": "panel",
+                      "emphasis": [
+                        "bold"
+                      ],
+                      "fg": "green"
+                    },
+                    "text": "3 green"
+                  }
+                ]
+              }
+            ]
+          },
+          "protocol_version": 1,
+          "tick": 42
+        },
+        "point": "frame"
+      }
+    },
+    {
+      "case": "lines/minimal",
+      "message": {
+        "body": {
+          "paint": {
+            "lines": [
+              {
+                "spans": [
+                  {
+                    "text": "3 green"
+                  }
+                ]
+              },
+              {}
+            ]
+          },
+          "protocol_version": 1,
+          "tick": 42
+        },
+        "point": "frame"
+      }
+    },
+    {
+      "case": "diff",
+      "message": {
+        "body": {
+          "paint": {
+            "diff": [
+              {
+                "col": 6,
+                "row": 1,
+                "style": {
+                  "fg": "silver"
+                },
+                "text": "ok"
+              }
+            ]
+          },
+          "protocol_version": 1,
+          "tick": 43
+        },
+        "point": "frame"
+      }
+    }
+  ],
+  "panel_leases": [
+    {
+      "case": "frame",
+      "message": {
+        "body": {
+          "budget_ms": 33,
+          "panel": "gates",
+          "protocol_version": 1,
+          "rect": {
+            "cols": 8,
+            "rows": 2
+          },
+          "tick": 42
+        },
+        "point": "frame"
+      }
+    }
+  ],
   "parts": [
     {
       "case": "candidate_grant/full",
@@ -587,6 +679,37 @@
       "allowance-spent",
       "unavailable",
       "failed"
+    ],
+    "panel_denial": [
+      "network",
+      "write-outside-sandbox"
+    ],
+    "panel_emphasis": [
+      "bold",
+      "dim",
+      "italic",
+      "underline"
+    ],
+    "panel_ink": [
+      "bg",
+      "panel",
+      "hl",
+      "border",
+      "rule",
+      "gold",
+      "gold_bright",
+      "silver",
+      "silver_type",
+      "text",
+      "muted",
+      "dim",
+      "green",
+      "red",
+      "diff_add_bg",
+      "diff_del_bg"
+    ],
+    "panel_point": [
+      "frame"
     ],
     "published_signal": [
       {

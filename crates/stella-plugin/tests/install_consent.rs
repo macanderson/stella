@@ -390,3 +390,70 @@ fn a_package_declaration_round_trips_through_toml_and_json() {
         "JSON round-trip diverged"
     );
 }
+
+/// The panel handshake, in the install prompt (`design/tui-v2/SPEC.md` §12).
+///
+/// §12 puts the declared denials in front of a human before any panel is
+/// granted, so a `[panel]` block that the prompt did not render would be the
+/// grant this whole module exists to make visible — one that changes what is
+/// on a person's screen and says nothing about it.
+///
+/// The process is disclosed for the same reason `driver_say` discloses one: a
+/// panel is a program on the reader's machine, and "draws a box" and "draws a
+/// box, with your `GITHUB_TOKEN`" are different things to agree to.
+#[test]
+fn the_consent_text_shows_the_panel_and_every_limit_it_accepts() {
+    let manifest = PluginManifest::from_toml_str(
+        "name = \"gates\"\ndescription = \"live gate status\"\n\
+         [panel]\ndenies = [\"network\", \"write-outside-sandbox\"]\n\
+         [panel.process]\nargv = [\"python3\", \"panel.py\"]\ntimeout_secs = 2\n\
+         env = [\"GATE_URL\"]\n",
+    )
+    .expect("a panel is expressible");
+    let text = consent_text(&manifest);
+
+    assert!(text.contains("Draws part of your screen"), "{text}");
+    assert!(
+        text.contains("may not reach the network from its panel process"),
+        "{text}"
+    );
+    assert!(
+        text.contains("may not write anywhere but the sandbox directory Stella hands it"),
+        "{text}"
+    );
+    assert!(
+        text.contains("runs as a process on your machine: `python3 panel.py`"),
+        "{text}"
+    );
+    assert!(
+        text.contains("it inherits these environment variables and no others: GATE_URL"),
+        "{text}"
+    );
+
+    // A plugin with no panel says nothing about one, which is what keeps the
+    // section meaningful where it does appear.
+    let bundle = PluginManifest::from_toml_str("name = \"bundle\"").expect("loads");
+    assert!(!consent_text(&bundle).contains("Draws part of your screen"));
+}
+
+/// AGENTS.md #4 for the `[panel]` block: what a host renders that handshake
+/// from must survive the wire a `stella-serve` host reads it over.
+#[test]
+fn a_panel_declaration_round_trips_through_toml_and_json() {
+    let parsed = PluginManifest::from_toml_str(
+        "name = \"gates\"\n[panel]\ndenies = [\"network\", \"write-outside-sandbox\"]\n",
+    )
+    .expect("a panel is expressible");
+    let toml_text = toml::to_string(&parsed).unwrap();
+    assert_eq!(
+        PluginManifest::from_toml_str(&toml_text).unwrap(),
+        parsed,
+        "TOML round-trip diverged"
+    );
+    let json = serde_json::to_string(&parsed).unwrap();
+    assert_eq!(
+        serde_json::from_str::<PluginManifest>(&json).unwrap(),
+        parsed,
+        "JSON round-trip diverged"
+    );
+}

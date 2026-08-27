@@ -50,6 +50,15 @@
 //!   byte-for-byte; `tests/wire_contract.rs` asserts it rather than promising
 //!   it.
 //!
+//! # The channels beside this one
+//!
+//! [`crate::host_call`] is the plugin's own asks mid-point, [`crate::driver`]
+//! is the session a plugin opens when it drives turns instead of sitting inside
+//! one, and [`crate::panel`] is the frame it draws when the interface leases it
+//! a rectangle. Each carries its own point vocabulary for
+//! [`WrapperPoint`]'s reason: a third value here would say a panel is something
+//! a turn dispatches, and it is not.
+//!
 //! # AGENTS.md #7 is encoded, not remembered
 //!
 //! Contributed context is a [`VolatileContext`], whose body is a private field
