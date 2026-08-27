@@ -995,6 +995,7 @@ fn panel_lease() -> PanelLease {
     PanelLease {
         protocol_version: PROTOCOL_VERSION,
         panel: "gates".to_string(),
+        surface: PanelSurface::Overlay,
         tick: 42,
         rect: PanelRect { cols: 8, rows: 2 },
         // 30fps, which is the equivalent §12 names as the example budget.
@@ -1005,6 +1006,7 @@ fn panel_lease() -> PanelLease {
 fn panel_frame_lines_full() -> PanelFrame {
     PanelFrame {
         protocol_version: PROTOCOL_VERSION,
+        surface: PanelSurface::Overlay,
         tick: 42,
         paint: PanelPaint::Lines(vec![PanelLine {
             spans: vec![PanelSpan {
@@ -1025,6 +1027,7 @@ fn panel_frame_lines_full() -> PanelFrame {
 fn panel_frame_lines_minimal() -> PanelFrame {
     PanelFrame {
         protocol_version: PROTOCOL_VERSION,
+        surface: PanelSurface::Overlay,
         tick: 42,
         paint: PanelPaint::Lines(vec![
             PanelLine {
@@ -1047,7 +1050,8 @@ fn panel_frame_lines_minimal() -> PanelFrame {
 fn panel_frame_diff() -> PanelFrame {
     PanelFrame {
         protocol_version: PROTOCOL_VERSION,
-        tick: 43,
+        surface: PanelSurface::Overlay,
+        tick: 42,
         paint: PanelPaint::Diff(vec![PanelPatch {
             row: 1,
             col: 6,

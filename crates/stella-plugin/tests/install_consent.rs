@@ -460,7 +460,7 @@ fn the_consent_text_shows_the_panel_and_every_limit_it_accepts() {
 fn the_consent_text_names_the_slash_command_a_panel_claims() {
     let declared = PluginManifest::from_toml_str(
         "name = \"gates\"\n[panel]\nsurfaces = [\"command\"]\ncommand = \"gate-status\"\n\
-         title = \"Gate status\"\ndenies = [\"network\", \"write-outside-sandbox\"]\n",
+         denies = [\"network\", \"write-outside-sandbox\"]\n",
     )
     .expect("a panel is expressible");
     let text = consent_text(&declared);
@@ -472,10 +472,6 @@ fn the_consent_text_names_the_slash_command_a_panel_claims() {
     // reader consenting to one is consenting to the other.
     assert!(
         text.contains("answers to `/gate-status`, and to `/gates:gate-status`"),
-        "{text}"
-    );
-    assert!(
-        text.contains("captions its panel `Gate status`, beside the `gates` label"),
         "{text}"
     );
 
@@ -512,8 +508,7 @@ fn the_consent_text_names_the_slash_command_a_panel_claims() {
 fn a_panel_declaration_round_trips_through_toml_and_json() {
     let parsed = PluginManifest::from_toml_str(
         "name = \"gates\"\n[panel]\nsurfaces = [\"settings\", \"overlay\", \"command\"]\n\
-         title = \"Gate status\"\ncommand = \"gate-status\"\n\
-         denies = [\"network\", \"write-outside-sandbox\"]\n",
+         command = \"gate-status\"\ndenies = [\"network\", \"write-outside-sandbox\"]\n",
     )
     .expect("a panel is expressible");
     let toml_text = toml::to_string(&parsed).unwrap();

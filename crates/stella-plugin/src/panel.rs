@@ -165,10 +165,6 @@ impl std::fmt::Display for PanelSurface {
     }
 }
 
-/// The longest a `[panel] title` may be, in `char`s. Past this the host's own
-/// label has nowhere to go.
-pub const MAX_PANEL_TITLE_CHARS: usize = 32;
-
 /// The longest a `[panel] command` may be, in `char`s. A slash name a person
 /// types, so the bound is what stays typable rather than what fits.
 pub const MAX_PANEL_COMMAND_CHARS: usize = 32;
@@ -181,21 +177,22 @@ pub const MAX_PANEL_COMMAND_CHARS: usize = 32;
 /// `[panel]` block the host leases no rectangle, so there is nothing for a
 /// frame to be checked against.
 ///
-/// # The title is a caption, never an identity
+/// # There is no title field, and that absence is the anti-spoofing rule
 ///
-/// §12 gives the border to the host, labelled `◳ panel · <plugin>`, and that
-/// label is written from [`crate::PluginManifest::name`] — the identity a human
-/// already consented to. [`PanelGrant::title`] is printed **beside** it and
-/// never in place of it, so a panel captioning itself `stella*` is a panel
-/// captioned `◳ panel · gates · stella*`, which claims nothing. That ordering
-/// is the whole anti-spoofing rule, and it is the host's to keep (#5055): this
-/// block cannot enforce a layout it does not draw.
+/// §12 gives the border and the title to the host, labelled `◳ panel ·
+/// <plugin>`. A `title` key here would let a panel call itself `GATES` or
+/// `stella*`, which is the one thing chrome a user trusts must not be able to
+/// say about itself. The host writes [`crate::PluginManifest::name`] into that
+/// label, so the label is the identity a human already consented to — and
+/// [`crate::PluginManifest::validate`] refuses a name that is not drawable, so
+/// the identity cannot carry an escape sequence into the chrome either.
 ///
-/// What this block does enforce is that the caption is drawable at all —
-/// single-line, bounded, and free of control characters, on [`PanelText`]'s
-/// reasoning. A title is glyphs the host prints into its own chrome, so an
-/// escape sequence in one would be Stella emitting a plugin's bytes under its
-/// own border.
+/// A caption field was written and removed while #5203 was in review. Printing
+/// it *beside* the host's label rather than instead of it looks safe, and it is
+/// not: it makes the guarantee a property of the host's layout, so any surface
+/// that later renders the caption alone hands a plugin the label. Nothing here
+/// could enforce that ordering, which is the argument for the field not
+/// existing rather than for documenting how to use it carefully.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PanelGrant {
@@ -213,13 +210,6 @@ pub struct PanelGrant {
     /// list of what appears on screen than as three separate blocks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<PanelSurface>,
-    /// The caption the host prints beside its own label — see the type docs on
-    /// why that is a caption and not an identity.
-    ///
-    /// **Absent means the plugin's name**, so a block that declares nothing
-    /// still labels its panel with something a reader recognises.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
     /// The bare slash name this panel's popup opens under, without the leading
     /// `/`.
     ///
@@ -298,15 +288,6 @@ impl PanelGrant {
             .find(|surface| !seen.insert(*surface))
     }
 
-    /// The caption the host prints beside its own label, resolving the default.
-    ///
-    /// `plugin_name` is [`crate::PluginManifest::name`], which is what an
-    /// undeclared title means.
-    #[must_use]
-    pub fn title_or<'a>(&'a self, plugin_name: &'a str) -> &'a str {
-        self.title.as_deref().unwrap_or(plugin_name)
-    }
-
     /// The bare slash name this panel's popup opens under, resolving the
     /// default, or `None` when this panel has no popup at all.
     ///
@@ -346,8 +327,8 @@ impl PanelGrant {
     /// block alone: the denial set is Stella's, so a block may not name a
     /// subset of it and call the result a narrower panel
     /// (`design/tui-v2/SPEC.md` §12's handshake); a panel names at least one
-    /// place it draws; and a caption or a slash name is checked for the shape
-    /// the host will have to render or register (#5203).
+    /// place it draws; and a slash name is checked for the shape the host will
+    /// have to register (#5203).
     ///
     /// **Where it draws is asked before what it gives up**, because a block
     /// naming no surface is unfinished rather than over-permissive, and telling
@@ -359,9 +340,8 @@ impl PanelGrant {
     /// [`ManifestError::PanelNoSurface`] for a panel that draws nowhere,
     /// [`ManifestError::PanelDuplicateSurface`] for a repeated placement,
     /// [`ManifestError::PanelCommandWithoutSurface`] for a slash name with no
-    /// popup to open, the `PanelTitle*` and `PanelCommand*` cases for a
-    /// caption or name the host could not render,
-    /// [`ManifestError::DuplicatePanelDenial`] for a repeated limit,
+    /// popup to open, the `PanelCommand*` cases for a name the host could not
+    /// register, [`ManifestError::DuplicatePanelDenial`] for a repeated limit,
     /// [`ManifestError::PanelDenialMissing`] for one the block never names, and
     /// whatever `[panel.process]` refuses.
     pub fn validate(&self) -> Result<(), ManifestError> {
@@ -370,9 +350,6 @@ impl PanelGrant {
         }
         if let Some(surface) = self.duplicate_surface() {
             return Err(ManifestError::PanelDuplicateSurface { surface });
-        }
-        if let Some(title) = &self.title {
-            validate_panel_title(title)?;
         }
         if let Some(command) = &self.command {
             if !self.draws(PanelSurface::Command) {
@@ -396,26 +373,6 @@ impl PanelGrant {
         }
         Ok(())
     }
-}
-
-/// Whether `title` is a caption the host can print into its own chrome.
-///
-/// Drawability is asked through [`PanelText`] rather than restated, so the
-/// caption and the panel's own glyphs refuse the same bytes for the same
-/// reason and a widened refusal there reaches here for free.
-fn validate_panel_title(title: &str) -> Result<(), ManifestError> {
-    PanelText::new(title).map_err(|source| ManifestError::PanelTitleNotDrawable { source })?;
-    if title.trim().is_empty() {
-        return Err(ManifestError::PanelTitleBlank);
-    }
-    let chars = title.chars().count();
-    if chars > MAX_PANEL_TITLE_CHARS {
-        return Err(ManifestError::PanelTitleTooLong {
-            chars,
-            max: MAX_PANEL_TITLE_CHARS,
-        });
-    }
-    Ok(())
 }
 
 /// Whether `command` is a slash name a person can type and a host can register.
@@ -510,9 +467,20 @@ impl PanelRequest {
 pub struct PanelLease {
     /// The version this message is written at.
     pub protocol_version: u32,
-    /// Which panel this lease is for — [`crate::PluginManifest::name`], echoed
-    /// so a process drawing more than one panel can tell them apart.
+    /// Which plugin this lease is for — [`crate::PluginManifest::name`].
+    ///
+    /// The plugin and **not** the panel: one plugin may declare all three
+    /// [`PanelSurface`]s, so this is shared by every lease it is handed and
+    /// disambiguates nothing on its own. [`PanelLease::surface`] is what says
+    /// which rectangle this is (#5210).
     pub panel: String,
+    /// Which of the plugin's panels this lease is for.
+    ///
+    /// A plugin declaring several surfaces receives several leases per tick,
+    /// alike in everything but this and their extents. It is echoed on
+    /// [`PanelFrame::surface`] for [`PanelLease::tick`]'s reason: a host that
+    /// has several in flight routes the answer instead of guessing.
+    pub surface: PanelSurface,
     /// The host's counter for this frame. A panel echoes it on
     /// [`PanelFrame::tick`], so a frame that arrives after the host has moved
     /// on is discardable without guessing.
@@ -531,24 +499,82 @@ pub struct PanelLease {
 impl PanelLease {
     /// A lease at the current [`PROTOCOL_VERSION`].
     #[must_use]
-    pub fn new(panel: impl Into<String>, tick: u64, rect: PanelRect, budget_ms: u32) -> Self {
+    pub fn new(
+        panel: impl Into<String>,
+        surface: PanelSurface,
+        tick: u64,
+        rect: PanelRect,
+        budget_ms: u32,
+    ) -> Self {
         Self {
             protocol_version: PROTOCOL_VERSION,
             panel: panel.into(),
+            surface,
             tick,
             rect,
             budget_ms,
         }
     }
 
-    /// Whether `frame` stays inside this lease.
+    /// Whether `frame` is the answer to this lease, and stays inside it.
+    ///
+    /// **Both questions, through one call**, because a host that asked only the
+    /// geometric one would blit a settings pane's frame into a command popup
+    /// whenever the two happened to be the same size — every cell inside the
+    /// lease, and the wrong panel's content. [`PanelFrame::fits`] is still the
+    /// geometry alone, for a caller that has already routed.
     ///
     /// # Errors
     ///
-    /// [`PanelOverflow`], naming the row or the cell that ran past the edge.
-    pub fn admits(&self, frame: &PanelFrame) -> Result<(), PanelOverflow> {
-        frame.fits(self.rect)
+    /// [`PanelRefusal`], naming the surface, the tick, or the cell that did it.
+    pub fn admits(&self, frame: &PanelFrame) -> Result<(), PanelRefusal> {
+        if frame.surface != self.surface {
+            return Err(PanelRefusal::Surface {
+                leased: self.surface,
+                answered: frame.surface,
+            });
+        }
+        if frame.tick != self.tick {
+            return Err(PanelRefusal::Tick {
+                leased: self.tick,
+                answered: frame.tick,
+            });
+        }
+        frame.fits(self.rect).map_err(PanelRefusal::Overflow)
     }
+}
+
+/// Why a host will not draw a frame it was handed.
+///
+/// Two routing cases and the geometry, because a frame can be wrong in ways
+/// that have nothing to do with its size: a plugin drawing three surfaces can
+/// answer the wrong lease, and one that fell behind can answer a tick the host
+/// has already replaced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PanelRefusal {
+    /// The frame answers a different panel than the one leased.
+    #[error("a panel frame for the \"{answered}\" surface answers a \"{leased}\" lease")]
+    Surface {
+        /// The surface the lease was for.
+        leased: PanelSurface,
+        /// The surface the frame claims.
+        answered: PanelSurface,
+    },
+    /// The frame answers a tick the host has moved on from.
+    #[error("a panel frame for tick {answered} answers the lease for tick {leased}")]
+    Tick {
+        /// The tick the lease was for.
+        leased: u64,
+        /// The tick the frame echoed.
+        answered: u64,
+    },
+    /// The frame addresses a cell the lease does not hold.
+    #[error(transparent)]
+    Overflow(
+        /// Which edge it ran past.
+        #[from]
+        PanelOverflow,
+    ),
 }
 
 /// The extent of a panel's lease, in terminal cells.
@@ -609,6 +635,9 @@ impl PanelResponse {
 pub struct PanelFrame {
     /// The version this message is written at.
     pub protocol_version: u32,
+    /// The [`PanelLease::surface`] this frame answers — which of the plugin's
+    /// panels it drew.
+    pub surface: PanelSurface,
     /// The [`PanelLease::tick`] this frame answers.
     pub tick: u64,
     /// What to draw.
@@ -618,15 +647,20 @@ pub struct PanelFrame {
 impl PanelFrame {
     /// A frame at the current [`PROTOCOL_VERSION`].
     #[must_use]
-    pub fn new(tick: u64, paint: PanelPaint) -> Self {
+    pub fn new(surface: PanelSurface, tick: u64, paint: PanelPaint) -> Self {
         Self {
             protocol_version: PROTOCOL_VERSION,
+            surface,
             tick,
             paint,
         }
     }
 
     /// Whether every cell this frame addresses is inside `rect`.
+    ///
+    /// The geometry alone. [`PanelLease::admits`] is the whole question — it
+    /// asks this one after it has established that the frame answers the lease
+    /// at all.
     ///
     /// # Errors
     ///
@@ -742,6 +776,19 @@ impl PanelLine {
     }
 }
 
+/// The first control character in `text`, as `(index in chars, character)`.
+///
+/// One definition of "drawable", read in two places: [`PanelText::new`] holds
+/// it for a panel's own glyphs, and [`crate::PluginManifest::validate`] holds it
+/// for the name Stella composes into chrome. A second copy of the predicate
+/// would drift, and the two are the same question — whether a string can reach
+/// a terminal without carrying an escape sequence into it.
+pub(crate) fn first_control_character(text: &str) -> Option<(usize, char)> {
+    text.chars()
+        .enumerate()
+        .find(|(_, found)| found.is_control())
+}
+
 /// One run of text in a row, drawn in one style.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -841,11 +888,7 @@ impl PanelText {
     /// character, naming the character and where it sits.
     pub fn new(text: impl Into<String>) -> Result<Self, PanelTextError> {
         let text = text.into();
-        if let Some((index, found)) = text
-            .chars()
-            .enumerate()
-            .find(|(_, found)| found.is_control())
-        {
+        if let Some((index, found)) = first_control_character(&text) {
             return Err(PanelTextError::ControlCharacter {
                 index,
                 code: found as u32,
@@ -1125,7 +1168,6 @@ mod tests {
     fn grant(surfaces: Vec<PanelSurface>) -> PanelGrant {
         PanelGrant {
             surfaces,
-            title: None,
             command: None,
             denies: PanelDenial::all().to_vec(),
             process: None,
@@ -1198,19 +1240,6 @@ mod tests {
             grant(vec![PanelSurface::Settings]).command_or("gates"),
             None
         );
-    }
-
-    #[test]
-    fn a_caption_falls_back_to_the_name_a_human_consented_to() {
-        assert_eq!(
-            grant(vec![PanelSurface::Overlay]).title_or("gates"),
-            "gates"
-        );
-        let captioned = PanelGrant {
-            title: Some("Gate status".to_string()),
-            ..grant(vec![PanelSurface::Overlay])
-        };
-        assert_eq!(captioned.title_or("gates"), "Gate status");
     }
 
     #[test]
@@ -1357,8 +1386,9 @@ mod tests {
 
     #[test]
     fn a_lease_admits_the_frame_that_answers_it() {
-        let lease = PanelLease::new("gates", 7, PanelRect::new(12, 1), 33);
+        let lease = PanelLease::new("gates", PanelSurface::Overlay, 7, PanelRect::new(12, 1), 33);
         let frame = PanelFrame::new(
+            PanelSurface::Overlay,
             7,
             PanelPaint::Lines(vec![PanelLine::new(vec![PanelSpan::new(
                 text("3 green"),

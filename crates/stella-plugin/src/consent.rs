@@ -567,12 +567,6 @@ fn panel_say(manifest: &PluginManifest) -> Vec<String> {
             one_line(command)
         ));
     }
-    if let Some(title) = &panel.title {
-        lines.push(format!(
-            "  - captions its panel `{}`, beside the `{name}` label Stella writes",
-            one_line(title)
-        ));
-    }
 
     // Before the limits, and before any early return: a panel's process is the
     // thing a host starts, so a declaration accepting every limit still puts a

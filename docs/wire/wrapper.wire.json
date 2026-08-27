@@ -283,6 +283,7 @@
             ]
           },
           "protocol_version": 1,
+          "surface": "overlay",
           "tick": 42
         },
         "point": "frame"
@@ -305,6 +306,7 @@
             ]
           },
           "protocol_version": 1,
+          "surface": "overlay",
           "tick": 42
         },
         "point": "frame"
@@ -327,7 +329,8 @@
             ]
           },
           "protocol_version": 1,
-          "tick": 43
+          "surface": "overlay",
+          "tick": 42
         },
         "point": "frame"
       }
@@ -345,6 +348,7 @@
             "cols": 8,
             "rows": 2
           },
+          "surface": "overlay",
           "tick": 42
         },
         "point": "frame"

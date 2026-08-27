@@ -9,7 +9,7 @@ use crate::driver::DriverCall;
 use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
 use crate::package::ContributionKind;
-use crate::panel::{PanelDenial, PanelSurface, PanelTextError};
+use crate::panel::{PanelDenial, PanelSurface};
 use crate::runtime::ProcessBlock;
 use crate::wire::WrapperPoint;
 use crate::wrapper::{HostStage, Signal, SignalKind, StageName};
@@ -201,34 +201,6 @@ pub enum ManifestError {
     PanelCommandWithoutSurface {
         /// The name that would have opened nothing.
         command: String,
-    },
-
-    /// `[panel] title` carried a control character.
-    ///
-    /// The caption is glyphs Stella prints inside its own border, so an escape
-    /// sequence in one would be Stella emitting a plugin's bytes under its own
-    /// chrome — [`crate::PanelText`]'s rule, which is where the check is made.
-    #[error("[panel] title is not drawable: {source}")]
-    PanelTitleNotDrawable {
-        /// Why the caption could not be drawn.
-        #[source]
-        source: PanelTextError,
-    },
-
-    /// `[panel] title` was empty, or nothing but whitespace.
-    #[error(
-        "[panel] title has no glyphs: give the panel a caption, or drop the key and take the \
-         plugin's own name"
-    )]
-    PanelTitleBlank,
-
-    /// `[panel] title` was longer than the host's chrome can print.
-    #[error("[panel] title is {chars} characters, past the {max} a panel caption may use")]
-    PanelTitleTooLong {
-        /// How long the declared caption is, in `char`s.
-        chars: usize,
-        /// The ceiling ([`crate::MAX_PANEL_TITLE_CHARS`]).
-        max: usize,
     },
 
     /// `[panel] command` was empty.
@@ -678,6 +650,24 @@ pub enum ManifestError {
     /// grant, chip, and hold attribution hangs off.
     #[error("manifest name must not be empty")]
     EmptyName,
+
+    /// The manifest's `name` carried a control character.
+    ///
+    /// The name is what Stella prints into its **own** chrome — the panel
+    /// label, the install prompt, a popup heading — so an escape sequence in it
+    /// is Stella emitting a plugin's bytes under its own border, past every
+    /// guarantee [`crate::PanelText`] makes about a panel's glyphs.
+    #[error(
+        "manifest name carries the control character U+{code:04X} at position {index}: the name \
+         is printed inside Stella's own chrome, and Stella writes every escape sequence the \
+         terminal sees"
+    )]
+    NameNotDrawable {
+        /// Which character of the name, counted in `char`s from zero.
+        index: usize,
+        /// The Unicode scalar value that was refused.
+        code: u32,
+    },
 
     /// A `[[capabilities]]` entry named no tool. The tool name is what a gate
     /// rule keys on and what the consent prompt shows; a blank one is a

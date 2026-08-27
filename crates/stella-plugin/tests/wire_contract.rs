@@ -31,9 +31,9 @@ use stella_plugin::{
     FanoutCandidate, FlipObservation, HostCall, HostCallOk, HostCallResponse, HostStage,
     ObservedEvidence, Outcome, PROTOCOL_VERSION, PanelDenial, PanelEmphasis, PanelFrame, PanelInk,
     PanelLease, PanelLine, PanelOverflow, PanelPaint, PanelPatch, PanelPoint, PanelRect,
-    PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelSurface, PanelText, PluginManifest,
-    PublishedSignal, RecallResult, RoundState, Signal, SignalValue, StageName, StopReason,
-    TamperFinding, TestBaseline, TestPlan, TestRunResult, TurnOutcome, UndecidedReason,
+    PanelRefusal, PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelSurface, PanelText,
+    PluginManifest, PublishedSignal, RecallResult, RoundState, Signal, SignalValue, StageName,
+    StopReason, TamperFinding, TestBaseline, TestPlan, TestRunResult, TurnOutcome, UndecidedReason,
     UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint,
     WrapperRequest, WrapperResponse,
 };
@@ -911,7 +911,7 @@ fn a_child_turn_ceiling_must_bound_a_call_this_manifest_can_actually_make() {
 
 /// The rectangle a host leases an eight-by-two panel for one tick.
 fn lease() -> PanelLease {
-    PanelLease::new("gates", 42, PanelRect::new(8, 2), 33)
+    PanelLease::new("gates", PanelSurface::Overlay, 42, PanelRect::new(8, 2), 33)
 }
 
 /// Glyphs the contract accepts, for a test that is about something else.
@@ -950,7 +950,11 @@ fn every_panel_message_round_trips_byte_for_byte() {
         ]),
         PanelLine::default(),
     ]);
-    let lines = round_trip(&PanelResponse::new(PanelFrame::new(42, styled)));
+    let lines = round_trip(&PanelResponse::new(PanelFrame::new(
+        PanelSurface::Overlay,
+        42,
+        styled,
+    )));
     let value: serde_json::Value = serde_json::from_str(&lines).unwrap();
     assert_eq!(value["point"], "frame");
     // An unstyled span omits the key and an empty row omits its spans, so the
@@ -968,7 +972,11 @@ fn every_panel_message_round_trips_byte_for_byte() {
         glyphs("ok"),
         PanelStyle::ink(PanelInk::Silver),
     )]);
-    let patched = round_trip(&PanelResponse::new(PanelFrame::new(43, diff)));
+    let patched = round_trip(&PanelResponse::new(PanelFrame::new(
+        PanelSurface::Overlay,
+        42,
+        diff,
+    )));
     let value: serde_json::Value = serde_json::from_str(&patched).unwrap();
     assert_eq!(value["body"]["paint"]["diff"][0]["row"], 1);
     assert_eq!(value["body"]["paint"]["diff"][0]["col"], 6);
@@ -992,11 +1000,13 @@ fn a_panel_frame_addressing_a_cell_outside_its_lease_is_refused() {
     // Exactly filling the lease is inside it: the edge is addressable, and a
     // panel that could not use its last column would be leased a lie.
     let full = PanelFrame::new(
+        PanelSurface::Overlay,
         42,
         PanelPaint::Lines(vec![row("12345678"), row("12345678")]),
     );
     assert_eq!(lease.admits(&full), Ok(()));
     let corner = PanelFrame::new(
+        PanelSurface::Overlay,
         42,
         PanelPaint::Diff(vec![PanelPatch::new(
             1,
@@ -1007,23 +1017,35 @@ fn a_panel_frame_addressing_a_cell_outside_its_lease_is_refused() {
     );
     assert_eq!(lease.admits(&corner), Ok(()));
 
-    let tall = PanelFrame::new(42, PanelPaint::Lines(vec![row("a"), row("b"), row("c")]));
+    let tall = PanelFrame::new(
+        PanelSurface::Overlay,
+        42,
+        PanelPaint::Lines(vec![row("a"), row("b"), row("c")]),
+    );
     assert_eq!(
         lease.admits(&tall),
-        Err(PanelOverflow::Rows { lines: 3, rows: 2 })
+        Err(PanelRefusal::Overflow(PanelOverflow::Rows {
+            lines: 3,
+            rows: 2
+        }))
     );
 
-    let wide = PanelFrame::new(42, PanelPaint::Lines(vec![row("123456789")]));
+    let wide = PanelFrame::new(
+        PanelSurface::Overlay,
+        42,
+        PanelPaint::Lines(vec![row("123456789")]),
+    );
     assert_eq!(
         lease.admits(&wide),
-        Err(PanelOverflow::Line {
+        Err(PanelRefusal::Overflow(PanelOverflow::Line {
             line: 0,
             cells: 9,
             cols: 8,
-        })
+        }))
     );
 
     let below = PanelFrame::new(
+        PanelSurface::Overlay,
         42,
         PanelPaint::Diff(vec![PanelPatch::new(
             2,
@@ -1034,10 +1056,14 @@ fn a_panel_frame_addressing_a_cell_outside_its_lease_is_refused() {
     );
     assert_eq!(
         lease.admits(&below),
-        Err(PanelOverflow::Row { row: 2, rows: 2 })
+        Err(PanelRefusal::Overflow(PanelOverflow::Row {
+            row: 2,
+            rows: 2
+        }))
     );
 
     let past = PanelFrame::new(
+        PanelSurface::Overlay,
         42,
         PanelPaint::Diff(vec![PanelPatch::new(
             0,
@@ -1048,12 +1074,12 @@ fn a_panel_frame_addressing_a_cell_outside_its_lease_is_refused() {
     );
     assert_eq!(
         lease.admits(&past),
-        Err(PanelOverflow::Patch {
+        Err(PanelRefusal::Overflow(PanelOverflow::Patch {
             row: 0,
             col: 7,
             cells: 2,
             cols: 8,
-        })
+        }))
     );
 
     // A run of no glyphs is anchored too. `col + 0` is inside every lease, so
@@ -1061,17 +1087,18 @@ fn a_panel_frame_addressing_a_cell_outside_its_lease_is_refused() {
     // buffer does not have — nothing to blit, and exactly the coordinate a host
     // that reads the column before it measures the run would index with.
     let anchored_out = PanelFrame::new(
+        PanelSurface::Overlay,
         42,
         PanelPaint::Diff(vec![PanelPatch::new(0, 8, glyphs(""), PanelStyle::plain())]),
     );
     assert_eq!(
         lease.admits(&anchored_out),
-        Err(PanelOverflow::Patch {
+        Err(PanelRefusal::Overflow(PanelOverflow::Patch {
             row: 0,
             col: 8,
             cells: 0,
             cols: 8,
-        })
+        }))
     );
 
     // And the refusal is readable: a host printing it names the coordinates a
@@ -1312,8 +1339,7 @@ fn a_panel_block_says_where_it_draws() {
     assert!(panel.draws(PanelSurface::Settings));
     assert!(panel.draws(PanelSurface::Command));
     assert!(!panel.draws(PanelSurface::Overlay));
-    // Undeclared, so both fall back to the identity a human consented to.
-    assert_eq!(panel.title_or(&loaded.name), "gates");
+    // Undeclared, so the name falls back to the identity a human consented to.
     assert_eq!(panel.command_or(&loaded.name), Some("gates"));
 
     assert!(matches!(
@@ -1344,11 +1370,94 @@ fn a_panel_block_says_where_it_draws() {
     ));
 }
 
-/// A caption and a slash name are rendered by the host and typed by a person,
-/// so the block is held to the shape each of those needs — and to nothing
-/// beyond it, because the reserved-name check is `stella-cli`'s (#5055).
+/// **The witness for #5210.** A plugin drawing several surfaces gets several
+/// leases a tick, and a frame says which one it answers — so a host with three
+/// in flight routes the answer instead of guessing, and cannot blit a settings
+/// pane into a command popup that happens to be the same size.
 #[test]
-fn a_panel_caption_and_slash_name_are_held_to_their_shapes() {
+fn a_frame_for_one_surface_does_not_answer_another_surfaces_lease() {
+    let leased = PanelLease::new("gates", PanelSurface::Settings, 7, PanelRect::new(8, 2), 33);
+    let answer = |surface, tick| PanelFrame::new(surface, tick, PanelPaint::Lines(vec![row("ok")]));
+
+    assert_eq!(leased.admits(&answer(PanelSurface::Settings, 7)), Ok(()));
+
+    // The same frame, the same size, the wrong panel. Every cell of it is
+    // inside the lease, so geometry alone would have drawn it.
+    let wrong = answer(PanelSurface::Command, 7);
+    assert_eq!(
+        wrong.fits(leased.rect),
+        Ok(()),
+        "it fits — that is the point"
+    );
+    assert_eq!(
+        leased.admits(&wrong),
+        Err(PanelRefusal::Surface {
+            leased: PanelSurface::Settings,
+            answered: PanelSurface::Command,
+        })
+    );
+
+    // And a frame that answers a tick the host has moved on from is refused
+    // rather than drawn late.
+    assert_eq!(
+        leased.admits(&answer(PanelSurface::Settings, 6)),
+        Err(PanelRefusal::Tick {
+            leased: 7,
+            answered: 6,
+        })
+    );
+
+    // The lease names the plugin and the surface, and only the pair
+    // disambiguates: one plugin, three leases, alike in the `panel` field.
+    let other = PanelLease::new("gates", PanelSurface::Command, 7, PanelRect::new(8, 2), 33);
+    assert_eq!(other.panel, leased.panel);
+    assert_ne!(other.surface, leased.surface);
+    assert_eq!(other.admits(&wrong), Ok(()));
+}
+
+/// **The witness for the name half of #5203.** The plugin's name is what Stella
+/// composes into its own chrome, so a name that could carry an escape sequence
+/// there would make [`PanelText`]'s guarantee worthless — the label around a
+/// panel's glyphs would be the way in.
+#[test]
+fn a_plugin_name_that_is_not_drawable_does_not_load() {
+    for hazard in [
+        "\\u001b[2J",
+        "gates\\u001b[31m",
+        "two\\nlines",
+        "tab\\there",
+    ] {
+        let err = PluginManifest::from_toml_str(&format!("name = \"{hazard}\""))
+            .expect_err("a name Stella cannot print into its own chrome");
+        assert!(
+            matches!(err, stella_plugin::ManifestError::NameNotDrawable { .. }),
+            "{hazard:?} loaded, or was refused by the wrong rule: {err}"
+        );
+    }
+
+    // The refusal names the position in `char`s, so a multi-byte glyph before
+    // the hazard does not shift it into a byte offset nobody can navigate by —
+    // `PanelText`'s rule, because it is literally the same predicate.
+    assert!(matches!(
+        PluginManifest::from_toml_str("name = \"✦\\u001b\"").expect_err("refused"),
+        stella_plugin::ManifestError::NameNotDrawable { index: 1, code: 27 }
+    ));
+
+    // An ordinary name still loads, including one with punctuation and
+    // non-ASCII letters — the rule is drawability, not an allowlist.
+    for fine in ["gates", "gate-status", "Gate Status", "ゲート", "stella*"] {
+        assert!(
+            PluginManifest::from_toml_str(&format!("name = \"{fine}\"")).is_ok(),
+            "{fine:?} is drawable and should load"
+        );
+    }
+}
+
+/// A slash name is typed by a person and registered by a host, so the block is
+/// held to the shape both need — and to nothing beyond it, because the
+/// reserved-name check is `stella-cli`'s (#5055).
+#[test]
+fn a_panel_slash_name_is_held_to_its_shape() {
     let manifest = |block: &str| {
         PluginManifest::from_toml_str(&format!(
             "name = \"gates\"\n[panel]\nsurfaces = [\"command\"]\n{block}\ndenies = \
@@ -1356,26 +1465,15 @@ fn a_panel_caption_and_slash_name_are_held_to_their_shapes() {
         ))
     };
 
-    let loaded = manifest("title = \"Gate status\"\ncommand = \"gate-status\"").expect("loads");
+    let loaded = manifest("command = \"gate-status\"").expect("loads");
     let panel = loaded.panel.expect("the block parsed");
-    assert_eq!(panel.title_or(&loaded.name), "Gate status");
     assert_eq!(panel.command_or(&loaded.name), Some("gate-status"));
 
-    // The caption is glyphs Stella prints inside its own border, so it refuses
-    // what a panel's own glyphs refuse — through the same constructor.
-    assert!(matches!(
-        manifest("title = \"\\u001b[2JGATES\"").expect_err("an escape sequence in the chrome"),
-        stella_plugin::ManifestError::PanelTitleNotDrawable { .. }
-    ));
-    assert!(matches!(
-        manifest("title = \"   \"").expect_err("a caption of nothing"),
-        stella_plugin::ManifestError::PanelTitleBlank
-    ));
-    assert!(matches!(
-        manifest(&format!("title = \"{}\"", "x".repeat(33)))
-            .expect_err("a caption past the chrome"),
-        stella_plugin::ManifestError::PanelTitleTooLong { chars: 33, max: 32 }
-    ));
+    // The block carries no caption at all, and that absence is the
+    // anti-spoofing rule: the label is the plugin's own name, so a panel
+    // cannot call itself `GATES`.
+    let err = manifest("title = \"GATES\"").expect_err("a panel does not name itself");
+    assert!(err.to_string().contains("title"), "got {err}");
 
     // The namespaced form is real, and it is derived rather than declared —
     // its own refusal, because it is the mistake an author makes on purpose.
