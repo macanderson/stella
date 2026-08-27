@@ -69,6 +69,7 @@ use stella_fleet::issue_claim_key;
 mod ending;
 mod notify;
 mod settlement;
+mod triage;
 
 use ending::{Tally, budget_reached, report, stopped_by_signal};
 use settlement::{Settlement, issue_finished_by};
@@ -420,7 +421,7 @@ pub(super) fn drive(
                 // `ContentionPolicy::ClaimsOnly`, which is what that policy
                 // is for (`stella_autonomy::ContentionPolicy`).
                 if let Err(error) =
-                    assess_one(durable, &root, &provider, &cfg, &mut budget, &mut triaged)
+                    triage::assess_one(durable, &root, &provider, &cfg, &mut budget, &mut triaged)
                 {
                     audit::record(
                         durable,
@@ -751,7 +752,14 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn did not complete: {reason}"),
                         );
-                        escalate(durable, &settings, &provider, &cfg, &resolved.key, &reason);
+                        triage::escalate(
+                            durable,
+                            &settings,
+                            &provider,
+                            &cfg,
+                            &resolved.key,
+                            &reason,
+                        );
                     }
                 }
             }
@@ -945,122 +953,6 @@ fn resume(durable: &Durable, cfg: &super::config::LoopConfig, state: &mut LoopSt
             &format!("could not read open pull requests to resume ({error}); continuing"),
         ),
     }
-}
-
-/// Mark an issue the loop tried and could not resolve.
-fn escalate(
-    durable: &Durable,
-    settings: &crate::settings::Settings,
-    provider: &crate::issue_provider::GhIssueProvider,
-    cfg: &super::config::LoopConfig,
-    key: &stella_protocol::issue::IssueKey,
-    why: &str,
-) {
-    match runtime().block_on(super::backlog::escalate(
-        provider,
-        key,
-        why,
-        &cfg.attribution.issue_comment,
-    )) {
-        Ok(()) => {
-            durable.update_stats(|s| s.issues_escalated += 1);
-            audit::record(
-                durable,
-                Audit::Escalated,
-                Some(key.as_str()),
-                &format!(
-                    "labelled `{}` — unresolved, later runs will skip it",
-                    stella_autonomy::ESCALATION_LABEL
-                ),
-            );
-            notify::escalated(&durable.repo_root, settings, key.as_str(), why);
-        }
-        Err(error) => audit::record(
-            durable,
-            Audit::Transient,
-            Some(key.as_str()),
-            &format!("could not label it as escalated: {error}"),
-        ),
-    }
-}
-
-/// Place the oldest issue nobody has judged, if there is one.
-///
-/// Returns `Ok(())` when there was nothing to do as well as when something was
-/// placed — a queue with no questions in it is the normal case, not an
-/// exception.
-///
-/// # Why a refusal escalates rather than retries
-///
-/// A turn that answers outside the declared vocabulary, or declines to answer
-/// at all, has told us it cannot place this issue. Leaving it unplaced would
-/// mean meeting it again on the very next pass, paying for the same turn, and
-/// getting the same refusal — forever, and at the cost of never claiming any
-/// work. So it gets the escalation label, which takes it out of the queue and
-/// puts it in front of a human. `triaged` is the process-local half of the
-/// same guard, covering the window before the label lands.
-fn assess_one(
-    durable: &Durable,
-    root: &std::path::Path,
-    provider: &crate::issue_provider::GhIssueProvider,
-    cfg: &super::config::LoopConfig,
-    budget: &mut super::budget::RunBudget,
-    triaged: &mut std::collections::HashSet<String>,
-) -> Result<(), String> {
-    let unassessed = super::backlog::unassessed(provider, &cfg.triage)?;
-    let Some(issue) = unassessed.into_iter().find(|u| !triaged.contains(&u.key)) else {
-        return Ok(());
-    };
-    triaged.insert(issue.key.clone());
-
-    audit::record(
-        durable,
-        Audit::TriageStarted,
-        Some(&issue.key),
-        &format!("nobody has placed this — assessing it: {}", issue.title),
-    );
-
-    // The body, so the turn judges the report rather than the headline. An
-    // unreadable body is not a reason to skip the issue; a title-only
-    // judgement is still better than leaving it unplaced forever.
-    let body = super::backlog::resolve(provider, &issue.key)
-        .map(|resolved| resolved.body)
-        .unwrap_or_default();
-
-    let prompt = super::triage::prompt(&issue, &body, &cfg.triage);
-    let output = super::work::run_turn(root, root, &prompt, budget)?;
-
-    let Some(assessment) = super::triage::parse(&output, &cfg.triage) else {
-        super::backlog::escalate_blocking(
-            provider,
-            &issue.key,
-            "triage could not place this issue in the configured vocabulary — \
-             it needs a human to label it",
-            &cfg.attribution.issue_comment,
-        )?;
-        audit::record(
-            durable,
-            Audit::Escalated,
-            Some(&issue.key),
-            "could not be placed — labelled for a human",
-        );
-        return Ok(());
-    };
-
-    super::triage::apply(
-        provider,
-        &issue.key,
-        &assessment,
-        &cfg.attribution.issue_comment,
-    )?;
-    durable.update_stats(|s| s.issues_triaged += 1);
-    audit::record(
-        durable,
-        Audit::Triaged,
-        Some(&issue.key),
-        &assessment.reason(),
-    );
-    Ok(())
 }
 
 /// Advance one pull request by exactly one deterministic transition.
