@@ -121,7 +121,7 @@ One vocabulary across every panel, including plugin-drawn UI:
 | Glyph | Meaning | Metal |
 |---|---|---|
 | `✓` | done, pass | green |
-| `◐` | running (spinner frames `◐◓◑◒`) | gold_bright when acting, silver when observing |
+| `◐` | running | gold_bright |
 | `○` | queued, pending | dim |
 | `◇` | gate (deterministic, merge-blocking) | gold |
 | `✗` | failed, delete | red |
@@ -137,6 +137,15 @@ One vocabulary across every panel, including plugin-drawn UI:
 | `◉` | tool class: mutate — written | takes the row's metal |
 | `⊙` | tool class: execute — external, opaque | takes the row's metal |
 | `↳` | tool class: delegate — handed to another agent | takes the row's metal |
+
+> The running row's metal was `gold_bright when acting, silver when observing`
+> until #5272, and the spinner's `◐◓◑◒` frames were named here too. Both are
+> corrected to what ships rather than the other way round — the call §6.4 made
+> for the diff gutter's tier (#4946). Nothing in a plan step says whether it is
+> changing something or only looking at it, so there is no signal to select a
+> metal on, and a glyph alternating both on a clock would mean neither; the
+> motion is in the tone (`step_style.rs`'s pulse), not in the glyph. #5308
+> holds both halves if a producer ever arrives.
 
 ### 4.1 Tool class is a shape, never a hue
 
