@@ -13,7 +13,9 @@
 //! the same cut `file_state` and `recall` already make, and along the same
 //! seam: a `TranscriptEntry`'s supporting types live beside it, not in it.
 
-use stella_protocol::{BudgetMode, ModelCallRole, StageKind, StageName};
+use stella_protocol::{AgentEvent, BudgetMode, ModelCallRole, StageKind, StageName};
+
+use super::TranscriptEntry;
 
 // Doc-link target only: named in `TurnOpening::queued_steer`'s docs, gated by
 // the fold in `super`. `cfg(doc)` keeps the intra-doc link resolving without
@@ -86,6 +88,78 @@ pub(crate) fn role_supplies_the_turns_model(role: ModelCallRole) -> bool {
         | ModelCallRole::Reflection
         | ModelCallRole::Summarization => false,
     }
+}
+
+/// SPEC 6.3's `◐ model` row for one settled model call, or `None` for any
+/// other event.
+///
+/// The rate is **derived, never invented**:
+/// [`AgentEvent::StepUsage`] is the driver's own per-call metering record
+/// (`stella-core`'s `driver::settlement::emit_step_usage`, and
+/// `accounted_call` for the management roles), and it already carries the
+/// output tokens the call produced and the wall clock it took to produce
+/// them. tok/s is a division over those two, so no second signal goes on the
+/// wire to say a thing the wire already says.
+///
+/// Total over [`AgentEvent`] so the metering record stays the only place a row
+/// can come from. The fold calls this from its `StepUsage` arm alone; a caller
+/// handing it anything else gets no row rather than a row about nothing.
+pub(crate) fn model_call_row(event: &AgentEvent) -> Option<TranscriptEntry> {
+    let AgentEvent::StepUsage {
+        role,
+        output_tokens,
+        duration_ms,
+        complete,
+        sub_agent_id,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    Some(TranscriptEntry::Model {
+        activity: activity_of(*role),
+        tokens_per_sec: tokens_per_sec(*output_tokens, *duration_ms, *complete),
+        duration_ms: *duration_ms,
+        sub_agent_id: sub_agent_id.clone(),
+    })
+}
+
+/// The wire token for a call role (`plan_repair`, not `PlanRepair`), so the
+/// word on screen is the word in `stella-events.jsonl` — the record anyone
+/// checking the row will open.
+///
+/// `None` for [`ModelCallRole::Unknown`], which is the `serde` default for an
+/// *absent* role and so covers every session recorded before call-role
+/// attribution existed. `unknown` on the head would read as an activity the
+/// engine has, and it has none by that name.
+fn activity_of(role: ModelCallRole) -> Option<String> {
+    if matches!(role, ModelCallRole::Unknown) {
+        return None;
+    }
+    match serde_json::to_value(role) {
+        Ok(serde_json::Value::String(token)) => Some(token),
+        // `ModelCallRole` is a plain `#[serde(rename_all)]` enum, so no other
+        // shape is reachable. Nothing branches on the absence — it renders as
+        // a head with no activity, exactly as `Unknown` does.
+        _ => None,
+    }
+}
+
+/// Output tokens per second over the call's own wall clock, or `None` when the
+/// division has no inputs to divide.
+///
+/// Three absences, one answer. A provider that supplied no truthful usage
+/// envelope (`StepUsage::complete` false) reports zeros that are not
+/// measurements; an untimed call has nothing to divide by; a call that emitted
+/// no output tokens generated nothing to rate. Each renders as no column,
+/// never `0 tok/s` — the substitution [`super::ReadSize`] and
+/// [`crate::views::transcript::Extent`] both already refuse, because a zero
+/// asserts a measurement where there was none (#2290, #4150).
+fn tokens_per_sec(output_tokens: u64, duration_ms: u64, complete: bool) -> Option<u32> {
+    if !complete || output_tokens == 0 || duration_ms == 0 {
+        return None;
+    }
+    u32::try_from(output_tokens.saturating_mul(1_000) / duration_ms).ok()
 }
 
 /// What SPEC 6.1's opening rule says out loud, stamped onto the stage boundary

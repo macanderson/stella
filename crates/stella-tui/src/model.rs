@@ -966,26 +966,28 @@ impl SessionModel {
                 };
                 self.transcript.push(entry);
             }
-            // Two facts come off a metering record, and they have different
-            // scopes — which is why this is one arm and not two.
+            // Two facts come off a metering record, and one arm folds both.
             //
-            // The **tokens** are folded for every call, whatever its role: the
+            // The **tokens** are counted for every call whatever its role: the
             // receipt accounts for the whole turn, auxiliary work included
-            // (#4184). The **model name** is folded only for a call that
-            // answers the turn (#4183). Splitting them into a guarded arm and a
-            // fallthrough would silently stop counting an answering call's
-            // tokens, because the first matching arm wins.
+            // (#4184). Guarding this arm on a role would stop counting an
+            // answering call's tokens — the first matching arm wins.
             //
-            // The cost deliberately is not folded either way. The HUD's live
-            // spend comes from `BudgetTick`, so folding `StepUsage::cost_usd`
-            // here would double-count it — that hazard is why this event was
-            // ignored outright, and the token half was collateral.
+            // The **row** is SPEC 6.3's `◐ model <activity> · tok/s`, one per
+            // settled call — see `turn::model_call_row` for why the rate is a
+            // division over this event rather than a second wire signal.
+            //
+            // The cost is folded neither way. The HUD's live spend comes from
+            // `BudgetTick`, so folding `StepUsage::cost_usd` here would
+            // double-count it — that hazard is why this event was ignored
+            // outright, and the token half was collateral.
             AgentEvent::StepUsage {
                 input_tokens,
                 output_tokens,
                 ..
             } => {
                 self.turn_counters.add_tokens(*input_tokens, *output_tokens);
+                self.transcript.extend(turn::model_call_row(event));
             }
             AgentEvent::UsageIncomplete { .. }
             // Context receipts (spec §4/§5) are consumed by the store/inspector,

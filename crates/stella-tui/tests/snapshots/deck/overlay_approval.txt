@@ -4,7 +4,6 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
@@ -17,27 +16,28 @@
 
 ☰  plan  4/7  ·  Wire the triggers API
 
-── EXECUTE ───────────────────────────────╭ ◇ approval · the turn is stopped ────────────────────────────────────────╮──────────────────────────────────────────
+ │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
+ │   irreducible generation               ╭ ◇ approval · the turn is stopped ────────────────────────────────────────╮
                                           │ bash  mutating                                                           │
- │ ⊙ apps/app/automations/page.tsx        │   rm -rf build/                                                          │                                    ⚡ 42ms
- │ ⎿ 312 lines                            │                                                                          │                       42ms
-                                          │ gate command.started                                                     │
- │ ● edit apps/app/automations/page.tsx +4│ reason matched rule no-destructive-shell                                 │                                    ⚡ 18ms
- │ ⎿                                      │                                                                          │               +4 −1 · 18ms
- │     10 -  const items = []             │   Allow this call, once                                                  │
- │     10 +  const items = useAutomations(│ ▸ Deny                                                                   │
- │     11 +  const [q, setQ] = useState(""│   Deny, and say why                                                      │
- │     12 +  const filtered = filter(items╰───────────────────────────────────────── ↑↓ move · ⏎ choose · esc denies ╯
+── EXECUTE ───────────────────────────────│   rm -rf build/                                                          │──────────────────────────────────────────
+                                          │                                                                          │
+ │ ⊙ apps/app/automations/page.tsx        │ gate command.started                                                     │                                    ⚡ 42ms
+ │ ⎿ 312 lines                            │ reason matched rule no-destructive-shell                                 │                       42ms
+                                          │                                                                          │
+ │ ● edit apps/app/automations/page.tsx +4│   Allow this call, once                                                  │                                    ⚡ 18ms
+ │ ⎿                                      │ ▸ Deny                                                                   │               +4 −1 · 18ms
+ │     10 -  const items = []             │   Deny, and say why                                                      │
+ │     10 +  const items = useAutomations(╰───────────────────────────────────────── ↑↓ move · ⏎ choose · esc denies ╯
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, q)
  │     13 +  const onNew = () => open()
+
+ │ ◐ model worker · 428 tok/s                                                                                                                           ⚡ 2100ms
+ │   irreducible generation
 
 ☰  plan  5/7  ·  Workflows canvas
 
 ⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
-
-
-
-
-
 
 
 >>>

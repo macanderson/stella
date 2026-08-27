@@ -4,7 +4,6 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
@@ -17,27 +16,28 @@
 
 ☰  plan  4/7  ·  Wire the triggers API
 
+ │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
+ │   irreducible generation
+
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
  │ ⊙ apps/app/automations/page.tsx                                                                                                                        ⚡ 42ms
  │ ⎿ 312 lines                                                                                                                               42ms
-
- │ ● edit apps/app/automations/page.tsx +4 -1                                                                                                             ⚡ 18ms
- │ ⎿                                                ╭ plan  pending approval · 3 steps ────────────────────╮                         +4 −1 · 18ms
- │     10 -  const items = []                       │Refactor the automations store into a shared worksp…  │
- │     10 +  const items = useAutomations()         │                                                      │
- │     11 +  const [q, setQ] = useState("")         │▸ ○ 1. extract types                                  │
- │     12 +  const filtered = filter(items, q)      │  ○ 2. move hooks                                     │
- │     13 +  const onNew = () => open()             │  ○ 3. update 9 imports                               │
-                                                    │                                                      │
-☰  plan  5/7  ·  Workflows canvas                   │repo      macanderson/web-app ⎇ feat/automations-store│
+                                                    ╭ plan  pending approval · 3 steps ────────────────────╮
+ │ ● edit apps/app/automations/page.tsx +4 -1       │Refactor the automations store into a shared worksp…  │                                              ⚡ 18ms
+ │ ⎿                                                │                                                      │                         +4 −1 · 18ms
+ │     10 -  const items = []                       │▸ ○ 1. extract types                                  │
+ │     10 +  const items = useAutomations()         │  ○ 2. move hooks                                     │
+ │     11 +  const [q, setQ] = useState("")         │  ○ 3. update 9 imports                               │
+ │     12 +  const filtered = filter(items, q)      │                                                      │
+ │     13 +  const onNew = () => open()             │repo      macanderson/web-app ⎇ feat/automations-store│
                                                     │write     packages/automations/** · apps/app/automatio│
-⏸ plan  Refactor the automations store into a shared│read      apps/** · packages/**  (2 globs)            │
-                                                    │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │
+ │ ◐ model worker · 428 tok/s                       │read      apps/** · packages/**  (2 globs)            │                                            ⚡ 2100ms
+ │   irreducible generation                         │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │
                                                     │models    think — · work glm-5.2-air · verify —       │
-                                                    │shell     allowlisted                                 │
+☰  plan  5/7  ·  Workflows canvas                   │shell     allowlisted                                 │
                                                     ╰────────────────────────────────── x skip · esc close ╯
-
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
 
 >>>

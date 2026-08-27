@@ -4,18 +4,20 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                         ╭ sub-agents · 1 running ────────────────────────────────────────────────────────────────────────────────────╮
-◉ recalled  2 frames · 21│▸ ◆ sub:auth  needs input · quiet 0:00 · 5:12 · glm-5.2 · effort high · $0.01                               │
-    symbol  engine step-d│     Wire the automations triggers API to the new router.                                                   │  120 tok
-    memory  event-log REP│     waiting on an answer from you                                                                          │   90 tok
-    ⋯ ctrl+o for provenan│                                                                                                            │
-                         │  ◆ sub:ci  running · quiet 0:00 · 5:12 · glm-5.2-air · $0.00                                               │
-── PLAN ─────────────────│     watch CI + open PR                                                                                     │─────────────────────────
-                         │     starting: no model call yet                                                                            │
-  Planning the automation│                                                                                                            │
+
+◉ recalled  2 frames · 21╭ sub-agents · 1 running ────────────────────────────────────────────────────────────────────────────────────╮
+    symbol  engine step-d│▸ ◆ sub:auth  needs input · quiet 0:00 · 5:12 · glm-5.2 · effort high · $0.01                               │  120 tok
+    memory  event-log REP│     Wire the automations triggers API to the new router.                                                   │   90 tok
+    ⋯ ctrl+o for provenan│     waiting on an answer from you                                                                          │
+                         │                                                                                                            │
+── PLAN ─────────────────│  ◆ sub:ci  running · quiet 0:00 · 5:12 · glm-5.2-air · $0.00                                               │─────────────────────────
+                         │     watch CI + open PR                                                                                     │
+  Planning the automation│     starting: no model call yet                                                                            │
                          │                                                                                                            │
 ☰  plan  4/7  ·  Wire the│                                                                                                            │
+                         │                                                                                                            │
+ │ ◐ model worker · 349 t│                                                                                                            │                 ⚡ 1830ms
+ │   irreducible generati│                                                                                                            │
                          │                                                                                                            │
 ── EXECUTE ──────────────│                                                                                                            │─────────────────────────
                          │                                                                                                            │
@@ -30,14 +32,12 @@
  │     12 +  const filter│                                                                                                            │
  │     13 +  const onNew │                                                                                                            │
                          │                                                                                                            │
+ │ ◐ model worker · 428 t│                                                                                                            │                 ⚡ 2100ms
+ │   irreducible generati│                                                                                                            │
+                         │                                                                                                            │
 ☰  plan  5/7  ·  Workflow│                                                                                                            │
                          │                                                                                                            │
 ⏸ plan  Refactor the auto│                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
                          │                                                                                                            │
                          │                                                                                                            │
 >>>                      ╰───────── ↑↓ · o↵ open · n nudge · f flag · l lead · x stop·xx delete · r resume·rr restart · p pause · esc ╯

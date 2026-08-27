@@ -181,6 +181,33 @@ pub enum TranscriptEntry {
         /// that never saw the start still needs (#4699).
         sub_agent_id: Option<String>,
     },
+    /// One settled model call — SPEC 6.3's `◐ model <activity> · tok/s`.
+    ///
+    /// Folded from [`stella_protocol::AgentEvent::StepUsage`], which the driver
+    /// already emits once per call with the call's own output tokens and its
+    /// own wall clock (`turn::model_call_row`). The rate is a division
+    /// over two numbers `stella-core` measured, so nothing new rides the wire
+    /// to carry it.
+    Model {
+        /// What the call was for, as the wire spells the role — `worker`,
+        /// `plan_repair`, `summarization`.
+        ///
+        /// `None` is [`stella_protocol::ModelCallRole::Unknown`]: a stream
+        /// recorded before call-role attribution existed. The head then names
+        /// no activity at all rather than printing `unknown`, on the rule
+        /// `turn::supplies_the_turns_model` already applies to that
+        /// role — a call this build cannot identify states no fact about
+        /// itself.
+        activity: Option<String>,
+        /// Output tokens per second over the call's own wall clock, or `None`
+        /// when the division has no inputs to divide (see
+        /// `turn::model_call_row` for the three cases).
+        tokens_per_sec: Option<u32>,
+        /// The call's own wall clock, rendered `⚡Nms` like every other head.
+        duration_ms: u64,
+        /// Which delegate made the call, `None` for the lead's own (#4699).
+        sub_agent_id: Option<String>,
+    },
     /// A model call was retried (surfaced only once the step commits — the
     /// engine defers these, L-E10).
     Retry { attempt: u32, reason: String },
