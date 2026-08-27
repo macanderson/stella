@@ -5,8 +5,8 @@
 # copies of an enforcement rule into an org whose sibling check exists to
 # detect exactly that kind of drift.
 #
-# There is deliberately no logic in this file. A change to *what* the check
-# does never touches it; only adding or removing a check does.
+# There is no logic in this file. A change to *what* the check does never
+# touches it; only adding or removing a check does.
 name: dod-check
 
 on:
@@ -20,4 +20,4 @@ permissions:
 
 jobs:
   dod:
-    uses: macanderson/oxagen/.github/workflows/dod-check.yml@main
+    uses: macanderson/oxagen/.github/workflows/dod-check.yml@a26bac4001eb5501f9d93f1deec240faecff7f1d # main
