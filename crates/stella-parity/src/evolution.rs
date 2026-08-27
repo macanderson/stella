@@ -315,7 +315,7 @@ evolution_surfaces! {
         EvolutionPosture::Shipped {
             mechanism: "mined candidates clear the distinct-task floor and are written as \
                         SKILL.md. The measured-lift gate exists and is off by default \
-                        (`SkillMineConfig::require_measured_lift` is `false`), so the shipped \
+                        (`AutoCreateConfig::require_measured_lift` is `false`), so the shipped \
                         default promotes on mining eligibility — which is why this row's \
                         impact is an advisory record and not a steering one",
             witness: "a_skill_that_helps_is_promoted_with_its_lift_recorded",
