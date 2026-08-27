@@ -284,8 +284,8 @@ mod tests {
     /// tokenizes to `[twenty, one, rust, crates]`, so from `twenty` the noun
     /// sits three tokens out — a window of `CARDINAL_LOOKAHEAD` alone stopped
     /// one short, and the spelled-compound count claim kept its `path_exists`
-    /// probe (#4262's false green). Digit forms and the deliberate `one`
-    /// exemption pin the boundary from the other side.
+    /// probe (#4262's false green). Digit forms and the `one` exemption pin
+    /// the boundary from the other side.
     #[test]
     fn a_spelled_compound_cardinal_loses_its_path_probe() {
         assert!(!probe_can_discriminate(

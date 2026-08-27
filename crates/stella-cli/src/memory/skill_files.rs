@@ -21,8 +21,9 @@ impl SkillSource for FsSkillSource {
                 // same-name entries in one root (flat `foo.md` beside
                 // `foo/SKILL.md`, or a frontmatter `name:` colliding with a
                 // sibling's slug) picked their winner per machine. The
-                // rendered prompt bytes must not depend on that (invariant
-                // #7); root order still decides cross-root precedence.
+                // rendered prompt bytes must not depend on that (AGENTS.md
+                // rule 7, byte-stable prompts); root order still decides
+                // cross-root precedence.
                 let mut paths: Vec<std::path::PathBuf> =
                     entries.flatten().map(|entry| entry.path()).collect();
                 paths.sort();
