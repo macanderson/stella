@@ -405,7 +405,8 @@ fn a_package_declaration_round_trips_through_toml_and_json() {
 fn the_consent_text_shows_the_panel_and_every_limit_it_accepts() {
     let manifest = PluginManifest::from_toml_str(
         "name = \"gates\"\ndescription = \"live gate status\"\n\
-         [panel]\ndenies = [\"network\", \"write-outside-sandbox\"]\n\
+         [panel]\nsurfaces = [\"settings\", \"overlay\"]\n\
+         denies = [\"network\", \"write-outside-sandbox\"]\n\
          [panel.process]\nargv = [\"python3\", \"panel.py\"]\ntimeout_secs = 2\n\
          env = [\"GATE_URL\"]\n",
     )
@@ -430,10 +431,75 @@ fn the_consent_text_shows_the_panel_and_every_limit_it_accepts() {
         "{text}"
     );
 
+    // Where it draws, and only where it draws: this panel asked for two of the
+    // three placements, so the third must not appear.
+    assert!(
+        text.contains("draws a pane inside your SETTINGS tab"),
+        "{text}"
+    );
+    assert!(
+        text.contains("draws a bordered block in your transcript"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("adds a popup you open by typing its name"),
+        "a placement the block never asked for was disclosed as granted: {text}"
+    );
+
     // A plugin with no panel says nothing about one, which is what keeps the
     // section meaningful where it does appear.
     let bundle = PluginManifest::from_toml_str("name = \"bundle\"").expect("loads");
     assert!(!consent_text(&bundle).contains("Draws part of your screen"));
+}
+
+/// **The witness for #5203's consent half.** A settings pane, a transcript
+/// block and a `/name` popup are three different asks, so the prompt names the
+/// ones being made — including the slash name a person will be able to type,
+/// which is the placement a reader cannot discover any other way.
+#[test]
+fn the_consent_text_names_the_slash_command_a_panel_claims() {
+    let declared = PluginManifest::from_toml_str(
+        "name = \"gates\"\n[panel]\nsurfaces = [\"command\"]\ncommand = \"gate-status\"\n\
+         denies = [\"network\", \"write-outside-sandbox\"]\n",
+    )
+    .expect("a panel is expressible");
+    let text = consent_text(&declared);
+    assert!(
+        text.contains("adds a popup you open by typing its name"),
+        "{text}"
+    );
+    // Both the headline name and the alias, because both will work and a
+    // reader consenting to one is consenting to the other.
+    assert!(
+        text.contains("answers to `/gate-status`, and to `/gates:gate-status`"),
+        "{text}"
+    );
+
+    // Undeclared, the name is the plugin's own — and the prompt still says so,
+    // because "you can type /gates" is not something a reader should have to
+    // infer from a default.
+    let defaulted = PluginManifest::from_toml_str(
+        "name = \"gates\"\n[panel]\nsurfaces = [\"command\"]\n\
+         denies = [\"network\", \"write-outside-sandbox\"]\n",
+    )
+    .expect("a panel is expressible");
+    assert!(
+        consent_text(&defaulted).contains("answers to `/gates`, and to `/gates:gates`"),
+        "{}",
+        consent_text(&defaulted)
+    );
+
+    // A panel with no popup claims no name at all, defaulted or otherwise.
+    let pane = PluginManifest::from_toml_str(
+        "name = \"gates\"\n[panel]\nsurfaces = [\"settings\"]\n\
+         denies = [\"network\", \"write-outside-sandbox\"]\n",
+    )
+    .expect("a panel is expressible");
+    assert!(
+        !consent_text(&pane).contains("answers to"),
+        "{}",
+        consent_text(&pane)
+    );
 }
 
 /// AGENTS.md #4 for the `[panel]` block: what a host renders that handshake
@@ -441,7 +507,8 @@ fn the_consent_text_shows_the_panel_and_every_limit_it_accepts() {
 #[test]
 fn a_panel_declaration_round_trips_through_toml_and_json() {
     let parsed = PluginManifest::from_toml_str(
-        "name = \"gates\"\n[panel]\ndenies = [\"network\", \"write-outside-sandbox\"]\n",
+        "name = \"gates\"\n[panel]\nsurfaces = [\"settings\", \"overlay\", \"command\"]\n\
+         command = \"gate-status\"\ndenies = [\"network\", \"write-outside-sandbox\"]\n",
     )
     .expect("a panel is expressible");
     let toml_text = toml::to_string(&parsed).unwrap();

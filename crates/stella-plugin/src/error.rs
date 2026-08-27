@@ -9,7 +9,7 @@ use crate::driver::DriverCall;
 use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
 use crate::package::ContributionKind;
-use crate::panel::PanelDenial;
+use crate::panel::{PanelDenial, PanelSurface};
 use crate::runtime::ProcessBlock;
 use crate::wire::WrapperPoint;
 use crate::wrapper::{HostStage, Signal, SignalKind, StageName};
@@ -166,6 +166,83 @@ pub enum ManifestError {
     DuplicatePanelDenial {
         /// The limit that appeared twice.
         denial: PanelDenial,
+    },
+
+    /// A `[panel]` block named no surface, so it draws nowhere.
+    ///
+    /// Not read as a narrower panel, for [`ManifestError::PanelDenialMissing`]'s
+    /// reason turned the other way up: a block with no placement is an
+    /// unfinished declaration, and the install prompt has nothing to tell a
+    /// reader they would be agreeing to see.
+    #[error(
+        "[panel] surfaces is empty: a panel draws somewhere, so name at least one of \
+         \"settings\", \"overlay\" or \"command\""
+    )]
+    PanelNoSurface,
+
+    /// `[panel] surfaces` listed the same placement twice — the
+    /// [`ManifestError::DuplicateHook`] rule again.
+    #[error("[panel] surfaces declares \"{surface}\" more than once")]
+    PanelDuplicateSurface {
+        /// The placement that appeared twice.
+        surface: PanelSurface,
+    },
+
+    /// `[panel] command` was declared without `"command"` among
+    /// `[panel] surfaces`.
+    ///
+    /// A slash name with no popup to open is a promise the interface will never
+    /// keep: the key reads as a working `/name` to whoever loads the manifest,
+    /// and nothing would ever answer it.
+    #[error(
+        "[panel] command = \"{command}\" has no popup to open: add \"command\" to [panel] \
+         surfaces, or drop the name"
+    )]
+    PanelCommandWithoutSurface {
+        /// The name that would have opened nothing.
+        command: String,
+    },
+
+    /// `[panel] command` was empty.
+    #[error(
+        "[panel] command is empty: give the popup a name, or drop the key and take the \
+         plugin's own id"
+    )]
+    PanelCommandBlank,
+
+    /// `[panel] command` was longer than a slash name should be.
+    #[error("[panel] command is {chars} characters, past the {max} a slash name may use")]
+    PanelCommandTooLong {
+        /// How long the declared name is, in `char`s.
+        chars: usize,
+        /// The ceiling ([`crate::MAX_PANEL_COMMAND_CHARS`]).
+        max: usize,
+    },
+
+    /// `[panel] command` was written in the namespaced form.
+    ///
+    /// `/<plugin>:<name>` is a real way to reach the panel, so an author can
+    /// reasonably think the namespace is theirs to write. It is derived from
+    /// the plugin's id, never declared, and this key takes the bare name.
+    #[error(
+        "[panel] command = \"{command}\" carries a namespace: write the bare name, and Stella \
+         derives the \"<plugin>:<name>\" alias from the plugin's id"
+    )]
+    PanelCommandCarriesNamespace {
+        /// The name as it was written.
+        command: String,
+    },
+
+    /// `[panel] command` was not a slug a person can type after a slash.
+    #[error(
+        "[panel] command carries '{found}' at position {index}: a slash name opens with a \
+         lowercase letter and continues with lowercase letters, digits and '-'"
+    )]
+    PanelCommandNotASlug {
+        /// The character that was refused.
+        found: char,
+        /// Which character of the name, counted in `char`s from zero.
+        index: usize,
     },
 
     /// `[loop] max_calls` was declared with no `[loop] calls` to bound.
@@ -573,6 +650,24 @@ pub enum ManifestError {
     /// grant, chip, and hold attribution hangs off.
     #[error("manifest name must not be empty")]
     EmptyName,
+
+    /// The manifest's `name` carried a control character.
+    ///
+    /// The name is what Stella prints into its **own** chrome — the panel
+    /// label, the install prompt, a popup heading — so an escape sequence in it
+    /// is Stella emitting a plugin's bytes under its own border, past every
+    /// guarantee [`crate::PanelText`] makes about a panel's glyphs.
+    #[error(
+        "manifest name carries the control character U+{code:04X} at position {index}: the name \
+         is printed inside Stella's own chrome, and Stella writes every escape sequence the \
+         terminal sees"
+    )]
+    NameNotDrawable {
+        /// Which character of the name, counted in `char`s from zero.
+        index: usize,
+        /// The Unicode scalar value that was refused.
+        code: u32,
+    },
 
     /// A `[[capabilities]]` entry named no tool. The tool name is what a gate
     /// rule keys on and what the consent prompt shows; a blank one is a

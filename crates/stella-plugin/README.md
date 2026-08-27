@@ -266,7 +266,8 @@ before it crosses.
 - `src/driver.rs` — the `[driver]` block and the drive-session wire shapes
   (`DriverGrant`, `DriverCall`, `DriveRequest`/`DriveResponse`): a plugin that
   starts turns rather than taking part in one.
-- `src/panel.rs` — the `[panel]` block and the panel channel's wire shapes
+- `src/panel.rs` — the `[panel]` block, the surfaces it draws on, and the panel
+  channel's wire shapes
   (`PanelGrant`, `PanelDenial`, `PanelLease`, `PanelFrame`): a plugin leased a
   rectangle of the screen, returning styled lines or a cell diff each tick
   (`design/tui-v2/SPEC.md` §12). Two of that section's rules are the types
