@@ -3200,6 +3200,7 @@ version = "0.9.254"
 dependencies = [
  "async-trait",
  "futures-util",
+ "libc",
  "proptest",
  "serde",
  "serde_json",
@@ -3313,7 +3314,9 @@ dependencies = [
  "serde_json",
  "stella-diag",
  "stella-diff",
+ "stella-plugin",
  "stella-protocol",
+ "stella-runtime",
  "stella-tools",
  "stella-transcript",
  "stella-tui-theme",

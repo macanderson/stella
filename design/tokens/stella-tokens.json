@@ -298,7 +298,7 @@
       "rust": "DIFF_ADD_BG",
       "role": "added diff row background",
       "surfaces": ["tui", "web-dark"],
-      "paint": { "gap": "#4058" }
+      "paint": "painted"
     },
     {
       "name": "diff-del-bg",
@@ -308,7 +308,7 @@
       "rust": "DIFF_DEL_BG",
       "role": "removed diff row background",
       "surfaces": ["tui", "web-dark"],
-      "paint": { "gap": "#4058" }
+      "paint": "painted"
     },
     {
       "name": "ink",

@@ -39,6 +39,13 @@ stella-transcript = { path = "../stella-transcript" }
 # dependency is `ratatui`, so it costs this crate nothing and costs every other
 # consumer nothing either.
 stella-tui-theme = { path = "../stella-tui-theme" }
+# The panel wire types a plugin's frame arrives as (`src/plugin_panel.rs`,
+# SPEC 12). The host has to read `PanelFrame` to blit it, and reproducing those
+# shapes here would be a second copy of a signed document's vocabulary — the
+# drift the wire crate exists to prevent. A near-leaf whose only workspace
+# dependency is `stella-protocol`, which this crate already takes, so the edge
+# adds no transitive weight.
+stella-plugin = { path = "../stella-plugin" }
 arboard.workspace = true
 png.workspace = true
 serde_json.workspace = true
@@ -51,6 +58,12 @@ sysinfo.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+# `tests/hello_panel_demo.rs` only: the panel driver that starts a plugin's
+# process, so the demo exercises the shipped chain rather than a fixture of it.
+# A dev edge, never a build one — the deck renders frames and does not spawn
+# the processes that produce them (SPEC 12's host/driver split), and
+# `stella-runtime` does not depend on this crate, so the graph stays acyclic.
+stella-runtime = { path = "../stella-runtime" }
 tempfile.workspace = true
 proptest.workspace = true
 # `tests/status_bar_goldens.rs` only. The deck's own golden harness
