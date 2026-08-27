@@ -78,7 +78,16 @@ the CLI does — so the dashboard and the terminal cannot disagree.
 
 | File | What it holds |
 |---|---|
-| [`src/lib.rs`](src/lib.rs) | Everything: the dedup digest, the `AimdLimits`/`Calibration`/`calibrate` controller, the `Lens`/`Tooling`/`LENSES` aperture ladder and `advance`, `CycleRecord`/`dry_streak`, the `Supply`/`Demand`/`Floors`/`CyclePlan`/`plan_cycle` governor, `Metrics`/`metrics`/`starved`, `QueueIssue`/`rank_defects`, and `Liveness`/`liveness`/`RunRow`/`fold_runs`. |
+| [`src/lib.rs`](src/lib.rs) | The dedup digest, the `AimdLimits`/`Calibration`/`calibrate` controller, the `Lens`/`Tooling`/`LENSES` aperture ladder and `advance`, `CycleRecord`/`dry_streak`, the `Supply`/`Demand`/`Floors`/`CyclePlan`/`plan_cycle` governor, `Metrics`/`metrics`/`starved`, `QueueIssue`/`rank_defects` (superseded by `priority::triage` — see that module), and `Liveness`/`liveness`/`RunRow`/`fold_runs`. |
+| [`src/step.rs`](src/step.rs) | The top-level loop machine: `LoopState`/`LoopObservation`/`step`, the `Unblock` remedies for a broken base, and the `Blocked` reasons. |
+| [`src/deliver.rs`](src/deliver.rs) | The per-PR delivery machine: `PrState`/`Observation`/`deliver_next`, the fix/rebase ceilings, and the escalation reasons. |
+| [`src/doctrine.rs`](src/doctrine.rs) | The policy knobs a human sets: `Doctrine`, `ForeignBreakage`, contention policy and `contention_verdict`. |
+| [`src/priority.rs`](src/priority.rs) | `triage`: rank by the ladder the repo actually uses, with unassessed issues distinct from unrankable ones. |
+| [`src/gate.rs`](src/gate.rs) | Which checks are allowed to block a merge, and which have stopped earning that right. |
+| [`src/closure.rs`](src/closure.rs) | How an issue ends, and what has to be true first. |
+| [`src/convention.rs`](src/convention.rs) | How this repository writes issues, learned rather than assumed. |
+| [`src/attribution.rs`](src/attribution.rs) | Attribution lines for filed issues and opened PRs. |
+| [`src/stats.rs`](src/stats.rs) | What a session did, counted as it happens. |
 | [`src/surface.rs`](src/surface.rs) | The host surface: `HOST_SURFACE`, `HOST_SURFACE_VERSION`, `HostVerb`, `Emits`, and the two-way `surface_drift` check the CLI's real clap tree is measured against (`doc:pipeline-as-plugins` §10, D2). |
 | [`src/tests.rs`](src/tests.rs) | Witness tests ported from `scripts/test-self-driving.sh` (#1548), plus the property tests a generator can sweep that the shell driver never could — digest normalization, controller bounds, dry-streak suffix matching, demand's one-directional effect on the plan. |
 
