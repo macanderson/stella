@@ -274,8 +274,9 @@ pub(crate) async fn run_goal_wrapped_turn(
     goal: &str,
     session: Option<&str>,
     budget_limit: Option<f64>,
-    // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller.
-    recall_event: Option<AgentEvent>,
+    // Phase 2 (#713): what this turn's opening block left to announce, in
+    // send order — the raw arm's twin. See `super::run_goal_turn`.
+    recall_events: Vec<AgentEvent>,
     session_memory: Option<&mut crate::memory::SessionMemory>,
     bound: &BoundWrapper,
     // The grant over the tree every round runs in, and the tamper baseline
@@ -342,7 +343,7 @@ pub(crate) async fn run_goal_wrapped_turn(
     // The session fact before the turn's, exactly as the raw arm opens
     // (#4500).
     super::announce_withheld_steering(&tx, cfg);
-    if let Some(event) = recall_event {
+    for event in recall_events {
         let _ = tx.send(event);
     }
 

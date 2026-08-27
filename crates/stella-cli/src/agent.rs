@@ -473,7 +473,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             println!();
             // Phase 2 (#713): carried to `run_goal_turn`, which owns the
             // event channel this turn's telemetry rides.
-            let mut recall_event = None;
+            let mut recall_events: Vec<AgentEvent> = Vec::new();
             if let Some(m) = &mut memory {
                 // Same schedule as the plain prompts above (#1221): one
                 // interleaved sequence per workspace, not one per command.
@@ -481,7 +481,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 let touched =
                     stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
                 let recalled = m.recall_block_reported(goal, &touched).await;
-                recall_event = recalled.telemetry_event();
+                recall_events = recalled.telemetry_events();
                 inject_recall_block(&mut messages, recalled.text);
             }
             // Everything the goal loop appends past here is this turn's work,
@@ -504,7 +504,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 &store,
                 goal,
                 Some(presence.id()),
-                recall_event,
+                recall_events,
                 memory.as_mut(),
                 Some(&mut goal_rounds),
             )
@@ -1233,7 +1233,7 @@ pub(crate) async fn run_turn(
     );
     // Recall's frames, then this run's own opening stage boundary — see
     // `output::open_raw_turn` for the ordering and for why it lives there.
-    output::open_raw_turn(&tx, recall.event, cfg.authority.withheld.as_ref());
+    output::open_raw_turn(&tx, recall.events, cfg.authority.withheld.as_ref());
 
     // Mid-turn fallback (#2679): on an exhausted retry ladder the engine
     // re-resolves the worker role through this session router.

@@ -169,11 +169,11 @@ pub(crate) fn entry_lines(
 /// SPEC 6 rows for the entries the shared projection owns; `false` leaves the
 /// entry to [`entry_body`] below.
 ///
-/// It owns a tool call's **head**, compaction's one quiet line, one settled
-/// model call, and the turn's own rules. Everything else still draws long-form
-/// until its phase lands, which is why
-/// this is a router rather than a replacement — a half-migrated transcript must
-/// still draw every row it holds, not drop the ones the projection has no arm for yet.
+/// It owns a tool call's **head**, the skill row, one settled model call,
+/// compaction's one quiet line, and the turn's own rules. Everything else still
+/// draws long-form until its phase lands, which is why this is a router rather
+/// than a replacement — a half-migrated transcript must still draw every row it
+/// holds, not drop the ones the projection has no arm for yet.
 ///
 /// A tool **result** is pointedly not here. Its body already carries syntax
 /// highlighting in the file's own language, inline word-level diffs, a line
@@ -234,6 +234,14 @@ fn projected_rows(
             if expanded {
                 tool::argument_rows(source::head_metal(name), raw, width, out);
             }
+            true
+        }
+        TranscriptEntry::Skill {
+            name,
+            summary,
+            tokens,
+        } => {
+            out.extend(source::skill_rows(name, summary, *tokens, width));
             true
         }
         TranscriptEntry::Model {
@@ -922,15 +930,16 @@ fn entry_body(
         // narrowed, a missing turn rule is a visible gap a reader can report,
         // where an `unreachable!()` would take the session down mid-frame.
         TranscriptEntry::Complete { .. } => {}
-        // Also the router's — head *and*, on ctrl+o, the argument object under
-        // it. This one **delegates** rather than drawing nothing, which is the
-        // difference between the two arms and the lesson of #4157: the row a
-        // gap here would cost is the call itself, the single most consequential
-        // row in the transcript, and the previous version of this arm sat here
-        // looking live while the router quietly took its `expanded` half away.
-        // Delegating means there is one implementation to keep correct and no
-        // second one to rot.
-        TranscriptEntry::ToolStart { .. } => {
+        // Also the router's — a call's head *and*, on ctrl+o, the argument
+        // object under it; a skill's head and its injected-summary footer.
+        // This arm **delegates** rather than drawing nothing, which is the
+        // difference between it and `Complete` above and the lesson of #4157:
+        // the row a gap here would cost is the call itself, the single most
+        // consequential row in the transcript, and the previous version of
+        // this arm sat here looking live while the router quietly took its
+        // `expanded` half away. Delegating means there is one implementation
+        // to keep correct and no second one to rot.
+        TranscriptEntry::ToolStart { .. } | TranscriptEntry::Skill { .. } => {
             projected_rows(entry, view, expanded, width, out);
         }
     }

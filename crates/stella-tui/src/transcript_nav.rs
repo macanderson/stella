@@ -116,6 +116,10 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
             .flat_map(|f| std::iter::once(f.label.as_str()).chain(f.uri.as_deref()))
             .collect(),
         E::ContextWrite { provider, .. } => vec![provider],
+        // "which turn pulled in the SQL skill?" is the search this row answers,
+        // and the summary is where a reader who knows the subject but not the
+        // slug will find it.
+        E::Skill { name, summary, .. } => vec![name, summary],
         E::MediaComplete { label, path, .. } => vec![label, path],
         E::Verdict { summary, .. } | E::ScopeReview { summary, .. } => vec![summary],
         E::GoalVerdict { reasoning, .. } => vec![reasoning],

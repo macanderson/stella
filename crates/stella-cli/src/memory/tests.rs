@@ -25,6 +25,9 @@ mod reflection_mining;
 // Spec §8 (#737): the seam where auto-created skill files meet what is
 // already on disk — its own module, and the reason tests.rs fits the ratchet.
 mod skill_creation;
+// #5031: whether a turn says which skills it injected. `golden_block` pins
+// what the block contains; this asks what the stream reports about it.
+mod skill_event;
 // #3243 D1/D2: what selection is allowed to call "relevant to this turn" —
 // per-turn domain scope, and a lexical score that can fire on a real prompt.
 mod steering_selection;

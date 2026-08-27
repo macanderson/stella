@@ -602,6 +602,56 @@ fn render_section_drops_extra_skills_past_the_total_budget() {
     assert!(out.contains("### s0"));
 }
 
+/// **Witness (#5031).** What the section reports having injected is what it
+/// injected: the same prefix, cut by the same budget, priced over the same
+/// bytes.
+///
+/// The over-budget fixture is the point. `select_skills` ranks more skills
+/// than the section fits, so a report built from the *selection* would name
+/// skills the prompt never carried and bill the turn for text nobody sent —
+/// which is exactly what the transcript row would then be asserting to a
+/// reader.
+#[test]
+fn injected_skills_names_only_what_the_section_budget_carried() {
+    let selected: Vec<SelectedSkill> = (0..6)
+        .map(|i| {
+            let mut s = skill(&format!("s{i}"), "d", &[], SkillOrigin::Workspace);
+            s.body = "word ".repeat(300);
+            SelectedSkill {
+                skill: s,
+                score: 1.0,
+                matched_terms: vec![],
+                matched_domains: vec![],
+            }
+        })
+        .collect();
+
+    let fit = section_fit(&selected);
+    assert!(fit < selected.len(), "the fixture must overrun the budget");
+
+    let injected = injected_skills(&selected);
+    let names: Vec<&str> = injected.iter().map(|s| s.name.as_str()).collect();
+    let rendered: Vec<String> = (0..fit).map(|i| format!("s{i}")).collect();
+    assert_eq!(
+        names,
+        rendered.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+
+    for (report, sel) in injected.iter().zip(&selected) {
+        assert_eq!(report.summary, sel.skill.description);
+        assert_eq!(
+            u64::from(report.tokens),
+            stella_protocol::estimate_tokens(&rendered_skill_block(sel)),
+            "the reported cost is the block's own",
+        );
+    }
+}
+
+#[test]
+fn injected_skills_of_nothing_is_nothing() {
+    assert!(injected_skills(&[]).is_empty());
+}
+
 // ---- mining ----
 
 fn observation(text: &str, occurred_at: u64) -> SkillObservation {

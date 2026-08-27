@@ -415,3 +415,36 @@ impl Hud {
             .unwrap_or_else(|| (self.spent_usd - self.turn_start_spent_usd).max(0.0))
     }
 }
+
+/// The opening rule of the turn now in flight, for a late-arriving field to
+/// fill.
+///
+/// Walks back to the **nearest** stage boundary that opened a turn and stops
+/// there, whether or not the caller fills anything. That single stop is what
+/// makes every field on the rule first-write-wins per turn, and it is doing
+/// two jobs:
+///
+/// * an earlier turn's rule is already settled and must not be rewritten by a
+///   later turn's event;
+/// * a sub-agent's calls also carry [`ModelCallRole::Worker`], and a child may
+///   well run on a different model. The lead has to call the model before it
+///   can decide to delegate, so the lead's own first worker call always
+///   precedes any child's and has already claimed the rule by the time one
+///   arrives. Depth is not on the wire here, so the ordering is the guarantee
+///   rather than a filter.
+///
+/// `None` for a turn whose rule was never stamped — no stage boundary has
+/// arrived yet — which leaves each caller's own fallback carrying the fact.
+///
+/// One walk rather than one per field: the model and the queued steer had a
+/// copy each, identical but for the field they wrote, so a fix to the stopping
+/// rule had two places to land and no way to notice the second.
+pub(super) fn open_turn(transcript: &mut [super::TranscriptEntry]) -> Option<&mut TurnOpening> {
+    transcript.iter_mut().rev().find_map(|entry| match entry {
+        super::TranscriptEntry::Stage {
+            opens: Some(opening),
+            ..
+        } => Some(opening),
+        _ => None,
+    })
+}

@@ -482,6 +482,11 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             superseded: 1,
             task_id: Some(TaskId::new("3")),
         },
+        AgentEvent::SkillInjected {
+            name: "oxagen-feature".into(),
+            summary: "the 10-layer feature contract".into(),
+            tokens: 1200,
+        },
         AgentEvent::StepManifest {
             turn_instance: 1,
             step: 0,
