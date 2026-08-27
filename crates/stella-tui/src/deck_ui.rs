@@ -2508,44 +2508,10 @@ fn handle_issues_modal_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckU
         IssuesMode::SearchTracker => handle_issues_search_key(key, ui),
         IssuesMode::Create => handle_issue_form_key(key, ui),
         IssuesMode::Comment | IssuesMode::SetStatus => handle_issue_prompt_key(key, ui),
-        IssuesMode::ConfirmSend => handle_issue_confirm_send_key(key, model, ui),
-        IssuesMode::StartWork => handle_start_work_key(key, ui),
+        IssuesMode::ConfirmSend => issues_keys::handle_issue_confirm_send_key(key, model, ui),
+        IssuesMode::StartWork => issues_keys::handle_start_work_key(key, ui),
         // Unreachable — the gate only fires for non-Browse modes.
         IssuesMode::Browse => DeckAction::Ignored,
-    }
-}
-
-/// The send-to-prompt confirmation (`p`): ⏎ submits the staged issues as one
-/// prompt and forwards to the Session tab so the human watches it land; Esc
-/// cancels back to the browse list. Every other key is swallowed — the popup
-/// is modal.
-fn handle_issue_confirm_send_key(
-    key: KeyEvent,
-    model: &WorkspaceModel,
-    ui: &mut DeckUi,
-) -> DeckAction {
-    match key.code {
-        KeyCode::Esc => {
-            ui.issues.mode = IssuesMode::Browse;
-            DeckAction::Handled
-        }
-        KeyCode::Enter => {
-            let rows: Vec<IssueRow> = ui.issues.picked_rows().into_iter().cloned().collect();
-            ui.issues.mode = IssuesMode::Browse;
-            if rows.is_empty() {
-                // The list refreshed out from under the popup — nothing to
-                // send, and nothing to confirm either.
-                ui.issues.notice = Some("the selection is gone — the list changed".into());
-                return DeckAction::Handled;
-            }
-            let text = issues_prompt_text(&rows);
-            ui.issues.picked.clear();
-            // Forward to the transcript BEFORE submitting so the human lands
-            // where the prompt is about to appear.
-            ui.set_tab(DeckTab::Session);
-            submit_prompt(ui, model, text)
-        }
-        _ => DeckAction::Handled,
     }
 }
 
@@ -3667,9 +3633,7 @@ mod skills_keys;
 
 /// ISSUES-tab browse keys and the multiselect they drive.
 mod issues_keys;
-use issues_keys::{
-    handle_issues_browse_key, handle_start_work_key, issues_page_request, issues_prompt_text,
-};
+use issues_keys::{handle_issues_browse_key, issues_page_request};
 
 #[cfg(test)]
 mod tests;

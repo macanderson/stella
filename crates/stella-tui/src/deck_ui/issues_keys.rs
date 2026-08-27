@@ -2,9 +2,13 @@
 //!
 //! Non-modal, exactly like the MCP tab's Browse mode — the composer stays
 //! live, so every letter verb gates on `composer_empty` and never shadows the
-//! first character of a prompt. The tab's other modes (the create form, the
-//! comment/status prompts, the tracker search line) are modal and stay in
-//! `deck_ui.rs` beside the state they drive.
+//! first character of a prompt.
+//!
+//! The two modal surfaces that hold a *selection* rather than a text buffer
+//! are here too — the send-to-prompt confirmation and the start-work draft.
+//! The three that hold text (the create form, the comment/status prompts,
+//! the tracker search line) stay in `deck_ui.rs` beside the buffers they
+//! type into.
 //!
 //! **Row keys carry their `#`.** `IssueRow::key` is the *display* spelling —
 //! the driver's `issue_row` puts the `#` on at the boundary and strips it
@@ -15,7 +19,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::{DeckAction, DeckUi, IssuesMode, IssuesPanel};
+use super::{DeckAction, DeckTab, DeckUi, IssuesMode, IssuesPanel};
 use crate::deck::WorkspaceModel;
 use crate::envelope::{IssueAction, IssueRow, WorkspaceInput};
 use crate::start_work::StartWorkDraft;
@@ -312,6 +316,40 @@ fn approve_start_work(ui: &mut DeckUi) -> DeckAction {
         tasks,
         seq,
     })
+}
+
+/// The send-to-prompt confirmation (`p`): ⏎ submits the staged issues as one
+/// prompt and forwards to the Session tab so the human watches it land; Esc
+/// cancels back to the browse list. Every other key is swallowed — the popup
+/// is modal.
+pub(super) fn handle_issue_confirm_send_key(
+    key: KeyEvent,
+    model: &WorkspaceModel,
+    ui: &mut DeckUi,
+) -> DeckAction {
+    match key.code {
+        KeyCode::Esc => {
+            ui.issues.mode = IssuesMode::Browse;
+            DeckAction::Handled
+        }
+        KeyCode::Enter => {
+            let rows: Vec<IssueRow> = ui.issues.picked_rows().into_iter().cloned().collect();
+            ui.issues.mode = IssuesMode::Browse;
+            if rows.is_empty() {
+                // The list refreshed out from under the popup — nothing to
+                // send, and nothing to confirm either.
+                ui.issues.notice = Some("the selection is gone — the list changed".into());
+                return DeckAction::Handled;
+            }
+            let text = issues_prompt_text(&rows);
+            ui.issues.picked.clear();
+            // Forward to the transcript BEFORE submitting so the human lands
+            // where the prompt is about to appear.
+            ui.set_tab(DeckTab::Session);
+            super::submit_prompt(ui, model, text)
+        }
+        _ => DeckAction::Handled,
+    }
 }
 
 /// Fetch the panel's current page — the one read every browse-list request
