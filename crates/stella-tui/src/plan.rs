@@ -26,11 +26,30 @@
 //!
 //! # Vocabulary (D6)
 //!
-//! Stella makes and executes **plans**. A plan has **plan steps**. `task`,
-//! `scope`, and `issue` are other tools' words — GitHub's, Jira's — and none
-//! of them reach a rendered string here. The `task_*` tool names and the
-//! `TaskUpdate` wire event keep their identifiers; this is the layer where
-//! they become one vocabulary.
+//! Stella makes and executes **plans**. A plan has **plan steps**. `scope` and
+//! `issue` are other tools' words — GitHub's, Jira's — and neither reaches a
+//! rendered string here.
+//!
+//! **`task` is not one of them, and saying it was is the correction #5155
+//! made.** D6 banned it as another tool's word, and it is stella's own: six
+//! built-in tools are named `task_*`, `"tools": {"task": "off"}` withholds
+//! that family by name, `stella-protocol` defines `TaskId` / `TaskItem` /
+//! `TaskStatus`, `events.task_id` carries it, and AGENTS.md's glossary gives
+//! it a row. A rule that calls a word foreign while the tool surface, the wire
+//! types and the glossary all use it is not a copy law, it is a mistake with a
+//! guard on it.
+//!
+//! So the two words divide by **what they name**, which is what SPEC §7.1–7.5
+//! already does and what #5041 shipped:
+//!
+//! - A **plan step** is a row of the approved plan — what the user agreed to,
+//!   in order. That is this module and the plan card.
+//! - A **task** is a row of the board, with an id, a contract and evidence
+//!   against it. That is the task zoom, one keypress inside the card.
+//!
+//! They are joined by ordinal id (see the fold above) and they are not the
+//! same entity, so collapsing them onto one word would lose the distinction
+//! the join exists to make.
 //!
 //! Pure: this module folds and formats, and returns rows for a renderer to
 //! style. No ratatui types, so the fold is unit-testable without a terminal.

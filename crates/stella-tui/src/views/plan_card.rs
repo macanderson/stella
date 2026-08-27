@@ -674,8 +674,71 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n")
             .to_lowercase();
-        for banned in ["task", "scope", "issue", "witness", "judge"] {
+        // `task` is NOT banned here any more (#5155): it is stella's own word
+        // — six `task_*` built-ins, a `task` tool family, `TaskId` in the
+        // protocol, a glossary row — and it names the board entity the zoom
+        // shows, not the plan step this card shows. The card still must not
+        // say it, because a plan step is not a task; that is
+        // `the_card_says_plan_step_where_the_zoom_says_task` below, which
+        // states the reason rather than filing it under foreign vocabulary.
+        for banned in ["scope", "issue", "witness", "judge"] {
             assert!(!text.contains(banned), "leaked {banned:?} in:\n{text}");
+        }
+    }
+
+    /// **The witness (#5155).** The two surfaces keep their own word, and the
+    /// guard covers both.
+    ///
+    /// D6 banned `task` from every rendered string as another tool's word,
+    /// while SPEC §7.5 spells it verbatim on the zoom one keypress inside this
+    /// card — so #5041 had to pick one and the deck said `plan step` on one
+    /// card and `task` on the next. The rule was the mistake: `task` is
+    /// stella's own (see `crate::plan`'s D6 note). The words divide by what
+    /// they name — a plan step is a row of the approved plan, a task is a row
+    /// of the board with a contract and evidence — and this pins that both
+    /// halves hold, which the one-surface guard above could not say.
+    #[test]
+    fn the_card_says_plan_step_where_the_zoom_says_task() {
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one"]));
+        plan.approve();
+        let card: String = step_rows(&plan, 52, None, 0, false, None)
+            .0
+            .iter()
+            .map(text_of)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .to_lowercase();
+        assert!(
+            !card.contains("task"),
+            "the plan card names the board's entity:\n{card}"
+        );
+
+        // The zoom's own blocks, which SPEC §7.5 words in tasks. Asserted in
+        // BOTH directions, and the positive half is the one with teeth: a
+        // later reader who decides this contradiction the other way — by
+        // renaming the zoom's copy to `plan step` — passes every
+        // absence-only check and fails here.
+        let zoom: String = crate::views::task_zoom::contract_rows(None, 52)
+            .iter()
+            .chain(crate::views::task_zoom::evidence_rows("3", None, 52).iter())
+            .map(text_of)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .to_lowercase();
+        assert!(
+            zoom.contains("task"),
+            "the zoom must name the board's entity in its own words:\n{zoom}"
+        );
+        assert!(
+            zoom.contains("task:3"),
+            "SPEC §7.5's evidence caption is `every event tagged task:<id>`:\n{zoom}"
+        );
+        for banned in ["scope", "issue", "plan step"] {
+            assert!(
+                !zoom.contains(banned),
+                "the zoom leaked {banned:?} in:\n{zoom}"
+            );
         }
     }
 }
