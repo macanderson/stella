@@ -656,6 +656,8 @@ mod tests {
             Just(TaskStatus::InProgress),
             Just(TaskStatus::Completed),
             Just(TaskStatus::Cancelled),
+            Just(TaskStatus::Verify),
+            Just(TaskStatus::Blocked),
         ]
     }
 

@@ -328,8 +328,37 @@ pub struct TaskItem {
 /// Lifecycle of a `TaskItem`. Terminal states are `Completed` and
 /// `Cancelled`; a cancelled task keeps its row (the board is an audit
 /// surface, not just a scheduler).
+///
+/// Each case is appended, never reordered or removed: `stella-store` writes
+/// the serde token into `tasks.status`, so a renumbering rewrites the meaning
+/// of every row already on disk.
+///
+/// SPEC 7.2 draws six task states. Five are lifecycle positions and live here.
+/// The sixth, `⌥ drift-inserted`, does not, for two reasons. Drift is
+/// *derived* from the plan graph — [`crate::plan_graph::Divergence`] has no
+/// constructor, so a producer cannot assert drift the graph does not show
+/// (#5037) — and it is orthogonal to lifecycle, since an inserted task is also
+/// queued, running or done. A `DriftInserted` status would be an assertable
+/// fact and an exclusive one at once.
+/// `stella_tui::plan::PlanStepState` carries it as a render state instead,
+/// because a row has one glyph cell and something has to win it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+// The doc above is written for someone reading this crate, and cites a Rust
+// path a wire consumer cannot resolve. This is the same fact said to that
+// other reader.
+#[cfg_attr(
+    feature = "schema",
+    schemars(description = "Where one task on the board is in its lifecycle. \
+                            `completed` and `cancelled` are terminal; the rest \
+                            can still change. `verify` means the work is done \
+                            and its checks are running, and `blocked` means \
+                            something outside the task stopped it — a red \
+                            gate, an unmet dependency — which is a different \
+                            fact from `cancelled`, a decision to abandon it. \
+                            Tokens are only ever added, so a reader that does \
+                            not recognise one is reading a newer stream.")
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     /// Created and not yet started.
@@ -341,13 +370,46 @@ pub enum TaskStatus {
     /// Abandoned. Terminal, and the row is kept — the board is an audit
     /// surface, not just a scheduler.
     Cancelled,
+    /// The work is done and its checks are running or awaiting a verdict —
+    /// SPEC 7.2's `◇ verify`, the window between "the worker stopped" and "the
+    /// gates are green" that the board had no word for.
+    ///
+    /// Open, because the verdict is what moves it: to [`Self::Completed`] on
+    /// green, to [`Self::Blocked`] on red. Closing on entry here would be the
+    /// model marking its own homework, which SPEC 7.1 exists to stop.
+    ///
+    /// Nothing sets it yet — the gate board is #5042.
+    Verify,
+    /// Stopped by something the task does not control: a red gate, an unmet
+    /// dependency.
+    ///
+    /// Open rather than terminal, because SPEC 8.1's receipt reads `merge
+    /// blocked · unblocks on green`. A blocked task that could never move
+    /// again would be a dead row wearing a live word.
+    ///
+    /// A different fact from [`Self::Cancelled`], which is a decision to
+    /// abandon the work. Both draw SPEC 4's one `✗`, and until this case
+    /// existed the board could not tell a reader which had happened.
+    ///
+    /// Nothing sets it yet — the gate that would is #5042.
+    Blocked,
 }
 
 impl TaskStatus {
     /// Whether the task can still change state. Terminal tasks reject
     /// further transitions (enforced by the board logic in `stella-core`).
+    ///
+    /// An exhaustive match rather than a `matches!`: the macro's implicit
+    /// false arm would file a new case under *terminal* without asking, and
+    /// terminal is the answer that stops a task moving.
     #[must_use]
     pub fn is_open(self) -> bool {
-        matches!(self, TaskStatus::Pending | TaskStatus::InProgress)
+        match self {
+            TaskStatus::Pending
+            | TaskStatus::InProgress
+            | TaskStatus::Verify
+            | TaskStatus::Blocked => true,
+            TaskStatus::Completed | TaskStatus::Cancelled => false,
+        }
     }
 }

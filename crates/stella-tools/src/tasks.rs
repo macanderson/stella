@@ -114,12 +114,21 @@ fn optional_str(input: &Value, field: &str) -> Option<String> {
 }
 
 /// One-character board glyph per status, for `task_list` lines.
+///
+/// ASCII, unlike SPEC 4's glyph vocabulary: this string is model context, and
+/// a mark the model has to guess at is worse than a letter it does not.
+/// `?` and `!` are unreachable today — nothing sets [`TaskStatus::Verify`] or
+/// [`TaskStatus::Blocked`], so `task_list`'s own legend does not advertise
+/// them (#5042 is the gate board that would). They exist because a total
+/// mapping is what makes the next status a compile error here.
 fn glyph(status: TaskStatus) -> char {
     match status {
         TaskStatus::Pending => ' ',
         TaskStatus::InProgress => '~',
         TaskStatus::Completed => 'x',
         TaskStatus::Cancelled => '-',
+        TaskStatus::Verify => '?',
+        TaskStatus::Blocked => '!',
     }
 }
 
