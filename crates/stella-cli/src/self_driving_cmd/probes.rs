@@ -38,33 +38,43 @@ fn cpu_total() -> u32 {
 
 /// Integer part of the 1-minute load average; the governor compares
 /// magnitudes, not decimals.
-fn load1() -> u32 {
+/// The 1-minute load average, or `None` when this box will not say.
+///
+/// `None` rather than `0`, which is what this returned and is the one value a
+/// governor must never invent: 0 is an idle machine. It cannot trip the
+/// `load1 >= cpu` shed-to-Light branch, and it actively QUALIFIES the
+/// `load1 < cpu / 2` branch that escalates to Heavy — a full workspace build
+/// and a head-to-head bench, on a box whose load nobody measured. The reason
+/// string that branch prints even says "and idle".
+///
+/// A container without `uptime`, or one whose `uptime` spells its output
+/// differently, is enough. See `supply` for what replaces the guess.
+fn load1() -> Option<u32> {
     if let Some(v) = env_override("SELF_DRIVING_PROBE_LOAD1") {
-        return v as u32;
+        return Some(v as u32);
     }
     if let Ok(text) = std::fs::read_to_string("/proc/loadavg") {
-        return parse_leading_int(text.split_whitespace().next().unwrap_or("0"));
+        return parse_leading_int(text.split_whitespace().next().unwrap_or(""));
     }
     // `uptime` tails with "load averages: 2.05 2.33 2.55" (macOS spells it
     // "averages", Linux "average:").
-    run("uptime", &[])
-        .and_then(|text| {
-            let tail = text.rsplit("load average").next()?.to_string();
-            let first = tail
-                .trim_start_matches(|c: char| c == 's' || c == ':' || c.is_whitespace())
-                .split([',', ' '])
-                .next()?
-                .to_string();
-            Some(parse_leading_int(&first))
-        })
-        .unwrap_or(0)
+    run("uptime", &[]).and_then(|text| {
+        let tail = text.rsplit("load average").next()?.to_string();
+        let first = tail
+            .trim_start_matches(|c: char| c == 's' || c == ':' || c.is_whitespace())
+            .split([',', ' '])
+            .next()?
+            .to_string();
+        parse_leading_int(&first)
+    })
 }
 
-fn parse_leading_int(text: &str) -> u32 {
-    text.split('.')
-        .next()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0)
+/// The integer part of a load figure, or `None` when the text is not one.
+///
+/// A malformed `/proc/loadavg` is a box that did not answer, not a box at
+/// rest — the same distinction `load1` turns on.
+fn parse_leading_int(text: &str) -> Option<u32> {
+    text.split('.').next()?.trim().parse().ok()
 }
 
 fn mem_total_gb() -> u64 {
@@ -221,9 +231,19 @@ fn is_real_work(line: &str) -> bool {
 
 /// Read the whole supply picture for the governor.
 pub(crate) fn supply(repo_root: &Path) -> Supply {
+    let cpu = cpu_total();
     Supply {
-        cpu: cpu_total(),
-        load1: load1(),
+        cpu,
+        // An unmeasured load stands at half the core count: the one value that
+        // is neither an escalation nor a shed. `Tier::Heavy` requires
+        // `load1 < cpu / 2` and `Tier::Light` requires `load1 >= cpu`, so
+        // `cpu / 2` satisfies neither and the governor runs its ordinary
+        // cycle — which is what "we do not know" should buy.
+        //
+        // `0` bought the opposite: the heaviest tier on a box whose load
+        // nobody read, which is the shape this module's own header rules out
+        // ("degrades to a conservative value").
+        load1: load1().unwrap_or(cpu / 2),
         mem_total_gb: mem_total_gb(),
         mem_free_gb: mem_free_gb(),
         disk_free_gb: disk_free_gb(repo_root),
@@ -235,6 +255,43 @@ pub(crate) fn supply(repo_root: &Path) -> Supply {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The witness.** A load the box will not report must not buy the
+    /// heaviest tier.
+    ///
+    /// `load1` returned `0` when `/proc/loadavg` was absent and `uptime`
+    /// could not be parsed — a container without `uptime`, or a BusyBox one
+    /// spelling its output differently. Zero is an idle machine: it cannot
+    /// trip `load1 >= cpu` (shed to Light) and it satisfies `load1 < cpu / 2`
+    /// (escalate to Heavy — a full workspace build and a head-to-head bench).
+    /// So the least information produced the most expensive decision, on a box
+    /// that may have been saturated, and the tier's own reason string said
+    /// "and idle" about a number nobody measured.
+    #[test]
+    fn an_unreadable_load_buys_neither_the_heavy_tier_nor_a_shed() {
+        // The fallback the supply assembly uses, spelled the same way.
+        let cpu = 16u32;
+        let unmeasured = cpu / 2;
+
+        assert!(
+            !(unmeasured < cpu / 2),
+            "an unmeasured load must not satisfy Heavy's idle test"
+        );
+        assert!(
+            unmeasured < cpu,
+            "nor trip the shed-to-Light branch, which would stop a healthy box"
+        );
+    }
+
+    /// The parse says nothing rather than "idle" when the text is not a load.
+    #[test]
+    fn a_malformed_load_figure_reports_nothing_rather_than_rest() {
+        assert_eq!(parse_leading_int("2.05"), Some(2));
+        assert_eq!(parse_leading_int("0.00"), Some(0), "a real zero survives");
+        assert_eq!(parse_leading_int(""), None);
+        assert_eq!(parse_leading_int("n/a"), None);
+        assert_eq!(parse_leading_int("load"), None);
+    }
 
     /// The filter that keeps a finished benchmark's watchers from pinning the
     /// loop to the light tier forever — each shape below was a live
