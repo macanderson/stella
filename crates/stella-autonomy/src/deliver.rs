@@ -258,7 +258,13 @@ pub fn deliver_next(
     }
 
     // 2. A ceiling already reached escalates before anything else is tried.
+    // Which reason depends on what exhausted it: a review loop that kept
+    // asking for changes ends as `ReviewNeedsHuman` — the human's next move
+    // is to read the review, not to raise the ceiling.
     if attempts.fixes >= policy.fix_ceiling {
+        if obs.review == ReviewState::ChangesRequested {
+            return escalate(EscalationReason::ReviewNeedsHuman);
+        }
         return escalate(EscalationReason::FixCeilingReached);
     }
     if attempts.rebases >= policy.rebase_ceiling {
@@ -434,6 +440,33 @@ mod tests {
         let again = deliver_next(t.state, &obs(), spent, &policy);
         assert_eq!(again.state, PrState::Escalated);
         assert_eq!(again.action, Action::Wait);
+    }
+
+    /// A review loop that exhausts the fix ceiling escalates as
+    /// `ReviewNeedsHuman`, not `FixCeilingReached` — the human's next move is
+    /// to read the review, not to raise a ceiling. The plain-red case above
+    /// keeps `FixCeilingReached`; either assertion alone is half a witness.
+    #[test]
+    fn an_exhausted_review_loop_escalates_as_review_needs_human() {
+        let reviewed = Observation {
+            review: ReviewState::ChangesRequested,
+            ..obs()
+        };
+        let policy = DeliverPolicy::default();
+        let spent = Attempts {
+            fixes: policy.fix_ceiling,
+            rebases: 0,
+        };
+
+        let t = deliver_next(PrState::ReviewChangesRequested, &reviewed, spent, &policy);
+        assert_eq!(t.state, PrState::Escalated);
+        assert_eq!(
+            t.action,
+            Action::Escalate {
+                reason: EscalationReason::ReviewNeedsHuman
+            },
+            "the escalation must name the reviewer, not the ceiling"
+        );
     }
 
     /// Merging past a human who asked for changes because CI is green is the
