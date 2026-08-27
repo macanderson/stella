@@ -244,10 +244,19 @@ fn cause_line(text: &str) -> String {
 /// itself named is one the reader can go and open, and a link from anywhere
 /// else would be this function guessing which issue a failure belongs to.
 /// `None` where the evidence named none, which renders as no cell at all.
+///
+/// Every `#` is tried, not just the first. Rust evidence is full of hashes
+/// that are not issue numbers — `#[test]`, `#![cfg(unix)]` — and stopping at
+/// the first one would drop the link in `#[test] a_case … see #151` while
+/// finding it in `see #151 … #[test] a_case`.
 fn linked_issue(text: &str) -> Option<String> {
-    let rest = text.split_once('#')?.1;
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    (!digits.is_empty()).then(|| format!("#{digits}"))
+    text.match_indices('#').find_map(|(at, _)| {
+        let digits: String = text[at + 1..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        (!digits.is_empty()).then(|| format!("#{digits}"))
+    })
 }
 
 /// The id the next task in `planned` would take, on the task board's own

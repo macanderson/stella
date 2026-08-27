@@ -306,6 +306,24 @@ fn the_linked_issue_comes_from_the_evidence_or_not_at_all() {
         None,
         "no issue in the evidence renders as no cell, never as a guess"
     );
+
+    // Rust evidence is full of hashes that are not issue numbers, and the
+    // link must survive one standing in front of it.
+    let mut attributes = RevisionGate::default();
+    assert_eq!(
+        attributes
+            .observe(
+                graph.revision().next(),
+                &graph.planned(graph.revision()),
+                &board(vec![failed(
+                    "tests",
+                    "#[test] a_short_cycle_is_detected",
+                    "the seen-set is rebuilt per run — see #151",
+                )]),
+            )
+            .and_then(|p| p.issue.clone()),
+        Some("#151".to_owned())
+    );
 }
 
 /// A failure whose evidence says nothing cannot carry a cause, and this module
