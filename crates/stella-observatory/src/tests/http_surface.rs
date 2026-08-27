@@ -127,6 +127,90 @@ fn a_turns_sub_agents_are_a_focusable_plane_of_the_transcript_page() {
     }
 }
 
+/// The session plane is cards with a clock rail, and holds no table.
+///
+/// Both lists were tables inside a horizontal scroller, so a phone showed the
+/// prompt column and hid outcome, cost and every count behind a swipe — and
+/// neither table printed a clock at all, which is half of what a session
+/// replay is for. Rust cannot decide whether the result *looks* right; it can
+/// decide that the markup a table needs is gone and the markup the cards and
+/// the rail need is there.
+#[test]
+fn a_session_replay_is_cards_with_a_clock_rail() {
+    for needle in [
+        "class=\"ses-cards\" id=\"ses-list\"", // the list container, no longer a scroller
+        "class=\"ses-card",                    // one card per session
+        "id=\"ses-filter\"",                   // eighty sessions, six on a screen
+        "class=\"tl-turn\"",                   // one card per turn
+        "class=\"tl-when\"",                   // …with the wall clock beside it
+        "turnGapHtml",                         // …and the idle gap between two
+        "const clockOf",                       // local time, from the stamp
+    ] {
+        assert!(
+            INDEX_HTML.contains(needle),
+            "the session plane is missing {needle}"
+        );
+    }
+    for gone in [
+        "<th class=\"num\">Tok in·out</th>", // the sixteen-column turn table
+        "<th class=\"num\">Turns</th>",      // the twelve-column session table
+        "function turnRowHtml",              // its row builder
+    ] {
+        assert!(
+            !INDEX_HTML.contains(gone),
+            "the session tables were replaced by cards, but {gone} survives"
+        );
+    }
+}
+
+/// A phone gets one scrolling row of tabs, and a rail that does not stand
+/// between the reader and the transcript.
+///
+/// Eleven tabs wrapped to four rows of sticky chrome at 390px, and the
+/// section rail — a sidebar in a one-column grid — stacked above the content
+/// as a list of section names to scroll past. Both are settled in the sheet,
+/// so both are checkable here.
+#[test]
+fn narrow_screens_get_one_tab_row_and_a_rail_beside_the_content() {
+    for needle in [
+        "@media(max-width:760px)",  // the narrow layer exists
+        ".tabs{flex-wrap:nowrap",   // one row, scrolled, never wrapped
+        ":root{--navh:45px}",       // …and everything sticky clears it
+        "@media(max-width:980px)",  // the rail's own breakpoint
+        ".tx-rail{top:var(--navh)", // it sticks under the bar
+        "flex-direction:row",       // as a strip, not a stacked list
+    ] {
+        assert!(
+            INDEX_HTML.contains(needle),
+            "the narrow-screen layout is missing {needle}"
+        );
+    }
+}
+
+/// The transcript host must not be styled by the masthead's status dot.
+///
+/// `paintRenderedTranscript` puts `live` on the host so the shared stylesheet
+/// shows its prompt-inspect controls (`:host(.live)`). The dashboard's own
+/// `.live` rule is the connection indicator, and its `display:inline-flex`
+/// made that host a content-sized box: at 390px the rendered transcript came
+/// out wider than the card holding it and had its right-hand column clipped.
+#[test]
+fn the_transcript_host_is_not_dressed_as_the_connection_indicator() {
+    assert!(
+        INDEX_HTML.contains(".headmeta .live{display:inline-flex"),
+        "the connection indicator's rule must be scoped to the masthead"
+    );
+    assert!(
+        !INDEX_HTML.contains("\n.live{display:inline-flex"),
+        "an unscoped .live rule also matches the transcript host, which wears \
+         that class so the shared stylesheet shows its inspect controls"
+    );
+    assert!(
+        INDEX_HTML.contains("#tx-render{display:block"),
+        "the transcript host states its own display"
+    );
+}
+
 /// The page must be fully self-contained: any http(s) URL in the HTML
 /// would be an outbound fetch from the user's browser — a phone-home.
 #[test]

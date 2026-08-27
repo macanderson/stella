@@ -210,6 +210,15 @@
      rounded corner is a soft edge on an instrument: it says "surface" where a
      hairline says "boundary", and this page is all boundaries. */
   --radius:0; --radius-sm:0;
+
+  /* The height of the sticky nav, as a token because three other rules have
+     to clear it: the transcript rail sticks under it, a section's
+     `scroll-margin-top` has to land below it, and the mobile rail stacks a
+     second sticky strip on top of that. It was written as three unrelated
+     literals (56px, 64px, 80px) that agreed with the nav by luck, and the
+     phone layout — where the bar is one scrolling row rather than four
+     wrapped ones — is where that luck ran out. */
+  --navh:56px; --railh:0px;
 }
 
 /* ── Light mode ───────────────────────────────────────────────────────────
@@ -410,11 +419,16 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
 .headmeta{margin-left:auto;display:flex;align-items:center;gap:var(--sp2);
           font:var(--fs-micro)/1 var(--mono);color:var(--text-3);flex-wrap:wrap;align-self:center}
 #ws{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.live{display:inline-flex;align-items:center;gap:7px;color:var(--text-2)}
-.live i{width:7px;height:7px;border-radius:0;background:var(--ok);flex:none;
+/* Scoped to the masthead. `live` is also the class the transcript host wears
+   so the shared stylesheet shows its prompt-inspect controls (`:host(.live)`),
+   and an unscoped `display:inline-flex` here made that host a content-sized
+   box — which on a phone rendered the transcript wider than the card holding
+   it, right-hand column clipped. */
+.headmeta .live{display:inline-flex;align-items:center;gap:7px;color:var(--text-2)}
+.headmeta .live i{width:7px;height:7px;border-radius:0;background:var(--ok);flex:none;
         animation:pulse 2.4s ease-in-out infinite}
-.live[data-state="offline"]{color:var(--bad)}
-.live[data-state="offline"] i{background:var(--bad);animation:none}
+.headmeta .live[data-state="offline"]{color:var(--bad)}
+.headmeta .live[data-state="offline"] i{background:var(--bad);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 select{background:var(--raised);color:var(--text);border:1px solid var(--control-edge);
        border-radius:var(--radius-sm);font:var(--fs-micro)/1.4 var(--mono);
@@ -632,10 +646,25 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .tx-step:hover:not(:disabled){color:var(--text);border-color:var(--accent)}
 .tx-step:disabled{color:var(--hairline-strong);border-color:var(--hairline);cursor:default}
 .tx-cols{display:grid;grid-template-columns:200px minmax(0,1fr);gap:var(--sp3);align-items:start}
-@media(max-width:980px){.tx-cols{grid-template-columns:minmax(0,1fr)}
-  .tx-rail{position:static!important;max-height:none!important}}
-.tx-rail{position:sticky;top:56px;display:flex;flex-direction:column;gap:1px;
-         max-height:calc(100vh - 80px);overflow-y:auto}
+.tx-rail{position:sticky;top:calc(var(--navh) + 4px);display:flex;flex-direction:column;gap:1px;
+         max-height:calc(100vh - var(--navh) - 24px);overflow-y:auto}
+/* Under 980px the rail turns on its side and sticks under the nav as one
+   scrolling strip of chips. Stacking it above the page — which is what a
+   one-column grid does to a sidebar — put a list of section names between
+   the reader and the transcript, so arriving at a turn on a phone meant
+   scrolling past the table of contents to reach the thing itself. As a strip
+   it stays on screen and every section is one tap. */
+@media(max-width:980px){
+  :root{--railh:41px}
+  .tx-cols{grid-template-columns:minmax(0,1fr);gap:var(--sp2)}
+  .tx-rail{top:var(--navh);z-index:15;flex-direction:row;gap:0;max-height:none;
+    overflow-x:auto;overflow-y:hidden;scrollbar-width:none;
+    background:var(--ground);border-bottom:1px solid var(--hairline-strong)}
+  .tx-rail::-webkit-scrollbar{display:none}
+  .tx-rail a{flex:none;white-space:nowrap;padding:11px 12px;gap:6px;
+    border-left:0;border-bottom:2px solid transparent;border-radius:0}
+  .tx-rail a.on{border-left-color:transparent;border-bottom-color:var(--accent)}
+}
 .tx-rail a{display:flex;justify-content:space-between;gap:var(--sp1);text-decoration:none;
   color:var(--text-2);font:var(--fs-sm)/1.5 var(--mono);padding:7px 11px;
   border-left:2px solid transparent;border-radius:0 var(--radius-sm) var(--radius-sm) 0}
@@ -646,8 +675,13 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
    `scroll-margin-top` clears the sticky nav bar when the rail jumps here. */
 .tx-sect{background:var(--surface);border:1px solid var(--hairline-strong);
          border-radius:var(--radius);padding:var(--sp2) var(--sp2) 18px;
-         margin-bottom:var(--sp2);scroll-margin-top:64px;min-width:0}
+         margin-bottom:var(--sp2);min-width:0;
+         scroll-margin-top:calc(var(--navh) + var(--railh) + 8px)}
 .tx-sect > h2{font:600 var(--fs-md)/1.3 var(--mono);letter-spacing:-.005em;margin-bottom:4px}
+/* The shadow host holding the rendered run: a block that takes the card's
+   width, stated here rather than inherited from whatever else in the sheet
+   happens to match a class the script puts on it. */
+#tx-render{display:block;min-width:0}
 .tx-sect > .kick{margin-bottom:var(--sp2)}
 
 /* ── Transcript entries (shared with the sessions turn-diff rows) ─────── */
@@ -774,14 +808,100 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .tx-sect .step-row:last-child{border-bottom:0}
 .tokbar{display:flex;height:10px;border-radius:0;overflow:hidden;gap:2px}
 .tokbar i{display:block;height:100%}
-/* The per-turn diff affordance in the sessions turns table (#1870). */
-.turn-diff{background:none;border:1px solid var(--hairline);color:var(--text-2);
-  border-radius:var(--radius-sm);padding:1px 6px;font:var(--fs-micro)/1.4 var(--mono);cursor:pointer}
-.turn-diff:hover{color:var(--text);border-color:var(--accent)}
-.turn-diff-row > td{background:var(--ground)}
+/* The per-turn diff (#1870), opened from a control on the turn card and
+   drawn inside the card rather than in a row of its own — the table it used
+   to span is gone. */
+.turn-diff-row{background:var(--ground);border:1px solid var(--hairline);padding:10px}
 /* No `.diff-body` here any more: the per-turn diff used to be a `<pre>` of
    coloured spans with its own type scale, and now renders through the same
    `.dx` component as every other diff on this page. */
+
+/* ── Session inspection ───────────────────────────────────────────────────
+   The sessions plane and the turn list under it are the answer to one
+   question — what did this session do, and when — and they used to answer it
+   with a twelve-column table and a sixteen-column one, both inside a
+   horizontal scroller. On a phone that shows the first column and hides
+   every number behind a swipe nobody makes, so the reader saw a list of
+   prompts and no outcome, no cost and no clock.
+
+   Cards replace both. One card carries every column the table carried, in a
+   strip that wraps instead of scrolling sideways, and the turn list gains a
+   time rail the table never had: the wall clock each turn started at, how
+   long it took, and the idle gap since the turn before it. Nothing is behind
+   a swipe at any width, so the same markup serves a 390px phone and a
+   1360px desktop with no second layout to keep in step. */
+.filterbar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp1);margin:var(--sp1) 0}
+.filter-in{flex:1;min-width:0;background:var(--raised);color:var(--text);
+  border:1px solid var(--control-edge);border-radius:var(--radius-sm);
+  font:var(--fs-sm)/1.4 var(--mono);padding:9px 11px}
+.filter-in::placeholder{color:var(--text-3)}
+.filter-in:focus{border-color:var(--accent)}
+.filter-n{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3);white-space:nowrap}
+
+/* The metric strip both cards use: every figure labelled, so a number read
+   out of column order still says what it is. */
+.mstrip{display:flex;flex-wrap:wrap;gap:2px var(--sp2);
+        font:var(--fs-micro)/1.7 var(--mono);color:var(--text-3)}
+.mstrip .m{white-space:nowrap}
+.mstrip .badge{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.mstrip .m b{color:var(--text-2);font-weight:600}
+.mstrip .m.ok b{color:var(--ok)}
+.mstrip .m.warn b{color:var(--warn)}
+.mstrip .m.bad b{color:var(--bad)}
+
+.ses-cards{border-top:1px solid var(--hairline);max-height:min(58vh,520px);overflow-y:auto}
+.ses-card{display:block;width:100%;text-align:left;background:none;color:inherit;
+  font:inherit;cursor:pointer;padding:11px var(--sp1) 11px 10px;
+  border:0;border-bottom:1px solid var(--hairline);border-left:2px solid transparent}
+.ses-card:hover{background:var(--accent-wash)}
+.ses-card.sel{background:var(--accent-wash);border-left-color:var(--accent)}
+.ses-card .row1{display:flex;align-items:flex-start;gap:var(--sp1);justify-content:space-between}
+.ses-card .t{font:var(--fs-sm)/1.45 var(--mono);color:var(--text);min-width:0;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ses-card .when{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3);white-space:nowrap;flex:none}
+.ses-card .mstrip{margin-top:5px}
+
+/* ── Turn timeline ────────────────────────────────────────────────────────
+   Oldest first, one row per turn, with the clock in a fixed rail so a
+   reader scanning the column reads the session's shape in time rather than
+   in row order. The gap row between two turns is the other half of that: a
+   session with a four-hour hole in it looked continuous when only the
+   ordinal was on screen. */
+.tl{margin-top:var(--sp1)}
+.tl-gap{display:flex;align-items:center;gap:var(--sp1);padding:5px 0 5px 74px;
+  font:var(--fs-micro)/1.5 var(--mono);color:var(--text-3)}
+.tl-gap::before{content:"";flex:none;width:14px;border-top:1px dashed var(--hairline-strong)}
+.tl-turn{display:grid;grid-template-columns:64px minmax(0,1fr);gap:0 10px;
+  padding:11px 0;border-top:1px solid var(--hairline)}
+.tl-turn:first-child{border-top:0}
+.tl-when{font:var(--fs-micro)/1.5 var(--mono);color:var(--text-3);text-align:right;padding-top:1px}
+.tl-when b{display:block;color:var(--text-2);font-weight:600;font-size:var(--fs-sm)}
+.tl-body{min-width:0}
+.tl-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:4px}
+.tl-n{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3)}
+.tl-model{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* The prompt is what the reader is looking for, so it leads the row at the
+   body size and clamps to three lines; the whole card toggles the clamp,
+   because a phone has no hover to reveal a title attribute. */
+.tl-prompt{font:var(--fs-base)/1.55 var(--mono);color:var(--text);
+  white-space:pre-wrap;word-break:break-word;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.tl-turn.open .tl-prompt{-webkit-line-clamp:unset;display:block}
+.tl-more{background:none;border:0;padding:2px 0;cursor:pointer;
+  font:var(--fs-micro)/1.5 var(--mono);color:var(--text-3)}
+.tl-more:hover{color:var(--text)}
+.tl-turn .mstrip{margin-top:6px}
+.tl-acts{display:flex;flex-wrap:wrap;gap:var(--sp1);margin-top:9px}
+/* 36px minimum on the short side: a control a thumb has to hit is not the
+   same control as one a cursor has to hit. */
+.tl-act{display:inline-flex;align-items:center;min-height:36px;padding:0 13px;cursor:pointer;
+  background:none;border:1px solid var(--control-edge);border-radius:var(--radius-sm);
+  color:var(--text-2);font:var(--fs-sm)/1 var(--mono)}
+.tl-act:hover{color:var(--text);border-color:var(--accent)}
+.tl-act.go{color:var(--mark)}
+.tl-diff{grid-column:1/-1;margin-top:10px}
+.tl-empty{grid-column:1/-1}
 
 /* ── Empty & structural bits ──────────────────────────────────────────── */
 .empty{padding:var(--sp4) var(--sp2);text-align:center;color:var(--text-2);
@@ -805,6 +925,73 @@ footer{margin-top:var(--sp4);padding-top:var(--sp2);border-top:1px solid var(--h
 footer b{color:var(--identity);font-weight:600}
 .vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
     clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ── Small screens ────────────────────────────────────────────────────────
+   Last in the sheet so a narrow rule wins a specificity tie against the wide
+   one it overrides, and one breakpoint rather than a ladder of them: 760px
+   is where the masthead stops fitting on a line and the tab row stops
+   fitting on a row, and everything below reads as one layout down to 320px.
+
+   The deleted rule this replaces was `flex-wrap:wrap` on the tab list. It
+   never failed at a size anyone tested, but at 390px the eleven tabs wrapped
+   to four rows of sticky chrome — 130px of a 844px screen, permanently, on
+   every page. A single row that scrolls sideways costs 44px and keeps the
+   whole set reachable. */
+@media(max-width:760px){
+  :root{--navh:45px}
+  .wrap{padding:0 12px 56px}
+  header{padding:var(--sp2) 0 var(--sp1);gap:10px;align-items:center}
+  header .bword{height:30px}
+  .title{padding-left:10px}
+  .title p{display:none}
+  .headmeta{margin-left:0;width:100%;gap:10px;flex-wrap:nowrap}
+  /* The workspace path goes: the picker beside it already names the
+     project, and the path is the longest string in the masthead. */
+  #ws{display:none}
+  select{max-width:none;flex:1;min-width:0}
+  nav.bar{flex-wrap:nowrap;margin-bottom:var(--sp2)}
+  .tabs{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
+        scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex:none;padding:14px 12px}
+  .kpis,.kpis4{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .grid{gap:var(--sp1)}
+  .tile{padding:11px}
+  .tile .v{font-size:22px}
+  .card,.tx-sect{padding:12px 12px 14px}
+  .section-gap{margin-bottom:var(--sp1)}
+  .ses-cards{max-height:none}
+  /* A tap has no hover, so the row that opens a turn says so on the control
+     rather than on the row, and the ordinal stops competing with the clock
+     for the rail. */
+  .tl-turn{grid-template-columns:56px minmax(0,1fr);gap:0 8px}
+  .tl-gap{padding-left:64px}
+  .tl-prompt{font-size:var(--fs-sm)}
+  .jrnl-body{max-height:320px}
+  .dx-line{grid-template-columns:38px 38px 18px minmax(max-content,1fr)}
+  .dx-line > span{padding:0 4px}
+  .prof-grid{grid-template-columns:minmax(0,1fr)}
+  .tx-head{padding-bottom:var(--sp1);margin-bottom:var(--sp2)}
+  .tx-prompt{font-size:var(--fs-base)}
+  .tx-step,.tx-back{min-height:36px;display:inline-flex;align-items:center}
+  /* The long half of a control's label. Three buttons at their full labels
+     take three rows of a 390px screen, and the arrow plus the noun says the
+     same thing in one. */
+  .wide-only{display:none}
+  /* The prompt inspector is the widest text this product produces. On a
+     phone a centred 92vw box with its own scroll box inside it wastes the
+     screen twice over, so the dialog takes the whole viewport and the body
+     is the only thing that scrolls. */
+  .ctx-dialog{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;
+    margin:0;top:0;left:0;border:0}
+  .ctx-inspect-modal{display:flex;flex-direction:column;height:100%}
+  .ctx-inspect-head{padding:10px 12px;gap:var(--sp1)}
+  .ctx-inspect-toolbar{padding:10px 12px}
+  .ctx-toggle{width:100%}
+  .ctx-toggle button{flex:1;padding:9px 6px;text-align:center}
+  .ctx-inspect-body{flex:1;min-height:0;max-height:none;padding:12px}
+  .ctx-nav{width:40px;height:40px}
+}
 </style>
 <script>
 /* Stamp an explicit theme choice on <html> before first paint, so a stored
@@ -881,18 +1068,29 @@ footer b{color:var(--identity);font-weight:600}
     <div class="grid kpis" id="ses-kpis"></div>
     <div class="card section-gap">
       <div class="kick">Every session of this workspace · registry + store ·
-        select one to list its turns below</div>
+        pick one to replay its turns below</div>
       <h2>Sessions</h2>
-      <div class="scroll-x" id="ses-list"></div>
+      <!-- A filter rather than a longer list. This workspace has eighty-odd
+           sessions and a phone shows six at a time, so finding the one you
+           mean by scrolling is a minute of thumb work; matching on the
+           prompt text or the session id is a second of typing. -->
+      <div class="filterbar">
+        <input class="filter-in" id="ses-filter" type="search" autocomplete="off"
+               placeholder="filter by prompt or session id"
+               aria-label="Filter sessions by prompt or session id">
+        <span class="filter-n" id="ses-count"></span>
+      </div>
+      <div class="ses-cards" id="ses-list"></div>
     </div>
     <div class="card section-gap" id="ses-detail-card" hidden>
       <div class="kick" id="ses-detail-kick">Nothing selected</div>
       <h2 id="ses-detail-title">Session replay</h2>
       <div id="ses-summary"></div>
       <div class="kick" style="margin-top:12px">Turn by turn · oldest first ·
-        open a turn for its full transcript, the context each model call was
-        sent, and what changed in the prompt between calls</div>
-      <div class="scroll-x" id="ses-turns"></div>
+        the clock rail is when each turn started and how long it ran · open a
+        turn for its full transcript, the context each model call was sent,
+        and what changed in the prompt between calls</div>
+      <div id="ses-turns"></div>
     </div>
     <div class="grid cols-2" id="ses-panels" hidden>
       <div class="card">
@@ -2513,6 +2711,25 @@ function ctxInspectKeydown(e) {
 /* The rail: one link per section actually rendered, with its count. Built
    from the same list the sections are, so a section can never be listed and
    missing (or present and unlisted). */
+/* How much sticky chrome sits above the content: the nav, plus the rail
+   itself once the rail is a strip under it. Read from the stylesheet rather
+   than repeated as a number here, because three rules already depend on it
+   and a fourth copy is one more thing to leave behind when the bar changes
+   height. */
+function topInset() {
+  const css = getComputedStyle(document.documentElement);
+  const px = (name) => parseFloat(css.getPropertyValue(name)) || 0;
+  return px("--navh") + px("--railh");
+}
+/* Keep the marked chip on screen while the page scrolls. Only when the rail
+   is the horizontal strip a narrow viewport gives it — the vertical rail
+   shows every section at once and has nothing to follow. */
+function railFollow(link) {
+  const rail = $("tx-rail");
+  if (!link || rail.scrollWidth <= rail.clientWidth + 1) return;
+  const left = link.offsetLeft - (rail.clientWidth - link.offsetWidth) / 2;
+  rail.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
+}
 function buildRail(sections) {
   $("tx-rail").innerHTML = sections.map((s, i) =>
     `<a href="#" data-sect="${esc(s.id)}"${i === 0 ? ' class="on"' : ""}>${esc(s.label)}${
@@ -2524,9 +2741,12 @@ function buildRail(sections) {
     const hit = ents.filter(e => e.isIntersecting)
       .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
     if (!hit) return;
-    for (const a of $("tx-rail").querySelectorAll("a"))
-      a.classList.toggle("on", a.dataset.sect === hit.target.id);
-  }, { rootMargin: "-64px 0px -70% 0px" });
+    for (const a of $("tx-rail").querySelectorAll("a")) {
+      const on = a.dataset.sect === hit.target.id;
+      a.classList.toggle("on", on);
+      if (on) railFollow(a);
+    }
+  }, { rootMargin: `-${Math.round(topInset()) + 8}px 0px -70% 0px` });
   for (const s of sections) {
     const el = $(s.id);
     if (el) txRailObserver.observe(el);
@@ -2801,12 +3021,13 @@ async function openTranscript(id, full = false, sub = "") {
     ${chips ? `<p class="tx-meta" style="margin-top:6px">${chips}</p>` : ""}
     <div class="tx-steps">
       <button type="button" class="tx-step" id="tx-prev"${
-        idx > 0 ? "" : " disabled"}>← previous turn</button>
+        idx > 0 ? "" : " disabled"}>←<span class="wide-only"> previous</span> turn</button>
       <button type="button" class="tx-step" id="tx-next"${
-        idx >= 0 && idx < txSiblings.ids.length - 1 ? "" : " disabled"}>next turn →</button>
+        idx >= 0 && idx < txSiblings.ids.length - 1 ? "" : " disabled"
+        }>next turn<span class="wide-only"> →</span></button>
       <button type="button" class="tx-step" id="tx-download"
         title="Everything on this page — journal, metadata and the call receipt index — as one JSON file">
-        ⬇ download transcript JSON</button>
+        ⬇<span class="wide-only"> download transcript</span> JSON</button>
       <span class="kick">the same view as
         <code>stella inspect ${fmtInt(d.id)}</code></span>
     </div>`;
@@ -2831,27 +3052,32 @@ async function openTranscript(id, full = false, sub = "") {
     `<section class="tx-sect" id="${id_}"><h2>${label}</h2>
       <div class="kick">${kick}</div>${inner}</section>`;
 
-  /* The profile first — who ran this turn and on what binding — then the
-     rendered transcript, which is the page's substance: the shared
-     stella-transcript renderer's markup, embedded here so what the run did,
-     what each call cost, and what each call was sent (the ⧉ prompt control
-     on a metering row) are all read in one place. */
+  /* The rendered transcript leads, and the profile follows it. Both orders
+     have a case, and the screen settles it: on a phone the first section is
+     most of the first two screens, and a reader who opened a turn came to
+     read what it did — arriving at a stack of model-binding cards means
+     scrolling past the answer to reach it. The rail puts the profile one tap
+     away, which the reverse order could not do for the transcript.
+     The transcript is the shared stella-transcript renderer's markup,
+     embedded here so what the run did, what each call cost, and what each
+     call was sent (the ⧉ prompt control on a metering row) are all read in
+     one place. */
   const usage = entries.filter(e => e.type === "step_usage");
   const seats = profileSeats(calls, usage);
   main.innerHTML =
-    sect("tx-profile", "Agent profile",
-      "One card per seat this turn ran — the model binding the run's own "
-      + "receipts recorded, and the defaults the local model catalog says "
-      + "that model offers.",
-      seats.length ? `<div class="prof-grid">${seats.map(seatCardHtml).join("")}</div>`
-        : `<div class="empty">No model calls were metered or receipted for this run.</div>`)
-    + sect("tx-transcript", "Transcript",
+    sect("tx-transcript", "Transcript",
       "The rendered run — folds, digests, real file diffs, and one metering "
       + "row per model call (provider, upstream, tokens, cache traffic, "
       + "latency). Open a metering row's ⧉ prompt control to inspect exactly "
       + "what that call was sent, as a diff against the previous call.",
       frag ? `<div id="tx-render"></div>`
            : `<div class="empty">The rendered transcript could not be loaded.</div>`)
+    + sect("tx-profile", "Agent profile",
+      "One card per seat this turn ran — the model binding the run's own "
+      + "receipts recorded, and the defaults the local model catalog says "
+      + "that model offers.",
+      seats.length ? `<div class="prof-grid">${seats.map(seatCardHtml).join("")}</div>`
+        : `<div class="empty">No model calls were metered or receipted for this run.</div>`)
     + sect("tx-subagents", "Sub-agents",
       "The delegate children this turn fanned out. Open one and the page assumes it — "
       + "← / → then cycle the fan-out, esc returns here.",
@@ -2902,8 +3128,8 @@ async function openTranscript(id, full = false, sub = "") {
         ${rf.critique ? `<br>critique: ${esc(rf.critique)}` : ""}</p>`) : "");
 
   buildRail([
-    { id: "tx-profile", label: "Agent profile", n: seats.length },
     { id: "tx-transcript", label: "Transcript", n: entries.length },
+    { id: "tx-profile", label: "Agent profile", n: seats.length },
     { id: "tx-subagents", label: "Sub-agents", n: agents.length + lanes.length },
     { id: "tx-steps", label: "Steps", n: steps.length },
     { id: "tx-tools", label: "Tool calls", n: tools.length },
@@ -4218,8 +4444,81 @@ function cachePct(read, miss) {
   const t = num(read) + num(miss);
   return t ? (100 * num(read) / t).toFixed(0) + "%" : "—";
 }
+/* The payload the list was last drawn from, so typing in the filter redraws
+   without a fetch and the 5s poll redraws without dropping what was typed. */
+let sesData = null;
+let sesFilter = "";
+/* Wall clock in the reader's own zone. The store stamps UTC, and the
+   question a turn list answers is when this happened to the person reading
+   it. */
+const clockOf = (s) => {
+  const d = utc(s);
+  /* 24-hour, because the rail is 56px wide on a phone and an AM/PM suffix
+     wraps it to three lines — and because every other number on this page is
+     already read as an instrument reading rather than as a sentence. */
+  return d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
+};
+const dayOf = (s) => {
+  const d = utc(s);
+  return d ? d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
+};
+const spanMs = (a, b) => {
+  const x = utc(a), y = utc(b);
+  return x && y ? y.getTime() - x.getTime() : null;
+};
+/* A duration a reader can hold in their head: milliseconds under a second,
+   whole seconds up to a minute and a half, then the same coarse steps `ago`
+   uses. A turn that ran 35 minutes and one that ran 35 seconds must not
+   render as the same shape of number. */
+const dur = (ms) => {
+  if (ms == null || !Number.isFinite(ms)) return "—";
+  const n = Math.max(0, ms);
+  return n < 1000 ? Math.round(n) + "ms"
+    : n < 90000 ? (n / 1000).toFixed(0) + "s" : rel(n / 1000);
+};
+/* One labelled figure in a metric strip: value first because that is what is
+   being scanned, label second because a number with no unit beside it is a
+   number the reader has to remember a column order to read. */
+const m = (v, label, cls) =>
+  `<span class="m${cls ? " " + cls : ""}"><b>${v}</b> ${esc(label)}</span>`;
+
+function sesCardHtml(r) {
+  const errs = num(r.tool_errors);
+  const tok = num(r.input_tokens) + num(r.output_tokens);
+  return `<button type="button" class="ses-card${r.id === state.session ? " sel" : ""}"
+      data-ses="${esc(r.id)}" aria-pressed="${r.id === state.session ? "true" : "false"}">
+    <span class="row1">
+      <span class="t">${esc(r.title || r.summary || r.id)}</span>
+      <span class="when">${r.updated_at_ms ? agoMs(r.updated_at_ms) : "—"}</span>
+    </span>
+    <span class="mstrip">
+      <span class="m">${sesBadge(r.status, r.crashed)}</span>
+      ${r.supervised ? `<span class="m"><span class="badge dim">supervised</span></span>` : ""}
+      ${r.registry ? "" : `<span class="m"><span class="badge dim">store only</span></span>`}
+      ${m(fmtInt(r.turns), "turns")}
+      ${num(r.tool_calls) ? m(fmtInt(r.tool_calls), "tools") : ""}
+      ${errs ? m("✕" + fmtInt(errs), "failed", "bad") : ""}
+      ${num(r.files_touched) ? m(fmtInt(r.files_touched), "files") : ""}
+      ${tok ? m(fmtTok(tok), "tok") : ""}
+      ${num(r.cache_read_tokens) + num(r.cache_miss_tokens)
+        ? m(cachePct(r.cache_read_tokens, r.cache_miss_tokens), "cached") : ""}
+      ${num(r.skill_uses) ? m(fmtInt(r.skill_uses), "skills") : ""}
+      ${num(r.mcp_calls) ? m(fmtInt(r.mcp_calls), "mcp") : ""}
+      ${num(r.cost_usd) ? m(fmtUsd(r.cost_usd), "spent") : ""}
+    </span>
+  </button>`;
+}
+/* Substring match over the two strings a person actually remembers a session
+   by. Case-folded, and applied to the payload rather than to the DOM, so the
+   count beside the box is the truth about the list under it. */
+const sesMatches = (r, q) => !q
+  || String(r.title ?? "").toLowerCase().includes(q)
+  || String(r.summary ?? "").toLowerCase().includes(q)
+  || String(r.id ?? "").toLowerCase().includes(q);
+
 function renderSessions(d) {
-  const rows = d?.sessions ?? [];
+  sesData = d ?? sesData;
+  const rows = sesData?.sessions ?? [];
   const live = rows.filter(r => r.live).length;
   const turns = rows.reduce((a, r) => a + num(r.turns), 0);
   const spend = rows.reduce((a, r) => a + num(r.cost_usd), 0);
@@ -4229,85 +4528,115 @@ function renderSessions(d) {
     tile("Spend", fmtUsd(spend), "sum of listed sessions") +
     tile("Tool calls", fmtInt(rows.reduce((a, r) => a + num(r.tool_calls), 0)),
       fmtInt(rows.reduce((a, r) => a + num(r.tool_errors), 0)) + " errored");
-  $("ses-list").innerHTML = rows.length ? `<table><thead><tr>
-      <th>Session</th><th>Status</th><th class="num">Turns</th>
-      <th class="num">Tools</th><th class="num">Files</th><th class="num">Tokens</th>
-      <th class="num">Cache</th><th class="num">Skills</th><th class="num">MCP</th>
-      <th class="num">Cost</th><th>Updated</th><th></th></tr></thead><tbody>
-    ${rows.map(r => `<tr class="click" data-ses="${esc(r.id)}">
-      <td><span class="name" title="${esc(r.id)}">${esc(clip(r.title || r.summary || r.id, 64))}</span>${
-        r.supervised ? ` <span class="badge dim">supervised</span>` : ""}${
-        r.registry ? "" : ` <span class="badge dim">store only</span>`}</td>
-      <td>${sesBadge(r.status, r.crashed)}</td>
-      <td class="num">${fmtInt(r.turns)}</td>
-      <td class="num">${fmtInt(r.tool_calls)}${num(r.tool_errors)
-        ? ` <span style="color:var(--bad)">✕${fmtInt(r.tool_errors)}</span>` : ""}</td>
-      <td class="num">${fmtInt(r.files_touched)}</td>
-      <td class="num">${fmtTok(num(r.input_tokens) + num(r.output_tokens))}</td>
-      <td class="num">${cachePct(r.cache_read_tokens, r.cache_miss_tokens)}</td>
-      <td class="num">${fmtInt(r.skill_uses)}</td>
-      <td class="num">${fmtInt(r.mcp_calls)}</td>
-      <td class="num">${fmtUsd(r.cost_usd)}</td>
-      <td>${r.updated_at_ms ? agoMs(r.updated_at_ms) : "—"}</td>
-      <td class="go">turns ↓</td></tr>`).join("")}
-    </tbody></table>`
-    : `<div class="empty">No sessions recorded yet. Run <code>stella</code> in this
-       workspace and the session appears here as it works.</div>`;
+  const q = sesFilter.trim().toLowerCase();
+  const shown = rows.filter(r => sesMatches(r, q));
+  $("ses-count").textContent = rows.length
+    ? (q ? `${fmtInt(shown.length)} of ${fmtInt(rows.length)}` : `${fmtInt(rows.length)} sessions`)
+    : "";
+  $("ses-list").innerHTML = shown.length ? shown.map(sesCardHtml).join("")
+    : rows.length
+      ? `<div class="empty">No session matches <code>${esc(sesFilter)}</code>.</div>`
+      : `<div class="empty">No sessions recorded yet. Run <code>stella</code> in this
+         workspace and the session appears here as it works.</div>`;
   if (state.session && rows.some(r => r.id === state.session)) {
     openSession(state.session, true);
-  } else if (rows.length) {
-    openSession(rows[0].id, true);
+  } else if (shown.length) {
+    openSession(shown[0].id, true);
   }
 }
-function turnRowHtml(t, i) {
+$("ses-filter").addEventListener("input", (ev) => {
+  sesFilter = ev.target.value;
+  renderSessions(null);
+});
+/* One turn, as a row of the session timeline.
+ *
+ * The sixteen-column table this replaces put the prompt in column two and
+ * everything a reader wants to know about the turn — outcome, cost, whether
+ * a tool failed — in columns three through sixteen, behind a horizontal
+ * scroller. It also never printed a clock, so the one question the page is
+ * for could not be answered from it at all: a run of turns read as a stack
+ * of rows with no gaps and no time in them.
+ *
+ * The card prints the same figures, wrapping instead of scrolling, and adds
+ * the rail: the wall-clock start on the left, the run time under it, and a
+ * gap row above whenever the session sat idle between two turns.
+ */
+const TURN_GAP_MS = 5 * 60 * 1000;
+
+function turnGapHtml(t, prev) {
+  const day = dayOf(t.started_at);
+  const newDay = !prev || dayOf(prev.started_at) !== day;
+  const gap = prev ? spanMs(prev.finished_at ?? prev.started_at, t.started_at) : null;
+  const idle = gap != null && gap >= TURN_GAP_MS ? `${dur(gap)} idle` : "";
+  if (!newDay && !idle) return "";
+  return `<div class="tl-gap">${newDay ? `<b>${esc(day)}</b>` : ""}${
+    newDay && idle ? " · " : ""}${idle ? esc(idle) : ""}</div>`;
+}
+
+function turnCardHtml(t, i, all) {
+  const prev = i > 0 ? all[i - 1] : null;
   const rating = t.reflection && t.reflection.self_rating != null
-    ? `${fmtInt(t.reflection.self_rating)}/10` : "—";
-  /* Skills and MCP chips render in the LAST column, deliberately: they used
-     to ride inside the Turn cell, and a turn that applied several skills
-     pushed outcome, tokens and cost behind the table's horizontal scroll —
-     the data a reader scans this table for, hidden by the decoration. */
-  /* A deck worker lane opens a real execution row, so it lists here beside
-     the lead turns and used to read exactly like one. The badge says which it
+    ? `${fmtInt(t.reflection.self_rating)}/10` : null;
+  /* A worker lane opens a real execution row, so it lists here beside the
+     lead turns and used to read exactly like one. The badge says which it
      is, and names the turn that dispatched it when a turn did — most lanes
-     are started by a person from the composer and honestly have no parent
-     (#4628). */
+     are started by a person from the composer and have no parent (#4628). */
   const lane = t.kind === "deck-sub"
-    ? ` <span class="badge dim" title="${t.parent_execution_id != null
+    ? `<span class="badge dim" title="${t.parent_execution_id != null
         ? `dispatched by execution ${fmtInt(t.parent_execution_id)}`
         : "dispatched from the composer, not by a turn"}">lane${
         t.parent_execution_id != null ? ` ← ${fmtInt(t.parent_execution_id)}` : ""}</span>`
     : "";
-  return `<tr class="click" data-exec="${fmtInt(t.id)}">
-    <td class="num">${fmtInt(i + 1)}</td>
-    <td><span class="name" title="execution ${fmtInt(t.id)}">${esc(clip(t.prompt ?? "", 80))}</span>${lane}</td>
-    <td>${badge(t.outcome)}</td>
-    <td><span title="${esc(t.provider)}/${esc(t.model)}">${esc(t.provider)}/${esc(clip(t.model ?? "", 24))}</span></td>
-    <td class="num">${fmtInt(t.steps)}</td>
-    <td class="num">${fmtInt(t.tool_calls)}${num(t.tool_errors)
-      ? ` <span style="color:var(--bad)">✕${fmtInt(t.tool_errors)}</span>` : ""}</td>
-    <td class="num">${fmtInt(t.files_touched)}
-      <span style="color:var(--ok)">+${fmtInt(t.lines_added)}</span>
-      <span style="color:var(--bad)">−${fmtInt(t.lines_removed)}</span>${
-      t.journal_turn != null
-        ? ` <button type="button" class="turn-diff" data-jturn="${num(t.journal_turn)}"
-             title="what this turn changed on disk, from the work journal">±&nbsp;diff</button>` : ""}</td>
-    <td class="num">${fmtTok(t.input_tokens)}·${fmtTok(t.output_tokens)}</td>
-    <td class="num" title="prompt-cache hit rate · ${fmtTok(t.cache_write_tokens)} written to cache">${
-      cachePct(t.cache_read_tokens, t.cache_miss_tokens)}</td>
-    <td class="num" title="model wall clock, summed over steps">${fmtMs(t.model_ms)}</td>
-    <td class="num">${num(t.retries) ? `<span style="color:var(--warn)">${fmtInt(t.retries)}</span>` : "0"}</td>
-    <td class="num">${fmtUsd(t.cost_usd)}</td>
-    <td class="num">${rating}</td>
-    <td class="num">${num(t.receipts) ? "✓" : "—"}</td>
-    <td>${
-      (t.skills ?? []).map(s => `<span class="badge accent">${esc(s)}</span> `).join("")}${
-      (t.mcp_servers ?? []).map(s => `<span class="badge dim">${esc(s)}</span> `).join("") || "—"}</td>
-    <td class="go">open ↗</td></tr>`;
+  const ran = spanMs(t.started_at, t.finished_at);
+  const errs = num(t.tool_errors);
+  const prompt = t.prompt ?? "";
+  const skills = (t.skills ?? []).map(x => `<span class="badge accent">${esc(x)}</span>`).join(" ");
+  const mcp = (t.mcp_servers ?? []).map(x => `<span class="badge dim">${esc(x)}</span>`).join(" ");
+  return turnGapHtml(t, prev) + `<article class="tl-turn" data-exec="${fmtInt(t.id)}"
+      role="link" tabindex="0" aria-label="Open turn ${fmtInt(i + 1)}">
+    <div class="tl-when"><b>${esc(clockOf(t.started_at))}</b>${
+      t.finished_at ? esc(dur(ran)) : "running"}</div>
+    <div class="tl-body">
+      <div class="tl-head">
+        <span class="tl-n">#${fmtInt(i + 1)}</span>${badge(t.outcome)}${lane}
+        <span class="tl-model" title="${esc(t.provider)}/${esc(t.model)}">${
+          esc(t.provider)}/${esc(clip(t.model ?? "", 28))}</span>
+      </div>
+      <p class="tl-prompt">${esc(prompt)}</p>
+      ${prompt.length > 150 ? `<button type="button" class="tl-more">show the whole prompt</button>` : ""}
+      <div class="mstrip">
+        ${m(fmtInt(t.steps), "steps")}
+        ${num(t.tool_calls) ? m(fmtInt(t.tool_calls), "tools") : ""}
+        ${errs ? m("✕" + fmtInt(errs), "failed", "bad") : ""}
+        ${num(t.files_touched) ? m(fmtInt(t.files_touched), "files") : ""}
+        ${num(t.lines_added) ? m("+" + fmtInt(t.lines_added), "added", "ok") : ""}
+        ${num(t.lines_removed) ? m("−" + fmtInt(t.lines_removed), "removed", "bad") : ""}
+        ${m(fmtTok(t.input_tokens) + "·" + fmtTok(t.output_tokens), "tok in·out")}
+        ${num(t.cache_read_tokens) + num(t.cache_miss_tokens)
+          ? m(cachePct(t.cache_read_tokens, t.cache_miss_tokens), "cached") : ""}
+        ${m(fmtMs(t.model_ms), "in the model")}
+        ${num(t.retries) ? m(fmtInt(t.retries), "retries", "warn") : ""}
+        ${m(fmtUsd(t.cost_usd), "spent")}
+        ${rating ? m(esc(rating), "self-rated") : ""}
+        ${num(t.receipts) ? m("✓", "receipts") : ""}
+      </div>
+      ${skills || mcp ? `<div class="mstrip">${skills} ${mcp}</div>` : ""}
+      <div class="tl-acts">
+        <button type="button" class="tl-act go">open transcript ↗</button>
+        ${t.journal_turn != null
+          ? `<button type="button" class="tl-act turn-diff" data-jturn="${num(t.journal_turn)}"
+               title="what this turn changed on disk, from the work journal">± diff</button>` : ""}
+      </div>
+    </div>
+  </article>`;
 }
 async function openSession(id, quiet) {
   state.session = id;
-  [...document.querySelectorAll("#ses-list tbody tr")].forEach(tr =>
-    tr.classList.toggle("sel", tr.dataset.ses === id));
+  [...document.querySelectorAll("#ses-list .ses-card")].forEach(card => {
+    const on = card.dataset.ses === id;
+    card.classList.toggle("sel", on);
+    card.setAttribute("aria-pressed", on ? "true" : "false");
+  });
   let d;
   try {
     d = await api("/api/session?id=" + encodeURIComponent(id));
@@ -4332,7 +4661,21 @@ async function openSession(id, quiet) {
   const avgRating = rated.length
     ? (rated.reduce((a, t) => a + num(t.reflection.self_rating), 0) / rated.length).toFixed(1)
     : null;
+  /* When the session ran, before what it did: a reader arriving at a
+     replay wants the span first, and the span was the one thing neither the
+     list nor the turn table printed. First turn to last activity, wall
+     clock, with the working time under it. */
+  const first = turns[0], last = turns[turns.length - 1];
+  const wall = first && last
+    ? spanMs(first.started_at, last.finished_at ?? last.started_at) : null;
+  const worked = turns.reduce((a, t) => a + num(spanMs(t.started_at, t.finished_at)), 0);
+  const spent = turns.reduce((a, t) => a + num(t.cost_usd), 0);
   $("ses-summary").innerHTML = `
+    ${first ? `<div class="feed-item"><b>When</b> —
+      ${esc(dayOf(first.started_at))} ${esc(clockOf(first.started_at))}
+      → ${esc(clockOf(last.finished_at ?? last.started_at))}
+      · ${esc(dur(wall))} elapsed · ${esc(dur(worked))} of it working
+      · ${fmtInt(turns.length)} turns · ${fmtUsd(spent)}</div>` : ""}
     ${reg?.summary ? `<div class="feed-item"><b>Now</b> — ${esc(reg.summary)}</div>` : ""}
     <div class="feed-item"><b>Tendencies</b> —
       ${fmtInt(retries)} retries ·
@@ -4341,13 +4684,8 @@ async function openSession(id, quiet) {
       avgRating ? ` · self-rated ${esc(avgRating)}/10 over ${fmtInt(rated.length)} turns` : ""}</div>
     ${d?.turns_truncated ? `<div class="feed-item"><b>Note</b> — showing the newest
       turns only; older turns were clipped from this view.</div>` : ""}`;
-  $("ses-turns").innerHTML = turns.length ? `<table><thead><tr>
-      <th class="num">#</th><th>Turn</th><th>Outcome</th><th>Model</th><th class="num">Steps</th>
-      <th class="num">Tools</th><th class="num">Files</th><th class="num">Tok in·out</th>
-      <th class="num">Cache</th><th class="num">Latency</th><th class="num">Retries</th>
-      <th class="num">Cost</th><th class="num">Rated</th><th class="num">Receipts</th>
-      <th>Skills</th><th></th></tr></thead><tbody>
-    ${turns.map(turnRowHtml).join("")}</tbody></table>`
+  $("ses-turns").innerHTML = turns.length
+    ? `<div class="tl">${turns.map((t, i) => turnCardHtml(t, i, turns)).join("")}</div>`
     : `<div class="empty">No turns stamped for this session yet${
        reg ? " — it may not have completed a turn" : ""}.</div>`;
   // What ← prev / next → on the transcript page step through, so arriving
@@ -4395,35 +4733,54 @@ async function openSession(id, quiet) {
     : `<div class="empty">No task board or pull requests recorded.</div>`;
 }
 $("ses-list").addEventListener("click", (ev) => {
-  const tr = ev.target.closest("tr[data-ses]");
-  if (tr) openSession(tr.dataset.ses);
+  const card = ev.target.closest("button.ses-card");
+  if (card) openSession(card.dataset.ses);
 });
+/* One delegate for the whole timeline, and the order of the three tests is
+   the behaviour: the two controls inside a turn are answered first, so the
+   card's own job — open this turn — is what is left when the tap landed on
+   the card itself. A phone has no hover, so the whole card is the target and
+   the controls have to be able to escape it. */
 $("ses-turns").addEventListener("click", (ev) => {
   const diffBtn = ev.target.closest("button.turn-diff");
   if (diffBtn) {
-    toggleTurnDiff(diffBtn.closest("tr[data-exec]"), +diffBtn.dataset.jturn);
+    toggleTurnDiff(diffBtn.closest("[data-exec]"), +diffBtn.dataset.jturn);
     return;
   }
-  const tr = ev.target.closest("tr[data-exec]");
-  if (tr && !tr.classList.contains("turn-diff-row")) goTranscript(+tr.dataset.exec);
+  const moreBtn = ev.target.closest("button.tl-more");
+  if (moreBtn) {
+    const turn = moreBtn.closest(".tl-turn");
+    const open = turn.classList.toggle("open");
+    moreBtn.textContent = open ? "clip the prompt" : "show the whole prompt";
+    return;
+  }
+  const tr = ev.target.closest("[data-exec]");
+  if (tr) goTranscript(+tr.dataset.exec);
+});
+/* The card is a link, so Enter opens it. Space is left to the page: a turn
+   card is tall, and swallowing the scroll key inside a list of them is worse
+   than the second way to activate. */
+$("ses-turns").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  const turn = ev.target.closest(".tl-turn");
+  if (turn && ev.target === turn) goTranscript(+turn.dataset.exec);
 });
 /* Expand one turn's on-disk diff (#1870) under its row — fetched from the
    session_turn_diffs projection the owning session precomputed at turn end,
    never from the work journal's repo. Click again to collapse. */
 async function toggleTurnDiff(row, jturn) {
   if (!row) return;
-  const open = row.nextElementSibling;
-  if (open && open.classList.contains("turn-diff-row")) { open.remove(); return; }
-  const holder = document.createElement("tr");
-  holder.className = "turn-diff-row";
-  const cols = row.children.length;
-  holder.innerHTML = `<td colspan="${cols}"><div class="empty">Loading the turn diff…</div></td>`;
-  row.after(holder);
+  const open = row.querySelector(":scope > .turn-diff-row");
+  if (open) { open.remove(); return; }
+  const holder = document.createElement("div");
+  holder.className = "turn-diff-row tl-diff";
+  holder.innerHTML = `<div class="empty">Loading the turn diff…</div>`;
+  row.append(holder);
   try {
     const d = await api(`/api/session-turn-diff?id=${encodeURIComponent(state.session)}&turn=${jturn}`);
-    holder.innerHTML = `<td colspan="${cols}">${turnDiffHtml(d)}</td>`;
+    holder.innerHTML = turnDiffHtml(d);
   } catch (e) {
-    holder.innerHTML = `<td colspan="${cols}"><div class="empty">Could not load the diff.</div></td>`;
+    holder.innerHTML = `<div class="empty">Could not load the diff.</div>`;
   }
 }
 function turnDiffHtml(d) {

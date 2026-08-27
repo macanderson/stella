@@ -215,6 +215,34 @@ by the isolation above — this crate must not link `stella-store` — so
 readers against a store built by the real migration path, and a column renamed
 underneath the predicate fails there.
 
+### The session plane is one layout, and it starts at 390px
+
+Sessions and the turns under them are cards, not tables. A table answers
+"compare this column across every row"; the question asked here is "what did
+this session do, and when", and the answer for one turn is fifteen figures
+that no phone can show in columns. Both lists used to be tables inside a
+horizontal scroller, so at 390px a reader saw prompts and nothing else — no
+outcome, no cost, no clock — with every other column behind a swipe.
+
+One card carries the figures the table carried, in a strip that wraps. The
+turn list adds what the table never had: a clock rail with the wall-clock
+start and the run time, and a row between two turns whenever the session sat
+idle or the day changed. Same markup at every width, so there is no second
+layout to keep in step, and `#ses-list` and `#ses-turns` hold no `<table>`.
+
+Two rules the rest of the page follows from here. The tab bar is one row that
+scrolls sideways under 760px rather than wrapping — eleven tabs wrapped to
+four rows of sticky chrome, which cost 130px of an 844px screen on every
+page. And the turn page's section rail turns on its side under 980px and
+sticks under the nav: stacking a sidebar above the content, which is what a
+one-column grid does to it, put a list of section names between the reader
+and the transcript they opened.
+
+The rendered transcript itself is `stella-transcript`'s markup and stylesheet,
+so its narrow-screen rules live in that crate — the gutters stay declared
+widths, they are just smaller ones, and under 560px the role gutter stops
+being a column so the text gets the full line.
+
 ### Secrets never reach the browser
 
 `settings.json` and `mcp.toml` carry credentials, and both are served. `redact`
