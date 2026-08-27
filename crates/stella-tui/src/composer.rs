@@ -32,9 +32,12 @@ use stella_protocol::{Attachment, AttachmentKind};
 use unicode_width::UnicodeWidthChar;
 
 pub mod args;
+pub mod fuzzy;
 pub mod palette;
+pub mod recent;
 
 pub use palette::{PaletteState, RelevantNow, SlashDomain};
+pub use recent::Recents;
 
 /// Below this many lines a paste is inserted inline; at or above it, the
 /// paste collapses to a chip. Small on purpose (L-T3).
@@ -198,6 +201,13 @@ pub struct Composer {
     cursor: usize,
     /// Paste-collapse threshold in lines.
     paste_threshold: usize,
+    /// Commands run from this composer's slash popup, most recent first —
+    /// SPEC 10's `recent` section. It rides the composer because the composer
+    /// already owns the slash-menu view ([`Composer::slash_menu`]), so the
+    /// key handler and the renderer read one list without either surface
+    /// having to pass it between them. A surface that hands it no path keeps
+    /// an in-session list; see [`recent::Recents`].
+    recent: Recents,
 }
 
 impl Composer {
@@ -215,6 +225,25 @@ impl Composer {
             paste_threshold: threshold.max(1),
             ..Self::default()
         }
+    }
+
+    /// Keep the `recent` section in `path` from now on, seeded with what is
+    /// already there. Called once by the surface that knows which workspace
+    /// this composer belongs to (`DeckOptions::recent_path`).
+    pub fn keep_recent_in(&mut self, path: impl Into<std::path::PathBuf>) {
+        self.recent = Recents::kept_in(path);
+    }
+
+    /// The commands this composer has run, most recent first.
+    pub fn recent(&self) -> &[String] {
+        self.recent.names()
+    }
+
+    /// Write the `recent` list back if a dispatch has changed it. Cheap
+    /// enough to call on every keystroke — it returns at once when nothing
+    /// has moved.
+    pub fn flush_recent(&mut self) {
+        self.recent.flush();
     }
 
     /// The live buffer text (what is being typed, chips excluded).
@@ -451,7 +480,7 @@ impl Composer {
         if !q.starts_with('/') || q.contains(char::is_whitespace) {
             return None;
         }
-        Some(SlashMenu::filter_with(commands, q, state))
+        Some(SlashMenu::filter_with(commands, q, state, self.recent()))
     }
 }
 
@@ -626,12 +655,23 @@ pub fn split_row_at(row: &str, col: usize) -> (String, Option<char>, String) {
     (before, None, String::new())
 }
 
+/// One palette row: the command, and where the query lit up inside its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashMatch<'a> {
+    pub command: &'a SlashCommand,
+    /// Char offsets into [`SlashCommand::name`], the leading `/` counted, so
+    /// the renderer walks the string it prints instead of re-deriving a bare
+    /// slug from it. Empty when the query matched only the description, and
+    /// for the browse list's `recent` rows.
+    pub highlights: Vec<usize>,
+}
+
 /// The filtered slash-command list for the current query. Borrows the
 /// caller's command vocabulary — the menu owns no command list of its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashMenu<'a> {
     pub query: String,
-    pub matches: Vec<&'a SlashCommand>,
+    pub matches: Vec<SlashMatch<'a>>,
     /// Headings the palette draws above [`Self::matches`], as
     /// `(index of the first match under it, heading)`. Ascending, and only
     /// ever populated for the browse list — see [`Self::filter_with`].
@@ -645,16 +685,18 @@ impl<'a> SlashMenu<'a> {
     /// so it gets the ranking it always had rather than a relevance block
     /// derived from zeroes.
     pub fn filter(commands: &'a [SlashCommand], query: &str) -> Self {
-        Self::filter_with(commands, query, &PaletteState::default())
+        Self::filter_with(commands, query, &PaletteState::default(), &[])
     }
 
     /// Fuzzy filter over `commands`, ordered by what the session is doing.
     ///
-    /// Matching is unchanged and decides *what appears*: a name-prefix match
-    /// ranks first, a name-substring match second, a description-substring
-    /// match third. An empty query (just `/`) matches everything.
-    /// Case-insensitive on the ASCII fold; command names are ASCII slugs, so
-    /// the cheap fold is exact for every name the CLI actually registers.
+    /// Matching decides *what appears* and where each row lights up
+    /// ([`fuzzy::match_name`]): a name-prefix match ranks first, a
+    /// name-substring match second, a name-subsequence match third, and a
+    /// description-substring match last. An empty query (just `/`) matches
+    /// everything and lights nothing. Case-insensitive on the ASCII fold;
+    /// command names are ASCII slugs, so the cheap fold is exact for every
+    /// name the CLI actually registers.
     ///
     /// `state` decides *the order*, and the two cases are deliberately
     /// different surfaces rather than one compromise (#4338):
@@ -668,19 +710,43 @@ impl<'a> SlashMenu<'a> {
     ///   grouping a three-row result buries the rows under their own
     ///   captions — but a relevant command still leads *within its rank*, so
     ///   `/pl` mid-turn opens on `/plan`.
-    pub fn filter_with(commands: &'a [SlashCommand], query: &str, state: &PaletteState) -> Self {
+    ///
+    /// `recent` closes the browse list under its own heading — the commands
+    /// this workspace ran last, most recent first. A recent row is a second
+    /// appearance of a command a domain group already lists, which is what a
+    /// shortcut is, so it is appended rather than lifted out of its group
+    /// (SPEC 10 puts the section last).
+    pub fn filter_with(
+        commands: &'a [SlashCommand],
+        query: &str,
+        state: &PaletteState,
+        recent: &[String],
+    ) -> Self {
         let needle = query.trim_start_matches('/').to_ascii_lowercase();
-        let rank = |c: &SlashCommand| -> Option<u8> {
-            let name = c.name.trim_start_matches('/').to_ascii_lowercase();
-            if name.starts_with(&needle) {
-                Some(0)
-            } else if name.contains(&needle) {
-                Some(1)
-            } else if c.description.to_ascii_lowercase().contains(&needle) {
-                Some(2)
-            } else {
-                None
+        let matched = |c: &'a SlashCommand| -> Option<(u8, SlashMatch<'a>)> {
+            let bare = c.name.trim_start_matches('/');
+            // What the slash cost, so the offsets index the printed name.
+            let slash = c.name.chars().count() - bare.chars().count();
+            match fuzzy::match_name(&bare.to_ascii_lowercase(), &needle) {
+                Some(m) => Some((
+                    m.kind.rank(),
+                    m.indices.iter().map(|i| i + slash).collect::<Vec<_>>(),
+                )),
+                None => c
+                    .description
+                    .to_ascii_lowercase()
+                    .contains(&needle)
+                    .then(|| (fuzzy::DESCRIPTION_RANK, Vec::new())),
             }
+            .map(|(rank, highlights)| {
+                (
+                    rank,
+                    SlashMatch {
+                        command: c,
+                        highlights,
+                    },
+                )
+            })
         };
         let relevant = palette::relevant_now(state);
         // Where a command sits in the relevance block, or past every one of
@@ -693,31 +759,28 @@ impl<'a> SlashMenu<'a> {
                 .unwrap_or(usize::MAX)
         };
 
-        let mut ranked: Vec<(u8, &SlashCommand)> = commands
-            .iter()
-            .filter_map(|c| rank(c).map(|r| (r, c)))
-            .collect();
+        let mut ranked: Vec<(u8, SlashMatch<'a>)> = commands.iter().filter_map(matched).collect();
 
         if !needle.is_empty() {
             // Stable within a key, so the vocabulary order survives among
             // commands the session says nothing about.
-            ranked.sort_by_key(|(r, c)| (*r, relevance(c)));
+            ranked.sort_by_key(|(r, m)| (*r, relevance(m.command)));
             return Self {
                 query: query.to_string(),
-                matches: ranked.into_iter().map(|(_, c)| c).collect(),
+                matches: ranked.into_iter().map(|(_, m)| m).collect(),
                 sections: Vec::new(),
             };
         }
 
         // The browse list: relevance block, then a group per domain.
-        ranked.sort_by_key(|(_, c)| (relevance(c), c.domain.order()));
-        let matches: Vec<&SlashCommand> = ranked.into_iter().map(|(_, c)| c).collect();
+        ranked.sort_by_key(|(_, m)| (relevance(m.command), m.command.domain.order()));
+        let mut matches: Vec<SlashMatch<'a>> = ranked.into_iter().map(|(_, m)| m).collect();
 
         let mut sections = Vec::new();
         let promoted = relevant.as_ref().map_or(0, |r| {
             matches
                 .iter()
-                .filter(|c| r.commands.iter().any(|n| *n == c.name))
+                .filter(|m| r.commands.iter().any(|n| *n == m.command.name))
                 .count()
         });
         if let Some(relevant) = relevant.as_ref()
@@ -726,11 +789,26 @@ impl<'a> SlashMenu<'a> {
             sections.push((0, format!("relevant now · {}", relevant.reason)));
         }
         let mut group = None;
-        for (i, command) in matches.iter().enumerate().skip(promoted) {
-            if group != Some(command.domain) {
-                group = Some(command.domain);
-                sections.push((i, command.domain.label().to_string()));
+        for (i, m) in matches.iter().enumerate().skip(promoted) {
+            if group != Some(m.command.domain) {
+                group = Some(m.command.domain);
+                sections.push((i, m.command.domain.label().to_string()));
             }
+        }
+        // `recent` closes the list. A name the vocabulary no longer answers to
+        // is skipped rather than drawn: the file outlives any one build's
+        // command set.
+        let recent_rows: Vec<SlashMatch<'a>> = recent
+            .iter()
+            .filter_map(|name| commands.iter().find(|c| c.name == *name))
+            .map(|command| SlashMatch {
+                command,
+                highlights: Vec::new(),
+            })
+            .collect();
+        if !recent_rows.is_empty() {
+            sections.push((matches.len(), "recent".to_string()));
+            matches.extend(recent_rows);
         }
         Self {
             query: query.to_string(),
@@ -758,7 +836,7 @@ pub fn slash_popup_matches(
 ) -> Vec<String> {
     composer
         .slash_menu(slash_commands, state)
-        .map(|m| m.matches.iter().map(|c| c.name.clone()).collect())
+        .map(|m| m.matches.iter().map(|m| m.command.name.clone()).collect())
         .unwrap_or_default()
 }
 
@@ -812,9 +890,14 @@ pub fn handle_slash_popup_key(
             Some(SlashPopupOutcome::Handled)
         }
         KeyCode::Enter => {
+            let chosen = matches[selected].clone();
+            // The one place a palette row is *run*, which is what the `recent`
+            // section reports. Tab completes instead of running, so it records
+            // nothing.
+            composer.recent.record(&chosen);
             composer.clear();
             *slash_selected = 0;
-            Some(SlashPopupOutcome::Submit(matches[selected].clone()))
+            Some(SlashPopupOutcome::Submit(chosen))
         }
         KeyCode::Esc => {
             composer.clear();
@@ -835,501 +918,4 @@ fn line_count(text: &str) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn commands() -> Vec<SlashCommand> {
-        vec![
-            SlashCommand::new("/help", "show help"),
-            SlashCommand::new("/clear", "clear the transcript"),
-            SlashCommand::new("/models", "list models"),
-            SlashCommand::new("/diff", "open the diff viewer"),
-            SlashCommand::new("/files", "focus the files panel"),
-        ]
-    }
-
-    #[test]
-    fn small_paste_inserts_inline() {
-        let mut c = Composer::with_paste_threshold(6);
-        c.paste("one\ntwo\nthree");
-        assert!(c.chips().is_empty());
-        assert_eq!(c.buffer(), "one\ntwo\nthree");
-    }
-
-    #[test]
-    fn large_paste_collapses_to_a_chip_but_keeps_the_payload() {
-        let mut c = Composer::with_paste_threshold(3);
-        let payload = "a\nb\nc\nd\ne";
-        c.paste(payload);
-        assert_eq!(c.chips().len(), 1);
-        // The real display path (what the renderers draw) shows the chip form.
-        assert_eq!(layout(&c, 80).rows, vec!["[pasted: 5 lines] ".to_string()]);
-        // The full payload survives to submission.
-        let msg = c.take_submission().unwrap().text;
-        assert_eq!(msg, payload);
-    }
-
-    #[test]
-    fn typed_text_before_a_chip_keeps_its_order_on_submit() {
-        let mut c = Composer::with_paste_threshold(3);
-        for ch in "review this: ".chars() {
-            c.insert_char(ch);
-        }
-        c.paste("x\ny\nz\nw");
-        for ch in " thanks".chars() {
-            c.insert_char(ch);
-        }
-        let msg = c.take_submission().unwrap().text;
-        assert_eq!(msg, "review this: \nx\ny\nz\nw\n thanks");
-        assert!(c.is_empty(), "submission clears the composer");
-    }
-
-    #[test]
-    fn display_never_leaks_the_raw_payload() {
-        let mut c = Composer::with_paste_threshold(2);
-        c.paste("secret-line-1\nsecret-line-2\nsecret-line-3");
-        let shown = layout(&c, 200).rows.join("\n");
-        assert!(
-            !shown.contains("secret"),
-            "chip must hide the payload: {shown}"
-        );
-    }
-
-    fn test_attachment(name: &str) -> Attachment {
-        Attachment::from_path(name, "image/png", 1024, format!("/tmp/{name}"))
-    }
-
-    #[test]
-    fn attachments_ride_the_submission_not_its_text() {
-        let mut c = Composer::new();
-        for ch in "see ".chars() {
-            c.insert_char(ch);
-        }
-        c.attach(test_attachment("shot.png"));
-        for ch in "what broke?".chars() {
-            c.insert_char(ch);
-        }
-        let shown = layout(&c, 200).rows.join("\n");
-        assert!(shown.contains("[image: shot.png"), "{shown}");
-        let submission = c.take_submission().unwrap();
-        assert_eq!(submission.text, "see \nwhat broke?");
-        assert_eq!(submission.attachments.len(), 1);
-        assert_eq!(submission.attachments[0].name, "shot.png");
-        assert!(c.is_empty(), "submission clears attachments too");
-    }
-
-    #[test]
-    fn attachment_only_submission_is_submittable() {
-        let mut c = Composer::new();
-        c.attach(test_attachment("clip.png"));
-        assert!(!c.is_empty());
-        let submission = c.take_submission().unwrap();
-        assert_eq!(submission.text, "");
-        assert_eq!(submission.attachments.len(), 1);
-    }
-
-    #[test]
-    fn backspace_pops_an_attachment_chip_when_the_buffer_is_empty() {
-        let mut c = Composer::new();
-        c.attach(test_attachment("oops.png"));
-        c.backspace();
-        assert!(c.is_blank(), "backspace removes the pending attachment");
-    }
-
-    #[test]
-    fn backspace_pops_a_chip_when_the_buffer_is_empty() {
-        let mut c = Composer::with_paste_threshold(2);
-        c.paste("a\nb\nc");
-        assert_eq!(c.chips().len(), 1);
-        c.backspace(); // buffer empty → removes the chip
-        assert!(c.chips().is_empty());
-    }
-
-    /// The vocabulary with domains, for the palette tests.
-    fn classified_commands() -> Vec<SlashCommand> {
-        vec![
-            SlashCommand::new("/help", "show help").in_domain(SlashDomain::Session),
-            SlashCommand::new("/clear", "clear the transcript").in_domain(SlashDomain::Session),
-            SlashCommand::new("/plan", "the plan").in_domain(SlashDomain::Plan),
-            SlashCommand::new("/budget", "set the spend cap").in_domain(SlashDomain::Plan),
-            SlashCommand::new("/diff", "open the diff viewer").in_domain(SlashDomain::Code),
-            SlashCommand::custom("/fix-bug", "fix a bug end to end"),
-        ]
-    }
-
-    /// **The witness (#4338).** The browse list opens on what the session
-    /// makes relevant, under a heading that says why, then one group per
-    /// domain — not thirty rows in vocabulary order.
-    #[test]
-    fn the_browse_list_leads_with_relevance_then_groups_by_domain() {
-        let cmds = classified_commands();
-        let state = PaletteState {
-            turn_running: true,
-            ..PaletteState::default()
-        };
-        let mut c = Composer::new();
-        c.insert_char('/');
-        let menu = c.slash_menu(&cmds, &state).expect("slash menu active");
-
-        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(
-            &names[..2],
-            &["/plan", "/budget"],
-            "the running turn's commands lead: {names:?}"
-        );
-        assert_eq!(
-            menu.sections.first(),
-            Some(&(0, "relevant now · a turn is running".to_string())),
-            "the heading says why: {:?}",
-            menu.sections
-        );
-        assert_eq!(
-            menu.sections[1..].to_vec(),
-            vec![
-                (2, "session".to_string()),
-                (4, "workspace".to_string()),
-                (5, "custom".to_string()),
-            ],
-            "one heading per remaining group, in domain order"
-        );
-    }
-
-    /// A quiet session has no relevance block at all — the list is the domain
-    /// groups alone, with no heading claiming a reason that does not exist.
-    #[test]
-    fn a_quiet_browse_list_is_groups_only() {
-        let cmds = classified_commands();
-        let mut c = Composer::new();
-        c.insert_char('/');
-        let menu = c
-            .slash_menu(&cmds, &PaletteState::default())
-            .expect("slash menu active");
-        assert!(
-            !menu.sections.iter().any(|(_, h)| h.starts_with("relevant")),
-            "nothing to be relevant about: {:?}",
-            menu.sections
-        );
-        assert_eq!(menu.sections.first().map(|(at, _)| *at), Some(0));
-        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(
-            names,
-            vec!["/help", "/clear", "/plan", "/budget", "/diff", "/fix-bug"],
-            "domain order, vocabulary order within a group"
-        );
-    }
-
-    /// A typed query keeps one flat ranked list — but a relevant command
-    /// leads its rank, so `/b` mid-turn opens on `/budget` rather than on
-    /// whatever the vocabulary happened to list first.
-    #[test]
-    fn a_typed_query_promotes_the_relevant_match_without_headings() {
-        let cmds = classified_commands();
-        let state = PaletteState {
-            turn_running: true,
-            ..PaletteState::default()
-        };
-        let mut c = Composer::new();
-        for ch in "/p".chars() {
-            c.insert_char(ch);
-        }
-        let menu = c.slash_menu(&cmds, &state).expect("slash menu active");
-        assert!(menu.sections.is_empty(), "no headings under a query");
-        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(
-            names.first(),
-            Some(&"/plan"),
-            "the prefix match still leads: {names:?}"
-        );
-        assert_eq!(
-            names.iter().position(|n| *n == "/budget"),
-            Some(2),
-            "and the relevant one leads its own (weaker) rank: {names:?}"
-        );
-
-        // Idle, the same query is the plain fuzzy ranking: `/budget` sits
-        // where the vocabulary put it, behind the two rows above it.
-        let idle = c
-            .slash_menu(&cmds, &PaletteState::default())
-            .expect("slash menu active");
-        let idle_names: Vec<&str> = idle.matches.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(idle_names.first(), Some(&"/plan"));
-        assert_eq!(
-            idle_names.iter().position(|n| *n == "/budget"),
-            Some(3),
-            "relevance is what moved it: {idle_names:?}"
-        );
-    }
-
-    #[test]
-    fn slash_menu_fuzzy_ranks_name_prefix_over_substring_over_description() {
-        let cmds = commands();
-        let mut c = Composer::new();
-        for ch in "/f".chars() {
-            c.insert_char(ch);
-        }
-        let menu = c
-            .slash_menu(&cmds, &PaletteState::default())
-            .expect("slash menu active");
-        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
-        // `/files` starts with the query; `/diff` merely contains it — the
-        // prefix match must lead.
-        assert_eq!(names, vec!["/files", "/diff"]);
-    }
-
-    #[test]
-    fn slash_menu_falls_back_to_description_matches() {
-        let cmds = commands();
-        let mut c = Composer::new();
-        for ch in "/transcript".chars() {
-            c.insert_char(ch);
-        }
-        let menu = c
-            .slash_menu(&cmds, &PaletteState::default())
-            .expect("slash menu active");
-        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
-        // No name contains "transcript"; `/clear`'s description does.
-        assert_eq!(names, vec!["/clear"]);
-    }
-
-    #[test]
-    fn bare_slash_lists_every_command() {
-        let cmds = commands();
-        let mut c = Composer::new();
-        c.insert_char('/');
-        let menu = c.slash_menu(&cmds, &PaletteState::default()).unwrap();
-        assert_eq!(menu.matches.len(), cmds.len());
-    }
-
-    #[test]
-    fn slash_menu_is_inactive_once_a_space_is_typed() {
-        let cmds = commands();
-        let mut c = Composer::new();
-        for ch in "/models ".chars() {
-            c.insert_char(ch);
-        }
-        assert!(c.slash_menu(&cmds, &PaletteState::default()).is_none());
-    }
-
-    #[test]
-    fn slash_command_constructors_set_the_kind() {
-        assert_eq!(SlashCommand::new("/help", "d").kind, SlashKind::Builtin);
-        assert_eq!(SlashCommand::custom("/x", "d").kind, SlashKind::Custom);
-    }
-
-    #[test]
-    fn slash_menu_is_inactive_when_chips_are_present() {
-        let cmds = commands();
-        let mut c = Composer::with_paste_threshold(2);
-        c.paste("a\nb\nc");
-        c.insert_char('/');
-        assert!(c.slash_menu(&cmds, &PaletteState::default()).is_none());
-    }
-
-    #[test]
-    fn line_count_ignores_a_trailing_newline() {
-        assert_eq!(line_count("a\nb\n"), 2);
-        assert_eq!(line_count("a\nb"), 2);
-        assert_eq!(line_count(""), 0);
-        assert_eq!(line_count("solo"), 1);
-    }
-
-    // Textarea semantics
-
-    fn typed(text: &str) -> Composer {
-        let mut c = Composer::new();
-        for ch in text.chars() {
-            c.insert_char(ch);
-        }
-        c
-    }
-
-    #[test]
-    fn newlines_typed_into_the_buffer_survive_submission_verbatim() {
-        let mut c = typed("first line");
-        c.insert_newline();
-        for ch in "second line".chars() {
-            c.insert_char(ch);
-        }
-        assert_eq!(c.take_submission().unwrap().text, "first line\nsecond line");
-    }
-
-    #[test]
-    fn insert_and_backspace_act_at_the_cursor() {
-        let mut c = typed("hello");
-        c.move_left();
-        c.move_left();
-        c.insert_char('X'); // hel X lo
-        assert_eq!(c.buffer(), "helXlo");
-        c.backspace(); // removes the X, not the tail
-        assert_eq!(c.buffer(), "hello");
-        assert_eq!(c.cursor(), 3);
-    }
-
-    #[test]
-    fn move_to_start_and_end_bound_the_whole_buffer() {
-        let mut c = typed("a\nb\nc");
-        c.move_to_start();
-        assert_eq!(c.cursor(), 0, "before the first character");
-        c.move_to_end();
-        assert_eq!(c.cursor(), c.buffer().len(), "one past the last character");
-    }
-
-    #[test]
-    fn vertical_motion_keeps_the_column_and_clamps_to_short_lines() {
-        let mut c = typed("long line\nab\nlonger line");
-        // Cursor at end of "longer line"; up lands clamped to "ab"'s end.
-        c.move_up();
-        assert_eq!(&c.buffer()[..c.cursor()], "long line\nab");
-        // Up again: column carried from the clamp point (2) into "long line".
-        c.move_up();
-        assert_eq!(&c.buffer()[..c.cursor()], "lo");
-        // Down from the first line's column 2 → "ab" clamps to its end again.
-        c.move_down();
-        assert_eq!(&c.buffer()[..c.cursor()], "long line\nab");
-        // Down on the last line jumps to the very end.
-        c.move_down();
-        c.move_down();
-        assert_eq!(c.cursor(), c.buffer().len());
-    }
-
-    #[test]
-    fn line_start_and_end_stay_within_the_logical_line() {
-        let mut c = typed("one\ntwo three");
-        // Cursor at end; Home goes to the start of "two three", not offset 0.
-        c.move_line_start();
-        assert_eq!(&c.buffer()[..c.cursor()], "one\n");
-        c.move_line_end();
-        assert_eq!(c.cursor(), c.buffer().len());
-    }
-
-    #[test]
-    fn paste_lands_at_the_cursor_and_normalizes_line_endings() {
-        let mut c = typed("ac");
-        c.move_left();
-        c.paste("b\r\nB"); // small paste: inline, CRLF → LF
-        assert_eq!(c.buffer(), "ab\nBc");
-    }
-
-    #[test]
-    fn big_paste_mid_buffer_keeps_the_tail_after_the_chip() {
-        let mut c = Composer::with_paste_threshold(2);
-        for ch in "headtail".chars() {
-            c.insert_char(ch);
-        }
-        for _ in 0..4 {
-            c.move_left(); // cursor between "head" and "tail"
-        }
-        c.paste("x\ny\nz");
-        let msg = c.take_submission().unwrap().text;
-        assert_eq!(msg, "head\nx\ny\nz\ntail", "order: before, chip, after");
-    }
-
-    #[test]
-    fn classify_enter_submits_bare_and_breaks_on_a_modifier() {
-        let plain = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let cmd = KeyEvent::new(KeyCode::Enter, KeyModifiers::SUPER);
-        let meta = KeyEvent::new(KeyCode::Enter, KeyModifiers::META);
-        let ctrl = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
-        let alt = KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT);
-        // Bare Enter always submits (never blocks).
-        assert_eq!(classify_enter(&plain), EnterAction::Submit);
-        // Every newline modifier inserts a line break instead.
-        assert_eq!(classify_enter(&cmd), EnterAction::Newline);
-        assert_eq!(classify_enter(&meta), EnterAction::Newline);
-        assert_eq!(classify_enter(&ctrl), EnterAction::Newline);
-        assert_eq!(classify_enter(&alt), EnterAction::Newline);
-        // A non-Enter key is not this function's concern.
-        let other = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert_eq!(classify_enter(&other), EnterAction::NotEnter);
-    }
-
-    #[test]
-    fn edit_keys_leave_an_empty_composer_to_the_surface() {
-        // Arrows on an empty buffer must fall through (they scroll views).
-        let mut c = Composer::new();
-        for code in [KeyCode::Left, KeyCode::Right, KeyCode::Up, KeyCode::Down] {
-            assert!(!handle_edit_key(
-                KeyEvent::new(code, KeyModifiers::NONE),
-                &mut c
-            ));
-        }
-        // ↑/↓ on a single-line buffer also fall through (transcript scroll).
-        let mut single = typed("one line");
-        assert!(!handle_edit_key(
-            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
-            &mut single
-        ));
-        assert!(handle_edit_key(
-            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
-            &mut single
-        ));
-    }
-
-    // Soft-wrap layout
-
-    #[test]
-    fn layout_soft_wraps_long_lines_and_hard_breaks_newlines() {
-        let c = typed("abcdef\ngh");
-        let l = layout(&c, 4);
-        assert_eq!(l.rows, vec!["abcd", "ef", "gh"]);
-        // Cursor at the end: one past 'h' on the last row.
-        assert_eq!((l.cursor_row, l.cursor_col), (2, 2));
-    }
-
-    #[test]
-    fn layout_places_the_cursor_mid_text() {
-        let mut c = typed("abcdef");
-        for _ in 0..2 {
-            c.move_left(); // cursor before 'e' (offset 4)
-        }
-        let l = layout(&c, 4);
-        assert_eq!(l.rows, vec!["abcd", "ef"]);
-        assert_eq!((l.cursor_row, l.cursor_col), (1, 0), "'e' starts row 1");
-    }
-
-    #[test]
-    fn layout_gives_the_cursor_a_fresh_row_when_the_last_row_is_full() {
-        let c = typed("abcd");
-        let l = layout(&c, 4);
-        assert_eq!(l.rows, vec!["abcd", ""]);
-        assert_eq!((l.cursor_row, l.cursor_col), (1, 0));
-    }
-
-    #[test]
-    fn layout_shows_chips_as_their_display_form() {
-        let mut c = Composer::with_paste_threshold(2);
-        c.paste("a\nb\nc");
-        for ch in "ok".chars() {
-            c.insert_char(ch);
-        }
-        let l = layout(&c, 40);
-        assert_eq!(l.rows, vec!["[pasted: 3 lines] ok"]);
-        assert_eq!((l.cursor_row, l.cursor_col), (0, 20));
-    }
-
-    #[test]
-    fn layout_is_wide_char_aware() {
-        let c = typed("日本語"); // width 2 each
-        let l = layout(&c, 4);
-        assert_eq!(l.rows, vec!["日本", "語"]);
-        assert_eq!((l.cursor_row, l.cursor_col), (1, 2));
-    }
-
-    #[test]
-    fn split_row_at_returns_the_char_under_the_cursor() {
-        assert_eq!(split_row_at("abc", 1), ("a".into(), Some('b'), "c".into()));
-        assert_eq!(split_row_at("abc", 3), ("abc".into(), None, String::new()));
-        assert_eq!(
-            split_row_at("日本", 2),
-            ("日".into(), Some('本'), String::new())
-        );
-    }
-
-    #[test]
-    fn empty_composer_lays_out_as_one_empty_row_with_the_cursor_home() {
-        let c = Composer::new();
-        let l = layout(&c, 10);
-        assert_eq!(l.rows, vec![""]);
-        assert_eq!((l.cursor_row, l.cursor_col), (0, 0));
-    }
-}
+mod tests;

@@ -403,9 +403,13 @@ Keep current information architecture (executions table, installed agents, agent
 
 ## 10. Command palette (rendering `08-command-palette`)
 
-- Overlay: `Clear` over a centered `Rect`, `panel` bg, `rule` border.
-- **Fuzzy matching** via `nucleo`; matched letters render gold inside each command name.
-- **Context section first**: `relevant now` derives from session state (verify running surfaces `/gates` with live gate status on the row). Then domain groups (plan, graph, skills, ...), then `recent`.
+- Overlay: `Clear` over a `Rect` anchored to the composer's left edge and opening upward, `panel` bg, `rule` border.
+
+  **Amended (#5048).** This bullet asked for a *centered* `Rect`. The palette completes the word under the cursor, and centering moves the completions away from the letters that produced them — every terminal and editor autocomplete anchors to the caret for that reason. The deck anchors, and `slash_popup_area` in `crates/stella-tui/src/render.rs` carries the same argument beside the code. The `panel` ground and the `rule` border are unchanged and now shipped; before #5048 the overlay drew `Clear` and no ground at all, so it read as a hole in the deck.
+- **Fuzzy matching**; matched letters render gold inside each command name, scattered letters included — `ga` lights the `g` and the `a` of `/graph query`. The leading `/` is the sigil that opened the palette and never lights.
+
+  **Amended (#5048).** This bullet named `nucleo`. The matcher is `crates/stella-tui/src/composer/fuzzy.rs` instead: a command name is a short ASCII slug, and the palette's order comes from the match kind and from what the session is doing (`relevant now` below), so a fuzzy-finder crate's scoring model would be computed and discarded. Match kind ranks prefix, then substring, then scattered letters, then a description-only match.
+- **Context section first**: `relevant now` derives from session state (verify running surfaces `/gates` with live gate status on the row). Then domain groups (plan, graph, skills, ...), then `recent` — the commands this workspace ran last, kept in `.stella/private/palette-recent.json` so they survive a restart. A `recent` row is a second appearance of a command a domain group already lists, which is what a shortcut is. The section is drawn for the browse list; a typed query returns one flat ranked list with no headings at all (#4338).
 - Rows may carry live right-aligned state (`◐ 2/5 green`, `det · $0.00`) and arg hints (`⇥ <name>`).
 - Keys: `↑↓ move · ↵ run · ⇥ args · esc`.
 

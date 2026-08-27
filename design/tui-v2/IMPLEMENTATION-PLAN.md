@@ -24,7 +24,7 @@ Companion to [`SPEC.md`](SPEC.md). Phases are ordered so each ships value alone 
 |---|---|---|
 | `ratatui` + `crossterm` | already in use | `BorderType::Rounded` for panels |
 | ~~`syntect`~~ | ~~syntax highlighting~~ | **Not taken.** The deck highlights through `stella_transcript::syntax`, which the export grid and Observatory already share. A syntect crate here would be a *fourth* lexer for the same bodies — the drift #3644 and #4036 each closed once (#4196). |
-| `nucleo` | fuzzy matching for the palette | **Not taken yet.** The palette ranks with a hand-rolled name-prefix / name-substring / description scan (`composer::SlashMenu::filter_with`), which produces no match indices — so only the typed prefix lights gold. Taking the dependency, or teaching the scan to emit indices, is the open decision in #5048. |
+| ~~`nucleo`~~ | ~~fuzzy matching for the palette~~ | **Not taken.** The palette matches through `composer::fuzzy`, which returns the char offsets a query consumed so the letters can light wherever they fell (#5048). A command name is a short ASCII slug and the row order comes from the match kind plus session relevance, so the scoring model a fuzzy-finder crate exists for would be computed and discarded. |
 | `insta` | snapshot tests | pairs with `TestBackend` |
 | `tokio` | async registry, tracker, oauth | already likely present |
 
@@ -48,7 +48,7 @@ rather than to this file's history.
 | P4 gates | not started | #5042 (board and failure block), #5043 (the proposed revision, which needs #5037). |
 | P5 issues and start work | part landed | The ISSUES tab, its state glyphs and its PR strip ship. Heat sort, the linked plan and the sync rule are #4336; `w start work` is #5044 (the key routes to a stub that errors today). |
 | P6 graph, skills, MCP | mostly landed | All three tabs ship. Reverse-edge session tags are #5045; the learned-skill lifecycle is #5046 and its economics and signatures #4337; the MCP pin, latency, tier and first-enable handshake are #5047. |
-| P7 palette and plugins | part landed | The palette overlay ships with a context section and a hand-rolled matcher. Scattered match letters, recents and the overlay's position are #5048. The plugin panel protocol does not exist in any form — #5054 (wire contract), #5055 (host), #5056 (handshake). |
+| P7 palette and plugins | part landed | The palette overlay ships whole: a context section, scattered match letters lit gold, a `recent` section kept per workspace, and the `panel` ground (#5048 — which also amended SPEC 10 to the anchored position the deck ships). Its remaining gaps are the `2m ago` column (#5213) and a rendering that still draws headings under a typed query (#5215). The plugin panel protocol does not exist in any form — #5054 (wire contract), #5055 (host), #5056 (handshake). |
 
 The epics that group these are #5057–#5062. Section 7's definition of done is
 unchanged and unmet: it is what closes those epics.
@@ -122,7 +122,7 @@ Acceptance: snapshots per tab; policy test that unsigned results never render an
 
 ### P7: palette and plugin panels
 
-- Palette overlay with nucleo matching, gold match letters, context section derived from session state, groups, recents, arg hints (SPEC 10).
+- Palette overlay with fuzzy matching, gold match letters, context section derived from session state, groups, recents, arg hints (SPEC 10).
 - Plugin panel host: `Rect` lease, styled-line blit API, host-owned chrome, handshake rendering, frame budget throttle (SPEC 12).
 
 Acceptance: palette snapshot for query `ga` during a verify turn showing `/gates` first; a test plugin that attempts to draw outside its `Rect` is clipped; over-budget plugin shows the throttle tag.
