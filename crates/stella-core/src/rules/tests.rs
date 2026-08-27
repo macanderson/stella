@@ -808,7 +808,7 @@ fn guard_allow_command_exempts_the_scoped_form_and_blocks_the_rest() {
 
     assert!(evaluate_guards(&rules, &bash("cargo test")).is_blocked());
     assert!(evaluate_guards(&rules, &bash("cargo test --workspace")).is_blocked());
-    // The variant a list of deny globs would have missed: scoped to nothing,
+    // The spelling a list of deny globs would have missed: scoped to nothing,
     // but not spelled with any of the flags someone thought to enumerate.
     assert!(evaluate_guards(&rules, &bash("cargo test some_filter")).is_blocked());
 
