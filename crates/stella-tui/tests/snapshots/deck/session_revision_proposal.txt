@@ -1,0 +1,45 @@
+# deck golden · session_revision_proposal
+# SPEC 8.1: a failing gate board and the plan revision it proposes
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
+
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ │ ⊙ apps/app/automations/page.tsx                                                                                                                        ⚡ 42ms
+ │ ⎿ 312 lines                                                                                                                               42ms
+
+ │ ● edit apps/app/automations/page.tsx +4 -1                                                                                                             ⚡ 18ms
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations()
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, q)
+ │     13 +  const onNew = () => open()
+
+ │ ◐ model worker · 428 tok/s                                                                                                                           ⚡ 2100ms
+ │   irreducible generation
+
+☰  plan  5/7  ·  Workflows canvas
+
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
+
+ │ ◇ gate board · patch-7 · 1/2 green · $0.00
+ │   ✓ fmt · green · $0.00 · det
+ │   ✗ tests failed
+ │       stella_core::loop_detect::a_short_cycle_is_detected
+ │       assertion `left == right` failed
+ │         left: 3
+ │       ^N jump · l full log · r rerun gate
+
+ │ ⌥ propose r2: add task "repair stella_core::loop_detect::a_short_cycle_is_detected"
+ │     cause  tests · assertion `left == right` failed
+ │     issue  #151
+ │     a approve r2 · e edit · x dismiss
+ │     merge blocked · unblocks on green
+
+
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

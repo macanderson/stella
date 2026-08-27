@@ -35,6 +35,7 @@ pub mod pulse;
 pub mod question;
 pub mod queue;
 pub(crate) mod record;
+pub mod revision_proposal;
 pub mod seats;
 pub mod session;
 pub mod sessions;

@@ -56,6 +56,9 @@
 
 use std::collections::HashSet;
 
+pub mod revision;
+pub use revision::{RevisionError, RevisionGate};
+
 use stella_protocol::plan_graph::{
     Divergence, DivergenceCause, DivergenceKind, PlanEdge, PlanEdgeKind, PlanEdgeSource, PlanNode,
     PlanRevision, TaskNode,

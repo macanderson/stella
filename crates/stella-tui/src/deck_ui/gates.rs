@@ -44,6 +44,38 @@ pub(super) fn index_hold(ui: &mut DeckUi) -> Option<DeckAction> {
     Some(DeckAction::Handled)
 }
 
+/// Hold a submission while a plan revision a failing gate put up is still
+/// unanswered — SPEC 8.1 item 3's "nothing runs until approval".
+///
+/// The deck's half of the withholding
+/// `stella_core::plan_graph::RevisionGate::admits` states engine-side. Both
+/// halves are needed and neither implies the other: the engine gate withholds
+/// the *tool calls* of a turn already in flight, and this withholds the
+/// *prompts* the deck would start, which never pass through it.
+///
+/// Workspace-wide rather than per-lane, on [`index_hold`]'s shape and for a
+/// blunter reason: a prompt does not choose its lane — the dispatcher does —
+/// so a hold scoped to the lane the reader happens to be looking at would let
+/// the very next prompt start work on the lane that is waiting for an answer.
+///
+/// `Some` means the keystroke is spent and the composer is untouched, so the
+/// user's text survives. It can never lock anybody out: `a`, `e` and `x` each
+/// clear the entry, and so does the lane going away.
+pub(super) fn revision_hold(ui: &mut DeckUi) -> Option<DeckAction> {
+    let (agent, proposal) = ui.pending_revisions.first_key_value()?;
+    let message = format!(
+        "{agent} is waiting on {}: {} — a approve · e edit · x dismiss on the proposal row",
+        proposal.revision, proposal.subject
+    );
+    // `demand`, not `push`, for `index_hold`'s reason: a dismissed notice
+    // dialog must not swallow the one explanation for a keystroke that was
+    // spent and did nothing.
+    ui.notice.demand(message.clone());
+    ui.scrollback
+        .announce(format!("{}{message}", crate::accessible::NOTICE_MARKER));
+    Some(DeckAction::Handled)
+}
+
 /// A reviewer's in-progress marks on one hunk-review card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HunkMarks {

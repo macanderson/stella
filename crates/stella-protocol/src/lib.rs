@@ -130,7 +130,7 @@ pub use stage::StageName;
 // constantly and none of them should have to spell the module path.
 pub use plan_graph::{
     Divergence, DivergenceCause, DivergenceKind, PlanEdge, PlanEdgeKind, PlanEdgeSource, PlanNode,
-    PlanRevision, TaskNode,
+    PlanRevision, RevisionProposal, TaskNode,
 };
 pub use task_contract::{
     Check, CheckKind, CheckMechanism, CheckOutcome, Closure, DefinitionOfDone, Judge, TaskContract,

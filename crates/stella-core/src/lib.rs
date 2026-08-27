@@ -79,7 +79,7 @@ pub use goal::{GoalAssessError, GoalConfig, GoalOutcome, GoalVerifierVerdict};
 pub use hooks::{HookEvent, HookPayload, HookRunOutcome, HookRunner, Hooks, run_hooks};
 pub use loop_detect::{CallRecord, LoopDetectionConfig, LoopIdentity, LoopVerdict, detect_loop};
 pub use mcp_usage::{McpUsageLedger, McpUsageRecord, drain_usage, push_usage};
-pub use plan_graph::{PlanGraph, PlanGraphError};
+pub use plan_graph::{PlanGraph, PlanGraphError, RevisionError, RevisionGate};
 pub use ports::{Clock, LiveService, ToolExecutor};
 pub use repair::{RepairCost, RepairHeadroom, RepairPlan, RepairRefusal, plan_repair};
 pub use retry::{RetryOutcome, RetryPolicy, retry_with_backoff};

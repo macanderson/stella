@@ -93,6 +93,13 @@ pub(crate) fn spawn_forwarder(
         // forwarder, and a forwarder is one lane — every lane has a registry
         // and a channel of its own, so two lanes' thoughts cannot fuse.
         let mut reasoning = agent::ReasoningRun::default();
+        // The lane's standing plan revision, and the number the next one would
+        // take. Held here because this task is the one place a `GateBoard` and
+        // the lane's plan are both in view: the gate goes past on this stream
+        // and the plan is `plan_board`'s rows. Per lane and per turn, like the
+        // ledger above.
+        let mut revisions = stella_core::RevisionGate::default();
+        let mut plan_revision = stella_protocol::PlanRevision::FIRST;
         // Two independent latches, not one. A single shared flag meant an
         // early usage gap — the benign, self-healing condition — silenced any
         // later store-write failure, which is the one that actually points at
@@ -209,6 +216,37 @@ pub(crate) fn spawn_forwarder(
                 let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
                 guard.seed_from_plan(&proposal.steps);
             }
+            // Which revision the plan is on, read off the gate's own proposals
+            // rather than counted here — `plan_gate` owns the numbering, and a
+            // second counter would eventually disagree with the breadcrumb.
+            if let AgentEvent::ScopeReview { proposal } = &event
+                && let Some(revision) = proposal
+                    .revision
+                    .and_then(stella_protocol::PlanRevision::new)
+            {
+                plan_revision = revision;
+            }
+            // SPEC 8.1 item 3: a determinate gate failure puts a plan revision
+            // up. Authored here rather than folded into the durable stream,
+            // because it is this host's reading of evidence a verification
+            // plugin reported — stella re-ran nothing (AGENTS.md's opening) —
+            // and a reading does not belong in the journal beside the board it
+            // read. Derived before the event is moved into the send below and
+            // emitted after it, for `cache_insight_for`'s reason: the deck must
+            // fold the failing board first, or the proposal lands above the
+            // thing it answers.
+            let proposed = match (&event, &plan_board) {
+                (AgentEvent::GateBoard { board }, plan) => {
+                    let planned = plan.as_ref().map_or_else(Vec::new, |handle| {
+                        let guard = handle.lock().unwrap_or_else(|p| p.into_inner());
+                        super::task_tap::plan_gate::plan_tasks(guard.items())
+                    });
+                    revisions
+                        .observe(plan_revision.next(), &planned, board)
+                        .cloned()
+                }
+                _ => None,
+            };
             let event = if let Some((store, id)) = &execution {
                 // Fold a streamed reasoning fragment into the open run rather
                 // than spending a row, a `seq` and a blocking hop on each one
@@ -301,6 +339,12 @@ pub(crate) fn spawn_forwarder(
             });
             if let Some(insight) = cache_insight {
                 let _ = inbound.send(insight);
+            }
+            if let Some(proposal) = proposed {
+                let _ = inbound.send(Inbound::RevisionProposed {
+                    agent: lane.clone(),
+                    proposal: Box::new(proposal),
+                });
             }
         }
         // The lane's stream is closed, so its open reasoning run is final: a
@@ -635,5 +679,83 @@ mod tests {
             stages(&events).is_empty(),
             "a staged lane's boundaries are the pipeline's alone: {events:?}"
         );
+    }
+
+    /// A board with one gate failing puts a plan revision up — SPEC 8.1 item
+    /// 3's producer.
+    ///
+    /// The ordering is asserted too: the proposal must reach the deck *after*
+    /// the board it answers, or the scrollback shows an answer above its
+    /// question. A green board proposes nothing, which is the other half.
+    #[tokio::test]
+    async fn a_failing_gate_board_proposes_a_plan_revision_after_the_board() {
+        use stella_protocol::{GateBoard, GateRow, GateState};
+
+        let gate = |name: &str, state: GateState| GateRow {
+            name: name.into(),
+            state,
+            deterministic: true,
+        };
+        let board = |gates: Vec<GateRow>| GateBoard {
+            patch: Some("patch-7".into()),
+            gates,
+        };
+
+        let root = tempfile::tempdir().expect("root");
+        let registry = stella_tools::ToolRegistry::new(root.path().to_path_buf());
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder(
+            rx,
+            None,
+            InsightScope {
+                provider_id: "anthropic".into(),
+                cache_ttl: stella_model::CacheTtl::default(),
+                opens_execute_stage: false,
+            },
+            in_tx,
+            "lead".to_string(),
+            Some(registry.task_board()),
+        );
+        tx.send(AgentEvent::GateBoard {
+            board: board(vec![gate("fmt", GateState::Green)]),
+        })
+        .unwrap();
+        tx.send(AgentEvent::GateBoard {
+            board: board(vec![gate(
+                "tests",
+                GateState::Failed {
+                    case: "a_short_cycle_is_detected".into(),
+                    log: "assertion `left == right` failed".into(),
+                },
+            )]),
+        })
+        .unwrap();
+        close_turn_stream(&registry, tx, forwarder).await;
+
+        let mut seen: Vec<&'static str> = Vec::new();
+        let mut proposal = None;
+        while let Ok(inbound) = in_rx.try_recv() {
+            match inbound {
+                Inbound::Event {
+                    event: AgentEvent::GateBoard { .. },
+                    ..
+                } => seen.push("board"),
+                Inbound::RevisionProposed { proposal: p, .. } => {
+                    seen.push("proposal");
+                    proposal = Some(*p);
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            seen,
+            vec!["board", "board", "proposal"],
+            "the green board proposes nothing, and the proposal follows the board it answers"
+        );
+        let proposal = proposal.expect("the failing board put a revision up");
+        assert_eq!(proposal.gate, "tests");
+        assert_eq!(proposal.subject, "repair a_short_cycle_is_detected");
+        assert_eq!(proposal.revision.to_string(), "r2");
     }
 }

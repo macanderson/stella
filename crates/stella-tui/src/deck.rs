@@ -842,6 +842,12 @@ impl WorkspaceModel {
             | Inbound::EntityHits { .. }
             | Inbound::RecordedCalls(_)
             | Inbound::InspectedCall(_)
+            // The proposal's scrollback row is written by
+            // `deck_ui::ingest_inner`, which holds the `DeckUi` the
+            // withholding lives on — the row and the hold go in together
+            // (`SessionModel::propose_revision`) rather than one here and one
+            // there.
+            | Inbound::RevisionProposed { .. }
             | Inbound::ShowHelp
             // A parked question is a tool call waiting, not speech. Nothing
             // has been said until the driver answers, and folding the

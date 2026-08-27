@@ -340,6 +340,55 @@ pub struct Divergence {
     pub cause: DivergenceCause,
 }
 
+/// A plan revision stella has **proposed** and not made — SPEC 8.1's
+/// `⌥ propose r4: add task "<title>"`.
+///
+/// A proposal is a different thing from a revision all the way to the surface.
+/// [`PlanNode`] is a revision that happened; this is one somebody has been
+/// asked about, and until they answer there is no node, no `[:NEXT]` edge and
+/// nothing that may run. A revision carrying an `approved: bool` instead would
+/// make "nothing runs until it is approved" a flag every producer can set
+/// rather than a shape the graph cannot express.
+///
+/// # What a proposal is allowed to claim
+///
+/// [`Self::gate`] names a gate an installed verification plugin reported on,
+/// and [`Self::cause`] is what that gate's evidence said. Stella re-ran
+/// nothing and re-checked nothing (AGENTS.md's opening), so a proposal
+/// answers reported evidence and is never a measurement of its own.
+///
+/// # Why the subject and not a task id
+///
+/// The proposal names the work in words. Board ids belong to the task board
+/// (`stella_core::tasks::TaskBoard::create` never reuses one), so a proposal
+/// that minted its own would open a second id space beside it. The id is the
+/// board's to assign when the insertion is actually made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct RevisionProposal {
+    /// The revision this would author if it were approved — `r{n+1}` against
+    /// the plan as it stands. A number that has not happened yet, which is why
+    /// it rides here rather than being read off a [`PlanNode`] that does not
+    /// exist.
+    pub revision: PlanRevision,
+    /// The task the revision would insert, in one line: SPEC 8.1's `<title>`.
+    pub subject: String,
+    /// The gate whose failure provoked this — the `[requirements]` key the
+    /// verification plugin's manifest wrote, as [`crate::GateRow::name`]
+    /// spells it.
+    pub gate: String,
+    /// What that gate's evidence said, as the linked cause the revision would
+    /// carry. Non-blank by construction, like every other cause here.
+    pub cause: DivergenceCause,
+    /// The issue this repair belongs to, where the evidence named one.
+    ///
+    /// `None` renders as no cell rather than a blank one, on
+    /// [`crate::GateBoard::patch`]'s rule: an invented link points the reader
+    /// at something they cannot go and look at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +472,36 @@ mod tests {
         let back: Divergence = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(divergence, back);
         assert_eq!(json, serde_json::to_string(&back).expect("re-serialize"));
+    }
+
+    #[test]
+    fn a_revision_proposal_round_trips() {
+        let proposal = RevisionProposal {
+            revision: PlanRevision::FIRST.next(),
+            subject: "repair the unresolved import".into(),
+            gate: "tests".into(),
+            cause: cause("E0432: unresolved import `stella_core::plan_graph`"),
+            issue: Some("#5043".into()),
+        };
+        let json = serde_json::to_string(&proposal).expect("serialize");
+        let back: RevisionProposal = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(proposal, back);
+        assert_eq!(json, serde_json::to_string(&back).expect("re-serialize"));
+    }
+
+    /// A proposal that named no issue writes no `issue` key, so a surface
+    /// cannot render an empty link cell for a link nobody supplied.
+    #[test]
+    fn a_proposal_with_no_issue_writes_no_issue_key() {
+        let json = serde_json::to_string(&RevisionProposal {
+            revision: PlanRevision::FIRST.next(),
+            subject: "repair the unresolved import".into(),
+            gate: "tests".into(),
+            cause: cause("E0432"),
+            issue: None,
+        })
+        .expect("serialize");
+        assert!(!json.contains("issue"), "{json}");
     }
 
     // ── the rules that are the type ────────────────────────────────────────
