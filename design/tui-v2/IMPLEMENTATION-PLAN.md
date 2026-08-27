@@ -1,13 +1,13 @@
 # IMPLEMENTATION PLAN: stella TUI v2
 
-Companion to `SPEC-stella-tui-v2.md`. Phases are ordered so each ships value alone and each later phase builds on tested earlier code.
+Companion to [`SPEC.md`](SPEC.md). Phases are ordered so each ships value alone and each later phase builds on tested earlier code; section 3 is where each one actually stands.
 
 ## 1. Architecture
 
 - **Immediate mode, pure projection.** The AEP event stream is the state. The draw function is a pure projection of state onto the buffer. The TUI mutates nothing.
-- **State crate boundaries** (adjust names to the existing workspace):
-  - `stella-tui-theme`: palette consts, hue clamp tests, glyph consts, 16-color fallback map.
-  - `stella-tui-widgets`: transcript, plan panel, task zoom, tabs, palette overlay, plugin panel host. Each widget implements `Widget` or `StatefulWidget` and renders into `Buffer` directly.
+- **State crate boundaries**, as they landed:
+  - `stella-tui-theme`: palette consts, hue clamp tests, glyph consts, 16-color fallback map. Shipped as its own crate, `ratatui` its only dependency.
+  - *(no widgets crate.)* The plan put transcript, plan panel, tabs, palette overlay and plugin panel host in a `stella-tui-widgets`. They landed in `stella-tui`'s own `src/views/`, each a `render(model, ui, area, buf)` over the fold rather than a `Widget` impl — the deck draws into bands it owns, and a second crate would have bought a boundary nothing crossed.
   - *(no highlighter crate — see below.)* An earlier draft of this plan put a
     `stella-tui-highlight` here: a syntect wrapper owning the lexer, the theme
     build and the per-event cache. Only the **cache** was the deck's to build.
@@ -15,7 +15,7 @@ Companion to `SPEC-stella-tui-v2.md`. Phases are ordered so each ships value alo
     the Observatory, and the deck keeps the palette (`syntax::tok_style`) and
     nothing else (#4036, #4196).
   - `stella-cli`: event loop, key routing, state reduction from AEP events.
-- **Event model**: every transcript event is a struct with `turn_id`, `task_id: Option<TaskId>`, `kind`, timing, and a lazily built `rendered: OnceCell<Vec<Line<'static>>>`. Rendering an event never recomputes highlights.
+- **Event model**: every transcript event is a struct with its kind, subject, timing and `task: Option<u32>` (`views::transcript::Event`). The plan's per-event `OnceCell<Vec<Line>>` is not how the cache landed — the fold keeps a settled prefix and a tail memo instead (`views/session/fold.rs`), which reuses across events rather than per event. The budget it was for is enforced either way: rendering never recomputes an unchanged highlight, witnessed by `an_unchanged_tail_is_highlighted_once_not_once_per_frame`.
 - **Async boundary**: registry searches (skills, MCP), tracker sync, and oauth run as tokio tasks that post results back into state between ticks. The draw path never awaits.
 
 ## 2. Dependencies
@@ -24,13 +24,36 @@ Companion to `SPEC-stella-tui-v2.md`. Phases are ordered so each ships value alo
 |---|---|---|
 | `ratatui` + `crossterm` | already in use | `BorderType::Rounded` for panels |
 | ~~`syntect`~~ | ~~syntax highlighting~~ | **Not taken.** The deck highlights through `stella_transcript::syntax`, which the export grid and Observatory already share. A syntect crate here would be a *fourth* lexer for the same bodies — the drift #3644 and #4036 each closed once (#4196). |
-| `nucleo` | fuzzy matching for the palette | match indices drive gold letters |
+| `nucleo` | fuzzy matching for the palette | **Not taken yet.** The palette ranks with a hand-rolled name-prefix / name-substring / description scan (`composer::SlashMenu::filter_with`), which produces no match indices — so only the typed prefix lights gold. Taking the dependency, or teaching the scan to emit indices, is the open decision in #5048. |
 | `insta` | snapshot tests | pairs with `TestBackend` |
 | `tokio` | async registry, tracker, oauth | already likely present |
 
 No other new dependencies without explicit approval.
 
-## 3. Phases
+## 3. Where this stands
+
+The phases below are the **plan as written**, kept because each one's acceptance
+criteria are still the bar. This table is what shipped against them, from a
+spec-vs-implementation audit on 2026-08-26. A phase is `landed` only where its
+acceptance criteria are met by tests in the tree; everything else names the
+issue that carries the remainder, so a reader chasing a gap goes to the tracker
+rather than to this file's history.
+
+| Phase | State | What is left, and where it is tracked |
+|---|---|---|
+| P0 theme | landed | The palette, the hue clamp, the wordmark and the one-row status bar all ship with tests. The 16-colour half has two tables that disagree (`theme::FALLBACKS` vs `fallback::ansi16`) — #5000. |
+| P1 transcript | mostly landed | Turn rules, receipts, rails, metals, queued-steer labels, `^Z`, the compaction one-liner, per-head wall time and the read fold all ship. The skill, memory, gate and model events render but have no live producer — #5031, #5032, #5033, #5034. The `→ task N` tag waits on its only producer, #5039. |
+| P2 highlighting | landed | Highlight-on-arrival with tail reuse, two-layer diffs, sign column, gutter. The write footer and the pre-execution delete graph check are #5034. |
+| P3 plan and tasks | part landed | The breadcrumb and the plan card ship. Per-task economics, the running-task card and drift rows are #5040; the task zoom is #5041; six task states is #5038; the `[:NEXT]`/`[:THEN]` graph the drift lanes read is #5037; the evidence ledger and per-task cost are #5039. |
+| P4 gates | not started | #5042 (board and failure block), #5043 (the proposed revision, which needs #5037). |
+| P5 issues and start work | part landed | The ISSUES tab, its state glyphs and its PR strip ship. Heat sort, the linked plan and the sync rule are #4336; `w start work` is #5044 (the key routes to a stub that errors today). |
+| P6 graph, skills, MCP | mostly landed | All three tabs ship. Reverse-edge session tags are #5045; the learned-skill lifecycle is #5046 and its economics and signatures #4337; the MCP pin, latency, tier and first-enable handshake are #5047. |
+| P7 palette and plugins | part landed | The palette overlay ships with a context section and a hand-rolled matcher. Scattered match letters, recents and the overlay's position are #5048. The plugin panel protocol does not exist in any form — #5054 (wire contract), #5055 (host), #5056 (handshake). |
+
+The epics that group these are #5057–#5062. Section 7's definition of done is
+unchanged and unmet: it is what closes those epics.
+
+## 4. Phases
 
 ### P0: theme foundation
 
@@ -104,7 +127,7 @@ Acceptance: snapshots per tab; policy test that unsigned results never render an
 
 Acceptance: palette snapshot for query `ga` during a verify turn showing `/gates` first; a test plugin that attempts to draw outside its `Rect` is clipped; over-budget plugin shows the throttle tag.
 
-## 4. Testing strategy
+## 5. Testing strategy
 
 - **Snapshot tests** are the backbone: render into `ratatui::backend::TestBackend`, assert the buffer with `insta`. Every phase adds snapshots; CI fails on unreviewed changes.
 - **Theme lint**: the hue clamp tests plus a repo-wide check that no rendering code contains hex literals (all color goes through the theme crate).
@@ -112,7 +135,7 @@ Acceptance: palette snapshot for query `ga` during a verify turn showing `/gates
 - **Performance budgets**: highlight once per event (counter test); full-frame draw under 3ms for a 500-event transcript on the dev machine (bench, not CI-gating initially).
 - **Key routing tests**: table-driven tests mapping keys to emitted actions per focus context.
 
-## 5. Risks and mitigations
+## 6. Risks and mitigations
 
 - **Lexer accuracy**: ~~a real cost, accepted for now~~ — **paid, in
   `stella-transcript`, by #4283.** `stella_transcript::syntax` is now
@@ -138,7 +161,7 @@ Acceptance: palette snapshot for query `ga` during a verify turn showing `/gates
 - **Registry and tracker latency**: never block the draw path; all remote work is async with visible `◐` states and stale-data tags.
 - **Scope creep in tabs**: AGENTS and SETTINGS are restyle-only in this cycle (SPEC 9.5).
 
-## 6. Definition of done (whole project)
+## 7. Definition of done (whole project)
 
 - Every rendering in `renderings/` is reproducible as a live screen or a scripted demo state.
 - All snapshots reviewed and green; theme lint green; red scarcity assertion green.
