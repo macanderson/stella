@@ -17,12 +17,19 @@
 use stella_diag::Level;
 use stella_protocol::MemoryClass;
 
-use super::{DomainBridge, Fields};
+use super::DomainBridge;
 
 /// One memory landed in the context store.
 ///
 /// `Debug`: a log is the ordinary case, and an operator watching at the
 /// default level is not asking to see every lesson the loop writes down.
+///
+/// The `.with` chain is written out here rather than shared with [`promoted`]
+/// through a helper, even though both name `class` and `confidence` the same
+/// way. `make diag-reference` reads these calls literally to generate each
+/// code's field list in `docs/reference/diagnostics.md`, so a field assembled
+/// behind a function call is a field the reference silently stops listing —
+/// the record keeps carrying it and the documentation stops saying so.
 pub(super) fn logged(
     bridge: &DomainBridge,
     class: MemoryClass,
@@ -33,7 +40,10 @@ pub(super) fn logged(
     bridge.emit(
         Level::Debug,
         "agent.memory.logged",
-        fields(bridge.at_seq(), class, confidence)
+        bridge
+            .at_seq()
+            .with("class", class.as_str())
+            .with("confidence", u32::from(confidence))
             .with("decays", decays)
             .with("promotes_at", u32::from(promotes_at)),
     );
@@ -55,11 +65,4 @@ pub(super) fn promoted(bridge: &DomainBridge, from: MemoryClass, to: MemoryClass
             .with("to", to.as_str())
             .with("confidence", u32::from(confidence)),
     );
-}
-
-/// The rung and the confidence, which both records state the same way.
-fn fields(at_seq: Fields, class: MemoryClass, confidence: u8) -> Fields {
-    at_seq
-        .with("class", class.as_str())
-        .with("confidence", u32::from(confidence))
 }

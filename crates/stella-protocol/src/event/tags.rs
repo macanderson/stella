@@ -413,7 +413,7 @@ agent_event_tags! {
     // is what #5032 was filed about.
     MemoryLogged => "memory_logged",
         ConsumerPosture::Behavioral {
-            site: "stella-tui/src/deck_ui/memory.rs::reject_selected",
+            site: "stella-tui/src/deck_ui/memory.rs::selected_memory",
         },
         &[];
     // A memory gained instruction authority. `RecordedOnly`: the transcript
