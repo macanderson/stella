@@ -174,6 +174,22 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             upserts: 2,
             superseded: 1,
         },
+        TranscriptEntry::MemoryLog {
+            memory_id: "nod_83b3f1d29a".into(),
+            text: "dedup keys must be stable across runs".into(),
+            class: stella_protocol::MemoryClass::Observation,
+            confidence: 62,
+            kind: "domain".into(),
+            decays: true,
+            promotes_at: 85,
+        },
+        TranscriptEntry::MemoryPromote {
+            lineage_id: "prp_directive_dedup-keys".into(),
+            from: stella_protocol::MemoryClass::Observation,
+            to: stella_protocol::MemoryClass::Rule,
+            confidence: 87,
+            audit_event_id: "prm_dedup_keys_a1b2".into(),
+        },
         TranscriptEntry::Skill {
             name: "reviewer".into(),
             summary: "database review".into(),
@@ -1294,4 +1310,109 @@ fn a_steer_keeps_its_own_row_whatever_its_cause() {
             "{cause:?} lost its transcript row"
         );
     }
+}
+
+/// **The witness (#5032).** A memory write renders SPEC 6.3's block **once**,
+/// and the v1 `✎ memory · N facts` row does not print beside it.
+///
+/// The block assertion proves the router took the
+/// entry — every text `memory_log_rows` composes has to survive the fold and
+/// the draw, not just the unit test in `views::transcript_source`. The absence
+/// assertion is what needs a whole-transcript fixture rather than a single
+/// entry: `entry_lines` calls `projected_rows` first and falls back to
+/// `entry_body` only when it declines, so a memory row that printed twice
+/// would print through two different arms, and only a render of the finished
+/// transcript can see both.
+///
+/// This is not a hypothetical: `entry_body`'s `Compaction` arm carried exactly
+/// such a stranded v1 row until it was made to delegate (#4157), and the
+/// `ContextWrite` arm's `✎ memory` line is the v1 renderer of the same subject
+/// this event replaces.
+#[test]
+fn a_logged_memory_renders_its_block_once_and_not_the_v1_row() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::MemoryLogged {
+        memory_id: "nod_83b3f1d29a".into(),
+        text: "dedup keys must be stable across runs".into(),
+        class: stella_protocol::MemoryClass::Observation,
+        confidence: 62,
+        kind: "domain".into(),
+        decays: true,
+        promotes_at: 85,
+        task_id: None,
+    });
+    let rendered: Vec<String> = transcript_lines(&model, false, 120)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|s| s.content.clone())
+                .collect::<String>()
+        })
+        .collect();
+    let whole = rendered.join("\n");
+
+    assert!(
+        whole.contains("OBSERVATION ▸ RULE ▸ FACT"),
+        "the ladder did not survive the fold and the draw: {whole}"
+    );
+    assert!(
+        whole.contains("promotes to RULE at 0.85"),
+        "the threshold footer did not reach the transcript: {whole}"
+    );
+    assert!(
+        !whole.contains("✎ memory"),
+        "the v1 aggregate row printed beside the SPEC 6.3 block: {whole}"
+    );
+    assert_eq!(
+        rendered.iter().filter(|row| row.contains('◆')).count(),
+        1,
+        "one memory drew more than one head: {whole}"
+    );
+
+    // And the receipt now has a number to state. It was fed only by
+    // `ContextWrite::upserts`, which nothing in this workspace emits, so
+    // `receipt … · n memories` had never rendered a count at all.
+    assert_eq!(
+        model.turn_counters.memories, 1,
+        "a logged memory must reach the turn's own receipt"
+    );
+}
+
+/// A promotion draws its one row through the same router, and draws no block.
+#[test]
+fn a_promotion_renders_one_row_through_the_router() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::MemoryPromoted {
+        lineage_id: "prp_directive_dedup-keys".into(),
+        from: stella_protocol::MemoryClass::Observation,
+        to: stella_protocol::MemoryClass::Rule,
+        confidence: 87,
+        audit_event_id: "prm_dedup_keys_a1b2".into(),
+        task_id: None,
+    });
+    // The block separator every entry gets is not the event's own row, so the
+    // count is over rows with content on them.
+    let rendered: Vec<String> = transcript_lines(&model, false, 120)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|s| s.content.clone())
+                .collect::<String>()
+        })
+        .filter(|row| !row.trim().is_empty())
+        .collect();
+    assert_eq!(
+        rendered.len(),
+        1,
+        "a promotion drew {} rows: {rendered:?}",
+        rendered.len()
+    );
+    let row = &rendered[0];
+    assert!(row.contains("memory promoted"), "{row}");
+    assert!(row.contains("now prompt-injected"), "{row}");
+    // A promotion moves a memory some turn already counted when it logged it.
+    // Counting it again would report more memories than the turn wrote.
+    assert_eq!(model.turn_counters.memories, 0, "{row}");
 }

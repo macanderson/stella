@@ -1249,6 +1249,16 @@ pub enum WorkspaceInput {
     /// with [`Inbound::Notice`] naming what was restored or why it could not
     /// be — an untracked file has no git reading to restore from.
     UndoDelete { paths: Vec<String> },
+    /// `x` on a highlighted memory row: tombstone that memory so it stops
+    /// steering the agent and the reflection loop stops re-learning it — the
+    /// row's `· x reject` affordance (SPEC 6.3).
+    ///
+    /// `text` rides along because the tombstone is content-addressed as well
+    /// as id-addressed: the loop re-mines paraphrases, so a rejection stored
+    /// against the id alone would be undone by the next turn that re-learned
+    /// the same lesson under a new one. The driver answers with
+    /// [`Inbound::Notice`].
+    RejectMemory { memory_id: String, text: String },
     /// Plan card (`/plan`), post-approval `e`: ask the driver to open a
     /// scope-change proposal for `agent`'s locked scope. The deck never edits
     /// scope locally — a granted change arrives back as a fresh

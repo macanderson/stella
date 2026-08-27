@@ -57,6 +57,14 @@ pub(super) fn event_intensity(ev: &AgentEvent) -> u8 {
         // A park is the turn deliberately idling — the coolest honest signal,
         // pitched with the metering ticks so a long wait never reads as work.
         AgentEvent::TurnParked { .. } | AgentEvent::TurnWoken { .. } => 60,
+        // Post-turn bookkeeping: the memory is the *record* of work the
+        // sparkline already registered as tool calls and model output, so
+        // pricing it as work again would let a reflective turn read as busier
+        // than the identical turn that learned nothing. Pitched with the
+        // metering ticks. Explicit rather than falling through the wildcard,
+        // which is what a turn writing eight lessons at its close would
+        // otherwise do: end in a burst of activity that never happened.
+        AgentEvent::MemoryLogged { .. } | AgentEvent::MemoryPromoted { .. } => 60,
         _ => 110,
     }
 }
@@ -204,6 +212,13 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             superseded,
             ..
         } => (TraceKind::Context, format!("+{upserts} ~{superseded}")),
+        AgentEvent::MemoryLogged { class, text, .. } => {
+            (TraceKind::Context, format!("{} {text}", class.as_str()))
+        }
+        AgentEvent::MemoryPromoted { from, to, .. } => (
+            TraceKind::Context,
+            format!("promoted {} → {}", from.as_str(), to.as_str()),
+        ),
         AgentEvent::SkillInjected { name, tokens, .. } => {
             (TraceKind::Context, format!("skill {name}, {tokens} tok"))
         }

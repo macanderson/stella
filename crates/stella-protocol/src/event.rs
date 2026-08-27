@@ -141,7 +141,8 @@ pub use tags::KNOWN_TYPE_TAGS;
 // re-exported unchanged: every consumer that spells
 // `stella_protocol::event::StageKind` must keep resolving after the split.
 pub use scopes::{
-    BudgetMode, BudgetScope, PolicyKind, StageKind, StageScope, UsageIncompleteReason, Withholder,
+    BudgetMode, BudgetScope, MemoryClass, PolicyKind, StageKind, StageScope, UsageIncompleteReason,
+    Withholder,
 };
 
 /// The one spelling of "this usage envelope could not name its model", for

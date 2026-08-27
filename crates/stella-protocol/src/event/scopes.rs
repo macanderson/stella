@@ -188,3 +188,67 @@ pub enum UsageIncompleteReason {
     /// normally reports through its ordinary `StepUsage` envelope instead).
     Cancelled,
 }
+
+/// Where a memory sits on the promotion ladder SPEC 6.3 renders as
+/// `OBSERVATION ▸ RULE ▸ FACT`.
+///
+/// The declaration order **is** the ladder, and [`MemoryClass::LADDER`] is the
+/// list a renderer walks rather than re-spelling three names it then has to
+/// keep in step with this enum.
+///
+/// The rungs are the ones the context lifecycle already distinguishes, under
+/// the names it already uses: a lesson enters as an observation, becomes a
+/// rule when enough distinct tasks repeat it that the mined directive proposal
+/// clears its auto-activation confidence, and a fact when something stronger
+/// than repetition establishes it. Repetition alone never reaches the top rung
+/// — [`crate::provenance`]'s "aggregation never promotes evidence" is the same
+/// rule stated for grades.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+// Written for the other reader. The doc comment above cites a Rust path,
+// which schemars would publish verbatim into `docs/wire/` where nothing can
+// resolve it; stripping it from the doc would take a useful reference away
+// from the reader it was written for, so the wire gets its own sentence.
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "Where a memory sits on the promotion ladder: an observation was seen once and steers nothing; a rule has repeated across distinct tasks and is injected into the prompt as an instruction; a fact is established by something stronger than its own recurrence. Repetition alone never reaches the top rung."
+    )
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryClass {
+    /// Seen once. Recallable, and steers nothing on its own.
+    Observation,
+    /// Repeated across distinct tasks and published as an advisory directive,
+    /// so it is injected into the prompt as an instruction.
+    Rule,
+    /// Established against something stronger than its own recurrence.
+    Fact,
+}
+
+impl MemoryClass {
+    /// Every rung, bottom to top — the ladder itself.
+    pub const LADDER: [Self; 3] = [Self::Observation, Self::Rule, Self::Fact];
+
+    /// The canonical `snake_case` string stored on the wire.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Observation => "observation",
+            Self::Rule => "rule",
+            Self::Fact => "fact",
+        }
+    }
+
+    /// The rung above this one, `None` at the top — which is what makes a
+    /// `promotes to … at` footer elide for a fact rather than name a rung that
+    /// does not exist.
+    #[must_use]
+    pub fn next(self) -> Option<Self> {
+        match self {
+            Self::Observation => Some(Self::Rule),
+            Self::Rule => Some(Self::Fact),
+            Self::Fact => None,
+        }
+    }
+}

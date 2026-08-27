@@ -273,6 +273,45 @@ fn projected_rows(
             ));
             true
         }
+        TranscriptEntry::MemoryLog {
+            memory_id,
+            text,
+            class,
+            confidence,
+            kind,
+            decays,
+            promotes_at,
+        } => {
+            out.extend(source::memory_log_rows(
+                &source::LoggedMemory {
+                    memory_id,
+                    text,
+                    class: *class,
+                    confidence: *confidence,
+                    kind,
+                    decays: *decays,
+                    promotes_at: *promotes_at,
+                },
+                width,
+            ));
+            true
+        }
+        TranscriptEntry::MemoryPromote {
+            from,
+            to,
+            confidence,
+            audit_event_id,
+            ..
+        } => {
+            out.extend(source::memory_promote_rows(
+                *from,
+                *to,
+                *confidence,
+                audit_event_id,
+                width,
+            ));
+            true
+        }
         TranscriptEntry::Complete {
             cost_usd,
             turn,
@@ -540,6 +579,14 @@ fn entry_body(
         // `dead-code-allows` nor `module-reachability` sees inside a match
         // (#4157's lesson, restated at the router).
         TranscriptEntry::Compaction { .. } => {
+            projected_rows(entry, view, expanded, width, out);
+        }
+        // The two memory events, delegating for the same reason. A v1-shaped
+        // `push_note` here would be a second renderer of a row the router
+        // already owns — and `TranscriptEntry::ContextWrite`'s `✎ memory`
+        // line, three arms down, is what one of those looks like once the
+        // event that fed it stops being the one a memory write emits.
+        TranscriptEntry::MemoryLog { .. } | TranscriptEntry::MemoryPromote { .. } => {
             projected_rows(entry, view, expanded, width, out);
         }
         // The router's too, and delegating for the same reason: this row is the

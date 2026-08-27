@@ -30,6 +30,7 @@ pub mod entry;
 mod error_rows;
 pub mod file_state;
 mod inline_diff;
+mod memory;
 pub mod recall;
 mod reset;
 mod summarize;
@@ -746,20 +747,9 @@ impl SessionModel {
                     budget,
                 });
             }
-            AgentEvent::ContextWrite {
-                provider,
-                upserts,
-                superseded,
-                ..
-            } => {
-                self.turn_counters.memories =
-                    self.turn_counters.memories.saturating_add(*upserts);
-                self.transcript.push(TranscriptEntry::ContextWrite {
-                    provider: provider.clone(),
-                    upserts: *upserts,
-                    superseded: *superseded,
-                });
-            }
+            AgentEvent::ContextWrite { .. }
+            | AgentEvent::MemoryLogged { .. }
+            | AgentEvent::MemoryPromoted { .. } => self.fold_memory_write(event),
             AgentEvent::SkillInjected {
                 name,
                 summary,

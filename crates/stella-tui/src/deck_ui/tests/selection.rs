@@ -36,6 +36,78 @@ fn with_delete_exchange(m: &mut WorkspaceModel, agent: &str) {
     });
 }
 
+/// One logged memory on `agent` — the event whose footer carries the
+/// `· x reject` affordance.
+fn with_logged_memory(m: &mut WorkspaceModel, agent: &str) {
+    m.apply_inbound(&Inbound::Event {
+        agent: agent.into(),
+        event: AgentEvent::MemoryLogged {
+            memory_id: "nod_83b3f1d29a".into(),
+            text: "dedup keys must be stable across runs".into(),
+            class: stella_protocol::MemoryClass::Observation,
+            confidence: 62,
+            kind: "domain".into(),
+            decays: false,
+            promotes_at: 85,
+            task_id: None,
+        },
+    });
+}
+
+/// **The witness (#5032).** With a logged memory highlighted, `x` sends
+/// [`WorkspaceInput::RejectMemory`] naming the memory *and its text* — the
+/// row's own `· x reject` affordance. With anything else highlighted the same
+/// key stays typing and lands in the composer.
+///
+/// The text is asserted, not just the id: the driver's tombstone is
+/// content-addressed as well as id-addressed, so a rejection that travelled
+/// with the id alone would be undone by the next turn that re-learned the
+/// same lesson under a fresh one — which is the loop's ordinary behaviour, not
+/// an edge case.
+#[test]
+fn x_on_a_highlighted_memory_sends_the_rejection_and_otherwise_types() {
+    let mut model = model_with(&["lead"]);
+    with_logged_memory(&mut model, "lead");
+    let mut ui = ready_ui();
+
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Char('x')), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::RejectMemory {
+            memory_id: "nod_83b3f1d29a".into(),
+            text: "dedup keys must be stable across runs".into(),
+        }),
+        "x on a memory row must reject that memory by id and by content"
+    );
+
+    // A non-memory highlight leaves `x` to the composer: it types.
+    let mut model = model_with(&["lead"]);
+    with_tool_exchange(&mut model, "lead");
+    let mut ui = ready_ui();
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char('x')), &model, &mut ui);
+    assert_eq!(
+        ui.composer.buffer(),
+        "x",
+        "x with a non-memory highlight falls through to typing"
+    );
+
+    // And a draft in the composer outranks the affordance, exactly as `u`'s
+    // guard does: someone mid-sentence must not lose the letter.
+    let mut model = model_with(&["lead"]);
+    with_logged_memory(&mut model, "lead");
+    let mut ui = ready_ui();
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char('f')), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char('x')), &model, &mut ui);
+    assert_eq!(
+        ui.composer.buffer(),
+        "fx",
+        "x with a draft in the composer types rather than rejecting"
+    );
+}
+
 /// The `u` binding (SPEC 11): with a delete event highlighted — its result
 /// row or its head — `u` sends [`WorkspaceInput::UndoDelete`] naming the
 /// deleted path; with anything else highlighted the same key stays typing and

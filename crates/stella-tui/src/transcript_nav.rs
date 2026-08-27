@@ -116,6 +116,18 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
             .flat_map(|f| std::iter::once(f.label.as_str()).chain(f.uri.as_deref()))
             .collect(),
         E::ContextWrite { provider, .. } => vec![provider],
+        // The lesson and its id. "Which turn taught us X" is what a reader
+        // brings to a find box for a memory row; the class, the confidence and
+        // the threshold are the row's own account of itself, and nobody types
+        // `0.62` looking for a memory.
+        E::MemoryLog {
+            memory_id, text, ..
+        } => vec![memory_id, text],
+        E::MemoryPromote {
+            lineage_id,
+            audit_event_id,
+            ..
+        } => vec![lineage_id, audit_event_id],
         // "which turn pulled in the SQL skill?" is the search this row answers,
         // and the summary is where a reader who knows the subject but not the
         // slug will find it.

@@ -183,6 +183,46 @@ pub(super) fn service_undo_delete(
     true
 }
 
+/// Service `x reject` on a memory row: tombstone that memory so it stops
+/// being recalled and the reflection loop stops re-learning it. Returns `true`
+/// if `input` was the reject verb (so the caller skips its own dispatch). A
+/// cheap local SQLite write, serviced identically idle or mid-turn — and
+/// answered either way with an [`Inbound::Notice`], because a rejection that
+/// says nothing leaves the reader unsure whether the key registered.
+///
+/// The tombstone is written with the memory's **text** as well as its id, and
+/// that is the half that makes the rejection durable: the reflection loop
+/// re-mines paraphrases of lessons it already learned, so a tombstone keyed on
+/// the id alone would be undone by the next turn that re-learned the same
+/// lesson under a fresh one. `Store::forget` compares candidates against the
+/// content copied in here.
+pub(super) fn service_reject_memory(
+    input: &WorkspaceInput,
+    workspace: &str,
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    let WorkspaceInput::RejectMemory { memory_id, text } = input else {
+        return false;
+    };
+    let notice =
+        match stella_store::Store::open(std::path::Path::new(workspace)).and_then(|store| {
+            store.forget(
+                stella_store::ContextSurface::Memory,
+                memory_id,
+                text,
+                "rejected from the transcript",
+            )
+        }) {
+            Ok(()) => format!("rejected {memory_id} — it will not be recalled or re-learned"),
+            // The store's own words. A rejection that failed must not read as one
+            // that landed: the memory is still steering later turns, and the
+            // reader needs to know that rather than believe otherwise.
+            Err(why) => format!("could not reject {memory_id}: {why}"),
+        };
+    let _ = in_tx.send(Inbound::Notice(notice));
+    true
+}
+
 /// Service a session-registry / inbox verb from the deck. Returns `true` if
 /// `input` was one (so the caller skips its own dispatch). All of these are
 /// cheap local file ops, serviced identically idle or mid-turn.

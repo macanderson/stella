@@ -516,6 +516,22 @@ pub struct UpsertReceipt {
     pub episodes_written: usize,
     /// `memory` rows written (inserted or updated in place by identity).
     pub memories_written: usize,
+    /// The `nod_…` public id of each memory's mirror node, in delta order —
+    /// the identity that travels, and the one `stella memory forget` and the
+    /// transcript's `x reject` both take.
+    ///
+    /// It rides the receipt because it is minted **here**: the id is derived
+    /// from the mirror node's kind and natural key, and the natural key is
+    /// `memory://{lineage}`, which a caller can only produce by
+    /// reconstructing the lineage seeding, the uri spelling and the hash. A
+    /// caller that did would be a second copy of an identity derivation, wrong
+    /// the day any of the three changes — the same reasoning the anchor loop
+    /// in [`ContextStore::upsert`] already states for why it mints the mirror
+    /// node itself rather than letting the caller name it.
+    ///
+    /// One entry per written memory, so it pairs positionally with
+    /// [`ContextDelta::memories`].
+    pub memory_node_ids: Vec<String>,
     /// Fact edges inserted. Re-asserting a `(subject, predicate, object)` that
     /// is already believed inserts nothing and is not counted.
     pub facts_asserted: usize,
@@ -718,6 +734,7 @@ impl ContextStore {
             receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, &now)?;
             receipt.nodes_upserted += 1;
             receipt.memories_written += 1;
+            receipt.memory_node_ids.push(node.public_id());
 
             // Anchor the memory to the files it is about. Written here rather
             // than left to the caller as a `FactAssertion` because the mirror

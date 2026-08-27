@@ -126,6 +126,8 @@ task_tagged_events! {
         ToolResult,
         FileChange,
         ContextWrite,
+        MemoryLogged,
+        MemoryPromoted,
         StepUsage,
         UsageIncomplete,
     }

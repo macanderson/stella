@@ -235,6 +235,14 @@ async fn main() -> std::io::Result<()> {
                         paths.join(", ")
                     )));
                 }
+                // `x` on a memory row: the demo has no context store to
+                // tombstone into, so it answers with the notice the real
+                // driver would send.
+                WorkspaceInput::RejectMemory { memory_id, .. } => {
+                    let _ = react_tx.send(Inbound::Notice(format!(
+                        "rejected {memory_id} — it will not be recalled or re-learned"
+                    )));
+                }
                 // The budget cap folds straight back through a BudgetTick, the
                 // same stream the real driver's guard reports on.
                 WorkspaceInput::SetBudget { limit_usd } => {

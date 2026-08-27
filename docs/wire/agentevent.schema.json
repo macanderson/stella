@@ -1187,6 +1187,26 @@
         }
       ]
     },
+    "MemoryClass": {
+      "description": "Where a memory sits on the promotion ladder: an observation was seen once and steers nothing; a rule has repeated across distinct tasks and is injected into the prompt as an instruction; a fact is established by something stronger than its own recurrence. Repetition alone never reaches the top rung.",
+      "oneOf": [
+        {
+          "const": "observation",
+          "description": "Seen once. Recallable, and steers nothing on its own.",
+          "type": "string"
+        },
+        {
+          "const": "rule",
+          "description": "Repeated across distinct tasks and published as an advisory directive,\nso it is injected into the prompt as an instruction.",
+          "type": "string"
+        },
+        {
+          "const": "fact",
+          "description": "Established against something stronger than its own recurrence.",
+          "type": "string"
+        }
+      ]
+    },
     "ModelCallRole": {
       "description": "Concrete purpose of one provider call. This is more precise than the\nrouter's tier role: repair and guidance calls must remain distinguishable\nin the paid-call ledger even when they share a provider/model.\n\nThis vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]\nis the `serde(default)` for an *absent* `role`, not a `serde(other)`\ncatch-all for an unrecognized one. A role token this build has never seen\nfails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —\nbecause a known `\"type\"` with a body that does not fit stays a hard error by\ndesign (see the module docs). Adding a case here is therefore a\none-directional change in a way adding an [`AgentEvent`] case no longer\nis.",
       "oneOf": [
@@ -3510,6 +3530,135 @@
         "provider",
         "upserts",
         "superseded"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "One memory landed in the context store — SPEC 6.3's `memory` (log)\nevent, one per memory.\n\n[`AgentEvent::ContextWrite`] is the same write counted rather than\nnamed: `3 facts · 1 superseded → provider` says a number where this\nsays which lessons, on which rung, at what confidence, and what it\nwould take to promote them. A reader who disagrees with a memory can\nonly act on the one that names it.",
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/MemoryClass",
+          "description": "Which rung of [`MemoryClass::LADDER`] it entered on."
+        },
+        "confidence": {
+          "description": "Confidence in the lesson, `0..=100` — the same scale the context\nlifecycle's own `Confidence` newtype carries, so the number does\nnot change units on its way to a screen. Rendered `conf 0.62`.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "decays": {
+          "description": "Whether this memory's weight decays with age. A durable fact about\nthe codebase does not; a note about how one turn went does.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "The store's own word for what sort of memory this is\n(`reflection`, `note`, `insight`). Open, because that vocabulary\nbelongs to the store and gains entries without this event's leave.",
+          "type": "string"
+        },
+        "memory_id": {
+          "description": "The memory's stable public id — the `nod_…` handle\n`stella memory forget` and the transcript's `x reject` both take.",
+          "type": "string"
+        },
+        "promotes_at": {
+          "description": "The confidence at which it promotes to [`MemoryClass::next`], on\nthe same `0..=100` scale — the workspace's own\n`auto_activate_at_confidence`, carried rather than assumed,\nbecause it is configurable per workspace.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which board task this memory is evidence for. Absent means no task was running when it was recorded, or the stream predates the field."
+        },
+        "text": {
+          "description": "The lesson as stored, quoted verbatim on the row beneath the head.",
+          "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "memory_logged",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "memory_id",
+        "text",
+        "class",
+        "confidence",
+        "kind",
+        "decays",
+        "promotes_at"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "A memory moved up the ladder — SPEC 6.3's `memory` (promote) event.\n\nThe rung matters because it is authority: an observation is recalled,\na rule is *injected into the prompt as an instruction*. So a promotion\nis the moment something the loop inferred starts steering every later\nturn, and `now prompt-injected` on the row is that fact stated where a\nperson can see it happen.",
+      "properties": {
+        "audit_event_id": {
+          "description": "The immutable governance record this promotion is auditable\nthrough — the `promotion_event` record's own id.",
+          "type": "string"
+        },
+        "confidence": {
+          "description": "The confidence that carried it, `0..=100` (rendered `conf 0.87`).",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "from": {
+          "$ref": "#/$defs/MemoryClass",
+          "description": "The rung it left."
+        },
+        "lineage_id": {
+          "description": "The lesson's lineage — the identity its proposal, its promotion\nevent and its published record all share, and therefore the one\nthing that is stable across the promotion itself.\n\nNot a memory's `nod_…` id: a promotion is mined from\nseveral observations across several tasks, so no single stored\nmemory is *the* thing promoted, and naming one would pick a\nwinner the evidence does not.",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which board task this promotion is evidence for. Absent means no task was running when it landed, or the stream predates the field."
+        },
+        "to": {
+          "$ref": "#/$defs/MemoryClass",
+          "description": "The rung it reached."
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "memory_promoted",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "lineage_id",
+        "from",
+        "to",
+        "confidence",
+        "audit_event_id"
       ],
       "type": "object"
     },

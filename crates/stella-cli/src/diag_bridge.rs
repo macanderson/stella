@@ -725,6 +725,47 @@ impl DomainBridge {
                         .with("superseded", *superseded),
                 );
             }
+            // No id and no text: `stella-diag` field values cannot hold a
+            // `String`, which is the rule that keeps a lesson the model wrote
+            // about the user's code out of the diagnostic stream. The shape of
+            // the write is what a diagnostic reader needs — which rung, how
+            // confident, how far from promoting.
+            AgentEvent::MemoryLogged {
+                class,
+                confidence,
+                decays,
+                promotes_at,
+                ..
+            } => {
+                self.emit(
+                    Level::Debug,
+                    "agent.memory.logged",
+                    self.at_seq()
+                        .with("class", class.as_str())
+                        .with("confidence", u32::from(*confidence))
+                        .with("decays", *decays)
+                        .with("promotes_at", u32::from(*promotes_at)),
+                );
+            }
+            // `Info`, unlike the log above: a promotion is when an inferred
+            // lesson starts being injected into the prompt as an instruction,
+            // which is a thing an operator reading diagnostics at the default
+            // level needs to see happen.
+            AgentEvent::MemoryPromoted {
+                from,
+                to,
+                confidence,
+                ..
+            } => {
+                self.emit(
+                    Level::Info,
+                    "agent.memory.promoted",
+                    self.at_seq()
+                        .with("from", from.as_str())
+                        .with("to", to.as_str())
+                        .with("confidence", u32::from(*confidence)),
+                );
+            }
             // The cost only. A skill's slug is workspace-authored text, which
             // a diagnostic field cannot hold at all (`stella-diag`'s field
             // types), and the transcript is where a reader learns *which*

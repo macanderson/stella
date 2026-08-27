@@ -858,3 +858,94 @@ fn the_lexical_path_mines_no_rules() {
         "the opted-out path wrote a rule"
     );
 }
+
+/// **The witness (#5032).** A rule that auto-activates announces itself as
+/// SPEC 6.3's `memory` (promote), and the record the announcement cites is
+/// really in the ledger.
+///
+/// The ledger half closes a gap this path had since it shipped:
+/// auto-activation wrote a rule file into `.stella/rules/`
+/// and recorded **no** `promotion_event`, so the lifecycle's own contract —
+/// that replaying those records in order reproduces the loop's governance
+/// state — did not hold for anything the loop activated on its own: a replay
+/// rebuilt a workspace with every user-kept rule and none of the automatic
+/// ones. The review surface's `keep` has always recorded one.
+///
+/// The event's `audit_event_id` is checked against the ledger rather than
+/// merely being non-empty, because `audit event <id>` is printed on a screen
+/// as the handle a reader looks the promotion up by, and an id no ledger holds
+/// is worse than a promotion that renders nothing.
+#[test]
+fn an_auto_activated_rule_announces_a_promotion_the_ledger_holds() {
+    let strong = "Always run the database migration before the integration suite starts.";
+    // Five distinct turns, so the mined proposal clears both the eligibility
+    // gate (distinct tasks) and the confidence bar auto-activation adds.
+    let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
+    let dir = workspace_with_log(&lessons);
+    let mut memory = session(dir.path(), Loop::Typed);
+    let events = memory.auto_create_skills(&log_path(dir.path()), true);
+
+    let promoted: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            stella_protocol::AgentEvent::MemoryPromoted {
+                from,
+                to,
+                confidence,
+                audit_event_id,
+                ..
+            } => Some((*from, *to, *confidence, audit_event_id.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        promoted.len(),
+        1,
+        "one rule auto-activated, so exactly one promotion is owed: {events:?}"
+    );
+    let (from, to, confidence, audit_event_id) = &promoted[0];
+    assert_eq!(*from, stella_protocol::MemoryClass::Observation);
+    assert_eq!(*to, stella_protocol::MemoryClass::Rule);
+    assert!(
+        *confidence >= 85,
+        "a rule activated below the bar it is gated on: conf {confidence}"
+    );
+
+    let recorded = crate::proposals_cmd::promotion_events(&memory.store);
+    assert!(
+        recorded
+            .iter()
+            .any(|event| &event.record_id == audit_event_id),
+        "the row cites `audit event {audit_event_id}`, which is in no ledger: {recorded:?}"
+    );
+
+    // And the projection the event describes really landed.
+    assert!(
+        dir.path().join(".stella/rules").exists(),
+        "a promotion was announced with no rule behind it"
+    );
+}
+
+/// A rule that was already on disk is not promoted again.
+///
+/// The loop re-reads the whole append-only log every reflection turn, so it
+/// re-mines the same candidate for as long as the lesson is in it. Announcing
+/// a promotion each time would be a row claiming a change that stopped
+/// happening turns ago — and, worse, a ledger filling with `auto_activated`
+/// events for one decision.
+#[test]
+fn a_rule_already_on_disk_is_not_promoted_a_second_time() {
+    let strong = "Always run the database migration before the integration suite starts.";
+    let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
+    let dir = workspace_with_log(&lessons);
+    let mut memory = session(dir.path(), Loop::Typed);
+    let first = memory.auto_create_skills(&log_path(dir.path()), true);
+    assert!(!first.is_empty(), "the first pass promoted nothing");
+
+    let mut later = session(dir.path(), Loop::Typed);
+    let second = later.auto_create_skills(&log_path(dir.path()), true);
+    assert!(
+        second.is_empty(),
+        "the same rule was promoted twice: {second:?}"
+    );
+}

@@ -1662,6 +1662,7 @@ pub(crate) mod graph;
 /// `↑`/`↓`/`j`/`k`/`⇞`/`⇟`/`Home`/`End` — one vocabulary for every list and body.
 pub mod list_nav;
 mod local;
+mod memory;
 mod overlays;
 mod parked;
 /// The session-override pickers' key routing (`/model`, `/agent`).
@@ -3528,6 +3529,7 @@ fn handle_session_key(
             undo::selected_delete_paths(model, ui)
                 .map(|paths| DeckAction::Send(WorkspaceInput::UndoDelete { paths }))
         }
+        KeyCode::Char('x') => memory::reject_selected(&key, model, ui),
         // The expand-ALL overlay's Esc way out (precedence rule 8): claimed
         // here, ahead of the turn-stop Esc, so closing the overlay can never
         // cancel a running turn.

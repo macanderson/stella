@@ -30,6 +30,10 @@ use stella_protocol::{
     ProviderShare, StageKind, StageName, TaskItem, TaskStatus, Withholder,
 };
 
+// SPEC 6.3's two memory lines, in their own module: this file is at its
+// 1500-line ceiling and a crossing takes no baseline entry (AGENTS.md).
+mod memory;
+
 /// Semantic weight of an annotation line. Each surface owns the mapping to
 /// its palette (e.g. plain maps `Muted` to ANSI dim, the deck to
 /// `theme::TEXT_SECONDARY`); no color name may appear in this module.
@@ -779,6 +783,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             superseded,
             ..
         } => Some(context_write(provider, *upserts, *superseded)),
+        AgentEvent::MemoryLogged { .. } | AgentEvent::MemoryPromoted { .. } => memory::line(event),
         AgentEvent::SkillInjected {
             name,
             summary,
