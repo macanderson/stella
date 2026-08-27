@@ -84,6 +84,16 @@
 //! [`RecordEnforcement`] for why a package may ship a record that steers and
 //! never one that denies.
 //!
+//! `panel.rs` (`design/tui-v2/SPEC.md` §12) is the third dispatch context: a
+//! plugin leased a rectangle of the screen, returning styled lines or a cell
+//! diff each tick. Two of that section's rules are held by the types —
+//! [`PanelText`] wraps a private `String` that refuses every control character,
+//! so no plugin can emit an escape sequence in any language, and [`PanelRect`]
+//! carries an extent with no origin, so a frame has no way to name a cell of
+//! Stella's own chrome. [`PanelFrame::fits`] refuses one that runs past the
+//! lease's edge, and `[panel] denies` must name every [`PanelDenial`] before
+//! the manifest loads.
+//!
 //! The three functions a host must not bypass are [`LoopGrant::permits_hook`],
 //! [`LoopGrant::permits_point`] and [`LoopGrant::permits_call`]: they are the
 //! authoritative filters behind the epic's rule that an undeclared hook is never
@@ -102,6 +112,7 @@ mod manifest;
 mod observed;
 mod oracle;
 mod package;
+mod panel;
 mod program;
 mod progressive;
 mod runtime;
@@ -156,6 +167,11 @@ pub use oracle::{
 pub use package::{
     ContributionKind, KindMismatch, McpContribution, PackageListing, PackageMismatch,
     RecordContribution, RecordEnforcement, SkillContribution, ToolContribution,
+};
+pub use panel::{
+    PanelDenial, PanelEmphasis, PanelFrame, PanelGrant, PanelInk, PanelLease, PanelLine,
+    PanelOverflow, PanelPaint, PanelPatch, PanelPoint, PanelRect, PanelRequest, PanelResponse,
+    PanelSpan, PanelStyle, PanelText, PanelTextError,
 };
 pub use program::{SignalValues, StageProgram};
 pub use progressive::{ProgressiveResolver, StageDecision};

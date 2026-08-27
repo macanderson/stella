@@ -74,8 +74,8 @@ pub fn expand_plugin_dir(text: &str, dir: &Path) -> String {
 
 /// Which block declared a process, so a refusal names the table to edit.
 ///
-/// Two blocks describe a process in the same words — [`Runtime`] serves both —
-/// and a rule broken in one of them must not report the other's name. The
+/// Three blocks describe a process in the same words — [`Runtime`] serves all
+/// of them — and a rule broken in one must not report another's name. The
 /// alternative was a second copy of the rules under `[driver.process]`, which
 /// is how one copy grows a check the other silently does not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +84,8 @@ pub enum ProcessBlock {
     Runtime,
     /// `[driver.process]` — the process a plugin is while driving Stella.
     DriverProcess,
+    /// `[panel.process]` — the process a plugin is while drawing its panel.
+    PanelProcess,
 }
 
 impl ProcessBlock {
@@ -93,6 +95,7 @@ impl ProcessBlock {
         match self {
             Self::Runtime => "[runtime]",
             Self::DriverProcess => "[driver.process]",
+            Self::PanelProcess => "[panel.process]",
         }
     }
 }

@@ -9,6 +9,7 @@ use crate::driver::DriverCall;
 use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
 use crate::package::ContributionKind;
+use crate::panel::PanelDenial;
 use crate::runtime::ProcessBlock;
 use crate::wire::WrapperPoint;
 use crate::wrapper::{HostStage, Signal, SignalKind, StageName};
@@ -141,6 +142,31 @@ pub enum ManifestError {
          declares: asking for none is an empty list, not a zero allowance"
     )]
     ZeroDriverMaxCalls,
+
+    /// `[panel] denies` did not name every limit a panel accepts.
+    ///
+    /// The set is Stella's rather than the author's
+    /// ([`PanelDenial`]), so a block that names fewer than
+    /// all of them is not a narrower panel — it is a consent document missing
+    /// a sentence the install prompt is supposed to show. The manifest is what
+    /// a signature covers, so the limits are checked into it rather than left
+    /// to whichever host happens to load it.
+    #[error(
+        "[panel] denies does not name \"{denial}\": a panel accepts every one of Stella's \
+         declared denials, and the manifest a human consents to has to say each of them"
+    )]
+    PanelDenialMissing {
+        /// The limit the block failed to name.
+        denial: PanelDenial,
+    },
+
+    /// `[panel] denies` listed the same limit twice — the
+    /// [`ManifestError::DuplicateHook`] rule, for the panel's denial list.
+    #[error("[panel] denies declares \"{denial}\" more than once")]
+    DuplicatePanelDenial {
+        /// The limit that appeared twice.
+        denial: PanelDenial,
+    },
 
     /// `[loop] max_calls` was declared with no `[loop] calls` to bound.
     #[error(
