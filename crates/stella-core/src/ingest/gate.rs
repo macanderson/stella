@@ -129,9 +129,14 @@ fn states_a_cardinality(statement: &str) -> bool {
         if !is_cardinal {
             continue;
         }
+        // The window is the intervening tokens PLUS the noun itself: with a
+        // lookahead of 2, the noun may sit at most three tokens out — which
+        // is exactly `twenty[-one Rust] crates`. `take(CARDINAL_LOOKAHEAD)`
+        // stopped one short and missed the doc's own example (#4262's shape:
+        // the count claim kept its probe and went green on every run).
         if tokens[i + 1..]
             .iter()
-            .take(CARDINAL_LOOKAHEAD)
+            .take(CARDINAL_LOOKAHEAD + 1)
             .any(|next| is_plural_noun(next))
         {
             return true;
@@ -273,6 +278,35 @@ mod tests {
         }
         // A decree could honor a gated probe; ingest never produces one.
         assert!(probe_honored(Origin::User, ProbeKind::CommandSucceeds));
+    }
+
+    /// The lookahead's own documented example: `twenty-one Rust crates`
+    /// tokenizes to `[twenty, one, rust, crates]`, so from `twenty` the noun
+    /// sits three tokens out — a window of `CARDINAL_LOOKAHEAD` alone stopped
+    /// one short, and the spelled-compound count claim kept its `path_exists`
+    /// probe (#4262's false green). Digit forms and the deliberate `one`
+    /// exemption pin the boundary from the other side.
+    #[test]
+    fn a_spelled_compound_cardinal_loses_its_path_probe() {
+        assert!(!probe_can_discriminate(
+            ProbeKind::PathExists,
+            "All twenty-one Rust crates live under crates/."
+        ));
+        assert!(!probe_can_discriminate(
+            ProbeKind::PathExists,
+            "There are 21 Rust crates under crates/."
+        ));
+        // `one` is not a cardinal here: "one job" claims existence, which is
+        // exactly what a path probe can refute.
+        assert!(probe_can_discriminate(
+            ProbeKind::PathExists,
+            "A tool does exactly one job, declared in one place."
+        ));
+        // A cardinal with no plural noun in reach quantifies nothing.
+        assert!(probe_can_discriminate(
+            ProbeKind::PathExists,
+            "The two of them agree."
+        ));
     }
 
     #[test]
