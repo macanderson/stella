@@ -1,0 +1,17 @@
+# deck golden · tab_row_72
+# the tab row's width ladder at 72 columns (#5072)
+# viewport 72×12 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SES AGE TRA GRA   FILES   SKI MCP ISS SET                      stella*
+ ▤ 2 files · +7 -1 · 0 reads
+  File                     Agent         Op +       -         reads    ×
+  …app/automations/page.tsxlead          U  +4      -1            0   ×1
+▸ …routes/v1/automations.tssub:auth      C  +3      -0            0   ×1
+
+
+ ↵ diff · ↑↓ pick
+ ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05           ? help

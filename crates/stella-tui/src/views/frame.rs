@@ -33,6 +33,11 @@
 //! learned the other eight tabs exist (#5049). The moment a plan or a lane
 //! gives the breadcrumb something to say, it takes the row back — which is
 //! also the form the renderings draw.
+//!
+//! The nine titles cost 65 columns and the mark eight more, so a frame under
+//! 74 cannot draw both at full length. [`tab_list`] resolves that in the list's
+//! favour: it is handed the columns left once the mark is paid for and yields
+//! rungs until it fits, so the mark holds the right edge at every width (#5072).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -44,6 +49,8 @@ use stella_tui_theme::{glyph, token};
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::plan::{Plan, PlanState};
+
+mod tab_list;
 
 /// The accent prompt prefix on every composer row. Chrome, never content — it
 /// is never part of the submitted string and the caret cannot enter it.
@@ -97,13 +104,6 @@ pub fn render_chrome_row(
 
 /// Draw the tab row into the top row of `area`.
 pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
-    let left = match ui.tab {
-        DeckTab::Session => {
-            breadcrumb_spans(model, ui).unwrap_or_else(|| tab_list_spans(DeckTab::Session))
-        }
-        tab => tab_list_spans(tab),
-    };
-
     let mut trailing: Vec<Span<'static>> = Vec::new();
     if ui.tab == DeckTab::Session && plan_of(model, ui).is_some_and(|p| !p.is_empty()) {
         // The chord comes from the keymap, never from a literal here: this
@@ -115,26 +115,36 @@ pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut
         ));
         trailing.push(Span::raw("   "));
     }
+
+    let budget = (area.width as usize).saturating_sub(right_edge_reserve(&trailing));
+    let left = match ui.tab {
+        DeckTab::Session => {
+            breadcrumb_spans(model, ui).unwrap_or_else(|| tab_list::spans(DeckTab::Session, budget))
+        }
+        tab => tab_list::spans(tab, budget),
+    };
     render_chrome_row(left, trailing, area, buf);
 }
 
-/// `SESSION AGENTS TRACES   GRAPH   FILES SKILLS MCP ISSUES SETTINGS` — the
-/// active tab in gold with a cell of air either side, the rest muted.
-fn tab_list_spans(active: DeckTab) -> Vec<Span<'static>> {
-    let muted = Style::new().fg(token::MUTED);
-    let lit = Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD);
-    let mut spans = vec![Span::raw(" ")];
-    for (i, tab) in DeckTab::ALL.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw(" "));
-        }
-        if *tab == active {
-            spans.push(Span::styled(format!("  {}  ", tab.title()), lit));
-        } else {
-            spans.push(Span::styled(tab.title(), muted));
-        }
-    }
-    spans
+/// The columns [`tab_list::spans`] may not spend: the wordmark, whatever rides
+/// inside it, the cell of air [`render_chrome_row`] adds after it, and one
+/// column of air before it.
+///
+/// That last column is what makes the reserve a guarantee rather than an
+/// estimate. [`render_chrome_row`] draws the mark only while the two sides are
+/// strictly narrower than the row, so a list sized to the exact remainder
+/// would meet the edge and lose the mark at the one width the ladder exists to
+/// survive. It is also the gap the row is drawn with everywhere else.
+///
+/// Derived from [`stella_tui_theme::wordmark::spans`] rather than written as a
+/// number, so the reserve follows the mark if the mark ever changes.
+fn right_edge_reserve(trailing: &[Span<'static>]) -> usize {
+    let mark: usize = stella_tui_theme::wordmark::spans()
+        .iter()
+        .map(Span::width)
+        .sum();
+    let trailing: usize = trailing.iter().map(Span::width).sum();
+    mark + trailing + 2
 }
 
 /// The SESSION tab's breadcrumb: `SESSION  ▸ plan · task 3 wire dedup digest
