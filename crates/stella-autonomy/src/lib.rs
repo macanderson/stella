@@ -222,10 +222,17 @@ pub enum CycleOutcome {
 pub fn calibrate(cal: &mut Calibration, outcome: CycleOutcome, limits: &AimdLimits) {
     match outcome {
         CycleOutcome::Ok => {
-            cal.clean_run += 1;
-            cal.batch_ceiling = (cal.batch_ceiling + 2).min(limits.batch_max);
+            // Saturating throughout: `Calibration` deserializes straight from
+            // `calibration.json` with no range check, so a hand-edited or
+            // corrupt ceiling near `u32::MAX` must not panic the controller
+            // (debug) or wrap past the `.min` clamp (release).
+            cal.clean_run = cal.clean_run.saturating_add(1);
+            cal.batch_ceiling = cal.batch_ceiling.saturating_add(2).min(limits.batch_max);
             if cal.clean_run.is_multiple_of(3) {
-                cal.parallel_ceiling = (cal.parallel_ceiling + 1).min(limits.parallel_max);
+                cal.parallel_ceiling = cal
+                    .parallel_ceiling
+                    .saturating_add(1)
+                    .min(limits.parallel_max);
             }
             cal.note = format!("clean run {}", cal.clean_run);
         }
@@ -607,14 +614,19 @@ pub fn plan_cycle(
     demand: Demand,
     ceilings: &Calibration,
     floors: Floors,
+    limits: &AimdLimits,
 ) -> CyclePlan {
     let mut tier = Tier::Normal;
     let mut local_build = true;
     let mut bench = BenchArm::Loop;
     let mut audit = AuditDepth::Deep;
     let mut scope = BuildScope::Impacted;
-    let mut batch = ceilings.batch_ceiling;
-    let mut parallel = ceilings.parallel_ceiling;
+    // The learned ceilings come off disk unchecked (`Calibration` derives
+    // `Deserialize` with no range guard), and `AimdLimits` promises bounds
+    // "the controller may never cross, whatever the evidence says" — so the
+    // plan clamps here rather than trusting every load site to have done it.
+    let mut batch = ceilings.batch_ceiling.clamp(1, limits.batch_max);
+    let mut parallel = ceilings.parallel_ceiling.clamp(1, limits.parallel_max);
 
     let reason: String;
     if supply.disk_free_gb < floors.disk_gb {
@@ -917,7 +929,7 @@ pub fn liveness(
     if live_run_id.is_empty() || live_run_id != run_id {
         return Liveness::Orphaned;
     }
-    if now_unix - live_heartbeat_unix > stale_after_secs {
+    if now_unix.saturating_sub(live_heartbeat_unix) > stale_after_secs {
         return Liveness::Stale;
     }
     Liveness::Live
@@ -933,7 +945,9 @@ pub struct RunRow {
     pub fixed: u64,
     pub filed: u64,
     pub new_findings: u64,
-    /// `"<phase> (<age>s ago)"` for the live run, empty otherwise.
+    /// `"<phase> (<age>s ago)"` — the live run's current phase, or a crashed
+    /// run's last-known phase with the age of its final heartbeat. Empty when
+    /// the live pointer never covered this run (`Liveness::Orphaned`).
     pub phase: String,
 }
 
@@ -993,7 +1007,7 @@ pub fn fold_runs(
                 phase = format!(
                     "{} ({}s ago)",
                     live.get("phase").and_then(|v| v.as_str()).unwrap_or("?"),
-                    now_unix - heartbeat
+                    now_unix.saturating_sub(heartbeat)
                 );
             }
             if verdict.is_crashed() {
@@ -1016,7 +1030,7 @@ pub fn fold_runs(
             phase,
         });
     }
-    out.sort_by_key(|r| -r.at_unix);
+    out.sort_by_key(|r| std::cmp::Reverse(r.at_unix));
     out
 }
 

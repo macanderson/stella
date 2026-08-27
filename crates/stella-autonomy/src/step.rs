@@ -296,6 +296,13 @@ pub struct LoopState {
     /// Proposals waiting for a human.
     #[serde(default)]
     pub pending_proposals: u32,
+    /// The contention evidence of the last base-fix deferral this loop
+    /// recorded, so `unblock_base` can tell "already declined this exact
+    /// situation" from "a new fixer appeared". Without it the deferral
+    /// re-fires every poll, and — because unblocking outranks working — the
+    /// loop does nothing else for as long as the peer's fix takes.
+    #[serde(default)]
+    pub deferred_fix_evidence: Vec<String>,
 }
 
 /// What the world looks like right now. Facts only — every policy question the
@@ -416,31 +423,31 @@ pub fn step(state: &LoopState, obs: &LoopObservation, doctrine: &Doctrine) -> Lo
         };
     }
 
-    // 5. Work what is already claimed before claiming more.
+    // 6. Work what is already claimed before claiming more.
     if let Some(issue) = state.claimed.first() {
         return LoopStep::Work {
             issue: issue.clone(),
         };
     }
 
-    // 6. Claim, while the queue offers and the batch has room.
+    // 7. Claim, while the queue offers and the batch has room.
     if obs.queue_depth > 0 && state.batch > 0 {
         return LoopStep::Claim { batch: state.batch };
     }
 
-    // 7. The queue is dry. A lens still open is where the next question comes
+    // 8. The queue is dry. A lens still open is where the next question comes
     //    from (§4.1: only the queue supply terminates).
     if let Some(lens) = &state.lens {
         return LoopStep::Sweep { lens: lens.clone() };
     }
 
-    // 8. Nothing to fix and nothing to look for — spend the idle step on
+    // 9. Nothing to fix and nothing to look for — spend the idle step on
     //    proposals that have already accumulated evidence.
     if state.pending_proposals > 0 {
         return LoopStep::Curate;
     }
 
-    // 9. The ladder is exhausted and the queue is empty. Wake when the base
+    // 10. The ladder is exhausted and the queue is empty. Wake when the base
     //    moves, because a lens dry at commit X says nothing about X+200 (§4.2).
     LoopStep::Watch {
         until: WakeCondition::BaseMoved,
@@ -480,10 +487,18 @@ fn unblock_base(
         return None;
     }
 
-    // 2. Do not duplicate a fix already in flight.
+    // 2. Do not duplicate a fix already in flight. Recorded once per distinct
+    //    evidence set — the same guard shape as adoption below: without it the
+    //    deferral re-fires every poll for as long as the peer's fix takes, and
+    //    because unblocking outranks working, the loop does nothing else. A
+    //    deferral already recorded returns `None`, which is what lets the
+    //    caller carry on with ordinary work as the doc above promises.
     if let ContentionVerdict::Defer { evidence } =
         contention_verdict(doctrine.contention, &obs.base_fix_contention)
     {
+        if state.deferred_fix_evidence == evidence {
+            return None;
+        }
         return Some(UnblockAttempt::DeferToExistingFix { evidence });
     }
 
@@ -622,6 +637,56 @@ mod tests {
             ),
             other => panic!("expected a deferral, got {other:?}"),
         }
+    }
+
+    /// A deferral already recorded must not re-fire; the loop goes back to
+    /// ordinary work while the peer's fix is in flight.
+    ///
+    /// Without the guard, `Unblock` outranks `Claim`/`Work` on every poll for
+    /// as long as the contention holds — the aggressive doctrine
+    /// (`FileAndAdopt`) would be strictly less productive than `FileAndWait`.
+    /// A *changed* evidence set still re-records, because "who is on it" is
+    /// exactly what the audit trail is for.
+    #[test]
+    fn a_recorded_deferral_yields_to_ordinary_work() {
+        let doctrine = Doctrine::default();
+        let observation = LoopObservation {
+            base_broken: true,
+            base_breakage_filed: true,
+            base_breakage_issue: Some(IssueRef("991".to_owned())),
+            base_fix_contention: Contention {
+                local_worktrees: vec!["/tmp/wt/991-abc".to_owned()],
+                ..Contention::default()
+            },
+            queue_depth: 5,
+            ..obs()
+        };
+        let recorded = LoopState {
+            planned: true,
+            batch: 3,
+            deferred_fix_evidence: vec!["local worktree: /tmp/wt/991-abc".to_owned()],
+            ..LoopState::default()
+        };
+
+        assert_eq!(
+            step(&recorded, &observation, &doctrine),
+            LoopStep::Claim { batch: 3 },
+            "a deferral this loop already recorded must not park it again"
+        );
+
+        let peer_changed = LoopState {
+            deferred_fix_evidence: vec!["open pr: 4001".to_owned()],
+            ..recorded
+        };
+        assert!(
+            matches!(
+                step(&peer_changed, &observation, &doctrine),
+                LoopStep::Unblock {
+                    attempt: UnblockAttempt::DeferToExistingFix { .. }
+                }
+            ),
+            "new contention evidence is a new decision and must be recorded"
+        );
     }
 
     fn obs() -> LoopObservation {

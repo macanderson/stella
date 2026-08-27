@@ -299,7 +299,7 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
             "live": live_block,
         }));
     }
-    out.sort_by_key(|r| -i64_at(r, "started_unix"));
+    out.sort_by_key(|r| std::cmp::Reverse(i64_at(r, "started_unix")));
     out
 }
 
@@ -426,7 +426,7 @@ pub fn runs(workspace_root: &Path) -> Value {
         }
     }
 
-    all_runs.sort_by_key(|r| -i64_at(r, "started_unix"));
+    all_runs.sort_by_key(|r| std::cmp::Reverse(i64_at(r, "started_unix")));
 
     let active = all_runs
         .iter()
