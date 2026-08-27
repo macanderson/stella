@@ -291,6 +291,7 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
         changes: 1,
         reads: 0,
         touched_seq: 1,
+        touched_turn: Some(1),
     }];
     let entry = TranscriptEntry::ToolResult {
         call_id: "c1".into(),
@@ -441,6 +442,7 @@ fn a_measured_change_with_no_patch_states_its_size_and_invents_no_diff() {
         changes: 1,
         reads: 0,
         touched_seq: 1,
+        touched_turn: Some(1),
     }];
     assert_eq!(
         (files[0].diff_at(1), files[0].delta_at(1)),

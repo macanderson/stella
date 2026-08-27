@@ -363,6 +363,16 @@ fn edge_kind(rel: &str) -> String {
 /// already made a total order — the lookup map is only ever read, never
 /// iterated, so the result is byte-stable across runs and the deck's goldens
 /// can pin it.
+///
+/// Every node leaves with [`stella_tui::GraphNode::touch`] unset, which is the
+/// design rather than a gap: that tag names a **turn**, and a turn ordinal
+/// exists only where turns and file changes are folded together — the deck's
+/// session model. An index knows what the tree looks like, never what a
+/// conversation has been doing to it, so a number invented here would be a
+/// second answer to the question the `● hot` mark already answers. The deck
+/// stamps it from that one ledger per frame
+/// ([`stella_tui::GraphSnapshot::stamp_session_touches`],
+/// `doc:adr/0019-graph-session-touch-tags`).
 fn frames_graph(
     frames: &[ContextFrame],
     root_rel: Option<&str>,
@@ -378,6 +388,7 @@ fn frames_graph(
             label: rel.to_string(),
             kind: "file".to_string(),
             location: Some(rel.to_string()),
+            touch: None,
         });
     }
 
@@ -399,6 +410,7 @@ fn frames_graph(
                     label: name.to_string(),
                     kind: node_kind(keyword),
                     location: frame_location(frame, workspace_root),
+                    touch: None,
                 });
                 at
             }
@@ -477,18 +489,21 @@ fn relation_node(
             .unwrap_or_else(|| relation.target_uri.clone()),
         kind: if rel_path.is_some() { "file" } else { "module" }.to_string(),
         location: rel_path,
+        touch: None,
     });
     at
 }
 
 /// One file neighborhood as the deck's node/edge pair: the file at index 0,
 /// then the symbols it defines, the modules it imports, and the files that
-/// import it.
+/// import it. Every node leaves with [`stella_tui::GraphNode::touch`] unset,
+/// for the reason [`frames_graph`] gives.
 fn neighborhood_graph(hood: &stella_graph::FileNeighborhood) -> (Vec<GraphNode>, Vec<GraphEdge>) {
     let mut nodes = vec![GraphNode {
         label: hood.file.clone(),
         kind: "file".to_string(),
         location: Some(hood.file.clone()),
+        touch: None,
     }];
     let mut edges = Vec::new();
     for symbol in &hood.symbols {
@@ -501,6 +516,7 @@ fn neighborhood_graph(hood: &stella_graph::FileNeighborhood) -> (Vec<GraphNode>,
             label: symbol.name.clone(),
             kind: symbol.kind.clone(),
             location: Some(format!("{}:{}", hood.file, symbol.start_line)),
+            touch: None,
         });
     }
     for import in &hood.imports {
@@ -513,6 +529,7 @@ fn neighborhood_graph(hood: &stella_graph::FileNeighborhood) -> (Vec<GraphNode>,
             label: import.clone(),
             kind: "module".to_string(),
             location: None,
+            touch: None,
         });
     }
     for importer in &hood.importers {
@@ -525,6 +542,7 @@ fn neighborhood_graph(hood: &stella_graph::FileNeighborhood) -> (Vec<GraphNode>,
             label: importer.clone(),
             kind: "file".to_string(),
             location: Some(importer.clone()),
+            touch: None,
         });
     }
     (nodes, edges)

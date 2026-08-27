@@ -1,5 +1,5 @@
-# deck golden · tab_graph_timed
-# the GRAPH tab with a measured query time in the query bar
+# deck golden · tab_graph_touched
+# the GRAPH tab with a session touch tag on an edge to an edited file
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
@@ -11,8 +11,8 @@
 ╭────────────────────────────────────────────────────────╮╭ ▢ Engine ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ƒ run_turn                                            3││ struct · stella-core/src/engine.rs:48                                                              │
 │ ▢ Engine                                              3││ ← called by 1 · uses 1 → · writes 1 →                                                              │
-│ ▢ Router                                              1││ called by ← run_turn                                                                               │
-│ ▢ AgentEvent                                          1││ uses → Router                                                                                      │
+│ ▢ Router                                          ● hot││ called by ← run_turn                                                                               │
+│ ▢ AgentEvent                                          1││ uses → Router · edited turn 1                                                                      │
 │ ▢ Ledger                                              1││ writes → Ledger                                                                                    │
 │ ▤ driver.rs                                           1││                                                                                                    │
 │                                                        ││                                                                                                    │

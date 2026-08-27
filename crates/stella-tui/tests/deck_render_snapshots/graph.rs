@@ -1,19 +1,79 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The GRAPH tab's query bar, pinned frame by frame.
+//! The GRAPH tab's query bar and its session tags, pinned frame by frame.
 //!
 //! A submodule of `deck_render_snapshots` rather than more lines in it: the
 //! parent is the whole deck's golden surface and every tab wants rows there,
 //! so it is the file that reaches the 1500-line ceiling first. The tab's
 //! three bar states -- a measured query time, a neighborhood that answers a
-//! free-form query, and the query box mid-type -- belong together anyway.
+//! free-form query, and the query box mid-type -- belong together anyway, and
+//! the session tag is read off the same frames.
 //!
 //! Every helper comes from the parent, so the goldens live in one directory
 //! and are blessed by one command:
 //! `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`.
 
 use super::*;
+
+/// The demo session, plus one edit to a file the demo neighborhood contains.
+///
+/// `demo_inbound` touches the scripted app's own files, and the demo graph is
+/// a neighborhood of `stella-core` -- the two never intersect, which is what
+/// keeps `tab_graph` free of `● hot` marks. Editing `router.rs` puts one node
+/// of that neighborhood in the ledger so the tag has something to name.
+fn model_that_edited_router() -> WorkspaceModel {
+    let mut model = fixture_model();
+    model.apply_inbound(&Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::FileChange {
+            path: "stella-core/src/router.rs".into(),
+            kind: FileChangeKind::Modified,
+            added: 12,
+            removed: 3,
+            diff: None,
+            minimal: true,
+            task_id: None,
+        },
+    });
+    model
+}
+
+/// **The witness (#5045).** An edge whose file this session edited names the
+/// turn that did it, on the node card, in the deck's own frame.
+///
+/// SPEC 9.1: "Reverse edges may carry session tags (`edited turn 14`)." Before
+/// this, `GraphNode` had no turn to carry and `render_card` drew every edge as
+/// a bare relation, so the tag was structurally unreachable rather than merely
+/// switched off.
+#[test]
+fn deck_render_snapshots_pin_the_graph_session_touch_tag() {
+    let model = model_that_edited_router();
+    let mut ui = ui_for(DeckTab::Graph);
+    if let Some(graph) = ui.graph.as_mut() {
+        graph.query_ms = Some(12);
+    }
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("uses → Router · edited turn 1"),
+        "the edge citing the edited file names the turn:\n{frame}"
+    );
+    assert!(
+        frame.contains("writes → Ledger") && !frame.contains("Ledger · edited"),
+        "a neighbor the session never touched carries no tag:\n{frame}"
+    );
+    assert!(
+        frame.contains("● hot"),
+        "and the same ledger row marks the node hot:\n{frame}"
+    );
+    assert_golden(
+        "tab_graph_touched",
+        "the GRAPH tab with a session touch tag on an edge to an edited file",
+        W,
+        H,
+        &frame,
+    );
+}
 
 /// **The witness (#4335).** The GRAPH query bar reports what the query cost
 /// when the driver measured one.

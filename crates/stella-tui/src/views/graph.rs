@@ -248,6 +248,7 @@ mod tests {
             label: label.into(),
             kind: "file".into(),
             location: None,
+            touch: None,
         }
     }
 

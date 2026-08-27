@@ -608,6 +608,7 @@ fn a_refreshed_graph_snapshot_updates_the_view_out_of_band() {
             label: "src/lib.rs".into(),
             kind: "file".into(),
             location: Some("src/lib.rs".into()),
+            touch: None,
         }],
         edges: vec![],
         files: vec!["src/lib.rs".into()],

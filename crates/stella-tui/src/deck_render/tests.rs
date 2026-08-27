@@ -498,6 +498,7 @@ fn ui_with_graph_picker(n: usize) -> DeckUi {
             label: focus,
             kind: "file".into(),
             location: None,
+            touch: None,
         }],
         edges: vec![],
         files,

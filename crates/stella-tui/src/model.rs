@@ -31,6 +31,7 @@ mod error_rows;
 pub mod file_state;
 mod inline_diff;
 pub mod recall;
+mod reset;
 mod summarize;
 mod turn;
 
@@ -279,59 +280,6 @@ impl SessionModel {
     /// A fresh, empty model — the seq-0 state.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Rewind the **conversation** to seq-0 while keeping the record of what
-    /// this session did to the tree — what `/clear` means
-    /// (`Inbound::SessionReset`; `command_deck::session_clear`).
-    ///
-    /// Everything conversational resets: transcript, HUD, plan, pending
-    /// gates, streaming preview. The file-touch half
-    /// ([`Self::files`], [`Self::files_evicted`], `file_touch_seq`) survives,
-    /// because those bytes are still on the user's disk after a clear and
-    /// `/clear` changes no identity — the session, its store row, its sidecar
-    /// dir and its worker lanes all continue.
-    ///
-    /// # Why this is not `*self = Self::new()`
-    ///
-    /// It was, and that made the Files tab lie. The tab's ROWS come from
-    /// `deck::WorkspaceModel::ledger`, which `/clear` deliberately leaves
-    /// alone; its diff TEXT is looked up here (L-T5 — there is no second data
-    /// path for diffs). Wholesale replacement cut one of those two and not the
-    /// other, so every row survived with its counts intact and every diff pane
-    /// went to `(no diff captured)`: an accurate `+64 -6` beside a claim that
-    /// nothing was captured.
-    ///
-    /// Carrying `file_touch_seq` across is required, not tidiness. It
-    /// stamps [`FileState::touched_seq`], the recency key
-    /// [`MAX_TRACKED_FILES`] eviction orders by; restarting it at 0 under
-    /// retained files would rank every surviving path above every new one and
-    /// evict newest-first.
-    ///
-    /// `diff_budget` crosses for the same reason and is the sharper case: it
-    /// is the accounting of the text `files` still holds, so resetting it
-    /// under a retained ledger would leave the session believing it holds
-    /// nothing while holding everything — a bound that reads as satisfied
-    /// because it forgot what it was bounding.
-    ///
-    /// Written as a destructure-and-restore so the default for a field added
-    /// later is to RESET — new conversation state is the common case, and it
-    /// then needs no edit here; a new *file-ledger* field is what has to be
-    /// named.
-    pub fn reset_conversation(&mut self) {
-        let Self {
-            files,
-            files_evicted,
-            file_touch_seq,
-            diff_budget,
-            per_call_producer_seen,
-            ..
-        } = std::mem::take(self);
-        self.files = files;
-        self.files_evicted = files_evicted;
-        self.file_touch_seq = file_touch_seq;
-        self.diff_budget = diff_budget;
-        self.per_call_producer_seen = per_call_producer_seen;
     }
 
     /// Fold one event into the model. This is the **only** mutator; every
@@ -1437,12 +1385,22 @@ impl SessionModel {
     ) {
         self.file_touch_seq += 1;
         let touched_seq = self.file_touch_seq;
+        // The turn in flight, in the 1-based numbering SPEC 6.1's opening rule
+        // stamps, so `edited turn N` on the Graph tab and the rule above the
+        // edit in the transcript name the same turn. Read before the ledger is
+        // borrowed below.
+        let turn = self.turns_completed.saturating_add(1);
         let seq = if let Some(existing) = self.files.iter_mut().find(|f| f.path == path) {
             existing.touched_seq = touched_seq;
             if !kind.is_mutation() {
                 existing.reads += 1;
                 return;
             }
+            // Past the read guard, beside `kind`: the two are read together as
+            // "what was last done to this path, and when", and a read that
+            // moved the turn without moving the kind would have the Graph tab
+            // report the turn of a read under the verb of an older edit.
+            existing.touched_turn = Some(turn);
             existing.kind = kind;
             existing.changes += 1;
             existing.added += added;
@@ -1470,6 +1428,7 @@ impl SessionModel {
                 changes: mutation as u32,
                 reads: !mutation as u32,
                 touched_seq,
+                touched_turn: mutation.then_some(turn),
             };
             if mutation {
                 state.remember_diff(diff, added, removed);
