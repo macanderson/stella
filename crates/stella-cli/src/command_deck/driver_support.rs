@@ -296,7 +296,24 @@ pub(super) fn service_approve_revision(
             proposal.revision, existing.id, existing.subject
         )
     } else {
-        let task = guard.create(proposal.subject.clone(), None, None);
+        // The cause rides the row's description, which is where the drift
+        // outcome is recoverable from: `stella_tui::plan::Plan::steps` reads it
+        // into `PlanStep::detail`, so the plan card states under the inserted
+        // task why it exists, and the board snapshot the store records carries
+        // it too. The `DivergenceCause` the next `PlanGate::review` writes onto
+        // the revision is a separate cell that this path cannot reach (#5296) —
+        // so the reason is recorded where it *can* be, rather than lost while
+        // waiting for the place it belongs.
+        let task = guard.create(
+            proposal.subject.clone(),
+            Some(format!(
+                "added by {}: the {} gate reported {}",
+                proposal.revision,
+                proposal.gate,
+                proposal.cause.as_str()
+            )),
+            None,
+        );
         format!(
             "{} approved — task {} \"{}\", because the {} gate reported: {}",
             proposal.revision,
@@ -820,6 +837,18 @@ mod approve_revision_tests {
                 .map(|item| item.subject.as_str())
                 .collect::<Vec<_>>(),
             vec!["repair a_short_cycle_is_detected"]
+        );
+        // The row itself carries the reason, so the plan card states under the
+        // inserted task why it exists and the recorded board snapshot keeps it.
+        let reason = guard.items()[0]
+            .description
+            .as_deref()
+            .expect("the inserted row records why it was inserted");
+        assert!(reason.contains("r2"), "{reason}");
+        assert!(reason.contains("tests"), "{reason}");
+        assert!(
+            reason.contains("assertion `left == right` failed"),
+            "{reason}"
         );
     }
 
