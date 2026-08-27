@@ -51,27 +51,28 @@ const DROPPED_HEAD_MARKER: &str = "[older history dropped: it exceeded the summa
 /// and the turn aborts (#2751). Dropping the head is the only lever left — the
 /// content is lost unsummarized, which is why the splice marker says so.
 ///
-/// The cut lands on the next line boundary at or after the halfway byte, so
-/// the tail opens on a whole rendered record rather than mid-way through one;
-/// falling back to the next char boundary when the half has no newline left
-/// in it. `None` when the drop would not actually shrink the request — an
+/// The halfway byte is walked to a char boundary first — it can land inside a
+/// multi-byte char, and the newline search slices from it — then the cut lands
+/// on the next line boundary at or after it, so the tail opens on a whole
+/// rendered record rather than mid-way through one; with no newline left, the
+/// boundary itself is the cut. `None` when the drop would not shrink — an
 /// empty render, a half that leaves no tail, or one so short that the marker
 /// costs more than the head saved — so a caller looping on this always
 /// terminates.
 pub(crate) fn drop_span_head(rendered: &str) -> Option<String> {
-    let half = rendered.len() / 2;
+    let mut half = rendered.len() / 2;
     if half == 0 {
         return None;
     }
+    // Walked to a boundary *before* the newline search: the halfway byte can
+    // land inside a multi-byte char, and `rendered[half..]` panics on that
+    // before either arm below gets a say.
+    while !rendered.is_char_boundary(half) {
+        half += 1;
+    }
     let cut = match rendered[half..].find('\n') {
         Some(offset) => half + offset + 1,
-        None => {
-            let mut cut = half;
-            while !rendered.is_char_boundary(cut) {
-                cut += 1;
-            }
-            cut
-        }
+        None => half,
     };
     let tail = &rendered[cut..];
     if tail.is_empty() {
@@ -167,5 +168,17 @@ mod tests {
         let rendered = "форматировать".repeat(40);
         let shorter = drop_span_head(&rendered).expect("a long render can shed a head");
         assert!(shorter.len() < rendered.len());
+    }
+
+    /// The witness the test above cannot be: its 2-byte chars start at byte 0,
+    /// so its halfway byte is always even and always a boundary. One leading
+    /// ASCII byte makes the halfway byte land *inside* a char, which the old
+    /// code sliced before its boundary walk ran.
+    #[test]
+    fn an_odd_halfway_byte_inside_a_char_does_not_panic() {
+        let rendered = format!("\n{}", "ф".repeat(500));
+        let shorter = drop_span_head(&rendered).expect("a long render can shed a head");
+        assert!(shorter.len() < rendered.len());
+        assert!(shorter.strip_prefix(DROPPED_HEAD_MARKER).is_some());
     }
 }
