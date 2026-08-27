@@ -55,6 +55,7 @@ fn result(name: &str, ok: bool, body: &str) -> TranscriptEntry {
         speculated: false,
         diff: Vec::new(),
         read_size: None,
+        graph: None,
         sub_agent_id: None,
     }
 }

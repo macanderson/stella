@@ -48,6 +48,7 @@ fn result(name: &str, ok: bool, path: Option<&str>, body: &str) -> TranscriptEnt
         speculated: false,
         diff: Vec::new(),
         read_size: None,
+        graph: None,
         sub_agent_id: None,
     }
 }
@@ -181,6 +182,7 @@ fn a_reads_line_count_is_stated_once_in_its_block() {
                 shown: 200,
                 total: 500,
             }),
+            graph: None,
             sub_agent_id: None,
         },
     ];
@@ -307,6 +309,7 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
             seq: 1,
         }],
         read_size: None,
+        graph: None,
         sub_agent_id: None,
     };
     let mut out = Vec::new();
@@ -465,6 +468,7 @@ fn a_measured_change_with_no_patch_states_its_size_and_invents_no_diff() {
             seq: 1,
         }],
         read_size: None,
+        graph: None,
         sub_agent_id: None,
     };
     let mut out = Vec::new();

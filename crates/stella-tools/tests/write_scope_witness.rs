@@ -85,7 +85,7 @@ async fn a_delete_inside_a_sibling_worktree_is_refused() {
     let ctx = ToolCtx::bare(dir.path().to_path_buf());
     let victim = dir.path().join(".stella/worktrees/sibling-task/secret.rs");
 
-    let out = DeleteFile
+    let out = DeleteFile::default()
         .execute(
             &serde_json::json!({ "path": ".stella/worktrees/sibling-task/secret.rs" }),
             &ctx,
@@ -364,7 +364,7 @@ async fn the_scope_check_does_not_resolve_the_final_component() {
         .expect("symlink");
 
     let ctx = ToolCtx::bare(dir.path().to_path_buf());
-    let out = DeleteFile
+    let out = DeleteFile::default()
         .execute(&serde_json::json!({ "path": "link.toml" }), &ctx)
         .await;
 

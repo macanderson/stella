@@ -1262,6 +1262,16 @@ pub(crate) fn all_files(conn: &Connection) -> Result<Vec<String>, GraphError> {
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// Whether `rel` has a node in the index.
+pub(crate) fn indexes_file(conn: &Connection, rel: &str) -> Result<bool, GraphError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM code_graph_files WHERE path = ?1",
+        params![rel],
+        |r| r.get(0),
+    )?;
+    Ok(count > 0)
+}
+
 /// Count of indexed files — used by status/tests.
 pub(crate) fn file_count(conn: &Connection) -> Result<usize, GraphError> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM code_graph_files", [], |r| r.get(0))?;

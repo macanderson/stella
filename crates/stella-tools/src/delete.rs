@@ -11,6 +11,14 @@
 //! loss on any repository carrying in-tree symlinks (vendored configs,
 //! `node_modules/.bin`).
 //!
+//! # The graph check runs first (#5034)
+//!
+//! Before anything is unlinked, the code graph is asked how many indexed
+//! files import the target. Afterwards there is no file to ask about and the
+//! answer would arrive too late to warn anybody, which is the whole reason
+//! the check is ordered rather than merely present. It publishes a
+//! [`crate::graph_fact::GraphFact`] and elides when no index answered.
+//!
 //! That is why this module reaches for [`RootHandle::symlink_stat`],
 //! [`RootHandle::read_link`] and [`RootHandle::remove_file`], the three
 //! entry-level calls, rather than the resolving [`RootHandle::stat`]. The
@@ -22,10 +30,31 @@ use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
+use crate::graph_fact::{Codegraph, GraphFact, WorkspaceGraph};
 use crate::registry::Tool;
 use crate::rootfd::{EntryKind, RootHandle};
 
-pub struct DeleteFile;
+pub struct DeleteFile {
+    /// The index consulted before the unlink. Injected so a test can prove
+    /// *when* it is consulted — see [`crate::graph_fact`]'s header.
+    graph: std::sync::Arc<dyn WorkspaceGraph>,
+}
+
+impl Default for DeleteFile {
+    fn default() -> Self {
+        Self {
+            graph: std::sync::Arc::new(Codegraph),
+        }
+    }
+}
+
+impl DeleteFile {
+    /// Construct against `graph` instead of the workspace's own index.
+    #[cfg(test)]
+    fn with_graph(graph: std::sync::Arc<dyn WorkspaceGraph>) -> Self {
+        Self { graph }
+    }
+}
 
 /// What the blocking worker saw and did: the removal happened, and this is
 /// what it read on the way past — the file's own bytes, or the symlink target
@@ -71,10 +100,35 @@ impl Tool for DeleteFile {
 
     async fn execute(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         if crate::batch::is_plural(input, FILES_KEY) {
-            return delete_batch(input, ctx).await;
+            return delete_batch(input, ctx, &self.graph).await;
         }
-        delete_one(input, ctx).await
+        delete_one(input, ctx, &self.graph).await
     }
+}
+
+/// Ask the index about `requested` while the file it names is still there.
+///
+/// On a blocking worker, because it opens SQLite and reads it; awaited to
+/// completion by the caller, which is what keeps it ahead of the unlink. The
+/// ordering is the await, not the thread.
+async fn graph_check(
+    graph: std::sync::Arc<dyn WorkspaceGraph>,
+    root: &std::path::Path,
+    scope_root: &std::path::Path,
+    requested: &str,
+    path: &str,
+) -> Option<GraphFact> {
+    let (root, file) = (root.to_path_buf(), scope_root.join(path));
+    let inbound = tokio::task::spawn_blocking(move || graph.inbound_refs(&root, &file))
+        .await
+        .ok()??;
+    Some(GraphFact::InboundRefs {
+        // Keyed by the path the caller asked for, not the resolved one: the
+        // transcript row rendering this deletion knows the call's own
+        // argument and nothing else.
+        path: requested.to_string(),
+        inbound,
+    })
 }
 
 /// The plural key: several files removed in one call.
@@ -120,7 +174,11 @@ fn attach_own_reading(
 /// outside the scope) is caught with the tree still intact. A mid-batch IO
 /// failure is the case no ordering can prevent, and it is reported naming
 /// exactly what had already been removed.
-async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
+async fn delete_batch(
+    input: &Value,
+    ctx: &crate::ctx::ToolCtx,
+    graph: &std::sync::Arc<dyn WorkspaceGraph>,
+) -> ToolOutput {
     let targets = match crate::batch::targets(input, FILES_KEY, "path", delete_target) {
         Ok(targets) => targets,
         Err(err) => return ToolOutput::from(err),
@@ -157,7 +215,7 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
             // bytes may be read for the own reading: `read_to_string` expands
             // the leaf, and a symlink deletion leaves its target alone.
             Ok(Ok(kind @ (EntryKind::File | EntryKind::Symlink))) => {
-                planned.push((handle, path, kind));
+                planned.push((handle, path, kind, target.clone()));
             }
             // An escape is a different mistake from a directory, and the
             // single form has always said so. Collapsing them here would tell
@@ -202,10 +260,28 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         }
     }
 
+    // Pass one and a half: the graph check for the whole batch, with every
+    // target still on disk. A batch is where the ordering is most visible —
+    // the second file's check would otherwise run after the first file was
+    // already gone.
+    let mut facts: Vec<GraphFact> = Vec::with_capacity(planned.len());
+    for (handle, path, _, requested) in &planned {
+        facts.extend(
+            graph_check(
+                std::sync::Arc::clone(graph),
+                ctx.root(),
+                handle.path(),
+                requested,
+                path,
+            )
+            .await,
+        );
+    }
+
     // Pass two: every target checked, so remove.
     let mut removed: Vec<String> = Vec::with_capacity(planned.len());
     let mut changes: Vec<crate::own_change::OwnChange> = Vec::with_capacity(planned.len());
-    for (handle, path, kind) in planned {
+    for (handle, path, kind, _) in planned {
         let scope_root = handle.path().to_path_buf();
         let outcome = tokio::task::spawn_blocking({
             let (handle, path) = (std::sync::Arc::clone(&handle), path.clone());
@@ -252,23 +328,31 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
             ),
         );
     }
-    crate::own_change::attach(
-        ToolOutput::ok(format!(
-            "deleted {} file(s): {}",
-            removed.len(),
-            removed.join(", ")
-        )),
-        &changes,
+    crate::graph_fact::attach(
+        crate::own_change::attach(
+            ToolOutput::ok(format!(
+                "deleted {} file(s): {}",
+                removed.len(),
+                removed.join(", ")
+            )),
+            &changes,
+        ),
+        &facts,
     )
 }
 
-async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
+async fn delete_one(
+    input: &Value,
+    ctx: &crate::ctx::ToolCtx,
+    graph: &std::sync::Arc<dyn WorkspaceGraph>,
+) -> ToolOutput {
     let path = match crate::input::required_str(input, "path") {
         Ok(v) => v,
         Err(err) => {
             return ToolOutput::from(err);
         }
     };
+    let requested = path.to_string();
     // A delete is the one built-in effect the agent cannot undo, so the
     // scope is consulted before the descriptor walk starts.
     let (scope_root, path) = match ctx.resolve_for_write(path) {
@@ -290,6 +374,16 @@ async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
             );
         }
     };
+    // The graph check, while the file is still there to be asked about
+    // (module header). Nothing below this line can be undone.
+    let fact = graph_check(
+        std::sync::Arc::clone(graph),
+        ctx.root(),
+        &scope_root,
+        &requested,
+        path,
+    )
+    .await;
     // Classify, read the link, and unlink on one blocking worker. All three
     // are entry-level calls off the same held directory descriptor, so
     // nothing planted between them can redirect the removal — and none of
@@ -316,22 +410,29 @@ async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         }
     })
     .await;
+    let fact = fact.into_iter().collect::<Vec<_>>();
     match outcome {
-        // The own reading rides `data`; `content` is untouched, so the
-        // byte-identical success string the stagnation detector keys on
-        // (#3176) is unchanged. It is observability only — the git-backed
-        // undo path (`· git-backed · u undo`) does not read it.
-        Ok(Ok(Some(Removed::File(before)))) => attach_own_reading(
-            ToolOutput::ok(format!("deleted {path}")),
-            ctx.root(),
-            &scope_root,
-            path,
-            before.as_deref(),
+        // The own reading and the graph check both ride `data`; `content` is
+        // untouched, so the byte-identical success string the stagnation
+        // detector keys on (#3176) is unchanged. Both are observability only
+        // — the git-backed undo path (`· git-backed · u undo`) reads neither.
+        Ok(Ok(Some(Removed::File(before)))) => crate::graph_fact::attach(
+            attach_own_reading(
+                ToolOutput::ok(format!("deleted {path}")),
+                ctx.root(),
+                &scope_root,
+                path,
+                before.as_deref(),
+            ),
+            &fact,
         ),
-        Ok(Ok(Some(Removed::Symlink(target)))) => ToolOutput::ok(format!(
-            "deleted symlink {path} — the link only; its target `{}` is untouched",
-            target.display()
-        )),
+        Ok(Ok(Some(Removed::Symlink(target)))) => crate::graph_fact::attach(
+            ToolOutput::ok(format!(
+                "deleted symlink {path} — the link only; its target `{}` is untouched",
+                target.display()
+            )),
+            &fact,
+        ),
         Ok(Ok(None)) => ToolOutput::classified_error(
             stella_protocol::ErrorClass::InvalidInput,
             format!(
@@ -386,7 +487,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("sub")).unwrap();
 
-        let on_a_directory = DeleteFile
+        let on_a_directory = DeleteFile::default()
             .execute(&serde_json::json!({"path": "sub"}), &cx(dir.path()))
             .await;
         match on_a_directory {
@@ -401,7 +502,7 @@ mod tests {
             other => panic!("expected an error, got {other:?}"),
         }
 
-        let on_a_missing_path = DeleteFile
+        let on_a_missing_path = DeleteFile::default()
             .execute(&serde_json::json!({"path": "ghost.txt"}), &cx(dir.path()))
             .await;
         match on_a_missing_path {
@@ -423,7 +524,7 @@ mod tests {
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("kill-me.txt"), "bye").unwrap();
 
-        let ok = DeleteFile
+        let ok = DeleteFile::default()
             .execute(&serde_json::json!({"path": "kill-me.txt"}), &cx(&root))
             .await;
         assert!(!ok.is_error(), "{ok:?}");
@@ -435,7 +536,7 @@ mod tests {
             (serde_json::json!({"path": "ghost.txt"}), "missing"),
             (serde_json::json!({}), "no path"),
         ] {
-            let out = DeleteFile.execute(&input, &cx(&root)).await;
+            let out = DeleteFile::default().execute(&input, &cx(&root)).await;
             assert!(out.is_error(), "{why} must be rejected: {out:?}");
         }
         std::fs::remove_dir_all(&root).ok();
@@ -453,7 +554,7 @@ mod tests {
         std::fs::write(dir.path().join("real.toml"), "keep me").unwrap();
         std::os::unix::fs::symlink("../real.toml", dir.path().join("vendor/config.toml")).unwrap();
 
-        let out = DeleteFile
+        let out = DeleteFile::default()
             .execute(
                 &serde_json::json!({"path": "vendor/config.toml"}),
                 &cx(dir.path()),
@@ -488,7 +589,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink("nowhere.txt", dir.path().join("ghost-link")).unwrap();
 
-        let out = DeleteFile
+        let out = DeleteFile::default()
             .execute(&serde_json::json!({"path": "ghost-link"}), &cx(dir.path()))
             .await;
         assert!(!out.is_error(), "{out:?}");
@@ -506,7 +607,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(outside.path(), dir.path().join("escape")).unwrap();
 
-        let out = DeleteFile
+        let out = DeleteFile::default()
             .execute(
                 &serde_json::json!({"path": "escape/secret.txt"}),
                 &cx(dir.path()),
@@ -523,7 +624,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("sub")).unwrap();
         for tail in ["sub/.", "sub/..", "."] {
-            let out = DeleteFile
+            let out = DeleteFile::default()
                 .execute(&serde_json::json!({"path": tail}), &cx(dir.path()))
                 .await;
             assert!(out.is_error(), "`{tail}` must be rejected: {out:?}");
@@ -539,7 +640,7 @@ mod tests {
         for name in ["a.rs", "b.rs"] {
             std::fs::write(dir.path().join(name), "x").unwrap();
         }
-        let out = DeleteFile
+        let out = DeleteFile::default()
             .execute(
                 &serde_json::json!({"files": [{"path": "a.rs"}, {"path": "b.rs"}]}),
                 &cx(dir.path()),
@@ -564,7 +665,7 @@ mod tests {
             serde_json::json!({"path": "adir"}),
             serde_json::json!({"path": "../outside.rs"}),
         ] {
-            let out = DeleteFile
+            let out = DeleteFile::default()
                 .execute(
                     &serde_json::json!({"files": [{"path": "real.rs"}, bad]}),
                     &cx(dir.path()),
@@ -576,5 +677,138 @@ mod tests {
                 "the deletable file must survive a batch that was going to fail: {out:?}"
             );
         }
+    }
+
+    /// A graph that records the tree as it stood when it was asked.
+    ///
+    /// Each answer keeps the path it was about, whether that path was still
+    /// there, and how many entries the workspace still held — the second
+    /// number is what a batch needs, since a per-file check that had slipped
+    /// into the removal loop would still find its own subject present while
+    /// the file before it was already gone.
+    struct WitnessGraph {
+        seen: std::sync::Mutex<Vec<(std::path::PathBuf, bool, usize)>>,
+        inbound: u32,
+    }
+
+    impl WitnessGraph {
+        fn with(inbound: u32) -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                seen: std::sync::Mutex::new(Vec::new()),
+                inbound,
+            })
+        }
+
+        fn record(&self, root: &std::path::Path, file: &std::path::Path) {
+            let entries = std::fs::read_dir(root).map_or(0, Iterator::count);
+            self.seen
+                .lock()
+                .unwrap()
+                .push((file.to_path_buf(), file.exists(), entries));
+        }
+    }
+
+    impl WorkspaceGraph for WitnessGraph {
+        fn inbound_refs(&self, root: &std::path::Path, file: &std::path::Path) -> Option<u32> {
+            self.record(root, file);
+            Some(self.inbound)
+        }
+
+        fn register(&self, root: &std::path::Path, file: &std::path::Path) -> Option<bool> {
+            self.record(root, file);
+            Some(true)
+        }
+    }
+
+    /// The #5034 ordering witness. The check is asked about a file that is
+    /// still on disk — a check that had run after the unlink would find its
+    /// own subject gone, which is the state that makes the warning useless.
+    #[tokio::test]
+    async fn the_graph_check_runs_while_the_file_it_is_about_still_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("doomed.rs"), "pub fn go() {}\n").unwrap();
+        let graph = WitnessGraph::with(0);
+
+        let out = DeleteFile::with_graph(graph.clone())
+            .execute(&serde_json::json!({"path": "doomed.rs"}), &cx(dir.path()))
+            .await;
+
+        assert!(!out.is_error(), "{out:?}");
+        assert!(!dir.path().join("doomed.rs").exists());
+        let seen = graph.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].0.ends_with("doomed.rs"), "{seen:?}");
+        assert!(seen[0].1, "the check ran after the unlink: {seen:?}");
+    }
+
+    /// The same ordering across a batch: every check is asked with the whole
+    /// batch still on disk, so the second file's answer is not measured
+    /// against a tree the first file has already left.
+    #[tokio::test]
+    async fn a_batch_asks_about_every_file_before_it_removes_any() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("one.rs"), "pub fn one() {}\n").unwrap();
+        std::fs::write(dir.path().join("two.rs"), "pub fn two() {}\n").unwrap();
+        let graph = WitnessGraph::with(0);
+
+        let out = DeleteFile::with_graph(graph.clone())
+            .execute(
+                &serde_json::json!({"files": [{"path": "one.rs"}, {"path": "two.rs"}]}),
+                &cx(dir.path()),
+            )
+            .await;
+
+        assert!(!out.is_error(), "{out:?}");
+        let seen = graph.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        for answer in seen.iter() {
+            assert!(
+                answer.1,
+                "a check ran after its own file was gone: {seen:?}"
+            );
+            assert_eq!(
+                answer.2, 2,
+                "a check ran after another file in the batch was gone: {seen:?}"
+            );
+        }
+    }
+
+    /// The count the check measured reaches the consumer, and the success
+    /// prose the stagnation detector compares (#3176) is untouched by it.
+    #[tokio::test]
+    async fn a_deletion_publishes_the_inbound_count_its_check_measured() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hub.rs"), "pub fn hub() {}\n").unwrap();
+
+        let out = DeleteFile::with_graph(WitnessGraph::with(4))
+            .execute(&serde_json::json!({"path": "hub.rs"}), &cx(dir.path()))
+            .await;
+
+        let ToolOutput::Ok { content, .. } = &out else {
+            panic!("{out:?}");
+        };
+        assert_eq!(content, "deleted hub.rs");
+        assert_eq!(
+            crate::graph_fact::from_output(&out),
+            vec![GraphFact::InboundRefs {
+                path: "hub.rs".into(),
+                inbound: 4,
+            }]
+        );
+    }
+
+    /// A workspace nobody has indexed publishes no graph fact at all,
+    /// rather than a clean check it never ran.
+    #[tokio::test]
+    async fn a_workspace_with_no_code_graph_publishes_no_check() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("lonely.rs"), "pub fn lonely() {}\n").unwrap();
+
+        let out = DeleteFile::default()
+            .execute(&serde_json::json!({"path": "lonely.rs"}), &cx(dir.path()))
+            .await;
+
+        assert!(!out.is_error(), "{out:?}");
+        assert!(crate::graph_fact::from_output(&out).is_empty(), "{out:?}");
     }
 }

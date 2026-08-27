@@ -25,14 +25,15 @@
 //! arm per tool is a renderer that silently drops the ones a user added — the
 //! reasoning [`stella_transcript::ToolKind`] already states.
 
-use ratatui::style::Color;
-use ratatui::text::Line;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use stella_tui_theme::token;
 
 use super::transcript::{
     Event, EventKind, Extent, Receipt, Subject, Touched, TurnHead, event_rows, receipt, turn_begin,
     turn_end,
 };
-use crate::model::{FileState, ReadSize, TranscriptEntry};
+use crate::model::{FileState, GraphFact, ReadSize, TranscriptEntry};
 
 /// What is known about one call at the moment its head renders — each field
 /// filled by its own resolver, or its `None`/default while nothing has
@@ -60,6 +61,10 @@ pub struct CallFacts {
     /// straight from `TranscriptEntry::ToolStart` so a fan-out call renders
     /// visibly apart from the lead's (#4699).
     pub sub_agent_id: Option<String>,
+    /// What the code graph said about the call's path ([`graph_fact`]).
+    /// `None` — no index, no fact published, nothing answered yet — renders
+    /// no graph line, never a zero the check did not measure (#5034).
+    pub graph: Option<GraphFact>,
     /// Whether the reader has expanded this entry (`ctrl+o`). A read head is
     /// folded until they do; every other kind ignores it here (its reveal is
     /// the argument body the caller hangs beneath).
@@ -89,6 +94,27 @@ pub fn head_rows(
     event.collapsed = Some(matches!(event.kind, EventKind::Read { .. }) && !facts.expanded);
     event.duration_ms = facts.duration_ms.unwrap_or(0);
     event.sub_agent_id = facts.sub_agent_id;
+    match facts.graph {
+        // SPEC 6.3's write footer. A dim trailing line, because it reports
+        // what the call already did rather than qualifying what it says.
+        Some(GraphFact::RegisteredModule) => {
+            event.footer = Some("  registered in graph as module node".to_string());
+        }
+        // SPEC 6.3's delete body: the count the check measured before the
+        // unlink, and `det` — the boolean SPEC §5 reserves for a call that
+        // reached no model, which a graph query never does.
+        Some(GraphFact::InboundRefs(inbound)) => {
+            let noun = if inbound == 1 { "ref" } else { "refs" };
+            event.body = vec![Line::from(vec![
+                Span::styled("  graph check: ", Style::new().fg(token::MUTED)),
+                Span::styled(
+                    format!("{inbound} inbound {noun} · det"),
+                    Style::new().fg(token::SILVER),
+                ),
+            ])];
+        }
+        None => {}
+    }
     event_rows(&event, width)
 }
 
@@ -190,6 +216,30 @@ pub fn read_size(call_id: &str, following: &[TranscriptEntry]) -> Option<ReadSiz
                 read_size,
                 ..
             } if cid == call_id => Some(*read_size),
+            _ => None,
+        })
+        .flatten()
+}
+
+/// What the code graph said about the call `call_id`'s own path, or `None`
+/// while nothing has said anything (#5034).
+///
+/// The same bounded scan as [`read_size`], off the entry's own [`GraphFact`]
+/// carrier, which the fold fills from the tool result's structured `data`.
+/// `None` covers every reason there is no fact — the call has not returned,
+/// it failed, this workspace has no code graph, the tool publishes none —
+/// and every one of them renders as no line at all.
+#[must_use]
+pub fn graph_fact(call_id: &str, following: &[TranscriptEntry]) -> Option<GraphFact> {
+    following
+        .iter()
+        .take_while(|e| !matches!(e, TranscriptEntry::Complete { .. }))
+        .find_map(|e| match e {
+            TranscriptEntry::ToolResult {
+                call_id: cid,
+                graph,
+                ..
+            } if cid == call_id => Some(*graph),
             _ => None,
         })
         .flatten()
@@ -574,6 +624,7 @@ mod tests {
             speculated: false,
             diff: Vec::new(),
             read_size: None,
+            graph: None,
             sub_agent_id: None,
         };
         assert_eq!(call_duration("c1", &[result("c1", 7)]), Some(7));
@@ -983,6 +1034,7 @@ mod tests {
         };
         let scope = measured_scope(call_id, &model.transcript[idx + 1..], &model.files);
         let read = read_size(call_id, &model.transcript[idx + 1..]);
+        let graph = graph_fact(call_id, &model.transcript[idx + 1..]);
         text_of_rows(&head_rows(
             name,
             path.as_deref(),
@@ -990,10 +1042,117 @@ mod tests {
             CallFacts {
                 scope,
                 read,
+                graph,
                 ..Default::default()
             },
             120,
         ))
+    }
+
+    /// One mutation driven through the real fold: the announcement, then a
+    /// result carrying whatever structured `data` the producer published.
+    fn mutated(name: &str, path: &str, data: Option<serde_json::Value>) -> SessionModel {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "c1".into(),
+                name: name.into(),
+                input: serde_json::json!({ "path": path }),
+            },
+            sub_agent_id: None,
+            task_id: None,
+        });
+        model.apply(&AgentEvent::ToolResult {
+            call_id: "c1".into(),
+            output: ToolOutput::Ok {
+                content: format!("did {name} on {path}"),
+                data,
+            },
+            duration_ms: 2,
+            speculated: false,
+            sub_agent_id: None,
+            task_id: None,
+        });
+        model
+    }
+
+    /// One graph-facts payload for `path`.
+    fn facts(path: &str, fact: serde_json::Value) -> serde_json::Value {
+        let mut fact = fact;
+        fact["path"] = serde_json::Value::String(path.to_string());
+        serde_json::json!({ "graph_facts": [fact] })
+    }
+
+    /// SPEC 6.3's write footer, end to end: the producer publishes the
+    /// registration, the fold carries it, and the head states it. The string
+    /// existed nowhere in the tree before #5034.
+    #[test]
+    fn a_write_that_registered_a_node_states_it_in_its_footer() {
+        let model = mutated(
+            "write_file",
+            "src/fresh.rs",
+            Some(facts(
+                "src/fresh.rs",
+                serde_json::json!({ "fact": "registered" }),
+            )),
+        );
+        let head = head_at(&model, 0);
+        assert!(
+            head.contains("registered in graph as module node"),
+            "{head}"
+        );
+    }
+
+    /// SPEC 6.3's delete body: the count the pre-execution check measured,
+    /// tagged `det` because a graph query reaches no model (SPEC §5). The
+    /// noun agrees with the number — a row that reads `1 inbound refs` is a
+    /// row a reader stops trusting.
+    #[test]
+    fn a_deletion_states_the_inbound_count_its_check_measured() {
+        for (inbound, expected) in [
+            (0, "graph check: 0 inbound refs · det"),
+            (1, "1 inbound ref "),
+        ] {
+            let model = mutated(
+                "delete_file",
+                "src/old.rs",
+                Some(facts(
+                    "src/old.rs",
+                    serde_json::json!({ "fact": "inbound_refs", "inbound": inbound }),
+                )),
+            );
+            let head = head_at(&model, 0);
+            assert!(head.contains(expected), "{inbound}: {head}");
+        }
+    }
+
+    /// A workspace with no code graph publishes no fact, and the row states
+    /// nothing rather than a `0 inbound refs` nobody measured.
+    #[test]
+    fn a_mutation_with_no_graph_fact_states_no_graph_line() {
+        for name in ["write_file", "delete_file"] {
+            let head = head_at(&mutated(name, "src/lonely.rs", None), 0);
+            assert!(!head.contains("graph check"), "{name}: {head}");
+            assert!(!head.contains("registered in graph"), "{name}: {head}");
+        }
+    }
+
+    /// A batch publishes one fact per file, so a row takes the one naming its
+    /// own path and never a neighbour's.
+    #[test]
+    fn a_row_takes_the_fact_naming_its_own_path() {
+        let payload = serde_json::json!({ "graph_facts": [
+            { "fact": "inbound_refs", "path": "src/a.rs", "inbound": 7 },
+            { "fact": "inbound_refs", "path": "src/b.rs", "inbound": 2 },
+        ]});
+        assert_eq!(
+            crate::model::GraphFact::from_data(&payload, "src/b.rs"),
+            Some(crate::model::GraphFact::InboundRefs(2))
+        );
+        assert_eq!(
+            crate::model::GraphFact::from_data(&payload, "src/c.rs"),
+            None
+        );
     }
 
     /// The witness for #4154: a head that used to be drawn once at dispatch and

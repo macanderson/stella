@@ -291,6 +291,44 @@ impl CodeGraph {
         self.index_all_with_progress(&mut |_| {})
     }
 
+    /// Index exactly `changed` now — the incremental pass the live watcher
+    /// runs, made callable by a producer that already knows which paths it
+    /// touched. A path that no longer exists is pruned, exactly as a watcher
+    /// event for a removed file is.
+    ///
+    /// The watcher debounces and the catch-up walk hashes the whole tree, so
+    /// neither can make a statement about a file written moments ago true at
+    /// the moment a tool states it. Synchronous — an async caller must wrap
+    /// it in `spawn_blocking`, the same contract [`index_all`](Self::index_all)
+    /// states.
+    /// A caller's spelling of a path may not be the one the store keys on:
+    /// the root is canonicalized at [`open`](Self::open), and on macOS a
+    /// temporary directory reaches a tool as `/var/…` and this handle as
+    /// `/private/var/…`. The indexer strips the root prefix without
+    /// canonicalizing, so an unresolved spelling would be filed under its own
+    /// absolute path and every later query would miss it. Rebuilding each
+    /// path through the same resolution the queries use is what makes the two
+    /// halves agree.
+    pub fn register_paths(&self, changed: &[PathBuf]) -> Result<IndexStats, GraphError> {
+        let rooted: Vec<PathBuf> = changed
+            .iter()
+            .map(|path| self.inner.root.join(self.resolve_rel(path)))
+            .collect();
+        self.inner.apply_changes_blocking(&rooted)
+    }
+
+    /// Whether `file` is a node in the index right now.
+    ///
+    /// The question [`register_paths`](Self::register_paths) leaves open: a
+    /// pass reports what it parsed, and a file whose bytes were already
+    /// indexed is *skipped* rather than parsed, so the stats alone cannot
+    /// tell "already a node" from "never became one". A caller stating a
+    /// fact about the node has to ask for the node.
+    pub fn indexes_file(&self, file: &Path) -> Result<bool, GraphError> {
+        let rel = self.resolve_rel(file);
+        store::indexes_file(&self.inner.read_guard(), &rel)
+    }
+
     /// [`index_all`](Self::index_all) with a per-file progress callback
     /// (#3102): `progress` receives the running [`IndexStats`] after each
     /// file the pass visits, so a long build can be narrated while it

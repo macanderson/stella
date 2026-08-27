@@ -226,6 +226,7 @@ fn projected_rows(
                     read: source::read_size(call_id, view.following),
                     duration_ms: source::call_duration(call_id, view.following),
                     sub_agent_id: sub_agent_id.clone(),
+                    graph: source::graph_fact(call_id, view.following),
                     expanded,
                 },
                 width,

@@ -55,6 +55,7 @@ pub mod exec;
 pub mod foundry_gate;
 pub mod foundry_witness;
 pub mod gated;
+pub mod graph_fact;
 pub mod hook_bridge;
 pub mod hook_runner;
 pub mod input;
