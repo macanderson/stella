@@ -47,7 +47,7 @@ use crate::error::ManifestError;
 use crate::host_call::HostCall;
 use crate::manifest::{Participation, PluginManifest};
 use crate::oracle::OracleProcessSource;
-use crate::panel::PanelDenial;
+use crate::panel::{PanelDenial, PanelSurface};
 use crate::runtime::Runtime;
 use crate::wire::{WIRE_FIELDS, WrapperPoint, hook_disclosures_for};
 
@@ -548,6 +548,31 @@ fn panel_say(manifest: &PluginManifest) -> Vec<String> {
              sends glyphs, so it cannot repaint anything outside the rectangle it was given."
         ),
     ];
+
+    // Where, before what it gives up. A settings pane, a transcript block and a
+    // popup are three different things to find on your screen, and a reader who
+    // is shown only the limits has agreed to a rectangle without being told
+    // where it lands. `PanelSurface::all()`'s order rather than the manifest's,
+    // on the denial list's reasoning: two plugins asking for the same
+    // placements render the same lines whichever order their authors typed.
+    for surface in PanelSurface::all() {
+        if panel.draws(*surface) {
+            lines.push(format!("  - {}", surface.consent_sentence()));
+        }
+    }
+    if let Some(command) = panel.command_or(&manifest.name) {
+        lines.push(format!(
+            "  - answers to `/{}`, and to `/{name}:{}`",
+            one_line(command),
+            one_line(command)
+        ));
+    }
+    if let Some(title) = &panel.title {
+        lines.push(format!(
+            "  - captions its panel `{}`, beside the `{name}` label Stella writes",
+            one_line(title)
+        ));
+    }
 
     // Before the limits, and before any early return: a panel's process is the
     // thing a host starts, so a declaration accepting every limit still puts a

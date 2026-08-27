@@ -85,8 +85,8 @@ use crate::{
     HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest,
     HostCallResponse, HostStage, ObservedEvidence, PROTOCOL_VERSION, PanelDenial, PanelEmphasis,
     PanelFrame, PanelInk, PanelLease, PanelLine, PanelPaint, PanelPatch, PanelPoint, PanelRect,
-    PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelText, PublishedSignal, RecallArgs,
-    RecallFrame, RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName,
+    PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelSurface, PanelText, PublishedSignal,
+    RecallArgs, RecallFrame, RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName,
     TestBaseline, TestPlan, TestRunResult, TurnOutcome, VolatileContext, WrapperPoint,
     WrapperRequest, WrapperResponse,
 };
@@ -442,6 +442,9 @@ fn vocabulary() -> Result<Value, serde_json::Error> {
         // check and the consent rendering already read that list, so walking it
         // twice would be a second thing to keep exhaustive.
         "panel_denial": values(PanelDenial::all().to_vec())?,
+        // From `PanelSurface::all()`, for the same reason again: the manifest
+        // check and the consent rendering both walk that list already.
+        "panel_surface": values(PanelSurface::all().to_vec())?,
         "panel_ink": values(enumerate(PanelInk::Bg, panel_ink_after))?,
         "panel_emphasis": values(enumerate(PanelEmphasis::Bold, panel_emphasis_after))?,
     }))

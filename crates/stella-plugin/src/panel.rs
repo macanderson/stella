@@ -22,6 +22,9 @@
 //! The `[panel]` block is the consent half: [`PanelGrant`], whose `denies` list
 //! must name every [`PanelDenial`] before the manifest loads, so the two limits
 //! §12's handshake shows a human ride in the signed document they consent to.
+//! It also names its [`PanelSurface`]s — a settings pane, a transcript overlay
+//! and a `/name` popup are three separate asks, and a reader agreeing to one
+//! should not be agreeing to the other two (#5203).
 
 use std::collections::HashSet;
 
@@ -95,6 +98,81 @@ impl std::fmt::Display for PanelDenial {
     }
 }
 
+/// Where a panel draws.
+///
+/// Closed, on [`PanelDenial`]'s reasoning: the places Stella has to put a
+/// plugin's rectangle are Stella's, so an unknown word is a parse error rather
+/// than a placement that reads as absent.
+///
+/// The kind selects **placement and chrome, never protocol** — all three are
+/// leased a [`PanelRect`] and answer with a [`PanelFrame`], so a plugin that
+/// draws two of them draws them the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PanelSurface {
+    /// A pane inside the SETTINGS tab (`design/tui-v2/SPEC.md` §9.5), beside
+    /// the executions table and the agent editor.
+    Settings,
+    /// A host-bordered block in the transcript, labelled `◳ panel · <plugin>`
+    /// (§12). The placement §12 describes when it says "the host blits it into
+    /// the buffer".
+    Overlay,
+    /// A popup opened by typing the panel's slash name, centered and treated
+    /// like the command palette (§10).
+    Command,
+}
+
+impl PanelSurface {
+    /// Every surface a `[panel]` block may name, in the order a prompt prints
+    /// them.
+    ///
+    /// Exhaustive by construction for [`PanelDenial::all`]'s reason: the
+    /// `match` in [`PanelSurface::as_str`] stops compiling when a case is added
+    /// and left out here.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[Self::Settings, Self::Overlay, Self::Command]
+    }
+
+    /// The name this surface is written as in `[panel] surfaces`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Settings => "settings",
+            Self::Overlay => "overlay",
+            Self::Command => "command",
+        }
+    }
+
+    /// The sentence a human reads at install for this placement.
+    ///
+    /// Written as what appears **on their screen**, because that is what a
+    /// reader is agreeing to see — [`PanelDenial::consent_sentence`]'s rule
+    /// pointed at a grant rather than a refusal.
+    #[must_use]
+    pub fn consent_sentence(self) -> &'static str {
+        match self {
+            Self::Settings => "draws a pane inside your SETTINGS tab",
+            Self::Overlay => "draws a bordered block in your transcript",
+            Self::Command => "adds a popup you open by typing its name",
+        }
+    }
+}
+
+impl std::fmt::Display for PanelSurface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The longest a `[panel] title` may be, in `char`s. Past this the host's own
+/// label has nowhere to go.
+pub const MAX_PANEL_TITLE_CHARS: usize = 32;
+
+/// The longest a `[panel] command` may be, in `char`s. A slash name a person
+/// types, so the bound is what stays typable rather than what fits.
+pub const MAX_PANEL_COMMAND_CHARS: usize = 32;
+
 /// The `[panel]` block — a plugin's declaration that it draws a panel, and of
 /// the limits it accepts in order to be allowed one.
 ///
@@ -103,16 +181,72 @@ impl std::fmt::Display for PanelDenial {
 /// `[panel]` block the host leases no rectangle, so there is nothing for a
 /// frame to be checked against.
 ///
-/// # There is no title field, and that absence is the anti-spoofing rule
+/// # The title is a caption, never an identity
 ///
-/// §12 gives the border and the title to the host, labelled `◳ panel ·
-/// <plugin>`. A `title` key here would let a panel call itself `GATES` or
-/// `stella*`, which is the one thing chrome a user trusts must not be able to
-/// say about itself. The host writes [`crate::PluginManifest::name`] into that
-/// label, so the label is the identity a human already consented to.
+/// §12 gives the border to the host, labelled `◳ panel · <plugin>`, and that
+/// label is written from [`crate::PluginManifest::name`] — the identity a human
+/// already consented to. [`PanelGrant::title`] is printed **beside** it and
+/// never in place of it, so a panel captioning itself `stella*` is a panel
+/// captioned `◳ panel · gates · stella*`, which claims nothing. That ordering
+/// is the whole anti-spoofing rule, and it is the host's to keep (#5055): this
+/// block cannot enforce a layout it does not draw.
+///
+/// What this block does enforce is that the caption is drawable at all —
+/// single-line, bounded, and free of control characters, on [`PanelText`]'s
+/// reasoning. A title is glyphs the host prints into its own chrome, so an
+/// escape sequence in one would be Stella emitting a plugin's bytes under its
+/// own border.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PanelGrant {
+    /// Where this panel draws, and every place it draws.
+    ///
+    /// Required and non-empty whenever the block is present: a panel naming no
+    /// surface draws nowhere, which is not a narrower panel but an unfinished
+    /// declaration ([`ManifestError::PanelNoSurface`]). A repeated entry is an
+    /// editing mistake rather than an emphasis, as `[panel] denies`'s is
+    /// ([`ManifestError::PanelDuplicateSurface`]).
+    ///
+    /// A set rather than one kind because the three placements are independent
+    /// — a plugin may reasonably want a settings pane and a `/name` popup and
+    /// no transcript block — and because the consent prompt reads better as a
+    /// list of what appears on screen than as three separate blocks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surfaces: Vec<PanelSurface>,
+    /// The caption the host prints beside its own label — see the type docs on
+    /// why that is a caption and not an identity.
+    ///
+    /// **Absent means the plugin's name**, so a block that declares nothing
+    /// still labels its panel with something a reader recognises.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The bare slash name this panel's popup opens under, without the leading
+    /// `/`.
+    ///
+    /// **Absent means the plugin's id**, which is the product rule: a plugin is
+    /// launched by its own name (`/hello`), and the namespaced
+    /// `/plugin:hello` form resolves as an always-available alias.
+    ///
+    /// Only meaningful alongside [`PanelSurface::Command`]. Set without it, it
+    /// is a promise the interface will never keep — there is no popup for the
+    /// name to open — so it is [`ManifestError::PanelCommandWithoutSurface`]
+    /// rather than a key a reader is left to wonder about.
+    ///
+    /// # This crate checks the shape and not the collision
+    ///
+    /// Validated here as a slug: lowercase ASCII opening character, then
+    /// lowercase, digits and `-`, non-empty and bounded by
+    /// [`MAX_PANEL_COMMAND_CHARS`]. Whether the name collides with a built-in
+    /// command is **not** asked here and cannot be: the built-in table is
+    /// `stella-cli`'s `DECK_BUILTINS`, and this crate is a near-leaf that takes
+    /// `stella-protocol` and nothing else (AGENTS.md § "When a new crate is
+    /// justified" is the same argument one boundary over). The host owns that
+    /// check, and it must **refuse visibly** — naming the plugin and the name it
+    /// wanted — rather than dropping the row in silence the way a colliding
+    /// `.stella/commands/*.toml` entry is dropped today. A signed manifest a
+    /// human read must not contain a name that quietly does nothing (#5055).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     /// The limits this panel accepts, which must be every [`PanelDenial`].
     ///
     /// Spelled in the block instead of assumed, because the manifest is the
@@ -147,6 +281,44 @@ impl PanelGrant {
         self.denies.contains(&denial)
     }
 
+    /// Whether this panel draws on `surface`.
+    #[must_use]
+    pub fn draws(&self, surface: PanelSurface) -> bool {
+        self.surfaces.contains(&surface)
+    }
+
+    /// The first surface this grant names twice, in declaration order, or
+    /// `None` when every entry is distinct.
+    #[must_use]
+    pub fn duplicate_surface(&self) -> Option<PanelSurface> {
+        let mut seen = HashSet::with_capacity(self.surfaces.len());
+        self.surfaces
+            .iter()
+            .copied()
+            .find(|surface| !seen.insert(*surface))
+    }
+
+    /// The caption the host prints beside its own label, resolving the default.
+    ///
+    /// `plugin_name` is [`crate::PluginManifest::name`], which is what an
+    /// undeclared title means.
+    #[must_use]
+    pub fn title_or<'a>(&'a self, plugin_name: &'a str) -> &'a str {
+        self.title.as_deref().unwrap_or(plugin_name)
+    }
+
+    /// The bare slash name this panel's popup opens under, resolving the
+    /// default, or `None` when this panel has no popup at all.
+    ///
+    /// `plugin_id` is what an undeclared name means. `None` for a panel that
+    /// does not draw on [`PanelSurface::Command`], so a caller cannot register
+    /// a name for a popup that does not exist.
+    #[must_use]
+    pub fn command_or<'a>(&'a self, plugin_id: &'a str) -> Option<&'a str> {
+        self.draws(PanelSurface::Command)
+            .then(|| self.command.as_deref().unwrap_or(plugin_id))
+    }
+
     /// The first denial this grant fails to name, in [`PanelDenial::all`]
     /// order, or `None` when it names all of them.
     ///
@@ -170,17 +342,46 @@ impl PanelGrant {
     ///
     /// Two rules are the ones every other block has — a repeated entry is an
     /// editing mistake rather than an emphasis, and a declared process is held
-    /// to [`Runtime`]'s rules under its own block name. The third belongs to
-    /// this block alone: the denial set is Stella's, so a block may not name a
+    /// to [`Runtime`]'s rules under its own block name. The rest belong to this
+    /// block alone: the denial set is Stella's, so a block may not name a
     /// subset of it and call the result a narrower panel
-    /// (`design/tui-v2/SPEC.md` §12's handshake).
+    /// (`design/tui-v2/SPEC.md` §12's handshake); a panel names at least one
+    /// place it draws; and a caption or a slash name is checked for the shape
+    /// the host will have to render or register (#5203).
+    ///
+    /// **Where it draws is asked before what it gives up**, because a block
+    /// naming no surface is unfinished rather than over-permissive, and telling
+    /// its author about a missing denial first would send them to fix the
+    /// second-most-wrong thing.
     ///
     /// # Errors
     ///
+    /// [`ManifestError::PanelNoSurface`] for a panel that draws nowhere,
+    /// [`ManifestError::PanelDuplicateSurface`] for a repeated placement,
+    /// [`ManifestError::PanelCommandWithoutSurface`] for a slash name with no
+    /// popup to open, the `PanelTitle*` and `PanelCommand*` cases for a
+    /// caption or name the host could not render,
     /// [`ManifestError::DuplicatePanelDenial`] for a repeated limit,
     /// [`ManifestError::PanelDenialMissing`] for one the block never names, and
     /// whatever `[panel.process]` refuses.
     pub fn validate(&self) -> Result<(), ManifestError> {
+        if self.surfaces.is_empty() {
+            return Err(ManifestError::PanelNoSurface);
+        }
+        if let Some(surface) = self.duplicate_surface() {
+            return Err(ManifestError::PanelDuplicateSurface { surface });
+        }
+        if let Some(title) = &self.title {
+            validate_panel_title(title)?;
+        }
+        if let Some(command) = &self.command {
+            if !self.draws(PanelSurface::Command) {
+                return Err(ManifestError::PanelCommandWithoutSurface {
+                    command: command.clone(),
+                });
+            }
+            validate_panel_command(command)?;
+        }
         let mut seen = HashSet::with_capacity(self.denies.len());
         for denial in &self.denies {
             if !seen.insert(*denial) {
@@ -195,6 +396,60 @@ impl PanelGrant {
         }
         Ok(())
     }
+}
+
+/// Whether `title` is a caption the host can print into its own chrome.
+///
+/// Drawability is asked through [`PanelText`] rather than restated, so the
+/// caption and the panel's own glyphs refuse the same bytes for the same
+/// reason and a widened refusal there reaches here for free.
+fn validate_panel_title(title: &str) -> Result<(), ManifestError> {
+    PanelText::new(title).map_err(|source| ManifestError::PanelTitleNotDrawable { source })?;
+    if title.trim().is_empty() {
+        return Err(ManifestError::PanelTitleBlank);
+    }
+    let chars = title.chars().count();
+    if chars > MAX_PANEL_TITLE_CHARS {
+        return Err(ManifestError::PanelTitleTooLong {
+            chars,
+            max: MAX_PANEL_TITLE_CHARS,
+        });
+    }
+    Ok(())
+}
+
+/// Whether `command` is a slash name a person can type and a host can register.
+///
+/// The shape check, and not the collision check: this crate cannot see the
+/// built-in command table (see [`PanelGrant::command`]).
+fn validate_panel_command(command: &str) -> Result<(), ManifestError> {
+    if command.is_empty() {
+        return Err(ManifestError::PanelCommandBlank);
+    }
+    let chars = command.chars().count();
+    if chars > MAX_PANEL_COMMAND_CHARS {
+        return Err(ManifestError::PanelCommandTooLong {
+            chars,
+            max: MAX_PANEL_COMMAND_CHARS,
+        });
+    }
+    // Its own refusal, ahead of the general one, because the alias makes this
+    // the mistake an author is most likely to make on purpose: `/plugin:hello`
+    // is a real way to reach the panel, so a reader can reasonably think the
+    // namespace is theirs to write. It is derived, never declared.
+    if command.contains(':') {
+        return Err(ManifestError::PanelCommandCarriesNamespace {
+            command: command.to_string(),
+        });
+    }
+    for (index, found) in command.chars().enumerate() {
+        let opens = found.is_ascii_lowercase();
+        let continues = index > 0 && (found.is_ascii_digit() || found == '-');
+        if !opens && !continues {
+            return Err(ManifestError::PanelCommandNotASlug { found, index });
+        }
+    }
+    Ok(())
 }
 
 /// The one point a panel answers.
@@ -866,19 +1121,96 @@ mod tests {
         );
     }
 
+    /// A grant that passes every rule, for a test that is about one of them.
+    fn grant(surfaces: Vec<PanelSurface>) -> PanelGrant {
+        PanelGrant {
+            surfaces,
+            title: None,
+            command: None,
+            denies: PanelDenial::all().to_vec(),
+            process: None,
+        }
+    }
+
     #[test]
     fn a_grant_reports_the_first_denial_it_fails_to_name() {
         let partial = PanelGrant {
             denies: vec![PanelDenial::WriteOutsideSandbox],
-            process: None,
+            ..grant(vec![PanelSurface::Overlay])
         };
         assert_eq!(partial.missing_denial(), Some(PanelDenial::Network));
-        let complete = PanelGrant {
-            denies: PanelDenial::all().to_vec(),
-            process: None,
-        };
+        let complete = grant(vec![PanelSurface::Overlay]);
         assert_eq!(complete.missing_denial(), None);
         assert!(complete.denies(PanelDenial::Network));
+    }
+
+    #[test]
+    fn every_surface_has_a_distinct_wire_name_and_a_sentence() {
+        let mut names: Vec<&str> = PanelSurface::all()
+            .iter()
+            .map(|surface| surface.as_str())
+            .collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "two surfaces share a wire name");
+        for surface in PanelSurface::all() {
+            assert!(!surface.consent_sentence().trim().is_empty(), "{surface}");
+            let json = serde_json::to_string(surface).expect("a surface serializes");
+            let back: PanelSurface = serde_json::from_str(&json).expect("and reads back");
+            assert_eq!(back, *surface);
+        }
+        assert!(
+            serde_json::from_str::<PanelSurface>("\"status_bar\"").is_err(),
+            "the placements are Stella's, so an unknown one is a refusal"
+        );
+    }
+
+    #[test]
+    fn a_panel_that_draws_nowhere_is_refused() {
+        assert!(matches!(
+            grant(Vec::new()).validate(),
+            Err(ManifestError::PanelNoSurface)
+        ));
+        assert!(matches!(
+            grant(vec![PanelSurface::Settings, PanelSurface::Settings]).validate(),
+            Err(ManifestError::PanelDuplicateSurface {
+                surface: PanelSurface::Settings
+            })
+        ));
+        assert!(grant(vec![PanelSurface::Settings]).validate().is_ok());
+    }
+
+    #[test]
+    fn a_slash_name_resolves_only_for_a_panel_that_has_a_popup() {
+        let popup = PanelGrant {
+            command: Some("hello".to_string()),
+            ..grant(vec![PanelSurface::Command])
+        };
+        assert_eq!(popup.command_or("gates"), Some("hello"));
+        // Absent means the plugin's id, which is the product rule.
+        assert_eq!(
+            grant(vec![PanelSurface::Command]).command_or("gates"),
+            Some("gates")
+        );
+        // And a panel with no popup registers no name, declared or defaulted.
+        assert_eq!(
+            grant(vec![PanelSurface::Settings]).command_or("gates"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_caption_falls_back_to_the_name_a_human_consented_to() {
+        assert_eq!(
+            grant(vec![PanelSurface::Overlay]).title_or("gates"),
+            "gates"
+        );
+        let captioned = PanelGrant {
+            title: Some("Gate status".to_string()),
+            ..grant(vec![PanelSurface::Overlay])
+        };
+        assert_eq!(captioned.title_or("gates"), "Gate status");
     }
 
     #[test]

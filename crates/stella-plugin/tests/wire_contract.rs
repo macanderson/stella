@@ -31,11 +31,11 @@ use stella_plugin::{
     FanoutCandidate, FlipObservation, HostCall, HostCallOk, HostCallResponse, HostStage,
     ObservedEvidence, Outcome, PROTOCOL_VERSION, PanelDenial, PanelEmphasis, PanelFrame, PanelInk,
     PanelLease, PanelLine, PanelOverflow, PanelPaint, PanelPatch, PanelPoint, PanelRect,
-    PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelText, PluginManifest, PublishedSignal,
-    RecallResult, RoundState, Signal, SignalValue, StageName, StopReason, TamperFinding,
-    TestBaseline, TestPlan, TestRunResult, TurnOutcome, UndecidedReason, UnmetBecause,
-    UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint, WrapperRequest,
-    WrapperResponse,
+    PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelSurface, PanelText, PluginManifest,
+    PublishedSignal, RecallResult, RoundState, Signal, SignalValue, StageName, StopReason,
+    TamperFinding, TestBaseline, TestPlan, TestRunResult, TurnOutcome, UndecidedReason,
+    UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext, WrapperPoint,
+    WrapperRequest, WrapperResponse,
 };
 use stella_protocol::CandidateHandle;
 
@@ -1141,6 +1141,29 @@ fn every_panel_vocabulary_is_pinned_on_both_sides() {
         "the denial set is closed, and its order is the one a prompt prints"
     );
 
+    for (surface, wire) in [
+        (PanelSurface::Settings, "settings"),
+        (PanelSurface::Overlay, "overlay"),
+        (PanelSurface::Command, "command"),
+    ] {
+        assert_eq!(serde_json::to_value(surface).unwrap(), wire);
+        assert_eq!(surface.to_string(), wire);
+        round_trip(&surface);
+    }
+    assert_eq!(
+        PanelSurface::all(),
+        &[
+            PanelSurface::Settings,
+            PanelSurface::Overlay,
+            PanelSurface::Command
+        ],
+        "the placements are closed, and their order is the one a prompt prints"
+    );
+    assert!(
+        serde_json::from_str::<PanelSurface>("\"status_bar\"").is_err(),
+        "where a panel may draw is Stella's to decide, so an unknown placement is a refusal"
+    );
+
     // The spellings are `design/tui-v2/SPEC.md` §3.1's own token names, so a
     // panel asks for the same colour the palette table publishes and a reader
     // crosses between the two documents without a mapping.
@@ -1189,9 +1212,12 @@ fn every_panel_vocabulary_is_pinned_on_both_sides() {
 }
 
 /// The panel tables refuse a key they do not know, as every other table on this
-/// wire does — and one of those keys is the title, whose absence is the
-/// anti-spoofing rule: the host writes the label from the name a human
-/// consented to, so a plugin cannot call itself `GATES`.
+/// wire does.
+///
+/// A **frame** still may not caption itself: the caption is a manifest
+/// declaration a human consented to at install, so a per-tick title would let a
+/// panel relabel itself after the fact, which is the spoof the block's caption
+/// rule exists to prevent (#5203).
 #[test]
 fn a_panel_may_not_name_itself_or_carry_a_key_the_contract_lacks() {
     let err = serde_json::from_str::<PanelResponse>(
@@ -1202,11 +1228,11 @@ fn a_panel_may_not_name_itself_or_carry_a_key_the_contract_lacks() {
     assert!(err.to_string().contains("title"), "got {err}");
 
     let err = PluginManifest::from_toml_str(
-        "name = \"gates\"\n[panel]\ntitle = \"GATES\"\ndenies = [\"network\", \
-         \"write-outside-sandbox\"]",
+        "name = \"gates\"\n[panel]\nsurfaces = [\"overlay\"]\nborder = \"double\"\n\
+         denies = [\"network\", \"write-outside-sandbox\"]",
     )
-    .expect_err("a [panel] block does not name the panel either");
-    assert!(err.to_string().contains("title"), "got {err}");
+    .expect_err("the chrome is the host's, so a [panel] block does not style it");
+    assert!(err.to_string().contains("border"), "got {err}");
 
     let err = serde_json::from_str::<PanelRequest>(
         "{\"point\":\"frame\",\"body\":{\"protocol_version\":1,\"panel\":\"gates\",\
@@ -1222,7 +1248,9 @@ fn a_panel_may_not_name_itself_or_carry_a_key_the_contract_lacks() {
 #[test]
 fn a_panel_block_must_name_every_denial_it_accepts() {
     let manifest = |denies: &str| {
-        PluginManifest::from_toml_str(&format!("name = \"gates\"\n[panel]\ndenies = [{denies}]"))
+        PluginManifest::from_toml_str(&format!(
+            "name = \"gates\"\n[panel]\nsurfaces = [\"overlay\"]\ndenies = [{denies}]"
+        ))
     };
 
     let loaded = manifest("\"network\", \"write-outside-sandbox\"").expect("loads");
@@ -1264,5 +1292,125 @@ fn a_panel_block_must_name_every_denial_it_accepts() {
             .panel
             .is_none(),
         "no [panel] block is no panel, and never an empty one"
+    );
+}
+
+/// **The witness for #5203.** A `[panel]` block says where it draws, and a
+/// block that names nowhere, names one place twice, or promises a `/name` it
+/// has no popup for is refused by the rule it broke.
+#[test]
+fn a_panel_block_says_where_it_draws() {
+    let manifest = |block: &str| {
+        PluginManifest::from_toml_str(&format!(
+            "name = \"gates\"\n[panel]\n{block}\ndenies = [\"network\", \
+             \"write-outside-sandbox\"]"
+        ))
+    };
+
+    let loaded = manifest("surfaces = [\"settings\", \"command\"]").expect("loads");
+    let panel = loaded.panel.expect("the block parsed");
+    assert!(panel.draws(PanelSurface::Settings));
+    assert!(panel.draws(PanelSurface::Command));
+    assert!(!panel.draws(PanelSurface::Overlay));
+    // Undeclared, so both fall back to the identity a human consented to.
+    assert_eq!(panel.title_or(&loaded.name), "gates");
+    assert_eq!(panel.command_or(&loaded.name), Some("gates"));
+
+    assert!(matches!(
+        manifest("surfaces = []").expect_err("a panel that draws nowhere"),
+        stella_plugin::ManifestError::PanelNoSurface
+    ));
+    assert!(matches!(
+        manifest("").expect_err("an absent list is an empty one"),
+        stella_plugin::ManifestError::PanelNoSurface
+    ));
+    assert!(matches!(
+        manifest("surfaces = [\"overlay\", \"overlay\"]")
+            .expect_err("a repeated placement is an editing mistake"),
+        stella_plugin::ManifestError::PanelDuplicateSurface {
+            surface: PanelSurface::Overlay
+        }
+    ));
+    let err = manifest("surfaces = [\"status_bar\"]").expect_err("the placements are Stella's");
+    assert!(err.to_string().contains("status_bar"), "got {err}");
+
+    // A slash name with no popup to open is a promise the interface will never
+    // keep, so it is refused rather than left as a key that quietly does
+    // nothing.
+    assert!(matches!(
+        manifest("surfaces = [\"settings\"]\ncommand = \"hello\"")
+            .expect_err("a name with nothing to open"),
+        stella_plugin::ManifestError::PanelCommandWithoutSurface { command } if command == "hello"
+    ));
+}
+
+/// A caption and a slash name are rendered by the host and typed by a person,
+/// so the block is held to the shape each of those needs — and to nothing
+/// beyond it, because the reserved-name check is `stella-cli`'s (#5055).
+#[test]
+fn a_panel_caption_and_slash_name_are_held_to_their_shapes() {
+    let manifest = |block: &str| {
+        PluginManifest::from_toml_str(&format!(
+            "name = \"gates\"\n[panel]\nsurfaces = [\"command\"]\n{block}\ndenies = \
+             [\"network\", \"write-outside-sandbox\"]"
+        ))
+    };
+
+    let loaded = manifest("title = \"Gate status\"\ncommand = \"gate-status\"").expect("loads");
+    let panel = loaded.panel.expect("the block parsed");
+    assert_eq!(panel.title_or(&loaded.name), "Gate status");
+    assert_eq!(panel.command_or(&loaded.name), Some("gate-status"));
+
+    // The caption is glyphs Stella prints inside its own border, so it refuses
+    // what a panel's own glyphs refuse — through the same constructor.
+    assert!(matches!(
+        manifest("title = \"\\u001b[2JGATES\"").expect_err("an escape sequence in the chrome"),
+        stella_plugin::ManifestError::PanelTitleNotDrawable { .. }
+    ));
+    assert!(matches!(
+        manifest("title = \"   \"").expect_err("a caption of nothing"),
+        stella_plugin::ManifestError::PanelTitleBlank
+    ));
+    assert!(matches!(
+        manifest(&format!("title = \"{}\"", "x".repeat(33)))
+            .expect_err("a caption past the chrome"),
+        stella_plugin::ManifestError::PanelTitleTooLong { chars: 33, max: 32 }
+    ));
+
+    // The namespaced form is real, and it is derived rather than declared —
+    // its own refusal, because it is the mistake an author makes on purpose.
+    assert!(matches!(
+        manifest("command = \"gates:status\"").expect_err("the namespace is Stella's to add"),
+        stella_plugin::ManifestError::PanelCommandCarriesNamespace { command }
+            if command == "gates:status"
+    ));
+    for (name, found, index) in [
+        ("Gates", 'G', 0usize),
+        ("-gates", '-', 0),
+        ("2gates", '2', 0),
+        ("gate status", ' ', 4),
+        ("gate_status", '_', 4),
+        ("/gates", '/', 0),
+    ] {
+        assert!(
+            matches!(
+                manifest(&format!("command = \"{name}\"")).expect_err("not a typable slug"),
+                stella_plugin::ManifestError::PanelCommandNotASlug { found: f, index: i }
+                    if f == found && i == index
+            ),
+            "{name:?} loaded, or was refused by the wrong rule"
+        );
+    }
+    assert!(matches!(
+        manifest("command = \"\"").expect_err("a popup with no name"),
+        stella_plugin::ManifestError::PanelCommandBlank
+    ));
+
+    // And the shape check stops at the shape: `stella-plugin` is a near-leaf
+    // that cannot see `DECK_BUILTINS`, so a name colliding with a built-in
+    // loads here and is the host's to refuse out loud.
+    assert!(
+        manifest("command = \"model\"").is_ok(),
+        "the reserved-name check belongs to the host, not to the contract crate"
     );
 }

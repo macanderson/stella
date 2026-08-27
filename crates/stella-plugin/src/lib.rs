@@ -169,9 +169,10 @@ pub use package::{
     RecordContribution, RecordEnforcement, SkillContribution, ToolContribution,
 };
 pub use panel::{
-    PanelDenial, PanelEmphasis, PanelFrame, PanelGrant, PanelInk, PanelLease, PanelLine,
-    PanelOverflow, PanelPaint, PanelPatch, PanelPoint, PanelRect, PanelRequest, PanelResponse,
-    PanelSpan, PanelStyle, PanelText, PanelTextError,
+    MAX_PANEL_COMMAND_CHARS, MAX_PANEL_TITLE_CHARS, PanelDenial, PanelEmphasis, PanelFrame,
+    PanelGrant, PanelInk, PanelLease, PanelLine, PanelOverflow, PanelPaint, PanelPatch, PanelPoint,
+    PanelRect, PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelSurface, PanelText,
+    PanelTextError,
 };
 pub use program::{SignalValues, StageProgram};
 pub use progressive::{ProgressiveResolver, StageDecision};

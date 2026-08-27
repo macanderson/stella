@@ -711,6 +711,11 @@
     "panel_point": [
       "frame"
     ],
+    "panel_surface": [
+      "settings",
+      "overlay",
+      "command"
+    ],
     "published_signal": [
       {
         "signal": "test-command",
