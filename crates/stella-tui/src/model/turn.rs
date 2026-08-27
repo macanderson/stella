@@ -385,8 +385,8 @@ pub struct Hud {
     /// and one field cannot answer both once the vocabulary is open. `stage` is
     /// "what is happening right now", which is what the statline says out loud.
     /// This is "how far through its own shape the turn has got", which is what
-    /// the three-segment progress bar draws — and the bar has only the host's
-    /// three phases to draw with.
+    /// [`crate::views::pipeline`]'s three-segment bar draws — and the bar has
+    /// only the host's three phases to draw with.
     ///
     /// Keeping it is what stops a contributed stage reading as a regression: a
     /// plugin stage arriving after `execute` leaves this at `Execute`, so the

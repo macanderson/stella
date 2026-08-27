@@ -222,6 +222,128 @@ pub fn consent_text(manifest: &PluginManifest) -> String {
     lines.join("\n")
 }
 
+/// Render SPEC 12.4's panel handshake: the document a person reads before a
+/// plugin is allowed to draw on their screen, and the `[a]llow [d]eny` ask
+/// underneath it.
+///
+/// `None` for a manifest with no `[panel]` block — a handshake about a plugin
+/// that draws nothing is a document about nothing, and rendering an empty one
+/// would teach a reader that the block is decorative.
+///
+/// # Why this is a second document rather than a section of [`consent_text`]
+///
+/// Installing and drawing are different grants, decided at different moments.
+/// [`consent_text`] answers "may this package exist on my machine, with the
+/// tools, skills and hooks it declares". A panel is the plugin becoming
+/// something the operator *looks at and trusts*, which SPEC 12 opens by
+/// calling the place the strongest limits belong. So the panel grant is
+/// recorded separately, can be withdrawn without uninstalling, and can be
+/// asked for a package that arrived by `git clone` and was never installed at
+/// all — which is a thing a section of `consent_text` could not do, since
+/// nothing ever rendered one for that package.
+///
+/// # The signature is the host's fact, not the manifest's
+///
+/// `signature` is the digest of the `plugin.toml` bytes this manifest was
+/// parsed from, supplied by the caller that read them. This crate performs no
+/// I/O and hashes nothing: computing it here would mean a second workspace
+/// dependency for a near-leaf crate — one this crate's manifest asks to have
+/// argued afresh rather than cited — and the digest a grant is keyed on has to
+/// be the one the host re-derives on the next load, not one this function
+/// recomputed from a copy.
+///
+/// # There is no caption here either
+///
+/// Every string below is either Stella's own or a manifest field flattened by
+/// `one_line`. SPEC 12.3's rule is that a plugin cannot name the chrome a
+/// reader trusts, and a consent document is chrome a reader trusts more than
+/// most: a plugin-authored heading here would be the same breach one surface
+/// earlier.
+#[must_use]
+pub fn panel_handshake_text(manifest: &PluginManifest, signature: &str) -> Option<String> {
+    let panel = manifest.panel.as_ref()?;
+    let name = one_line(&manifest.name);
+    let mut lines = vec![
+        format!("◳ panel handshake · {name}"),
+        format!(
+            "`{name}` is asking to draw part of your screen. Stella draws the border and the \
+             label `◳ panel · {name}` around it and writes every escape sequence your terminal \
+             ever sees — a panel sends glyphs, and supplies no title of its own."
+        ),
+        String::new(),
+        // First, because it is what the answer is *about*: a grant covers these
+        // exact bytes, so a manifest that widens itself afterwards is a
+        // different declaration and has to be asked again.
+        format!("Manifest signature: {}", one_line(signature)),
+        "  This grant covers exactly these manifest bytes. Change them and the panel is \
+         withheld until it is granted again."
+            .into(),
+    ];
+
+    lines.push(String::new());
+    lines.extend(capability_grant(manifest));
+
+    lines.push(String::new());
+    lines.push("Limits this panel accepts:".into());
+    for denial in PanelDenial::all() {
+        lines.push(format!(
+            "  - {}",
+            if panel.denies(*denial) {
+                denial.consent_sentence().to_string()
+            } else {
+                // Unreachable through `PluginManifest::from_toml_str`, which
+                // refuses a block naming fewer than all of them
+                // (`PanelGrant::missing_denial`). Rendered rather than skipped
+                // for a grant a host built in Rust: a limit missing from the
+                // document reads as a limit that is absent, which is the
+                // failure `PanelDenial`'s closure exists to prevent.
+                format!("does NOT accept the limit `{}`", denial.as_str())
+            }
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push("Where it draws:".into());
+    // `PanelSurface::all()`'s order rather than the manifest's, on the denial
+    // list's reasoning: two plugins asking for the same placements render the
+    // same lines whichever order their authors typed.
+    for surface in PanelSurface::all() {
+        if panel.draws(*surface) {
+            lines.push(format!("  - {}", surface.consent_sentence()));
+        }
+    }
+    if let Some(command) = panel.command_or(&manifest.name) {
+        lines.push(format!(
+            "  - answers to `/{}`, and to `/{name}:{}`",
+            one_line(command),
+            one_line(command)
+        ));
+    }
+
+    // Last of the declaration, because it is the sentence that turns everything
+    // above into a program running on somebody's machine.
+    match &panel.process {
+        Some(process) => lines.extend(process_say(process)),
+        None => lines.push(
+            "  - is not started by Stella: this declares what such a panel accepts, and \
+             nothing here runs a program"
+                .into(),
+        ),
+    }
+
+    lines.push(String::new());
+    lines.push(PANEL_GRANT_ASK.into());
+    lines.push(
+        "Nothing is leased a rectangle, and no panel process is started, until you allow it."
+            .into(),
+    );
+    Some(lines.join("\n"))
+}
+
+/// The choice SPEC 12.4 puts under the handshake, so a host's prompt and a
+/// deck's notice cannot spell it two ways.
+pub const PANEL_GRANT_ASK: &str = "[a]llow  [d]eny";
+
 /// The "what it does inside your turn" half: the grade, and every power the
 /// grade unlocked that this manifest actually declared.
 fn loop_say(manifest: &PluginManifest) -> Vec<String> {

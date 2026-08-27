@@ -243,6 +243,41 @@ so its narrow-screen rules live in that crate — the gutters stay declared
 widths, they are just smaller ones, and under 560px the role gutter stops
 being a column so the text gets the full line.
 
+### …and it uses a wide screen rather than stretching to fit one
+
+Above 1080px the picker is a sticky rail beside the replay instead of a
+full-width list above it. One column is right for a phone and wrong for
+1400px: the list took the whole width for rows of one line each, and the
+replay it controls started below the fold, so choosing a session meant
+scrolling to find out what the choice did. As a rail, a click changes the pane
+already on screen — and the click-scroll that a stacked layout needs is gated
+on the same breakpoint, because scrolling to something already in view is a
+page that moves for no reason.
+
+The four panels under the timeline are not a third column. They are read after
+the turns rather than beside them, and a 380px column of tables would be the
+horizontal-scroll problem again pointing the other way.
+
+### A table that scrolls sideways says so
+
+Ten containers on this page overflow at phone width. They now carry the
+scroll-shadow pair — two gradients painted `local`, which travel with the
+content and cover the shadow at an edge that has been reached, over two
+painted `scroll`, which stay put and show while there is more out there. It is
+pure CSS on the scroller itself, so every table gets it at once and there is no
+observer to keep in step with a re-render. The shade is `--hairline-strong`
+rather than a black alpha, which would be invisible on this ground.
+
+Under 760px the first cell of each row also sticks, capped at `45vw`: swiping
+must not cost the reader the cell that says which row they are on, and an
+uncapped identity column ate the screen the swipe was for — a full-width model
+slug left four clipped digits of the columns it was meant to reveal.
+
+Two lists are cards rather than tables, and the rule for which is whether a row
+is something you *open*: the sessions list, the turn timeline, and the
+Overview's executions all open a turn, so they read as cards with a clock. A
+table of (server, tool, calls) is genuinely tabular and stays one.
+
 ### Secrets never reach the browser
 
 `settings.json` and `mcp.toml` carry credentials, and both are served. `redact`
