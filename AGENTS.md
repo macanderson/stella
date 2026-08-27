@@ -114,6 +114,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + deck-paths (the decks' code-map citations)
                          #   + css-vars (every var() in a token sheet resolves)
                          #   + reserved-paths (no Windows device name in a path)
+                         #   + rendering-facts (no v2 rendering draws a
+                         #     fact SPEC.md retired)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)

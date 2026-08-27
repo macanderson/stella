@@ -150,6 +150,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-deck-paths.sh
 
+      - name: The rendering-facts guard can still fail
+        run: ./scripts/test-rendering-facts.sh
+
       - name: diagnostic-code registry failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-diagnostic-codes.sh

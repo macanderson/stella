@@ -45,7 +45,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     bench-suites wire-paths \
                     tokens hue-separation contrast light-clamp transcript-surfaces prose \
                     line-citations \
-                    deck-fit-all-test deck-paths css-vars reserved-paths
+                    deck-fit-all-test deck-paths css-vars reserved-paths rendering-facts
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -519,6 +519,14 @@ css-vars: ## Assert every var() in a token sheet resolves inside it (#4122)
 .PHONY: reserved-paths
 reserved-paths: ## Assert no tracked path uses a Windows device name, which makes the repo unclonable there (#3550)
 	@./scripts/check-reserved-paths.sh
+
+.PHONY: rendering-facts
+rendering-facts: ## Assert no v2 rendering draws a fact design/tui-v2/SPEC.md retired (#5291)
+	@./scripts/check-rendering-facts.sh
+
+.PHONY: rendering-facts-test
+rendering-facts-test: ## Test the rendering-facts guard's directions (hermetic; not part of `gate`)
+	@./scripts/test-rendering-facts.sh
 
 .PHONY: dead-code-allows
 dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)

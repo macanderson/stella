@@ -123,6 +123,8 @@ on:
       - "scripts/contrast-baseline.txt"
       - "scripts/light-clamp-baseline.txt"
       - "design/tokens/**"
+      - "design/tui-v2/renderings/**"
+      - "scripts/check-rendering-facts.sh"
       - ".github/workflows/docs-guards.yml"
   push:
     branches: [main]
@@ -154,6 +156,8 @@ on:
       - "scripts/contrast-baseline.txt"
       - "scripts/light-clamp-baseline.txt"
       - "design/tokens/**"
+      - "design/tui-v2/renderings/**"
+      - "scripts/check-rendering-facts.sh"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
 
@@ -272,6 +276,9 @@ jobs:
       - name: nothing outside docs/design cites docs/design
         if: ${{ !cancelled() }}
         run: bash scripts/check-design-refs.sh
+
+      - name: No v2 rendering draws a fact the SPEC retired
+        run: ./scripts/check-rendering-facts.sh
 
       # The brand kit's two cross-file strings: the install line against
       # README.md, and now the tagline against the kit (#3631). `--check`
