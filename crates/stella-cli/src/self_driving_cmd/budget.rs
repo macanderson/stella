@@ -41,10 +41,30 @@
 //! (`agent::summary::print_json_summary`), for a completed turn and an aborted
 //! one alike. That number is the child's own accounting of what it spent, which
 //! is the same accounting `store.db` records — not a re-derivation from token
-//! counts here. A summary this build cannot parse contributes nothing, and that
-//! is the unsafe direction: an unparseable summary under-counts the run's
-//! spend, so the ceiling is a ceiling on *measured* spend. What bounds the gap
-//! is the child's own per-turn ceiling, which is still handed down.
+//! counts here.
+//!
+//! # A turn that cannot report is charged its ceiling, not nothing
+//!
+//! An unparseable summary used to contribute `0.0`, and this module argued the
+//! gap was bounded by "the child's own per-turn ceiling, which is still handed
+//! down". That bounds one turn and not a run: charging nothing leaves
+//! [`RunBudget::remaining`] where it was, so the next turn is handed the same
+//! full remainder, and N unmeasurable turns are authorised N times the cap.
+//! That is the defect this module was written to fix, reached through a
+//! different door — witnessed by
+//! `a_run_of_unreportable_turns_cannot_be_authorised_past_its_cap`.
+//!
+//! So such a turn is charged what it was **authorised** to spend. Its model
+//! calls already happened and were already billed; the ceiling is the only
+//! number the parent knows to be true of them, and it is the one direction
+//! that cannot spend past the cap. The total is then an over-estimate by
+//! construction, which [`RunBudget::unreported`] lets a report say rather than
+//! presenting a bound as a measurement.
+//!
+//! The parse is forgiving first, so this cannot fire on a turn that did report:
+//! the whole of stdout, then the last line that parses. A warning printed
+//! ahead of the summary is not a turn that failed to report, and ending a run
+//! over one would be a worse failure than the overspend the charge prevents.
 
 use super::turn_flags::TurnFlags;
 
@@ -57,6 +77,9 @@ use super::turn_flags::TurnFlags;
 pub(super) struct RunBudget {
     /// The flags every child turn inherits, ceiling included.
     flags: TurnFlags,
+    /// Turns whose summary could not be read, and which were therefore
+    /// charged their whole remaining ceiling rather than nothing.
+    unreported: u32,
     /// What the child turns have reported spending, in USD.
     spent: f64,
 }
@@ -87,7 +110,11 @@ impl std::fmt::Display for Exhausted {
 impl RunBudget {
     /// A budget over the flags this invocation parsed.
     pub(super) fn new(flags: TurnFlags) -> Self {
-        Self { flags, spent: 0.0 }
+        Self {
+            flags,
+            spent: 0.0,
+            unreported: 0,
+        }
     }
 
     /// The run's ceiling, when one was set.
@@ -137,7 +164,35 @@ impl RunBudget {
     /// Takes the turn's whole stdout rather than a number, because the parse is
     /// the part that can be wrong and it belongs beside the contract it reads.
     pub(super) fn record(&mut self, summary: &str) {
-        self.spent += turn_cost(summary).unwrap_or(0.0);
+        match turn_cost(summary) {
+            Some(cost) => self.spent += cost,
+            // A turn that could not report is charged what it was AUTHORISED
+            // to spend, not nothing. Its model calls already happened and were
+            // already billed; the only number the parent knows to be true of
+            // them is the ceiling it handed down, and charging that is the one
+            // direction that cannot spend past the cap.
+            //
+            // Charging nothing is what made the gap unbounded: `remaining()`
+            // did not move, so the NEXT turn was handed the same full
+            // remainder, and N unmeasurable turns were authorised N times the
+            // cap — #4353's own defect through a different door. The module
+            // doc argued the child's per-turn ceiling bounded this; it bounds
+            // one turn, never a run.
+            None => {
+                self.unreported += 1;
+                self.spent += self.remaining().unwrap_or(0.0);
+            }
+        }
+    }
+
+    /// How many turns spent without being able to say how much.
+    ///
+    /// Non-zero means [`Self::spent`] is an over-estimate by construction —
+    /// each such turn was charged its whole remaining ceiling — so a report
+    /// that prints the total should say which of the two it is rather than
+    /// presenting a bound as a measurement.
+    pub(super) fn unreported(&self) -> u32 {
+        self.unreported
     }
 }
 
@@ -149,15 +204,93 @@ impl RunBudget {
 /// sum. `None` for anything that does not parse or does not carry the field: a
 /// guess here would be a number the run's ceiling was then enforced against.
 fn turn_cost(summary: &str) -> Option<f64> {
-    serde_json::from_str::<serde_json::Value>(summary)
-        .ok()?
-        .get("cost_usd")?
-        .as_f64()
+    fn cost_of(text: &str) -> Option<f64> {
+        serde_json::from_str::<serde_json::Value>(text)
+            .ok()?
+            .get("cost_usd")?
+            .as_f64()
+    }
+    // The whole of stdout first — the ordinary case, and the only one before
+    // an unreadable summary started costing the run its remaining ceiling.
+    if let Some(cost) = cost_of(summary.trim()) {
+        return Some(cost);
+    }
+    // Then the last line that parses. A warning printed to stdout ahead of the
+    // summary is not a turn that failed to report, and charging it the ceiling
+    // would trade an unbounded overspend for an ended run — a worse failure
+    // than the one that repair exists for. Last rather than first: the summary
+    // is the final thing a turn prints.
+    summary.lines().rev().find_map(|line| cost_of(line.trim()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The witness.** A turn whose summary cannot be parsed must not leave
+    /// the ceiling where it was.
+    ///
+    /// The module doc argued the gap was bounded: "What bounds the gap is the
+    /// child's own per-turn ceiling, which is still handed down." It bounds one
+    /// turn. It does not bound a run, because an unparseable summary folds
+    /// nothing in — so `remaining()` does not move, and the NEXT turn is handed
+    /// the same full remainder. Ten unmeasurable turns are authorised ten times
+    /// the cap, which is #4353's own defect through a different door.
+    #[test]
+    fn a_run_of_unreportable_turns_cannot_be_authorised_past_its_cap() {
+        let mut budget = RunBudget::new(TurnFlags {
+            spend_limit: Some(30.0),
+            ..TurnFlags::default()
+        });
+
+        // A child that died before printing its summary: a panic, an OOM kill,
+        // a SIGKILL. Its model calls already happened and were already billed.
+        for _ in 0..10 {
+            budget.record("thread 'main' panicked at 'boom'");
+        }
+
+        assert!(
+            budget.exhausted().is_some(),
+            "ten turns that could not report must not leave the run spendable: \
+             spent {:?}, remaining {:?}",
+            budget.spent(),
+            budget.remaining(),
+        );
+        assert!(
+            budget.next_turn_flags().is_err(),
+            "and the eleventh turn must not be authorised at all"
+        );
+    }
+
+    /// The measured path is unchanged: a turn that reports its cost is charged
+    /// that cost, not its ceiling.
+    #[test]
+    fn a_reported_turn_is_still_charged_exactly_what_it_reported() {
+        let mut budget = RunBudget::new(TurnFlags {
+            spend_limit: Some(30.0),
+            ..TurnFlags::default()
+        });
+        budget.record(&summary(4.0));
+        assert!((budget.spent() - 4.0).abs() < f64::EPSILON);
+        assert!(budget.exhausted().is_none(), "4 of 30 is not exhausted");
+    }
+
+    /// A summary with a line of noise before the JSON still reports. Without
+    /// this the fix above turns a stray log line into an ended run, which
+    /// would be a worse failure than the one it repairs.
+    #[test]
+    fn a_summary_behind_a_stray_line_is_still_measured() {
+        let mut budget = RunBudget::new(TurnFlags {
+            spend_limit: Some(30.0),
+            ..TurnFlags::default()
+        });
+        budget.record(&format!("warning: something on stdout\n{}", summary(4.0)));
+        assert!(
+            (budget.spent() - 4.0).abs() < f64::EPSILON,
+            "the JSON was there to find: spent {:?}",
+            budget.spent()
+        );
+    }
 
     fn summary(cost: f64) -> String {
         serde_json::json!({
