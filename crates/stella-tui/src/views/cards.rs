@@ -247,28 +247,51 @@ pub(crate) fn fmt_mss(ms: u64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
-/// Greedy word wrap to `width` columns.
+/// Greedy word wrap to `width` columns, one paragraph at a time.
 ///
-/// Shared by [`crate::views::plan_card`] and [`crate::views::task_zoom`],
-/// which wrap for the same reason: their content is free text a model wrote,
-/// so a mid-word cut is the common case rather than the edge one, and the
-/// point of opening either surface is to read the words. A word wider than
-/// `width` still takes a row of its own — nothing here splits one.
+/// The crate's only word wrap (#5156). Shared by
+/// [`crate::views::plan_card`], [`crate::views::task_zoom`] and
+/// [`crate::views::mcp_tab`], which wrap for the same reason: their content is
+/// free text somebody else wrote — a model, or a server's handshake
+/// instructions — so a mid-word cut is the common case rather than the edge
+/// one, and the point of opening any of those surfaces is to read the words. A
+/// word wider than `width` still takes a row of its own; nothing here splits
+/// one.
+///
+/// **A line break in the input is a line break in the output.** The three
+/// copies this replaces did not agree on that: the two card ones flattened the
+/// text with `split_whitespace`, so a two-paragraph server description came
+/// back as one run-on paragraph. Keeping the breaks is the superset behaviour
+/// and the one a reader of the text wants; a blank input line survives as a
+/// blank row, which is what makes the paragraphs visible.
+///
+/// A `width` of 0 wraps to nothing rather than to one row per word — at zero
+/// columns there is no row to put a word on.
+///
+/// Width is counted in `char`s, not display columns, so a row of wide glyphs
+/// wraps late and overflows the card it was measured for. That is what all
+/// three copies did, and the merge left it alone: fixing it moves goldens for
+/// a reason unrelated to the merge, and the two changes would be
+/// indistinguishable in one diff. [`crate::views::models_card`]'s `wrap_parts`
+/// measures display width and is the shape to follow — #5307.
 pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if line.is_empty() {
-            line.push_str(word);
-        } else if line.chars().count() + 1 + word.chars().count() <= width {
-            line.push(' ');
-            line.push_str(word);
-        } else {
-            out.push(std::mem::take(&mut line));
-            line.push_str(word);
-        }
+    if width == 0 {
+        return Vec::new();
     }
-    if !line.is_empty() {
+    let mut out: Vec<String> = Vec::new();
+    for paragraph in text.lines() {
+        let mut line = String::new();
+        for word in paragraph.split_whitespace() {
+            if line.is_empty() {
+                line.push_str(word);
+            } else if line.chars().count() + 1 + word.chars().count() <= width {
+                line.push(' ');
+                line.push_str(word);
+            } else {
+                out.push(std::mem::take(&mut line));
+                line.push_str(word);
+            }
+        }
         out.push(line);
     }
     out
@@ -324,6 +347,47 @@ pub(crate) fn truncate_cols(text: &str, max_cols: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Carried over from `mcp_tab::detail`'s own copy when the three wraps
+    /// became one (#5156) — it was the only one of the three that had a test,
+    /// which is the half of the duplication that cost the most: the copies
+    /// were not equally proved.
+    #[test]
+    fn wrap_breaks_on_words_and_never_loses_one() {
+        assert_eq!(
+            wrap("alpha beta gamma delta", 11),
+            vec!["alpha beta", "gamma delta"]
+        );
+        // A single word longer than the width is emitted whole rather than
+        // dropped; the widget's own wrap catches it.
+        assert_eq!(
+            wrap("supercalifragilistic", 5),
+            vec!["supercalifragilistic"]
+        );
+        assert!(wrap("anything", 0).is_empty());
+    }
+
+    /// **The witness (#5156).** A line break in the input survives.
+    ///
+    /// This is where the three copies actually disagreed, and why the merge is
+    /// not a pure move. The two card wraps flattened with `split_whitespace`,
+    /// so a server description written as two paragraphs came back as one
+    /// run-on line; `mcp_tab`'s wrapped per line. The shared one keeps the
+    /// breaks, because that is what a reader of the text wants and the other is
+    /// a loss with nothing to recommend it.
+    #[test]
+    fn a_paragraph_break_survives_the_wrap() {
+        assert_eq!(
+            wrap("first para\n\nsecond para", 40),
+            vec!["first para", "", "second para"],
+            "the blank row is what makes the two paragraphs visible"
+        );
+        // And a break still wraps within its own paragraph.
+        assert_eq!(
+            wrap("alpha beta gamma\ndelta", 11),
+            vec!["alpha beta", "gamma", "delta"]
+        );
+    }
 
     fn rows(n: usize) -> Vec<Line<'static>> {
         (0..n).map(|i| Line::from(format!("step {i}"))).collect()

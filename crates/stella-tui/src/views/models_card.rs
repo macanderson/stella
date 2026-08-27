@@ -148,6 +148,14 @@ fn standing(model: &WorkspaceModel, role_key: &str) -> Option<&'static str> {
 /// on the disclosure — the single most useful thing this dialog can say — the
 /// moment the terminal is anything short of very wide. A part that cannot fit
 /// a row on its own still gets elided; nothing else can be done with it.
+///
+/// **Not [`cards::wrap`]**, and the difference is why #5156 unified the
+/// crate's other two copies and left this one alone. It packs *pre-split
+/// parts* rather than breaking on whitespace, so a part is atomic and its own
+/// spaces never become break points; it joins with the deck's ` · ` separator
+/// rather than a space; and it **truncates** a part too wide for a row, where
+/// `wrap` gives it a row of its own and leaves the overflow to the widget. It
+/// measures display width, which `cards::wrap` does not (#5307).
 fn wrap_parts(parts: &[String], width: usize) -> Vec<String> {
     let mut rows: Vec<String> = Vec::new();
     for part in parts {
