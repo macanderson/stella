@@ -782,6 +782,9 @@ fn discard_undelivered_attempt(root: &Path, key: &str, error: &str) -> bool {
         if branch.is_empty() {
             continue;
         }
+        if !is_attempt_at(branch, key) {
+            continue;
+        }
         // The worktree first: git refuses to delete a branch one holds.
         let path = root
             .join(WORKTREES_DIR)
@@ -798,24 +801,103 @@ fn discard_undelivered_attempt(root: &Path, key: &str, error: &str) -> bool {
     cleared
 }
 
+/// Whether `branch` is an attempt at **this** issue and not one whose number
+/// merely ends in the same digits.
+///
+/// `git branch --list "*<key>-*"` is a substring glob, and the caller of this
+/// **force-deletes every branch it returns, worktree included**. For key `43`
+/// that glob matches `stella/143-<hash>` — issue 143's live attempt — while the
+/// open-pull-request check one step earlier asked the forge about issue 43 and
+/// so saw nothing to protect it. A loop that could not cut a worktree for its
+/// own issue would throw away a peer's uncommitted work on a different one.
+///
+/// [`stella_fleet`]'s `worktree_slug` builds the branch as
+/// `<prefix><key>-<hash>`, so the question is whether the branch's last path
+/// segment *begins* `<key>-`. Read off the leaf rather than the prefix so an
+/// operator who changes `branch_prefix` between two attempts gets the hint
+/// below instead of a deletion — the direction that never destroys work.
+fn is_attempt_at(branch: &str, key: &str) -> bool {
+    let leaf = branch.rsplit('/').next().unwrap_or(branch);
+    leaf.strip_prefix(key)
+        .is_some_and(|rest| rest.starts_with('-'))
+}
+
 fn stale_attempt_hint(root: &Path, key: &str, error: &str) -> String {
     if !error.contains("already exists") {
         return format!("could not create the worktree: {error}");
     }
     let branches =
         super::state::git(root, &["branch", "--list", &format!("*{key}-*")]).unwrap_or_default();
+    // Filtered like the deletion above, so the hint cannot name another
+    // issue's branch as this one's unfinished attempt and send a human to
+    // delete it by hand.
+    let mine: Vec<&str> = branches
+        .lines()
+        .map(|line| line.trim_start_matches(['*', '+', ' ']).trim())
+        .filter(|branch| is_attempt_at(branch, key))
+        .collect();
     format!(
         "#{key} already has a branch from an earlier attempt:\n{}\n\
          \n\
          That attempt did not finish. If it holds work worth keeping, deliver \
          or inspect it; if not, delete the branch and run this again. Nothing \
          here will discard it for you.",
-        branches.trim()
+        mine.join("\n")
     )
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// A branch for a different issue is never mistaken for this one's.
+    ///
+    /// **The destructive one.** `discard_undelivered_attempt` force-removes the
+    /// worktree and deletes the branch of everything
+    /// `git branch --list "*<key>-*"` returns, and that glob is a substring
+    /// match: for key `43` it also returns `stella/143-<hash>`, issue 143's
+    /// live attempt. The open-pull-request check one step earlier asked the
+    /// forge about issue 43, so nothing in the path had looked at 143 before
+    /// its uncommitted work was thrown away.
+    #[test]
+    fn a_branch_for_another_issue_is_not_this_issues_attempt() {
+        // `stella_fleet::worktree_slug` builds `<prefix><key>-<hash>`.
+        assert!(is_attempt_at("stella/43-a1b2c3d4e5f6a7b8", "43"));
+
+        for other in [
+            "stella/143-a1b2c3d4e5f6a7b8", // ends in the same digits
+            "stella/243-a1b2c3d4e5f6a7b8",
+            "stella/1043-a1b2c3d4e5f6a7b8",
+            "stella/430-a1b2c3d4e5f6a7b8", // starts with them
+            "stella/4300-a1b2c3d4e5f6a7b8",
+            "feature/v43-rewrite", // a human's branch that merely says 43
+        ] {
+            assert!(
+                !is_attempt_at(other, "43"),
+                "{other} is not an attempt at #43"
+            );
+        }
+    }
+
+    /// The prefix is not part of the test, so a branch is judged by its leaf.
+    ///
+    /// An operator who changes `branch_prefix` between two attempts gets the
+    /// stale-attempt hint rather than a deletion — the direction that never
+    /// destroys work — and a prefix carrying digits cannot make a branch look
+    /// like somebody else's.
+    #[test]
+    fn the_branch_prefix_does_not_decide_the_match() {
+        assert!(is_attempt_at("anything/you/like/43-abc", "43"));
+        assert!(is_attempt_at("43-abc", "43"));
+        // The prefix's own digits are not the key.
+        assert!(!is_attempt_at("v43-team/99-abc", "43"));
+    }
+
+    /// A bare key with no hash after it is not a generated attempt branch.
+    #[test]
+    fn a_branch_that_is_only_the_key_is_not_an_attempt() {
+        assert!(!is_attempt_at("stella/43", "43"));
+        assert!(!is_attempt_at("43", "43"));
+    }
     use super::*;
     use stella_protocol::issue::{IssueClass, IssueKey, IssueState};
 
