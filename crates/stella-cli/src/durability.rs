@@ -73,8 +73,9 @@ use stella_store::work_journal::WorkJournal;
 ///   that will not exist.
 /// - **A deck sub-session** — `agent::subsession_engine_config_for` re-keys it
 ///   to the lane's OWN handle rather than stripping it (#3233): each lane is
-///   bound to its own journal key (`{session}/{lane}`), so it is independently
-///   resumable instead of a second writer of the lead's one resume point. The
+///   bound to its own journal key (`subsession::lane_journal_key`),
+///   so it is independently resumable instead of a second writer of the lead's
+///   one resume point. The
 ///   re-key still has to happen at this seam, invisible to `stella-core`: a
 ///   sub-session is a full engine session built through `Engine::with_sleeper`,
 ///   not a child reached through `run_sub_agent`, so the engine crate never

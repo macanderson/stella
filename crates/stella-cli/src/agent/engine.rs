@@ -238,9 +238,9 @@ pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
 ///
 /// The fix here is to re-key, not strip: `durability` is the lane's OWN
 /// handle, bound by the caller (`crate::subsession::run_worker`) to its own
-/// journal key (`{session}/{lane}`), so its steps checkpoint into their own
-/// ref namespace and can never collide with the lead's, or with a sibling
-/// lane's (#3233).
+/// journal key (`subsession::lane_journal_key`), so its steps
+/// checkpoint into their own ref namespace and can never collide with the
+/// lead's, or with a sibling lane's (#3233).
 ///
 /// A fleet attempt takes the same seam for the same reason (#3232). Its
 /// handle is minted by `crate::fleet_cmd::durability` under the attempt's
