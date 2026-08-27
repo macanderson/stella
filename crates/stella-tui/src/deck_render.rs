@@ -105,7 +105,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let bands = Layout::vertical([
         Constraint::Length(1),          // tab row / breadcrumb
         Constraint::Min(1),             // active view
-        Constraint::Length(1),          // air above the prompt, or the pulse row
+        Constraint::Length(1),          // pipeline line, or the pulse row, or air
         Constraint::Length(composer_h), // composer
         Constraint::Length(1),          // keybinding hint row
         Constraint::Length(statline_h), // status bar (+ diagnosis)
@@ -136,11 +136,26 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         DeckTab::Settings => crate::views::settings::render(model, ui, content, b),
     });
 
-    // The pulse row (`views::pulse`) draws in the air row off the SESSION tab,
-    // and at an opened lane: the live agent's status, quiet time, place and
-    // last words, so no tab is blind to the turn.
-    guarded_band(buf, bands[2], "pulse", |b| {
-        crate::views::pulse::render_row(model, ui, bands[2], b)
+    // The row above the composer carries two facts that are never both
+    // available, so they share it rather than costing a row each (#5050).
+    //
+    // `views::pulse` draws off the SESSION tab and at an opened lane: the live
+    // agent's status, quiet time, place and last words, so no tab is blind to
+    // the turn. It returns `None` on SESSION at the lead, where the transcript
+    // is already the pulse — and that is exactly the state SPEC 5 draws its
+    // prompt block in, so `views::pipeline` takes the row there and nowhere
+    // else. Neither displaced the other and pulse's information did not move.
+    //
+    // The precedence is written out rather than left to the two `None`s to
+    // arrange between them: they are disjoint today, and a band that painted
+    // twice because one of them widened would be a bug nothing here could
+    // see. `the_two_row_claimants_are_disjoint` holds the disjointness itself.
+    guarded_band(buf, bands[2], "pulse or pipeline", |b| {
+        if crate::views::pipeline::pipeline(model, ui).is_some() {
+            crate::views::pipeline::render_row(model, ui, bands[2], b);
+        } else {
+            crate::views::pulse::render_row(model, ui, bands[2], b);
+        }
     });
     guarded_band(buf, bands[3], "composer", |b| {
         render_composer(&c_layout, bands[3], b)

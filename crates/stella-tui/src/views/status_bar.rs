@@ -135,19 +135,23 @@ fn partial_cell(filled: f64) -> char {
 }
 
 /// The meter's spans: gold fill on `border` gray (SPEC 5).
-fn meter(frac: f64) -> Vec<Span<'static>> {
-    let exact = ratio(frac) * METER_CELLS as f64;
+///
+/// `cells` because the deck draws meters at two lengths — this bar's twelve
+/// and the pipeline row's eight ([`super::pipeline`]) — and SPEC 5 states the
+/// fill and track colours once, for every meter. A second implementation for
+/// the shorter bar is how the two would come to disagree about which gray the
+/// track is.
+pub(super) fn meter(frac: f64, cells: usize) -> Vec<Span<'static>> {
+    let exact = ratio(frac) * cells as f64;
     let full = exact.trunc() as usize;
     let mut spans = Vec::with_capacity(3);
     if full > 0 {
         spans.push(Span::styled(
-            glyph::BLOCK_EIGHTHS[8]
-                .to_string()
-                .repeat(full.min(METER_CELLS)),
+            glyph::BLOCK_EIGHTHS[8].to_string().repeat(full.min(cells)),
             Style::new().fg(token::GOLD),
         ));
     }
-    if full < METER_CELLS {
+    if full < cells {
         let partial = partial_cell(exact.fract());
         if partial != ' ' {
             spans.push(Span::styled(
@@ -155,7 +159,7 @@ fn meter(frac: f64) -> Vec<Span<'static>> {
                 Style::new().fg(token::GOLD),
             ));
         }
-        let track = METER_CELLS - full - usize::from(partial != ' ');
+        let track = cells - full - usize::from(partial != ' ');
         if track > 0 {
             spans.push(Span::styled(
                 glyph::METER_TRACK.to_string().repeat(track),
@@ -207,7 +211,7 @@ pub fn cells(status: &Status<'_>) -> Vec<Vec<Span<'static>>> {
     cells.extend([
         {
             let mut ctx = vec![Span::styled("ctx ", label)];
-            ctx.extend(meter(status.ctx_used));
+            ctx.extend(meter(status.ctx_used, METER_CELLS));
             ctx.push(Span::styled(format!(" {}%", pct(status.ctx_used)), text));
             ctx
         },

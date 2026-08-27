@@ -103,6 +103,9 @@ fn deck_renders_every_tab_with_real_content() {
         "stella*",   // the wordmark on the tab row (SPEC 3.3)
         "⏎ queue",   // the hint row under the composer (SPEC 5)
         "sub-agent", // …and its `↓ N sub-agents` hint: the lanes exist
+        // The stage stepper this comment has named since SPEC 5 landed, and
+        // which nothing here asserted until it was built (#5050).
+        "▸ execute",
     ] {
         assert!(
             session.contains(needle),
