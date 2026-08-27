@@ -24,6 +24,7 @@ pub mod frame;
 pub mod graph;
 pub mod graph_tab;
 pub mod installed;
+pub mod issues;
 pub mod issues_tab;
 pub mod mcp_tab;
 pub mod models_card;

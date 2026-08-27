@@ -61,7 +61,7 @@ use ratatui::backend::TestBackend;
 
 use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
 use stella_tui::Inbound;
-use stella_tui::scenario::{demo_graph, demo_inbound};
+use stella_tui::scenario::{demo_graph, demo_inbound, demo_linked_work};
 use stella_tui::{
     DeckTab, DeckUi, IssueRow, ResourceSample, ScopeAction, SettingsPane, SkillPrompt, SkillRow,
     SkillScope, SkillsView, ToolDenial, ToolPolicyState, ToolRow, ToolScope, WorkspaceModel,
@@ -436,6 +436,12 @@ fn fixture_agents() -> Vec<stella_tui::InstalledAgentEntry> {
     ]
 }
 
+/// The wall clock the ISSUES golden's heat sort ages against:
+/// 2026-02-13T00:00:00Z, thirty days after `fixture_issues`' fixed stamp. A
+/// live clock would make the age term — and so the ordering — drift with the
+/// calendar under a golden that is meant to be exact.
+const GOLDEN_NOW_MS: u64 = 1_770_940_800_000;
+
 fn fixture_issues() -> Vec<IssueRow> {
     let issue = |key: &str, title: &str, state: &str, labels: &[&str], assignee: Option<&str>| {
         IssueRow {
@@ -448,6 +454,7 @@ fn fixture_issues() -> Vec<IssueRow> {
             // A fixed stamp: `updated_at` is a rendered string, so a live one
             // would age the golden out from under the suite.
             updated_at: Some("2026-01-14T09:30:00Z".to_string()),
+            linked: None,
         }
     };
     vec![
@@ -458,13 +465,20 @@ fn fixture_issues() -> Vec<IssueRow> {
             &["enhancement", "area:tui"],
             Some("dev"),
         ),
-        issue(
-            "#826",
-            "run_deck event-loop pty harness",
-            "open",
-            &["enhancement"],
-            None,
-        ),
+        IssueRow {
+            // The one claimed row, so the golden pins SPEC 9.4's three linked
+            // surfaces at once: the inline `plan r3 · task 3 live` tag, the
+            // detail pane's `linked` line, and the heat sort lifting it over
+            // a backlog the graph cannot rank.
+            linked: Some(demo_linked_work()),
+            ..issue(
+                "#826",
+                "run_deck event-loop pty harness",
+                "in progress",
+                &["enhancement"],
+                None,
+            )
+        },
         issue(
             "#689",
             "Surface per-server MCP tool truncation",
@@ -525,10 +539,17 @@ fn ui_for(tab: DeckTab) -> DeckUi {
             ui.skills.sel = 1;
         }
         DeckTab::Mcp => ui.mcp.servers = mcp::fixture_mcp_servers(),
+        // Through `adopt_rows` rather than by assignment, so the golden is of
+        // the ordering the deck actually applies (`views::issues::sort_by_heat`)
+        // rather than of a list a fixture hand-ordered. The claimed row sorts
+        // to the top, and the cursor sits on it so the detail pane draws its
+        // `linked` line.
         DeckTab::Issues => {
-            ui.issues.rows = fixture_issues();
+            let graph = ui.graph.clone();
+            ui.issues
+                .adopt_rows(fixture_issues(), graph.as_ref(), GOLDEN_NOW_MS);
             ui.issues.loaded = true;
-            ui.issues.sel = 1;
+            ui.issues.sel = 0;
         }
         // Lands on the AGENTS pane; `settings_tools_pane` pins the other one.
         DeckTab::Settings => ui.tools.state = Some(fixture_tool_policy()),

@@ -4,22 +4,22 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION AGENTS TRACES GRAPH FILES SKILLS MCP   ISSUES   SETTINGS                                                                                       stella*
- backlog · 3 listed
+ backlog · 3 listed · heat sort
+   from the graph, not vibes
   ⇢ #981 open · CI … running
 
+▸   ▶ #826      run_deck event-loop pty harness  in progress · enhancement  plan r3 · task 3 live                                                    2026-01-14
     ○ #874      Command-deck render golden tests  open · dev · enhancement, area:tui                                                                 2026-01-14
-▸   ○ #826      run_deck event-loop pty harness  open · enhancement                                                                                  2026-01-14
     ✓ #689      Surface per-server MCP tool truncation  closed · dev · bug                                                                           2026-01-14
 
- ○ #826  run_deck event-loop pty harness
-   open · enhancement · updated 2026-01-14T09:30:00Z
+ ▶ #826  run_deck event-loop pty harness
+   in progress · enhancement · updated 2026-01-14T09:30:00Z
    https://github.com/example/repo/issues/826
+   linked plan r3 · 2/6 · branch fix/token-race · evidence 2 files · 4/4 tests
    ↵ open · c comment · s status · p to prompt
 
  w start work   on the selected issue → stella drafts the plan from the issue and the graph, and waits for your approval before touching code
  ↑↓ select · w start work · n new issue · / search tracker · r refresh · ]/[ page · space pick · p send to prompt · x close / reopen
-
-
 
 
 

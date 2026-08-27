@@ -21,6 +21,7 @@ fn a_issue(key: &str) -> IssueRow {
         assignee: Some("@octocat".into()),
         url: format!("https://github.com/o/r/issues/{key}"),
         updated_at: None,
+        linked: None,
     }
 }
 
@@ -461,6 +462,68 @@ fn issues_list_ingest_folds_rows_clears_busy_and_drops_stale() {
         "{:?}",
         ui.issues.notice
     );
+}
+
+/// The witness for SPEC 9.4's heat sort: a list reply arrives in the tracker's
+/// order and is adopted in the graph's, heaviest first, with the caption flag
+/// the tab reads set. The graph is the deck's own snapshot — the same one the
+/// GRAPH tab ranks coupling from — so the ordering has a source to name.
+#[test]
+fn issues_list_ingest_orders_the_backlog_by_the_graphs_coupling() {
+    let mut model = WorkspaceModel::new();
+    model.now_ms = 1_770_940_800_000; // 2026-02-13T00:00:00Z
+    let mut ui = issues_ui();
+    ui.graph = Some(crate::scenario::demo_graph());
+    ui.issues.list_wait = 1;
+
+    let claimed = |key: &str, files: &[&str]| IssueRow {
+        updated_at: Some("2026-01-14T09:30:00Z".into()),
+        linked: Some(crate::envelope::LinkedWork {
+            touched_files: files.iter().map(|f| (*f).to_string()).collect(),
+            ..crate::scenario::demo_linked_work()
+        }),
+        ..a_issue(key)
+    };
+
+    ingest_inbound(
+        &Inbound::IssuesList {
+            seq: 1,
+            outcome: Ok(vec![
+                // The graph has never heard of this file, so the row keeps the
+                // tracker's place rather than being ranked against a guess.
+                claimed("#unknown", &["src/nowhere.rs"]),
+                a_issue("#unclaimed"),
+                claimed("#coupled", &["stella-core/src/driver.rs"]),
+            ]),
+        },
+        &mut model,
+        &mut ui,
+    );
+
+    let keys: Vec<&str> = ui.issues.rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(keys, vec!["#coupled", "#unknown", "#unclaimed"]);
+    assert!(ui.issues.heat_sorted, "the tab may caption this ordering");
+}
+
+/// With no graph loaded there is no coupling to sort by, so the tracker's own
+/// order stands and the tab draws no caption over it.
+#[test]
+fn issues_list_ingest_keeps_the_tracker_order_when_no_graph_is_loaded() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.graph = None;
+    ui.issues.list_wait = 1;
+    ingest_inbound(
+        &Inbound::IssuesList {
+            seq: 1,
+            outcome: Ok(vec![a_issue("#3"), a_issue("#1"), a_issue("#2")]),
+        },
+        &mut model,
+        &mut ui,
+    );
+    let keys: Vec<&str> = ui.issues.rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(keys, vec!["#3", "#1", "#2"]);
+    assert!(!ui.issues.heat_sorted);
 }
 
 #[test]

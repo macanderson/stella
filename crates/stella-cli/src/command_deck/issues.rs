@@ -192,7 +192,16 @@ fn issue_row(issue: &Issue) -> IssueRow {
         // the field to the port first, for every tracker.
         assignee: None,
         url: issue.url.clone(),
+        // The port carries a creation stamp and no update stamp, and the two
+        // are different facts — the row would rather say nothing than date an
+        // issue by when it was filed (#5196).
         updated_at: None,
+        // A tracker knows nothing about a session's claim, so a tracker read
+        // never fills this. Its producer is the self-driving loop's dispatch
+        // ledger, which [`issues_act`] refuses to stand in for —
+        // `IssueAction::StartWork` is that refusal — and which has no read
+        // path to the deck yet (#5197).
+        linked: None,
     }
 }
 
