@@ -1,7 +1,29 @@
 //! Resource probes for the self-driving governor — cross-platform, best-effort,
-//! never fatal. Every probe returns a NUMBER and degrades to a conservative
-//! value rather than failing: a governor that dies because `pmset` is missing
-//! is worse than one that assumes mains power.
+//! never fatal. A probe degrades rather than failing: a governor that dies
+//! because `pmset` is missing is worse than one that assumes mains power.
+//!
+//! # Which way each probe degrades, and why it is not one rule
+//!
+//! This used to say every probe degrades to a *conservative* value. That is
+//! true of most and was never true of all, and `load1` was the one where the
+//! gap bit: it fell back to `0`, an idle box, which cannot trip the
+//! shed-to-Light branch and actively qualifies the escalate-to-Heavy one
+//! (#5359). The least information bought the most expensive decision.
+//!
+//! - **Toward scarcity** — `cpu_total` (2), `mem_total_gb` (8),
+//!   `mem_free_gb` (2), `disk_free_gb` (0, which trips the disk floor). An
+//!   unmeasured box looks small, so it is not asked to do much.
+//! - **Toward neither** — `load1`, which stands at half the core count: the
+//!   one value that satisfies neither `load1 < cpu / 2` (Heavy) nor
+//!   `load1 >= cpu` (Light), so an unmeasured load runs the ordinary cycle.
+//! - **Toward permissive, on purpose** — `on_battery` (mains) and
+//!   `contention` (free). Both would otherwise pin the loop to the light tier
+//!   for the life of a box that simply lacks `pmset` or `pgrep`, and
+//!   `contention`'s own doc names that failure: permanent, silent, and
+//!   looking like caution.
+//!
+//! A reader adding a probe should say which of the three it takes and why,
+//! rather than inheriting a blanket claim that cannot hold for all of them.
 //!
 //! And every probe yields to a `SELF_DRIVING_PROBE_*` override before touching
 //! the machine, for two consumers. The hermetic test suites (Rust and shell)
