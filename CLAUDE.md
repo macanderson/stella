@@ -191,7 +191,13 @@
   Search for an existing issue first; link, don't duplicate. The full policy
   is AGENTS.md § "Nothing left behind — every finding becomes a fix or a
   GitHub issue". Never end a turn with untracked half-finished work.
-- **Every issue is labelled, in this order.** First a priority (`P0`–`P4`),
+- **An issue you file carries the `triage` label and nothing else.** SCR-004
+  and SCR-005 (AGENTS.md's standing-decisions block) hold sizing and priority
+  for a dedicated triage agent, and `triage-guard` strips a creator-applied
+  priority — so a `P2` you add is both a rule break and a label that does not
+  survive. The taxonomy below is what **triage** applies; read it to
+  understand what the labels on an issue mean, not as a list to add yourself.
+- **The taxonomy, in this order.** First a priority (`P0`–`P4`),
   then the `area:*` tag — several when the work genuinely spans areas — then
   exactly one `use-model:*` tag (`cheap` / `balanced` / `pro` / `ultra`)
   naming the cheapest model class that can do the work without sacrificing

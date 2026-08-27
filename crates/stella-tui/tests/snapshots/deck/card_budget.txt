@@ -4,7 +4,6 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
@@ -16,6 +15,9 @@
   Planning the automations cluster: list, editor, triggers, workflows.
 
 ☰  plan  4/7  ·  Wire the triggers API
+
+ │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
+ │   irreducible generation
 
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -30,14 +32,12 @@
  │     12 +  const filtered = filter(items, q)
  │     13 +  const onNew = () => open()
 
-☰  plan  5/7  ·  Workflows canvas
-
-⏸ plan  Refactor the automations store into a shared╭ budget  session spend cap ───────────────────────────╮
-                                                    │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │
+ │ ◐ model worker · 428 tok/s                       ╭ budget  session spend cap ───────────────────────────╮                                            ⚡ 2100ms
+ │   irreducible generation                         │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │
                                                     │new cap $                                             │
-                                                    │the cap applies when the driver's budget stream folds │
+☰  plan  5/7  ·  Workflows canvas                   │the cap applies when the driver's budget stream folds │
                                                     ╰────────────────────────── ⏎ set · ⌫ edit · esc close ╯
-
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
 
 >>>

@@ -127,6 +127,10 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
             ..
         } => vec![agent_id, instruction_preview],
         E::AskUser { question, .. } => vec![question],
+        // The role word, which is the only free text on the row and the one a
+        // reader types: "where did the summarizer run?". The rate and the wall
+        // clock are numbers a find box cannot ask for.
+        E::Model { activity, .. } => activity.as_deref().into_iter().collect(),
         // The tool name is the only free text on the row; the two counts are
         // numbers a search over the transcript has no way to ask for.
         E::HunkReview { tool, .. } => vec![tool],

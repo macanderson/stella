@@ -169,8 +169,9 @@ pub(crate) fn entry_lines(
 /// SPEC 6 rows for the entries the shared projection owns; `false` leaves the
 /// entry to [`entry_body`] below.
 ///
-/// Two arms, deliberately: a tool call's **head** and compaction's one quiet
-/// line. Everything else still draws long-form until its phase lands, which is why
+/// It owns a tool call's **head**, compaction's one quiet line, one settled
+/// model call, and the turn's own rules. Everything else still draws long-form
+/// until its phase lands, which is why
 /// this is a router rather than a replacement — a half-migrated transcript must
 /// still draw every row it holds, not drop the ones the projection has no arm for yet.
 ///
@@ -232,6 +233,21 @@ fn projected_rows(
             if expanded {
                 tool::argument_rows(source::head_metal(name), raw, width, out);
             }
+            true
+        }
+        TranscriptEntry::Model {
+            activity,
+            tokens_per_sec,
+            duration_ms,
+            sub_agent_id,
+        } => {
+            out.extend(source::model_rows(
+                activity.as_deref(),
+                *tokens_per_sec,
+                *duration_ms,
+                sub_agent_id.clone(),
+                width,
+            ));
             true
         }
         TranscriptEntry::Compaction {
@@ -515,6 +531,13 @@ fn entry_body(
         // `dead-code-allows` nor `module-reachability` sees inside a match
         // (#4157's lesson, restated at the router).
         TranscriptEntry::Compaction { .. } => {
+            projected_rows(entry, view, expanded, width, out);
+        }
+        // The router's too, and delegating for the same reason: this row is the
+        // only place a turn prices its model work against the deterministic
+        // path, so a gap here is the det/model split going quiet at the moment
+        // it happens. One implementation, no second one to rot (#4157).
+        TranscriptEntry::Model { .. } => {
             projected_rows(entry, view, expanded, width, out);
         }
         TranscriptEntry::BudgetTick {

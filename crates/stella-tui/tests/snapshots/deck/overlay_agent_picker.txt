@@ -4,7 +4,6 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
@@ -16,6 +15,9 @@
   Planning the automations cluster: list, editor, triggers, workflows.
 
 ☰  plan  4/7  ·  Wire the triggers API
+
+ │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
+ │   irreducible generation
 
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -30,14 +32,12 @@
  │     12 +  const filtered = filter(items, q)
  │     13 +  const onNew = () => open()
 
-☰  plan  5/7  ·  Workflows canvas
+ │ ◐ model worker · 428 tok/s                                                                                                                           ⚡ 2100ms
+ │   irreducible generation
 
-⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
-
-
-                                                ╭ agent · 1/2 · this session only ─────────────────────────────╮
+☰  plan  5/7  ·  Workflows canvas               ╭ agent · 1/2 · this session only ─────────────────────────────╮
                                                 │▸ reviewer  project  reviews a diff against the house rules   │
-                                                │  release-captain  user  cuts a release: bump, changelog, tag │
+⏸ plan  Refactor the automations store into a sh│  release-captain  user  cuts a release: bump, changelog, tag │
                                                 ╰──────────────────────────────────── ↑↓ move · ⏎ assume · esc ╯
 
 >>>

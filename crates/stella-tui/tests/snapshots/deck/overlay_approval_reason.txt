@@ -4,7 +4,6 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
@@ -17,27 +16,28 @@
 
 ☰  plan  4/7  ·  Wire the triggers API
 
-── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
+ │   irreducible generation
                                           ╭ ◇ approval · the turn is stopped ────────────────────────────────────────╮
- │ ⊙ apps/app/automations/page.tsx        │ bash  mutating                                                           │                                    ⚡ 42ms
- │ ⎿ 312 lines                            │   rm -rf build/                                                          │                       42ms
-                                          │                                                                          │
- │ ● edit apps/app/automations/page.tsx +4│ gate command.started                                                     │                                    ⚡ 18ms
- │ ⎿                                      │ reason matched rule no-destructive-shell                                 │               +4 −1 · 18ms
- │     10 -  const items = []             │                                                                          │
- │     10 +  const items = useAutomations(│ denying — say why (the model is told, verbatim):                         │
- │     11 +  const [q, setQ] = useState(""│   use the staging bucket instead▏                                        │
- │     12 +  const filtered = filter(items╰────────────────────────────────────── ⏎ deny with these words · esc back ╯
+── EXECUTE ───────────────────────────────│ bash  mutating                                                           │──────────────────────────────────────────
+                                          │   rm -rf build/                                                          │
+ │ ⊙ apps/app/automations/page.tsx        │                                                                          │                                    ⚡ 42ms
+ │ ⎿ 312 lines                            │ gate command.started                                                     │                       42ms
+                                          │ reason matched rule no-destructive-shell                                 │
+ │ ● edit apps/app/automations/page.tsx +4│                                                                          │                                    ⚡ 18ms
+ │ ⎿                                      │ denying — say why (the model is told, verbatim):                         │               +4 −1 · 18ms
+ │     10 -  const items = []             │   use the staging bucket instead▏                                        │
+ │     10 +  const items = useAutomations(╰────────────────────────────────────── ⏎ deny with these words · esc back ╯
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, q)
  │     13 +  const onNew = () => open()
+
+ │ ◐ model worker · 428 tok/s                                                                                                                           ⚡ 2100ms
+ │   irreducible generation
 
 ☰  plan  5/7  ·  Workflows canvas
 
 ⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
-
-
-
-
-
 
 
 >>>

@@ -4,7 +4,6 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
@@ -17,6 +16,9 @@
 
 ☰  plan  4/7  ·  Wire the triggers API
 
+ │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
+ │   irreducible generation
+
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
  │ ⊙ apps/app/automations/page.tsx                                                                                                                        ⚡ 42ms
@@ -26,18 +28,16 @@
  │ ⎿                                                                                                                                 +4 −1 · 18ms
  │     10 -  const items = []
  │     10 +  const items = useAutomations()
- │     11 +  const [q, setQ] = useState("")
- │     12 +  const filtered = filter(items, q)
- │     13 +  const onNew = () => open()   ╭ question ────────────────────────────────────────────────────────────────╮
-                                          │from the `research-child` sub-agent                                       │
-☰  plan  5/7  ·  Workflows canvas         │                                                                          │
+ │     11 +  const [q, setQ] = useState(""╭ question ────────────────────────────────────────────────────────────────╮
+ │     12 +  const filtered = filter(items│from the `research-child` sub-agent                                       │
+ │     13 +  const onNew = () => open()   │                                                                          │
                                           │Which auth should the new endpoint use?                                   │
-⏸ plan  Refactor the automations store int│                                                                          │
-                                          │▸ [ ] Session cookie — Matches the rest of the app                        │
+ │ ◐ model worker · 428 tok/s             │                                                                          │                                  ⚡ 2100ms
+ │   irreducible generation               │▸ [ ] Session cookie — Matches the rest of the app                        │
                                           │  [ ] Bearer token                                                        │
-                                          │  [ ] Type your own answer                                                │
+☰  plan  5/7  ·  Workflows canvas         │  [ ] Type your own answer                                                │
                                           ╰────────────── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ╯
-
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
 
 >>>

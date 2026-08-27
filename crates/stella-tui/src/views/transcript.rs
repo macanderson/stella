@@ -166,7 +166,14 @@ pub enum EventKind {
     /// `◇ gate <name> · state` — always priced, `$0.00` when deterministic.
     Gate { state: String, deterministic: bool },
     /// `◐ model <activity> · tok/s`.
-    Model { tokens_per_sec: u32 },
+    ///
+    /// The rate is an `Option` for the reason [`Extent`]'s counts are: a model
+    /// call whose provider vouched for no usage envelope, or whose wall clock
+    /// nobody took, has no rate — and `0 tok/s` states that the model generated
+    /// nothing per second, which is a louder claim than "not measured".
+    /// [`super::transcript_source::model_rows`] names the three absences it
+    /// covers.
+    Model { tokens_per_sec: Option<u32> },
     /// `↓ compacted 74k→69k · 0 evicted · 0 deduped` — one dim line, no rail.
     Compaction {
         from_tokens: u64,
@@ -733,9 +740,10 @@ fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
             }
             spans
         }
-        EventKind::Model { tokens_per_sec } => {
-            vec![Span::styled(format!(" · {tokens_per_sec} tok/s"), dim)]
-        }
+        EventKind::Model { tokens_per_sec } => match tokens_per_sec {
+            Some(rate) => vec![Span::styled(format!(" · {rate} tok/s"), dim)],
+            None => Vec::new(),
+        },
         EventKind::Run { touched } | EventKind::Other { touched, .. } => touched_detail(*touched),
         // Named rather than swept up by a wildcard, so adding an `EventKind`
         // is an `E0004` here the way it already is in `head_glyph` (#4320).

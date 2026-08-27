@@ -219,6 +219,51 @@ pub fn call_duration(call_id: &str, following: &[TranscriptEntry]) -> Option<u64
         .filter(|ms| *ms > 0)
 }
 
+/// What SPEC 6.3's model footer can say without inventing a number.
+///
+/// `irreducible generation` is a **fact about the call**, not a measurement:
+/// this work reached a model, so it was not the deterministic path SPEC 1
+/// prefers, and that is exactly what the deck's `$0.00 · det` gate row says in
+/// the other direction. It needs nothing behind it, so it stays on the row the
+/// way `new file` and `git-backed · u undo` stay on theirs when their counts
+/// have not arrived.
+///
+/// SPEC 6.3's second clause — `n of m budgeted model calls this turn` — is
+/// **elided**, because nothing in this workspace budgets model calls per turn.
+/// `EngineConfig::max_steps` is the nearest number and its own doc calls it a
+/// "hard backstop on step count … never the *primary* stuck-loop defense", so
+/// `3 of 200 budgeted` would report a backstop as a plan. `n` alone cannot
+/// stand in either: `n of m` is one reading, and half of it says something
+/// else. #5234 is where a real per-turn model-call budget is tracked; when one
+/// exists, the clause comes back here.
+const MODEL_FOOTER: &str = "   irreducible generation";
+
+/// One settled model call (SPEC 6.3) — `◐ model <activity> · tok/s` over the
+/// gold-bright rail that marks generation, with `MODEL_FOOTER` under it.
+///
+/// `activity` is the wire's own word for the call's role and `None` for a role
+/// this build cannot identify; the head then names no activity rather than one
+/// nothing recorded. `tokens_per_sec` is `None` for a call whose rate has no
+/// inputs to divide — see [`crate::model::TranscriptEntry::Model`], whose fold
+/// resolves both.
+#[must_use]
+pub fn model_rows(
+    activity: Option<&str>,
+    tokens_per_sec: Option<u32>,
+    duration_ms: u64,
+    sub_agent_id: Option<String>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut event = Event::new(
+        EventKind::Model { tokens_per_sec },
+        activity.unwrap_or_default(),
+    );
+    event.duration_ms = duration_ms;
+    event.sub_agent_id = sub_agent_id;
+    event.footer = Some(MODEL_FOOTER.to_string());
+    event_rows(&event, width)
+}
+
 /// One dim line, no rail (SPEC 6.3).
 #[must_use]
 pub fn compaction_rows(
@@ -534,6 +579,186 @@ mod tests {
         assert_eq!(call_duration("c1", &[result("c1", 7)]), Some(7));
         assert_eq!(call_duration("c1", &[result("c1", 0)]), None);
         assert_eq!(call_duration("c1", &[result("c2", 7)]), None);
+    }
+
+    /// One settled model call, as the driver meters it — the shape
+    /// `stella-core`'s `driver::settlement::emit_step_usage` emits once per
+    /// call. Every field the row reads is a parameter, so a test that changes
+    /// one says which fact it is changing.
+    fn metered(
+        role: stella_protocol::ModelCallRole,
+        output_tokens: u64,
+        duration_ms: u64,
+        complete: bool,
+    ) -> AgentEvent {
+        AgentEvent::StepUsage {
+            step: 0,
+            turn_instance: Some(0),
+            call_seq: Some(0),
+            role,
+            provider: "openrouter".into(),
+            upstream_provider: None,
+            output_text: None,
+            model: "glm-5.2".into(),
+            input_tokens: 4_000,
+            output_tokens,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: None,
+            estimated_input_tokens: 0,
+            cost_usd: 0.01,
+            duration_ms,
+            retries: 0,
+            tool_calls: 1,
+            complete,
+            finish_reason: None,
+            effort: None,
+            max_output_tokens: None,
+            temperature: None,
+            params: None,
+            sub_agent_id: None,
+            task_id: None,
+        }
+    }
+
+    /// The whole live chain for one model call: the driver's metering record,
+    /// through the fold, out of the deck's own renderer.
+    ///
+    /// `render::entry_lines` rather than [`model_rows`] directly,
+    /// because the half that was missing was never the projection — it was
+    /// everything between the wire and it.
+    fn rendered_model_rows(usage: &AgentEvent) -> String {
+        let mut model = SessionModel::new();
+        model.apply(usage);
+        let rows: Vec<_> = model
+            .transcript
+            .iter()
+            .filter(|entry| matches!(entry, TranscriptEntry::Model { .. }))
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one metering record must fold to exactly one model row: {:?}",
+            model.transcript
+        );
+        let mut out = Vec::new();
+        crate::render::entry_lines(
+            rows[0],
+            crate::render::EntryView::of(&model.files),
+            false,
+            false,
+            false,
+            120,
+            &mut out,
+        );
+        text_of_rows(&out)
+    }
+
+    /// **The witness (#5033).** A live turn shows SPEC 6.3's `◐ model` head
+    /// with a real tok/s figure, derived from the driver's own metering record
+    /// rather than invented.
+    ///
+    /// Nothing produced this row before: `EventKind::Model` was reachable from
+    /// fixtures only, so a turn's most expensive work — the generation the
+    /// deterministic-first thesis is measured against (SPEC 1) — left no mark
+    /// on the transcript at the moment it happened.
+    ///
+    /// 420 output tokens over 5 seconds is 84 tok/s, and the arithmetic is
+    /// what is asserted: the rate this row reports and the numbers the driver
+    /// measured have to be one reading.
+    #[test]
+    fn a_settled_model_call_renders_its_rate_from_the_drivers_own_metering() {
+        let text = rendered_model_rows(&metered(
+            stella_protocol::ModelCallRole::Worker,
+            420,
+            5_000,
+            true,
+        ));
+        assert!(text.contains(glyph::RUNNING), "{text}");
+        assert!(text.contains("model worker"), "{text}");
+        assert!(text.contains("84 tok/s"), "{text}");
+        // The call's own wall clock, which `Event::duration_ms` renders for
+        // every kind — this row gets it for free and must not drop it.
+        assert!(text.contains("⚡5000ms"), "{text}");
+    }
+
+    /// The footer states the half of SPEC 6.3's wording that has a source, and
+    /// **only** that half.
+    ///
+    /// `irreducible generation` is a fact about the call. The
+    /// `n of m budgeted model calls this turn` clause is elided because
+    /// nothing budgets model calls per turn — `EngineConfig::max_steps` is a
+    /// declared backstop, not a plan — and a fabricated `m` on the one row
+    /// that prices model work would be worse than no clause. See
+    /// `MODEL_FOOTER`.
+    #[test]
+    fn the_model_footer_claims_no_budget_nobody_set() {
+        let text = rendered_model_rows(&metered(
+            stella_protocol::ModelCallRole::Worker,
+            420,
+            5_000,
+            true,
+        ));
+        assert!(text.contains("irreducible generation"), "{text}");
+        for fabricated in ["budgeted", " of ", "200"] {
+            assert!(
+                !text.contains(fabricated),
+                "the footer states `{fabricated}`, which no source in this \
+                 workspace can back: {text}"
+            );
+        }
+    }
+
+    /// A rate with nothing to divide renders as no column, never `0 tok/s`.
+    ///
+    /// Three ways the division fails, and the row still draws for all three: a
+    /// model call happened, and that is the fact the row exists to state.
+    /// `0 tok/s` would assert the model generated nothing per second, the same
+    /// substitution `+0 -0` made over a real edit (#4150).
+    #[test]
+    fn a_call_whose_rate_has_no_source_states_no_rate() {
+        use stella_protocol::ModelCallRole::Worker;
+        for (label, usage) in [
+            (
+                "an envelope the provider did not vouch for",
+                metered(Worker, 420, 5_000, false),
+            ),
+            ("an untimed call", metered(Worker, 420, 0, true)),
+            (
+                "a call that generated nothing",
+                metered(Worker, 0, 5_000, true),
+            ),
+        ] {
+            let text = rendered_model_rows(&usage);
+            // No column, which subsumes the `0 tok/s` this exists to refuse:
+            // there is no rate the row could print that would be a
+            // measurement.
+            assert!(
+                !text.contains("tok/s"),
+                "{label} reported a rate nobody measured: {text}"
+            );
+            assert!(
+                text.contains("model"),
+                "{label} lost the row entirely — the call still happened: {text}"
+            );
+        }
+    }
+
+    /// A role this build cannot identify names no activity, rather than
+    /// printing `unknown` as though the engine had a stage by that name.
+    ///
+    /// The same refusal the turn rule's model name makes for that role
+    /// (#4124): a legacy stream keeps its blank.
+    #[test]
+    fn a_call_with_no_recorded_role_names_no_activity() {
+        let text = rendered_model_rows(&metered(
+            stella_protocol::ModelCallRole::Unknown,
+            420,
+            5_000,
+            true,
+        ));
+        assert!(!text.contains("unknown"), "{text}");
+        assert!(text.contains("model · 84 tok/s"), "{text}");
     }
 
     /// An unknown tool still renders — the vocabulary is open (MCP, custom

@@ -154,7 +154,12 @@ fn every_event_row_shows_its_rail_in_the_correct_metal() {
             token::SILVER,
         ),
         (EventKind::Memory, token::SILVER),
-        (EventKind::Model { tokens_per_sec: 1 }, token::GOLD_BRIGHT),
+        (
+            EventKind::Model {
+                tokens_per_sec: Some(1),
+            },
+            token::GOLD_BRIGHT,
+        ),
     ];
     for (kind, expected) in cases {
         let mut event = Event::new(kind.clone(), "x");
@@ -389,7 +394,9 @@ fn every_head_glyph_is_in_the_vocabulary() {
             state: "pass".into(),
             deterministic: true,
         },
-        EventKind::Model { tokens_per_sec: 40 },
+        EventKind::Model {
+            tokens_per_sec: Some(40),
+        },
         EventKind::Compaction {
             from_tokens: 74_000,
             to_tokens: 69_000,
