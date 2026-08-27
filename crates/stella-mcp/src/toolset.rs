@@ -70,6 +70,64 @@ pub use resources::{list_resources_tool_name, read_resource_tool_name};
 /// simply disappear from the advertised set (and any stray call errors).
 pub type DisabledServers = Arc<Mutex<HashSet<String>>>;
 
+/// The session-scoped set of server names whose declared capabilities the
+/// operator has **granted** (SPEC §9.3's first-enable handshake). Shared with
+/// the deck, which adds a name the moment the grant is given, so a server
+/// becomes usable inside the session it was reviewed in.
+///
+/// An allowlist, so a host that installs one gets default-deny: every
+/// connected server not named here has its tools withheld from the model and
+/// every call to it refused. `.stella/mcp.toml` is where the decision persists
+/// ([`crate::McpConfig::granted_names`] builds the initial set); this is the
+/// live mirror of it.
+///
+/// Connecting is not gated. The handshake is *how* declared capabilities
+/// become knowable, and nobody can review a tool list that was never fetched —
+/// so the gate sits between the handshake and the first `tools/call`, which is
+/// where the spec puts it.
+///
+/// `docs/adr/0018-mcp-capability-grants.md` records why the gate lives here
+/// rather than at each call site, and why an absent on-disk decision reads as
+/// granted.
+pub type CapabilityGrants = Arc<Mutex<HashSet<String>>>;
+
+/// Why a connected server's tools are unavailable this session.
+///
+/// One enum rather than two predicates because both answers are needed at four
+/// sites (the advertised schemas, the two synthetic tool families, and
+/// dispatch), and the two reasons must never be reported as each other: a
+/// server the operator switched off and a server the operator has not yet
+/// reviewed need different remedies from whoever reads the refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Withheld {
+    /// Toggled off for this session (`e` on the MCP tab).
+    Disabled,
+    /// No capability grant recorded — the first-enable handshake has not been
+    /// answered.
+    Ungranted,
+}
+
+impl Withheld {
+    /// The model-visible refusal for a call to `tool` on `server`.
+    ///
+    /// `RefusedByPolicy` for both: nothing failed, a rule declined. Each
+    /// message names its own remedy, because a tool error is often the only
+    /// place the model — and through it the user — meets this state.
+    fn refusal(self, server: &str, tool: &str) -> ToolOutput {
+        let message = match self {
+            Withheld::Disabled => format!(
+                "mcp server `{server}` is disabled for this session — tool `{tool}` unavailable"
+            ),
+            Withheld::Ungranted => format!(
+                "mcp server `{server}` has not been granted its declared capabilities — tool \
+                 `{tool}` unavailable. The user must review the server's handshake and grant it \
+                 (`e` on the deck's MCP tab, or `stella mcp grant {server}`)."
+            ),
+        };
+        ToolOutput::classified_error(stella_protocol::ErrorClass::RefusedByPolicy, message)
+    }
+}
+
 /// The tool-namespace prefix.
 const NS_PREFIX: &str = "mcp__";
 /// The separator between the `mcp__`, server, and tool segments.
@@ -165,6 +223,12 @@ pub struct McpToolSet {
     /// Server names disabled for this session. A disabled server's tools are
     /// hidden from `schemas()` and its calls error, without disconnecting it.
     disabled: Option<DisabledServers>,
+    /// Server names the operator has granted (SPEC §9.3's first-enable
+    /// handshake). `None` = no gate installed, which is what a caller with no
+    /// human to ask — a test, an embedder — gets. `Some` is default-deny: a
+    /// connected server absent from the set advertises nothing and answers
+    /// every call with [`Withheld::Ungranted`].
+    grants: Option<CapabilityGrants>,
     /// Connected server names opted into the Best-of-N candidate allowlist
     /// (`.stella/mcp.toml`'s `candidate_safe = true`, issue #248 Phase 1).
     /// Populated from the configs at connect time; see
@@ -272,6 +336,7 @@ impl McpToolSet {
             native: None,
             usage: None,
             disabled: None,
+            grants: None,
             candidate_safe,
         };
         set.rebuild_routes();
@@ -308,6 +373,7 @@ impl McpToolSet {
             native: None,
             usage: None,
             disabled: None,
+            grants: None,
             candidate_safe: HashSet::new(),
         };
         set.rebuild_routes();
@@ -355,6 +421,37 @@ impl McpToolSet {
         self
     }
 
+    /// Gate this set on the operator's capability grants (SPEC §9.3's
+    /// first-enable handshake). Installing a set makes the gate **default
+    /// deny**: only servers named in it advertise tools or answer calls.
+    ///
+    /// The set is shared, so a grant given mid-session takes effect on the
+    /// next model call without a reconnect — the same live contract
+    /// [`Self::with_disabled_servers`] keeps for the toggle.
+    #[must_use]
+    pub fn with_capability_grants(mut self, grants: CapabilityGrants) -> Self {
+        self.grants = Some(grants);
+        self
+    }
+
+    /// Whether `server`'s tools are usable this session, and if not, why.
+    ///
+    /// The disable is checked first: it is the operator's most recent
+    /// instruction, and a server they just switched off should say so rather
+    /// than send them to review a handshake they will then have switched off
+    /// anyway.
+    fn withheld(&self, server: &str) -> Option<Withheld> {
+        if self.is_disabled(server) {
+            return Some(Withheld::Disabled);
+        }
+        let granted = self.grants.as_ref().is_none_or(|set| {
+            set.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains(server)
+        });
+        (!granted).then_some(Withheld::Ungranted)
+    }
+
     /// Whether `server` is currently disabled for this session.
     fn is_disabled(&self, server: &str) -> bool {
         self.disabled.as_ref().is_some_and(|set| {
@@ -372,7 +469,7 @@ impl McpToolSet {
     pub fn is_candidate_safe_tool(&self, namespaced: &str) -> bool {
         self.routes.get(namespaced).is_some_and(|(idx, _)| {
             let name = self.clients[*idx].name();
-            self.candidate_safe.contains(name) && !self.is_disabled(name)
+            self.candidate_safe.contains(name) && self.withheld(name).is_none()
         })
     }
 
@@ -789,10 +886,11 @@ impl McpToolSet {
     fn mcp_segment(&self) -> Vec<ToolSchema> {
         let mut mcp = Vec::new();
         for (idx, client) in self.clients.iter().enumerate() {
-            // A disabled server advertises nothing this session — the engine
+            // A withheld server advertises nothing this session — the engine
             // re-reads schemas each model call, so the model stops seeing its
-            // tools the moment it is toggled off.
-            if self.is_disabled(client.name()) {
+            // tools the moment it is toggled off, and never sees them at all
+            // until its handshake has been granted.
+            if self.withheld(client.name()).is_some() {
                 continue;
             }
             for tool in client.tools() {
@@ -829,14 +927,8 @@ impl McpToolSet {
     async fn dispatch_namespaced(&self, name: &str, input: &Value) -> ToolOutput {
         if let Some((idx, raw_tool)) = self.routes.get(name) {
             let client = &self.clients[*idx];
-            if self.is_disabled(client.name()) {
-                return ToolOutput::classified_error(
-                    stella_protocol::ErrorClass::RefusedByPolicy,
-                    format!(
-                        "mcp server `{}` is disabled for this session — tool `{name}` unavailable",
-                        client.name()
-                    ),
-                );
+            if let Some(withheld) = self.withheld(client.name()) {
+                return withheld.refusal(client.name(), name);
             }
             return self.execute_mcp(client, raw_tool, input).await;
         }

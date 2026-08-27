@@ -95,6 +95,19 @@ pub struct ServerHealth {
     /// `None` when none is armed — which includes the `Down`-but-connected
     /// case (the transport is up, the calls on it are failing).
     pub retry_in: Option<Duration>,
+    /// Round-trip time of the `initialize` request measured when the *live*
+    /// connection was established — how far away the server is.
+    ///
+    /// The `initialize` request alone, not the whole handshake: `tools/list`
+    /// pages, so including it would price a catalogue server as a distant
+    /// one. A reconnect re-measures, so this always describes the connection
+    /// that is up now.
+    ///
+    /// `None` for a server that has never completed a handshake — an
+    /// auth-suppressed row, or a client wrapped around a transport that has
+    /// not been initialized. Never a synthesized zero: unknown distance and
+    /// zero distance are different facts, and the second one is a lie.
+    pub latency: Option<Duration>,
 }
 
 impl ServerHealth {
@@ -130,6 +143,12 @@ pub(super) struct Health {
     /// Earliest instant a reconnect may be attempted (set when the transport
     /// is torn down).
     pub(super) next_retry_at: Option<Instant>,
+    /// The live connection's `initialize` round trip — see
+    /// [`ServerHealth::latency`]. Lives behind the connection mutex rather
+    /// than beside the handshake's other outputs because the reconnect path
+    /// holds only `&self`, and a stale number there would be the one thing
+    /// this field must never report.
+    pub(super) latency: Option<Duration>,
 }
 
 impl Default for Health {
@@ -140,6 +159,7 @@ impl Default for Health {
             connect_failures: 0,
             last_error: None,
             next_retry_at: None,
+            latency: None,
         }
     }
 }
@@ -156,6 +176,13 @@ impl Health {
 }
 
 impl Connection {
+    /// Record the `initialize` round trip a completed handshake measured —
+    /// the first one and every reconnect's, so the reported distance is
+    /// always the live connection's ([`ServerHealth::latency`]).
+    pub(super) fn note_handshake_latency(&mut self, latency: Duration) {
+        self.health.latency = Some(latency);
+    }
+
     /// A request *returned* — the handshake or a `tools/call`. This is the
     /// only transition into [`HealthState::Live`]: it is the only evidence
     /// that the server actually serves requests.
@@ -203,6 +230,10 @@ impl Connection {
     /// backoff clock armed from the combined streak.
     fn tear_down(&mut self, err: &McpError) {
         self.transport = None;
+        // The measured distance belonged to the connection that just died.
+        // Keeping it would report a round trip nothing can make right now;
+        // the next handshake supplies a fresh one.
+        self.health.latency = None;
         self.health.last_error = Some(err.user_message());
         self.health.state = HealthState::Down;
         self.health.next_retry_at =

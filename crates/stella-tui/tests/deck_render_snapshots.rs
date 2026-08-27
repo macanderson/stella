@@ -88,6 +88,11 @@ mod attribution;
 #[path = "deck_render_snapshots/task_zoom.rs"]
 mod task_zoom;
 
+/// The MCP tab's golden fixture. See [`graph`]'s doc for why this is
+/// `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/mcp.rs"]
+mod mcp;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.
@@ -495,45 +500,6 @@ fn fixture_tool_policy() -> ToolPolicyState {
     }
 }
 
-fn fixture_mcp_servers() -> Vec<stella_tui::McpServerInfo> {
-    vec![
-        stella_tui::McpServerInfo {
-            name: "stripe".into(),
-            title: Some("Stripe".into()),
-            description: Some("Payments, refunds, and balance reads.".into()),
-            endpoint: "https://mcp.stripe.com/v1".into(),
-            kind: "http".into(),
-            enabled: true,
-            connected: true,
-            health: Some("live".into()),
-            tool_count: 21,
-            oauth: Some(true),
-            calls: 14,
-            ..Default::default()
-        },
-        stella_tui::McpServerInfo {
-            name: "fs".into(),
-            endpoint: "npx -y @modelcontextprotocol/server-filesystem /w".into(),
-            kind: "stdio".into(),
-            enabled: true,
-            connected: true,
-            health: Some("live".into()),
-            tool_count: 4,
-            ..Default::default()
-        },
-        stella_tui::McpServerInfo {
-            name: "linear".into(),
-            title: Some("Linear".into()),
-            description: Some("Issues, projects, cycles, and documents.".into()),
-            endpoint: "https://mcp.linear.app/mcp".into(),
-            kind: "http".into(),
-            enabled: false,
-            oauth: Some(false),
-            ..Default::default()
-        },
-    ]
-}
-
 /// The representative state for each tab: populated entries, a moved cursor,
 /// and whatever out-of-band snapshot that tab reads. A tab rendered from
 /// `DeckUi::default()` would pin its empty state and nothing else.
@@ -557,7 +523,7 @@ fn ui_for(tab: DeckTab) -> DeckUi {
             ui.skills.view = fixture_skills();
             ui.skills.sel = 1;
         }
-        DeckTab::Mcp => ui.mcp.servers = fixture_mcp_servers(),
+        DeckTab::Mcp => ui.mcp.servers = mcp::fixture_mcp_servers(),
         DeckTab::Issues => {
             ui.issues.rows = fixture_issues();
             ui.issues.loaded = true;

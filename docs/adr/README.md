@@ -83,6 +83,7 @@ open; nothing before Phase 3 forces it.
 | [0014](0014-memories-join-the-record-control-plane.md) | Memories Join the Context-Record Control Plane | **Proposed** — awaiting ratification |
 | [0015](0015-the-task-tag-rides-the-event.md) | The Task Tag Rides the Event | Implemented — landed with #5039 |
 | [0017](0017-plan-graph-persistence.md) | The Plan Graph Is Persisted in the Store, Not the Context Plane | **Proposed** — awaiting ratification |
+| [0018](0018-mcp-capability-grants.md) | MCP Servers Are Withheld Until Their Handshake Is Granted | **Proposed** — awaiting ratification |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -108,3 +109,10 @@ graph SPEC §7.4 specifies. It routes the record to `store.db` beside the
 execution it describes rather than to the retrieval plane in `context.db`, and
 argues the shape (edge rows, not a JSON column) from the auditability the
 issue asks for. Unlike 0013 it is implemented in the change that files it.
+
+ADR 0018 makes `McpServerEntry::granted` a three-state field, so an entry says
+which door its server came through: a grant, a registry install, or a human
+editing `mcp.toml`. Only the middle one withholds, and `CapabilityGrants` then
+keeps an ungranted server out of `schemas()` and refuses its calls before the
+transport — on both hosts, so the property does not depend on which surface is
+driving.

@@ -953,6 +953,20 @@ pub enum WorkspaceInput {
         field: String,
         value: Secret,
     },
+    /// MCP tab: record the operator's capability grant for a configured
+    /// server, after the first-enable handshake showed what it declares
+    /// (SPEC §9.3).
+    ///
+    /// The driver writes `granted = true` into `.stella/mcp.toml`, adds the
+    /// name to the session's shared grant set — so the server becomes usable
+    /// in the session it was reviewed in, without a reconnect — enables it,
+    /// and pushes a fresh [`Inbound::McpServers`] snapshot.
+    ///
+    /// Only ever sent for a grant. There is no `McpGrant { granted: false }`:
+    /// declining is not answering, the gate's default is withheld, and a
+    /// parameter that selects between granting and revoking would be two verbs
+    /// wearing one name — the single-purpose rule AGENTS.md #9 states.
+    McpGrant { name: String },
     /// MCP tab: rebuild and re-push the [`Inbound::McpServers`] snapshot.
     McpRefresh,
     /// MCP tab: assemble the ctrl+o inspector detail for one configured server
@@ -1125,8 +1139,8 @@ pub mod steering;
 mod tool_policy;
 pub use engine_config::{EngineAgentState, EngineConfigState, EngineRole, RoleWiringRow, SeatRow};
 pub use mcp::{
-    McpLiveIdentity, McpLookupState, McpSearchItem, McpSearchOutcome, McpServerDetail,
-    McpServerInfo, McpToolRow,
+    GRAPH_SERVER, McpLiveIdentity, McpLookupState, McpSearchItem, McpSearchOutcome,
+    McpServerDetail, McpServerInfo, McpSignature, McpSourceTier, McpToolRow,
 };
 pub use roles::{RoleTableEntry, role_table};
 pub use skills::{SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView};

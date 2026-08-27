@@ -51,7 +51,10 @@ pub(crate) mod testkit {
     use crate::error::McpError;
 
     type Queues = Arc<Mutex<HashMap<String, VecDeque<Result<Value, McpError>>>>>;
-    type Log = Arc<Mutex<Vec<(String, Value)>>>;
+    /// A shared record of what crossed the transport. Handed out by
+    /// [`ScriptedTransport::requests_handle`] so a test can assert what did
+    /// **not** go over the wire — the one claim no return value can carry.
+    pub(crate) type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
     /// Enqueue responses with [`ScriptedTransport::push_ok`] /
     /// [`ScriptedTransport::push_err`]; each `request(method, …)` pops the

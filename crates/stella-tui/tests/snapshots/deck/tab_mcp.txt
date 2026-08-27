@@ -4,18 +4,18 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION AGENTS TRACES GRAPH FILES SKILLS   MCP   ISSUES SETTINGS                                                                                       stella*
- servers · 3 · 2 connected
-▸ ● Stripe                 http   21 tools   live  oauth ✓  · 14×
+ servers · 4 · 4 connected
+  ● graph                  stdio  14 tools      8ms  live  · pinned
+      stella's own code graph — nodes, edges, coupling.
+      graph is pinned · it is the product, not an integration
+▸ ● Stripe                 http   21 tools     66ms  live  oauth ✓  · 14×
       stripe  ·  Payments, refunds, and balance reads.
-  ● fs                     stdio  4 tools    live
+  ● fs                     stdio  4 tools       2ms  live
       npx -y @modelcontextprotocol/server-filesystem /w
-  ○ Linear                 http   0 tools    disabled  o login
+  ● Linear                 http   9 tools      41ms  live  · ungranted  o login
       linear  ·  Issues, projects, cycles, and documents.
 
  registry · web · s search · new servers land disabled · the handshake shows capabilities before first enable
-
-
-
 
 
 

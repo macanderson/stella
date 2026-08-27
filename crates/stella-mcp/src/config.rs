@@ -110,6 +110,11 @@ impl McpConfig {
                     McpServerEntry {
                         transport,
                         candidate_safe: false,
+                        // A server arriving through this door has not been
+                        // reviewed, so the decision is recorded as "not
+                        // granted" rather than left absent — absent means a
+                        // human wrote the entry (see the field's doc).
+                        granted: Some(false),
                         card,
                     },
                 );
@@ -133,6 +138,52 @@ impl McpConfig {
             }
             None => false,
         }
+    }
+
+    /// Whether `name`'s tools may be advertised to the model and called —
+    /// the on-disk half of SPEC §9.3's first-enable handshake gate.
+    ///
+    /// `true` for a granted server and for one whose entry records no
+    /// decision at all; `false` only where a decision is recorded and it is
+    /// not yes. See [`McpServerEntry::granted`] for why an absent key reads as
+    /// granted. An unconfigured name is `false` — there is nothing to grant.
+    pub fn is_granted(&self, name: &str) -> bool {
+        self.servers
+            .get(name)
+            .is_some_and(|e| e.granted.unwrap_or(true))
+    }
+
+    /// The recorded grant decision for `name`, undecided (`None`) included —
+    /// what a UI needs to tell "granted" from "nobody ever asked". Use
+    /// [`McpConfig::is_granted`] for the gate itself.
+    pub fn grant_decision(&self, name: &str) -> Option<Option<bool>> {
+        self.servers.get(name).map(|e| e.granted)
+    }
+
+    /// Record the operator's answer to the first-enable handshake, returning
+    /// whether the server exists to answer for.
+    ///
+    /// Always writes a decision, never clears one: revoking is
+    /// `set_granted(name, false)`, which is a different state from the absent
+    /// key a hand-written entry carries and must stay distinguishable from it.
+    pub fn set_granted(&mut self, name: &str, granted: bool) -> bool {
+        match self.servers.get_mut(name) {
+            Some(entry) => {
+                entry.granted = Some(granted);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Every configured server whose tools may be used — the set
+    /// [`crate::McpToolSet::with_capability_grants`] is built from.
+    pub fn granted_names(&self) -> Vec<&str> {
+        self.servers
+            .iter()
+            .filter(|(_, e)| e.granted.unwrap_or(true))
+            .map(|(name, _)| name.as_str())
+            .collect()
     }
 
     /// Remove a server entry, returning whether it existed.
@@ -257,6 +308,29 @@ pub struct McpServerEntry {
     /// never inferred.
     #[serde(default)]
     pub candidate_safe: bool,
+    /// The operator's capability grant for this server (SPEC §9.3's
+    /// first-enable handshake), in three states:
+    ///
+    /// - `Some(true)` — the operator read what this server declares at
+    ///   handshake and granted it. Its tools are advertised and callable.
+    /// - `Some(false)` — a decision is recorded and it was *not yet yes*.
+    ///   This is what an install writes, so a server added from the registry
+    ///   arrives withheld: no tool of it is advertised to the model and every
+    ///   call to it is refused until the handshake is reviewed.
+    /// - `None` — no decision was ever recorded, which is what a hand-written
+    ///   `mcp.toml` entry looks like. Read as granted, because writing the
+    ///   transport into this file by hand **is** the review the gate is
+    ///   asking for. The gate exists for the other door: one keystroke on
+    ///   a registry search result, which adds a stranger's server.
+    ///
+    /// The asymmetry is the threat model rather than a convenience. Anyone who
+    /// can write `granted = true` here can equally omit the key, so reading
+    /// `None` as withheld would defend against nothing `Some(false)` does not
+    /// already cover — and would disarm every existing workspace on upgrade,
+    /// which is the failure mode that teaches operators to grant without
+    /// reading. [`McpConfig::is_granted`] is the one reader.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted: Option<bool>,
     /// Publisher-supplied identity, recorded at install. Flattened so the
     /// fields sit beside the transport's rather than in a sub-table — an entry
     /// stays one readable block in `mcp.toml`, and an absent card writes

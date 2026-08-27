@@ -88,6 +88,109 @@ struct OfficialMeta {
     is_latest: Option<bool>,
     #[serde(default, rename = "updatedAt")]
     updated_at: Option<String>,
+    /// How many times this server has been installed, where the registry
+    /// counts. The frozen v0.1 schema does not define the field and the
+    /// official registry does not serve it today, so this is usually absent —
+    /// see [`RegistryEntry::installs`] for why absent stays absent.
+    #[serde(default, rename = "downloadCount")]
+    download_count: Option<u64>,
+}
+
+/// How far the registry's own publish authentication goes for an entry —
+/// SPEC §9.3's `official · vendor · community` column.
+///
+/// Derived from the entry's **namespace**, because that is what the registry
+/// actually verifies at publish time: a reverse-DNS namespace is proved with a
+/// DNS record on the domain, a code-host namespace with an account on that
+/// host, and the registry operator's own namespace is the operator itself.
+/// Nothing here is a judgement about the software; it names who had to prove
+/// what before the entry could exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SourceTier {
+    /// The registry operator's own namespace (`io.modelcontextprotocol…`).
+    Official,
+    /// A namespace under a domain the publisher proved they control — the
+    /// reverse-DNS form, `com.stripe/mcp`. The strongest claim a third party
+    /// can make here: it ties the entry to an organization, not an account.
+    Vendor,
+    /// A namespace under a code host (`io.github.…`, `io.gitlab.…`), or the
+    /// registry's anonymous namespace. An account proved it, nothing more.
+    Community,
+}
+
+impl SourceTier {
+    /// The one-word label the MCP tab renders.
+    pub fn label(self) -> &'static str {
+        match self {
+            SourceTier::Official => "official",
+            SourceTier::Vendor => "vendor",
+            SourceTier::Community => "community",
+        }
+    }
+}
+
+/// Whether the registry vouches for who published an entry — SPEC §9.3's
+/// signature column, and the gate `install` refuses on.
+///
+/// "Signed" here is a claim about **provenance**, and each answer below says
+/// exactly which evidence produced it, because the word is easy to over-read: the
+/// registry authenticates a publisher against the namespace they publish under
+/// and records the entry's lifecycle in `_meta`. Stella verifies no signature
+/// over the package bytes themselves — no MCP registry publishes one to verify
+/// yet, and claiming otherwise would be the most dangerous kind of green badge
+/// — #5176 is where verifying the artifact goes once registries publish
+/// attestations to verify.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignatureStatus {
+    /// The registry attributed this entry to a verified namespace and its
+    /// lifecycle record says `active`.
+    Signed,
+    /// The registry attributed the entry to nobody: no official `_meta` block
+    /// at all, or the anonymous namespace. **Blocked** — an entry nobody
+    /// vouches for is a spawn command from a stranger.
+    Unsigned,
+    /// The registry attributed the entry and then withdrew it — `deprecated`,
+    /// `deleted`, or any lifecycle state that is not `active`. **Blocked**,
+    /// and worded apart from `Unsigned` because the remedy differs: this one
+    /// was published and pulled, and the operator should find out why.
+    Withdrawn(&'static str),
+}
+
+impl SignatureStatus {
+    /// Whether stella will install a server carrying this status.
+    ///
+    /// The refusal is the point of the column (SPEC §9.3, "Unsigned
+    /// blocked"): a search result is one keystroke from a `cmd` line this
+    /// process will spawn, so the check belongs on the install path and not
+    /// only in the paint.
+    pub fn installable(self) -> bool {
+        matches!(self, SignatureStatus::Signed)
+    }
+
+    /// The short label the MCP tab renders beside the row.
+    pub fn label(self) -> &'static str {
+        match self {
+            SignatureStatus::Signed => "signed",
+            SignatureStatus::Unsigned => "unsigned · blocked",
+            SignatureStatus::Withdrawn(_) => "withdrawn · blocked",
+        }
+    }
+
+    /// Why an install was refused, phrased for the operator who pressed the
+    /// key. `None` when nothing is refused.
+    pub fn refusal(self) -> Option<String> {
+        match self {
+            SignatureStatus::Signed => None,
+            SignatureStatus::Unsigned => Some(
+                "the registry does not attribute this entry to a verified publisher — \
+                 blocked by policy"
+                    .to_string(),
+            ),
+            SignatureStatus::Withdrawn(status) => Some(format!(
+                "the registry has withdrawn this entry (status `{status}`) — blocked by policy"
+            )),
+        }
+    }
 }
 
 /// A published `server.json` document: identity, description, and the ways to
@@ -235,6 +338,20 @@ pub struct RegistryEntry {
     pub status: Option<String>,
     pub is_latest: Option<bool>,
     pub updated_at: Option<String>,
+    /// Recorded installs, where the registry counts them.
+    ///
+    /// `None` means *the registry published no count*, and it is rendered as
+    /// unknown rather than as `0`: the frozen v0.1 schema defines no such
+    /// field, so most entries are legitimately absent, and a zero would say
+    /// "nobody has ever installed this" about a server with a million users.
+    pub installs: Option<u64>,
+    /// Whether the registry attributed this entry to anyone, and whether it
+    /// stands behind it — see [`SignatureStatus`]. Stella refuses to install
+    /// anything but [`SignatureStatus::Signed`].
+    pub signature: SignatureStatus,
+    /// How far the publisher's namespace verification goes — see
+    /// [`SourceTier`].
+    pub tier: SourceTier,
 }
 
 /// A page of results with the opaque cursor for the next page (`None` = last).
@@ -350,6 +467,70 @@ impl RegistryServer {
             }
         }
         options
+    }
+}
+
+/// The registry operator's own namespace: entries published by the people who
+/// run the registry.
+const OPERATOR_NAMESPACE: &str = "io.modelcontextprotocol";
+/// The namespace the official registry files entries under when it could not
+/// attribute them to a publisher at all.
+const ANONYMOUS_NAMESPACE: &str = "io.modelcontextprotocol.anonymous";
+/// Namespace prefixes whose ownership proof is a code-host account rather than
+/// a domain. `io.github.acme/x` says an account called `acme` exists on GitHub;
+/// `com.acme/x` says somebody served a DNS record for `acme.com`.
+const CODE_HOST_NAMESPACES: [&str; 2] = ["io.github.", "io.gitlab."];
+
+/// The namespace half of a registry name: everything before the first `/`.
+/// A name with no `/` is entirely namespace — the registry rejects those, and
+/// reading one as "no namespace" is the safe direction here.
+fn namespace_of(name: &str) -> &str {
+    name.split('/').next().unwrap_or(name)
+}
+
+/// Which [`SourceTier`] a registry name's namespace earns. See the enum for
+/// what each tier claims and why the namespace is the evidence.
+pub fn source_tier(name: &str) -> SourceTier {
+    let namespace = namespace_of(name);
+    if namespace == ANONYMOUS_NAMESPACE
+        || CODE_HOST_NAMESPACES
+            .iter()
+            .any(|prefix| namespace.starts_with(prefix))
+    {
+        return SourceTier::Community;
+    }
+    if namespace == OPERATOR_NAMESPACE || namespace.starts_with(&format!("{OPERATOR_NAMESPACE}.")) {
+        return SourceTier::Official;
+    }
+    // Everything left is a reverse-DNS namespace under somebody's domain.
+    // A name with no dot at all is nobody's domain, so it is not a vendor
+    // claim either.
+    if namespace.contains('.') {
+        SourceTier::Vendor
+    } else {
+        SourceTier::Community
+    }
+}
+
+/// Whether the registry attributed and still stands behind an entry — see
+/// [`SignatureStatus`] for what the word "signed" does and does not claim.
+///
+/// `status` is the entry's lifecycle field from the official `_meta` block.
+/// Its absence is read as *unattributed*, not as *active*: an entry the
+/// registry keeps no record for is one nobody has vouched for, and this
+/// function's answer decides whether a spawn command from a stranger may be
+/// written into `mcp.toml`.
+pub fn signature_status(name: &str, status: Option<&str>) -> SignatureStatus {
+    if namespace_of(name) == ANONYMOUS_NAMESPACE {
+        return SignatureStatus::Unsigned;
+    }
+    match status.map(str::trim) {
+        Some("active") => SignatureStatus::Signed,
+        Some("deprecated") => SignatureStatus::Withdrawn("deprecated"),
+        Some("deleted") => SignatureStatus::Withdrawn("deleted"),
+        // Any other lifecycle word is one this build does not know. Unknown
+        // is not active.
+        Some(_) | None => SignatureStatus::Unsigned,
     }
 }
 
@@ -595,11 +776,17 @@ impl RegistryClient {
         let entries = response
             .servers
             .into_iter()
-            .map(|envelope| RegistryEntry {
-                server: envelope.server,
-                status: envelope.meta.official.status,
-                is_latest: envelope.meta.official.is_latest,
-                updated_at: envelope.meta.official.updated_at,
+            .map(|envelope| {
+                let official = envelope.meta.official;
+                RegistryEntry {
+                    tier: source_tier(&envelope.server.name),
+                    signature: signature_status(&envelope.server.name, official.status.as_deref()),
+                    installs: official.download_count,
+                    server: envelope.server,
+                    status: official.status,
+                    is_latest: official.is_latest,
+                    updated_at: official.updated_at,
+                }
             })
             .collect();
         Ok(RegistryPage {
@@ -632,6 +819,80 @@ mod tests {
                 .any(|e| e.status.as_deref() == Some("active"))
         );
         assert!(page.entries.iter().any(|e| e.is_latest == Some(true)));
+    }
+
+    /// The tier column reads the registry's own verification classes off the
+    /// namespace — a DNS-proved domain outranks a code-host account, and the
+    /// registry operator's own namespace is its own tier.
+    #[test]
+    fn the_source_tier_is_read_from_the_namespace_the_registry_verified() {
+        for (name, tier) in [
+            ("io.modelcontextprotocol/everything", SourceTier::Official),
+            ("io.modelcontextprotocol.registry/x", SourceTier::Official),
+            ("com.stripe/mcp", SourceTier::Vendor),
+            ("ai.smithery/obsidian", SourceTier::Vendor),
+            ("io.github.acme/thing", SourceTier::Community),
+            ("io.gitlab.acme/thing", SourceTier::Community),
+            ("io.modelcontextprotocol.anonymous/x", SourceTier::Community),
+            // No dot is nobody's domain, so it is no vendor claim either.
+            ("plain/thing", SourceTier::Community),
+        ] {
+            assert_eq!(source_tier(name), tier, "{name}");
+        }
+    }
+
+    /// Blocked is the default. Only a lifecycle record the registry keeps and
+    /// still calls `active`, under a namespace it attributed to somebody,
+    /// earns an install.
+    #[test]
+    fn only_an_active_attributed_entry_is_installable() {
+        assert_eq!(
+            signature_status("com.stripe/mcp", Some("active")),
+            SignatureStatus::Signed
+        );
+        assert!(SignatureStatus::Signed.installable());
+
+        for (name, status) in [
+            // No lifecycle record at all: nobody vouched for this.
+            ("com.stripe/mcp", None),
+            // Attributed, then withdrawn.
+            ("com.stripe/mcp", Some("deprecated")),
+            ("com.stripe/mcp", Some("deleted")),
+            // A lifecycle word this build does not know is not `active`.
+            ("com.stripe/mcp", Some("quarantined")),
+            // The registry could not attribute it, whatever the status says.
+            ("io.modelcontextprotocol.anonymous/x", Some("active")),
+        ] {
+            let verdict = signature_status(name, status);
+            assert!(
+                !verdict.installable(),
+                "{name} / {status:?} must be blocked, got {verdict:?}"
+            );
+            assert!(verdict.refusal().is_some(), "a block must say why");
+        }
+
+        // Withdrawn is worded apart from unsigned: the remedies differ.
+        assert_ne!(
+            signature_status("com.stripe/mcp", Some("deprecated")).label(),
+            signature_status("com.stripe/mcp", None).label()
+        );
+    }
+
+    /// A registry that publishes no install count leaves the row saying
+    /// "unknown". A zero would claim nobody has ever installed the server.
+    #[test]
+    fn an_absent_install_count_stays_absent() {
+        let page = RegistryClient::parse_page(SEARCH_PACKAGES).unwrap();
+        assert!(
+            page.entries.iter().all(|e| e.installs.is_none()),
+            "the recorded official-registry page carries no count"
+        );
+
+        let counted = r#"{"servers":[{"server":{"name":"com.acme/x"},
+            "_meta":{"io.modelcontextprotocol.registry/official":
+            {"status":"active","downloadCount":9123}}}],"metadata":{}}"#;
+        let page = RegistryClient::parse_page(counted).unwrap();
+        assert_eq!(page.entries[0].installs, Some(9123));
     }
 
     #[test]

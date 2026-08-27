@@ -710,6 +710,8 @@ fn fixture_mcp_servers() -> Vec<McpServerInfo> {
             tool_count: 21,
             oauth: Some(true),
             calls: 14,
+            latency_ms: Some(66),
+            granted: true,
             ..Default::default()
         },
         McpServerInfo {
@@ -720,6 +722,8 @@ fn fixture_mcp_servers() -> Vec<McpServerInfo> {
             connected: true,
             health: Some("live".into()),
             tool_count: 4,
+            latency_ms: Some(2),
+            granted: true,
             ..Default::default()
         },
         McpServerInfo {
@@ -730,6 +734,7 @@ fn fixture_mcp_servers() -> Vec<McpServerInfo> {
             kind: "http".into(),
             enabled: false,
             oauth: Some(false),
+            granted: true,
             ..Default::default()
         },
         McpServerInfo {
@@ -744,6 +749,8 @@ fn fixture_mcp_servers() -> Vec<McpServerInfo> {
             tool_count: 38,
             oauth: Some(true),
             calls: 6,
+            latency_ms: Some(88),
+            granted: true,
             ..Default::default()
         },
     ]
