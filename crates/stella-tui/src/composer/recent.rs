@@ -36,7 +36,7 @@ pub const MAX_RECENT: usize = 5;
 /// this crate carries `serde_json` and not `serde`, and one small struct is not
 /// the reason to add a derive dependency to a rendering crate (AGENTS.md, "No
 /// new dependencies casually"). The by-hand reader is also what lets one pass
-/// accept both file shapes — see [`read_entries`].
+/// accept both file shapes — see this module's `read_entries`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recent {
     pub name: String,
