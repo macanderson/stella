@@ -33,7 +33,7 @@
 //!   positive match, which cannot express the shape most command rules
 //!   actually have: *this family is forbidden **except** in its scoped
 //!   form*. Approximating that with a list of deny globs only enumerates
-//!   the spellings someone thought of, and the first unlisted variant walks
+//!   the spellings someone thought of, and the first unlisted one walks
 //!   through while the rule still looks enforced. Write the broad deny and
 //!   name the narrow exception — a missing exception shows up at once as a
 //!   false block, where a missing deny pattern is silent. Command-scoped by
@@ -278,8 +278,8 @@ pub(crate) fn load_workspace_rules(
 /// tier merge resolved them, plus the guards TOML records earned.
 ///
 /// The split is deliberate and the reason is blast radius. The markdown path carries
-/// an invariant with teeth — a user-global hard guard is *monotonic*, and a project
-/// rule with the same id can never remove it — and that invariant is enforced by
+/// a rule with teeth — a user-global hard guard is *monotonic*, and a project
+/// rule with the same id can never remove it — and that rule is enforced by
 /// [`merge_rule_trust_tiers`] over `Vec<Rule>`. Re-expressing it inside the record
 /// registry's lineage merge would mean rewriting security-relevant merge logic to
 /// add a feature, so the markdown result is passed through untouched and only the
