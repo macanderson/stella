@@ -12,6 +12,7 @@ Offline: reads and writes local files, no API key.
 ```bash
 stella plugin install <dir> [--scope project|user] [--yes]
 stella plugin list
+stella plugin panel <name> [--allow|--deny]
 stella plugin remove <name>
 stella plugin drive <name>
 ```
@@ -109,6 +110,7 @@ vera                     project  arbiter
   Holds a turn open until the tests pass.
   /ws/.stella/plugins/vera
   runs: python3 ${plugin_dir}/main.py (30s, env: PATH)
+  panel: ! `vera` declares a panel and is not drawing one — nobody has been asked yet. Run `stella plugin panel vera` to read the handshake and decide.
 
 hook dispatches:
   vera                     PreToolUse -> python3 /ws/.stella/plugins/vera/main.py
@@ -118,6 +120,26 @@ hook dispatches:
 The two sections answer different questions. The first is what the plugin declared; the second is what would actually run. A plugin with a hook grant but no `[runtime]` appears in the first and not the second, which is the answer to "I declared `Stop` and nothing happens".
 
 A declared environment variable that stella grades as a model credential is refused and named here rather than discovered as a missing variable at the first dispatch. A plugin never receives the key that pays for the agent; the fix is a `[roles]` tier, so the host makes the call and the spend lands on the receipt.
+
+## `stella plugin panel`
+
+Decide whether a plugin may draw on your screen.
+
+```bash
+stella plugin panel hello           # print the handshake and ask
+stella plugin panel hello --allow
+stella plugin panel hello --deny
+```
+
+A plugin with a `[panel]` block is leased a rectangle of your terminal and fills it every tick. That is a separate grant from installing the package, and it is asked separately: the handshake shows the manifest signature, the capabilities the plugin asks for, the limits its panel accepts, which of the three surfaces it draws on, the slash name it answers to, and the program the host starts to draw it. Underneath is `[a]llow  [d]eny`.
+
+Until that question is answered, **the panel does not draw and its program is never started**. `stella plugin install` asks it for a package it is copying (and `--yes` answers it along with the install), so this verb is for the three cases an install prompt never reaches:
+
+- a plugin that arrived with a `git clone` into `.stella/plugins` and was never installed by this binary;
+- a plugin whose manifest changed after the grant — the answer covers exact bytes, so a `[panel]` that grows a surface or a wider process is asked again;
+- withdrawing a panel you previously allowed.
+
+Denying is not uninstalling. The package keeps its tools, its skills and its hooks, and loses only the rectangle — `stella plugin remove` is what takes the rest away.
 
 ## `stella plugin remove`
 

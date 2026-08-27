@@ -145,7 +145,9 @@ pub use candidate_grant::{
     test_plan, witness_identity_matches,
 };
 pub use configure::{ConfigureEntry, REFUSED_SECTIONS};
-pub use consent::{Capability, RiskLevel, consent_text, highest_risk};
+pub use consent::{
+    Capability, PANEL_GRANT_ASK, RiskLevel, consent_text, highest_risk, panel_handshake_text,
+};
 pub use driver::{
     DriveNext, DrivePoint, DriveRequest, DriveResponse, DriveSession, DriverCall,
     DriverCallOutcome, DriverCallRequest, DriverCallResponse, DriverFamily, DriverGrant,
