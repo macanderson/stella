@@ -176,10 +176,29 @@ pub struct Cell {
 
 impl Cell {
     /// A plain run in the given colour.
+    ///
+    /// A cell is one styled run of one row, so a control character in it can
+    /// only corrupt the frame: a `\n` splits the row when the encoders join
+    /// lines, and the rest of the class is zero columns to [`cells`] and
+    /// something real to the terminal — `\t` a stop, `\r` a return — so the
+    /// width contract breaks exactly where nothing measures it. Wire text
+    /// reaches this constructor unsanitised (a bash `header_object` is
+    /// routinely multi-line; a diff row of a Makefile carries tabs), so the
+    /// boundary is here: tabs expand from the cell's own origin — body lines
+    /// arrive already expanded against their true column
+    /// (`push_output_text`), so this is the fallback stop, not a second
+    /// opinion — and every other control character becomes a space.
     #[must_use]
     pub fn new(text: impl Into<String>, fg: Color) -> Self {
+        let mut text = text.into();
+        if text.chars().any(char::is_control) {
+            text = crate::tabs::expand(&text, 0)
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+        }
         Self {
-            text: text.into(),
+            text,
             fg,
             tint: Tint::None,
             bold: false,
@@ -646,6 +665,18 @@ fn body_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, call: &Call, shown: &str, ti: 
             push_output_text(&mut line, text, paint);
             out.push(line);
         }
+    }
+    // An expanded body shows everything the fold hid — except lines the
+    // transport dropped before this crate saw them. Those still need the
+    // honest marker `Output::clipped` promises, or the expanded view presents
+    // a truncated output as the whole thing. The HTML renderer keeps its fold
+    // control (and the count) visible when open; this is the grid's
+    // equivalent.
+    if output_open && fold.clipped > 0 {
+        out.push(vec![
+            body_gutter(),
+            Cell::new(fold.clip_label(), Color::Faint),
+        ]);
     }
 }
 
