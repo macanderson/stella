@@ -29,9 +29,9 @@ Divergence files (or updates) a `triage`-labelled issue in oxagen naming every
 differing, missing, and extra file, and fails the run. The reference copy is
 oxagen's, because ADR-038 and the rollout originated there — but a report
 means *the copies disagree*, not *the others are wrong*. Resolve it by
-deciding what the corpus should say and re-syncing all five deliberately;
-blindly overwriting from oxagen can silently discard the very edit that was
-correct.
+deciding what the corpus should say and re-syncing all five from that
+decision; blindly overwriting from oxagen can silently discard the very edit
+that was correct.
 
 The check itself lives only in oxagen and reads the other four over the API.
 Installing five copies of the drift detector would replicate the thing whose
