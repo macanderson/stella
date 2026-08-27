@@ -604,6 +604,21 @@ pub enum Inbound {
     /// prompts, far larger than any other `Inbound` payload, and this variant
     /// would otherwise set the size of every channel send.
     InspectedCall(Box<InspectView>),
+    /// A failing gate has put a plan revision up for `agent` — SPEC 8.1 item 3.
+    ///
+    /// Out-of-band view-and-model state like [`Inbound::GraphSnapshot`], not
+    /// an [`Inbound::Event`]: `stella_core::plan_graph::RevisionGate` authors
+    /// it host-side from a `GateBoard` the host already evaluated, so the
+    /// journal keeps the board and the proposal is the host's reading of it.
+    /// Routing it as an event would put a host-side decision into the durable
+    /// stream, where a second producer could then write one.
+    ///
+    /// Folded by `SessionModel::propose_revision`, which files the scrollback
+    /// row and starts withholding the composer in one step.
+    RevisionProposed {
+        agent: AgentId,
+        proposal: Box<stella_protocol::RevisionProposal>,
+    },
 }
 
 /// One row of the ISSUES tab's browse list — tracker-agnostic: the driver
@@ -1301,6 +1316,23 @@ pub enum WorkspaceInput {
     RerunGate {
         /// The gate's name, as its row states it.
         gate: String,
+    },
+    /// `a` on a highlighted revision proposal: make the plan revision the
+    /// failing gate put up — SPEC 8.1's `a approve r4`.
+    ///
+    /// The whole proposal travels rather than its subject alone, because the
+    /// driver re-checks it before writing: `RevisionGate::approve` refuses a
+    /// proposal whose revision number the plan has moved past, and a subject
+    /// on its own carries no number to check.
+    ///
+    /// `e edit` and `x dismiss` are absent from this enum on purpose. Both are
+    /// answered entirely inside the deck — `e` hands the subject to the
+    /// composer and stands the proposal down, `x` drops it — and neither
+    /// writes anything, so a round trip to the driver would be a message whose
+    /// only effect is latency.
+    ApproveRevision {
+        agent: AgentId,
+        proposal: Box<stella_protocol::RevisionProposal>,
     },
     /// Plan card (`/plan`), post-approval `e`: ask the driver to open a
     /// scope-change proposal for `agent`'s locked scope. The deck never edits

@@ -643,6 +643,20 @@ pub struct DeckUi {
     /// Out-of-band view state, never folded: it is a fact about the machine,
     /// not about the session. It gates one thing — see `gates::index_hold`.
     pub index_readiness: IndexReadiness,
+    /// Plan revisions a failing gate has put up and nobody has answered, by
+    /// lane ([`Inbound::RevisionProposed`], SPEC 8.1 item 3).
+    ///
+    /// Out-of-band view state like [`Self::index_readiness`], and here rather
+    /// than on `SessionModel` because a key press clears it: the model is an
+    /// event fold with one mutator, and the answer to a proposal arrives from
+    /// the keyboard.
+    ///
+    /// It gates one thing: `gates::revision_hold` withholds every submission
+    /// while any entry stands, which is the deck's half of SPEC 8.1's
+    /// "nothing runs until approval". Keyed
+    /// by lane and ordered, so two lanes proposing at once hold in a fixed
+    /// order rather than whichever the map happened to yield.
+    pub pending_revisions: std::collections::BTreeMap<AgentId, stella_protocol::RevisionProposal>,
     pub help_open: bool,
     /// Vertical scroll for the help overlay (↑/↓, PageUp/Down, Home/End). Kept
     /// separate from the transcript scroll since the overlay is a different
@@ -897,6 +911,7 @@ impl Default for DeckUi {
             splash: SplashState::new(),
             notice: NoticeState::new(),
             index_readiness: IndexReadiness::unknown(),
+            pending_revisions: std::collections::BTreeMap::new(),
             help_open: false,
             // A sheet, not a log: it opens at its top, never at its tail.
             help_scroll: ScrollState {
@@ -1194,6 +1209,19 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     }
     if let Inbound::IndexReadiness(readiness) = inbound {
         ui.index_readiness = *readiness;
+        return;
+    }
+    // A plan revision a failing gate put up: the scrollback row and the
+    // withholding are written together, because a transcript showing a
+    // question the deck has stopped waiting on is worse than either alone.
+    // Ignored for a lane the deck does not have: unlike `Inbound::Event`, and
+    // like every other envelope carrying an agent id, this never registers one.
+    if let Inbound::RevisionProposed { agent, proposal } = inbound {
+        if let Some(lane) = model.index_of(agent).and_then(|i| model.agents.get_mut(i)) {
+            lane.model.propose_revision((**proposal).clone());
+            ui.pending_revisions
+                .insert(agent.clone(), (**proposal).clone());
+        }
         return;
     }
     if crate::panel_deck::ingest(&mut ui.panels, inbound) {
@@ -3524,6 +3552,12 @@ fn dispatch_submission(ui: &mut DeckUi, model: &WorkspaceModel) -> DeckAction {
     // (#4043). Checked here rather than inside `submit_prompt` precisely so
     // the text is still in the composer when the hold fires.
     if let Some(held) = gates::index_hold(ui) {
+        return held;
+    }
+    // And a lane with a plan revision standing runs nothing at all until it is
+    // answered (SPEC 8.1 item 3). Same placement, same reason: the composer
+    // still holds the text when the hold fires.
+    if let Some(held) = gates::revision_hold(ui) {
         return held;
     }
     // The deck queue is text-shaped: attachments enter deck prompts as

@@ -26,6 +26,7 @@ mod issues;
 mod list_vocabulary;
 mod mcp;
 mod queue;
+mod revision;
 mod routing_card;
 mod selection;
 mod sessions;

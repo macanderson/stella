@@ -157,6 +157,14 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
                 })
             })
             .collect(),
+        // "which failure did that repair task come from?" is a find-box
+        // question, and the cause is where the answer lives — the gate's own
+        // words, on the row that proposed the work.
+        E::RevisionProposal { proposal } => vec![
+            proposal.subject.as_str(),
+            proposal.gate.as_str(),
+            proposal.cause.as_str(),
+        ],
         E::GoalVerdict { reasoning, .. } => vec![reasoning],
         // The child's id and task are the searchable part; its summary never
         // reaches the transcript, by design.

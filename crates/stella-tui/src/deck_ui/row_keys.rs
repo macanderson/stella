@@ -3,14 +3,28 @@
 
 //! The bare letters a highlighted transcript row lends the keyboard.
 //!
-//! Four of them today: `u` on a delete event (SPEC 6.3's `· git-backed ·
-//! u undo`, SPEC 11), `l` / `r` on a gate board carrying a failure (SPEC
-//! 8.1's `^N jump · l full log · r rerun gate`), and `x` on a logged memory
-//! (SPEC 6.3's `· x reject`). One module rather than four arms in
-//! `deck_ui.rs`, which is a god file closed to growth — and one *shape*,
-//! because all four answer the same two questions: does this keystroke belong
-//! to the keyboard or to the composer, and does the highlight actually offer
-//! this verb?
+//! `u` on a delete event (SPEC 6.3's `· git-backed · u undo`, SPEC 11),
+//! `l` / `r` on a gate board carrying a failure (SPEC 8.1's `^N jump ·
+//! l full log · r rerun gate`), `x` on a logged memory (SPEC 6.3's
+//! `· x reject`), and `a` / `e` / `x` on a standing plan-revision proposal
+//! (SPEC 8.1's `a approve r4 · e edit · x dismiss`). One module rather than an
+//! arm each in `deck_ui.rs`, which is a god file closed to growth — and one
+//! *shape*, because every one of them answers the same two questions: does
+//! this keystroke belong to the keyboard or to the composer, and does the
+//! highlight actually offer this verb?
+//!
+//! # Why the proposal's keys are here and not on a card
+//!
+//! SPEC 8.1 asks for bare `a` / `e` / `x`, and [`crate::views::approval`]
+//! refuses bare letters. Both are right, because they guard
+//! different things. An approval card *arrives unbidden* over a composer
+//! somebody may be mid-sentence in, so a keystroke already in flight must not
+//! decide a call that runs their `rm -rf`. A transcript row is the opposite:
+//! [`is_bare_row_key`] admits a letter only when the composer is blank **and**
+//! the reader has moved the highlight onto the row, which is why destructive
+//! `u` is already admitted here. `a` on a proposal changes what is *planned*,
+//! and every task it admits still passes the tool-approval gate
+//! `views::approval` guards.
 //!
 //! # The rule every letter here follows
 //!
@@ -37,7 +51,7 @@ use crate::model::TranscriptEntry;
 /// them keeps this half cheap enough to run on every letter typed into the
 /// composer.
 pub(super) fn is_bare_row_key(c: char, key: KeyEvent, ui: &DeckUi) -> bool {
-    matches!(c, 'u' | 'l' | 'r' | 'x')
+    matches!(c, 'a' | 'e' | 'u' | 'l' | 'r' | 'x')
         && !key.modifiers.intersects(
             KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META | KeyModifiers::ALT,
         )
@@ -68,12 +82,49 @@ pub(super) fn act(c: char, model: &WorkspaceModel, ui: &mut DeckUi) -> Option<De
             let gate = selected_failed_board(model, ui)?.1;
             Some(DeckAction::Send(WorkspaceInput::RerunGate { gate }))
         }
-        // The text travels with the id because the rejection is a tombstone
-        // and an id alone would not hold it: the reflection loop re-mines
+        // `a approve r4` — SPEC 8.1's first action. The whole proposal travels
+        // to the driver, which re-checks its revision number against the plan
+        // before writing (`RevisionGate::approve`); the withholding is
+        // released here, because the reader has answered.
+        'a' => {
+            let (agent, proposal) = take_selected_proposal(model, ui)?;
+            Some(DeckAction::Send(WorkspaceInput::ApproveRevision {
+                agent,
+                proposal: Box::new(proposal),
+            }))
+        }
+        // `e edit`. A transcript row holds no text buffer and the deck's one
+        // buffer is the composer, which `is_bare_row_key` requires to be
+        // blank — so `e` hands the proposed subject to the composer and stands
+        // the proposal down: "I will write this one myself". Editing the task
+        // in place, and approving the edited version without retyping it, is
+        // #5289.
+        'e' => {
+            let (_, proposal) = take_selected_proposal(model, ui)?;
+            ui.composer.paste(&proposal.subject);
+            Some(DeckAction::Handled)
+        }
+        // `x reject` on a memory row. The text travels with the id because the
+        // rejection is a tombstone and an id alone would not hold it: the
+        // reflection loop re-mines
         // paraphrases, so the same lesson returns tomorrow under a fresh
         // `nod_…`. `stella-store`'s `forget` compares candidates against the
         // content it copied in, which is what catches the restatement.
+        //
+        // `x` on a standing proposal is `x dismiss` instead (SPEC 8.1). One
+        // letter, two rows, and no ambiguity: the two verbs are selected by
+        // what the highlight is on, and a row is one or the other.
         'x' => {
+            if let Some((agent, proposal)) = take_selected_proposal(model, ui) {
+                let message = format!(
+                    "{} dismissed on {agent}: {}",
+                    proposal.revision, proposal.subject
+                );
+                ui.notice.push(message.clone());
+                ui.scrollback
+                    .announce(format!("{}{message}", crate::accessible::NOTICE_MARKER));
+                return Some(DeckAction::Handled);
+            }
             let (memory_id, text) = super::memory::selected_memory(model, ui)?;
             Some(DeckAction::Send(WorkspaceInput::RejectMemory {
                 memory_id,
@@ -82,6 +133,32 @@ pub(super) fn act(c: char, model: &WorkspaceModel, ui: &mut DeckUi) -> Option<De
         }
         _ => None,
     }
+}
+
+/// The standing proposal under the transcript highlight, removed from the
+/// pending set — so the withholding is released by exactly the key press that
+/// answers it.
+///
+/// `None` for any other selection, and for a proposal row that has already
+/// been answered: the row stays in the scrollback after `a`, `e` or `x` (it is
+/// what the reader saw), and a second press on it must fall through to the
+/// composer rather than re-answering a question that is settled.
+fn take_selected_proposal(
+    model: &WorkspaceModel,
+    ui: &mut DeckUi,
+) -> Option<(String, stella_protocol::RevisionProposal)> {
+    let idx = ui.session_selected?;
+    let agent = model.agents.get(ui.focused)?;
+    let TranscriptEntry::RevisionProposal { proposal } = agent.model.transcript.get(idx)? else {
+        return None;
+    };
+    let id = agent.meta.id.clone();
+    let standing = ui.pending_revisions.get(&id)?;
+    if standing != proposal {
+        return None;
+    }
+    let proposal = ui.pending_revisions.remove(&id)?;
+    Some((id, proposal))
 }
 
 /// Flip entry `idx`'s expanded state for the focused agent — what `ctrl+o`

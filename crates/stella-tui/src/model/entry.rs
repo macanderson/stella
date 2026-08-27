@@ -19,8 +19,8 @@
 //! determinism extends through the renderer precisely because these are inert).
 
 use stella_protocol::{
-    BudgetMode, CiStatus, GateBoard, MediaJobState, MediaKind, MemoryClass, PrStatus, StageName,
-    SubAgentStatus, Withholder,
+    BudgetMode, CiStatus, GateBoard, MediaJobState, MediaKind, MemoryClass, PrStatus,
+    RevisionProposal, StageName, SubAgentStatus, Withholder,
 };
 
 use super::recall::{RecallBudget, RecalledFrameRow};
@@ -386,6 +386,19 @@ pub enum TranscriptEntry {
     /// is carried unchanged — every field on it is already content with no
     /// styling, which is what an entry is (module docs).
     GateBoard { board: GateBoard },
+    /// The plan revision a failing gate put up, and has not had answered —
+    /// SPEC 8.1 item 3.
+    ///
+    /// A transcript row rather than an overlay, which is what lends it the
+    /// bare `a` / `e` / `x` keys: `deck_ui::row_keys` admits a letter only
+    /// when the composer is blank and the reader has highlighted the row,
+    /// where `views::approval`'s card arrives unbidden over a composer
+    /// somebody may be typing into and refuses bare letters for that reason.
+    ///
+    /// The proposal is carried whole. Every field on it is content the
+    /// producer settled — `stella_core::plan_graph::RevisionGate` authors it
+    /// from a board the host evaluated — and nothing here re-derives any of it.
+    RevisionProposal { proposal: RevisionProposal },
     /// A goal-check verdict from the verifier loop (`AgentEvent::GoalVerdict`) —
     /// the symmetric scrollback row to [`Self::Verdict`]. `met` is the
     /// pass/fail; `round` is the verifier iteration it settled on.

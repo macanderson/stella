@@ -396,7 +396,7 @@ impl PlanGate {
 /// stay on the board forever (a cancelled task keeps its row as an audit
 /// trail, and ids are never reused), so a plan only ever grows, and a change
 /// to it is an insertion somebody made.
-fn plan_tasks(board: &[TaskItem]) -> Vec<TaskNode> {
+pub(crate) fn plan_tasks(board: &[TaskItem]) -> Vec<TaskNode> {
     board
         .iter()
         .map(|item| TaskNode::new(item.id.clone(), item.subject.clone()))

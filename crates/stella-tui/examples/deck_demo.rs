@@ -428,6 +428,15 @@ async fn main() -> std::io::Result<()> {
                         "rerun gate \"{gate}\": the demo has no verification plugin bound"
                     )));
                 }
+                // `a` on a revision proposal. The demo keeps no task board, so
+                // it answers with the sentence the real driver sends once the
+                // insertion is written (`service_approve_revision`).
+                WorkspaceInput::ApproveRevision { proposal, .. } => {
+                    let _ = react_tx.send(Inbound::Notice(format!(
+                        "{} approved — added task \"{}\"",
+                        proposal.revision, proposal.subject
+                    )));
+                }
                 WorkspaceInput::Quit => break,
             }
         }

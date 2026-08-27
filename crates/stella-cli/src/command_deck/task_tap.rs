@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::subsession::SupervisorMsg;
 
-mod plan_gate;
+pub(crate) mod plan_gate;
 
 pub(crate) use plan_gate::PlanSetup;
 

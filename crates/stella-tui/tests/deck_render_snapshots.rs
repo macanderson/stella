@@ -93,6 +93,11 @@ mod task_zoom;
 #[path = "deck_render_snapshots/gate_board.rs"]
 mod gate_board;
 
+/// SPEC 8.1's plan-revision proposal, the block the board above provokes. See
+/// [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/revision_proposal.rs"]
+mod revision_proposal;
+
 /// See [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
 #[path = "deck_render_snapshots/start_work.rs"]
 mod start_work;

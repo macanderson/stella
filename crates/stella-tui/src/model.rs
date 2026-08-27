@@ -33,6 +33,7 @@ mod inline_diff;
 mod memory;
 pub mod recall;
 mod reset;
+mod revision;
 mod summarize;
 mod turn;
 

@@ -114,8 +114,9 @@ mod theme_cmd;
 mod whistle;
 mod worker_control;
 use driver_support::{
-    handle_supervisor_msg, service_registry_action, service_reject_memory, service_rerun_gate,
-    service_undo_delete, spawn_mcp_connect, spawn_notification_poller, spawn_pr_monitor,
+    handle_supervisor_msg, service_approve_revision, service_registry_action,
+    service_reject_memory, service_rerun_gate, service_undo_delete, spawn_mcp_connect,
+    spawn_notification_poller, spawn_pr_monitor,
 };
 use lead_turn::run_lead_turn;
 use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
@@ -2245,6 +2246,15 @@ pub async fn run_deck_session(
                         // there is nothing for a busy lane to contend with.
                         Some(input @ WorkspaceInput::RerunGate { .. }) => {
                             service_rerun_gate(&input, &in_tx);
+                        }
+                        // `a approve r{n}` on a revision proposal: one row on
+                        // the task board, serviced mid-turn on the same
+                        // reasoning as the three above. The reader is looking
+                        // at a gate that just failed, and the whole point of
+                        // the proposal is that the plan changes before more
+                        // work runs against the old one.
+                        Some(input @ WorkspaceInput::ApproveRevision { .. }) => {
+                            service_approve_revision(&input, &registry, &in_tx);
                         }
                         // INSPECT is answered mid-turn too: the receipts of
                         // earlier steps are already durable, and watching the

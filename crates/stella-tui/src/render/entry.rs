@@ -321,6 +321,13 @@ fn projected_rows(
             out.extend(crate::views::gate_board::board_rows(board, expanded, width));
             true
         }
+        // The block the failing board above provoked. Fixed height — there is
+        // no log to open, so it is not expandable and `l` stays the gate
+        // board's.
+        TranscriptEntry::RevisionProposal { proposal } => {
+            out.extend(crate::views::revision_proposal::proposal_rows(proposal));
+            true
+        }
         TranscriptEntry::Complete {
             cost_usd,
             turn,
@@ -609,7 +616,7 @@ fn entry_body(
         // once, in `views::gate_board`. The arm exists because this match is
         // exhaustive by design, and it delegates rather than drawing a second
         // board here for the reason the two above delegate.
-        TranscriptEntry::GateBoard { .. } => {
+        TranscriptEntry::GateBoard { .. } | TranscriptEntry::RevisionProposal { .. } => {
             projected_rows(entry, view, expanded, width, out);
         }
         TranscriptEntry::BudgetTick {

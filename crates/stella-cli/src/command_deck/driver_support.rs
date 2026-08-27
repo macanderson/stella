@@ -250,6 +250,84 @@ pub(super) fn service_rerun_gate(input: &WorkspaceInput, in_tx: &UnboundedSender
     true
 }
 
+/// Service `a approve r{n}` on a standing plan revision (SPEC 8.1 item 3).
+/// Returns `true` if `input` was that verb.
+///
+/// **It changes the plan; it settles nothing.** The gate that failed belongs
+/// to the verification plugin that reported the evidence, and stella never
+/// re-runs one (AGENTS.md's opening) — so approving a repair task adds work,
+/// and the merge stays blocked until a plugin reports a green board.
+///
+/// The board *is* the plan on this path (`task_tap::plan_gate`'s module doc),
+/// so the insertion is a board row and nothing else: the next step's
+/// `PlanGate::review` reads the changed board, authors `r{n+1}` through
+/// `PlanGraph::revise`, and the `[:NEXT]` edge falls out of the machinery that
+/// already writes every other revision. `RevisionGate::approve` decides *what*
+/// is inserted and *where* — and refuses a proposal the plan has already moved
+/// past, which is the check a bare subject could not carry.
+///
+/// A plan the board already holds is not approved twice: a second `a` on a
+/// stale row, or an approval racing the model's own `task_create`, would add
+/// the same repair step under two ids that never resolve to one task.
+///
+/// It does **not** build a `PlanGraph` here. The live one belongs to the
+/// turn's `PlanGate`, this is between turns, and a throwaway graph
+/// reconstructed from the board would restart at `r1` — so every number it
+/// produced would contradict the `r{n}` the reader just approved. The
+/// engine-side gate, where `RevisionGate::admits` withholds the *tool calls*
+/// of a turn already in flight, is #5296.
+pub(super) fn service_approve_revision(
+    input: &WorkspaceInput,
+    registry: &ToolRegistry,
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    let WorkspaceInput::ApproveRevision { proposal, .. } = input else {
+        return false;
+    };
+    let board = registry.task_board();
+    let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
+    let message = if let Some(existing) = guard
+        .items()
+        .iter()
+        .find(|item| item.subject == proposal.subject)
+    {
+        format!(
+            "{} was already approved — task {} \"{}\" is on the board",
+            proposal.revision, existing.id, existing.subject
+        )
+    } else {
+        // The cause rides the row's description, which is where the drift
+        // outcome is recoverable from: `stella_tui::plan::Plan::steps` reads it
+        // into `PlanStep::detail`, so the plan card states under the inserted
+        // task why it exists, and the board snapshot the store records carries
+        // it too. The `DivergenceCause` the next `PlanGate::review` writes onto
+        // the revision is a separate cell that this path cannot reach (#5296) —
+        // so the reason is recorded where it *can* be, rather than lost while
+        // waiting for the place it belongs.
+        let task = guard.create(
+            proposal.subject.clone(),
+            Some(format!(
+                "added by {}: the {} gate reported {}",
+                proposal.revision,
+                proposal.gate,
+                proposal.cause.as_str()
+            )),
+            None,
+        );
+        format!(
+            "{} approved — task {} \"{}\", because the {} gate reported: {}",
+            proposal.revision,
+            task.id,
+            task.subject,
+            proposal.gate,
+            proposal.cause.as_str()
+        )
+    };
+    drop(guard);
+    let _ = in_tx.send(Inbound::Notice(message));
+    true
+}
+
 /// Service a session-registry / inbox verb from the deck. Returns `true` if
 /// `input` was one (so the caller skips its own dispatch). All of these are
 /// cheap local file ops, serviced identically idle or mid-turn.
@@ -697,5 +775,97 @@ mod undo_delete_tests {
             &workspace,
             &tx
         ));
+    }
+}
+
+#[cfg(test)]
+mod approve_revision_tests {
+    use super::*;
+
+    fn proposal(subject: &str) -> stella_protocol::RevisionProposal {
+        stella_protocol::RevisionProposal {
+            revision: stella_protocol::PlanRevision::new(2).expect("r2"),
+            subject: subject.into(),
+            gate: "tests".into(),
+            cause: stella_protocol::DivergenceCause::new("assertion `left == right` failed")
+                .expect("a cause"),
+            issue: None,
+        }
+    }
+
+    fn approve(registry: &ToolRegistry, subject: &str) -> String {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        assert!(service_approve_revision(
+            &WorkspaceInput::ApproveRevision {
+                agent: LEAD.into(),
+                proposal: Box::new(proposal(subject)),
+            },
+            registry,
+            &tx,
+        ));
+        match rx.try_recv() {
+            Ok(Inbound::Notice(text)) => text,
+            other => panic!("an approval always answers in words: {other:?}"),
+        }
+    }
+
+    /// The deck's `a` binding, from the driver's side: the approved task lands
+    /// on the board — which *is* the plan on this path — so the next step's
+    /// `PlanGate::review` sees a changed plan and authors the revision.
+    ///
+    /// The notice names the cause, because SPEC 8.1's proposal answers a
+    /// failure and an approval that dropped the reason would leave the board
+    /// with a task nobody can trace back to it.
+    #[test]
+    fn approving_a_revision_puts_the_task_on_the_board_and_names_the_cause() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = ToolRegistry::new(dir.path().to_path_buf());
+
+        let notice = approve(&registry, "repair a_short_cycle_is_detected");
+        assert!(notice.contains("r2 approved"), "{notice}");
+        assert!(
+            notice.contains("assertion `left == right` failed"),
+            "{notice}"
+        );
+
+        let board = registry.task_board();
+        let guard = board.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(
+            guard
+                .items()
+                .iter()
+                .map(|item| item.subject.as_str())
+                .collect::<Vec<_>>(),
+            vec!["repair a_short_cycle_is_detected"]
+        );
+        // The row itself carries the reason, so the plan card states under the
+        // inserted task why it exists and the recorded board snapshot keeps it.
+        let reason = guard.items()[0]
+            .description
+            .as_deref()
+            .expect("the inserted row records why it was inserted");
+        assert!(reason.contains("r2"), "{reason}");
+        assert!(reason.contains("tests"), "{reason}");
+        assert!(
+            reason.contains("assertion `left == right` failed"),
+            "{reason}"
+        );
+    }
+
+    /// A second `a` on the same proposal adds nothing. Two rows for one repair
+    /// would be two tasks nothing ever resolves back to one, which is the
+    /// drift the plan graph exists to make impossible.
+    #[test]
+    fn approving_the_same_revision_twice_adds_one_task() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = ToolRegistry::new(dir.path().to_path_buf());
+
+        approve(&registry, "repair a_short_cycle_is_detected");
+        let again = approve(&registry, "repair a_short_cycle_is_detected");
+        assert!(again.contains("already approved"), "{again}");
+
+        let board = registry.task_board();
+        let guard = board.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(guard.items().len(), 1);
     }
 }
