@@ -526,10 +526,21 @@ fn store_integrity(workspace_root: &Path, repair: bool) -> Check {
                 ));
             }
             match (&quarantine.salvaged, &quarantine.salvage_error) {
-                (Some(salvaged), _) => done.push(format!(
-                    "salvaged what was readable → {}",
-                    display_path(workspace_root, salvaged)
-                )),
+                (Some(salvaged), note) => {
+                    done.push(format!(
+                        "salvaged what was readable → {}",
+                        display_path(workspace_root, salvaged)
+                    ));
+                    // A partial salvage is a file AND a caveat. `VACUUM INTO`
+                    // either copies everything or nothing, so a path alone used
+                    // to mean "complete"; the per-table scan can hand back a
+                    // copy that stops short, and saying which one this is costs
+                    // a line (#5282). The `.recover` remedy is attached below
+                    // on the same condition.
+                    if let Some(note) = note {
+                        done.push(format!("  {note}"));
+                    }
+                }
                 (None, Some(error)) => {
                     done.push(format!("nothing could be salvaged ({error})"));
                 }
