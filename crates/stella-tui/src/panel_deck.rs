@@ -64,11 +64,15 @@ pub struct PanelSlot {
     /// that arrives after the host moved on is discardable.
     tick: u64,
     /// The rectangle the last draw leased this panel, in `(cols, rows)` inside
-    /// the chrome, or `None` before the first draw that had room for it.
+    /// the chrome, or `None` when the last draw did not draw it.
     ///
-    /// Recorded by the draw and read by [`PanelDeck::requests`], which is the
-    /// whole reason the deck is what asks: the lease is the host's measurement
-    /// of its own layout, and the driver has never seen the terminal.
+    /// Written by the draw and **taken** by [`PanelDeck::requests`], which is
+    /// what makes "asked for a frame" mean "on screen": a closed popup and a
+    /// pane on a tab nobody is looking at both go undrawn, so neither leaves a
+    /// rectangle behind and neither spawns a process for a panel no one can
+    /// see. It is also the whole reason the deck is what asks — the lease is
+    /// the host's measurement of its own layout, and the driver has never seen
+    /// the terminal.
     leased: Option<(u16, u16)>,
     /// Whether a request for this slot is out and unanswered.
     ///
@@ -122,12 +126,6 @@ impl PanelSlot {
     #[must_use]
     pub fn tick(&self) -> u64 {
         self.tick
-    }
-
-    /// The rectangle the last draw leased this panel, inside the chrome.
-    #[must_use]
-    pub fn leased(&self) -> Option<(u16, u16)> {
-        self.leased
     }
 
     /// Land a frame the plugin drew inside its budget.
@@ -229,16 +227,25 @@ impl PanelDeck {
     /// the draw path" is kept: only the deck knows the rectangle, only the
     /// driver may block on a process, and this is the sentence between them.
     ///
-    /// A slot is asked when it has been drawn at least once (so there is a
-    /// rectangle to lease), has no request outstanding, and has not been asked
-    /// inside the refresh interval. Nothing here starts anything — a request is a
-    /// message, and a seat that no grant produced has no slot to be asked
-    /// about.
+    /// A slot is asked when the last draw drew it (so there is a rectangle to
+    /// lease, and something is on screen to refresh), it has no request
+    /// outstanding, and it has not been asked inside the refresh interval.
+    /// Nothing here starts anything — a request is a message, and a seat that
+    /// no grant produced has no slot to be asked about.
     pub fn requests(&mut self) -> Vec<crate::envelope::WorkspaceInput> {
-        let now = std::time::Instant::now();
+        self.requests_at(std::time::Instant::now())
+    }
+
+    /// [`PanelDeck::requests`] against a stated clock.
+    ///
+    /// The seam exists because a witness for "a panel that went undrawn is not
+    /// asked again" needs a second draw, and a second draw inside the refresh
+    /// interval reports "not asked" for the wrong reason — while a test that
+    /// slept out a real second would be a second added to every run.
+    pub fn requests_at(&mut self, now: std::time::Instant) -> Vec<crate::envelope::WorkspaceInput> {
         let mut out = Vec::new();
         for (slot, panel) in self.slots.iter_mut().enumerate() {
-            let Some((cols, rows)) = panel.leased else {
+            let Some((cols, rows)) = panel.leased.take() else {
                 continue;
             };
             if panel.awaiting {

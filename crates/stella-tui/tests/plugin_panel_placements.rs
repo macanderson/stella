@@ -293,6 +293,75 @@ async fn slash_hello_opens_the_centred_popup() {
     assert!(ui.panels.open_popup().is_none(), "esc closes it");
 }
 
+/// A panel nobody is looking at is not asked for a frame.
+///
+/// The lease is **taken** by the request rather than read, so a rectangle
+/// exists only for as long as it is on screen. A closed popup and a pane on
+/// another tab both go undrawn, and neither starts somebody else's process
+/// once a second for a panel no one can see.
+///
+/// Driven across two draws with a stated clock: a second draw inside the
+/// refresh interval would report "not asked" for the wrong reason, and the
+/// witness would pass against a build that never cleared the lease at all.
+#[test]
+fn a_panel_that_was_not_drawn_is_not_asked_for_a_frame() {
+    let (manifest, _) = hello_plugin();
+    let mut ui = ready_ui();
+    seat_hello(&mut ui, &manifest);
+    let model = lead_workspace();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a test terminal");
+    let mut draw = |ui: &mut DeckUi| {
+        terminal
+            .draw(|f| stella_tui::deck_render::render_deck(&model, ui, f))
+            .expect("the deck draws");
+    };
+
+    // Open, drawn, asked — the overlay block and the popup both.
+    assert_eq!(
+        submit(&mut ui, &model, "/hello"),
+        stella_tui::deck_ui::DeckAction::Handled
+    );
+    draw(&mut ui);
+    let opened = std::time::Instant::now();
+    assert_eq!(
+        slots_asked(&mut ui, opened),
+        vec![1, 2],
+        "both are on screen"
+    );
+
+    // Answer both, so neither is held off as still awaiting.
+    for slot in [1, 2] {
+        let mut model = WorkspaceModel::new();
+        stella_tui::deck_ui::ingest_inbound(&Inbound::PanelSilent { slot }, &mut model, &mut ui);
+    }
+
+    // Closed, undrawn, and — a clear refresh interval later, so the interval
+    // is not what answers — not asked.
+    ui.panels.close_popup();
+    draw(&mut ui);
+    let later = opened + std::time::Duration::from_secs(5);
+    assert_eq!(
+        slots_asked(&mut ui, later),
+        vec![1],
+        "the closed popup is not asked; the overlay still is"
+    );
+}
+
+/// Which seats asked for a frame, at a stated clock.
+fn slots_asked(ui: &mut DeckUi, now: std::time::Instant) -> Vec<usize> {
+    let mut asked: Vec<usize> = ui
+        .panels
+        .requests_at(now)
+        .into_iter()
+        .filter_map(|input| match input {
+            WorkspaceInput::PanelFrameWanted { slot, .. } => Some(slot),
+            _ => None,
+        })
+        .collect();
+    asked.sort_unstable();
+    asked
+}
+
 /// The namespaced alias is derived and always available, whatever the manifest
 /// named — `PanelGrant::command` refuses a manifest that spells it itself.
 #[test]
