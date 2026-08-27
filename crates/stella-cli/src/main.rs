@@ -119,6 +119,7 @@ mod skill_manager;
 mod source_scan;
 mod startup;
 mod stats;
+mod stdin_lines;
 mod storage_cmd;
 mod subagent;
 mod subsession;

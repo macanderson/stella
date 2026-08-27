@@ -18,6 +18,9 @@ fn faulted_report() -> stella_runtime::wrapper::DispatchReport {
         rounds: 1,
         verdict: stella_plugin::Verdict::Undecided {
             reason: stella_plugin::UndecidedReason::NoOracle,
+            // No oracle ran, so no requirement was individually decided; the
+            // board below declares none either.
+            undecided: Vec::new(),
         },
         outcome: stella_plugin::Outcome::Undecided {
             reason: stella_plugin::UndecidedReason::NoOracle,
