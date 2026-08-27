@@ -67,7 +67,7 @@ fn slash_popup_windows_the_selection_into_view() {
     // Select the very last command: without windowing it renders off the
     // bottom of the popup box and never appears in the buffer.
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 14, &[], area, &mut buf);
+    render_slash_popup(&menu, 14, &[], 0, area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("/cmd14"), "selected row is visible:\n{text}");
     assert!(
@@ -79,7 +79,7 @@ fn slash_popup_windows_the_selection_into_view() {
 
     // Selecting the top shows the head and hides the tail instead.
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    render_slash_popup(&menu, 0, &[], 0, area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("/cmd00"), "top row visible:\n{text}");
     assert!(!text.contains("/cmd14"), "tail hidden:\n{text}");
@@ -104,7 +104,7 @@ fn slash_popup_survives_a_selection_past_the_filtered_end() {
     let mut buf = Buffer::empty(area);
     // selected far past the 3 matches — the render-side clamp keeps it in
     // view; all three rows fit so nothing scrolls.
-    render_slash_popup(&menu, 99, &[], area, &mut buf);
+    render_slash_popup(&menu, 99, &[], 0, area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("/cmd02"), "last row still shown:\n{text}");
     assert!(
@@ -139,7 +139,7 @@ fn the_browse_popup_draws_the_relevance_heading_and_the_domain_groups() {
         height: (rows.len() as u16) + 3,
     };
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    render_slash_popup(&menu, 0, &[], 0, area, &mut buf);
     let text = buffer_text(&buf);
     assert!(
         text.contains("relevant now · a turn is running"),
@@ -176,7 +176,7 @@ fn scattered_matched_letters_light_gold_inside_the_name() {
         height: 5,
     };
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    render_slash_popup(&menu, 0, &[], 0, area, &mut buf);
 
     let (x, y) = find_cell(&buf, "/graph").expect("the row is drawn");
     // `/ g r a p h` — the `g` at +1 and the `a` at +3 are the two matched
@@ -214,7 +214,7 @@ fn a_prefix_still_lights_as_one_run() {
         height: 5,
     };
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    render_slash_popup(&menu, 0, &[], 0, area, &mut buf);
 
     let (x, y) = find_cell(&buf, "/plan").expect("the row is drawn");
     assert_eq!(
@@ -245,7 +245,7 @@ fn the_palette_floats_on_the_panel_ground() {
         height: 5,
     };
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    render_slash_popup(&menu, 0, &[], 0, area, &mut buf);
 
     let (x, y) = find_cell(&buf, "/plan").expect("the row is drawn");
     // A row that is not selected: the selected one carries `hl` over the top.
@@ -273,14 +273,27 @@ fn the_palette_floats_on_the_panel_ground() {
 /// section, listing the commands this workspace ran last. A recent row is a
 /// second appearance of a command a domain group already carries — that is
 /// what a shortcut is — so both are drawn.
+/// **The witness (#5213).** A `recent` row says how long ago it ran, and the
+/// domain-group copy of the same command does not.
+///
+/// The second half is the load-bearing one: `live` is keyed by command *name*,
+/// and a recent command appears twice in the browse list, so an age looked up
+/// by name at paint time would land on both rows. The stamp rides the match
+/// instead (`SlashMatch::recent_at`), which is what makes the two copies of
+/// `/diff` distinguishable.
 #[test]
-fn the_browse_popup_closes_with_the_recent_section() {
+fn a_recent_row_says_how_long_ago_and_the_group_copy_does_not() {
     use crate::composer::{PaletteState, SlashDomain};
     let cmds = vec![
         SlashCommand::new("/clear", "reset").in_domain(SlashDomain::Session),
         SlashCommand::new("/diff", "the diff").in_domain(SlashDomain::Code),
     ];
-    let recent = vec!["/diff".to_string()];
+    let now = 1_700_000_000_000u64;
+    let recent = vec![crate::composer::Recent {
+        name: "/diff".to_string(),
+        // Two hours before `now`.
+        at_ms: Some(now - 2 * 3_600_000),
+    }];
     let menu = SlashMenu::filter_with(&cmds, "/", &PaletteState::default(), &recent);
     let rows = crate::render::display_rows(&menu);
     let area = Rect {
@@ -290,7 +303,82 @@ fn the_browse_popup_closes_with_the_recent_section() {
         height: (rows.len() as u16) + 3,
     };
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    render_slash_popup(&menu, 0, &[], now, area, &mut buf);
+    let text = buffer_text(&buf);
+
+    assert_eq!(
+        text.matches("2h ago").count(),
+        1,
+        "exactly one row is dated — the recent one:\n{text}"
+    );
+    // Both copies of `/diff` are drawn; the age is on the lower one.
+    assert_eq!(text.matches("/diff").count(), 2, "{text}");
+    let dated_row = text
+        .lines()
+        .position(|line| line.contains("2h ago"))
+        .expect("a dated row");
+    let recent_heading = text
+        .lines()
+        .position(|line| line.contains("recent"))
+        .expect("the recent heading");
+    assert!(
+        dated_row > recent_heading,
+        "the dated row sits under the `recent` heading:\n{text}"
+    );
+}
+
+/// An entry read from the pre-#5213 file has no stamp, so its row carries no
+/// age — the section still works, it just says less.
+#[test]
+fn a_recent_row_with_no_stamp_carries_no_age() {
+    use crate::composer::{PaletteState, SlashDomain};
+    let cmds = vec![SlashCommand::new("/diff", "the diff").in_domain(SlashDomain::Code)];
+    let recent = vec![crate::composer::Recent {
+        name: "/diff".to_string(),
+        at_ms: None,
+    }];
+    let menu = SlashMenu::filter_with(&cmds, "/", &PaletteState::default(), &recent);
+    let rows = crate::render::display_rows(&menu);
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 72,
+        height: (rows.len() as u16) + 3,
+    };
+    let mut buf = Buffer::empty(area);
+    render_slash_popup(&menu, 0, &[], 1_700_000_000_000, area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(
+        text.contains("recent"),
+        "the section is still drawn:\n{text}"
+    );
+    assert!(
+        !text.contains("ago") && !text.contains(" now "),
+        "an unstamped row is undated rather than guessed:\n{text}"
+    );
+}
+
+#[test]
+fn the_browse_popup_closes_with_the_recent_section() {
+    use crate::composer::{PaletteState, SlashDomain};
+    let cmds = vec![
+        SlashCommand::new("/clear", "reset").in_domain(SlashDomain::Session),
+        SlashCommand::new("/diff", "the diff").in_domain(SlashDomain::Code),
+    ];
+    let recent = vec![crate::composer::Recent {
+        name: "/diff".to_string(),
+        at_ms: None,
+    }];
+    let menu = SlashMenu::filter_with(&cmds, "/", &PaletteState::default(), &recent);
+    let rows = crate::render::display_rows(&menu);
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 72,
+        height: (rows.len() as u16) + 3,
+    };
+    let mut buf = Buffer::empty(area);
+    render_slash_popup(&menu, 0, &[], 0, area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("recent"), "the heading is drawn:\n{text}");
     assert_eq!(
@@ -323,7 +411,7 @@ fn a_queried_popup_draws_no_headings() {
         height: (SLASH_POPUP_MAX_ROWS as u16) + 3,
     };
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    render_slash_popup(&menu, 0, &[], 0, area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("/plan"), "{text}");
     assert!(

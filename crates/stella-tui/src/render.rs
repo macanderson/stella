@@ -365,10 +365,30 @@ pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -
 /// query drops the headings — grouping a three-row result buries the rows
 /// under their own captions — and keeps the flat ranking, in which a relevant
 /// command still leads its rank.
+/// How long ago `at_ms` was, coarsely — `now`, `2m ago`, `3h ago`, `2d ago`.
+///
+/// Coarse on purpose: this repaints with the overlay, and a per-second age is
+/// motion nobody asked for on a surface the deck freezes under `--no-anim`
+/// and `--accessible`. A clock that went backwards saturates to `now` rather
+/// than rendering a negative age.
+fn coarse_age(now_ms: u64, at_ms: u64) -> String {
+    let secs = now_ms.saturating_sub(at_ms) / 1_000;
+    if secs < 60 {
+        "now".to_string()
+    } else if secs < 3_600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3_600)
+    } else {
+        format!("{}d ago", secs / 86_400)
+    }
+}
+
 pub(crate) fn render_slash_popup(
     menu: &SlashMenu,
     selected: usize,
     live: &[(String, String)],
+    now_ms: u64,
     area: Rect,
     buf: &mut Buffer,
 ) {
@@ -412,10 +432,19 @@ pub(crate) fn render_slash_popup(
             let c = m.command;
             let is_sel = index == selected;
             let marker = if is_sel { "▸ " } else { "  " };
-            let live_value = live
-                .iter()
-                .find(|(name, _)| *name == c.name)
-                .map(|(_, v)| v.clone());
+            // A `recent` row shows when it last ran; every other row shows the
+            // command's live value, if it has one. The age wins on a recent
+            // row because `live` is keyed by command *name* and a recent
+            // command is a second appearance of one a domain group already
+            // lists — so the live value is already painted above, and only
+            // the lower row is dated (#5213).
+            let live_value = match m.recent_at {
+                Some(at) => Some(coarse_age(now_ms, at)),
+                None => live
+                    .iter()
+                    .find(|(name, _)| *name == c.name)
+                    .map(|(_, v)| v.clone()),
+            };
             let description = c.description.clone();
             let name = c.name.clone();
             let mut spans = vec![Span::styled(marker.to_string(), gold)];

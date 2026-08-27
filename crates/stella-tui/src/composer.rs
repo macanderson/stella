@@ -37,7 +37,7 @@ pub mod palette;
 pub mod recent;
 
 pub use palette::{PaletteState, RelevantNow, SlashDomain};
-pub use recent::Recents;
+pub use recent::{Recent, Recents};
 
 /// Below this many lines a paste is inserted inline; at or above it, the
 /// paste collapses to a chip. Small on purpose (L-T3).
@@ -234,9 +234,10 @@ impl Composer {
         self.recent = Recents::kept_in(path);
     }
 
-    /// The commands this composer has run, most recent first.
-    pub fn recent(&self) -> &[String] {
-        self.recent.names()
+    /// The commands this composer has run, most recent first, each with when
+    /// it ran.
+    pub fn recent(&self) -> &[Recent] {
+        self.recent.entries()
     }
 
     /// Write the `recent` list back if a dispatch has changed it. Cheap
@@ -659,6 +660,12 @@ pub fn split_row_at(row: &str, col: usize) -> (String, Option<char>, String) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashMatch<'a> {
     pub command: &'a SlashCommand,
+    /// When this command last ran, for a row in the browse list's `recent`
+    /// section. `None` on every other row — including the domain-group copy
+    /// of the same command, which is why this rides the match rather than
+    /// being looked up by name at paint time: a recent command appears twice
+    /// in the browse list, and only the lower one is dated (#5213).
+    pub recent_at: Option<u64>,
     /// Char offsets into [`SlashCommand::name`], the leading `/` counted, so
     /// the renderer walks the string it prints instead of re-deriving a bare
     /// slug from it. Empty when the query matched only the description, and
@@ -720,7 +727,7 @@ impl<'a> SlashMenu<'a> {
         commands: &'a [SlashCommand],
         query: &str,
         state: &PaletteState,
-        recent: &[String],
+        recent: &[Recent],
     ) -> Self {
         let needle = query.trim_start_matches('/').to_ascii_lowercase();
         let matched = |c: &'a SlashCommand| -> Option<(u8, SlashMatch<'a>)> {
@@ -744,6 +751,7 @@ impl<'a> SlashMenu<'a> {
                     SlashMatch {
                         command: c,
                         highlights,
+                        recent_at: None,
                     },
                 )
             })
@@ -800,10 +808,15 @@ impl<'a> SlashMenu<'a> {
         // command set.
         let recent_rows: Vec<SlashMatch<'a>> = recent
             .iter()
-            .filter_map(|name| commands.iter().find(|c| c.name == *name))
-            .map(|command| SlashMatch {
-                command,
-                highlights: Vec::new(),
+            .filter_map(|entry| {
+                commands
+                    .iter()
+                    .find(|c| c.name == entry.name)
+                    .map(|command| SlashMatch {
+                        command,
+                        highlights: Vec::new(),
+                        recent_at: entry.at_ms,
+                    })
             })
             .collect();
         if !recent_rows.is_empty() {

@@ -181,7 +181,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         // never cached in `DeckUi` (D3).
         let live = slash_live_hints(model, ui);
         guarded_band(buf, popup, "slash menu", |b| {
-            render_slash_popup(&menu, selected, &live, popup, b)
+            render_slash_popup(&menu, selected, &live, model.now_ms, popup, b)
         });
     }
     // The `/model` argument menu opens where the slash menu closed — the
