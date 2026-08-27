@@ -3,6 +3,7 @@ import Link from "next/link";
 import { HeroTerminal } from "@/components/command-deck";
 import { AnimatedLockup } from "@/components/animated-lockup";
 import { Mark } from "@/components/brand";
+import { DeckShot } from "@/components/deck-shot";
 import { InstallBlock } from "@/components/install-block";
 import { PROVIDER_CATALOG } from "@/components/provider-catalog";
 import { REPO_URL, SITE_URL } from "@/lib/site";
@@ -63,9 +64,9 @@ const softwareJsonLd = {
  * The landing page.
  *
  * One sentence saying what stella is, the command that installs it, a
- * transcript of a real run, the list of providers it speaks to, and the four
- * doors into the docs. Everything else is one click away and better written
- * there.
+ * transcript of a real run, two frames of the interactive deck, the list of
+ * providers it speaks to, and the four doors into the docs. Everything else is
+ * one click away and better written there.
  *
  * Brand notes (docs/brand): the name is lowercase always; the comet flies
  * left→right into the wordmark; gold is the signal (the lockup, the prompt,
@@ -218,8 +219,36 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── The tour ───────────────────────────────────────────────────── */}
+      {/* ── The deck ───────────────────────────────────────────────────── */}
       <section className="lp-section">
+        <div className="mx-auto w-full max-w-3xl px-4 py-16">
+          <h2 className="lp-eyebrow mb-5">The deck</h2>
+          <p className="max-w-prose text-base">
+            Two moments decide whether you can trust an agent with a branch:
+            what it does before it starts, and what it does when a check goes
+            red. Running <span className="lp-brand-face">stella</span> with no
+            subcommand opens the interactive deck, where both of them look
+            like this —{" "}
+            <Link
+              href="/docs/agent-modes#interactive-the-command-deck"
+              className="underline underline-offset-4"
+            >
+              every tab, and what each one holds
+            </Link>
+            .
+          </p>
+
+          <div className="mt-8">
+            <DeckShot id="start-work" />
+          </div>
+          <div className="mt-10">
+            <DeckShot id="gate" />
+          </div>
+        </div>
+      </section>
+
+      {/* ── The tour ───────────────────────────────────────────────────── */}
+      <section className="lp-section lp-band">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Step inside</h2>
           <p className="max-w-prose text-base">
@@ -246,7 +275,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Providers ──────────────────────────────────────────────────── */}
-      <section className="lp-section lp-band">
+      <section className="lp-section">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Providers</h2>
           <p className="max-w-prose text-base">
@@ -282,7 +311,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Doors into the docs ────────────────────────────────────────── */}
-      <section className="lp-section">
+      <section className="lp-section lp-band">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Start here</h2>
           <ul className="border-t border-fd-border">

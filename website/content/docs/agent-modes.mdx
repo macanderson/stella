@@ -119,6 +119,20 @@ immediately, inline in the session transcript, skipping the queue. A single **Es
 **double-Esc** cancels *and holds* dispatch so what you type next runs first.
 Prefer a plain line-based REPL? `stella --plain` (or `STELLA_PLAIN=1`).
 
+### The transcript, and the palette
+
+The turn is the unit of the transcript. It opens with a rule, folds every read
+that changed nothing, keeps the edits expanded with their diffs, and closes on
+a receipt — what the turn cost, what it proved, and how much of it never
+reached a model.
+
+<DeckShot id="turn" />
+
+Slash commands open a fuzzy palette that knows what is running: while a verify
+turn is in flight, the gate commands sort to the top.
+
+<DeckShot id="palette" />
+
 ## One-shot: `stella run`
 
 The non-interactive workhorse: one prompt in, the finished work and an exit

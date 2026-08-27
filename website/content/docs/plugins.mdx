@@ -26,6 +26,13 @@ This is a feature, not a limitation, and it is worth being explicit about why. A
 Every capability a plugin needs arrives **in the request**. There is no ambient authority to reach for — no environment variable beyond what its manifest declared, no working directory, no terminal, no credential. That is what lets the identical plugin process run under the CLI, a headless server, or an application that embedded the loop, unchanged.
 </Callout>
 
+What that looks like from the driver's seat. A red gate is not something the
+model can talk its way past: it answers with a proposed plan revision naming
+the cause, the merge stays blocked until the board is green, and nothing runs
+until you approve it.
+
+<DeckShot id="gate" />
+
 ## The participation ladder
 
 `[loop].participation` is how much say a plugin has asked for, on a four-rung ladder. Each grade includes every grade below it, and the power that separates two rungs is rejected below the rung that grants it — a manifest cannot quietly hold more than its declared grade.

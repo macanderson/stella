@@ -1,0 +1,67 @@
+<svg viewBox="0 0 680 420" width="680" height="420" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
+<rect x="0" y="0" width="680" height="420" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="22" font-size="11" fill="#777782">SESSION  AGENTS  TRACES  GRAPH  FILES  SKILLS</text>
+<text x="360" y="22" font-size="11" fill="#EFC53F" font-weight="500">MCP</text>
+<text x="398" y="22" font-size="11" fill="#777782">ISSUES</text>
+<text x="600" y="22" font-size="12" fill="#E8E8EC" font-weight="500">stella</text>
+<text x="645" y="22" font-size="12" fill="#EFC53F" font-weight="500">*</text>
+<line x1="0" y1="32" x2="680" y2="32" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="56" font-size="11" fill="#777782">servers · 4 · 3 connected</text>
+<rect x="12" y="64" width="656" height="130" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="24" y="84" font-size="11" fill="#EFC53F">●</text>
+<text x="40" y="84" font-size="11" fill="#E8E8EC">graph</text>
+<text x="130" y="84" font-size="11" fill="#4B4B56">stdio</text>
+<text x="216" y="84" font-size="11" fill="#777782">14 tools</text>
+<text x="310" y="84" font-size="11" fill="#777782">8ms</text>
+<text x="392" y="84" font-size="11" fill="#4B4B56">oxagen · pinned</text>
+<line x1="12" y1="92" x2="668" y2="92" stroke="#17171B" stroke-width="1"/>
+<text x="24" y="110" font-size="11" fill="#EFC53F">●</text>
+<text x="40" y="110" font-size="11" fill="#A9AAB5">linear</text>
+<text x="130" y="110" font-size="11" fill="#4B4B56">http</text>
+<text x="216" y="110" font-size="11" fill="#777782">9 tools</text>
+<text x="310" y="110" font-size="11" fill="#777782">41ms</text>
+<text x="392" y="110" font-size="11" fill="#74C991">oauth ✓</text>
+<line x1="12" y1="118" x2="668" y2="118" stroke="#17171B" stroke-width="1"/>
+<text x="24" y="136" font-size="11" fill="#EFC53F">●</text>
+<text x="40" y="136" font-size="11" fill="#A9AAB5">github</text>
+<text x="130" y="136" font-size="11" fill="#4B4B56">http</text>
+<text x="216" y="136" font-size="11" fill="#777782">12 tools</text>
+<text x="310" y="136" font-size="11" fill="#777782">66ms</text>
+<text x="392" y="136" font-size="11" fill="#74C991">oauth ✓</text>
+<line x1="12" y1="144" x2="668" y2="144" stroke="#17171B" stroke-width="1"/>
+<rect x="13" y="150" width="654" height="18" fill="#17171B"/>
+<text x="24" y="163" font-size="11" fill="#4B4B56">○</text>
+<text x="40" y="163" font-size="11" fill="#E8E8EC">stripe</text>
+<text x="130" y="163" font-size="11" fill="#4B4B56">http</text>
+<text x="216" y="163" font-size="11" fill="#777782">1 tool</text>
+<text x="310" y="163" font-size="11" fill="#E0687A">not connected</text>
+<text x="440" y="163" font-size="11" fill="#EFC53F">o login</text>
+<text x="24" y="186" font-size="11" fill="#4B4B56">login opens the browser · returns via stella:// deep link · token stays in keychain</text>
+<text x="16" y="218" font-size="11" fill="#777782">registry · web</text>
+<rect x="12" y="226" width="656" height="24" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="22" y="243" font-size="11" fill="#EFC53F">⌕</text>
+<text x="38" y="243" font-size="11" fill="#E8E8EC">postgres</text>
+<rect x="112" y="231" width="7" height="13" fill="#E8E8EC"/>
+<text x="560" y="243" font-size="11" fill="#777782">3 results</text>
+<rect x="12" y="258" width="656" height="86" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="22" y="278" font-size="11" fill="#A9AAB5">postgres-mcp</text>
+<text x="150" y="278" font-size="11" fill="#4B4B56">official</text>
+<text x="222" y="278" font-size="11" fill="#777782">12 tools</text>
+<text x="300" y="278" font-size="11" fill="#4B4B56">9.1k installs</text>
+<text x="410" y="278" font-size="11" fill="#74C991">signed</text>
+<text x="588" y="278" font-size="11" fill="#EFC53F">i install</text>
+<text x="22" y="298" font-size="11" fill="#A9AAB5">supabase-mcp</text>
+<text x="150" y="298" font-size="11" fill="#4B4B56">vendor</text>
+<text x="222" y="298" font-size="11" fill="#777782">22 tools</text>
+<text x="300" y="298" font-size="11" fill="#4B4B56">6.4k installs</text>
+<text x="410" y="298" font-size="11" fill="#74C991">signed</text>
+<text x="588" y="298" font-size="11" fill="#EFC53F">i install</text>
+<text x="22" y="318" font-size="11" fill="#4B4B56">pg-anything</text>
+<text x="150" y="318" font-size="11" fill="#4B4B56">community</text>
+<text x="300" y="318" font-size="11" fill="#4B4B56">112 installs</text>
+<text x="410" y="318" font-size="11" fill="#E0687A">unsigned · blocked</text>
+<text x="22" y="336" font-size="11" fill="#4B4B56">new servers land disabled · handshake shows capabilities before first enable</text>
+<line x1="0" y1="358" x2="680" y2="358" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="380" font-size="11" fill="#4B4B56">↵ tools · a auth · e enable · x remove · r refresh · i install · esc</text>
+<text x="16" y="404" font-size="11" fill="#777782">graph is pinned · it is the product, not an integration</text>
+</svg>

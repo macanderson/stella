@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import { DIAGRAM_DESCRIPTIONS } from "../components/diagram-descriptions.ts";
 import { COMMAND_DECK_TABS } from "../components/command-deck-tabs.ts";
+import { DECK_SHOTS, DECK_SHOT_IDS } from "../components/deck-shots.ts";
 import { PROVIDER_CATALOG } from "../components/provider-catalog.ts";
 import {
   DIAGRAM_PLACEHOLDER_NAMES,
@@ -39,9 +40,15 @@ test("every placeholder name source.config.ts emits has a renderer", () => {
   // exactly the renderer set, so neither side can drift.
   assert.match(SOURCE_CONFIG, /"ProviderGrid"/);
   assert.match(SOURCE_CONFIG, /"CommandDeckExplorer"/);
+  assert.match(SOURCE_CONFIG, /"DeckShot"/);
   assert.deepEqual(
     Object.keys(PLACEHOLDER_RENDERERS).sort(),
-    [...DIAGRAM_PLACEHOLDER_NAMES, "ProviderGrid", "CommandDeckExplorer"].sort(),
+    [
+      ...DIAGRAM_PLACEHOLDER_NAMES,
+      "ProviderGrid",
+      "CommandDeckExplorer",
+      "DeckShot",
+    ].sort(),
   );
 });
 
@@ -52,6 +59,38 @@ test("every diagram placeholder renders its aria-label sentence", async () => {
     const out = await render({ name, attributes: {}, children: "" });
     assert.equal(out, `*${DIAGRAM_DESCRIPTIONS[name]}*`);
     assert.ok(out.length > 20, `${name} rendered suspiciously short`);
+  }
+});
+
+test("every deck shot renders its alt sentence", async () => {
+  for (const id of DECK_SHOT_IDS) {
+    const out = await PLACEHOLDER_RENDERERS.DeckShot({
+      name: "DeckShot",
+      attributes: { id },
+      children: "",
+    });
+    assert.equal(out, `*${DECK_SHOTS[id].alt}*`);
+    assert.ok(out.length > 20, `${id} rendered suspiciously short`);
+  }
+});
+
+/**
+ * The record names a file; nothing else does. A typo in `file` renders a
+ * broken image on a marketing page and fails no build — the `<img>` 404s and
+ * React is perfectly happy. This is the only place that can catch it.
+ */
+test("every deck shot names a file that exists under public/tui", () => {
+  for (const id of DECK_SHOT_IDS) {
+    const shot = DECK_SHOTS[id];
+    const path = join(HERE, "../../public/tui", `${shot.file}.svg`);
+    const svg = readFileSync(path, "utf8");
+    // The declared size is what reserves the box before the file lands, so a
+    // record that disagrees with the viewBox makes the page jump on load.
+    assert.match(
+      svg,
+      new RegExp(`viewBox="0 0 ${shot.width} ${shot.height}"`),
+      `${id}: record says ${shot.width}x${shot.height}, the SVG disagrees`,
+    );
   }
 });
 

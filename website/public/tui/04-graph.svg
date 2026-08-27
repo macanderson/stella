@@ -1,0 +1,80 @@
+<svg viewBox="0 0 680 468" width="680" height="468" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
+<rect x="0" y="0" width="680" height="468" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="22" font-size="11" fill="#777782">SESSION  AGENTS  TRACES</text>
+<text x="212" y="22" font-size="11" fill="#EFC53F" font-weight="500">GRAPH</text>
+<text x="262" y="22" font-size="11" fill="#777782">FILES  SKILLS  MCP  ISSUES</text>
+<text x="600" y="22" font-size="12" fill="#E8E8EC" font-weight="500">stella</text>
+<text x="645" y="22" font-size="12" fill="#EFC53F" font-weight="500">*</text>
+<line x1="0" y1="32" x2="680" y2="32" stroke="#26262C" stroke-width="1"/>
+<rect x="12" y="42" width="656" height="24" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="22" y="59" font-size="11" fill="#EFC53F">⌕</text>
+<text x="38" y="59" font-size="11" fill="#E8E8EC">file:stella-protocol/src/lib.rs</text>
+<text x="290" y="59" font-size="11" fill="#4B4B56">q free-form query</text>
+<text x="518" y="59" font-size="11" fill="#777782">438 nodes · 12ms · det</text>
+<text x="16" y="88" font-size="11" fill="#777782">nodes · 27 in file</text>
+<rect x="12" y="96" width="244" height="296" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<rect x="13" y="102" width="242" height="18" fill="#17171B"/>
+<text x="22" y="115" font-size="11" fill="#EFC53F">▤ lib.rs</text>
+<text x="160" y="115" font-size="11" fill="#F7D96B">● hot</text>
+<text x="22" y="137" font-size="11" fill="#BFC1CC">▢ Attachment</text>
+<text x="196" y="137" font-size="11" fill="#4B4B56">18</text>
+<text x="22" y="155" font-size="11" fill="#BFC1CC">▢ AttachmentKind</text>
+<text x="196" y="155" font-size="11" fill="#4B4B56">7</text>
+<text x="22" y="173" font-size="11" fill="#BFC1CC">▢ AttachmentSource</text>
+<text x="196" y="173" font-size="11" fill="#4B4B56">5</text>
+<text x="22" y="191" font-size="11" fill="#A9AAB5">ƒ classify_media_type</text>
+<text x="196" y="191" font-size="11" fill="#4B4B56">4</text>
+<text x="22" y="209" font-size="11" fill="#A9AAB5">ƒ human_bytes</text>
+<text x="196" y="209" font-size="11" fill="#4B4B56">3</text>
+<text x="22" y="227" font-size="11" fill="#BFC1CC">▢ CandidateDenial</text>
+<text x="196" y="227" font-size="11" fill="#4B4B56">6</text>
+<text x="22" y="245" font-size="11" fill="#BFC1CC">▢ CandidateHandle</text>
+<text x="196" y="245" font-size="11" fill="#4B4B56">9</text>
+<text x="22" y="263" font-size="11" fill="#BFC1CC">▢ CompactionRewrite</text>
+<text x="196" y="263" font-size="11" fill="#4B4B56">11</text>
+<text x="22" y="281" font-size="11" fill="#BFC1CC">▢ CompletionRequest</text>
+<text x="196" y="281" font-size="11" fill="#4B4B56">14</text>
+<text x="22" y="299" font-size="11" fill="#BFC1CC">▢ CompletionResult</text>
+<text x="196" y="299" font-size="11" fill="#4B4B56">8</text>
+<text x="22" y="317" font-size="11" fill="#A9AAB5">ƒ media_type_for_path</text>
+<text x="196" y="317" font-size="11" fill="#4B4B56">2</text>
+<text x="22" y="335" font-size="11" fill="#4B4B56">⋯ 16 more</text>
+<text x="22" y="362" font-size="11" fill="#4B4B56">▤ file · ▢ type · ƒ fn</text>
+<text x="22" y="380" font-size="11" fill="#4B4B56">right column = edge count</text>
+<rect x="268" y="96" width="400" height="150" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="280" y="116" font-size="11" fill="#EFC53F">▤ crates/stella-protocol/src/lib.rs</text>
+<text x="576" y="116" font-size="11" fill="#F7D96B">turn 14</text>
+<line x1="268" y1="124" x2="668" y2="124" stroke="#26262C" stroke-width="1"/>
+<text x="280" y="144" font-size="11" fill="#E8E8EC">imports 24 →</text>
+<text x="386" y="144" font-size="11" fill="#E8E8EC">← imported-by 12</text>
+<text x="524" y="144" font-size="11" fill="#E8E8EC">writes 2 · tests 6</text>
+<text x="280" y="166" font-size="11" fill="#777782">→</text>
+<text x="296" y="166" font-size="11" fill="#A9AAB5">attachment::Attachment</text>
+<text x="280" y="184" font-size="11" fill="#777782">→</text>
+<text x="296" y="184" font-size="11" fill="#A9AAB5">cache::CacheCause</text>
+<text x="280" y="202" font-size="11" fill="#777782">←</text>
+<text x="296" y="202" font-size="11" fill="#A9AAB5">stella-cli::self_driving_cmd</text>
+<text x="510" y="202" font-size="11" fill="#F7D96B">edited turn 14</text>
+<text x="280" y="220" font-size="11" fill="#777782">←</text>
+<text x="296" y="220" font-size="11" fill="#A9AAB5">stella-engine::compaction</text>
+<text x="280" y="238" font-size="11" fill="#4B4B56">⋯ e expand all edges</text>
+<rect x="268" y="256" width="400" height="136" fill="#0F0F12" stroke="#26262C" stroke-width="1"/>
+<text x="280" y="276" font-size="11" fill="#777782">coupling · neighbors by edge count</text>
+<line x1="268" y1="284" x2="668" y2="284" stroke="#26262C" stroke-width="1"/>
+<text x="280" y="304" font-size="11" fill="#A9AAB5">attachment::Attachment</text>
+<text x="472" y="304" font-size="11" fill="#EFC53F">████████▌</text>
+<text x="586" y="304" font-size="11" fill="#777782">18</text>
+<text x="280" y="322" font-size="11" fill="#A9AAB5">completion::Request</text>
+<text x="472" y="322" font-size="11" fill="#EFC53F">█████▎</text>
+<text x="586" y="322" font-size="11" fill="#777782">11</text>
+<text x="280" y="340" font-size="11" fill="#A9AAB5">compaction::Rewrite</text>
+<text x="472" y="340" font-size="11" fill="#EFC53F">███▊</text>
+<text x="586" y="340" font-size="11" fill="#777782">8</text>
+<text x="280" y="358" font-size="11" fill="#A9AAB5">cache::CacheCause</text>
+<text x="472" y="358" font-size="11" fill="#EFC53F">██▉</text>
+<text x="586" y="358" font-size="11" fill="#777782">6</text>
+<text x="280" y="380" font-size="11" fill="#4B4B56">high coupling = blast radius if you edit this file</text>
+<line x1="0" y1="404" x2="680" y2="404" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="426" font-size="11" fill="#4B4B56">↵ open file · e edges · q query · t touched this session · ⇥ panes</text>
+<text x="16" y="450" font-size="11" fill="#777782">every answer here is deterministic · $0.00 · 12ms</text>
+</svg>

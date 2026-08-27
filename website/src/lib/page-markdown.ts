@@ -9,9 +9,10 @@
  * GFM tables survive. Reading the raw `.mdx` off disk instead would leak JSX
  * tags a markdown consumer cannot read.
  *
- * Three component kinds carry meaning outside their children — the SVG
- * diagrams (their content is the picture), `ProviderGrid` (its content is the
- * catalog data), and `CommandDeckExplorer` (nine tabbed panes). Those are
+ * Some components carry meaning outside their children — the SVG diagrams
+ * (their content is the picture), `ProviderGrid` (its content is the catalog
+ * data), `CommandDeckExplorer` (the tabbed panes), and `DeckShot` (a rendering
+ * of the deck, whose content is a file this module cannot read). Those are
  * emitted as placeholders at build time and re-rendered to markdown here by
  * `renderPlaceholder`, from the same records the components render from, so
  * the export can never drift from what the page shows.
@@ -25,6 +26,7 @@ import { renderPlaceholder } from "fumadocs-core/mdx-plugins/remark-llms.runtime
 
 import { DIAGRAM_DESCRIPTIONS } from "../components/diagram-descriptions.ts";
 import { COMMAND_DECK_TABS } from "../components/command-deck-tabs.ts";
+import { DECK_SHOTS } from "../components/deck-shots.ts";
 import { PROVIDER_CATALOG } from "../components/provider-catalog.ts";
 
 /**
@@ -56,6 +58,20 @@ function providerGridMarkdown(only: unknown): string {
   ].join("\n");
 }
 
+/**
+ * A deck rendering exports as its own alt sentence, the way a diagram exports
+ * as its description: the picture is the content, and the sentence is what a
+ * reader who is handed the page as text gets instead of it.
+ *
+ * An `id` that names no shot exports nothing rather than a broken italic — the
+ * page still renders in that case (the component would throw first), so this
+ * is the belt on a brace, not a supported call.
+ */
+function deckShotMarkdown(id: unknown): string {
+  const shot = typeof id === "string" ? DECK_SHOTS[id as keyof typeof DECK_SHOTS] : undefined;
+  return shot ? `*${shot.alt}*` : "";
+}
+
 function commandDeckMarkdown(): string {
   return COMMAND_DECK_TABS.map(
     (tab) => `### ${tab.label}\n\n${tab.blurb}\n\n\`\`\`text\n${tab.lines.join("\n")}\n\`\`\``,
@@ -65,8 +81,8 @@ function commandDeckMarkdown(): string {
 /**
  * Renderers for the placeholders `includeProcessedMarkdown` emits. A name
  * absent here degrades to the placeholder's children (fumadocs' default),
- * which for these three would be nothing — so the record is exhaustive by
- * construction: the placeholder list in `source.config.ts` is exactly these
+ * which for every one of these would be nothing — so the record is exhaustive
+ * by construction: the placeholder list in `source.config.ts` is exactly these
  * keys, and `page-markdown.test.ts` asserts it.
  */
 export const PLACEHOLDER_RENDERERS: Record<
@@ -79,6 +95,7 @@ export const PLACEHOLDER_RENDERERS: Record<
   ]),
   ["ProviderGrid", (data: { attributes: Record<string, unknown> }) => providerGridMarkdown(data.attributes.only)],
   ["CommandDeckExplorer", () => commandDeckMarkdown()],
+  ["DeckShot", (data: { attributes: Record<string, unknown> }) => deckShotMarkdown(data.attributes.id)],
 ]);
 
 export interface PageMarkdownInput {

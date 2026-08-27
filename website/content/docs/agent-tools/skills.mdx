@@ -114,7 +114,14 @@ The underlying commands are overridable (`STELLA_SKILLS_SEARCH_CMD`,
 
 ## Managing skills in the Command Deck
 
-`/skills` opens the SKILLS tab:
+`/skills` opens the SKILLS tab. Installed skills carry their own injection
+counts and token cost, so the ones that never fire are visible and can be
+pruned; the learned rows below them are the ones stella wrote from its own
+traces; and an unsigned registry result installs disabled.
+
+<DeckShot id="skills" />
+
+The keys:
 
 <CardGrid size="sm">
   <OptionCard name="space">

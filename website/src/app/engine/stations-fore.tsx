@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DeckShot } from "@/components/deck-shot";
 import {
   BrandFace,
   EventFeed,
@@ -158,6 +159,13 @@ export function TurnLoopStation() {
       </div>
 
       <EventFeed lines={LOOP_FEED} />
+
+      {/* The same loop with a reader in front of it. The deck makes the turn
+          the unit of the transcript, which is the shape the station above
+          argues for, drawn. */}
+      <div className="eng-deck">
+        <DeckShot id="turn" />
+      </div>
     </Station>
   );
 }
