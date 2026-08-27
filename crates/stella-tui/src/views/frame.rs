@@ -35,9 +35,10 @@
 //! also the form the renderings draw.
 //!
 //! The nine titles cost 65 columns and the mark eight more, so a frame under
-//! 74 cannot draw both at full length. [`tab_list`] resolves that in the list's
-//! favour: it is handed the columns left once the mark is paid for and yields
-//! rungs until it fits, so the mark holds the right edge at every width (#5072).
+//! 74 cannot draw both at full length. The `tab_list` submodule resolves that
+//! in the list's favour: it is handed the columns left once the mark is paid
+//! for and yields rungs until it fits, so the mark holds the right edge at
+//! every width (#5072).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
