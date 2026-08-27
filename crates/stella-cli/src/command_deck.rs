@@ -98,6 +98,7 @@ mod lead_control;
 mod lead_turn;
 mod model_cmd;
 mod panel_snapshots;
+mod plugin_panels;
 mod pr_observe;
 mod profile_cmd;
 mod session_clear;
@@ -723,6 +724,25 @@ pub async fn run_deck_session(
         None,
     ));
 
+    // Seat the plugin panels (SPEC 12.2). The roster is the install grant:
+    // `PluginRoster::load` drops every package whose consent receipt no longer
+    // matches, and `panel_routes` emits nothing for a plugin that is not in
+    // it — so a panel that was never granted is never leased a rectangle and
+    // never asked for a frame. A slash name colliding with one of the deck's
+    // own is refused here, out loud, and only that popup is lost.
+    // Through `PluginRoster::load` and nowhere else — that is where the #3509
+    // project-tier trust gate lives (`plugin_hooks`'s
+    // `no_other_production_site_reads_the_plugins_tier`).
+    let panel_settings = crate::settings::Settings::load(&cfg.workspace_root).unwrap_or_default();
+    let (panel_roster, _) =
+        crate::plugin_cmd::roster::PluginRoster::load(&cfg.workspace_root, &panel_settings);
+    let panel_routes = panel_roster.panel_routes();
+    let seating = plugin_panels::seat(&panel_routes);
+    for refusal in seating.refusals {
+        let _ = deck_tx.send(system_notice(refusal));
+    }
+    let _ = in_tx.send(Inbound::PanelsSeated(seating.seats));
+
     // Honour the persisted colour theme (`ui.theme`) before the deck spawns its
     // render task, so the very first frame — the launch cinematic — is already
     // in the chosen theme. Best-effort: an unset/unknown value keeps the
@@ -1121,6 +1141,19 @@ pub async fn run_deck_session(
                         | WorkspaceInput::GraphQuery { .. }),
                     ) => {
                         graph_input::answer(input, &graph_host, &cfg.workspace_root, &in_tx).await;
+                        continue 'session;
+                    }
+                    // A panel's next frame. Handled at both recv sites because a
+                    // panel is drawn between turns and during one alike, and
+                    // spawned rather than awaited so the driver's own loop is
+                    // no more blocked on a plugin's process than the draw is.
+                    Some(WorkspaceInput::PanelFrameWanted {
+                        slot,
+                        tick,
+                        cols,
+                        rows,
+                    }) => {
+                        plugin_panels::spawn_tick(&panel_routes, slot, tick, cols, rows, &in_tx);
                         continue 'session;
                     }
                     // SKILLS-tab ops work whether or not a turn is running — handled
@@ -1841,6 +1874,22 @@ pub async fn run_deck_session(
                                     );
                                 }
                             }
+                        }
+                        // A panel's next frame, mid-turn — see the idle arm.
+                        Some(WorkspaceInput::PanelFrameWanted {
+                            slot,
+                            tick,
+                            cols,
+                            rows,
+                        }) => {
+                            plugin_panels::spawn_tick(
+                                &panel_routes,
+                                slot,
+                                tick,
+                                cols,
+                                rows,
+                                &in_tx,
+                            );
                         }
                         // A queue-free command runs beside the turn — the
                         // whole point of the route (`command_side`); a text

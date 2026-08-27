@@ -612,6 +612,8 @@ pub struct DeckUi {
     /// The SETTINGS tab's secondary nav: AGENTS | TOOLS. Which editor the tab
     /// renders full-width, and which one `e` focuses.
     pub settings_pane: crate::views::settings::SettingsPane,
+    /// The plugin panels this session may draw ([`crate::panel_deck`]).
+    pub panels: crate::panel_deck::PanelDeck,
     /// The INSTALLED AGENTS pane's state.
     pub installed: InstalledPanel,
     /// The SKILLS tab's view state (installed list, search, overlays).
@@ -880,6 +882,7 @@ impl Default for DeckUi {
         Self {
             tab: DeckTab::Session,
             settings_pane: crate::views::settings::SettingsPane::default(),
+            panels: crate::panel_deck::PanelDeck::default(),
             installed: InstalledPanel::default(),
             skills: SkillsPanel::default(),
             issues: IssuesPanel::default(),
@@ -1186,6 +1189,9 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     }
     if let Inbound::IndexReadiness(readiness) = inbound {
         ui.index_readiness = *readiness;
+        return;
+    }
+    if crate::panel_deck::ingest(&mut ui.panels, inbound) {
         return;
     }
     if let Inbound::SlashCommands(commands) = inbound {
@@ -1760,6 +1766,9 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         return handle_help_key(key, ui);
     }
 
+    if crate::panel_deck::esc_closes_popup(&mut ui.panels, is_esc) {
+        return DeckAction::Handled;
+    }
     // The AGENTS page (`←` twice) is full-frame and modal while open — only
     // quit, the splash, and help (all handled above) precede it.
     if ui.agents_page.open {

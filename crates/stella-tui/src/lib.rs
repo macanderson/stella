@@ -77,6 +77,7 @@ pub mod graph;
 pub mod markdown;
 pub mod notice;
 pub mod palette;
+pub mod panel_deck;
 pub mod plan;
 pub mod plugin_panel;
 pub mod resource;

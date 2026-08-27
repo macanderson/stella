@@ -109,11 +109,28 @@ pub(super) fn deck_local_command(text: &str, ui: &mut DeckUi) -> Option<DeckActi
             ui.cards.raise(cards::Card::Budget);
             DeckAction::Handled
         }
-        // Everything else — including `/help` — is enqueued for the
-        // driver, which owns the session vocabulary and answers into the
-        // transcript (a transient overlay would leave no record).
-        _ => return None,
+        // A plugin's command panel (SPEC 12.2). Deck-local like the cards
+        // above: the popup is view state, and the frame it draws is already
+        // here. Asked after every built-in, which is the same precedence
+        // `DECK_BUILTINS` enforces at the seat — a name that reached a seat
+        // has already been refused if it collided, so this arm can never
+        // shadow one of Stella's own.
+        _ => return panel_command(text, ui),
     })
+}
+
+/// Open the command panel `text` names, as `/<name>` or the always-available
+/// `/plugin:<name>` alias (SPEC 12.2).
+///
+/// `None` for anything that is not one, so an unknown slash keeps falling
+/// through to the driver exactly as it did.
+fn panel_command(text: &str, ui: &mut DeckUi) -> Option<DeckAction> {
+    let name = text.strip_prefix('/')?;
+    // The namespaced form is derived rather than declared — a manifest naming
+    // it is a load error (`PanelGrant::command`) — so it is resolved here and
+    // nowhere the plugin can reach.
+    let name = name.strip_prefix("plugin:").unwrap_or(name);
+    ui.panels.open_command(name).then_some(DeckAction::Handled)
 }
 
 /// The `/model` argument menu's keys for the deck composer (see
