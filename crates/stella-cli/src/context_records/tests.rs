@@ -427,6 +427,24 @@ fn appending_a_promotion_extends_the_chain_and_leaves_the_reviewed_dir_clean() {
     );
 }
 
+/// A ledger that lost only its trailing newline still verifies — so the next
+/// append used to glue its line onto the old tail and durably write one
+/// unparseable line, discovering the damage only after it was on disk.
+#[test]
+fn appending_to_a_newline_trimmed_ledger_does_not_glue_lines() {
+    let root = tempfile::tempdir().unwrap();
+    append_promotion(root.path(), grant("ctx.acme.web.a", "first grant")).unwrap();
+
+    // Trim the trailing newline, as an editor or a filter pipeline would.
+    let (path, text) = promotion_ledger_text(root.path());
+    std::fs::write(&path, text.trim_end_matches('\n')).unwrap();
+    read_promotions(root.path()).expect("the trimmed ledger still verifies");
+
+    append_promotion(root.path(), grant("ctx.acme.web.b", "second grant")).unwrap();
+    let events = read_promotions(root.path()).expect("the appended ledger verifies");
+    assert_eq!(events.len(), 2, "both grants survive as separate lines");
+}
+
 /// A record set file, as a plugin package or a repository ships one.
 fn record_set(set_id: &str, lineage: &str) -> String {
     format!(
