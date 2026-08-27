@@ -23,7 +23,7 @@ use stella_plugin::{
     OracleCheck, OracleCommand, Outcome, Participation, RoundState, StopReason, TamperFinding,
     TamperPolicy, UndecidedReason, UnmetBecause, Verdict, VerdictRule,
 };
-use stella_runtime::wrapper::{again, judge};
+use stella_runtime::wrapper::{again, gate_board, judge};
 
 const REQUIREMENT: &str = "proven";
 const STATEMENT: &str = "the change is proven by the witness";
@@ -696,6 +696,100 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
 /// carrying the same oracle and the same evidence recovers it, and is faithful
 /// because every clause is decided from the oracle and the evidence alone —
 /// nothing about one requirement can change the answer for another.
+/// SPEC 8.1's board has a row for every declared requirement, not only for the
+/// ones that failed.
+///
+/// The distinction the board exists for: `Verdict::Unmet` lists what failed and
+/// nothing else, so a board read off the verdict alone would show one row for a
+/// three-gate rule with one failure — and `0/0 green` for a perfect run. This
+/// is the witness for `gate_board` reading the *rule* as well.
+#[test]
+fn a_gate_board_has_a_row_for_every_requirement_not_only_the_failures() {
+    let rule = VerdictRule {
+        requirements: BTreeMap::from([
+            ("fmt".to_string(), "the tree is formatted".to_string()),
+            ("proven".to_string(), STATEMENT.to_string()),
+            ("tidy".to_string(), "no marker is left behind".to_string()),
+        ]),
+        oracle: Some(oracle(FlipPolicy::Required, Vec::new(), Vec::new())),
+    };
+
+    let met = judge(
+        &rule,
+        &evidence(FlipObservation::Achieved, TamperFinding::Clean),
+    );
+    let green = gate_board(&rule, &met, Some("patch-7".into()));
+    assert_eq!(green.total(), 3, "a board must have a row per requirement");
+    assert_eq!(green.green(), 3);
+    assert!(!green.has_failure());
+    assert_eq!(green.patch.as_deref(), Some("patch-7"));
+
+    // One clause fails; the other two are still on the board, and still green.
+    let unmet = judge(
+        &rule,
+        &evidence(FlipObservation::NotAchieved, TamperFinding::Clean),
+    )
+    .with_detail(Some("the witness never went red".to_string()));
+    let board = gate_board(&rule, &unmet, None);
+    assert_eq!(board.total(), 3);
+    assert!(board.has_failure());
+    // Every requirement fails here, because the flip is a fact about the run
+    // and conjoins with all three — the shape that matters is that the board
+    // reports it per row rather than as one line.
+    assert_eq!(board.green(), 0);
+    for gate in &board.gates {
+        let stella_protocol::GateState::Failed { case, log } = &gate.state else {
+            panic!(
+                "{} is not red on a denied flip: {:?}",
+                gate.name, gate.state
+            );
+        };
+        assert!(
+            case.contains("flip"),
+            "the failing case is not named: {case}"
+        );
+        assert_eq!(
+            log, "the witness never went red",
+            "the plugin's own account did not reach the block"
+        );
+    }
+    assert_eq!(board.patch, None, "a board with no candidate invents none");
+}
+
+/// An abstention paints undecided, never green — and the board says so in the
+/// words a report prints rather than in a `Debug` rendering.
+#[test]
+fn an_undecidable_verdict_paints_no_green_row() {
+    let rule = flip_rule(FlipPolicy::Required);
+    let undecided = judge(
+        &rule,
+        &evidence(FlipObservation::Unobservable, TamperFinding::Clean),
+    );
+    assert!(matches!(undecided, Verdict::Undecided { .. }));
+
+    let board = gate_board(&rule, &undecided, None);
+    assert_eq!(board.green(), 0, "an abstention must not read as a pass");
+    assert!(
+        !board.has_failure(),
+        "an abstention must not read as a failure either"
+    );
+    let stella_protocol::GateState::Undecided { reason } = &board.gates[0].state else {
+        panic!("the row is not undecided: {:?}", board.gates[0].state);
+    };
+    assert!(
+        reason.contains("witness"),
+        "the reason is not in a reader's words: {reason}"
+    );
+    assert!(
+        !reason.contains('{'),
+        "the reason is a Debug rendering: {reason}"
+    );
+    assert!(
+        board.gates.iter().all(|gate| gate.deterministic),
+        "judge asks no model, so every row it decides prices at $0.00"
+    );
+}
+
 fn met_requirements(rule: &VerdictRule, evidence: &EvidenceSet) -> BTreeSet<String> {
     rule.requirements
         .iter()

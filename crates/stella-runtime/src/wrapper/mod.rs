@@ -128,7 +128,7 @@ pub use test_run::{
     DEFAULT_HOST_MAX_TEST_RUNS, DEFAULT_TEST_OUTPUT_CHARS, TestObservation, TestRunDenial,
     TestRunHost, TestRunPlane, TestRunRecord, TestRuns,
 };
-pub use verdict::{again, judge};
+pub use verdict::{again, gate_board, judge};
 
 /// The two points a wrapper answers.
 ///

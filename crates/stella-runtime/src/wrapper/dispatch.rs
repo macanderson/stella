@@ -70,6 +70,7 @@ use stella_plugin::{
     PluginManifest, PublishedSignal, RoundState, SignalValues, StageName, StageProgram,
     TamperFinding, TurnOutcome, Verdict, VerdictRule, WrapperPoint,
 };
+use stella_protocol::GateBoard;
 use stella_protocol::completion::CompletionMessage;
 
 use super::{TurnWrapper, WrapperError, admissible, again, judge};
@@ -233,6 +234,17 @@ pub struct DispatchReport {
     pub rounds: u32,
     /// The verdict of the final round.
     pub verdict: Verdict,
+    /// The same verdict as SPEC 8.1's gate board — one row per requirement the
+    /// rule declares.
+    ///
+    /// Built here rather than by the caller because the rule is this
+    /// dispatcher's own state and a board built from the verdict alone would
+    /// have a row only for each *failure* (`super::gate_board`). Its `patch` is
+    /// the candidate this round ran against, when there was one.
+    ///
+    /// It re-decides nothing: every row is read out of `verdict` above, so the
+    /// two cannot disagree.
+    pub board: GateBoard,
     /// How the loop ended.
     pub outcome: Outcome,
     /// Every point that failed, in the order it failed. Empty in the ordinary
@@ -580,10 +592,16 @@ impl WrapperDispatch {
             };
             match again(&verdict, &state, &self.hold_grant) {
                 Continuation::Stop { outcome } => {
+                    let board = super::gate_board(
+                        &self.rule,
+                        &verdict,
+                        input.candidate.as_ref().map(|c| c.handle.to_string()),
+                    );
                     return Ok(DispatchReport {
                         variant,
                         rounds,
                         verdict,
+                        board,
                         outcome,
                         faults,
                     });
@@ -791,10 +809,7 @@ impl DispatchReport {
                 )
             }
             Outcome::Undecided { reason } => {
-                format!(
-                    "{}: nothing decided it either way ({reason:?})",
-                    self.variant
-                )
+                format!("{}: nothing decided it either way — {reason}", self.variant)
             }
         }
     }

@@ -1425,4 +1425,5 @@ fn stamping_fills_an_empty_tag_and_never_overwrites_one() {
     assert_eq!(narration.task_id(), None);
 }
 
+mod gate_board;
 mod tag_table;

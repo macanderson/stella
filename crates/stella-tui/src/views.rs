@@ -21,6 +21,7 @@ pub mod engine_panel;
 pub mod fields;
 pub mod files_tab;
 pub mod frame;
+pub mod gate_board;
 pub mod graph;
 pub mod graph_tab;
 pub mod installed;
