@@ -472,7 +472,7 @@ mod tests {
     fn an_over_budget_panel_is_tagged() {
         let area = Rect::new(0, 0, 40, 5);
         let mut buf = Buffer::empty(area);
-        chrome(area, "slow", &mut buf);
+        let _ = chrome(area, "slow", &mut buf);
         throttle_tag(area, 91, 33, &mut buf);
         let painted = text_of(&buf);
         assert!(painted.contains("throttled · 91ms of 33ms"), "{painted}");
