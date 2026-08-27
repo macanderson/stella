@@ -464,7 +464,17 @@ fn entry_body(
             );
         }
         TranscriptEntry::Text(text) => {
-            push_row_block(Rail::Agent, crate::markdown::render(text), width, out);
+            // Stella's own voice takes the silver rail (SPEC 12.4, #5300).
+            // Keyed on the marker `chrome_note` already stamps rather than on
+            // a second channel: the marker is the accessible half and the rail
+            // is the visual one, so deriving one from the other is what stops
+            // them ever disagreeing about who spoke.
+            let rail = if text.starts_with(crate::accessible::NOTICE_MARKER) {
+                Rail::Host
+            } else {
+                Rail::Agent
+            };
+            push_row_block(rail, crate::markdown::render(text), width, out);
         }
         TranscriptEntry::Reasoning(text) => {
             let total_lines = text.lines().count().max(1);
