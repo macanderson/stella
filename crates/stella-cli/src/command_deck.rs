@@ -114,7 +114,7 @@ mod theme_cmd;
 mod whistle;
 mod worker_control;
 use driver_support::{
-    handle_supervisor_msg, service_approve_revision, service_registry_action,
+    handle_supervisor_msg, service_approve_revision, service_edit_memory, service_registry_action,
     service_reject_memory, service_rerun_gate, service_undo_delete, spawn_mcp_connect,
     spawn_notification_poller, spawn_pr_monitor,
 };
@@ -1555,6 +1555,7 @@ pub async fn run_deck_session(
                             )
                             && !service_undo_delete(&other, &workspace_path, &in_tx)
                             && !service_reject_memory(&other, &workspace_path, &in_tx)
+                            && !service_edit_memory(&other, &workspace_path, &in_tx)
                             && !inspect_service::service_inspect_action(
                                 &other,
                                 &store,
@@ -2240,6 +2241,14 @@ pub async fn run_deck_session(
                         // reader is watching.
                         Some(input @ WorkspaceInput::RejectMemory { .. }) => {
                             service_reject_memory(&input, &workspace_path, &in_tx);
+                        }
+                        // `e edit` likewise (#5231), and for the sharper form
+                        // of the same reason: the reader is rewriting a lesson
+                        // the running turn may recall before it ends, so an
+                        // edit that waited would be recalled in its old words
+                        // by the very turn the reader is watching.
+                        Some(input @ WorkspaceInput::EditMemory { .. }) => {
+                            service_edit_memory(&input, &workspace_path, &in_tx);
                         }
                         // `r rerun gate` likewise: it answers in words rather
                         // than running anything (`service_rerun_gate`), so

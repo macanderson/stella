@@ -761,6 +761,10 @@ pub struct DeckUi {
     /// runs before the prompt the hold returned to the queue. Cleared the
     /// moment that submission is sent.
     pub dispatch_held: bool,
+    /// The memory `e edit` is rewriting, if any (#5231). Set when the row's
+    /// words reach the composer; read and cleared by `memory::submit_edit` and
+    /// `memory::abandon_edit`, which carry the reasoning.
+    pub editing_memory: Option<String>,
     /// The same latch for a pending `ask_user` question (cleared on a fresh
     /// `AskUser`).
     pub ask_answered: std::collections::HashSet<String>,
@@ -952,6 +956,7 @@ impl Default for DeckUi {
             fold_rev: 0,
             esc_armed_at: None,
             dispatch_held: false,
+            editing_memory: None,
             ask_answered: std::collections::HashSet::new(),
             hunk_answered: std::collections::HashSet::new(),
             hunk_marks: std::collections::HashMap::new(),
@@ -1795,6 +1800,13 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         ui.notice.dismiss();
     }
 
+    // Backing out of a memory edit (#5231) — Esc, or `⏎` on a composer the
+    // reader emptied. Ahead of the modal contexts below because the latch is
+    // not one of them, and the reasoning is `memory::abandon_edit`'s.
+    if let Some(action) = memory::abandon_edit(key, ui) {
+        return action;
+    }
+
     // Help overlay is modal: scrolling keys drive it, `q`/Esc close it. Only
     // Ctrl-C quit and the splash (handled above) precede it. Unlike a plain
     // "any key closes" dismiss, this keeps the overlay readable — the content
@@ -2192,6 +2204,11 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
 /// where it belongs. A held dispatch skips the card: the double-Esc already
 /// *was* the user saying "run mine next".
 fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckAction {
+    // A memory edit is not a prompt, so it is answered before anything that
+    // could route it as one (#5231) — see `memory::submit_edit`.
+    if let Some(action) = memory::submit_edit(ui, &text) {
+        return action;
+    }
     // A deck-local command acts on the view whether it arrived from the
     // slash popup or was typed out and submitted — see `local`.
     if let Some(action) = local::deck_local_command(text.trim(), ui) {

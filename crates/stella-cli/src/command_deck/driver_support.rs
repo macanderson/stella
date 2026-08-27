@@ -196,6 +196,34 @@ pub(super) fn service_undo_delete(
 /// the id alone would be undone by the next turn that re-learned the same
 /// lesson under a fresh one. `Store::forget` compares candidates against the
 /// content copied in here.
+/// `e edit` on a memory row: replace its words, keeping the lineage (#5231).
+///
+/// Drives the same path `stella memory edit <id> <text>` does — a new revision
+/// on the same lineage, so the old words stop being served and the id does not
+/// change. A reader who edits from the transcript and a reader who edits from
+/// the command line must not get two different things.
+///
+/// Reports its failure for the reason `service_reject_memory` does: an edit
+/// that did not land leaves the OLD words steering later turns, and a silent
+/// failure would leave the reader believing the opposite.
+pub(super) fn service_edit_memory(
+    input: &WorkspaceInput,
+    workspace: &str,
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    let WorkspaceInput::EditMemory { memory_id, text } = input else {
+        return false;
+    };
+    let notice =
+        match crate::memory_cmd::edit_memory_text(std::path::Path::new(workspace), memory_id, text)
+        {
+            Ok(_) => format!("edited {memory_id} — later turns recall the new words"),
+            Err(why) => format!("could not edit {memory_id}: {why}"),
+        };
+    let _ = in_tx.send(Inbound::Notice(notice));
+    true
+}
+
 pub(super) fn service_reject_memory(
     input: &WorkspaceInput,
     workspace: &str,

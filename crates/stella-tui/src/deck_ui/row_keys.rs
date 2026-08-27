@@ -100,8 +100,20 @@ pub(super) fn act(c: char, model: &WorkspaceModel, ui: &mut DeckUi) -> Option<De
         // in place, and approving the edited version without retyping it, is
         // #5289.
         'e' => {
-            let (_, proposal) = take_selected_proposal(model, ui)?;
-            ui.composer.paste(&proposal.subject);
+            if let Some((_, proposal)) = take_selected_proposal(model, ui) {
+                ui.composer.paste(&proposal.subject);
+                return Some(DeckAction::Handled);
+            }
+            // `e edit` on a memory row (SPEC 6.3, #5231). Same move as the
+            // proposal arm above and for the same reason — a transcript row
+            // holds no buffer and the deck's one buffer is the composer — with
+            // one addition: the latch, so the submission leaves as
+            // `EditMemory` rather than as a prompt. Without it a reader who
+            // rewrote a memory would have dispatched a turn saying the new
+            // words instead of storing them.
+            let (memory_id, text) = super::memory::selected_memory(model, ui)?;
+            ui.composer.paste(&text);
+            ui.editing_memory = Some(memory_id);
             Some(DeckAction::Handled)
         }
         // `x reject` on a memory row. The text travels with the id because the

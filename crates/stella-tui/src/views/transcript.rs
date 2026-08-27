@@ -913,11 +913,11 @@ const LADDER_METRIC_GAP: usize = 6;
 pub fn memory_log_footer(class: MemoryClass, promotes_at: u8) -> String {
     match class.next() {
         Some(next) => format!(
-            " promotes to {} at {} · x reject",
+            " promotes to {} at {} · e edit · x reject",
             class_label(next),
             fmt_confidence(promotes_at)
         ),
-        None => " x reject".to_string(),
+        None => " e edit · x reject".to_string(),
     }
 }
 

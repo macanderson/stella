@@ -160,6 +160,10 @@ mod tests {
             "kind domain",
             "decays",
             "promotes to RULE at 0.85",
+            // SPEC 6.3's footer in full since #5231. `e edit` was absent while
+            // it did nothing, because an affordance printed on a row that does
+            // nothing when pressed is worse than an absent one.
+            "e edit",
             "x reject",
         ] {
             assert!(

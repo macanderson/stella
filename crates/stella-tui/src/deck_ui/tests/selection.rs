@@ -54,6 +54,105 @@ fn with_logged_memory(m: &mut WorkspaceModel, agent: &str) {
     });
 }
 
+/// **The witness (#5231).** `e` on a logged memory hands its words to the
+/// composer and latches the edit, and the submission leaves as
+/// [`WorkspaceInput::EditMemory`] rather than as a prompt.
+///
+/// The second half is what makes this more than a paste. A transcript row holds no buffer
+/// and the deck's one buffer is the composer, so `e` has to borrow it — and
+/// without the latch a reader who rewrote a memory would have dispatched a
+/// *turn* saying the new words instead of storing them. Asserting only that
+/// the text reaches the composer would pass on that bug.
+#[test]
+fn e_on_a_highlighted_memory_edits_it_rather_than_prompting() {
+    let mut model = model_with(&["lead"]);
+    with_logged_memory(&mut model, "lead");
+    let mut ui = ready_ui();
+
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Char('e')), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Handled,
+        "e opens the edit, sends nothing"
+    );
+    assert_eq!(
+        ui.composer.buffer(),
+        "dedup keys must be stable across runs",
+        "the memory's current words are what a reader edits"
+    );
+    assert_eq!(ui.editing_memory.as_deref(), Some("nod_83b3f1d29a"));
+
+    // Replace the words and submit.
+    ui.composer.clear();
+    for c in "dedup keys are stable across runs".chars() {
+        ui.composer.insert_char(c);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::EditMemory {
+            memory_id: "nod_83b3f1d29a".into(),
+            text: "dedup keys are stable across runs".into(),
+        }),
+        "the submission must store the memory, not run a turn saying it"
+    );
+    assert!(
+        ui.editing_memory.is_none(),
+        "the latch is spent by the submission"
+    );
+}
+
+/// `e` with a non-blank composer types the letter, and Esc abandons the edit.
+///
+/// The first is the constraint that made this more than a keybinding: a bare
+/// `e` must not steal a keystroke from someone mid-prompt. The second is
+/// SPEC 13 — every overlay closes on Esc — and it has to clear the borrowed
+/// buffer too, or a reader who backed out is left holding words whose next
+/// `⏎` still rewrites the memory.
+#[test]
+fn e_does_not_steal_a_keystroke_and_esc_abandons_the_edit() {
+    let mut model = model_with(&["lead"]);
+    with_logged_memory(&mut model, "lead");
+
+    let mut ui = ready_ui();
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    for c in "wri".chars() {
+        ui.composer.insert_char(c);
+    }
+    handle_deck_key(key(KeyCode::Char('e')), &model, &mut ui);
+    assert_eq!(ui.composer.buffer(), "wrie", "e mid-prompt types");
+    assert!(ui.editing_memory.is_none(), "and latches nothing");
+
+    let mut ui = ready_ui();
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char('e')), &model, &mut ui);
+    assert!(ui.editing_memory.is_some());
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert!(ui.editing_memory.is_none(), "Esc abandons the edit");
+    assert_eq!(ui.composer.buffer(), "", "and clears the words it borrowed");
+}
+
+/// An empty submission leaves the memory alone rather than blanking it.
+///
+/// `⏎` on nothing is how a reader backs out of a buffer, and a memory with no
+/// words steers nothing while still being recalled — so the empty case is the
+/// one that must not reach the store. `run_memory_edit` refuses it too; this
+/// keeps the deck from asking.
+#[test]
+fn an_empty_edit_submission_leaves_the_memory_as_it_was() {
+    let mut model = model_with(&["lead"]);
+    with_logged_memory(&mut model, "lead");
+    let mut ui = ready_ui();
+
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char('e')), &model, &mut ui);
+    ui.composer.clear();
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "nothing is sent");
+    assert!(ui.editing_memory.is_none(), "and the latch is released");
+}
+
 /// **The witness (#5032).** With a logged memory highlighted, `x` sends
 /// [`WorkspaceInput::RejectMemory`] naming the memory *and its text* — the
 /// row's own `· x reject` affordance. With anything else highlighted the same
