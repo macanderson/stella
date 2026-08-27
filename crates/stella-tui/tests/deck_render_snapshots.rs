@@ -102,12 +102,18 @@ mod start_work;
 #[path = "deck_render_snapshots/mcp.rs"]
 mod mcp;
 
+/// The tab row's width ladder (#5072). See [`graph`]'s doc for why this is
+/// `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/tab_row.rs"]
+mod tab_row;
+
 /// SPEC 7.3's plan-panel economics. See [`graph`]'s doc for why this is
 /// `#[path]` rather than a plain `mod`.
 ///
-/// Declared last rather than in the list's order, so this and #5043's
-/// `revision_proposal` module do not both land on the line above
-/// [`start_work`] and collide when the two branches meet.
+/// Appended rather than filed in the list's order. Every branch that adds a
+/// golden adds one line here, and they all reach for the same insertion point;
+/// two that pick the same one conflict on the only file they otherwise share
+/// nothing in. Appending makes that a merge nobody has to resolve.
 #[path = "deck_render_snapshots/plan_economics.rs"]
 mod plan_economics;
 

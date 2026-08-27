@@ -767,3 +767,96 @@ fn a_panicking_deck_view_renders_an_error_card_and_the_session_survives() {
         "the frame after a caught panic matches one that never saw it"
     );
 }
+
+/// SPEC 5's prompt block opens with the pipeline line, and it draws in the row
+/// immediately above the composer (#5050).
+///
+/// Positional rather than a `contains` over the frame: the word `execute` is
+/// already on the status bar and on the turn's opening rule, so a frame-wide
+/// search would pass on a stepper that rendered nowhere near the composer, or
+/// on no stepper at all.
+#[test]
+fn a_turn_mid_execute_draws_the_pipeline_line_above_the_composer() {
+    let model = running_model_with_queue();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    let mut term = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let text = buffer_text(term.backend().buffer());
+    let rows: Vec<&str> = text.lines().collect();
+    let composer = rows
+        .iter()
+        .position(|r| r.starts_with(">>>"))
+        .expect("the composer draws");
+    let pipeline = rows[composer - 1];
+    assert!(
+        pipeline.contains("✓ plan") && pipeline.contains("▸ execute"),
+        "the row above the composer is SPEC 5's pipeline line: {pipeline:?}\n{text}"
+    );
+    assert!(
+        pipeline.contains("50%") && pipeline.contains("· verify"),
+        "…with the meter and the phase ahead: {pipeline:?}"
+    );
+}
+
+/// A run that announces no stage draws no stepper — the row stays air.
+///
+/// A plain `stella run` is the raw step-loop and emits no stage boundaries
+/// (AGENTS.md's opening), so a stepper that always drew would be describing a
+/// pipeline this binary cannot run. The same refusal the status bar's stage
+/// cell makes when it renders `—` rather than the word `idle`.
+#[test]
+fn a_run_that_announces_no_stage_draws_no_stepper() {
+    let mut model = WorkspaceModel::new();
+    model.now_ms = 1_000;
+    model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    let mut term = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let text = buffer_text(term.backend().buffer());
+    let rows: Vec<&str> = text.lines().collect();
+    let composer = rows
+        .iter()
+        .position(|r| r.starts_with(">>>"))
+        .expect("the composer draws");
+    assert!(
+        rows[composer - 1].trim().is_empty(),
+        "no stage announced, so the row stays air: {:?}",
+        rows[composer - 1]
+    );
+}
+
+/// The pipeline line and the pulse row share one band and never both claim it
+/// (#5050), across every tab and every focus the two decisions read.
+///
+/// The band is drawn once, by whichever of them answers; this is the property
+/// that makes that single draw correct rather than lucky.
+#[test]
+fn the_two_row_claimants_are_disjoint() {
+    let mut model = running_model_with_queue();
+    model.apply_inbound(&Inbound::Register(
+        AgentMeta::new("sub:1", "task 1", 0)
+            .with_role("subagent")
+            .with_parent("lead"),
+    ));
+    model.apply_inbound(&Inbound::Status {
+        agent: "sub:1".into(),
+        status: crate::AgentStatus::Running,
+    });
+    for tab in DeckTab::ALL {
+        for focused in 0..model.agents.len() {
+            let mut ui = DeckUi {
+                tab,
+                ..Default::default()
+            };
+            ui.focus_agent(focused);
+            let pipeline = crate::views::pipeline::pipeline(&model, &ui).is_some();
+            let pulse = crate::views::pulse::pulse(&model, &ui).is_some();
+            assert!(
+                !(pipeline && pulse),
+                "{tab:?} focused on {focused} has both claiming the row"
+            );
+        }
+    }
+}

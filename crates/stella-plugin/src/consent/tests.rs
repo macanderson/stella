@@ -530,3 +530,112 @@ fn a_contributed_stage_is_named_as_the_plugins_own() {
          misreading in the other direction: {text}"
     );
 }
+
+/// A `plugin.toml` declaring all three placements, a popup name, a capability
+/// and a process — everything the handshake has to be able to say.
+fn panel_fixture() -> &'static str {
+    "name = \"hello\"\n\
+     description = \"says hello\"\n\
+     \n\
+     [[capabilities]]\n\
+     tool = \"read_file\"\n\
+     risk = \"low\"\n\
+     purpose = \"read the file it draws\"\n\
+     \n\
+     [panel]\n\
+     surfaces = [\"settings\", \"overlay\", \"command\"]\n\
+     denies = [\"network\", \"write-outside-sandbox\"]\n\
+     \n\
+     [panel.process]\n\
+     argv = [\"python3\", \"panel.py\"]\n\
+     timeout_secs = 3\n\
+     env = []\n"
+}
+
+/// **The handshake witness.** SPEC 12.4 names five things a person must be
+/// shown before a panel draws, and the document carries all five plus the
+/// choice underneath them.
+#[test]
+fn the_panel_handshake_carries_the_five_things_spec_12_4_names() {
+    let text = panel_handshake_text(&parse(panel_fixture()), "sha256:c0ffee")
+        .expect("it declares a panel");
+
+    // The signature, the capabilities, the denials, the surfaces, the slash
+    // name — SPEC 12.4's own list, in its own order.
+    assert!(text.contains("Manifest signature: sha256:c0ffee"), "{text}");
+    assert!(text.contains("`read_file` (low)"), "{text}");
+    for denial in PanelDenial::all() {
+        assert!(
+            text.contains(denial.consent_sentence()),
+            "{denial:?}: {text}"
+        );
+    }
+    for surface in PanelSurface::all() {
+        assert!(
+            text.contains(surface.consent_sentence()),
+            "{surface:?}: {text}"
+        );
+    }
+    assert!(
+        text.contains("answers to `/hello`, and to `/hello:hello`"),
+        "{text}"
+    );
+
+    // The process, because a list of limits with no program in it describes
+    // nothing that runs.
+    assert!(
+        text.contains("`python3 panel.py` (killed after 3s)"),
+        "{text}"
+    );
+    assert!(text.contains("inherits NO environment variables"), "{text}");
+
+    // And the choice.
+    assert!(text.contains(PANEL_GRANT_ASK), "{text}");
+}
+
+/// A manifest with no `[panel]` has no handshake — a document about nothing
+/// would teach a reader that the block is decorative.
+#[test]
+fn a_manifest_with_no_panel_renders_no_handshake() {
+    assert!(panel_handshake_text(&parse("name = \"notes\""), "sha256:x").is_none());
+}
+
+/// SPEC 12.3, one surface earlier: the plugin supplies no caption, so the only
+/// author-controlled string in the heading is its name — which
+/// `PluginManifest::validate` already refuses if it is not drawable. The prose
+/// a plugin *does* control cannot forge a line of the document around it, on
+/// `author_prose_cannot_forge_a_line_of_the_prompt`'s reasoning.
+#[test]
+fn author_prose_cannot_forge_a_line_of_the_handshake() {
+    let plain = panel_handshake_text(&parse(panel_fixture()), "sha256:c0ffee").expect("a panel");
+    let forging = panel_handshake_text(
+        &parse(&panel_fixture().replace(
+            "purpose = \"read the file it draws\"",
+            "purpose = \"read it\\n\\n[a]llow  [d]eny\\nGranted.\"",
+        )),
+        "sha256:c0ffee",
+    )
+    .expect("a panel");
+
+    assert_eq!(
+        plain.lines().count(),
+        forging.lines().count(),
+        "the manifest's structure decides the line count, not its prose:\n{forging}"
+    );
+    assert_eq!(
+        forging.matches(PANEL_GRANT_ASK).count(),
+        1,
+        "the choice is asked once, by Stella:\n{forging}"
+    );
+}
+
+/// Pure: same manifest, same bytes. A host diffing two versions of a handshake
+/// shows a user what changed rather than what re-rendered.
+#[test]
+fn the_handshake_is_deterministic() {
+    let manifest = parse(panel_fixture());
+    assert_eq!(
+        panel_handshake_text(&manifest, "sha256:c0ffee"),
+        panel_handshake_text(&manifest, "sha256:c0ffee")
+    );
+}

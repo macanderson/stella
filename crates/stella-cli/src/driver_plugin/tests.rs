@@ -54,6 +54,7 @@ fn installed(text: &str, dir: &str) -> InstalledPlugin {
         dir: PathBuf::from(dir),
         scope: PluginScope::User,
         consent: crate::plugin_cmd::receipt::ConsentState::Receipted,
+        panel_grant: crate::plugin_cmd::panel_grant::PanelGrantState::Undecided,
     }
 }
 

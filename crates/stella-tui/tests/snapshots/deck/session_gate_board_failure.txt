@@ -39,7 +39,7 @@
  │   ✓ doc-warnings · green · $0.00 · det
  │   ✓ witness-flip · green · $0.00 · det
 
-
+ ✓ plan ▸ execute ████░░░░ 50% · verify
 >>>
  ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help
