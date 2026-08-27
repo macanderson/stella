@@ -1091,6 +1091,36 @@
           "type": "object"
         },
         {
+          "description": "A workspace skill entered this turn's context — one event per skill\nthe steering section actually carried.\n\nEmitted after the section's own token budget has made its cut, so\n`tokens` is what the prompt paid rather than what selection ranked:\nselection routinely scores more skills than the section fits, and an\nevent per *candidate* would bill the turn for text it never sent.",
+          "properties": {
+            "name": {
+              "description": "The skill's slug, as its `SKILL.md` frontmatter names it.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "The skill's own one-line description.",
+              "type": "string"
+            },
+            "tokens": {
+              "description": "What this skill's rendered block cost, estimated over the exact\nbytes the section carried.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "skill_injected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "summary",
+            "tokens"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A context block first became eligible to enter the prompt (spec §4).\nThe birth record that makes the per-step manifest an index over the fold.\n\nDigest, not bytes, for the kinds the journal already carries whole\n(`ToolResult`, `ToolCall`/`ToolStart`, assistant `Text`): those preimages\nare resolved from the originating event at reconstruction time, never\nre-stored. For the two kinds the fold does NOT carry — the system prefix\nand the assembled user/recall message — `content` carries the bytes so\nthe step is reconstructable (spec §5.3). \"Content-free\" is therefore a\nclaim about two specific things and no others: the *export* projection,\nwhich strips `content`, and the *wire shape of journal-resolvable\nkinds*, which never carry bytes at all. It is **not** a claim about this\nevent stream, which gap-kind blocks do put prompt bytes on: everything\nemitted here also reaches `--output-format stream-json` on stdout and\nany durable stream file configured behind it. Treat a raw event stream\nas carrying prompt content and redirect it accordingly. Additive:\nconsumers recorded before receipts existed simply never see this event.",
           "properties": {
             "block_id": {
@@ -1277,6 +1307,23 @@
             "type",
             "passed",
             "evidence"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The gate board a verify turn draws — SPEC 8.1, one row per clause of\nthe definition of done an installed verification plugin declared.\n\nA sibling of [`AgentEvent::Verdict`] at a different granularity, and\nthat is what earns it its own case rather than a field on that one: a\nverdict is the run's single answer, and this is the per-gate breakdown\nthe answer was composed from. A reader wanting to know *which* gate went\nred had to parse the verdict's prose summary, which is a scraper\nguessing at a harness rather than a reading.\n\nThe whole board rides one event rather than one event per gate. A board\nheader states `4/5 green`, and a stream of per-gate events cannot say\nthat until the last one lands — so a per-gate stream would either draw a\nheader that is wrong for as long as the gates are arriving, or hold every\nrow back until it can be right. The board is a snapshot for the reason\n[`AgentEvent::TaskUpdate`]'s is.\n\nStella never re-runs a gate: the evidence is the plugin's self-report and\nthe host only evaluates it against the plugin's declared rule\n(AGENTS.md's opening). This event carries the outcome of that evaluation.",
+          "properties": {
+            "board": {
+              "$ref": "#/$defs/GateBoard"
+            },
+            "type": {
+              "const": "gate_board",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "board"
           ],
           "type": "object"
         },
@@ -2526,6 +2573,107 @@
           "const": "achieved",
           "description": "The tracked command was observed failing and then passing, and the\nconfirmation re-run held.",
           "type": "string"
+        }
+      ]
+    },
+    "GateBoard": {
+      "description": "A verify turn's gate board — SPEC 8.1's `◇ gate board · patch-7 · 4/5 green`.\n\nOne row per gate, where a gate is one clause of the definition of done that\nan installed verification plugin declared. Verification is the plugin's, not\nthis host's (AGENTS.md's opening): the plugin reports what it observed, the\nhost evaluates that evidence against the plugin's declared rule, and this\nboard is the result of that evaluation. Nothing here was re-run or\nre-checked by stella, so a row states what the rule concluded from what the\nplugin said — never a measurement stella took.",
+      "properties": {
+        "gates": {
+          "description": "The rows, in the rule's own order.\n\nThat order is the manifest's: a verdict rule keys its requirements in a\n`BTreeMap`, so two runs over the same rule draw the board the same way.",
+          "items": {
+            "$ref": "#/$defs/GateRow"
+          },
+          "type": "array"
+        },
+        "patch": {
+          "description": "What is under verification, as the board's header names it (`patch-7`).\n\n`None` on a door with no patch identity to state, and it renders as no\ncell at all — a header that invented one would name a thing the reader\ncannot go and look at.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "GateRow": {
+      "description": "One gate on a [`GateBoard`].",
+      "properties": {
+        "deterministic": {
+          "description": "Whether deciding this gate asked no model and cost nothing, which is\nwhat earns the row its `$0.00 · det` price (SPEC 6.3, SPEC 8.1).\n\nTrue for every gate the host's own `judge` decided: that function is\nsynchronous, I/O-free and total, so there is no `.await` to hang a model\ncall on and no arm that escalates to one. It is a field rather than a\nconstant because the price belongs to whoever produced the row — a\nproducer that ever does buy a call to settle a gate has to say so here,\nand `$0.00` over a row that spent money is exactly the flattering number\nAGENTS.md forbids.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "The gate's name — the `[requirements]` key the plugin's manifest wrote.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/GateState",
+          "description": "What the rule concluded about it."
+        }
+      },
+      "required": [
+        "name",
+        "state",
+        "deterministic"
+      ],
+      "type": "object"
+    },
+    "GateState": {
+      "description": "What the verdict rule concluded about one gate.\n\nThree answers rather than a `bool`, for the reason the wrapper socket's own\nverdict has three: \"the evidence could not decide\" is a real outcome, and\nrendering it as a failure blames a worker for the instrument while rendering\nit as a pass is the false claim the verification path exists to prevent.",
+      "oneOf": [
+        {
+          "const": "green",
+          "description": "Every clause of this gate held.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The gate did not hold, and what the evidence said about it.\n\nThe two fields ride the failing state rather than sitting beside it on\n[`GateRow`], so a green row carrying a failure block is not something\nthis type can express. The alternative — an `Option` next to a `state` —\nmakes the renderer's red-scarcity rule (SPEC 2, SPEC 8.1) a convention a\nproducer can break instead of a property of the value it sends.",
+          "properties": {
+            "failed": {
+              "properties": {
+                "case": {
+                  "description": "The failing case, as the evidence named it: the check the manifest\nwrote, or the flip that was not observed.",
+                  "type": "string"
+                },
+                "log": {
+                  "description": "Everything the gate reported about the failure, in full.\n\nThe board renders the first lines of it (SPEC 8.1's two-line\nexcerpt) and the reader opens the rest, so the excerpting is the\nrenderer's decision and is not baked in here where a second surface\ncould not undo it. Empty where the plugin reported no detail, which\nrenders as a failure block with no excerpt rather than one with a\nblank one.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "case"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "failed"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The evidence could not decide this gate, in the words a report prints.",
+          "properties": {
+            "undecided": {
+              "properties": {
+                "reason": {
+                  "description": "Why — the host's own sentence about what the evidence lacked.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "undecided"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3903,7 +4051,7 @@
       "type": "object"
     },
     "TaskStatus": {
-      "description": "Lifecycle of a `TaskItem`. Terminal states are `Completed` and\n`Cancelled`; a cancelled task keeps its row (the board is an audit\nsurface, not just a scheduler).",
+      "description": "Where one task on the board is in its lifecycle. `completed` and `cancelled` are terminal; the rest can still change. `verify` means the work is done and its checks are running, and `blocked` means something outside the task stopped it — a red gate, an unmet dependency — which is a different fact from `cancelled`, a decision to abandon it. Tokens are only ever added, so a reader that does not recognise one is reading a newer stream.",
       "oneOf": [
         {
           "const": "pending",
@@ -3923,6 +4071,16 @@
         {
           "const": "cancelled",
           "description": "Abandoned. Terminal, and the row is kept — the board is an audit\nsurface, not just a scheduler.",
+          "type": "string"
+        },
+        {
+          "const": "verify",
+          "description": "The work is done and its checks are running or awaiting a verdict —\nSPEC 7.2's `◇ verify`, the window between \"the worker stopped\" and \"the\ngates are green\" that the board had no word for.\n\nOpen, because the verdict is what moves it: to [`Self::Completed`] on\ngreen, to [`Self::Blocked`] on red. Closing on entry here would be the\nmodel marking its own homework, which SPEC 7.1 exists to stop.\n\nNothing sets it yet — the gate board is #5042.",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "Stopped by something the task does not control: a red gate, an unmet\ndependency.\n\nOpen rather than terminal, because SPEC 8.1's receipt reads `merge\nblocked · unblocks on green`. A blocked task that could never move\nagain would be a dead row wearing a live word.\n\nA different fact from [`Self::Cancelled`], which is a decision to\nabandon the work. Both draw SPEC 4's one `✗`, and until this case\nexisted the board could not tell a reader which had happened.\n\nNothing sets it yet — the gate that would is #5042.",
           "type": "string"
         }
       ]

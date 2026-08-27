@@ -88,6 +88,11 @@ mod attribution;
 #[path = "deck_render_snapshots/task_zoom.rs"]
 mod task_zoom;
 
+/// SPEC 8.1's gate board. See [`graph`]'s doc for why this is `#[path]` rather
+/// than a plain `mod`.
+#[path = "deck_render_snapshots/gate_board.rs"]
+mod gate_board;
+
 /// See [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
 #[path = "deck_render_snapshots/start_work.rs"]
 mod start_work;

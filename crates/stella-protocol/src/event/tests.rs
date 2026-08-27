@@ -6,6 +6,8 @@
 use super::*;
 use crate::FlipOutcome;
 
+mod task_status;
+
 #[test]
 fn agent_event_roundtrips_with_type_tag() {
     let event = AgentEvent::ToolStart {
@@ -789,59 +791,6 @@ fn pr_event_from_a_pre_ci_stream_still_parses() {
     }
 }
 
-#[test]
-fn task_update_roundtrips_a_full_board_snapshot() {
-    let event = AgentEvent::TaskUpdate {
-        tasks: vec![
-            TaskItem {
-                id: "1".into(),
-                subject: "Map the auth module".into(),
-                description: None,
-                status: TaskStatus::Completed,
-                owner: Some("lead".into()),
-                contract: None,
-            },
-            TaskItem {
-                id: "2".into(),
-                subject: "Fix the redirect loop".into(),
-                description: Some("token refresh races the redirect".into()),
-                status: TaskStatus::InProgress,
-                owner: Some("sub:2".into()),
-                contract: None,
-            },
-            TaskItem {
-                id: "3".into(),
-                subject: "Add a witness test".into(),
-                description: None,
-                status: TaskStatus::Pending,
-                owner: None,
-                contract: None,
-            },
-        ],
-    };
-    let json = serde_json::to_string(&event).unwrap();
-    assert!(json.contains("\"type\":\"task_update\""), "{json}");
-    // Absent optionals are omitted, not serialized as null.
-    assert!(!json.contains("null"), "{json}");
-    let back: AgentEvent = serde_json::from_str(&json).unwrap();
-    match back {
-        AgentEvent::TaskUpdate { tasks } => {
-            assert_eq!(tasks.len(), 3);
-            assert_eq!(tasks[1].status, TaskStatus::InProgress);
-            assert_eq!(tasks[1].owner.as_deref(), Some("sub:2"));
-        }
-        other => panic!("unexpected case: {other:?}"),
-    }
-}
-
-#[test]
-fn task_status_open_vs_terminal() {
-    assert!(TaskStatus::Pending.is_open());
-    assert!(TaskStatus::InProgress.is_open());
-    assert!(!TaskStatus::Completed.is_open());
-    assert!(!TaskStatus::Cancelled.is_open());
-}
-
 /// The research stage's two wire tokens (#1778), pinned in both directions
 /// (AGENTS.md #4): the snake_case token is what a recorded stream carries, and
 /// a role addition is one-directional (`ModelCallRole` has no catch-all), so
@@ -1476,4 +1425,5 @@ fn stamping_fills_an_empty_tag_and_never_overwrites_one() {
     assert_eq!(narration.task_id(), None);
 }
 
+mod gate_board;
 mod tag_table;

@@ -27,6 +27,9 @@ mod tail;
 // What each file mutation renders as, and where its line numbers come from.
 mod file_kinds;
 
+// What the stylesheet promises a 390px screen.
+mod narrow;
+
 use crate::digest::{self, format_cost, format_duration, format_tokens};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::{Command, Cursor, FoldState, Zoom, apply};

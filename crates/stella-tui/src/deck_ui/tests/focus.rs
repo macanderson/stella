@@ -27,7 +27,7 @@ fn lead_and_lane() -> WorkspaceModel {
 /// to the strip: one per pane, so a tab with none hands the first press up.
 fn panes_to_cross(tab: DeckTab) -> usize {
     match tab {
-        DeckTab::Settings => crate::views::settings::SettingsPane::ALL.len(),
+        DeckTab::Settings => crate::views::settings::SettingsPane::BUILTIN.len(),
         DeckTab::Skills => 2, // installed → search → (rise)
         _ => 1,
     }

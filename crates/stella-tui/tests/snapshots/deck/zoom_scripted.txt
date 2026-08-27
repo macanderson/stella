@@ -4,7 +4,7 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan · task 5 Wire the triggers API · 4/7                                                                                         ⌃S plan   stella*
-task 5 · Wire the triggers API                                                                                             ● working · lead · glm-5.2 · esc back
+task 5 · Wire the triggers API                                                                                             ◐ working · lead · glm-5.2 · esc back
 
 done means · the contract, checked not vibed
   ✓ no inbound refs to the removed trigger route                                                                                                     graph · det

@@ -70,6 +70,7 @@
 
 mod disclosure;
 mod envelope;
+mod wording;
 
 pub use self::disclosure::{HOOK_FIELDS, HookField, WIRE_FIELDS, WireField, hook_disclosures_for};
 

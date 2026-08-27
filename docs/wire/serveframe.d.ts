@@ -557,6 +557,21 @@ export type AgentEvent = {
   upserts: number;
 } | {
   /**
+   * The skill's slug, as its `SKILL.md` frontmatter names it.
+   */
+  name: string;
+  /**
+   * The skill's own one-line description.
+   */
+  summary: string;
+  /**
+   * What this skill's rendered block cost, estimated over the exact
+   * bytes the section carried.
+   */
+  tokens: number;
+  type: "skill_injected";
+} | {
+  /**
    * `blk_<24 hex of sha256(kind \0 content)>`. Byte-identical blocks
    * share an id, so dedup/supersession become identities not counts.
    */
@@ -681,6 +696,9 @@ export type AgentEvent = {
   evidence: VerdictEvidence;
   passed: boolean;
   type: "verdict";
+} | {
+  board: GateBoard;
+  type: "gate_board";
 } | {
   proposal: ScopeProposal;
   type: "scope_review";
@@ -1370,6 +1388,98 @@ export type FinishReason = "stop" | "length" | "tool_calls" | "content_filter";
  * recorded before this existed keep parsing.
  */
 export type FlipOutcome = "unobserved" | "not_achieved" | "achieved";
+
+/**
+ * A verify turn's gate board — SPEC 8.1's `◇ gate board · patch-7 · 4/5 green`.
+ *
+ * One row per gate, where a gate is one clause of the definition of done that
+ * an installed verification plugin declared. Verification is the plugin's, not
+ * this host's (AGENTS.md's opening): the plugin reports what it observed, the
+ * host evaluates that evidence against the plugin's declared rule, and this
+ * board is the result of that evaluation. Nothing here was re-run or
+ * re-checked by stella, so a row states what the rule concluded from what the
+ * plugin said — never a measurement stella took.
+ */
+export interface GateBoard {
+  /**
+   * The rows, in the rule's own order.
+   *
+   * That order is the manifest's: a verdict rule keys its requirements in a
+   * `BTreeMap`, so two runs over the same rule draw the board the same way.
+   */
+  gates?: GateRow[];
+  /**
+   * What is under verification, as the board's header names it (`patch-7`).
+   *
+   * `None` on a door with no patch identity to state, and it renders as no
+   * cell at all — a header that invented one would name a thing the reader
+   * cannot go and look at.
+   */
+  patch?: string | null;
+}
+
+/**
+ * One gate on a [`GateBoard`].
+ */
+export interface GateRow {
+  /**
+   * Whether deciding this gate asked no model and cost nothing, which is
+   * what earns the row its `$0.00 · det` price (SPEC 6.3, SPEC 8.1).
+   *
+   * True for every gate the host's own `judge` decided: that function is
+   * synchronous, I/O-free and total, so there is no `.await` to hang a model
+   * call on and no arm that escalates to one. It is a field rather than a
+   * constant because the price belongs to whoever produced the row — a
+   * producer that ever does buy a call to settle a gate has to say so here,
+   * and `$0.00` over a row that spent money is exactly the flattering number
+   * AGENTS.md forbids.
+   */
+  deterministic: boolean;
+  /**
+   * The gate's name — the `[requirements]` key the plugin's manifest wrote.
+   */
+  name: string;
+  /**
+   * What the rule concluded about it.
+   */
+  state: GateState;
+}
+
+/**
+ * What the verdict rule concluded about one gate.
+ *
+ * Three answers rather than a `bool`, for the reason the wrapper socket's own
+ * verdict has three: "the evidence could not decide" is a real outcome, and
+ * rendering it as a failure blames a worker for the instrument while rendering
+ * it as a pass is the false claim the verification path exists to prevent.
+ */
+export type GateState = "green" | {
+  failed: {
+    /**
+     * The failing case, as the evidence named it: the check the manifest
+     * wrote, or the flip that was not observed.
+     */
+    case: string;
+    /**
+     * Everything the gate reported about the failure, in full.
+     *
+     * The board renders the first lines of it (SPEC 8.1's two-line
+     * excerpt) and the reader opens the rest, so the excerpting is the
+     * renderer's decision and is not baked in here where a second surface
+     * could not undo it. Empty where the plugin reported no detail, which
+     * renders as a failure block with no excerpt rather than one with a
+     * blank one.
+     */
+    log?: string;
+  };
+} | {
+  undecided: {
+    /**
+     * Why — the host's own sentence about what the evidence lacked.
+     */
+    reason: string;
+  };
+};
 
 /**
  * Optional sampling/routing parameter overrides riding a
@@ -2286,11 +2396,9 @@ export interface TaskItem {
 }
 
 /**
- * Lifecycle of a `TaskItem`. Terminal states are `Completed` and
- * `Cancelled`; a cancelled task keeps its row (the board is an audit
- * surface, not just a scheduler).
+ * Where one task on the board is in its lifecycle. `completed` and `cancelled` are terminal; the rest can still change. `verify` means the work is done and its checks are running, and `blocked` means something outside the task stopped it — a red gate, an unmet dependency — which is a different fact from `cancelled`, a decision to abandon it. Tokens are only ever added, so a reader that does not recognise one is reading a newer stream.
  */
-export type TaskStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type TaskStatus = "pending" | "in_progress" | "completed" | "cancelled" | "verify" | "blocked";
 
 /**
  * One tool invocation the model requested.

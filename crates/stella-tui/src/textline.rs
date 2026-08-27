@@ -30,6 +30,9 @@ use stella_protocol::{
     ProviderShare, StageKind, StageName, TaskItem, TaskStatus, Withholder,
 };
 
+mod gate;
+pub use gate::gate_board;
+
 /// Semantic weight of an annotation line. Each surface owns the mapping to
 /// its palette (e.g. plain maps `Muted` to ANSI dim, the deck to
 /// `theme::TEXT_SECONDARY`); no color name may appear in this module.
@@ -452,6 +455,21 @@ pub fn context_write(provider: &str, upserts: u32, superseded: u32) -> EventLine
     }
 }
 
+/// One injected skill, for the surfaces that render a stream as text.
+///
+/// The summary rides `detail` rather than the body so a narrow terminal drops
+/// the description and keeps the two facts a reader acts on — which skill, and
+/// what it cost.
+pub fn skill_injected(name: &str, summary: &str, tokens: u32) -> EventLine {
+    EventLine {
+        glyph: "✦",
+        tone: Tone::Muted,
+        strong: false,
+        body: format!("skill {name} injected · {tokens} tok"),
+        detail: (!summary.is_empty()).then(|| summary.to_string()),
+    }
+}
+
 pub fn media_progress(kind: MediaKind, artifact_id: &str, state: &MediaJobState) -> EventLine {
     match state {
         MediaJobState::Failed { reason } => EventLine {
@@ -764,6 +782,11 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             superseded,
             ..
         } => Some(context_write(provider, *upserts, *superseded)),
+        AgentEvent::SkillInjected {
+            name,
+            summary,
+            tokens,
+        } => Some(skill_injected(name, summary, *tokens)),
         AgentEvent::MediaProgress {
             artifact_id,
             kind,
@@ -779,6 +802,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             evidence.deterministic,
             &evidence.summary,
         )),
+        AgentEvent::GateBoard { board } => Some(gate_board(board)),
         AgentEvent::ScopeReview { proposal } => Some(scope_review(
             &proposal.summary,
             proposal.steps.len(),

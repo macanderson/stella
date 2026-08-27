@@ -22,6 +22,9 @@ fn faulted_report() -> stella_runtime::wrapper::DispatchReport {
         outcome: stella_plugin::Outcome::Undecided {
             reason: stella_plugin::UndecidedReason::NoOracle,
         },
+        // A rule with no requirements draws no rows: nothing was declared, so
+        // there is no gate to report on.
+        board: stella_protocol::GateBoard::default(),
         faults: vec![stella_runtime::wrapper::WrapperError::EmptyArgv],
     }
 }

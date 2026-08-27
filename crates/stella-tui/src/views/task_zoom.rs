@@ -444,10 +444,12 @@ fn state_word(step: &PlanStep) -> String {
     match step.state {
         PlanStepState::Planned => "queued".to_string(),
         PlanStepState::Started => "working".to_string(),
+        PlanStepState::Verify => "verify".to_string(),
         PlanStepState::Complete => "done".to_string(),
-        // A cancelled step carries its reason in the note, and "failed" would
-        // read as a crash when it was a decision.
-        PlanStepState::Error => step.note.clone().unwrap_or_else(|| "failed".to_string()),
+        // A cancelled step carries its reason in the note, and "blocked" would
+        // read as a gate stopping it when it was a decision.
+        PlanStepState::Blocked => step.note.clone().unwrap_or_else(|| "blocked".to_string()),
+        PlanStepState::DriftInserted => "inserted".to_string(),
     }
 }
 

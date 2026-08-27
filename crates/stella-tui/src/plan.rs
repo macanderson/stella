@@ -39,33 +39,77 @@ use std::collections::BTreeMap;
 
 use stella_protocol::{ScopeProposal, TaskContract, TaskItem, TaskStatus};
 
-/// Where one plan step is in its lifecycle.
+/// What a plan-step row says about itself — SPEC 7.2's six states, one per
+/// glyph cell.
 ///
-/// Four states, deliberately. A step is *going to happen*, *happening*,
-/// *happened*, or *went wrong*; anything finer is scheduler detail the reader
-/// of a rail does not need.
+/// This is the *render* vocabulary, not the wire one. Five of the six are
+/// lifecycle positions and fold straight from [`TaskStatus`]; the sixth,
+/// [`Self::DriftInserted`], is a fact about the plan graph rather than about
+/// the step's progress, and it takes the glyph cell because a row has one.
+/// See [`stella_protocol::TaskStatus`] for why the wire refuses to carry it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlanStepState {
-    /// Agreed and not yet begun. The default for every step of a fresh plan.
+    /// Agreed and not yet begun — SPEC 7.2's `○ queued`. The default for every
+    /// step of a fresh plan.
     #[default]
     Planned,
-    /// Being worked right now.
+    /// Being worked right now — `◐ running`.
     Started,
-    /// Finished successfully. Terminal.
+    /// Finished successfully — `✓ done`. Terminal.
     Complete,
-    /// Failed, or was abandoned before finishing. Terminal.
+    /// Stopped short — `✗ blocked`.
     ///
-    /// A cancelled step lands here too: the four-state vocabulary has one slot
-    /// for "terminal and not done", and a dropped step is not a completed one.
-    /// [`PlanStep::note`] carries the distinction in words so the row never
-    /// reads as a crash when it was a decision.
-    Error,
+    /// A cancelled step lands here too: SPEC 4 spends one `✗` on every way a
+    /// step can end badly, so [`PlanStep::note`] carries the distinction in
+    /// words and the row never reads as a crash when it was a decision. The
+    /// wire tells the two apart now ([`TaskStatus::Blocked`] against
+    /// [`TaskStatus::Cancelled`]) even though the glyph cannot.
+    Blocked,
+    /// Its checks are running or awaiting a verdict — `◇ verify`, a gate task
+    /// that blocks the merge.
+    Verify,
+    /// A step the approved plan did not contain — `⌥ drift-inserted`.
+    ///
+    /// Nothing folds into this state yet: drift lives on the plan graph's
+    /// `[:THEN]` lane ([`PlanLanes`]), which #5037 landed as
+    /// `stella_protocol::plan_graph::DivergenceKind::Inserted`, and no
+    /// [`TaskStatus`] asserts it. Until something joins those divergences to
+    /// this fold, a step reaches this state only from a caller that builds the
+    /// [`PlanStep`] itself — the tests below and the scenario fixture.
+    DriftInserted,
 }
 
 impl PlanStepState {
     /// Whether the step can still change state.
+    ///
+    /// [`Self::Blocked`] is open: SPEC 8.1 unblocks a red gate on green, and
+    /// the card offers `x` on an open row, which is the dismiss that section
+    /// asks for. An exhaustive match, so a seventh state has to answer this
+    /// rather than inherit an answer.
     pub fn is_open(self) -> bool {
-        matches!(self, PlanStepState::Planned | PlanStepState::Started)
+        match self {
+            PlanStepState::Planned
+            | PlanStepState::Started
+            | PlanStepState::Blocked
+            | PlanStepState::Verify
+            | PlanStepState::DriftInserted => true,
+            PlanStepState::Complete => false,
+        }
+    }
+
+    /// Whether work has begun on this step — what makes the plan as a whole
+    /// `started` rather than `approved`.
+    ///
+    /// A drift-inserted step is queued work that arrived late, so its presence
+    /// is not progress; it answers this the same way [`Self::Planned`] does.
+    fn has_begun(self) -> bool {
+        match self {
+            PlanStepState::Planned | PlanStepState::DriftInserted => false,
+            PlanStepState::Started
+            | PlanStepState::Complete
+            | PlanStepState::Blocked
+            | PlanStepState::Verify => true,
+        }
     }
 }
 
@@ -366,11 +410,11 @@ impl Plan {
             }
             return;
         }
-        self.state = if steps.iter().any(|s| s.state == PlanStepState::Error) {
+        self.state = if steps.iter().any(|s| s.state == PlanStepState::Blocked) {
             PlanState::Error
         } else if steps.iter().all(|s| s.state == PlanStepState::Complete) {
             PlanState::Completed
-        } else if steps.iter().any(|s| s.state != PlanStepState::Planned) {
+        } else if steps.iter().any(|s| s.state.has_begun()) {
             PlanState::Started
         } else if self.decided {
             PlanState::Approved
@@ -387,7 +431,10 @@ impl Plan {
     /// run ending, and a non-retryable error ending it early.
     pub fn finish(&mut self) {
         for item in &mut self.board {
-            if item.status == TaskStatus::InProgress {
+            // `Verify` counts as in flight: a gate that never returned a
+            // verdict is not a pass, and leaving the row on `◇` would imply
+            // one is still coming.
+            if matches!(item.status, TaskStatus::InProgress | TaskStatus::Verify) {
                 item.status = TaskStatus::Cancelled;
             }
         }
@@ -420,11 +467,18 @@ impl Plan {
             })
             .collect();
         for item in &self.board {
+            // No arm reaches `DriftInserted`: see its doc comment — the wire
+            // deliberately carries no status that asserts drift.
             let (state, note) = match item.status {
                 TaskStatus::Pending => (PlanStepState::Planned, None),
                 TaskStatus::InProgress => (PlanStepState::Started, None),
+                TaskStatus::Verify => (PlanStepState::Verify, None),
                 TaskStatus::Completed => (PlanStepState::Complete, None),
-                TaskStatus::Cancelled => (PlanStepState::Error, Some("cancelled".to_string())),
+                TaskStatus::Blocked => (PlanStepState::Blocked, None),
+                // Both draw `✗`; the note is the only thing that tells a
+                // reader a person dropped this step rather than a gate
+                // stopping it.
+                TaskStatus::Cancelled => (PlanStepState::Blocked, Some("cancelled".to_string())),
             };
             match steps.iter_mut().find(|s| s.id == item.id) {
                 Some(step) => {
@@ -750,6 +804,113 @@ mod tests {
             TaskStatus::InProgress,
         )]);
         assert_eq!(plan.steps()[0].title, "the concrete restatement");
+    }
+
+    /// **The de-conflation.** `✗` is the only red mark SPEC 4 has, so a
+    /// blocked step and an abandoned one draw the same glyph — but they are no
+    /// longer the same fact, and the row says which. Before this the board had
+    /// one word for both and the note always read `cancelled`, including for
+    /// work a red gate had stopped.
+    #[test]
+    fn a_blocked_step_and_a_cancelled_one_are_told_apart_by_their_note() {
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one", "two"]));
+        plan.approve();
+        plan.apply_board(&[
+            item("1", "one", TaskStatus::Blocked),
+            item("2", "two", TaskStatus::Cancelled),
+        ]);
+        let steps = plan.steps();
+        assert_eq!(steps[0].state, PlanStepState::Blocked);
+        assert_eq!(steps[1].state, PlanStepState::Blocked);
+        assert_eq!(steps[0].note, None, "a gate stopped it; nobody dropped it");
+        assert_eq!(steps[1].note.as_deref(), Some("cancelled"));
+        assert_eq!(plan.state, PlanState::Error);
+    }
+
+    /// A task whose checks are running is neither working nor done: it folds
+    /// to its own state, and the plan reads as started rather than complete.
+    #[test]
+    fn a_verifying_step_folds_to_its_own_state_and_is_not_yet_complete() {
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one", "two"]));
+        plan.approve();
+        plan.apply_board(&[
+            item("1", "one", TaskStatus::Completed),
+            item("2", "two", TaskStatus::Verify),
+        ]);
+        let steps = plan.steps();
+        assert_eq!(steps[1].state, PlanStepState::Verify);
+        assert_eq!(plan.progress(), (1, 2), "a gate in flight is not a pass");
+        assert_eq!(plan.state, PlanState::Started);
+        assert!(steps[1].state.is_open());
+    }
+
+    /// `finish` reaches the gate too: a verdict that never arrived is not a
+    /// green one, so the row must stop implying one is coming.
+    #[test]
+    fn a_turn_ending_mid_gate_does_not_leave_the_step_verifying() {
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one"]));
+        plan.approve();
+        plan.apply_board(&[item("1", "one", TaskStatus::Verify)]);
+        plan.finish();
+        let steps = plan.steps();
+        assert_eq!(steps[0].state, PlanStepState::Blocked);
+        assert_eq!(steps[0].note.as_deref(), Some("cancelled"));
+    }
+
+    /// SPEC 8.1 unblocks a red gate on green, so a blocked step is still
+    /// moveable — and the card's `x` is offered on exactly the open rows.
+    #[test]
+    fn only_a_complete_step_is_settled() {
+        for state in [
+            PlanStepState::Planned,
+            PlanStepState::Started,
+            PlanStepState::Verify,
+            PlanStepState::Blocked,
+            PlanStepState::DriftInserted,
+        ] {
+            assert!(state.is_open(), "{state:?} can still move");
+        }
+        assert!(!PlanStepState::Complete.is_open());
+    }
+
+    /// A step the plan did not contain is queued work that arrived late, so
+    /// its presence alone must not promote an approved plan to `working` —
+    /// nothing has been done yet.
+    #[test]
+    fn a_drift_inserted_step_is_not_progress() {
+        assert!(!PlanStepState::DriftInserted.has_begun());
+        assert!(!PlanStepState::Planned.has_begun());
+        for state in [
+            PlanStepState::Started,
+            PlanStepState::Verify,
+            PlanStepState::Complete,
+            PlanStepState::Blocked,
+        ] {
+            assert!(state.has_begun(), "{state:?} means work happened");
+        }
+    }
+
+    /// The wire carries no status that asserts drift, so no board snapshot can
+    /// fold into it — see [`PlanStepState::DriftInserted`]. Pinned because the
+    /// obvious "add a `TaskStatus::DriftInserted`" would let a producer claim
+    /// drift the plan graph does not show (#5037).
+    #[test]
+    fn no_board_snapshot_can_fold_a_step_into_drift_inserted() {
+        for status in [
+            TaskStatus::Pending,
+            TaskStatus::InProgress,
+            TaskStatus::Completed,
+            TaskStatus::Cancelled,
+            TaskStatus::Verify,
+            TaskStatus::Blocked,
+        ] {
+            let mut plan = Plan::default();
+            plan.apply_board(&[item("1", "one", status)]);
+            assert_ne!(plan.steps()[0].state, PlanStepState::DriftInserted);
+        }
     }
 
     #[test]

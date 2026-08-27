@@ -180,6 +180,13 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // will not guess where it goes. Above the transcript with the other
     // gates, because it is the same kind of thing — work parked on an answer.
     let dispatch_h: u16 = if ui.pending_dispatch.is_some() { 7 } else { 0 };
+    // The overlay panels (SPEC 12.2): a host-bordered block in the flow of the
+    // turn, below the gates and above the transcript. A band rather than a
+    // `TranscriptEntry`, because a panel is live state and a transcript row is
+    // a record — a row per tick would fill the conversation with somebody
+    // else's repaints, and the row a reader scrolled back to would be a frame
+    // its plugin has long since replaced.
+    let overlay_h = crate::panel_deck::overlay_height(&ui.panels, area.height);
 
     // SPEC 5: the transcript gets the full width and no border. The identity
     // header, the stage box, the PLAN rail and the nested sub-agent band the
@@ -189,6 +196,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         Constraint::Length(ask_h),      // pending ask-user (0 = collapsed)
         Constraint::Length(hunk_h),     // pending hunk review (0 = collapsed)
         Constraint::Length(dispatch_h), // mid-turn routing (0 = collapsed)
+        Constraint::Length(overlay_h),  // plugin overlay panels (0 = none)
         Constraint::Min(1),             // transcript
     ])
     .split(area);
@@ -210,7 +218,8 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if let Some(pending) = &ui.pending_dispatch {
         crate::views::dispatch_card::render(pending, bands[2], buf);
     }
-    let transcript_area = bands[3];
+    crate::panel_deck::render_overlay(&mut ui.panels, bands[3], buf);
+    let transcript_area = bands[4];
 
     // Transcript: fold through the incremental cache (settled entries fold
     // once; only the streaming tail re-folds per frame), then reuse the

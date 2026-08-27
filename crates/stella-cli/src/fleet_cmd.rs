@@ -679,26 +679,26 @@ async fn worker_recall_block(
     cfg: &Config,
     active_rules: &rules::ResolvedRules,
     prompt: &str,
-) -> (Option<String>, Option<AgentEvent>) {
+) -> (Option<String>, Vec<AgentEvent>) {
     // `warn: false`, the Command Deck's choice for the Command Deck's reason:
     // with `--watch` a live grid owns the terminal, and a per-worker store
     // warning would be N-fold noise painted over it.
     let Some(mut memory) =
         crate::memory::SessionMemory::open_for_session(root, false, &cfg.authority, active_rules)
     else {
-        return (None, None);
+        return (None, Vec::new());
     };
     memory.arm_recall_control();
     // A fleet attempt recalls before its engine has messages, so there is no
     // conversation to derive touched paths from — the empty anchor set is the
     // honest argument here, and the same scoping the prompt alone always gave.
     let recalled = memory.recall_block_reported(prompt, &[]).await;
-    let event = recalled.telemetry_event();
+    let events = recalled.telemetry_events();
     // `memory` is dropped here, and deliberately not carried to the reflection
     // below: this handle is rooted at the attempt's own tree, and a lesson
     // written through it would land in a database that is deleted with the
     // worktree. [`mine_attempt_lesson`] opens its own, at the invocation root.
-    (recalled.text, event)
+    (recalled.text, events)
 }
 
 /// The task boundary a fleet attempt stamps onto every lesson it mines.
@@ -989,9 +989,10 @@ async fn run_task(
     // above is only the byte-stable prefix — memories and enforced rules; the
     // selected skills, the matched context records, and today's date ride the
     // recall block, exactly as they do for `stella run`, `/goal` and the deck.
-    // The event is carried to the channel opened below, which this turn's
-    // telemetry rides — the same split `agent::goal` documents.
-    let (recall_text, recall_event) =
+    // What it leaves to announce — the recall receipt and a row per injected
+    // skill — is carried to the channel opened below, which this attempt's
+    // telemetry rides; the same split `agent::goal` documents.
+    let (recall_text, recall_events) =
         worker_recall_block(root, &cfg, &active_rules, &task.prompt).await;
     crate::memory::inject_recall_block(&mut messages, recall_text);
     // Everything the engine appends past here is this attempt's own work; the
@@ -1112,9 +1113,9 @@ async fn run_task(
             // What recall cost this attempt, on the attempt's own lane (#713,
             // #3947). Recall ran before this channel existed — it has to, the
             // block is part of the messages the engine is about to be handed —
-            // so the event waits here rather than being dropped for want of a
-            // sink, which is the discard #713 closed everywhere else.
-            if let Some(event) = recall_event {
+            // so they wait here rather than being dropped for want of a sink,
+            // which is the discard #713 closed everywhere else.
+            for event in recall_events {
                 let _ = tx.send(event);
             }
             match &wrapped {

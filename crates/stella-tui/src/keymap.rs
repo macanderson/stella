@@ -226,6 +226,18 @@ pub const BINDINGS: &[Binding] = &[
         &["u_on_a_highlighted_delete_sends_the_undo_and_otherwise_types"],
     ),
     row(
+        "l",
+        "open the highlighted gate failure's full log",
+        Tab(T::Session),
+        &["l_on_a_failed_gate_board_opens_the_log_and_otherwise_types"],
+    ),
+    row(
+        "r",
+        "ask for the highlighted gate to be run again",
+        Tab(T::Session),
+        &["r_on_a_failed_gate_board_re_requests_the_gate_and_otherwise_types"],
+    ),
+    row(
         "ctrl-r",
         "expand / collapse all thinking",
         Tab(T::Session),

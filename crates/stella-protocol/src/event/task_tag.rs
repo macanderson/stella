@@ -56,7 +56,8 @@ use crate::task_id::TaskId;
 ///   traffic ([`AgentEvent::TaskUpdate`]) is the mirror case: it carries every
 ///   task at once, so naming one of them would be a category error.
 /// - **Delivery and verification** ([`AgentEvent::Commit`],
-///   [`AgentEvent::Pr`], [`AgentEvent::Proof`], [`AgentEvent::Verdict`]) are
+///   [`AgentEvent::Pr`], [`AgentEvent::Proof`], [`AgentEvent::Verdict`],
+///   [`AgentEvent::GateBoard`]) are
 ///   claims about the *run's* output. A task's own claim is its
 ///   [`TaskContract`](crate::TaskContract), which the board already carries,
 ///   and a second per-task verification channel here would rival it.
@@ -130,6 +131,7 @@ task_tagged_events! {
         UsageIncomplete,
     }
     untagged {
+        SkillInjected,
         Stage,
         Text,
         TextDelta,
@@ -152,6 +154,7 @@ task_tagged_events! {
         StepManifest,
         Proof,
         Verdict,
+        GateBoard,
         ScopeReview,
         HunkReview,
         AskUser,

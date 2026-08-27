@@ -84,8 +84,9 @@ pub(super) async fn run_lead_turn(
     // the path that ends normally — whichever of the two runs, exactly one
     // holds the handle, because the future either completes or is dropped.
     *drain.lock().unwrap_or_else(|p| p.into_inner()) = Some(forwarder);
-    // First event of the turn: what recall put in front of the model.
-    if let Some(event) = recall.event {
+    // First events of the turn: what recall put in front of the model, and
+    // the skills that rode the same block (SPEC 6.3).
+    for event in recall.events {
         let _ = tx.send(event);
     }
 

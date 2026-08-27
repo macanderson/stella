@@ -406,8 +406,19 @@ async fn main() -> std::io::Result<()> {
                 }
                 // The demo has no store, so INSPECT answers an empty index —
                 // exactly what the real driver does when receipts are absent.
+                // No plugins are installed in the demo, so nothing seats a
+                // panel and nothing can ask for a frame.
+                WorkspaceInput::PanelFrameWanted { .. } => {}
                 WorkspaceInput::InspectRefresh | WorkspaceInput::InspectCall { .. } => {
                     let _ = react_tx.send(Inbound::RecordedCalls(Vec::new()));
+                }
+                // The demo binds no verification plugin, so it answers `r`
+                // exactly as the real driver does on a session with none —
+                // in words, having run nothing (`service_rerun_gate`).
+                WorkspaceInput::RerunGate { gate } => {
+                    let _ = react_tx.send(Inbound::Notice(format!(
+                        "rerun gate \"{gate}\": the demo has no verification plugin bound"
+                    )));
                 }
                 WorkspaceInput::Quit => break,
             }
