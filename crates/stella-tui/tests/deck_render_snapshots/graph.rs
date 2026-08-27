@@ -75,6 +75,51 @@ fn deck_render_snapshots_pin_the_graph_session_touch_tag() {
     );
 }
 
+/// **The witness (#5220).** The hot mark's ladder, in the deck's own frames,
+/// at the two widths where it changes rung.
+///
+/// The wide frame is `tab_graph_touched` above, which carries the full
+/// `● hot · turn 1`. These are the other two, and they exist because the
+/// ladder is a *rendering* decision: `hot_mark`'s unit pins fix the arithmetic,
+/// and only a frame shows what the row looks like once the mark has given
+/// ground — that the label kept its columns, and that the list still reads as a
+/// list.
+///
+/// 80 columns is the width the issue names: the left pane is 36% of it, which
+/// is where the full tag would eat most of the label.
+#[test]
+fn deck_render_snapshots_pin_the_hot_mark_as_the_pane_narrows() {
+    let model = model_that_edited_router();
+
+    let mut ui = ui_for(DeckTab::Graph);
+    let narrow = render_frame(&model, &mut ui, 80, H);
+    assert!(
+        narrow.contains("● hot 1") && !narrow.contains("● hot · turn 1"),
+        "at 80 columns the separator goes and the turn stays:\n{narrow}"
+    );
+    assert_golden(
+        "tab_graph_touched_80",
+        "the GRAPH tab at 80 columns: the hot mark drops its separator, not the turn",
+        80,
+        H,
+        &narrow,
+    );
+
+    let mut ui = ui_for(DeckTab::Graph);
+    let narrower = render_frame(&model, &mut ui, 64, H);
+    assert!(
+        narrower.contains("● hot") && !narrower.contains("● hot 1"),
+        "and below that the turn goes too, leaving the mark #5220 started from:\n{narrower}"
+    );
+    assert_golden(
+        "tab_graph_touched_64",
+        "the GRAPH tab at 64 columns: the mark keeps the label's columns and drops the turn",
+        64,
+        H,
+        &narrower,
+    );
+}
+
 /// **The witness (#4335).** The GRAPH query bar reports what the query cost
 /// when the driver measured one.
 ///
