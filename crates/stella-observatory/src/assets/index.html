@@ -4568,7 +4568,9 @@ const TURN_GAP_MS = 5 * 60 * 1000;
 
 function turnGapHtml(t, prev) {
   const day = dayOf(t.started_at);
-  const newDay = !prev || dayOf(prev.started_at) !== day;
+  // An unparseable stamp has no day, so it opens no day break — a dash and an
+  // empty bold span is a row that says nothing.
+  const newDay = !!day && (!prev || dayOf(prev.started_at) !== day);
   const gap = prev ? spanMs(prev.finished_at ?? prev.started_at, t.started_at) : null;
   const idle = gap != null && gap >= TURN_GAP_MS ? `${dur(gap)} idle` : "";
   if (!newDay && !idle) return "";
