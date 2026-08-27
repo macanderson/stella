@@ -534,9 +534,33 @@ tbody tr.sel > td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
    list read as inert is that nothing on it looked like a link. */
 td.go{color:var(--mark);text-align:right}
 tr:hover td.go{text-decoration:underline}
-.scroll-x{overflow-x:auto}
+/* The scroll-shadow pair: two gradients painted `local` (they travel with the
+   content, so they cover the shadow when that edge is reached) over two
+   painted `scroll` (they stay put, so they show while content is still out
+   there). Pure CSS, self-adjusting, no observer to keep in step with a
+   re-render — and the shade is `--hairline-strong` rather than a black alpha,
+   which would be invisible on this ground and wrong on paper. */
+.scroll-x{overflow-x:auto;
+  background:
+    linear-gradient(to right,var(--surface),rgba(0,0,0,0)) left center/28px 100% no-repeat local,
+    linear-gradient(to left,var(--surface),rgba(0,0,0,0)) right center/28px 100% no-repeat local,
+    linear-gradient(to right,var(--hairline-strong),rgba(0,0,0,0)) left center/10px 100% no-repeat scroll,
+    linear-gradient(to left,var(--hairline-strong),rgba(0,0,0,0)) right center/10px 100% no-repeat scroll}
 .scroll-y{max-height:340px;overflow-y:auto}
 .scroll-y-tall{max-height:520px;overflow-y:auto}
+/* Swiping a table sideways must not cost the reader the cell that says which
+   row they are on. Narrow screens only: at desktop width the row is whole. */
+@media(max-width:760px){
+  .scroll-x table th:first-child,.scroll-x table td:first-child{
+    position:sticky;left:0;z-index:2;background:var(--surface);
+    /* Capped, or the identity column eats the screen it was meant to make
+       swipeable — a full-width model slug left four clipped digits of the
+       columns the swipe was for. */
+    max-width:45vw;overflow:hidden;text-overflow:ellipsis}
+  .scroll-x table thead th:first-child{z-index:3}
+  .scroll-x table tr:hover td:first-child{background:var(--raised)}
+  .scroll-x table tbody tr.sel > td:first-child{background:var(--raised)}
+}
 
 /* ── Badges & chips ───────────────────────────────────────────────────── */
 /* Status is always glyph-paired; hue alone never carries meaning (BRAND.md). */
@@ -903,6 +927,28 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .tl-diff{grid-column:1/-1;margin-top:10px}
 .tl-empty{grid-column:1/-1}
 
+/* ── The replay, on a wide screen ─────────────────────────────────────────
+   One column is right for a phone and wrong for 1400px: the picker took the
+   full width for a list of one-line rows, and the replay it controls started
+   below the fold, so choosing a session meant scrolling to see what the
+   choice did. Above 1080px the picker becomes a sticky rail beside the
+   replay — the same card, narrower — and a click changes the pane you are
+   already looking at.
+
+   Deliberately not a third column for the four panels underneath: they are
+   read after the timeline, not beside it, and a 380px column of them would
+   be the horizontal-scroll problem again in a different direction. */
+@media(min-width:1080px){
+  .ses-cols{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr);
+    gap:var(--sp2);align-items:start}
+  .ses-pick{position:sticky;top:calc(var(--navh) + 8px);display:flex;flex-direction:column;
+    max-height:calc(100vh - var(--navh) - 40px);margin-bottom:0}
+  /* The list is the only part of the rail that scrolls, so the heading and
+     the filter stay put while eighty sessions go past under them. */
+  .ses-pick .ses-cards{flex:1;min-height:0;max-height:none}
+  .ses-replay{min-width:0}
+}
+
 /* ── Empty & structural bits ──────────────────────────────────────────── */
 .empty{padding:var(--sp4) var(--sp2);text-align:center;color:var(--text-2);
        font:var(--fs-sm)/1.7 var(--mono)}
@@ -1066,9 +1112,10 @@ footer b{color:var(--identity);font-weight:600}
   <!-- ══ SESSIONS ══════════════════════════════════════════════════════ -->
   <section data-tab="sessions" id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0">
     <div class="grid kpis" id="ses-kpis"></div>
-    <div class="card section-gap">
+    <div class="ses-cols">
+    <div class="card section-gap ses-pick">
       <div class="kick">Every session of this workspace · registry + store ·
-        pick one to replay its turns below</div>
+        pick one to replay it</div>
       <h2>Sessions</h2>
       <!-- A filter rather than a longer list. This workspace has eighty-odd
            sessions and a phone shows six at a time, so finding the one you
@@ -1082,6 +1129,7 @@ footer b{color:var(--identity);font-weight:600}
       </div>
       <div class="ses-cards" id="ses-list"></div>
     </div>
+    <div class="ses-replay">
     <div class="card section-gap" id="ses-detail-card" hidden>
       <div class="kick" id="ses-detail-kick">Nothing selected</div>
       <h2 id="ses-detail-title">Session replay</h2>
@@ -1115,6 +1163,8 @@ footer b{color:var(--identity);font-weight:600}
         <h2>Outcomes</h2>
         <div class="scroll-y" id="ses-outcomes"></div>
       </div>
+    </div>
+    </div>
     </div>
   </section>
 
@@ -1239,9 +1289,12 @@ footer b{color:var(--identity);font-weight:600}
       </div>
     </div>
     <div class="card section-gap">
-      <div class="kick">Every run, receipted</div>
+      <div class="kick">Every run, receipted · newest first · open one for its
+        full transcript</div>
       <h2>Executions</h2>
-      <div class="scroll-x scroll-y" id="executions" tabindex="0"></div>
+      <!-- Cards, so no column is behind a sideways swipe; the box still caps
+           its height, because this list is hundreds of runs long. -->
+      <div class="scroll-y-tall" id="executions" tabindex="0"></div>
     </div>
   </section>
 
@@ -2141,32 +2194,44 @@ function renderExecutions() {
       Every <code>stella run</code>, <code>goal</code>, chat turn and pipeline lands here.</div>`;
     return;
   }
-  $("executions").innerHTML = `<table><thead><tr>
-    <th scope="col">#</th><th scope="col">kind</th><th scope="col">prompt</th>
-    <th scope="col">model</th><th scope="col">outcome</th>
-    <th scope="col" class="num">steps</th><th scope="col" class="num">tools</th>
-    <th scope="col" class="num">files</th>
-    <th scope="col" class="num">tok&nbsp;in</th><th scope="col" class="num">tok&nbsp;out</th>
-    <th scope="col" class="num">cost&nbsp;USD</th><th scope="col" class="num">started</th>
-    </tr></thead><tbody>` +
-    rows.map(r => `<tr class="click" data-id="${num(r.id)}">
-      <td><button type="button" class="rowbtn" data-id="${num(r.id)}"
-          aria-label="Open execution ${num(r.id)}">${num(r.id)}</button></td>
-      <td>${esc(r.kind)}</td>
-      <td class="main" style="max-width:340px;overflow:hidden;text-overflow:ellipsis"
-          title="${esc(r.prompt)}">${esc(r.prompt)}</td>
-      <td title="${esc(r.provider)}/${esc(r.model)}">${esc(r.model)}</td>
-      <td>${badge(r.outcome)}</td>
-      <td class="num">${fmtInt(r.steps)}</td><td class="num">${fmtInt(r.tool_calls)}</td>
-      <td class="num">${fmtInt(r.files_touched)}</td>
-      <td class="num">${fmtTok(r.input_tokens)}</td><td class="num">${fmtTok(r.output_tokens)}</td>
-      <td class="num">${fmtUsd(r.cost_usd)}</td>
-      <td class="num" title="${esc(r.started_at)} UTC">${ago(r.started_at)}</td></tr>`).join("") +
-    `</tbody></table>`;
+  $("executions").innerHTML =
+    `<div class="tl">${rows.map(execCardHtml).join("")}</div>`;
+}
+/* One execution, as a card of the same shape the session timeline uses — the
+   clock on the left, the prompt leading, the figures in a wrapping strip.
+   `data-id` rather than `data-exec`: this list is the Overview's, and its
+   click handler is the one below. */
+function execCardHtml(r) {
+  return `<article class="tl-turn" data-id="${num(r.id)}" role="link" tabindex="0"
+      aria-label="Open execution ${num(r.id)}">
+    <div class="tl-when"><b>${esc(clockOf(r.started_at))}</b>${esc(dayShort(r.started_at))}</div>
+    <div class="tl-body">
+      <div class="tl-head">
+        <span class="tl-n">#${num(r.id)}</span>${badge(r.outcome)}
+        <span class="badge dim">${esc(r.kind)}</span>
+        <span class="tl-model" title="${esc(r.provider)}/${esc(r.model)}">${
+          esc(clip(r.model ?? "", 28))}</span>
+      </div>
+      <p class="tl-prompt">${esc(r.prompt)}</p>
+      <div class="mstrip">
+        ${m(fmtInt(r.steps), "steps")}
+        ${num(r.tool_calls) ? m(fmtInt(r.tool_calls), "tools") : ""}
+        ${num(r.files_touched) ? m(fmtInt(r.files_touched), "files") : ""}
+        ${m(fmtTok(r.input_tokens) + "·" + fmtTok(r.output_tokens), "tok in·out")}
+        ${num(r.cost_usd) ? m(fmtUsd(r.cost_usd), "spent") : ""}
+        ${m(esc(ago(r.started_at)), "ago")}
+      </div>
+    </div>
+  </article>`;
 }
 $("executions").addEventListener("click", (ev) => {
-  const tr = ev.target.closest("tr[data-id]");
+  const tr = ev.target.closest("[data-id]");
   if (tr) goTranscript(+tr.dataset.id);
+});
+$("executions").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  const card = ev.target.closest(".tl-turn[data-id]");
+  if (card && ev.target === card) goTranscript(+card.dataset.id);
 });
 
 /* ── transcript page ──────────────────────────────────────────────────────
@@ -2301,6 +2366,14 @@ async function paintRenderedTranscript(fragment) {
   const css = await transcriptCss();
   const shadow = holder.shadowRoot || holder.attachShadow({ mode: "open" });
   shadow.innerHTML = `<style>${themedTranscriptCss(css)}</style><div class="wrap">${fragment}</div>`;
+  /* `live` is the shared stylesheet's opt-in for showing the ⧉ prompt
+     controls (`:host(.live)`). They stay shown even when the receipt index is
+     empty, and the inspector says why — see `openCtxDialog`. Hiding them
+     instead was tried and is worse twice over: the reader loses the only
+     signal that the receipts are missing at all (the silence that hid #5255
+     for a whole workspace of turns), and `tx.calls` is fixed at page open, so
+     a running turn whose receipts arrived after the first paint would keep
+     its controls hidden until someone reloaded. */
   holder.classList.add("live");
   for (const btn of shadow.querySelectorAll("button.inspect")) {
     btn.addEventListener("click", (ev) => {
@@ -3169,7 +3242,21 @@ async function openTranscript(id, full = false, sub = "") {
 function openCtxDialog(step, role) {
   const dlg = $("ctx-dialog");
   const calls = tx?.calls ?? [];
-  if (!dlg || !tx || !calls.length) return;
+  if (!dlg || !tx) return;
+  /* No receipt index for this turn. Say that, rather than swallowing the
+     click: the reader asked what this call was sent, and "nothing recorded
+     it" is an answer — silence is not (#5255). */
+  if (!calls.length) {
+    $("ctxTitle").textContent = "No receipt for this call";
+    $("ctxSub").textContent = `execution ${fmtInt(tx.id)}`;
+    $("ctxBody").innerHTML = `<div class="empty">This turn recorded no call
+      receipts, so there is nothing to reconstruct. The prompt each call was
+      sent is rebuilt from <code>step_receipt</code> and
+      <code>step_manifest</code>; a turn that wrote neither cannot be
+      inspected after the fact, however complete its transcript looks.</div>`;
+    if (!dlg.open) dlg.showModal();
+    return;
+  }
   let idx = calls.findIndex(c => num(c.step) === step && c.call_role === role);
   if (idx < 0) idx = calls.findIndex(c => num(c.step) === step);
   if (idx < 0) idx = calls.length - 1;
@@ -4465,6 +4552,12 @@ const dayOf = (s) => {
   const d = utc(s);
   return d ? d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
 };
+/* The same date without its weekday, for the 56px clock rail — "Tue, Aug 25"
+   wraps to three lines there and "Aug 25" does not. */
+const dayShort = (s) => {
+  const d = utc(s);
+  return d ? d.toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+};
 const spanMs = (a, b) => {
   const x = utc(a), y = utc(b);
   return x && y ? y.getTime() - x.getTime() : null;
@@ -4544,7 +4637,11 @@ function renderSessions(d) {
   if (state.session && rows.some(r => r.id === state.session)) {
     openSession(state.session, true);
   } else if (shown.length) {
-    openSession(shown[0].id, true);
+    /* The newest session with a turn in it, rather than simply the newest:
+       a session that crashed before its first turn opens an empty replay,
+       and that is what the page shows on arrival more often than not. An
+       explicit choice still wins — this is only the default. */
+    openSession((shown.find(r => num(r.turns) > 0) ?? shown[0]).id, true);
   }
 }
 $("ses-filter").addEventListener("input", (ev) => {
@@ -4712,11 +4809,15 @@ async function openSession(id, quiet) {
   // What ← prev / next → on the transcript page step through, so arriving
   // from this list costs no extra request.
   txSiblings = { session: id, ids: turns.map(t => num(t.id)) };
-  // A click that reveals a panel below the fold reads as a click that did
-  // nothing. Only on a real click: `quiet` marks the auto-selection that
-  // happens on every 5s re-render, and scrolling the page under the reader
-  // twelve times a minute would be its own defect.
-  if (!quiet) $("ses-detail-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  /* A click that reveals a panel below the fold reads as a click that did
+     nothing — but only while the replay IS below the fold. Above 1080px it
+     sits beside the picker, already on screen, and scrolling then would move
+     the page for no reason. `quiet` marks the auto-selection that happens on
+     every 5s re-render; scrolling the page under the reader twelve times a
+     minute would be its own defect. */
+  if (!quiet && !matchMedia("(min-width:1080px)").matches) {
+    $("ses-detail-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   const skills = d?.skills ?? [], agents = d?.agents ?? [];
   $("ses-skills").innerHTML = (skills.length || agents.length) ? `
     ${skills.map(s => `<div class="feed-item"><b>${esc(s.skill)}</b> —
