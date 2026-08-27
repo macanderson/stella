@@ -1,0 +1,28 @@
+# DoD merge check (SCR-003) — caller stub.
+#
+# The implementation lives once in oxagen and is called from here. ADR-039:
+# copying the check into each repo would put five independently-drifting
+# copies of an enforcement rule into an org whose sibling check exists to
+# detect exactly that kind of drift.
+#
+# There is no logic in this file. A change to *what* the check does never
+# touches it; only adding or removing a check does.
+#
+# The ref is a commit SHA, not `@main`: a cross-repo `uses:` resolved through
+# a moving ref both fails `action-pins` and lets another repository change
+# what runs here without a commit in this one. Re-pin when the implementation
+# changes, which is a reviewable one-line diff naming the version it moved to.
+name: dod-check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  dod:
+    uses: macanderson/oxagen/.github/workflows/dod-check.yml@319b0a97d8685abdb2721a3e95c2f766902eb4db # oxagen main, #1323
