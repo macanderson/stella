@@ -140,6 +140,7 @@ fn skills_ui(accessible: bool) -> DeckUi {
             body: String::new(),
             origin: "workspace".into(),
             evidence_grade: None,
+            learned: None,
             enabled: true,
             version: 1,
             latest: 1,

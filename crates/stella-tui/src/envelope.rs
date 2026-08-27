@@ -1129,7 +1129,9 @@ pub use mcp::{
     McpServerInfo, McpToolRow,
 };
 pub use roles::{RoleTableEntry, role_table};
-pub use skills::{SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView};
+pub use skills::{
+    LearnedProvenance, LearnedSource, SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView,
+};
 pub use tool_policy::{ToolDenial, ToolPolicyState, ToolRow, ToolScope};
 
 /// A secret string whose `Debug` is redacted, so it can ride the deck's input

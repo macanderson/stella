@@ -585,6 +585,20 @@ pub(super) fn handle_skills_input(
                 crate::skill_manager::set_pin(*scope, name, *version, &root).unwrap_or_else(|e| e);
             let _ = in_tx.send(skills_snapshot(&root, Some(status)));
         }
+        SkillOp::Rename { scope, from, to } => {
+            let status =
+                crate::skill_manager::rename(*scope, from, to, &root).unwrap_or_else(|e| e);
+            let _ = in_tx.send(skills_snapshot(&root, Some(status)));
+        }
+        SkillOp::Reject { scope, name } => {
+            // Seconds, from the driver's one clock: a rejection's instant is
+            // audit metadata, and `now_ms` is what every other driver-side
+            // timestamp is read from.
+            let now = super::now_ms() / 1_000;
+            let status =
+                crate::skill_manager::reject(*scope, name, now, &root).unwrap_or_else(|e| e);
+            let _ = in_tx.send(skills_snapshot(&root, Some(status)));
+        }
         SkillOp::Search { query } => {
             let registry = registry.clone();
             let in_tx = in_tx.clone();

@@ -28,7 +28,12 @@
 //! `<slug>/SKILL.md`). Enabled/disabled and the pinned version live there;
 //! version *history* lives under `<slug>/versions/vN/SKILL.md` (the versioning
 //! layer). A disabled skill is excluded from recall/selection — the file stays
-//! on disk (see [`retain_enabled`]).
+//! on disk (see [`retain_enabled`]). The sidecar also carries SPEC 9.2's
+//! learned-skill lifecycle — see [`learned`].
+
+// #5046: the learned-skill lifecycle — the provenance a mined skill carries,
+// the rename that keeps it, and the rejection the miner reads back.
+pub mod learned;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -37,8 +42,12 @@ use serde::{Deserialize, Serialize};
 use stella_core::skills::{Skill, SkillOrigin, skill_from_file_with_origin};
 use stella_tui::{SkillRow, SkillScope};
 
+pub use learned::{record_learned, reject, rejections, rename};
+
 /// The per-scope sidecar that records state the `SKILL.md` files don't: which
-/// skills are disabled and (versioning layer) which version each is pinned to.
+/// skills are disabled, (versioning layer) which version each is pinned to,
+/// and the learned-skill lifecycle of SPEC 9.2 — provenance that survives a
+/// rename, and the rejections the miner reads back.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScopeState {
     /// Skill names disabled in this scope (excluded from recall; file kept).
@@ -47,6 +56,61 @@ pub struct ScopeState {
     /// Skill name → pinned version (versioning layer). Absent ⇒ latest.
     #[serde(default)]
     pub pins: std::collections::BTreeMap<String, u32>,
+    /// Learned-skill provenance, keyed by the skill's **current** name so it
+    /// reads like every other map here; [`rename`] moves the entry with the
+    /// file (#5046).
+    #[serde(default)]
+    pub learned: std::collections::BTreeMap<String, LearnedRecord>,
+    /// Learned skills the user rejected. Kept *after* the file is deleted —
+    /// this is the whole point, since the reflection log that mined it is
+    /// append-only and would mint it straight back.
+    #[serde(default)]
+    pub rejected: Vec<RejectedSkill>,
+}
+
+/// What a learned skill's `SKILL.md` cannot carry.
+///
+/// The rendered file is byte-pinned by
+/// `stella_core::skills::migration_contract::rendered_skill_bytes_are_pinned`
+/// — every mined file already on disk must re-render identically — so
+/// provenance the lifecycle needs but the format never had goes where the
+/// module header already says this kind of state goes: the per-scope sidecar,
+/// beside `disabled` and `pins`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LearnedRecord {
+    /// The `stella_core::skills::candidate_id` the miner minted this skill
+    /// under — the `was <hash>` half of the row, and the key a rejection is
+    /// recorded against. Survives every rename, which is exactly why it is
+    /// stored rather than re-derived from the (renamed) file.
+    pub mined_as: String,
+    /// The workspace turn it was learned on, from the context store's durable
+    /// turn counter. `None` for a skill mined before this was recorded, or in
+    /// a session that never claimed a turn — absent, not a turn invented to
+    /// fill the column.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<u64>,
+}
+
+/// One rejected learned skill — the durable half of `x reject teaches the
+/// learner`, mapped to `stella_core::skills::SkillRejection` by
+/// [`rejections`] and read by the miner on its next pass.
+///
+/// Filesystem-first (ADR-008) and beside the skills it is about, so a
+/// workspace's rejections travel with the repository the way its skills do,
+/// and a user can read — or undo — them with an editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RejectedSkill {
+    /// The mined identity, the key the miner matches on.
+    pub mined_as: String,
+    /// The body at rejection time, so a re-worded cluster minting a fresh
+    /// `<hash8>` is still caught.
+    pub lesson: String,
+    /// Unix seconds.
+    pub rejected_at: u64,
+    /// What the skill was called when it was rejected. Audit only — after a
+    /// rename this is the human name, and `mined_as` is what matches.
+    #[serde(default)]
+    pub name: String,
 }
 
 const STATE_FILE: &str = ".stella-skills.json";
@@ -204,6 +268,9 @@ pub fn enumerate(workspace_root: &Path) -> Vec<SkillRow> {
             let latest = latest_version(&entry.entry_path).max(1);
             let version = state.pins.get(&name).copied().unwrap_or(latest).min(latest);
             let evidence_grade = grades.get(&name).map(|g| g.as_str().to_string());
+            let learned = (entry.skill.origin == SkillOrigin::AutoCreated)
+                .then(|| learned::learned_provenance(&state, &name, &entry.skill.body))
+                .flatten();
             rows.push(SkillRow {
                 scope,
                 enabled: !disabled.contains(&name),
@@ -212,6 +279,7 @@ pub fn enumerate(workspace_root: &Path) -> Vec<SkillRow> {
                 body: entry.skill.body,
                 origin: origin_label(entry.skill.origin).to_string(),
                 evidence_grade,
+                learned,
                 version,
                 latest,
                 // Everything under a managed scope dir is deletable — uninstall
@@ -269,8 +337,9 @@ fn contributed_rows(workspace_root: &Path, own: &[SkillRow]) -> Vec<SkillRow> {
                 origin: origin_label(skill.origin).to_string(),
                 // A contributed skill was never mined in this workspace's own
                 // loop, so there is no proposal here for it to be graded
-                // against.
+                // against — and, for the same reason, no traces behind it.
                 evidence_grade: None,
+                learned: None,
                 version: 1,
                 latest: 1,
                 removable: false,
@@ -387,10 +456,13 @@ pub fn uninstall(scope: SkillScope, name: &str, workspace_root: &Path) -> Result
         std::fs::remove_dir_all(&entry.entry_path)
     };
     outcome.map_err(|e| format!("delete failed: {e}"))?;
-    // Forget any lingering state for the deleted name.
+    // Forget any lingering state for the deleted name. `rejected` is
+    // untouched on purpose: it is keyed on the mined identity, not on a file,
+    // and outliving the file it is about is the whole reason it exists.
     let mut state = read_state(&root);
     state.disabled.retain(|n| n != name);
     state.pins.remove(name);
+    state.learned.remove(name);
     let _ = write_state(&root, &state);
     Ok(format!("deleted {name} ({})", scope.label()))
 }
@@ -677,7 +749,7 @@ pub fn pinned_versions(workspace_root: &Path) -> std::collections::HashMap<Strin
 mod tests {
     use super::*;
 
-    fn write_skill(dir: &Path, slug: &str, desc: &str) {
+    pub(super) fn write_skill(dir: &Path, slug: &str, desc: &str) {
         let sub = dir.join(slug);
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(
@@ -696,7 +768,7 @@ mod tests {
     /// races are UB and the harness runs these on parallel threads. The
     /// redirect is per-thread now (#1139), so there is nothing to serialize
     /// and no window in which another test could see an unrestored `HOME`.
-    fn scratch() -> (tempfile::TempDir, PathBuf, crate::paths::TestHomeGuard) {
+    pub(super) fn scratch() -> (tempfile::TempDir, PathBuf, crate::paths::TestHomeGuard) {
         let td = tempfile::tempdir().unwrap();
         let home = td.path().join("home");
         std::fs::create_dir_all(&home).unwrap();

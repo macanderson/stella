@@ -59,7 +59,7 @@ fn candidate_identity_is_pinned_to_a_literal() {
     let observations = (0..3)
         .map(|i| pinned_observation(&format!("reflection:{i}"), 100 + i))
         .collect();
-    let mined = mine_skill_candidates(observations, &[], &SkillMineConfig::default());
+    let mined = mine_skill_candidates(observations, &[], &[], &SkillMineConfig::default());
     assert_eq!(mined.len(), 1, "one cluster, one candidate: {mined:#?}");
     assert_eq!(
         mined[0].name, "prefer-updating-witness-test-assertions-e2010443",
@@ -261,7 +261,7 @@ fn lexical_miner_counts_events_not_distinct_tasks() {
     let thirty_in_one_task: Vec<SkillObservation> = (0..30)
         .map(|i| pinned_observation("trace:the-one-and-only-task", 100 + i))
         .collect();
-    let mined = mine_skill_candidates(thirty_in_one_task, &[], &SkillMineConfig::default());
+    let mined = mine_skill_candidates(thirty_in_one_task, &[], &[], &SkillMineConfig::default());
     assert_eq!(
         mined.len(),
         1,
@@ -294,14 +294,14 @@ fn the_shipped_thresholds_are_three_occurrences_or_one_salient() {
         .map(|i| pinned_observation(&format!("reflection:{i}"), 100 + i))
         .collect();
     assert!(
-        mine_skill_candidates(two, &[], &config).is_empty(),
+        mine_skill_candidates(two, &[], &[], &config).is_empty(),
         "two occurrences are below the bar"
     );
 
     let mut one_salient = vec![pinned_observation("reflection:0", 100)];
     one_salient[0].salient = true;
     assert_eq!(
-        mine_skill_candidates(one_salient, &[], &config).len(),
+        mine_skill_candidates(one_salient, &[], &[], &config).len(),
         1,
         "one salient observation clears the bar on its own"
     );
@@ -326,7 +326,7 @@ fn a_candidate_matching_an_existing_skill_is_dropped() {
         .map(|i| pinned_observation(&format!("reflection:{i}"), 100 + i))
         .collect();
     assert!(
-        mine_skill_candidates(observations, &existing, &SkillMineConfig::default()).is_empty(),
+        mine_skill_candidates(observations, &existing, &[], &SkillMineConfig::default()).is_empty(),
         "the lesson is already captured by a skill on disk"
     );
 }

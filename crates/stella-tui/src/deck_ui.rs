@@ -230,6 +230,18 @@ pub enum SkillPrompt {
         latest: u32,
         sel: u32,
     },
+    /// Give a learned skill a human name (SPEC 9.2's `r rename`).
+    ///
+    /// `was` is the mined `<hash>` the rename keeps, carried into the dialog
+    /// so it can promise that on screen — a rename that silently dropped the
+    /// provenance and one that keeps it look identical at the prompt, and the
+    /// whole point of this verb is that the second is what happens.
+    Rename {
+        scope: SkillScope,
+        name: String,
+        buffer: String,
+        was: String,
+    },
 }
 
 /// The deferred action a [`SkillPrompt::Scope`] picker resolves into once the
@@ -282,6 +294,11 @@ pub struct SkillsPanel {
     pub status: Option<String>,
     /// First `ctrl+x` arms; the second uninstalls.
     pub uninstall_armed: bool,
+    /// First `x` arms; the second rejects (SPEC 9.2). Armed separately from
+    /// [`Self::uninstall_armed`] because the two verbs make different claims
+    /// and must not be able to complete each other: pressing `ctrl+x` then `x`
+    /// is a user changing their mind, not a confirmed rejection.
+    pub reject_armed: bool,
     /// An active overlay capturing keys ahead of the panes.
     pub prompt: Option<SkillPrompt>,
     /// The ctrl+o markdown preview overlay (modal, scroll + esc), or `None`.
@@ -1045,6 +1062,9 @@ impl DeckUi {
                 // The create-description is one line (its ⏎ advances to the
                 // scope picker) — flatten, like every other one-line field.
                 Some(SkillPrompt::CreateDescription { buffer }) => push_single_line(buffer, text),
+                // A skill name is one line too, and for a stronger reason: a
+                // newline in it would be a newline in a filename.
+                Some(SkillPrompt::Rename { buffer, .. }) => push_single_line(buffer, text),
                 // The edit buffer is a genuine multi-line surface: verbatim.
                 Some(SkillPrompt::Edit { buffer, .. }) => buffer.push_str(text),
                 // Scope / pin pickers and the creation dialog's in-flight /
@@ -1192,9 +1212,12 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     if let Inbound::Skills(view) = inbound {
         ui.skills.view = view.clone();
         // A fresh list is the completion signal for a disk/npx op: stop the
-        // spinner and disarm any half-armed uninstall.
+        // spinner and disarm any half-armed uninstall or rejection — the list
+        // under the selection has just moved, so the row the second press
+        // would have confirmed is no longer the row that was armed.
         ui.skills.searching = false;
         ui.skills.uninstall_armed = false;
+        ui.skills.reject_armed = false;
         // The LLM-assisted create keeps its dialog open while the draft runs;
         // the refreshed snapshot is its completion signal (see
         // [`create::settle_skills_snapshot`]).
@@ -2793,24 +2816,6 @@ fn handle_skills_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Op
     }
 }
 
-/// Open the ctrl+o preview for the highlighted installed skill — its body is
-/// already in hand (`SkillRow::body`), so no driver round-trip.
-fn open_installed_preview(ui: &mut DeckUi) -> Option<DeckAction> {
-    let row = ui.skills.view.rows.get(ui.skills.sel)?;
-    ui.skills.preview = Some(SkillPreview {
-        title: row.name.clone(),
-        subtitle: format!("{} · {} · v{}", row.scope.label(), row.origin, row.version),
-        pending: None,
-        body: Some(if row.body.trim().is_empty() {
-            "*(this skill has an empty body)*".to_string()
-        } else {
-            row.body.clone()
-        }),
-        scroll: 0,
-    });
-    Some(DeckAction::Handled)
-}
-
 /// Open the ctrl+o preview for the highlighted registry hit — the body is not
 /// local, so show a loading state and ask the driver to fetch the `SKILL.md`.
 fn open_search_preview(ui: &mut DeckUi) -> Option<DeckAction> {
@@ -2855,7 +2860,9 @@ fn handle_skills_preview_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 }
 
 /// The installed-skills (manage) pane: navigate, toggle enabled (space),
-/// uninstall (ctrl+x twice), edit (e), pin (p), create (n), cross to search (→).
+/// uninstall (ctrl+x twice), edit (e), pin (p), create (n), cross to search
+/// (→) — and, on a learned row, the SPEC 9.2 lifecycle: rename (r), reject
+/// (x twice), source traces (ctrl+o).
 fn handle_skills_installed_key(
     key: KeyEvent,
     ui: &mut DeckUi,
@@ -2863,11 +2870,19 @@ fn handle_skills_installed_key(
     composer_empty: bool,
 ) -> Option<DeckAction> {
     let count = ui.skills.view.rows.len();
-    // Any key other than a fresh ctrl+x disarms the two-press uninstall.
+    // Any key other than a fresh ctrl+x disarms the two-press uninstall, and
+    // any key other than a fresh bare `x` disarms the two-press rejection.
+    // Tracked apart so neither can confirm the other: `ctrl+x` then `x` is a
+    // user changing their mind about which verb they wanted.
     let was_armed = ui.skills.uninstall_armed;
+    let reject_was_armed = ui.skills.reject_armed;
     let is_ctrl_x = ctrl && matches!(key.code, KeyCode::Char('x'));
+    let is_bare_x = !ctrl && composer_empty && matches!(key.code, KeyCode::Char('x'));
     if !is_ctrl_x {
         ui.skills.uninstall_armed = false;
+    }
+    if !is_bare_x {
+        ui.skills.reject_armed = false;
     }
     if list_nav::select(key, &mut ui.skills.sel, count, composer_empty) {
         return Some(DeckAction::Handled);
@@ -2943,7 +2958,7 @@ fn handle_skills_installed_key(
             }
         }
         // Preview the selected skill's rendered SKILL.md (scrollable, esc closes).
-        KeyCode::Char('o') if ctrl => open_installed_preview(ui),
+        KeyCode::Char('o') if ctrl => skills_keys::open_installed_preview(ui),
         // Edit the selected skill's body (saving makes a new pinned version).
         KeyCode::Char('e') if !ctrl && composer_empty => {
             if let Some(row) = ui.skills.view.rows.get(ui.skills.sel) {
@@ -2977,6 +2992,12 @@ fn handle_skills_installed_key(
                 buffer: String::new(),
             });
             Some(DeckAction::Handled)
+        }
+        // The learned-skill lifecycle's two verbs (SPEC 9.2), both of which
+        // apply to a learned row and to nothing else.
+        KeyCode::Char('r') if !ctrl && composer_empty => Some(skills_keys::begin_rename(ui)),
+        KeyCode::Char('x') if !ctrl && composer_empty => {
+            Some(skills_keys::reject_press(ui, reject_was_armed))
         }
         _ => None,
     }
@@ -3053,6 +3074,12 @@ fn handle_skills_prompt_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
         Some(SkillPrompt::Scope { action, user }) => {
             skills_keys::handle_scope_key(key, ui, action, user)
         }
+        Some(SkillPrompt::Rename {
+            scope,
+            name,
+            buffer,
+            was,
+        }) => skills_keys::handle_rename_key(key, ui, scope, name, buffer, was),
         // The create-description input: type a short description, ⏎ moves on to
         // the scope picker (which dispatches the LLM-assisted create).
         Some(SkillPrompt::CreateDescription { mut buffer }) => match key.code {

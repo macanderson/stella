@@ -19,6 +19,9 @@
 //!
 //! * the per-session cap, counted across the loop's own accounting;
 //! * a hand-edited file surviving a re-mine of the same lesson.
+//! * a rejected learned skill is not learned again (#5046) — the negative
+//!   signal is written by the SKILLS tab and read by the loop, and only a test
+//!   holding both ends shows the two mean the same fact.
 //!
 //! ## Every guarantee runs under BOTH loops
 //!
@@ -274,6 +277,103 @@ fn the_sweep_covers_every_restatement_suppressing_surface() {
         vec![ContextSurface::Memory, ContextSurface::Skill],
         "the regenerable surfaces changed — the miner's sweep must be re-checked"
     );
+}
+
+// ---- the learned-skill lifecycle: reject teaches the learner (#5046) ----
+
+/// **The witness.** Rejecting a learned skill from the SKILLS tab teaches the
+/// *learner*, not just the list: the very next mining pass, over the very same
+/// append-only log that produced it, writes nothing.
+///
+/// Asserted end to end rather than on the miner alone. The miner's
+/// own unit tests (`stella_core::skills::tests`) prove it honours a
+/// `SkillRejection`; what those cannot prove is that the rejection the SKILLS
+/// tab writes is a rejection the *loop* reads — a correct filter the loop calls
+/// with an empty slice is exactly the shipped behaviour, and exactly the bug
+/// #5046 describes. So this drives the real `x` path
+/// (`skill_manager::reject`) and then the real loop, on both paths, and looks
+/// at what is on disk.
+#[test]
+fn a_rejected_skill_is_not_learned_again() {
+    each_path(|path| {
+        let dir = workspace_with_log(&three_occurrences_of(RECURRING));
+        let mut memory = session(dir.path(), path);
+        memory.auto_create_skills(&log_path(dir.path()), true);
+        let mined = "prefer-updating-witness-test-assertions-e2010443";
+        assert_eq!(
+            skill_files(dir.path()),
+            vec![format!("{mined}.md")],
+            "{path:?}: the control must mine, or the rejection proves nothing"
+        );
+
+        // Exactly what `x` does, driver-side.
+        crate::skill_manager::reject(
+            stella_tui::SkillScope::Project,
+            mined,
+            1_700_000_000,
+            dir.path(),
+        )
+        .expect("reject");
+        assert!(
+            skill_files(dir.path()).is_empty(),
+            "{path:?}: the file is gone"
+        );
+
+        // A later session — `skills_created` starts at zero again, so the
+        // per-session cap is not what stops the second write.
+        let mut later = session(dir.path(), path);
+        later.auto_create_skills(&log_path(dir.path()), true);
+        assert!(
+            skill_files(dir.path()).is_empty(),
+            "{path:?}: the miner wrote a rejected skill straight back: {:?}",
+            skill_files(dir.path())
+        );
+    });
+}
+
+/// The narrow half of the same guarantee. A rejection stops one skill; the loop
+/// keeps learning everything else, or `x` would be a way to silently switch
+/// mining off for the whole workspace.
+#[test]
+fn a_rejection_leaves_the_rest_of_the_loop_learning() {
+    const OTHER: &str = "Reach for ripgrep instead of grep when searching this repository.";
+    each_path(|path| {
+        let mut lessons = three_occurrences_of(RECURRING);
+        lessons.extend([(OTHER, 400), (OTHER, 500), (OTHER, 600)]);
+        let dir = workspace_with_log(&lessons);
+
+        // Both are mined first — the per-session cap is exactly 2, so one pass
+        // writes both.
+        let mut memory = session(dir.path(), path);
+        memory.auto_create_skills(&log_path(dir.path()), true);
+        assert_eq!(
+            skill_files(dir.path()).len(),
+            2,
+            "{path:?}: the control mines both: {:?}",
+            skill_files(dir.path())
+        );
+
+        crate::skill_manager::reject(
+            stella_tui::SkillScope::Project,
+            "prefer-updating-witness-test-assertions-e2010443",
+            1_700_000_000,
+            dir.path(),
+        )
+        .expect("reject");
+
+        let mut later = session(dir.path(), path);
+        later.auto_create_skills(&log_path(dir.path()), true);
+        let files = skill_files(dir.path());
+        assert_eq!(
+            files.len(),
+            1,
+            "{path:?}: exactly the un-rejected skill survives: {files:?}"
+        );
+        assert!(
+            !files[0].starts_with("prefer-updating-witness-test-assertions"),
+            "{path:?}: the rejected one came back: {files:?}"
+        );
+    });
 }
 
 // ---- guarantee: the per-session creation cap ----

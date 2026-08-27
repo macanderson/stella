@@ -417,7 +417,7 @@ fn the_dedup_and_clustering_predicates_hold_the_declared_relationship() {
             reference: format!("trace:{index}"),
         })
         .collect();
-    let candidates = skills::mine_skill_candidates(observations, &[], &mining);
+    let candidates = skills::mine_skill_candidates(observations, &[], &[], &mining);
     let candidate = candidates
         .first()
         .expect("the naturally-worded convention must mine a candidate");
