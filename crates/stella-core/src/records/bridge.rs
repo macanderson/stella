@@ -149,7 +149,7 @@ fn self_attested(record: &Record, trust: Trust) -> bool {
 ///
 /// [ev]: super::super::rules::evaluate_guards
 fn concrete(guard: &RuleGuard) -> bool {
-    // `allow_command_glob` is deliberately absent: an exception alone denies
+    // `allow_command_glob` is absent: an exception alone denies
     // nothing, so a record carrying only one would advertise Tier 2 while
     // being structurally unable to fire — the defect this function exists to
     // prevent, arriving through a newer field.

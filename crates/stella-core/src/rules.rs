@@ -88,7 +88,7 @@ pub struct RuleGuard {
     /// its scoped form*. "No workspace-wide test compiles, but
     /// `cargo test -p <crate>` is fine" is not writable as a single glob,
     /// and approximating it with a list of deny globs only enumerates the
-    /// spellings someone thought of — the first unlisted variant walks
+    /// spellings someone thought of — the first unlisted one walks
     /// straight through, and the rule looks enforced while it is not.
     ///
     /// Hence a first-class exception rather than a cleverer deny pattern:
