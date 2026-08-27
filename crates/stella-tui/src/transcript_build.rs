@@ -459,6 +459,7 @@ fn note_kind(event: &AgentEvent) -> NoteKind {
         AgentEvent::Stage { .. } => NoteKind::Stage,
         AgentEvent::ContextRecall { .. }
         | AgentEvent::ContextWrite { .. }
+        | AgentEvent::SkillInjected { .. }
         | AgentEvent::Compaction { .. } => NoteKind::Context,
         AgentEvent::BudgetTick { .. }
         | AgentEvent::BudgetDenied { .. }

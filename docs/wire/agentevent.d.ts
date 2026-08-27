@@ -2067,6 +2067,25 @@ export type AgentEvent = {
   upserts: number;
 } | {
   /**
+   * The skill's slug, as its `SKILL.md` frontmatter names it.
+   */
+  name: string;
+  /**
+   * The skill's own one-line description.
+   */
+  summary: string;
+  /**
+   * What this skill's rendered block cost, estimated over the exact
+   * bytes the section carried.
+   */
+  tokens: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
+  type: "skill_injected";
+} | {
+  /**
    * `blk_<24 hex of sha256(kind \0 content)>`. Byte-identical blocks
    * share an id, so dedup/supersession become identities not counts.
    */
@@ -2375,6 +2394,7 @@ export type KnownTypeTag =
   | "file_change"
   | "context_recall"
   | "context_write"
+  | "skill_injected"
   | "block_registered"
   | "step_manifest"
   | "proof"

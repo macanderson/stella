@@ -1043,7 +1043,10 @@ impl TurnDriver for RawTurnDriver<'_> {
             self.prompt,
             Some(self.session),
             crate::memory::OpeningRecall {
-                event: self.recall.event.take(),
+                // Taken, not cloned: the block was injected once, before the
+                // first round, so a later round re-announcing it would report
+                // an injection that did not happen.
+                events: std::mem::take(&mut self.recall.events),
                 produced: self.recall.produced.clone(),
             },
             self.memory.as_deref_mut(),

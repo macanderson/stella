@@ -557,6 +557,21 @@ export type AgentEvent = {
   upserts: number;
 } | {
   /**
+   * The skill's slug, as its `SKILL.md` frontmatter names it.
+   */
+  name: string;
+  /**
+   * The skill's own one-line description.
+   */
+  summary: string;
+  /**
+   * What this skill's rendered block cost, estimated over the exact
+   * bytes the section carried.
+   */
+  tokens: number;
+  type: "skill_injected";
+} | {
+  /**
    * `blk_<24 hex of sha256(kind \0 content)>`. Byte-identical blocks
    * share an id, so dedup/supersession become identities not counts.
    */

@@ -964,6 +964,22 @@ pub enum AgentEvent {
         )]
         task_id: Option<crate::TaskId>,
     },
+    /// A workspace skill entered this turn's context — one event per skill
+    /// the steering section actually carried.
+    ///
+    /// Emitted after the section's own token budget has made its cut, so
+    /// `tokens` is what the prompt paid rather than what selection ranked:
+    /// selection routinely scores more skills than the section fits, and an
+    /// event per *candidate* would bill the turn for text it never sent.
+    SkillInjected {
+        /// The skill's slug, as its `SKILL.md` frontmatter names it.
+        name: String,
+        /// The skill's own one-line description.
+        summary: String,
+        /// What this skill's rendered block cost, estimated over the exact
+        /// bytes the section carried.
+        tokens: u32,
+    },
     /// A context block first became eligible to enter the prompt (spec §4).
     /// The birth record that makes the per-step manifest an index over the fold.
     ///

@@ -649,7 +649,7 @@ pub async fn run_goal_cmd(
     let mut memory =
         SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
     // Phase 2 (#713): carried to the turn runner, which owns the event channel.
-    let mut recall_event = None;
+    let mut recall_events: Vec<AgentEvent> = Vec::new();
     if let Some(m) = &mut memory {
         // One arm for the whole goal run (#1221): the judged rounds below are
         // stages of one turn — they share this run's episode, so they must
@@ -658,7 +658,7 @@ pub async fn run_goal_cmd(
         m.arm_recall_control();
         let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
         let recalled = m.recall_block_reported(goal, &touched).await;
-        recall_event = recalled.telemetry_event();
+        recall_events = recalled.telemetry_events();
         inject_recall_block(&mut messages, recalled.text);
     }
 
@@ -688,7 +688,7 @@ pub async fn run_goal_cmd(
             goal,
             Some(presence.id()),
             budget_limit,
-            recall_event,
+            recall_events,
             memory.as_mut(),
             bound,
             candidate,
@@ -709,7 +709,7 @@ pub async fn run_goal_cmd(
             &store,
             goal,
             Some(presence.id()),
-            recall_event,
+            recall_events,
             memory.as_mut(),
             Some(&mut rounds),
         )
@@ -835,9 +835,12 @@ pub(crate) async fn run_goal_turn(
     store: &Option<Arc<Store>>,
     goal: &str,
     session: Option<&str>,
-    // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
-    // because recall necessarily precedes the channel it would be emitted on.
-    recall_event: Option<AgentEvent>,
+    // Phase 2 (#713): what this turn's opening block left to announce — its
+    // `ContextRecall`, then a `SkillInjected` per skill it carried (#5031) —
+    // carried from the caller because recall necessarily precedes the channel
+    // it would be emitted on. Already in send order; see
+    // `memory::RecalledBlock::telemetry_events`.
+    recall_events: Vec<AgentEvent>,
     // The caller's session memory, so the execution seam can stamp this
     // round's execution id and record its skill-version usage before the turn
     // runs — reflection stores the self-review 1:1 with an execution, and an
@@ -909,7 +912,7 @@ pub(crate) async fn run_goal_turn(
     // neither opener, so an untrusted checkout's refusal was on stderr and on
     // no event stream at all.
     announce_withheld_steering(&tx, cfg);
-    if let Some(event) = recall_event {
+    for event in recall_events {
         let _ = tx.send(event);
     }
 

@@ -336,6 +336,36 @@ pub fn compaction_rows(
     )
 }
 
+/// `✦ skill <name> · auto · n tok`, over `injected <summary>` (SPEC 6.3).
+///
+/// The trigger reads `auto` because auto-selection is the only channel that
+/// announces itself: a skill reaches the prompt either through the turn's own
+/// steering block, which is what `AgentEvent::SkillInjected` reports, or
+/// through an explicit `/slug`, which `stella-cli`'s `extensions.rs` expands
+/// into prompt text and tells nobody about. Wiring the second is #5232; until
+/// that lands, the literal here is the true reading and a carried field would
+/// be a column with one value.
+///
+/// SPEC's `used n× this repo` is **elided**, not zeroed. The store counts it
+/// (`skill_usage`, one row per skill per execution), but no live path carries
+/// that number to the deck, and a `used 0×` under a skill that just fired
+/// would state the opposite of what happened. #4337 is where the counter's
+/// reader is decided.
+#[must_use]
+pub fn skill_rows(name: &str, summary: &str, tokens: u32, width: usize) -> Vec<Line<'static>> {
+    let mut event = Event::new(
+        EventKind::Skill {
+            trigger: "auto".to_string(),
+            tokens,
+        },
+        name.to_string(),
+    );
+    if !summary.is_empty() {
+        event.footer = Some(format!("  injected {summary}"));
+    }
+    event_rows(&event, width)
+}
+
 /// Map a wire tool name onto SPEC 6.3's event vocabulary.
 ///
 /// The same six names [`stella_transcript::ToolKind::from_name`]

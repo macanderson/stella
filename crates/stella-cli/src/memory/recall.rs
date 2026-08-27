@@ -34,6 +34,14 @@ pub struct RecalledBlock {
     /// re-query carries this forward so the next block renders only what is
     /// new (#4236).
     pub produced: super::steering::ProducedSteering,
+    /// The skills [`Self::text`] carried, in rendered order — the material
+    /// each `SkillInjected` event is built from.
+    ///
+    /// Held rather than re-derived downstream because selection is not free
+    /// and, more to the point, not stable to re-run: the block's own cut is
+    /// the only place that knows which ranked skills the section's token
+    /// budget actually admitted.
+    pub injected_skills: Vec<skills::InjectedSkill>,
 }
 
 impl RecalledBlock {
@@ -43,21 +51,47 @@ impl RecalledBlock {
     pub fn telemetry_event(&self) -> Option<stella_protocol::AgentEvent> {
         self.recall.telemetry_event()
     }
+
+    /// Everything this block leaves for the turn runner's channel, in send
+    /// order: the recall telemetry, then one `SkillInjected` per skill it
+    /// carried — SPEC 6.3's `✦ skill` rows.
+    ///
+    /// One event per skill rather than one carrying a list, because each
+    /// becomes one transcript row with its own head, subject and cost; a list
+    /// would make the renderer split what the emitter had already separated.
+    #[must_use]
+    pub fn telemetry_events(&self) -> Vec<stella_protocol::AgentEvent> {
+        self.telemetry_event()
+            .into_iter()
+            .chain(self.injected_skills.iter().map(|s| {
+                stella_protocol::AgentEvent::SkillInjected {
+                    name: s.name.clone(),
+                    summary: s.summary.clone(),
+                    tokens: s.tokens,
+                }
+            }))
+            .collect()
+    }
 }
 
 /// What a turn-opening recall leaves behind for the turn runner: the
-/// telemetry event to put on the channel the runner opens, and the handles
-/// the injected block rendered, which seed the mid-turn re-query so its first
+/// telemetry to put on the channel the runner opens, and the handles the
+/// injected block rendered, which seed the mid-turn re-query so its first
 /// answer does not repeat the opening block (#4498).
 ///
-/// The two travel together because they are two residues of one injection —
-/// carrying only the event was exactly how the seed got lost: the block's
-/// `produced` died at the call site while its event rode on.
+/// They travel together because they are residues of one injection — carrying
+/// only the events was exactly how the seed got lost: the block's `produced`
+/// died at the call site while its event rode on.
 #[derive(Debug, Default)]
 pub(crate) struct OpeningRecall {
-    /// This turn's `ContextRecall`, if recall ran — emitted by the turn
-    /// runner, which owns the event channel recall precedes.
-    pub(crate) event: Option<stella_protocol::AgentEvent>,
+    /// This turn's `ContextRecall` if recall ran, then one `SkillInjected`
+    /// per skill the block carried — emitted by the turn runner, which owns
+    /// the event channel the block precedes.
+    ///
+    /// **In send order**, which is the producer's to decide: recall and the
+    /// skills entered the prompt in one block, and a reader who saw a skill
+    /// ahead of the recall it rode with would place it in the wrong turn.
+    pub(crate) events: Vec<stella_protocol::AgentEvent>,
     /// The frames, skills and records the opening block rendered, by steering
     /// handle — the re-query adapter's seed.
     pub(crate) produced: super::steering::ProducedSteering,
@@ -70,10 +104,10 @@ pub(crate) fn inject_opening_recall(
     messages: &mut Vec<CompletionMessage>,
     recalled: RecalledBlock,
 ) -> OpeningRecall {
-    let event = recalled.telemetry_event();
+    let events = recalled.telemetry_events();
     inject_recall_block(messages, recalled.text);
     OpeningRecall {
-        event,
+        events,
         produced: recalled.produced,
     }
 }
@@ -292,6 +326,7 @@ impl SessionMemory {
                 .then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n"))),
             recall,
             produced,
+            injected_skills: skills::injected_skills(&kept),
         }
     }
 
@@ -421,6 +456,7 @@ impl SessionMemory {
                 .then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n"))),
             recall,
             produced: block_produced,
+            injected_skills: skills::injected_skills(&kept),
         }
     }
 

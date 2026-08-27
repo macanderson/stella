@@ -725,6 +725,18 @@ impl DomainBridge {
                         .with("superseded", *superseded),
                 );
             }
+            // The cost only. A skill's slug is workspace-authored text, which
+            // a diagnostic field cannot hold at all (`stella-diag`'s field
+            // types), and the transcript is where a reader learns *which*
+            // skill fired anyway. What a diagnostic can answer is the
+            // budget question: how much of this turn's prompt was steering.
+            AgentEvent::SkillInjected { tokens, .. } => {
+                self.emit(
+                    Level::Debug,
+                    "agent.skill.injected",
+                    self.at_seq().with("tokens", *tokens),
+                );
+            }
 
             // ---- Workspace effects. -------------------------------------
             AgentEvent::FileChange {

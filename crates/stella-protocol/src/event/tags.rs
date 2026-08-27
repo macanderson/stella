@@ -404,6 +404,15 @@ agent_event_tags! {
     ContextWrite => "context_write",
         ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
+    // A workspace skill entered the turn's context. `RecordedOnly`: the deck
+    // folds it to `TranscriptEntry::Skill` and draws SPEC 6.3's `✦ skill`
+    // head, which is the only place a user learns which skill fired and what
+    // it cost — and interactive mode is precisely what `Surface` omits, so
+    // claiming `Surfaced` here would be the euphemism this ledger strips out.
+    // #5229 is where the Observatory query that would earn it is decided.
+    SkillInjected => "skill_injected",
+        ConsumerPosture::RecordedOnly { issue: "#5229" },
+        &[];
     // A context receipt. `Behavioral`: `persist_event_detailed` writes the
     // `context_blocks` row that the Observatory's block registry and
     // `stella-store`'s preimage reconstruction both resolve against — and the

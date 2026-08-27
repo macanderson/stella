@@ -29,6 +29,8 @@ mod inline_diff;
 mod mutation_diff_e2e;
 mod palette;
 mod result_row;
+// #5031: SPEC 6.3's skill event, from the wire event to the rendered row.
+mod skill;
 mod slash;
 mod steering;
 mod thinking;
@@ -171,6 +173,11 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             provider: "mem".into(),
             upserts: 2,
             superseded: 1,
+        },
+        TranscriptEntry::Skill {
+            name: "reviewer".into(),
+            summary: "database review".into(),
+            tokens: 1200,
         },
         TranscriptEntry::MediaProgress {
             artifact_id: "m1".into(),

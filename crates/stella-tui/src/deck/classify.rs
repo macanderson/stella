@@ -204,6 +204,9 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             superseded,
             ..
         } => (TraceKind::Context, format!("+{upserts} ~{superseded}")),
+        AgentEvent::SkillInjected { name, tokens, .. } => {
+            (TraceKind::Context, format!("skill {name}, {tokens} tok"))
+        }
         // Receipts are filtered out of the trace ring above (apply_event's
         // guard); these arms exist only to keep this mapping total.
         AgentEvent::BlockRegistered { kind, .. } => {

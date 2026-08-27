@@ -161,10 +161,15 @@ pub(super) fn event_sender_for_run(
 }
 
 /// Open a raw (non-staged) run's turn on `events`: what this workspace's trust
-/// gate withheld, then this turn's `ContextRecall` if recall ran, and then the
-/// run owner's own `Stage(Execute)`.
+/// gate withheld, then this turn's `ContextRecall` if recall ran, then one
+/// `SkillInjected` per skill that block carried, and then the run owner's own
+/// `Stage(Execute)`.
 ///
-/// All three are ordered deliberately. The withheld-steering notice goes first
+/// The skills ride beside recall because they entered the prompt in the same
+/// block and at the same moment; a reader who saw them after the first stage
+/// would place them inside work they in fact preceded.
+///
+/// All of it is ordered deliberately. The withheld-steering notice goes first
 /// because it is a fact about the *session* rather than about this turn: it
 /// was established while settings loaded, before any of this existed, and a
 /// harness reading the stream should learn that the repository did not steer
@@ -177,21 +182,23 @@ pub(super) fn event_sender_for_run(
 /// close to the 1500-line ratchet.
 ///
 /// `withheld` is carried in rather than surveyed here for the same reason
-/// `recall_event` is: the answer exists long before this channel does, and
+/// `opening` is: the answer exists long before this channel does, and
 /// re-deriving it could announce something the session did not actually run
-/// under.
+/// under. `opening` arrives already ordered — its producer
+/// (`memory::RecalledBlock::telemetry_events`) is the only layer that knows
+/// which skills the block's token budget admitted, and in what order.
 ///
 /// It is also announced **once per session**, which is what [`to_announce`]
 /// is for: this function is per-turn, and the notice is not.
 pub(super) fn open_raw_turn(
     events: &EventSender,
-    recall_event: Option<AgentEvent>,
+    opening: Vec<AgentEvent>,
     withheld: Option<&crate::settings::WithheldNotice>,
 ) {
     if let Some(withheld) = to_announce(withheld, &ANNOUNCED) {
         let _ = events.send(withheld.event());
     }
-    if let Some(event) = recall_event {
+    for event in opening {
         let _ = events.send(event);
     }
     let _ = events.send(AgentEvent::Stage {
@@ -512,7 +519,7 @@ mod durable_stream_tests {
         let sender = EventSender::new(raw_tx);
         let _latch = latch_for_withheld_test();
         for _ in 0..3 {
-            open_raw_turn(&sender, None, Some(&notice));
+            open_raw_turn(&sender, Vec::new(), Some(&notice));
         }
         drop(sender);
 

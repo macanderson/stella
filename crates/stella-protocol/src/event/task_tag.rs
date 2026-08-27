@@ -130,6 +130,7 @@ task_tagged_events! {
         UsageIncomplete,
     }
     untagged {
+        SkillInjected,
         Stage,
         Text,
         TextDelta,

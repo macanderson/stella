@@ -760,6 +760,17 @@ impl SessionModel {
                     superseded: *superseded,
                 });
             }
+            AgentEvent::SkillInjected {
+                name,
+                summary,
+                tokens,
+            } => {
+                self.transcript.push(TranscriptEntry::Skill {
+                    name: name.clone(),
+                    summary: summary.clone(),
+                    tokens: *tokens,
+                });
+            }
             AgentEvent::MediaProgress {
                 artifact_id,
                 kind,
@@ -1284,61 +1295,22 @@ impl SessionModel {
             .and_then(|(name, path)| is_file_mutation(&name).then_some(path).flatten())
     }
 
-    /// Name `model` on the opening rule of the turn now in flight, if that rule
-    /// has not been given one yet.
-    ///
-    /// Walks back to the **nearest** stage boundary that opened a turn and stops
-    /// there, whether or not it fills anything. That single stop is what makes
-    /// this first-write-wins per turn, and it is doing two jobs:
-    ///
-    /// * an earlier turn's rule is already settled and must not be rewritten by
-    ///   a later turn's call;
-    /// * a sub-agent's calls also carry
-    ///   [`stella_protocol::ModelCallRole::Worker`], and a child may well run on
-    ///   a different model. The lead has to call the model before it can decide
-    ///   to delegate, so the lead's own first worker call always precedes any
-    ///   child's and has already claimed the rule by the time one arrives. Depth
-    ///   is not on the wire here, so the ordering is the guarantee rather than a
-    ///   filter.
-    ///
-    /// A turn whose rule was never stamped (`turn_head_stamped` false — no stage
-    /// boundary yet) simply finds nothing and leaves `hud.model` to carry it.
+    /// Name `model` on the opening rule of the turn now in flight, if that
+    /// rule has not been given one yet. [`turn::open_turn`] carries the
+    /// stopping rule and why it is first-write-wins.
     fn name_the_open_turns_model(&mut self, model: &str) {
-        if let Some(TranscriptEntry::Stage {
-            opens: Some(opening),
-            ..
-        }) = self
-            .transcript
-            .iter_mut()
-            .rev()
-            .find(|e| matches!(e, TranscriptEntry::Stage { opens: Some(_), .. }))
+        if let Some(opening) = turn::open_turn(&mut self.transcript)
             && opening.model.is_none()
         {
             opening.model = Some(model.to_owned());
         }
     }
 
-    /// Name the steer a person made on the opening rule of the turn now in
-    /// flight, if that rule has not been given one yet.
-    ///
-    /// The same walk as [`Self::name_the_open_turns_model`], and for the same
-    /// reason: the nearest stage boundary that opened a turn, stop there
-    /// whether or not it fills anything. That single stop is what makes this
-    /// first-write-wins per turn — an earlier turn's rule is settled and a
-    /// second steer in this turn does not rewrite what the turn opened by
-    /// consuming.
-    ///
-    /// A turn whose rule was never stamped simply finds nothing, and the steer
-    /// keeps the `(steered mid-turn)` transcript row it always had.
+    /// Name the steer a person made on the same rule, if it has not been given
+    /// one yet. A turn that never stamped a rule keeps the
+    /// `(steered mid-turn)` transcript row it always had.
     fn name_the_open_turns_steer(&mut self, text: &str) {
-        if let Some(TranscriptEntry::Stage {
-            opens: Some(opening),
-            ..
-        }) = self
-            .transcript
-            .iter_mut()
-            .rev()
-            .find(|e| matches!(e, TranscriptEntry::Stage { opens: Some(_), .. }))
+        if let Some(opening) = turn::open_turn(&mut self.transcript)
             && opening.queued_steer.is_none()
         {
             opening.queued_steer = Some(text.to_owned());

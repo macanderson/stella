@@ -697,6 +697,40 @@ pub fn section_fit(selected: &[SelectedSkill]) -> usize {
     selected.len()
 }
 
+/// One skill the section carried, and what it cost — SPEC 6.3's
+/// `✦ skill <name> · auto · n tok` head and its `injected <summary>` body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InjectedSkill {
+    /// The skill's slug.
+    pub name: String,
+    /// The skill's own one-line description.
+    pub summary: String,
+    /// What this skill's block cost, over the same bytes [`section_fit`]
+    /// measured.
+    pub tokens: u32,
+}
+
+/// The skills [`render_skills_section`] actually injected, in rendered order.
+///
+/// A prefix of `selected`, cut by [`section_fit`] rather than by a second
+/// reading of the budget — a skill that lost its seat is context the prompt
+/// never carried, and announcing it would bill the turn for text nobody sent.
+#[must_use]
+pub fn injected_skills(selected: &[SelectedSkill]) -> Vec<InjectedSkill> {
+    if selected.is_empty() {
+        return Vec::new();
+    }
+    selected[..section_fit(selected)]
+        .iter()
+        .map(|sel| InjectedSkill {
+            name: sel.skill.name.clone(),
+            summary: sel.skill.description.clone(),
+            tokens: u32::try_from(stella_protocol::estimate_tokens(&rendered_skill_block(sel)))
+                .unwrap_or(u32::MAX),
+        })
+        .collect()
+}
+
 // Auto-creation — mining observations into new skills (the user requirement)
 
 /// One mineable observation — a recurring style preference or reflection

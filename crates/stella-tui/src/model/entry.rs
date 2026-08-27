@@ -272,6 +272,19 @@ pub enum TranscriptEntry {
         commands: usize,
         agents: usize,
     },
+    /// One workspace skill entered this turn's context (SPEC 6.3).
+    ///
+    /// The complement of [`Self::SteeringWithheld`]'s `skills` count, which
+    /// says how many were held back and never which ones: a user could see
+    /// that steering was withheld and still not learn that anything fired.
+    Skill {
+        /// The skill's slug — the head's subject.
+        name: String,
+        /// The skill's own one-line description, rendered `injected <summary>`.
+        summary: String,
+        /// What the injected block cost.
+        tokens: u32,
+    },
     /// Context recall completed; frames are cited by human label, never raw
     /// id (L-C4).
     ///
