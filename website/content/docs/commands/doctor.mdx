@@ -104,7 +104,11 @@ When it does act, in this order:
 
    The sidecars must travel with the database. A stale WAL left beside the fresh store your next session creates is how a successful repair turns into new corruption. Renames come first because once they land the workspace is usable again even if everything after them fails.
 
-2. **Whatever is still readable is copied out** to a separate database beside the original — `store.db.salvaged-1769472000` — restricted to your user. If nothing can be salvaged, that is reported and the quarantine still stands; a failed salvage is never fatal.
+2. **A copy of whatever SQLite can still read** is written to a separate database beside the original — `store.db.salvaged-1769472000` — restricted to your user. If nothing can be salvaged, that is reported and the quarantine still stands; a failed salvage is never fatal.
+
+   <Callout type="warn">
+   Expect this step to salvage nothing, and use the `by hand:` line instead. The copy is a `VACUUM INTO`, which walks the database and so gives up entirely at the first page it cannot read — on a store measured at six damaged pages in an otherwise healthy 1 GB file it returned zero rows, while the `sqlite3 .recover` command printed in the `by hand:` line returned 376,129 of 376,140 events and every row of `executions`, `telemetry` and `tool_calls`. `.recover` rebuilds from surviving records rather than walking the tree, which is why it survives damage this step cannot. Making `--repair` use it is [#5282](https://github.com/macanderson/stella/issues/5282).
+   </Callout>
 
 3. **Your next session starts a fresh store.** Nothing was deleted.
 
