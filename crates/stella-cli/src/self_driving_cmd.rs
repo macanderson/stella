@@ -784,11 +784,11 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
 
 fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<(), String> {
     if dry_streak {
-        let streak = stella_autonomy::dry_streak(&st.cycles(), &st.aperture());
+        let streak = stella_autonomy::dry_streak(&st.cycles().rows, &st.aperture());
         println!("{streak}");
         return Ok(());
     }
-    let cycles = st.cycles();
+    let cycles = st.cycles().rows;
     if format == QueryFormat::Json {
         println!(
             "{}",
@@ -854,7 +854,7 @@ fn cycle_begin(st: &LoopState) -> Result<(), String> {
     );
 
     let aperture = st.aperture();
-    let streak = stella_autonomy::dry_streak(&st.cycles(), &aperture);
+    let streak = stella_autonomy::dry_streak(&st.cycles().rows, &aperture);
     println!("SELF_DRIVING_CYCLE={n}");
     println!("SELF_DRIVING_DRY_STREAK_SO_FAR={streak}");
     println!(
@@ -960,7 +960,7 @@ fn cycle_end(
         );
     }
 
-    let streak = stella_autonomy::dry_streak(&st.cycles(), &aperture);
+    let streak = stella_autonomy::dry_streak(&st.cycles().rows, &aperture);
     if streak >= state::dry_streak_target() {
         say(&format!("aperture {aperture} is dry after {streak} cycles"));
         advance_aperture(st, &aperture)?;
@@ -1366,7 +1366,7 @@ fn run_info(st: &LoopState) -> hooks::HookRunInfo {
 fn runs_report(st: &LoopState) -> Result<(), String> {
     let rows = stella_autonomy::fold_runs(
         &st.run_records(),
-        &st.cycles(),
+        &st.cycles().rows,
         st.run_doc().as_ref(),
         now_unix(),
         state::stale_after_secs(),

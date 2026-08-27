@@ -123,6 +123,20 @@ pub(crate) fn repo_slug(root: &Path) -> String {
         .unwrap_or_else(|| "workspace".to_string())
 }
 
+/// The cycle ledger as it was actually read.
+///
+/// The unreadable count rides with the rows rather than being available beside
+/// them, so a surface reporting a rate over `rows` has the number of records
+/// that rate is missing in the same value. Every consumer of a ledger row
+/// reaches through this, which is what makes the loss impossible to take
+/// without seeing.
+pub(crate) struct CycleLedger {
+    /// The records that parsed.
+    pub rows: Vec<CycleRecord>,
+    /// Ledger lines that did not, and are therefore absent from `rows`.
+    pub unreadable: usize,
+}
+
 /// One loop's state directory, resolved and seeded.
 pub(crate) struct LoopState {
     pub dir: PathBuf,
@@ -316,11 +330,32 @@ impl LoopState {
 
     // -- the ledger ---------------------------------------------------------
 
-    pub fn cycles(&self) -> Vec<CycleRecord> {
-        read_jsonl(&self.ledger_path())
-            .into_iter()
-            .filter_map(|v| serde_json::from_value(v).ok())
-            .collect()
+    /// The cycle ledger, and how much of it could not be read.
+    ///
+    /// A ledger line is dropped when it is not JSON at all — a truncated tail
+    /// from an append that died mid-write — or when it is an object that is not
+    /// a [`CycleRecord`]. Every field of that struct carries a serde default
+    /// except `cycle`, so in practice the second case is a row with no cycle
+    /// number: what a second writer produces, and the ledger has one (the
+    /// shell driver reports `cycles logged` by counting raw lines, a different
+    /// rule from this one).
+    ///
+    /// Dropping those rows is right — a record with no cycle number cannot be
+    /// folded. Dropping them *silently* is not: `metrics` divides every rate it
+    /// prints by the number of rows it read and labels the result `cycles`, so
+    /// an unreadable row does not make a rate uncertain, it makes it confidently
+    /// wrong. The count travels with the rows so the surface can say so.
+    pub fn cycles(&self) -> CycleLedger {
+        let lines = read_jsonl(&self.ledger_path());
+        let mut rows = Vec::with_capacity(lines.values.len());
+        let mut unreadable = lines.unreadable;
+        for value in lines.values {
+            match serde_json::from_value(value) {
+                Ok(record) => rows.push(record),
+                Err(_) => unreadable += 1,
+            }
+        }
+        CycleLedger { rows, unreadable }
     }
 
     pub fn append_cycle(&self, rec: &CycleRecord) -> Result<(), String> {
@@ -487,7 +522,7 @@ impl LoopState {
     }
 
     pub fn run_records(&self) -> Vec<Value> {
-        read_jsonl(&self.runs_path())
+        read_jsonl(&self.runs_path()).values
     }
 
     /// Bank a run record left behind by a driver that died, so the history
@@ -615,15 +650,37 @@ fn read_json(path: &Path) -> Option<Value> {
 
 /// Parse a `.jsonl` file, skipping unparseable lines — a truncated final line
 /// is the normal state of a file being appended to while it is read.
-fn read_jsonl(path: &Path) -> Vec<Value> {
-    std::fs::read_to_string(path)
-        .map(|text| {
-            text.lines()
-                .filter_map(|line| serde_json::from_str(line).ok())
-                .filter(Value::is_object)
-                .collect()
-        })
-        .unwrap_or_default()
+/// The objects a JSONL file yielded, and how many of its lines did not.
+struct JsonlLines {
+    values: Vec<Value>,
+    unreadable: usize,
+}
+
+/// Read a JSONL file, counting what it could not read rather than discarding
+/// it quietly.
+///
+/// A blank line is not a loss — an append that ends in a newline leaves one,
+/// and every writer here does. Anything else that is not a JSON object is:
+/// either malformed JSON, or a bare scalar where a record was expected.
+fn read_jsonl(path: &Path) -> JsonlLines {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return JsonlLines {
+            values: Vec::new(),
+            unreadable: 0,
+        };
+    };
+    let mut values = Vec::new();
+    let mut unreadable = 0;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Value>(line) {
+            Ok(value) if value.is_object() => values.push(value),
+            _ => unreadable += 1,
+        }
+    }
+    JsonlLines { values, unreadable }
 }
 
 fn hostname() -> String {
@@ -669,6 +726,83 @@ mod tests {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join("seen.txt"), seen).unwrap();
         std::fs::write(dir.join("ledger.jsonl"), "{\"cycle\":1}\n").unwrap();
+    }
+
+    /// A ledger line that cannot be read is counted, not discarded quietly.
+    ///
+    /// `metrics` divides every rate it prints by the number of rows it read
+    /// and labels that number `cycles`. A dropped row does not make a rate
+    /// uncertain — it makes it confidently wrong, over a denominator nobody
+    /// was told was short.
+    ///
+    /// Three ways a line fails, all in one ledger: a truncated tail (what an
+    /// append that died mid-write leaves), an object with no `cycle` (the one
+    /// `CycleRecord` field with no serde default, so the shape a second writer
+    /// produces), and a bare scalar where a record belongs.
+    #[test]
+    fn an_unreadable_ledger_line_is_counted_rather_than_dropped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("state");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("ledger.jsonl"),
+            concat!(
+                "{\"cycle\":1,\"fixed\":2}\n",
+                "{\"cycle\":2,\"fixed\":4}\n",
+                "{\"fixed\":9}\n",      // an object, but no cycle number
+                "12\n",                 // valid JSON, not a record
+                "{\"cycle\":3,\"fix\n", // the truncated tail of a dead append
+            ),
+        )
+        .unwrap();
+
+        let st = LoopState {
+            dir,
+            repo_root: tmp.path().to_path_buf(),
+        };
+        let ledger = st.cycles();
+
+        assert_eq!(ledger.rows.len(), 2, "only the two whole records fold");
+        assert_eq!(
+            ledger.unreadable, 3,
+            "and the loop is told about the three it could not read"
+        );
+    }
+
+    /// A trailing newline is not a loss.
+    ///
+    /// Every append here ends in one, so counting the resulting blank line as
+    /// unreadable would report a loss on every healthy ledger — and a warning
+    /// that always fires is one nobody reads.
+    #[test]
+    fn the_newline_every_append_leaves_is_not_counted_as_a_loss() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("state");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ledger.jsonl"), "{\"cycle\":1}\n{\"cycle\":2}\n").unwrap();
+
+        let st = LoopState {
+            dir,
+            repo_root: tmp.path().to_path_buf(),
+        };
+        let ledger = st.cycles();
+
+        assert_eq!(ledger.rows.len(), 2);
+        assert_eq!(ledger.unreadable, 0, "a healthy ledger reports no loss");
+    }
+
+    /// A ledger that does not exist yet is empty, not damaged.
+    #[test]
+    fn a_missing_ledger_reports_no_loss() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = LoopState {
+            dir: tmp.path().join("nothing-here"),
+            repo_root: tmp.path().to_path_buf(),
+        };
+        let ledger = st.cycles();
+
+        assert!(ledger.rows.is_empty());
+        assert_eq!(ledger.unreadable, 0);
     }
 
     /// `<stella home>/self-driving/<slug>`, the destination under test.

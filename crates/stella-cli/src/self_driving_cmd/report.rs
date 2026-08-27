@@ -159,9 +159,17 @@ pub(super) fn watch(st: &LoopState) -> Result<(), String> {
 }
 
 pub(super) fn metrics(st: &LoopState) -> Result<(), String> {
-    let rows = st.cycles();
+    let ledger = st.cycles();
+    let rows = ledger.rows;
     if rows.is_empty() {
-        println!("no cycles recorded yet");
+        if ledger.unreadable > 0 {
+            println!(
+                "no cycles could be read — {} ledger line(s) are unreadable",
+                ledger.unreadable
+            );
+        } else {
+            println!("no cycles recorded yet");
+        }
         return Ok(());
     }
     let cal = st.calibration();
@@ -169,6 +177,16 @@ pub(super) fn metrics(st: &LoopState) -> Result<(), String> {
     let n = m.cycles;
 
     println!("cycles            {n}");
+    // Every rate below divides by `n`. A ledger line that could not be read is
+    // not in `n`, so saying nothing here would print a confident rate over a
+    // denominator that is quietly short.
+    if ledger.unreadable > 0 {
+        println!(
+            "unreadable        {} ledger line(s) — every rate below is over {n}, not {}",
+            ledger.unreadable,
+            n as usize + ledger.unreadable
+        );
+    }
     println!(
         "fixed / cycle     {:.1}   ({} total)",
         m.fixed as f64 / n as f64,
