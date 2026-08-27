@@ -1,6 +1,6 @@
 # SPEC: stella TUI v2 (command deck)
 
-Status: draft for implementation
+Status: normative, part implemented — `IMPLEMENTATION-PLAN.md` §3 is where each section stands
 Owner: Mac Anderson, Oxagen, Inc.
 Scope: full visual and interaction redesign of the stella TUI (Rust, ratatui)
 Companion docs: `IMPLEMENTATION-PLAN.md`, `renderings/`
