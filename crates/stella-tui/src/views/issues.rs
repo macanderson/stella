@@ -378,6 +378,74 @@ mod tests {
         assert_eq!(keys, vec!["#3", "#1", "#2"]);
     }
 
+    /// Age multiplies: a lightly-coupled issue the tracker has not moved in
+    /// three months outranks a heavily-coupled one it moved last week.
+    ///
+    /// This is the half [`the_sort_ranks_by_heat_and_leaves_unranked_rows_in_tracker_order`]
+    /// cannot see — every row there shares one stamp, so a sort that dropped
+    /// the age term entirely would still pass it.
+    #[test]
+    fn an_old_lightly_coupled_issue_outranks_a_fresh_heavily_coupled_one() {
+        let snap = snapshot();
+        // One edge, ninety days: 2025-11-15 is 15 + 31 + 31 + 13 days before
+        // the 2026-02-13 the clock reads.
+        let aged = row(
+            "#aged",
+            Some("2025-11-15T00:00:00Z"),
+            Some(&["src/cold.rs"]),
+        );
+        assert_eq!(heat(&aged, Some(&snap), NOW_MS), Some(90));
+        // Three edges, ten days.
+        let fresh = row(
+            "#fresh",
+            Some("2026-02-03T00:00:00Z"),
+            Some(&["src/hot.rs"]),
+        );
+        assert_eq!(heat(&fresh, Some(&snap), NOW_MS), Some(3 * 10));
+
+        let mut rows = vec![fresh, aged];
+        assert!(sort_by_heat(&mut rows, Some(&snap), NOW_MS));
+        let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, vec!["#aged", "#fresh"]);
+    }
+
+    /// Two rows of equal heat keep the order the tracker delivered them in,
+    /// whichever order that was.
+    ///
+    /// Asserted from both sides on purpose: an ordering that always emitted
+    /// `#by-coupling` first would satisfy one arrangement by accident. Running
+    /// the same pair swapped is what distinguishes a stable sort from a lucky
+    /// one, and stability is the whole reason a tie is not a reshuffle the
+    /// reader sees on every refresh.
+    #[test]
+    fn rows_of_equal_heat_keep_the_tracker_order_in_either_arrangement() {
+        let snap = snapshot();
+        // Three edges times ten days, and one edge times thirty: the same heat
+        // by two different routes.
+        let by_coupling = row(
+            "#by-coupling",
+            Some("2026-02-03T00:00:00Z"),
+            Some(&["src/hot.rs"]),
+        );
+        let by_age = row(
+            "#by-age",
+            Some("2026-01-14T09:30:00Z"),
+            Some(&["src/cold.rs"]),
+        );
+        assert_eq!(heat(&by_coupling, Some(&snap), NOW_MS), Some(30));
+        assert_eq!(heat(&by_age, Some(&snap), NOW_MS), Some(30));
+
+        let mut rows = vec![by_coupling.clone(), by_age.clone()];
+        assert!(sort_by_heat(&mut rows, Some(&snap), NOW_MS));
+        let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, vec!["#by-coupling", "#by-age"]);
+
+        let mut rows = vec![by_age, by_coupling];
+        assert!(sort_by_heat(&mut rows, Some(&snap), NOW_MS));
+        let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, vec!["#by-age", "#by-coupling"]);
+    }
+
     #[test]
     fn the_plan_tag_names_the_round_and_the_live_task() {
         let mut work = linked(&["src/hot.rs"]);
