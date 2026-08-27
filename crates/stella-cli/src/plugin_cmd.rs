@@ -92,12 +92,6 @@ pub enum PluginCmd {
     /// List installed plugins, what each is allowed to do, and where it came
     /// from.
     List,
-    /// Remove an installed plugin, by manifest name.
-    Remove {
-        /// The plugin's `name`, as `stella plugin list` prints it.
-        #[arg(value_name = "NAME")]
-        name: String,
-    },
     /// Decide whether an installed plugin may draw on your screen: print its
     /// panel handshake, and record the answer (SPEC 12.4).
     ///
@@ -116,6 +110,12 @@ pub enum PluginCmd {
         /// Answer `deny` without prompting.
         #[arg(long)]
         deny: bool,
+    },
+    /// Remove an installed plugin, by manifest name.
+    Remove {
+        /// The plugin's `name`, as `stella plugin list` prints it.
+        #[arg(value_name = "NAME")]
+        name: String,
     },
     /// Open one driver session against an installed plugin that declares
     /// `[driver]`, and report what it says to do next.
