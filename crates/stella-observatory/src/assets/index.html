@@ -2367,11 +2367,14 @@ async function paintRenderedTranscript(fragment) {
   const shadow = holder.shadowRoot || holder.attachShadow({ mode: "open" });
   shadow.innerHTML = `<style>${themedTranscriptCss(css)}</style><div class="wrap">${fragment}</div>`;
   /* `live` is the shared stylesheet's opt-in for showing the ⧉ prompt
-     controls (`:host(.live)`), so it is only earned when there is a receipt
-     index for them to open. A turn whose calls were never receipted keeps the
-     controls hidden rather than offering a button that cannot answer — the
-     shape that hid #5255 for a whole workspace of turns. */
-  holder.classList.toggle("live", !!(tx && tx.calls && tx.calls.length));
+     controls (`:host(.live)`). They stay shown even when the receipt index is
+     empty, and the inspector says why — see `openCtxDialog`. Hiding them
+     instead was tried and is worse twice over: the reader loses the only
+     signal that the receipts are missing at all (the silence that hid #5255
+     for a whole workspace of turns), and `tx.calls` is fixed at page open, so
+     a running turn whose receipts arrived after the first paint would keep
+     its controls hidden until someone reloaded. */
+  holder.classList.add("live");
   for (const btn of shadow.querySelectorAll("button.inspect")) {
     btn.addEventListener("click", (ev) => {
       /* The control sits inside a summary: without preventDefault the click
