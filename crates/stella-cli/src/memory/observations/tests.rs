@@ -241,3 +241,103 @@ fn a_pre_task_id_log_line_still_parses() {
     assert_eq!(lesson.task_id, "");
     assert_eq!(task_id_for(&lesson), "turn:100");
 }
+
+/// **Witness (#5323).** A lesson whose append failed is re-scanned next turn,
+/// not stepped over.
+///
+/// Fails on the base, where the loop swallowed a failed append and then set the
+/// cursor to `lines.len()` regardless — putting the failed line below the
+/// cursor and out of reach forever. The module header claimed "a crash costs
+/// one re-scan, never a duplicate"; a *failure* cost the record outright, and
+/// the lexical path (which re-reads the whole log every turn) did not, so the
+/// two diverged exactly here.
+///
+/// # What the two codes do here, and why the last assertion is the witness
+///
+/// A rival holds the write lock just past the store's 5s `busy_timeout` and
+/// then lets go, which is the #5323 shape: a concurrent writer the append
+/// cannot outwait.
+///
+/// - **Base:** the first lesson's append fails and is swallowed; the loop
+///   carries on, the second lesson lands once the lock clears, and the cursor
+///   is then set to 2 — past a line that never appended. The first lesson is
+///   gone, and the next scan starts after it.
+/// - **Here:** the loop stops at the first failure, so nothing appends and the
+///   cursor is not moved. The next scan sees both lines again.
+///
+/// So the discriminating fact is the ledger's contents *after a second scan*:
+/// two observations here, one on the base, forever. The intermediate counts are
+/// asserted too, but that final line is the one that cannot pass both ways.
+#[test]
+fn a_lesson_whose_append_failed_is_recovered_on_the_next_scan() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("context.db");
+    let store = ContextStore::open(&db).expect("open");
+    let log = write_log(
+        dir.path(),
+        &[("Prefer rg.", 100), ("Pin the toolchain.", 200)],
+    );
+
+    // Just past the 5s `busy_timeout` the schema sets, so the first append
+    // waits it out and fails rather than queueing behind the rival.
+    const HELD_FOR: std::time::Duration = std::time::Duration::from_millis(5_600);
+    let (locked, taken) = std::sync::mpsc::channel();
+    let rival = std::thread::spawn(move || {
+        let conn = rusqlite::Connection::open(&db).expect("second connection");
+        conn.busy_timeout(std::time::Duration::from_millis(0))
+            .expect("no wait");
+        conn.execute_batch("BEGIN IMMEDIATE").expect("take the lock");
+        locked.send(()).expect("announce");
+        std::thread::sleep(HELD_FOR);
+        conn.execute_batch("ROLLBACK").expect("release the lock");
+    });
+    taken.recv().expect("the rival holds the write lock");
+
+    assert_eq!(
+        extract_reflection_observations(&store, &log),
+        0,
+        "the scan stops at the lesson whose append lost to the lock"
+    );
+    rival.join().expect("rival");
+
+    assert_eq!(
+        all_observations(&store, 10).len(),
+        0,
+        "and it stopped before the second lesson rather than skipping the first"
+    );
+
+    // The witness. On the base this is 1 and stays 1: the first lesson sits
+    // below a cursor that advanced past it.
+    assert_eq!(
+        extract_reflection_observations(&store, &log),
+        2,
+        "the next scan recovers both lessons"
+    );
+    assert_eq!(all_observations(&store, 10).len(), 2, "and nothing was lost");
+}
+
+/// A line that can never be represented is stepped over rather than becoming a
+/// permanent barrier.
+///
+/// The other half of the fix, and the reason it is not "stop at the first
+/// failure" alone: a cursor parked on a line that will never append would
+/// re-scan the whole log on every turn, forever, growing the per-turn cost
+/// without ever making progress. Deterministic refusals are skipped like the
+/// malformed JSON above them.
+#[test]
+fn an_unrepresentable_line_does_not_wedge_the_cursor() {
+    let (dir, store) = store();
+    let log = write_log(
+        dir.path(),
+        &[("   ", 100), ("Prefer rg.", 200), ("Pin the toolchain.", 300)],
+    );
+
+    assert_eq!(extract_reflection_observations(&store, &log), 2);
+    assert_eq!(
+        store
+            .extraction_cursor("reflections.jsonl")
+            .expect("read cursor"),
+        Some("3".to_string()),
+        "the cursor reaches the end of a log with nothing retryable in it"
+    );
+}

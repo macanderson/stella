@@ -27,6 +27,23 @@
 //! record in the batch or lose it. With derived ids, the cursor is a pure
 //! optimization and a crash costs one re-scan, never a duplicate.
 //!
+//! A **crash** costs a re-scan. A *failure* used to cost the records outright:
+//! the loop swallowed a failed append and advanced the cursor to the end of the
+//! log regardless, so a line whose write lost to `SQLITE_BUSY` was left below
+//! the cursor and never looked at again. The lexical path re-reads the whole log
+//! every turn and is unaffected, so the two diverged exactly there — against the
+//! behaviour-compatibility contract [`super::learning`] holds them to (#5323).
+//!
+//! So the cursor stops at the first line whose append failed, and everything
+//! from there is re-scanned next turn. Content-derived ids make that replay a
+//! no-op for the lines that did land.
+//!
+//! A line the ledger refuses **deterministically** — one whose record cannot be
+//! constructed or serialized at all — is not a barrier. Retrying it can never
+//! succeed, and a cursor parked on it would re-scan the whole log every turn
+//! forever without advancing. Those are skipped the way a malformed JSON line
+//! already is.
+//!
 //! ## Failure isolation
 //!
 //! Every function here swallows its errors and degrades to "no observations
@@ -106,29 +123,70 @@ pub(crate) fn extract_reflection_observations(store: &ContextStore, log_path: &P
     let start = if consumed > lines.len() { 0 } else { consumed };
 
     let mut appended = 0usize;
-    for line in &lines[start..] {
+    // Where the cursor may advance to: the first line whose ledger write failed,
+    // or the end of the log if none did.
+    let mut settled = lines.len();
+    for (offset, line) in lines[start..].iter().enumerate() {
         let Ok(lesson) = serde_json::from_str::<ReflectionLesson>(line) else {
             continue;
         };
         if lesson.lesson.trim().is_empty() {
             continue;
         }
-        // Only a genuinely NEW record counts. A replay reports `AlreadyPresent`
-        // and must not inflate the number, or "how many observations did this
-        // turn produce" becomes "how many lines did it re-read".
-        if append_observation(store, &lesson) == Some(AppendOutcome::Appended) {
-            appended += 1;
+        match append_observation(store, &lesson) {
+            // Only a genuinely NEW record counts. A replay reports
+            // `AlreadyPresent` and must not inflate the number, or "how many
+            // observations did this turn produce" becomes "how many lines did
+            // it re-read".
+            Ok(AppendOutcome::Appended) => appended += 1,
+            Ok(_) => {}
+            // Deterministic: this line will not append on any future turn
+            // either, so a barrier here would park the cursor forever.
+            Err(AppendFailure::Unrepresentable) => {}
+            // Transient — a concurrent writer holding the lock past the busy
+            // timeout is the case. Stop the cursor here so the next scan sees
+            // this line again; everything after it is re-scanned too, which
+            // content-derived ids make a no-op for whatever did land.
+            Err(AppendFailure::LedgerRefused) => {
+                settled = start + offset;
+                break;
+            }
         }
     }
 
     // Advanced last and best-effort. If this write fails the next turn re-scans
     // and re-derives the same ids, which the ledger absorbs as replays.
-    let _ = store.set_extraction_cursor(REFLECTION_SOURCE, &lines.len().to_string());
+    let _ = store.set_extraction_cursor(REFLECTION_SOURCE, &settled.to_string());
     appended
 }
 
-/// Redact, type, and append one lesson. `None` on any failure.
-fn append_observation(store: &ContextStore, lesson: &ReflectionLesson) -> Option<AppendOutcome> {
+/// Why one lesson did not become a record.
+///
+/// The distinction is the whole of #5323: one of these is worth retrying and
+/// the other never will be, and the old `Option` could not tell a caller which
+/// it was holding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppendFailure {
+    /// The storage layer would not take the write — a lock held past the busy
+    /// timeout, a disk error. The same bytes may well append on the next turn,
+    /// so the cursor stops here.
+    LedgerRefused,
+    /// This line cannot become a record: it did not construct, did not
+    /// serialize, or the ledger refused its *content*. Retrying is pointless —
+    /// the input is fixed, so the outcome is — and a cursor waiting on it would
+    /// never advance again.
+    Unrepresentable,
+}
+
+/// Redact, type, and append one lesson.
+///
+/// The error says whether the next turn should try again. Everything before the
+/// ledger call is a pure function of the line, so its failures are
+/// [`AppendFailure::Unrepresentable`]; the ledger's own refusal is not.
+fn append_observation(
+    store: &ContextStore,
+    lesson: &ReflectionLesson,
+) -> Result<AppendOutcome, AppendFailure> {
     // Redaction happens BEFORE the record is constructed, so no unredacted
     // typed record ever exists — not even transiently in memory as something a
     // later refactor could persist by accident.
@@ -143,10 +201,10 @@ fn append_observation(store: &ContextStore, lesson: &ReflectionLesson) -> Option
         redaction.redacted,
         rfc3339(lesson.occurred_at),
     )
-    .ok()?;
+    .map_err(|_| AppendFailure::Unrepresentable)?;
 
-    let body = serde_json::to_string(&record).ok()?;
-    let outcome = store
+    let body = serde_json::to_string(&record).map_err(|_| AppendFailure::Unrepresentable)?;
+    store
         .append_record(LedgerAppend {
             record_id: &record.record_id,
             lineage_id: &record.lineage_id,
@@ -157,8 +215,17 @@ fn append_observation(store: &ContextStore, lesson: &ReflectionLesson) -> Option
             observed_at: &record.observed_at,
             supersedes: None,
         })
-        .ok()?;
-    Some(outcome)
+        .map_err(|error| match error {
+            // The storage layer itself: `SQLITE_BUSY` from a writer holding the
+            // lock past the busy timeout, a disk error, a full volume. The same
+            // bytes may well append on the next turn.
+            stella_context::ContextError::Sqlite(_) => AppendFailure::LedgerRefused,
+            // Everything else is the ledger judging this record's *content* —
+            // `InvalidInput` for two records claiming one id, chief among them.
+            // The input is fixed, so the verdict is; retrying it forever is how
+            // a cursor stops advancing at all.
+            _ => AppendFailure::Unrepresentable,
+        })
 }
 
 /// Every observation in the ledger, oldest first — what the miner consumes.
