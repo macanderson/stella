@@ -867,3 +867,71 @@ async fn ending_an_anchor_stops_live_recall_traversing_it() {
         "the anchor is still BELIEVED; only the present stops seeing it"
     );
 }
+
+/// **The traversal witness (#5338).** Recall seeded at a file reaches the
+/// episodes that touched it.
+///
+/// This is the question the issue names — "what happened to this file" — and
+/// before the episode anchor loop it had no answer: recall expands from an
+/// anchor seed through `neighbors_valid_at`, and an episode's file list lived
+/// in a JSON column with no edge for that expansion to follow.
+///
+/// The corpus is large enough that the frame budget binds, for
+/// the same reason `an_anchor_to_a_deleted_file_stops_feeding_recall` builds
+/// one: with a handful of records, recency alone would seat the episode and
+/// its presence would prove nothing about the edge.
+#[tokio::test]
+async fn recall_seeded_at_a_file_reaches_the_episode_that_touched_it() {
+    let clock = FixedClock::shared(1_000);
+    let dir = TempDir::new().unwrap();
+    let store = ContextStore::open_with(
+        dir.path().join("context.db"),
+        Arc::new(HashEmbedder::default()),
+        clock.clone(),
+    )
+    .unwrap();
+
+    store
+        .upsert(
+            crate::writeback::ContextDelta::new().with_episode(
+                crate::writeback::EpisodeInput::new(
+                    "zzz quokka marmalade tessellation",
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-01T00:05:00Z",
+                )
+                .with_files(["src/registry.rs"]),
+            ),
+        )
+        .await
+        .unwrap();
+
+    for i in 0..40 {
+        clock.advance(100);
+        store
+            .upsert(crate::writeback::ContextDelta::new().with_memory(
+                crate::writeback::MemoryInput::reflection(
+                    format!("unrelated later note number {i} about deployment rollout"),
+                    Vec::<String>::new(),
+                ),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let mut q = base_query("what happened here", "deployment note");
+    // The uri spelling must match what the write side minted.
+    q.anchors = vec!["file://src/registry.rs".into()];
+    q.max_frames = 3;
+
+    let got = store.recall(&q).await.unwrap();
+    assert!(
+        got.frames
+            .iter()
+            .any(|f| f.content.as_deref().unwrap_or_default().contains("quokka")),
+        "the file anchor must pull in the episode that touched it: {:?}",
+        got.frames
+            .iter()
+            .map(|f| f.content.clone())
+            .collect::<Vec<_>>()
+    );
+}
