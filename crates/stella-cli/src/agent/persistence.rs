@@ -975,7 +975,14 @@ pub(crate) fn persist_event_detailed(
         compiled_frame,
     } = event
     {
-        let _ = store.record_step_manifest(
+        // Reported, not discarded. This is the receipts plane: the header and
+        // its entries are written in one transaction, so a failure here turns
+        // OFF `stella inspect --diff`, the Observatory's prompt inspector and
+        // the context-diff panel together — the three surfaces that answer
+        // "what exactly did this call see". A `let _` made that silent, which
+        // is how a workspace can end up with 588k manifest entries, no
+        // receipts, and nothing anywhere saying so (#5255).
+        let receipt = store.record_step_manifest(
             execution_id,
             &StepManifestRow {
                 turn_instance: *turn_instance,
@@ -1013,6 +1020,12 @@ pub(crate) fn persist_event_detailed(
                     .collect(),
             },
         );
+        if receipt.is_err() {
+            warn_store_write_failed(
+                "the prompt receipt (`stella inspect --diff` and the Observatory's \
+                 prompt inspector read it)",
+            );
+        }
     }
     // What disqualifies the execution's COST ROLLUP, which is the only thing
     // `usage_complete` claims — deliberately not `recorded`.
