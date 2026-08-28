@@ -82,8 +82,11 @@ enable it.
 - A terminal with `REPORT_EVENT_TYPES` gets crisp release detection; every
   other terminal inherits the repeat-gap heuristic, which requires OS
   key-repeat to be enabled. A user with key-repeat disabled and no kitty
-  protocol cannot hold-to-talk; the tap-to-toggle mode Claude Code also
-  ships is the remedy and is tracked as a follow-up issue.
+  protocol cannot hold-to-talk. `voice.mode = "tap"` (#5347) is the way in
+  for them: one space on an empty composer starts the capture and the next
+  ends it, which needs neither signal. It is chosen by name rather than
+  inferred from terminal capabilities — both modes read the spacebar, so a
+  wrong guess makes Space do the other thing without being asked.
 - Recording is bounded (a hard cap, and the elapsed time is drawn from the
   deck's tick clock), and audio is written to a temporary file that is
   removed after transcription — nothing about a dictation persists except

@@ -1219,16 +1219,9 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
         ui.index_readiness = *readiness;
         return;
     }
-    // A dictation's answer is keyboard input by another route: paste the
-    // text at the cursor, or say why there is none (`crate::voice`).
-    if let Inbound::VoiceTranscript { text } = inbound {
-        ui.voice.settled();
-        ui.paste(text);
-        return;
-    }
-    if let Inbound::VoiceFailed { reason } = inbound {
-        ui.voice.settled();
-        ui.notice.push(reason.clone());
+    // The dictation envelopes — transcript, failure, and the gesture
+    // `/voice` just persisted (`voice_inbound`).
+    if voice_inbound::ingest(inbound, ui) {
         return;
     }
     // A plan revision a failing gate put up: the scrollback row and the
@@ -3682,6 +3675,7 @@ mod skills_keys;
 
 /// ISSUES-tab browse keys and the multiselect they drive.
 mod issues_keys;
+mod voice_inbound;
 use issues_keys::{handle_issues_browse_key, issues_page_request};
 
 #[cfg(test)]

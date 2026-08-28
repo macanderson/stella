@@ -573,15 +573,18 @@ pub const BINDINGS: &[Binding] = &[
     ),
     // Wherever a bare space types, that is (`voice`'s observation fold); a
     // tab where space pages or toggles never arms. Off until `voice.enabled`
-    // (ADR 0020).
+    // (ADR 0020). Which gesture the key carries is `voice.mode`, so the row
+    // names both: a reader in tap mode holding the key would conclude the
+    // sheet is lying about their deck.
     row(
-        "space (hold)",
-        "dictate — keep holding until listening, release to insert the transcript",
+        "space",
+        "dictate — hold until listening, or tap to start and stop (`/voice`)",
         Everywhere,
         &[
             "a_bare_space_is_the_push_to_talk_key_and_a_modified_space_is_not",
             "the_voice_observation_requires_a_space_that_actually_landed",
             "a_hold_crosses_the_warmup_and_retracts_exactly_what_it_typed",
+            "tap_mode_records_with_no_key_repeat_and_no_release_events",
             "esc_cancels_a_recording_without_transcribing",
         ],
     ),

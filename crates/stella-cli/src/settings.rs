@@ -880,6 +880,17 @@ pub struct VoiceSettings {
     /// selected by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Which gesture on the spacebar dictates: `"hold"` (the default — hold
+    /// through a warmup, release to stop) or `"tap"` (tap on an empty
+    /// composer to start, tap again to stop).
+    ///
+    /// Unset or unrecognised means `hold`, validated at the read site
+    /// ([`stella_tui::voice::VoiceMode::parse`]) like every other slug in
+    /// this file. `tap` is what makes dictation reachable at all on a
+    /// terminal that reports no key releases with OS key-repeat disabled,
+    /// where a hold cannot be told from a tap (#5347).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     /// The provider id whose OpenAI-compatible `audio/transcriptions`
     /// endpoint transcribes. Unset falls back to `openai`; any provider
     /// whose settings declare a compatible `base_url` (a local Whisper
@@ -893,6 +904,58 @@ pub struct VoiceSettings {
     /// Unset sends no hint and the model auto-detects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+}
+
+impl VoiceSettings {
+    /// Whether every field is unset — the section would serialize to `{}`,
+    /// and the writers drop the key instead.
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none()
+            && self.mode.is_none()
+            && self.provider.is_none()
+            && self.model.is_none()
+            && self.language.is_none()
+    }
+
+    /// Persist THIS section as the `"voice"` key of the settings file at
+    /// `path`, preserving every other key byte-for-byte at the value level —
+    /// the same read-modify-write contract as [`UiSettings::save_to`],
+    /// [`ToolsSettings::save_to`] and [`AgentEngineConfig::save_to`].
+    ///
+    /// That contract is the whole reason this exists rather than a serialize
+    /// of a fresh struct: `[voice]` also carries `provider`, `model` and
+    /// `language`, and `/voice tap` writing only what it knows about would
+    /// silently drop a configured local Whisper endpoint. An empty section
+    /// removes the key rather than writing `{}`.
+    pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        if toml_config::path_is_toml(path) {
+            let user_private = user_config_path().as_deref() == Some(path);
+            let value = (!self.is_empty()).then_some(self);
+            return toml_io::save_section(path, "voice", value, user_private);
+        }
+        private::reject_symlink(path)?;
+        let mut root: serde_json::Value = match std::fs::read_to_string(path) {
+            Ok(contents) => serde_json::from_str(&contents)
+                .map_err(|e| format!("invalid settings file {}: {e}", path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let object = root
+            .as_object_mut()
+            .ok_or_else(|| format!("settings file {} is not a JSON object", path.display()))?;
+        if self.is_empty() {
+            object.remove("voice");
+        } else {
+            let value =
+                serde_json::to_value(self).map_err(|e| format!("cannot serialize voice: {e}"))?;
+            object.insert("voice".to_string(), value);
+        }
+        let mut rendered = serde_json::to_string_pretty(&root)
+            .map_err(|e| format!("cannot render settings: {e}"))?;
+        rendered.push('\n');
+        let user_private = user_settings_path().as_deref() == Some(path);
+        private::write_settings(path, rendered.as_bytes(), user_private)
+    }
 }
 
 impl UiSettings {

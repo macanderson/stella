@@ -52,6 +52,21 @@ pub(super) fn enabled(cfg: &Config) -> bool {
         .unwrap_or(false)
 }
 
+/// Which spacebar gesture dictates (`voice.mode`), threaded into
+/// `DeckOptions` beside [`enabled`].
+///
+/// Validated here rather than stored typed, the house convention for a slug
+/// in settings: an unreadable value falls back to the default gesture, so a
+/// typo costs the mode a person asked for and never dictation itself.
+pub(super) fn mode(cfg: &Config) -> stella_tui::voice::VoiceMode {
+    Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| s.voice.as_ref().and_then(|v| v.mode.clone()))
+        .as_deref()
+        .and_then(stella_tui::voice::VoiceMode::parse)
+        .unwrap_or_default()
+}
+
 /// One in-flight capture, or nothing. Held by `run_deck_session` across the
 /// whole session; transcription tasks are spawned and own their own halves.
 #[derive(Default)]
@@ -591,6 +606,9 @@ mod tests {
     fn a_declared_provider_entry_overrides_endpoint_and_env() {
         let voice = VoiceSettings {
             enabled: Some(true),
+            // Transcription is mode-agnostic: which gesture opened the
+            // capture is the deck's business, not the endpoint's.
+            mode: None,
             provider: Some("groq".to_string()),
             model: Some("whisper-large-v3".to_string()),
             language: Some("en".to_string()),
