@@ -172,7 +172,12 @@ pub fn decide(
     observed: Option<&str>,
     polls_used: u64,
 ) -> Option<WakeReason> {
-    if observed.is_some_and(|fingerprint| fingerprint != request.baseline) {
+    // The baseline is trimmed exactly as `probe_fingerprint` trims the
+    // observation: the depositing tool records its baseline from raw command
+    // output, and normalizing only one side let a trailing newline
+    // manufacture a `Changed` wake on the first probe of an unchanged
+    // condition — the phantom wake the trimming exists to prevent.
+    if observed.is_some_and(|fingerprint| fingerprint != request.baseline.trim()) {
         return Some(WakeReason::Changed);
     }
     if polls_used >= request.max_polls() {
@@ -273,6 +278,28 @@ mod tests {
         );
         // A change on the final poll still reports Changed, not a timeout.
         assert_eq!(decide(&req, Some("settled"), 40), Some(WakeReason::Changed));
+    }
+
+    /// The other half of the trimming rule: the BASELINE is raw command
+    /// output recorded by the depositing tool, so it can carry the trailing
+    /// newline the fingerprint has already shed. Normalizing only the
+    /// observation side made the very first probe of an unchanged condition
+    /// wake the turn with a phantom `Changed`. Fails on the one-sided
+    /// comparison.
+    #[test]
+    fn a_trailing_newline_baseline_cannot_manufacture_a_wake() {
+        let mut req = request(15, 600);
+        req.baseline = "pending\n".into();
+        let observed = probe_fingerprint(&ToolOutput::Ok {
+            content: "pending\n".into(),
+            data: None,
+        });
+        assert_eq!(
+            decide(&req, observed.as_deref(), 1),
+            None,
+            "an unchanged condition must keep waiting whatever the baseline's \
+             trailing whitespace"
+        );
     }
 
     #[test]

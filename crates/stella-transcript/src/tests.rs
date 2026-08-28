@@ -30,6 +30,10 @@ mod file_kinds;
 // What the stylesheet promises a 390px screen.
 mod narrow;
 
+// Fold state, zoom presets, the cursor, and the fold controls both renderers
+// draw over them.
+mod folds;
+
 use crate::digest::{self, format_cost, format_duration, format_tokens};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::{Command, Cursor, FoldState, Zoom, apply};
@@ -675,135 +679,6 @@ fn a_first_line_that_merely_resembles_the_command_is_not_suppressed() {
     let call = bash("make test", &["make test failed", "…"], Status::Ok);
     let fold = digest::fold_output(&call.output, &call.header_object);
     assert!(!fold.echo_hidden, "a real output line was eaten");
-}
-
-// ------------------------------------------------------------------- folds
-
-#[test]
-fn collapsing_a_parent_preserves_child_fold_state() {
-    let run = run_with(vec![
-        step(bash("a", &["x"], Status::Ok), 0),
-        step(bash("b", &["y"], Status::Ok), 1),
-    ]);
-    let turn = NodeId::Turn(0);
-    let second = NodeId::Step { turn: 0, step: 1 };
-
-    let mut state = FoldState::new();
-    state.open(second);
-    state.close(turn);
-    assert!(!state.is_open(&run, turn));
-
-    state.open(turn);
-    assert!(
-        state.is_open(&run, second),
-        "collapsing the turn discarded the step's fold state"
-    );
-}
-
-#[test]
-fn the_output_fold_control_has_something_behind_it() {
-    // Nine lines: past `PREVIEW_LINES` but short of `TAIL_FOLD_THRESHOLD`, so
-    // this is the head-only fold. It used to be six, which was past the old
-    // three-line head — the same shape, restated against the shared preview
-    // budget the deck also uses now (#3644).
-    let out = output(&["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
-    let fold = digest::fold_output(&out, "cmd");
-    assert_eq!(fold.head.len(), digest::PREVIEW_LINES);
-    assert!(fold.tail.is_empty(), "a short fold keeps no tail");
-    assert_eq!(fold.hidden, 3);
-    assert_eq!(fold.more_label(), "▸ 3 more lines");
-}
-
-/// The rule `PREVIEW_LINES` exists to state: **however** an output folds,
-/// a reader sees the same number of lines of it.
-///
-/// Before this, the head-only fold and the head…tail fold showed different
-/// totals (three against five), and the Command Deck showed a third number
-/// again (six) from its own constant — so "how much of this tool's output do I
-/// get" depended on both which surface you opened and how long the output
-/// happened to be. `crates/stella-tui/src/render/tests/tool_output.rs` is the other half
-/// of this: the same assertion made against the deck's renderer.
-#[test]
-fn every_fold_shows_the_same_number_of_lines_whatever_its_shape() {
-    for total in 0..40usize {
-        let lines: Vec<String> = (0..total).map(|i| format!("line {i}")).collect();
-        let out = Output { lines, clipped: 0 };
-        let fold = digest::fold_output(&out, "cmd");
-        let shown = fold.head.len() + fold.tail.len();
-        assert_eq!(
-            shown,
-            total.min(digest::PREVIEW_LINES),
-            "a {total}-line output shows {shown} lines, not the shared preview budget"
-        );
-        assert_eq!(
-            fold.hidden,
-            total - shown,
-            "a {total}-line output must account for every line it does not show"
-        );
-    }
-}
-
-#[test]
-fn a_long_output_folds_head_and_tail_so_errors_at_the_end_stay_visible() {
-    let mut lines: Vec<String> = (0..30).map(|i| format!("line {i}")).collect();
-    lines.push("error: the thing failed".to_string());
-    let out = Output { lines, clipped: 0 };
-    let fold = digest::fold_output(&out, "cmd");
-    assert_eq!(fold.head.len(), digest::HEAD_LINES);
-    assert_eq!(fold.tail.len(), digest::TAIL_LINES);
-    assert!(fold.tail.last().unwrap().contains("failed"));
-}
-
-#[test]
-fn clipped_lines_are_counted_in_the_fold_control() {
-    let out = Output {
-        lines: vec!["a".to_string(), "b".to_string()],
-        clipped: 24,
-    };
-    let fold = digest::fold_output(&out, "cmd");
-    assert_eq!(fold.hidden, 24, "the transport's clip must be admitted");
-}
-
-#[test]
-fn zoom_cycles_through_the_three_presets() {
-    let mut state = FoldState::new();
-    assert_eq!(state.zoom(), Zoom::Steps);
-    state.cycle_zoom();
-    assert_eq!(state.zoom(), Zoom::Everything);
-    state.cycle_zoom();
-    assert_eq!(state.zoom(), Zoom::Turns);
-    state.cycle_zoom();
-    assert_eq!(state.zoom(), Zoom::Steps);
-}
-
-#[test]
-fn the_cursor_walks_steps_and_saturates_at_the_ends() {
-    let run = run_with(vec![
-        step(bash("a", &[], Status::Ok), 0),
-        step(bash("b", &[], Status::Ok), 1),
-    ]);
-    let cursor = Cursor::default();
-    assert_eq!(cursor.next(&run).step, 1);
-    assert_eq!(cursor.next(&run).next(&run).step, 1, "wrapped past the end");
-    assert_eq!(cursor.prev(&run).step, 0, "wrapped past the start");
-}
-
-#[test]
-fn copy_returns_the_invocation_rather_than_reaching_a_clipboard() {
-    let run = run_with(vec![step(bash("cargo test", &[], Status::Ok), 0)]);
-    let mut state = FoldState::new();
-    let mut cursor = Cursor::default();
-    let copied = apply(&run, &mut state, &mut cursor, Command::CopyInvocation);
-    assert_eq!(copied.as_deref(), Some("cargo test"));
-}
-
-#[test]
-fn keys_bind_to_the_documented_commands() {
-    assert_eq!(Command::from_key("j"), Some(Command::NextStep));
-    assert_eq!(Command::from_key("z"), Some(Command::CycleZoom));
-    assert_eq!(Command::from_key("e"), Some(Command::ExpandOutputs));
-    assert_eq!(Command::from_key("c"), Some(Command::CopyInvocation));
-    assert_eq!(Command::from_key("Q"), None);
 }
 
 // ------------------------------------------------------------------- words

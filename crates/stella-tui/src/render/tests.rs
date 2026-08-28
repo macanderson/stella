@@ -884,6 +884,41 @@ fn ctrl_o_reveals_provenance_and_the_budget_report() {
     assert!(expanded.contains("2 rejected"), "{expanded}");
 }
 
+/// A digest is wire text from an external context provider, and the
+/// provenance line shortens it to its first seven characters. That cut used
+/// to be a byte slice, which panics the render (and costs the whole session
+/// band, every frame, via the panel guard) the moment a provider emits a
+/// digest with a multi-byte character in reach of the cut — hostile-but-legal
+/// data the reader cannot dismiss.
+#[test]
+fn a_multibyte_digest_shortens_instead_of_panicking_the_render() {
+    let entry = TranscriptEntry::ContextRecall {
+        frames: vec![crate::model::RecalledFrameRow {
+            kind: "memory".into(),
+            label: "prefer rg over grep".into(),
+            uri: None,
+            provider: "workspace-memory".into(),
+            source: "stella-context".into(),
+            method: None,
+            id: None,
+            // The `é` starts at byte 6 of the hex part, so a 7-byte cut
+            // lands mid-character.
+            digest: Some("sha256:9f2c1aé8b".into()),
+            tokens: 40,
+        }],
+        tokens: 40,
+        latency_ms: 5,
+        used_ann_index: None,
+        providers: vec![("workspace-memory".into(), 1)],
+        budget: None,
+    };
+    let expanded = recall_text(&entry, true, 100);
+    assert!(
+        expanded.contains("sha256:9f2c1aé…"),
+        "the digest must shorten to whole characters: {expanded}"
+    );
+}
+
 /// The collapsed row cites by human label; the raw id appears only once
 /// `ctrl+o` has been pressed.
 ///

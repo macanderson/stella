@@ -196,44 +196,37 @@ fn detect(
     }
 }
 
-/// The window a once-per-turn nudge reasons over: from the last user message
-/// that is NOT itself one. [`turn_start_index`] restarts at any user message
-/// — including a nudge — so the plain window would put the once-only marker
-/// outside its own scan. Measured on the prove-it gate's first field trial
-/// (run `gate-ab`, task pypi-server): three nudges in one turn, each re-armed
-/// by that reset, riding a refuted `verify_done` into the 900s ceiling — the
-/// exact spend the gate exists to stop.
-///
-/// **Every** engine-authored nudge prefix must be excluded here, not just the
-/// asking gate's own: two gates sharing a turn each append a user message, so
-/// a window that skipped only its own would let the other's message reopen it
-/// and reproduce that regression across gates rather than within one. The
-/// end-of-turn service assertion ([`super::live_services`], #2764) is the
-/// second such gate.
-pub(super) fn nudge_turn_start(messages: &[CompletionMessage]) -> usize {
-    messages
-        .iter()
-        .rposition(|m| m.role == MessageRole::User && !is_engine_nudge(&m.content))
-        .unwrap_or(0)
-}
-
 /// Whether a user message is one the engine wrote rather than one the user
 /// (or host) sent. Exactly the set of once-per-turn nudge prefixes; a new
 /// gate adds its own here in the same change that adds the gate.
-fn is_engine_nudge(content: &str) -> bool {
+///
+/// Read by [`turn_start_index`] alongside the marker table: a nudge is a
+/// user-role message the engine authored, so it bounds no window. It used to
+/// be excluded only from the nudge gates' own scans, so every nudge reset the
+/// loop-detection and confident-zero windows mid-turn — the prove-it ask on
+/// an edited-then-tested turn erased the edit from the tally, and the turn
+/// could then be aborted as a confident zero for the read-only test run the
+/// nudge itself requested. Measured once already on the prove-it gate's first
+/// field trial (run `gate-ab`, task pypi-server): three nudges in one turn,
+/// each re-armed by that reset, riding a refuted `verify_done` into the 900s
+/// ceiling.
+pub(super) fn is_engine_nudge(content: &str) -> bool {
     content.starts_with(PROVE_IT_PREFIX)
         || content.starts_with(super::live_services::SERVICES_PREFIX)
 }
 
 /// True when this turn did mutating work and the prove-it nudge has not
 /// been issued yet — the #2663 condition: work was declared, never proven,
-/// and not yet asked about. Windowed with [`nudge_turn_start`], so the
-/// nudge itself never reopens the window it closed.
+/// and not yet asked about. Windowed with [`turn_start_index`], which skips
+/// engine markers and both nudge prefixes, so neither gate's message reopens
+/// the window it closed — two gates share a turn, and a window that skipped
+/// only its own nudge would let the other's re-arm it (the `gate-ab`
+/// regression, across gates instead of within one).
 fn wants_prove_it_nudge(messages: &[CompletionMessage], read_only_tools: &HashSet<String>) -> bool {
     if turn_activity(messages, read_only_tools).artifact_calls == 0 {
         return false;
     }
-    let start = nudge_turn_start(messages);
+    let start = turn_start_index(messages);
     // One nudge per turn: asked and answered, whatever the answer.
     !messages[start..]
         .iter()
@@ -494,6 +487,35 @@ mod tests {
         assert_eq!(
             detect(&messages, &read_only(&["read_file"]), "looking into it"),
             Some(ConfidentZero { tool_calls: 1 })
+        );
+    }
+
+    /// A mutating turn answering the prove-it ask with a read-only proof run
+    /// must not be aborted as a confident zero: the nudge is an
+    /// engine-authored user message, and when it reset the turn window the
+    /// tally saw only the post-nudge read-only calls — one tool call, zero
+    /// artifacts — and an orientation-shaped closing line then aborted a
+    /// turn that did real, now-proven work. Fails on the pre-fix window.
+    #[test]
+    fn the_proof_run_after_a_nudge_is_not_a_confident_zero() {
+        let messages = vec![
+            CompletionMessage::user("fix the bug"),
+            assistant_call("edit_file", "c1"),
+            tool_result("c1", "ok"),
+            CompletionMessage::assistant("Done — the bug is fixed."),
+            CompletionMessage::user(super::PROVE_IT_NUDGE),
+            assistant_call("read_file", "c2"),
+            tool_result("c2", "test passed"),
+        ];
+        assert_eq!(
+            detect(
+                &messages,
+                &read_only(&["read_file"]),
+                "checking the test output"
+            ),
+            None,
+            "the pre-nudge edit is this turn's work; the proof run must not \
+             erase it from the tally"
         );
     }
 

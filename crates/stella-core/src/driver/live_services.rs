@@ -61,8 +61,9 @@ use crate::ports::LiveService;
 
 /// The nudge's own marker, prefix-detected on the transcript. Shares the
 /// once-per-turn window with the prove-it nudge — see
-/// [`super::confident_zero::nudge_turn_start`], which must skip both or each
-/// gate's message reopens the other's window (the `gate-ab` regression, #2663).
+/// [`super::confident_zero::is_engine_nudge`], which the shared turn window
+/// reads: it must skip both prefixes or each gate's message reopens the
+/// other's window (the `gate-ab` regression, #2663).
 pub(super) const SERVICES_PREFIX: &str = "Before ending this turn:";
 
 /// One line per still-running service, in the order the executor reported
@@ -139,11 +140,11 @@ pub(super) fn check(
 }
 
 /// Whether this turn already carries the assertion. Windowed with
-/// [`super::confident_zero::nudge_turn_start`] so the nudge's own message —
-/// a user message, which the plain turn window restarts at — cannot put the
+/// [`super::loop_evidence::turn_start_index`] — which skips engine markers
+/// and both nudge prefixes — so the nudge's own message cannot put the
 /// marker outside the scan that looks for it.
 fn already_asked(messages: &[CompletionMessage]) -> bool {
-    let start = super::confident_zero::nudge_turn_start(messages);
+    let start = super::loop_evidence::turn_start_index(messages);
     messages[start..]
         .iter()
         .any(|message| message.content.starts_with(SERVICES_PREFIX))

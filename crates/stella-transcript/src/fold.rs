@@ -152,7 +152,7 @@ impl FoldState {
             // last turn stays open, because a reader arriving at a finished run
             // is nearly always looking at what just happened.
             (Zoom::Turns, NodeId::Turn(t)) => is_last_turn(run, t),
-            (_, NodeId::Turn(t)) => is_last_turn(run, t) || run.turns.len() == 1,
+            (_, NodeId::Turn(_)) => true,
             (Zoom::Everything, _) => true,
             (Zoom::Turns, _) => false,
             // At `Steps`, a step digest is visible but its body is not, and
@@ -279,8 +279,10 @@ impl Cursor {
                 ..self
             };
         }
+        // `.get`, not indexing: `turn` starts under `self.turn`, and a cursor
+        // restored from a saved session can point past a shorter re-loaded run.
         for turn in (0..self.turn).rev() {
-            let steps = run.turns[turn].steps.len();
+            let steps = run.turns.get(turn).map_or(0, |t| t.steps.len());
             if steps > 0 {
                 return Self {
                     turn,

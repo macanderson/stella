@@ -69,6 +69,12 @@ pub struct OutputFold {
     pub tail: Vec<String>,
     /// How many lines the fold control hides.
     pub hidden: usize,
+    /// Lines the transport dropped before this crate ever saw them
+    /// ([`crate::model::Output::clipped`]). Counted inside [`Self::hidden`] so
+    /// a closed fold's control counts them too — and carried separately so an
+    /// *expanded* body, which shows everything the fold hid, can still say
+    /// these lines are missing rather than presenting itself as complete.
+    pub clipped: usize,
     /// Whether the first line was suppressed as an echo of the invocation.
     pub echo_hidden: bool,
 }
@@ -86,6 +92,18 @@ impl OutputFold {
         match self.hidden {
             1 => "▸ 1 more line".to_string(),
             n => format!("▸ {n} more lines"),
+        }
+    }
+
+    /// The marker an *expanded* body renders when the transport clipped lines
+    /// this crate never received — the clipped marker promised by
+    /// [`crate::model::Output::clipped`]. Empty-count callers should not call
+    /// this; gate on [`Self::clipped`].
+    #[must_use]
+    pub fn clip_label(&self) -> String {
+        match self.clipped {
+            1 => "… 1 line clipped in transport".to_string(),
+            n => format!("… {n} lines clipped in transport"),
         }
     }
 }
@@ -115,6 +133,7 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
             body,
             tail: Vec::new(),
             hidden: output.clipped,
+            clipped: output.clipped,
             echo_hidden,
         };
     }
@@ -126,6 +145,7 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
             head,
             tail,
             hidden: total - HEAD_LINES - TAIL_LINES + output.clipped,
+            clipped: output.clipped,
             body,
             echo_hidden,
         };
@@ -135,6 +155,7 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
         head: body[..PREVIEW_LINES].to_vec(),
         tail: Vec::new(),
         hidden: total - PREVIEW_LINES + output.clipped,
+        clipped: output.clipped,
         body,
         echo_hidden,
     }

@@ -602,10 +602,23 @@ fn recall_provenance(frame: &RecalledFrameRow) -> String {
 
 /// `sha256:9f2c1ab…` — enough to compare two frames by eye, short enough to
 /// share a row with the rest of the provenance chain.
+///
+/// Counted in `char`s, not bytes: the digest is wire text from an external
+/// context provider, and a byte cut through a multi-byte character panics on
+/// data this crate has no say over.
 fn short_digest(digest: &str) -> String {
     match digest.split_once(':') {
-        Some((algo, hex)) => format!("{algo}:{}…", &hex[..hex.len().min(7)]),
-        None => format!("{}…", &digest[..digest.len().min(14)]),
+        Some((algo, hex)) => format!("{algo}:{}…", prefix_chars(hex, 7)),
+        None => format!("{}…", prefix_chars(digest, 14)),
+    }
+}
+
+/// The first `cap` chars of `text`, whole — the char-boundary cut
+/// [`short_digest`] needs, as [`take_right`] is for the other end.
+fn prefix_chars(text: &str, cap: usize) -> &str {
+    match text.char_indices().nth(cap) {
+        Some((at, _)) => &text[..at],
+        None => text,
     }
 }
 

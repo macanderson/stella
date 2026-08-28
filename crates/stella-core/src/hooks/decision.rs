@@ -74,13 +74,16 @@ pub enum DecisionParse {
 
 /// Parse a hook's stdout for a decision document.
 ///
-/// The whole trimmed stdout is tried first; if that is not JSON, the last
-/// non-empty line is tried, so a hook that logs progress before printing
-/// its decision still works. Only a JSON **object carrying an `action`
-/// key** is treated as a decision attempt — anything else is
-/// [`DecisionParse::NoDecision`], which keeps a `cat`-style hook (whose
-/// stdout echoes the payload, itself a JSON object without `action`) on
-/// the legacy path.
+/// The whole trimmed stdout is tried first; if that is not JSON, every
+/// trailing block that opens on a `{` is tried, latest first, so a hook
+/// that logs progress before printing its decision still works — including
+/// a decision pretty-printed across several lines, which the previous
+/// last-line-only fallback read as `}` and silently dropped, failing the
+/// chain OPEN on exactly the hook output the doc above promises to accept.
+/// Only a JSON **object carrying an `action` key** is treated as a decision
+/// attempt — anything else is [`DecisionParse::NoDecision`], which keeps a
+/// `cat`-style hook (whose stdout echoes the payload, itself a JSON object
+/// without `action`) on the legacy path.
 pub fn parse_decision(stdout: &str) -> DecisionParse {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
@@ -88,12 +91,20 @@ pub fn parse_decision(stdout: &str) -> DecisionParse {
     }
     let candidate = match serde_json::from_str::<Value>(trimmed) {
         Ok(value) => Some(value),
-        Err(_) => trimmed
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .and_then(|line| serde_json::from_str::<Value>(line).ok()),
+        Err(_) => {
+            // The document is the trailing block. Trying each `{`-opening
+            // suffix latest-first means a log line that is itself JSON (a
+            // structured logger) cannot shadow the decision behind it: the
+            // suffix from that log line is two documents and fails to
+            // parse, while the decision's own opening line succeeds.
+            let lines: Vec<&str> = trimmed.lines().collect();
+            lines
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, line)| line.trim_start().starts_with('{'))
+                .find_map(|(from, _)| serde_json::from_str::<Value>(&lines[from..].join("\n")).ok())
+        }
     };
     let Some(value) = candidate else {
         return DecisionParse::NoDecision;
@@ -605,6 +616,31 @@ mod tests {
         let parsed = parse_decision("checking policy…\n{\"action\":\"deny\",\"reason\":\"no\"}");
         assert_eq!(
             parsed,
+            DecisionParse::Decision(HookDecision::Deny("no".into()))
+        );
+    }
+
+    /// A decision pretty-printed across several lines after a log line is
+    /// still a decision. The last-line-only fallback saw `}`, parsed
+    /// nothing, and returned `NoDecision` — the chain then failed OPEN on a
+    /// deny the hook actually printed, contradicting both the documented
+    /// "logs progress before printing its decision still works" contract
+    /// and the fail-closed `Malformed` design. Fails on that fallback.
+    #[test]
+    fn a_pretty_printed_decision_after_a_log_line_still_parses() {
+        let parsed =
+            parse_decision("checking policy…\n{\n  \"action\": \"deny\",\n  \"reason\": \"no\"\n}");
+        assert_eq!(
+            parsed,
+            DecisionParse::Decision(HookDecision::Deny("no".into()))
+        );
+        // A structured-logging line that is itself JSON cannot shadow the
+        // decision printed after it.
+        let shadowed = parse_decision(
+            "{\"level\":\"info\",\"msg\":\"checking\"}\n{\n  \"action\": \"deny\",\n  \"reason\": \"no\"\n}",
+        );
+        assert_eq!(
+            shadowed,
             DecisionParse::Decision(HookDecision::Deny("no".into()))
         );
     }

@@ -90,6 +90,15 @@ pub(crate) fn push_if_due(state: &mut crate::step::TurnState, now: std::time::In
     }
 }
 
+/// The notice's marker prefix — one entry of
+/// [`crate::engine_markers::ENGINE_MARKERS`]. The notice rides the wire as a
+/// `User`-role message, and an unmarked one is a genuine user turn to every
+/// marker consumer: `turn_start_index` reset the loop-detection and
+/// confident-zero windows on it — erasing a stuck loop's accumulated evidence
+/// exactly when a deadline-bounded run needs the detector — and receipts
+/// attributed the engine's own text to the person.
+pub(crate) const DEADLINE_MARKER_PREFIX: &str = "[time remaining";
+
 /// What the model is actually told. Names the remaining time and the change
 /// of strategy it implies — a bare number invites the model to note it and
 /// carry on doing what it was doing, which is the behaviour this exists to
@@ -107,7 +116,10 @@ fn notice_text(remaining_ms: u64, threshold_ms: u64) -> String {
         "Budget the rest of your work accordingly: prefer finishing what you \
          have started over widening the search."
     };
-    format!("[time] About {minutes} minute(s) of wall clock remain for this task. {advice}")
+    format!(
+        "{DEADLINE_MARKER_PREFIX}] About {minutes} minute(s) of wall clock remain for this \
+         task. {advice}"
+    )
 }
 
 #[cfg(test)]
@@ -121,6 +133,22 @@ mod tests {
         let mut notices = DeadlineNotices::default();
         let text = notices.due(590_000).expect("10-minute threshold must fire");
         assert!(text.contains("10 minute"), "{text}");
+    }
+
+    /// The notice is engine text riding a `User`-role message, so it must
+    /// open with a marker the engine's table knows — an unmarked notice is a
+    /// genuine user turn to `turn_start_index`, which then resets the
+    /// loop-detection and confident-zero windows mid-turn (#2837's class).
+    #[test]
+    fn the_notice_opens_with_a_registered_engine_marker() {
+        let mut notices = DeadlineNotices::default();
+        let text = notices.due(590_000).expect("10-minute threshold must fire");
+        assert!(
+            crate::engine_markers::ENGINE_MARKERS
+                .iter()
+                .any(|marker| text.starts_with(marker)),
+            "the deadline notice carries no registered engine marker: {text}"
+        );
     }
 
     /// Byte-stability (AGENTS.md #7): a turn that keeps ticking inside one

@@ -70,7 +70,12 @@ pub fn epoch_seconds(rfc3339: &str) -> Option<i64> {
 
     let offset = offset_seconds(text.get(19..).unwrap_or(""))?;
     let days = days_from_civil(year, month, day);
-    Some(days * SECS_PER_DAY + hour * SECS_PER_HOUR + minute * SECS_PER_MINUTE + second - offset)
+    // The date/time fields are range-checked above, so their sum is small;
+    // the offset is the one unbounded term, and a checked subtraction is
+    // what keeps an absurd hand-written offset a parse refusal instead of a
+    // debug-build panic or a wrapped (far-past) timestamp.
+    (days * SECS_PER_DAY + hour * SECS_PER_HOUR + minute * SECS_PER_MINUTE + second)
+        .checked_sub(offset)
 }
 
 /// The timezone offset in seconds from the tail after the seconds field, which
@@ -95,7 +100,12 @@ fn offset_seconds(tail: &str) -> Option<i64> {
     let (hh, mm) = hhmm.split_once(':')?;
     let hours: i64 = hh.parse().ok()?;
     let minutes: i64 = mm.parse().ok()?;
-    Some(sign * (hours * SECS_PER_HOUR + minutes * SECS_PER_MINUTE))
+    // Checked: the digit counts are unbounded wire text off a record file,
+    // and `922337203685477:00` must be a refusal, not an overflow.
+    let magnitude = hours
+        .checked_mul(SECS_PER_HOUR)?
+        .checked_add(minutes.checked_mul(SECS_PER_MINUTE)?)?;
+    Some(sign * magnitude)
 }
 
 /// Days from the Unix epoch for a proleptic-Gregorian civil date — Howard
@@ -137,13 +147,20 @@ pub fn duration_seconds(iso: &str) -> Option<i64> {
         let value: i64 = digits.parse().ok()?;
         digits.clear();
         saw_any = true;
-        total += match ch {
-            'Y' | 'y' => value * DAYS_PER_YEAR * SECS_PER_DAY,
-            'M' | 'm' => value * DAYS_PER_MONTH * SECS_PER_DAY,
-            'W' | 'w' => value * 7 * SECS_PER_DAY,
-            'D' | 'd' => value * SECS_PER_DAY,
+        // Checked throughout: the value is unbounded text off a record file,
+        // and `P9000000000000000Y` must parse as no-duration — which the
+        // callers already resolve in the safe direction (a sweep fires, a
+        // decline stays permanent) — not overflow. A debug build panics on
+        // the wrapped multiply; a release build would report a far-future
+        // TTL as already expired.
+        let scaled = match ch {
+            'Y' | 'y' => value.checked_mul(DAYS_PER_YEAR * SECS_PER_DAY),
+            'M' | 'm' => value.checked_mul(DAYS_PER_MONTH * SECS_PER_DAY),
+            'W' | 'w' => value.checked_mul(7 * SECS_PER_DAY),
+            'D' | 'd' => value.checked_mul(SECS_PER_DAY),
             _ => return None,
-        };
+        }?;
+        total = total.checked_add(scaled)?;
     }
     if !digits.is_empty() {
         // A trailing number with no unit is not a duration.
@@ -159,12 +176,13 @@ pub fn duration_seconds(iso: &str) -> Option<i64> {
             let value: i64 = digits.parse().ok()?;
             digits.clear();
             saw_any = true;
-            total += match ch {
-                'H' | 'h' => value * SECS_PER_HOUR,
-                'M' | 'm' => value * SECS_PER_MINUTE,
-                'S' | 's' => value,
+            let scaled = match ch {
+                'H' | 'h' => value.checked_mul(SECS_PER_HOUR),
+                'M' | 'm' => value.checked_mul(SECS_PER_MINUTE),
+                'S' | 's' => Some(value),
                 _ => return None,
-            };
+            }?;
+            total = total.checked_add(scaled)?;
         }
         if !digits.is_empty() {
             return None;
@@ -301,6 +319,21 @@ mod tests {
         ] {
             assert_eq!(epoch_seconds(bad), None, "{bad} must not parse");
         }
+    }
+
+    /// Both values are unbounded text off an on-disk record file, so an
+    /// absurd magnitude must be a parse refusal — the direction the callers
+    /// already resolve safely — never wrapped arithmetic. Panics on the
+    /// unchecked multiplications in a debug build; in release the wrap
+    /// reported a far-future TTL as already expired.
+    #[test]
+    fn an_absurd_duration_or_offset_is_refused_not_overflowed() {
+        assert_eq!(duration_seconds("P9000000000000000Y"), None);
+        assert_eq!(duration_seconds("PT9000000000000000000H"), None);
+        assert_eq!(
+            epoch_seconds("2026-07-20T00:00:00+9223372036854775:00"),
+            None
+        );
     }
 
     #[test]

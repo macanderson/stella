@@ -124,8 +124,22 @@ impl<'a> Engine<'a> {
             // above because a turn that is aborting has nothing to be asked
             // about. The executor answers what is still up — the engine holds
             // no process table and must not (AGENTS.md #1) — and the nudge
-            // only names it: nothing here stops anything (#2666).
-            if live_services::check(messages, &self.tools.live_services(), &result.text, events) {
+            // only names it: nothing here stops anything (#2666). Not on the
+            // out-of-time path: the continuation was declined because the
+            // wall clock cannot fund another model step, and the nudge is
+            // one. The declaration the assertion appends is the elided form
+            // of a truncated partial — `retained_partial`'s contract governs
+            // everything history keeps of this step's text, and the raw
+            // cut-off narration used to ride into history here, bypassing
+            // both the elision and the truncation notice below.
+            let declaration = if result.finish_reason == Some(FinishReason::Length) {
+                truncation::retained_partial(&result.text)
+            } else {
+                result.text.clone()
+            };
+            if !out_of_time
+                && live_services::check(messages, &self.tools.live_services(), &declaration, events)
+            {
                 return None;
             }
             // A non-empty answer truncated with the continuation allowance
