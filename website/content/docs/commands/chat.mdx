@@ -248,6 +248,14 @@ Open a tab or run an action:
     Switch and persist the colour theme (`stella-dark`, `stella-light`). With no
     argument, show the current theme.
   </OptionCard>
+  <OptionCard name="/voice">
+    Turn dictation on and pick the spacebar gesture: `/voice hold` (hold Space
+    through a warmup, release to stop), `/voice tap` (tap Space on an empty
+    prompt to start, tap again to stop), `/voice off`. Persists, and takes
+    effect in this session. With no argument, show what is set. Pick `tap` if
+    holding Space never starts a recording — hold needs either a terminal that
+    reports key releases or OS key repeat, and tap needs neither.
+  </OptionCard>
   <OptionCard name="/init">
     Index the workspace: domain taxonomy plus the code graph.
   </OptionCard>

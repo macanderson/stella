@@ -875,7 +875,10 @@ impl WorkspaceModel {
             // A dictation's text is keyboard input by another route — it
             // lands in the composer (`ingest_inbound`), never the record.
             | Inbound::VoiceTranscript { .. }
-            | Inbound::VoiceFailed { .. } => {}
+            | Inbound::VoiceFailed { .. }
+            // Switching the dictation gesture is settings, not speech; the
+            // `/voice` reply itself is the transcript row a person reads.
+            | Inbound::VoiceConfig { .. } => {}
         }
     }
 

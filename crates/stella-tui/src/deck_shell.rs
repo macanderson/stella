@@ -113,6 +113,40 @@ pub struct DeckOptions {
     /// off by default — ADR 0020). The caller reads settings for the reason
     /// it resolves [`Self::mid_turn_prompt`]: this crate does not read config.
     pub voice_enabled: bool,
+    /// Which dictation gesture is bound to Space (`voice.mode` in settings,
+    /// `hold` by default). Read by the caller for the same reason as
+    /// [`Self::voice_enabled`]; `/voice` re-sends it mid-session as
+    /// [`Inbound::VoiceConfig`].
+    pub voice_mode: crate::voice::VoiceMode,
+}
+
+/// Carry out a [`crate::voice::VoiceCmd`]: the composer edit it asks for, and
+/// the input it sends the driver.
+///
+/// Three arms fold voice events — a reported release, a swallowed space, and
+/// the tick clock — and every one of them can now open or close a capture, so
+/// the retraction and the send live here rather than being written out three
+/// times and drifting apart.
+fn apply_voice_cmd(
+    cmd: crate::voice::VoiceCmd,
+    ui: &mut DeckUi,
+    submissions: &UnboundedSender<WorkspaceInput>,
+) {
+    match cmd {
+        crate::voice::VoiceCmd::Start { retract } => {
+            for _ in 0..retract {
+                ui.composer.backspace();
+            }
+            let _ = submissions.send(WorkspaceInput::VoiceStart);
+        }
+        crate::voice::VoiceCmd::Stop => {
+            let _ = submissions.send(WorkspaceInput::VoiceStop);
+        }
+        crate::voice::VoiceCmd::Cancel => {
+            let _ = submissions.send(WorkspaceInput::VoiceCancel);
+        }
+        crate::voice::VoiceCmd::None => {}
+    }
 }
 
 fn now_ms() -> u64 {
@@ -608,6 +642,7 @@ pub async fn run_deck(
     // Push-to-talk: enablement is the caller's (settings), release reporting
     // is the terminal's (the same push as the Enter semantics above).
     ui.voice.enabled = opts.voice_enabled;
+    ui.voice.mode = opts.voice_mode;
     ui.voice.release_events = guard.kitty();
     let mut resources = ResourceMonitor::new();
 
@@ -738,16 +773,19 @@ pub async fn run_deck(
                     // fires and the repeat-gap fallback in the tick arm ends
                     // the hold instead (`crate::voice`).
                     Some(Event::Key(key)) if key.kind == KeyEventKind::Release => {
-                        if is_plain_space(key)
-                            && ui.voice.space_release(model.now_ms) == crate::voice::VoiceCmd::Stop
-                        {
-                            let _ = submissions.send(WorkspaceInput::VoiceStop);
+                        if is_plain_space(key) {
+                            let cmd = ui.voice.space_release(model.now_ms);
+                            apply_voice_cmd(cmd, &mut ui, &submissions);
                         }
                     }
-                    // While recording, the held space's repeats are "still
-                    // held", never characters — and Esc abandons the capture.
+                    // While recording, a space is never a character. In hold
+                    // mode it is a repeat saying the key is still down; in
+                    // tap mode it is the second tap, which ends the capture
+                    // (`crate::voice::VoiceUi::swallowed_space`). Esc
+                    // abandons the capture in both.
                     Some(Event::Key(key)) if ui.voice.swallows_space() && is_plain_space(key) => {
-                        ui.voice.space_repeat(model.now_ms);
+                        let cmd = ui.voice.swallowed_space(model.now_ms);
+                        apply_voice_cmd(cmd, &mut ui, &submissions);
                     }
                     Some(Event::Key(key))
                         if ui.voice.esc_cancels()
@@ -842,7 +880,13 @@ pub async fn run_deck(
                         if space
                             && space_landed_in_composer(&ui.composer, before_len, before_cursor)
                         {
-                            ui.voice.typed_space(model.now_ms);
+                            // Whether that space met an *empty* composer is
+                            // what arms tap mode, and only dispatch knows it
+                            // — hence the snapshot above rather than a guess
+                            // inside the machine.
+                            let cmd =
+                                ui.voice.typed_space(model.now_ms, before_len == 0);
+                            apply_voice_cmd(cmd, &mut ui, &submissions);
                         } else if !space {
                             ui.voice.interrupt();
                         }
@@ -922,18 +966,8 @@ pub async fn run_deck(
                 // here — retracting exactly the spaces the arming run typed —
                 // and, without release reporting, a quiet repeat stream ends
                 // the recording here too.
-                match ui.voice.tick(model.now_ms) {
-                    crate::voice::VoiceCmd::Start { retract } => {
-                        for _ in 0..retract {
-                            ui.composer.backspace();
-                        }
-                        let _ = submissions.send(WorkspaceInput::VoiceStart);
-                    }
-                    crate::voice::VoiceCmd::Stop => {
-                        let _ = submissions.send(WorkspaceInput::VoiceStop);
-                    }
-                    crate::voice::VoiceCmd::Cancel | crate::voice::VoiceCmd::None => {}
-                }
+                let cmd = ui.voice.tick(model.now_ms);
+                apply_voice_cmd(cmd, &mut ui, &submissions);
             }
         }
     }

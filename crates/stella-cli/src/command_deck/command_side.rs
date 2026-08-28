@@ -19,6 +19,7 @@ use super::*;
 // `/models` parsing moved next to the rest of the slash vocabulary in #4775;
 // this module is the queue-free half of the same vocabulary and still asks it.
 use super::slash_commands::{ModelsCommand, parse_models_command};
+use super::voice_cmd::{VoiceCommand, parse_voice_command};
 
 /// Try `trimmed` as a queue-free command. `true` = recognized and handled
 /// (possibly by spawning a task that reports later); `false` = not one —
@@ -46,6 +47,7 @@ pub(super) fn run(
         }
         "/info" | "/models" => say(Config::available_models_plain(None)),
         "/theme" => say(theme_cmd::current_summary(cfg)),
+        "/voice" => say(voice_cmd::current_summary(cfg)),
         // Export THIS session's telemetry to a timestamped ZIP of raw JSON
         // dumps + a self-contained HTML dashboard, in the background: the
         // in-flight turn is not paused, not queued behind, not interrupted.
@@ -72,6 +74,31 @@ pub(super) fn run(
                         Ok(msg) | Err(msg) => say(msg),
                     },
                     theme_cmd::ThemeCommand::Usage(arg) => say(theme_cmd::usage(&arg)),
+                }
+                return true;
+            }
+            // `/voice hold|tap|off` — persist, then tell the deck, which
+            // holds the gesture on its own `VoiceUi`. The live update rides
+            // only on a successful write, so a session never ends up
+            // dictating in a mode that was not saved.
+            if let Some(command) = parse_voice_command(trimmed) {
+                let written = match command {
+                    VoiceCommand::On(mode) => {
+                        voice_cmd::set_mode(mode).map(|msg| (msg, true, mode))
+                    }
+                    VoiceCommand::Off => voice_cmd::set_off()
+                        .map(|msg| (msg, false, voice_cmd::persisted(&cfg.workspace_root).1)),
+                    VoiceCommand::Usage(arg) => {
+                        say(voice_cmd::usage(&arg));
+                        return true;
+                    }
+                };
+                match written {
+                    Ok((msg, enabled, mode)) => {
+                        let _ = in_tx.send(Inbound::VoiceConfig { enabled, mode });
+                        say(msg);
+                    }
+                    Err(msg) => say(msg),
                 }
                 return true;
             }

@@ -64,6 +64,11 @@ pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
         SlashDomain::Config,
     ),
     (
+        "/voice",
+        "dictation on/off and which spacebar gesture (hold · tap; persists)",
+        SlashDomain::Config,
+    ),
+    (
         "/init",
         "index the workspace: domains + code graph",
         SlashDomain::Code,
@@ -184,7 +189,7 @@ pub(super) const SIDEBAND: &[&str] = &[
     // `/info`'s pre-rename name, still routed (#4617) — a queue-free
     // command must not become queued just because the reader typed the
     // name they learned.
-    "/models", "/theme", "/export", "/donate",
+    "/models", "/theme", "/voice", "/export", "/donate",
 ];
 
 /// Whether `head` (the first `/`-token of a submission) is queue-free.

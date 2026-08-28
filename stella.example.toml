@@ -477,6 +477,13 @@ theme = "stella-dark"
 
 [voice]
 enabled = false
+# mode = "hold"              # hold | tap. `hold` holds Space through a warmup
+#                            # and stops on release; `tap` taps Space on an
+#                            # empty prompt to start and taps again to stop.
+#                            # Pick tap when holding Space never starts a
+#                            # recording: hold needs either key-release
+#                            # reporting or OS key repeat, and tap needs
+#                            # neither. `/voice tap` writes this for you.
 # provider = "openai"        # or "groq", or any [providers] entry with a
 #                            # compatible base_url (a local Whisper server)
 # model = "whisper-1"
