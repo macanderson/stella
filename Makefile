@@ -39,7 +39,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity left-behind \
-                    role-names stat-portability module-reachability typed-errors \
+                    role-names stat-portability module-reachability core-reachability \
+                    typed-errors \
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
                     bench-suites wire-paths \
@@ -758,6 +759,18 @@ module-reachability: ## Assert every .rs under a crate's src/ is reachable from 
 .PHONY: module-reachability-test
 module-reachability-test: ## Test the module-reachability walker (hermetic; not part of `gate`)
 	./scripts/test-module-reachability.sh
+
+.PHONY: core-reachability
+core-reachability: ## Assert a stella-core module is reachable from the engine's step path (#5115)
+	@python3 ./scripts/check-core-reachability.py
+
+.PHONY: core-reachability-update
+core-reachability-update: ## Shrink the core-reachability baseline after an eviction (refuses to grow)
+	@python3 ./scripts/check-core-reachability.py --update
+
+.PHONY: core-reachability-test
+core-reachability-test: ## Test the core-reachability walker (hermetic; not part of `gate`)
+	./scripts/test-core-reachability.sh
 
 .PHONY: god-files
 god-files: ## Assert AGENTS.md and the crate READMEs name the baselined god files (#1435)

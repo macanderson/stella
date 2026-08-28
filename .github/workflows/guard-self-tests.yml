@@ -205,6 +205,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-module-reachability.sh
 
+      - name: the core-reachability walker and its ratchet direction
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-core-reachability.sh
+
       - name: the session-scratch boundary
         if: ${{ !cancelled() }}
         run: ./scripts/test-no-scratch.sh

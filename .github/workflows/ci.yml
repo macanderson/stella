@@ -311,6 +311,14 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-module-reachability.py
 
+      # Reachability from the crate root is not reachability from the engine:
+      # `search.rs`, `records/` and the rest are all reachable from `lib.rs`,
+      # which is how a 15k-LOC subsystem lands in stella-core behind a
+      # `pub mod` line. This walks the step path instead, down-only (#5115).
+      - name: a stella-core module is reachable from the step path
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-core-reachability.py
+
       # Also toolchain-free. AGENTS.md requires that anything noticed and not
       # fixed becomes an issue written as a handoff; nothing checked it, and an
       # unenforced standard reads as one the codebase is meeting. The decidable

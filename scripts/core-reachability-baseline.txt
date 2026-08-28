@@ -1,0 +1,21 @@
+# Modules in `stella-core` that the engine's step path does not reach.
+#
+# A DOWN-ONLY ratchet (#5115). This records the debt that predates the guard;
+# it may never gain an entry, and `--update` refuses to add one. Each eviction
+# under #5113 deletes a line here. It is meant to reach empty.
+#
+# Regenerate after an eviction:  ./scripts/check-core-reachability.py --update
+event_stream
+extensions
+goal
+ingest
+mcp_usage
+plan_graph
+redact
+repair
+scoreboard
+search
+subagent
+tool_foundry
+turn_slots
+workspace_scope
