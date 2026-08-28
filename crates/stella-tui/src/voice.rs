@@ -64,7 +64,7 @@ pub const MAX_HOLD_MS: u64 = 120_000;
 /// [`LISTENING_GAP_MS`], [`MAX_HOLD_MS`]. [`VoicePhase::Transcribing`] had
 /// none, and it is the one phase whose exit belongs to *another crate*: only
 /// `Inbound::VoiceTranscript` / `VoiceFailed` clear it. `cancel` refuses
-/// (it acts only while [`Voice::recording`]) and a fresh space press is a
+/// (it acts only while [`VoiceUi::recording`]) and a fresh space press is a
 /// no-op, so an answer that never arrives disabled dictation for the rest of
 /// the session, showing `◌ transcribing…` forever.
 ///

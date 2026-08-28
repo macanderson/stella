@@ -489,7 +489,7 @@ pub struct StoreQuarantine {
 ///    workspace is usable again even if everything below fails.
 /// 2. Copy what is readable into a new `store.db.salvaged-<epoch>`, by
 ///    `VACUUM INTO` where SQLite can walk the file end to end and by a
-///    per-table scan where it cannot ([`salvage`]). Salvage is recorded in
+///    per-table scan where it cannot (`salvage::salvage`). Salvage is recorded in
 ///    [`StoreQuarantine::salvage_error`] rather than failing the repair. The
 ///    read is immutable, so the quarantined evidence is never modified by the
 ///    attempt to read it.

@@ -189,7 +189,7 @@ fn ordinal_width(steps: &[crate::plan::PlanStep]) -> usize {
 /// One step's own row: selection marker, state glyph, ordinal, title, and the
 /// trailing `(note)` / `(owner)` tag.
 ///
-/// `num_w` is the ordinal column's width, from [`ordinal_width`] over the whole
+/// `num_w` is the ordinal column's width, from `ordinal_width` over the whole
 /// plan so the titles line up. It is a layout parameter, not plan state — the
 /// row stays goldenable one state at a time, which is what the note below is
 /// about. The separator survives whatever is passed: the field is never
