@@ -370,7 +370,11 @@ mod tests {
     fn write_learned_skill(dir: &Path, name: &str, lesson: &str, traces: &[u64]) {
         let candidate = stella_core::skills::SkillCandidate {
             name: name.to_string(),
-            description: format!("Learned from {} observations.", traces.len()),
+            // What `mine_skill_candidates` now writes: the lesson's own
+            // words, not the occurrence count (#5335). The count moved into
+            // the rendered `## Evidence` section, and this fixture claims to
+            // be the bytes the learner puts on disk — so it has to follow.
+            description: lesson.to_string(),
             domains: vec!["testing".into()],
             body: lesson.to_string(),
             occurrences: traces.len(),
