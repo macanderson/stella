@@ -340,9 +340,20 @@ pub(crate) enum Command {
 
         /// Enable an adopted tool — the one approval in the protocol a
         /// machine never grants itself. Refused if the tool's bytes changed
-        /// since its witness ran.
+        /// since its witness ran, and refused with no terminal attached
+        /// unless --yes says a human already read the declaration.
         #[arg(long, value_name = "NAME", conflicts_with_all = ["validate", "adopt"])]
         enable: Option<String>,
+
+        /// Accept an --enable without being asked interactively.
+        ///
+        /// The escape hatch the human-presence check needs to be usable at
+        /// all: a provisioning script has no terminal, and refusing it
+        /// outright would be a rule nobody could follow. A flag rather than an
+        /// environment variable, so granting the tool is a line somebody wrote
+        /// down and a reviewer can find (#5332).
+        #[arg(long, requires = "enable")]
+        yes: bool,
 
         /// Stop offering an adopted tool, keeping its proof on file
         #[arg(

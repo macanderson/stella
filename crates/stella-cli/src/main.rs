@@ -662,6 +662,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             validate,
             adopt,
             enable,
+            yes,
             disable,
             foundry,
         }) => {
@@ -677,10 +678,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 _ if enable.is_some() => tool_foundry::adopt::run_tools_enable(
                     enable.as_deref().unwrap_or_default(),
                     true,
+                    *yes,
                 ),
+                // Disabling withdraws authority rather than granting it, so it
+                // asks nobody: the direction that needs a human is the one that
+                // lets a model call new code (#5332).
                 _ if disable.is_some() => tool_foundry::adopt::run_tools_enable(
                     disable.as_deref().unwrap_or_default(),
                     false,
+                    true,
                 ),
                 // `--validate` (dir optional) is the strict pre-flight path;
                 // a plain `stella tools` stays the lenient listing.
