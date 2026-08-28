@@ -88,3 +88,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/main-canary.sh --announce
+
+      # The other half of the same question, and the one nothing asked: is
+      # there a commit on `main` that nothing VERIFIED — as distinct from one
+      # a check said no about (#5027)?
+      #
+      # This canary only files when its own job runs and fails, so a
+      # `startup_failure`, a cancellation, or a run that was never created
+      # produces no issue at all. On 2026-08-26 four commits landed during a
+      # runner outage and `main` sat unchecked for 85 minutes with every
+      # surface reading green.
+      #
+      # `!cancelled()` so it still reports when the reconciliation above
+      # failed: a red `main` that ALSO carries unverified commits is worse
+      # than either, and the reader should see both. It fails open at every
+      # unknown, so it cannot itself become the thing blocking a repair.
+      - name: Every recent commit on main has a completed ci run
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/check-main-verified.sh

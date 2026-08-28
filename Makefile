@@ -815,6 +815,14 @@ deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handl
 # the point a merge is still a decision (#3917). Not a gate step for the same
 # reason the canary is not — it asks the issue tracker a question, and `gate`
 # is hermetic and offline by contract.
+.PHONY: main-verified
+main-verified: ## Ask whether every recent commit on main has a completed ci run (#5027)
+	@./scripts/check-main-verified.sh
+
+.PHONY: main-verified-test
+main-verified-test: ## Test the unverified-main detector (hermetic; not part of `gate`)
+	./scripts/test-main-verified.sh
+
 .PHONY: main-red-hold
 main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)
 	@./scripts/check-main-red-hold.sh
