@@ -207,6 +207,20 @@ silent failure costs here). `make main-canary` runs the same check locally
 without filing anything; `scripts/main-canary.sh`'s header carries the full
 argument, including why it deliberately does not open a fix PR (#3332).
 
+It answers "is `main` **known broken**". A second step in the same workflow —
+`scripts/check-main-verified.sh` (`make main-verified`) — answers the question
+nothing else here asks: is there a commit on `main` that nothing **verified**?
+Those are different states, and every other mechanism reads the second as
+green. The canary files only when its own job runs and fails, so a
+`startup_failure`, a cancellation, or a run that was never created produces no
+issue; `main-red-hold.yml` passes when no issue is open; and `gh run list`
+shows no row at all for a run that never existed. On 2026-08-26 an Actions
+outage landed four commits with no completed `ci` run between them and `main`
+sat unchecked for 85 minutes with every surface reading green (#5027). A
+failing run is a **verified** commit and stays the canary's business; this
+reports only the absence of an answer, and fails open at every unknown so it
+can never be the thing blocking a repair.
+
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`, asks the tracker whether a `main-red`

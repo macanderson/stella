@@ -209,6 +209,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-core-reachability.sh
 
+      - name: the unverified-main detector, and that it fails open
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-main-verified.sh
+
       - name: the session-scratch boundary
         if: ${{ !cancelled() }}
         run: ./scripts/test-no-scratch.sh
