@@ -231,13 +231,17 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
             + meta.chars().count();
         let desc_room = width.saturating_sub(used + 3);
         // A learned row spends its last column on **provenance** rather than
-        // on a description (SPEC 9.2). Nothing is lost: the description a
-        // mined skill carries is `Learned from N observations.`, which is the
-        // trace count already — said less precisely, and without the turn or
-        // the identity `r rename` has to keep. The real prose is in the body,
-        // one `ctrl+o` away. *This* column and not a right-aligned one: the
-        // right edge of an installed row is where per-skill economics land
-        // (#4337).
+        // on a description (SPEC 9.2), because provenance carries the turn and
+        // the identity `r rename` has to keep, and the description does not.
+        //
+        // That trade used to be free: the description a mined skill carried
+        // was `Learned from N observations.`, the trace count said less
+        // precisely. Since #5335 it is the lesson's own first sentence, so
+        // there is now a real thing on the other side of the choice — #5425
+        // is where whether this column should prefer it gets decided. The
+        // full prose is in the body either way, one `ctrl+o` away. *This*
+        // column and not a right-aligned one: the right edge of an installed
+        // row is where per-skill economics land (#4337).
         let tail = provenance(row).unwrap_or_else(|| row.description.clone());
         let desc = if desc_room >= 6 && !tail.is_empty() {
             format!("  {}", truncate(&tail, desc_room))
