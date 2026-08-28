@@ -241,10 +241,16 @@ non-interactively); personal records stay private across the transition.
 
 Each argument changes only what it names. `govern team` moves the mode and
 leaves separation as the repository recorded it; `--separation false` turns
-separation off and leaves the mode. In regulated mode with separation on, the
-identity that authored a record cannot approve its own enforcement grant, nor
-supersede that record while the grant is live — and an author that cannot be
-established fails closed.
+separation off and leaves the mode.
+
+In regulated mode with separation on, the identity that authored a record
+cannot approve its own enforcement grant — and, while that grant is live,
+cannot clear it either. That covers every event whose ledger fold drops the
+grant: `context keep`'s supersession, `proposals retract`, and
+`ingest --refresh`'s retirement, alongside `context promote` itself. A record
+holding **no** grant is untouched by any of it, so editing and retiring
+advisory records stays ordinary. An author that cannot be established fails
+closed.
 
 `.stella/rules/governance.toml` decides who may grant enforcement, so a file
 that exists and does not parse is an error rather than a fall back to `solo`.

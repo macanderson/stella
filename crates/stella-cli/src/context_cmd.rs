@@ -43,7 +43,11 @@ use stella_core::ingest::record::{ContextFile, Proposal};
 
 mod amend;
 mod explain;
-mod govern;
+// `pub(crate)` rather than private: the separation gate is one rule with three
+// callers, and two of them (`proposals retract`, `ingest --refresh`) live
+// outside this module. A second copy of the check is exactly what #5328 was
+// filed about.
+pub(crate) mod govern;
 mod propose;
 mod review;
 // `pub(crate)` for one reason: the retirement handshake spans two commands, so its

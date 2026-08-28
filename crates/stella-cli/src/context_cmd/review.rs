@@ -443,26 +443,14 @@ pub fn run_keep(
             // keeps ordinary editing of an advisory record possible in a
             // regulated repository. `promote` guards the transition INTO
             // blocking; this guards the one that silently undoes it.
-            let holds_a_grant = stella_core::records::promotion::blocking_grants(
-                &crate::context_records::read_promotions(root)?,
-            )
-            .contains_key(&record.lineage_id);
-            let proposer = if holds_a_grant {
-                crate::context_cmd::govern::separation_cleared(
-                    root,
-                    &governance,
-                    &record.lineage_id,
-                    // The lineage id, because this `Record` carries no handle —
-                    // it is also what the ledger event is keyed by, so a human
-                    // reading the refusal can find the event it prevented.
-                    &record.lineage_id,
-                    &approver,
-                    "supersede its own enforced record",
-                    "make this change — it revokes a live blocking grant",
-                )?
-            } else {
-                None
-            };
+            let proposer = crate::context_cmd::govern::separation_cleared_if_enforced(
+                root,
+                &governance,
+                &record.lineage_id,
+                &approver,
+                "supersede its own enforced record",
+                "make this change — it revokes a live blocking grant",
+            )?;
             crate::context_records::append_promotion(
                 root,
                 stella_core::records::promotion::PromotionEvent {

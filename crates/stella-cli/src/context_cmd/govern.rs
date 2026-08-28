@@ -149,6 +149,34 @@ pub(crate) fn separation_cleared(
     }
 }
 
+/// [`separation_cleared`], but only where the lineage actually holds a blocking
+/// grant.
+///
+/// The gate every **lifecycle** event goes through: `keep`'s supersession,
+/// `proposals retract`, and `ingest --refresh`'s retirement all append events
+/// whose latest-event fold drops any blocking grant the lineage held. That is
+/// enforcement being revoked, which is the act separation governs — and all
+/// three used to write it with `proposer: None` and no check at all (#5328).
+///
+/// Scoped rather than universal, because these three are also how an ordinary
+/// advisory record is edited or retired. `promote` guards the transition INTO
+/// blocking and needs no scoping; these guard the ones that silently undo it,
+/// and must not make routine editing in a regulated repository need a second
+/// identity.
+pub(crate) fn separation_cleared_if_enforced(
+    root: &Path,
+    governance: &Governance,
+    lineage: &str,
+    approver: &str,
+    bars: &str,
+    instead: &str,
+) -> Result<Option<String>, String> {
+    if !blocking_grants(&read_promotions(root)?).contains_key(lineage) {
+        return Ok(None);
+    }
+    separation_cleared(root, governance, lineage, lineage, approver, bars, instead)
+}
+
 fn show_governance(root: &Path, governance: &Governance) -> Result<(), String> {
     let events = read_promotions(root)?;
     println!(
@@ -392,6 +420,110 @@ mod tests {
             std::fs::read_to_string(root.path().join(GOVERNANCE_FILE)).expect("read"),
             before,
             "showing the policy must not rewrite it"
+        );
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_gate_tests {
+    use super::*;
+    use crate::context_records::{RULES_DIR, append_promotion};
+
+    fn regulated() -> Governance {
+        Governance {
+            mode: GovernanceMode::Regulated,
+            separation: true,
+        }
+    }
+
+    fn grant(root: &Path, lineage: &str) {
+        std::fs::create_dir_all(root.join(RULES_DIR)).expect("rules dir");
+        append_promotion(
+            root,
+            PromotionEvent {
+                seq: 0,
+                prev: String::new(),
+                at: "2026-08-04T09:00:00Z".into(),
+                lineage_id: lineage.into(),
+                from: "advisory".into(),
+                to: "blocking".into(),
+                approver: "lead".into(),
+                proposer: None,
+                reason: "measured over 30 days".into(),
+                mode: "regulated".into(),
+                action: stella_core::records::promotion::LedgerAction::Grant,
+            },
+        )
+        .expect("grant");
+    }
+
+    /// **Witness (#5328).** An armed record's author cannot clear its own
+    /// grant through a lifecycle event.
+    ///
+    /// Fails on the base, where the separation check lived only in
+    /// `run_promote`. The three lifecycle writers — `keep`'s supersession,
+    /// `proposals retract`, `ingest --refresh`'s retirement — each appended an
+    /// event whose latest-event fold drops the grant, with `proposer: None`
+    /// and no check. One door was guarded and three were open.
+    #[test]
+    fn clearing_a_grant_is_refused_when_the_author_could_not_be_established() {
+        let root = tempfile::tempdir().expect("tempdir");
+        grant(root.path(), "ctx.acme.web.a");
+
+        let refusal = separation_cleared_if_enforced(
+            root.path(),
+            &regulated(),
+            "ctx.acme.web.a",
+            "someone",
+            "retire its own enforced record",
+            "make this change",
+        )
+        .expect_err("separation fails closed on an unattributable record");
+
+        assert!(refusal.contains("could not be established"), "{refusal}");
+    }
+
+    /// A lineage holding no grant is untouched, so routine editing and
+    /// retirement of an advisory record still work in a regulated repository.
+    ///
+    /// Without this the fix would make every `keep`, `retract` and
+    /// `ingest --refresh` in a regulated repo need a second identity — a much
+    /// larger behaviour change than the issue asks for.
+    #[test]
+    fn an_advisory_lineage_passes_the_lifecycle_gate_untouched() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join(RULES_DIR)).expect("rules dir");
+
+        assert_eq!(
+            separation_cleared_if_enforced(
+                root.path(),
+                &regulated(),
+                "ctx.acme.web.never-promoted",
+                "someone",
+                "retire its own enforced record",
+                "make this change",
+            ),
+            Ok(None)
+        );
+    }
+
+    /// Separation off — the shipped default — clears everything, so the gate
+    /// cannot break a solo or team repository.
+    #[test]
+    fn the_gate_is_inert_where_separation_is_not_in_force() {
+        let root = tempfile::tempdir().expect("tempdir");
+        grant(root.path(), "ctx.acme.web.a");
+
+        assert!(
+            separation_cleared_if_enforced(
+                root.path(),
+                &Governance::default(),
+                "ctx.acme.web.a",
+                "someone",
+                "retire its own enforced record",
+                "make this change",
+            )
+            .is_ok()
         );
     }
 }

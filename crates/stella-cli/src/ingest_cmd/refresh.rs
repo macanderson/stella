@@ -202,6 +202,19 @@ fn published_from_source(root: &Path, rel: &str) -> Vec<PublishedFile> {
 /// record must not keep the authority to deny tool calls.
 fn record_retirement(root: &Path, rel: &str, claim: &PublishedClaim) -> Result<(), String> {
     let governance = crate::context_records::read_governance(root)?;
+    let approver = crate::context_cmd::actor();
+    // The same separation gate the other two lifecycle writers run. The fold
+    // this event feeds drops any blocking grant the lineage held — the doc
+    // above says so — so retiring an armed record revokes enforcement, and
+    // that is what separation governs (#5328).
+    let proposer = crate::context_cmd::govern::separation_cleared_if_enforced(
+        root,
+        &governance,
+        &claim.lineage_id,
+        &approver,
+        "retire its own enforced record",
+        "make this change — it revokes a live blocking grant",
+    )?;
     crate::context_records::append_promotion(
         root,
         stella_core::records::promotion::PromotionEvent {
@@ -211,8 +224,8 @@ fn record_retirement(root: &Path, rel: &str, claim: &PublishedClaim) -> Result<(
             lineage_id: claim.lineage_id.clone(),
             from: "active".to_string(),
             to: "archived".to_string(),
-            approver: crate::context_cmd::actor(),
-            proposer: None,
+            approver,
+            proposer,
             reason: format!(
                 "retired by `stella ingest --refresh {rel}`: the source no longer asserts \
                  {} (was {})",
