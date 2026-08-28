@@ -690,6 +690,8 @@ pub fn plan_extension_sync(
     let mut plan = SyncPlan::default();
     let mut claimed: std::collections::HashSet<(ExtensionKind, String)> =
         std::collections::HashSet::new();
+    let mut planned_names: std::collections::HashSet<(ExtensionKind, String)> =
+        std::collections::HashSet::new();
     let mut present_files: std::collections::HashMap<
         ExtensionKind,
         std::collections::HashSet<String>,
@@ -705,7 +707,6 @@ pub fn plan_extension_sync(
                 claimed.insert((source.kind, name));
             }
         }
-        let present = &present_files[&source.kind];
         for entry in &source.entries {
             let skip = |reason| SyncSkip {
                 kind: source.kind,
@@ -717,10 +718,20 @@ pub fn plan_extension_sync(
                 plan.skips.push(skip(SyncSkipReason::SourceIsSymlink));
             } else if !entry.is_loadable {
                 plan.skips.push(skip(SyncSkipReason::NotLoadable));
-            } else if present.contains(&entry.name) {
+            } else if present_files[&source.kind].contains(&entry.name) {
                 plan.skips.push(skip(SyncSkipReason::DestinationExists));
             } else if !claimed.insert((source.kind, entry.definition_name.clone())) {
                 plan.skips.push(skip(SyncSkipReason::DuplicateName));
+            } else if !planned_names.insert((source.kind, entry.name.clone())) {
+                // A planned link claims its destination basename exactly as a
+                // file already on disk does: two sources can carry the same
+                // file name under DIFFERENT frontmatter names, which the
+                // definition-name dedup above cannot see, and the plan then
+                // emitted two links to one destination — the clobber the
+                // rules above exist to refuse, deferred to apply time.
+                // Checked after the definition-name rule so a same-name
+                // collision keeps its established `DuplicateName` reading.
+                plan.skips.push(skip(SyncSkipReason::DestinationExists));
             } else {
                 plan.links.push(PlannedLink {
                     kind: source.kind,
@@ -1161,6 +1172,41 @@ mod tests {
         );
         assert_eq!(plan.skips.len(), 1);
         assert_eq!(plan.skips[0].reason, SyncSkipReason::SourceIsSymlink);
+    }
+
+    /// Two sources can carry the same FILE name under different frontmatter
+    /// names — `.claude/commands/deploy.md` (`name: deploy-web`) beside
+    /// `.agents/commands/deploy.md` (`name: deploy-api`). The definition-name
+    /// dedup sees no collision, so only the planned link's claim on its
+    /// destination basename stops the plan from emitting two links to one
+    /// path — the clobber every rule here exists to refuse. Fails on the
+    /// plan that never recorded its own links as present.
+    #[test]
+    fn a_planned_link_claims_its_destination_basename() {
+        let mut web = entry("deploy.md", "/h/.claude/commands/deploy.md", false);
+        web.definition_name = "deploy-web".to_string();
+        let mut api = entry("deploy.md", "/h/.agents/commands/deploy.md", false);
+        api.definition_name = "deploy-api".to_string();
+        let sources = vec![
+            SyncSource {
+                kind: ExtensionKind::Commands,
+                entries: vec![web],
+            },
+            SyncSource {
+                kind: ExtensionKind::Commands,
+                entries: vec![api],
+            },
+        ];
+        let plan = plan_extension_sync(&sources, &no_existing);
+        assert_eq!(
+            plan.links.len(),
+            1,
+            "two links to one destination path: {:?}",
+            plan.links
+        );
+        assert_eq!(plan.links[0].source_path, "/h/.claude/commands/deploy.md");
+        assert_eq!(plan.skips.len(), 1);
+        assert_eq!(plan.skips[0].reason, SyncSkipReason::DestinationExists);
     }
 
     #[test]
