@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use serde_json::{Value, json};
+use stella_core::context_record::SelectionHealthPolicy;
 
 pub use contributions::{ContributedDir, NoContributions, PluginContributions, PluginTier};
 
@@ -823,6 +824,68 @@ fn settings_scope(scope: &str, path: PathBuf) -> Value {
         "parse_error": parse_error,
         "settings": body,
     })
+}
+
+/// The selection-health thresholds this workspace actually applies.
+///
+/// The dashboard used to fold every record under
+/// `SelectionHealthPolicy::default()` while the loop read tuned values out of
+/// the settings scope chain, so a workspace with a tuned `context.efficacy`
+/// could see a different failing/earning verdict on the panel than the thing
+/// it is a panel *of* (#1944).
+///
+/// Read through [`settings_scope`] rather than a second parser, per the
+/// observatory's read-only contract: the same three files `config` reports,
+/// merged in the same order the CLI's `Settings::load` merges them — user,
+/// then org-managed, then project — **per field**, so a project that tunes one
+/// threshold does not silently reset the other two to their defaults. Redaction
+/// cannot reach these: it replaces strings under a credential key, and every
+/// threshold here is a number.
+///
+/// A scope that is absent, unreadable, or carries no `context.efficacy`
+/// contributes nothing, so a workspace that has tuned nothing lands exactly on
+/// the shipped defaults.
+#[must_use]
+pub fn selection_health_policy(workspace_root: &Path) -> SelectionHealthPolicy {
+    let user = user_config_dir()
+        .map(|d| d.join("settings.json"))
+        .unwrap_or_else(|| PathBuf::from("settings.json"));
+    let mut policy = SelectionHealthPolicy::default();
+    // Later wins, which is the CLI's order: project overrides managed
+    // overrides user.
+    for path in [
+        user,
+        managed_settings_path(),
+        workspace_root.join(".stella").join("settings.json"),
+    ] {
+        let scope = settings_scope("", path);
+        let Some(efficacy) = scope
+            .get("settings")
+            .and_then(|s| s.get("context"))
+            .and_then(|c| c.get("efficacy"))
+        else {
+            continue;
+        };
+        if let Some(v) = efficacy
+            .get("min_attributable_uses")
+            .and_then(Value::as_u64)
+        {
+            policy.min_attributable_uses = v as u32;
+        }
+        if let Some(v) = efficacy
+            .get("not_helpful_ratio_threshold")
+            .and_then(Value::as_f64)
+        {
+            policy.not_helpful_ratio_threshold = v;
+        }
+        if let Some(v) = efficacy
+            .get("min_attribution_confidence")
+            .and_then(Value::as_u64)
+        {
+            policy.min_attribution_confidence = v as u8;
+        }
+    }
+    policy
 }
 
 /// The full configuration picture: the settings scope chain (ascending

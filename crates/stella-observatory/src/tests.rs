@@ -14,6 +14,9 @@ mod execution_routes;
 /// The raw HTTP surface tests -- a child module for the same reason.
 mod http_surface;
 
+/// The selection-health panel's policy (#1944).
+mod selection_health;
+
 #[test]
 fn host_header_gates_dns_rebinding() {
     let local = [

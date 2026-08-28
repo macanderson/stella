@@ -87,7 +87,9 @@ pub(crate) fn self_improvement(root: &Path) -> Result<Value, DbError> {
     let unreadable = unreadable_reflections(root)?;
     let db = root.join(".stella").join("private").join("context.db");
     let Some(conn) = open_read_only(&db) else {
-        let mut payload = empty_payload(false);
+        // Reported even here: "no context.db" and "context.db under tuned
+        // thresholds" are different states, and the panel says which.
+        let mut payload = empty_payload(false, &crate::fsview::selection_health_policy(root));
         crate::db::merge(
             &mut payload,
             json!({ "unreadable_reflections": unreadable }),
@@ -110,8 +112,12 @@ pub(crate) fn self_improvement(root: &Path) -> Result<Value, DbError> {
     let proposals = proposal_rows(&conn)?;
     let events = event_rows(&conn)?;
     let episodes = episode_rows(&conn)?;
-    let health = health_rows(&conn)?;
-    let policy = SelectionHealthPolicy::default();
+    // The thresholds this workspace actually applies, not the shipped ones.
+    // The fold below and the `health_policy` echo must be the same policy: a
+    // panel that folded under one and reported another would be worse than the
+    // default it replaces, which at least said which numbers it used (#1944).
+    let policy = crate::fsview::selection_health_policy(root);
+    let health = health_rows(&conn, policy)?;
 
     Ok(json!({
         "present": true,
@@ -126,10 +132,9 @@ pub(crate) fn self_improvement(root: &Path) -> Result<Value, DbError> {
         // simply never learned anything. They rendered identically until this
         // existed (#2175).
         "unreadable_reflections": unreadable,
-        // The thresholds the fold above ran with. The CLI reads tuned values
-        // out of the settings scope chain; the dashboard runs the shipped
-        // defaults and says so, rather than silently presenting a verdict
-        // computed under thresholds the reader cannot see.
+        // The thresholds the fold above ran with — kept in the payload now
+        // that they are the tuned ones, because a reader still cannot tell a
+        // tuned verdict from a default one without seeing the numbers.
         "health_policy": {
             "min_attributable_uses": policy.min_attributable_uses,
             "not_helpful_ratio_threshold": policy.not_helpful_ratio_threshold,
@@ -141,8 +146,7 @@ pub(crate) fn self_improvement(root: &Path) -> Result<Value, DbError> {
 /// The payload shape with nothing in it. Same key set as the populated branch
 /// so a client indexing a section never finds the key missing — the lesson
 /// `Observatory::cursor` already carries.
-fn empty_payload(present: bool) -> Value {
-    let policy = SelectionHealthPolicy::default();
+fn empty_payload(present: bool, policy: &SelectionHealthPolicy) -> Value {
     json!({
         "present": present,
         "counts": [],
@@ -375,7 +379,7 @@ fn episode_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
 
 /// Selection health, folded from the ledger's use/feedback records through the
 /// same pure fold the CLI runs, worst standing first.
-fn health_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
+fn health_rows(conn: &Connection, policy: SelectionHealthPolicy) -> Result<Vec<Value>, DbError> {
     let uses: Vec<(String, ContextUse)> = kind_rows(conn, "context_use", USE_READ_LIMIT)?
         .into_iter()
         .filter_map(|(record_id, body)| {
@@ -389,7 +393,7 @@ fn health_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
             .into_iter()
             .filter_map(|(_, body)| serde_json::from_str::<ContextUseFeedback>(&body).ok())
             .collect();
-    let mut health = fold_selection_health(&uses, &feedback, SelectionHealthPolicy::default());
+    let mut health = fold_selection_health(&uses, &feedback, policy);
     health.sort_by(|a, b| {
         b.failing
             .cmp(&a.failing)
