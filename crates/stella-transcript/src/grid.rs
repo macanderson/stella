@@ -668,7 +668,7 @@ fn body_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, call: &Call, shown: &str, ti: 
     }
     // An expanded body shows everything the fold hid — except lines the
     // transport dropped before this crate saw them. Those still need the
-    // honest marker `Output::clipped` promises, or the expanded view presents
+    // marker `Output::clipped` promises, or the expanded view presents
     // a truncated output as the whole thing. The HTML renderer keeps its fold
     // control (and the count) visible when open; this is the grid's
     // equivalent.

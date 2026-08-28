@@ -71,7 +71,7 @@ pub struct OutputFold {
     pub hidden: usize,
     /// Lines the transport dropped before this crate ever saw them
     /// ([`crate::model::Output::clipped`]). Counted inside [`Self::hidden`] so
-    /// a closed fold's control totals honestly — and carried separately so an
+    /// a closed fold's control counts them too — and carried separately so an
     /// *expanded* body, which shows everything the fold hid, can still say
     /// these lines are missing rather than presenting itself as complete.
     pub clipped: usize,
@@ -96,7 +96,7 @@ impl OutputFold {
     }
 
     /// The marker an *expanded* body renders when the transport clipped lines
-    /// this crate never received — the "honest 'clipped' marker" promised by
+    /// this crate never received — the clipped marker promised by
     /// [`crate::model::Output::clipped`]. Empty-count callers should not call
     /// this; gate on [`Self::clipped`].
     #[must_use]

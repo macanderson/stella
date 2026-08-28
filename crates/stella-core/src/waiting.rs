@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(decide(&req, Some("settled"), 40), Some(WakeReason::Changed));
     }
 
-    /// The other half of the trimming invariant: the BASELINE is raw command
+    /// The other half of the trimming rule: the BASELINE is raw command
     /// output recorded by the depositing tool, so it can carry the trailing
     /// newline the fingerprint has already shed. Normalizing only the
     /// observation side made the very first probe of an unchanged condition
