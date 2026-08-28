@@ -178,21 +178,89 @@ pub(crate) fn promotion_ledger_text(root: &Path) -> (std::path::PathBuf, String)
     (path, text)
 }
 
+/// Where this machine remembers the ledger's head, relative to the workspace.
+///
+/// Under `.stella/private/` for the reason [`PROMOTION_LOCK`] is: it is one
+/// clone's memory of what it last saw, not reviewed policy. Committing it
+/// would make one developer's machine the authority on another's, and it would
+/// have to be updated in every pull request that touches a grant.
+const PROMOTION_HEAD_PIN: &str = ".stella/private/promotions-head.json";
+
 /// Verify and parse the promotion ledger. A chain violation is an error the
 /// caller must surface — never silently treated as an empty ledger, which
 /// would read tampering as "no grants" and drop enforcement without a trace.
+///
+/// **Two checks, because the chain can only see one of the two ways a ledger
+/// lies.** `parse_and_verify` walks each line against the one before it, which
+/// a truncated tail satisfies perfectly — so a removed demotion event
+/// resurrects the grant it revoked and `validate` goes green on it (#5327).
+/// The second check compares the file against [`PROMOTION_HEAD_PIN`], this
+/// machine's record of what it last read.
+///
+/// The pin is advanced after a clean read, so ordinary growth is silent and
+/// only a *shrink* or a rewrite is reported. A failure to write it is not an
+/// error: the worst case is one unprotected read, and refusing to run because
+/// a private cache could not be updated would be worse than the gap.
 pub(crate) fn read_promotions(
     root: &Path,
 ) -> Result<Vec<stella_core::records::promotion::PromotionEvent>, String> {
     let (path, text) = promotion_ledger_text(root);
-    stella_core::records::promotion::parse_and_verify(&text).map_err(|violation| {
+    let events = stella_core::records::promotion::parse_and_verify(&text).map_err(|violation| {
         format!(
             "{} line {}: {}",
             path.display(),
             violation.line,
             violation.reason
         )
-    })
+    })?;
+
+    if let Some(pinned) = read_head_pin(root)
+        && let Some(violation) =
+            stella_core::records::promotion::continuity_violation(&text, &pinned)
+    {
+        return Err(format!(
+            "{}: {}\n\
+             This machine's record of the ledger's head is {}; repair the ledger from Git \
+             history, or delete {PROMOTION_HEAD_PIN} if you know the change was intended.",
+            path.display(),
+            violation.reason,
+            PROMOTION_HEAD_PIN
+        ));
+    }
+    write_head_pin(root, &text);
+    Ok(events)
+}
+
+/// What this machine last saw at the end of the ledger, if it has looked.
+fn read_head_pin(root: &Path) -> Option<stella_core::records::promotion::ChainHead> {
+    let text = std::fs::read_to_string(root.join(PROMOTION_HEAD_PIN)).ok()?;
+    // An unreadable pin is no pin. Failing closed here would refuse every
+    // command on a corrupt private cache, which is a local artifact the user
+    // never wrote and can always delete — the opposite of `governance.toml`,
+    // where the file IS the policy.
+    serde_json::from_str(&text).ok()
+}
+
+/// Record the ledger's head as this machine's new anchor. Best-effort.
+fn write_head_pin(root: &Path, text: &str) {
+    let Some(head) = stella_core::records::promotion::head_of(text) else {
+        return;
+    };
+    let path = root.join(PROMOTION_HEAD_PIN);
+    let Some(parent) = path.parent() else { return };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    if let Ok(body) = serde_json::to_string(&head) {
+        // Owner-only, like everything else under `.stella/private/`: another
+        // account able to rewrite this pin could hide a truncation from the
+        // check it exists to feed.
+        let _ = stella_store::durable::write_atomic(
+            &path,
+            body.as_bytes(),
+            stella_store::durable::MODE_PRIVATE,
+        );
+    }
 }
 
 /// Append one promotion event, stamping seq + prev from the verified tail.
