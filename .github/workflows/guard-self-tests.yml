@@ -193,6 +193,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-red-claim.sh
 
+      - name: the issue-claim pre-flight, standing-down branch included
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-issue-claim.sh
+
       - name: the retired-hex ban in every notation, and the citation check
         if: ${{ !cancelled() }}
         run: ./scripts/test-tokens.sh
@@ -208,6 +212,10 @@ jobs:
       - name: the core-reachability walker and its ratchet direction
         if: ${{ !cancelled() }}
         run: ./scripts/test-core-reachability.sh
+
+      - name: the unverified-main detector, and that it fails open
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-main-verified.sh
 
       - name: the session-scratch boundary
         if: ${{ !cancelled() }}

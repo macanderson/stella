@@ -815,6 +815,14 @@ deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handl
 # the point a merge is still a decision (#3917). Not a gate step for the same
 # reason the canary is not — it asks the issue tracker a question, and `gate`
 # is hermetic and offline by contract.
+.PHONY: main-verified
+main-verified: ## Ask whether every recent commit on main has a completed ci run (#5027)
+	@./scripts/check-main-verified.sh
+
+.PHONY: main-verified-test
+main-verified-test: ## Test the unverified-main detector (hermetic; not part of `gate`)
+	./scripts/test-main-verified.sh
+
 .PHONY: main-red-hold
 main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)
 	@./scripts/check-main-red-hold.sh
@@ -834,6 +842,14 @@ main-red-claim: ## Ask whether somebody is already repairing a red `main` (reads
 .PHONY: main-red-claim-test
 main-red-claim-test: ## Test the red-main claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
 	./scripts/test-main-red-claim.sh
+
+.PHONY: issue-claim
+issue-claim: ## Ask whether somebody is already implementing an issue: make issue-claim N=5045
+	@./scripts/issue-claim.sh check $(N)
+
+.PHONY: issue-claim-test
+issue-claim-test: ## Test the issue-claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
+	./scripts/test-issue-claim.sh
 
 .PHONY: check
 check: $(GATE_GUARDS) $(GATE_NO_BUILD) lint ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy, no rustdoc and no tests

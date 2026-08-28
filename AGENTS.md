@@ -207,6 +207,20 @@ silent failure costs here). `make main-canary` runs the same check locally
 without filing anything; `scripts/main-canary.sh`'s header carries the full
 argument, including why it deliberately does not open a fix PR (#3332).
 
+It answers "is `main` **known broken**". A second step in the same workflow —
+`scripts/check-main-verified.sh` (`make main-verified`) — answers the question
+nothing else here asks: is there a commit on `main` that nothing **verified**?
+Those are different states, and every other mechanism reads the second as
+green. The canary files only when its own job runs and fails, so a
+`startup_failure`, a cancellation, or a run that was never created produces no
+issue; `main-red-hold.yml` passes when no issue is open; and `gh run list`
+shows no row at all for a run that never existed. On 2026-08-26 an Actions
+outage landed four commits with no completed `ci` run between them and `main`
+sat unchecked for 85 minutes with every surface reading green (#5027). A
+failing run is a **verified** commit and stays the canary's business; this
+reports only the absence of an answer, and fails open at every unknown so it
+can never be the thing blocking a repair.
+
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`, asks the tracker whether a `main-red`
@@ -246,6 +260,31 @@ loudly: no `gh`, an unreachable tracker, an unreadable identity, two open
 a claim check that can block a repair is worse than the duplication it
 prevents. `make main-red-claim` asks by hand; `make main-red-claim-test`
 covers it, standing-down branch included.
+
+**The same collision happens over an issue, and `scripts/issue-claim.sh` is
+the same mechanic pointed at one.** Two sessions implemented #5045 in
+parallel and one merge kept one tree, dropping the other implementation with
+no conflict to report; #4336 and #5054 are the same shape, three in one
+afternoon (#5224). Every signal said that branch was abandoned — it existed
+only locally, in a stale worktree, clean, with no remote branch and no PR.
+
+```bash
+./scripts/issue-claim.sh check 5045   # exit 0 proceed, 1 stand down
+./scripts/issue-claim.sh claim 5045   # check, then post the claim
+```
+
+It asks the **pull requests first**, because that is the stronger signal and
+the one the issue itself never shows: a sweep PR can close forty issues at
+once while each of them still reads unassigned, unlabelled and open. Then the
+claim comments, on the red-`main` rules — the tracker is the table so a peer
+in another worktree can see it, a comment carries its author and timestamp, a
+claim lapses so a crashed session cannot hold an issue shut, and every unknown
+proceeds loudly. `make issue-claim N=5045` asks by hand; `make
+issue-claim-test` covers it, both blocking branches included.
+
+Run it **before writing code and again before opening the PR**. The gap
+between those two is enough: a peer's PR can merge inside one issue's worth of
+work, and then the check that was clean at the start is stale at the end.
 
 An eighth, `windows-check.yml`, is the only compiler in this project that
 looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and
