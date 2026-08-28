@@ -76,12 +76,83 @@ pub(crate) const GOVERNANCE_FILE: &str = ".stella/rules/governance.toml";
 const PROMOTION_LOCK: &str = ".stella/private/promotions.lock";
 
 /// Read the governance settings; absent file = solo defaults (§5.1).
-pub(crate) fn read_governance(root: &Path) -> stella_core::records::promotion::Governance {
+///
+/// A file that is PRESENT but unreadable or unparseable fails closed
+/// (#5328): governance selects the enforcement tier, so a one-character
+/// corruption must not silently switch a regulated repository back to solo
+/// defaults — turning off validate's regulated check and promote's
+/// separation gate with nothing on screen. The broken ledger beside it
+/// already fails loudly; the file that decides how strictly the ledger is
+/// held must not be softer than the ledger.
+pub(crate) fn read_governance(
+    root: &Path,
+) -> Result<stella_core::records::promotion::Governance, String> {
     let path = root.join(GOVERNANCE_FILE);
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| toml::from_str(&text).ok())
-        .unwrap_or_default()
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(stella_core::records::promotion::Governance::default());
+        }
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    toml::from_str(&text).map_err(|e| {
+        format!(
+            "{} does not parse: {e} — this file selects the governance tier, so it \
+             must be repaired (or deleted to return to solo defaults) rather than \
+             silently ignored",
+            path.display()
+        )
+    })
+}
+
+/// The separation gate for a lifecycle event that would DISARM enforcement,
+/// returning the record's author (as the event's `proposer`) once it holds.
+///
+/// The ledger's latest-event fold retains only grant events, so a
+/// `Superseded`/`Retired` event on a lineage clears its blocking grant — a
+/// supersession or retraction is an enforcement change exactly as much as the
+/// grant was, and it used to run with no separation check while `stella
+/// context promote` failed closed (#5328). Under regulated mode with
+/// separation on, a lineage holding a live blocking grant cannot be disarmed
+/// by its own author acting alone, and an author the decision ledger cannot
+/// establish fails closed the way `run_promote` already does. Lineages with
+/// no live blocking grant pass untouched: superseding your own advisory
+/// record is authoring, not enforcement.
+pub(crate) fn separation_checked_proposer(
+    root: &Path,
+    lineage_id: &str,
+    approver: &str,
+    act: &str,
+) -> Result<Option<String>, String> {
+    let governance = read_governance(root)?;
+    let proposer = read_decisions(root)
+        .iter()
+        .filter(|event| event.lineage_id == lineage_id && event.decision.publishes())
+        .map(|event| event.actor.clone())
+        .next_back();
+    if !(governance.mode == stella_core::records::promotion::GovernanceMode::Regulated
+        && governance.separation)
+    {
+        return Ok(proposer);
+    }
+    let events = read_promotions(root)?;
+    if !stella_core::records::promotion::blocking_grants(&events).contains_key(lineage_id) {
+        return Ok(proposer);
+    }
+    match &proposer {
+        None => Err(format!(
+            "proposer/approver separation is on, and {lineage_id} holds a live blocking \
+             grant whose author could not be established from the decision ledger — {act} \
+             would disarm that grant; record the authorship first, or have a different \
+             identity run this"
+        )),
+        Some(author) if author == approver => Err(format!(
+            "proposer/approver separation is on: {author} authored {lineage_id}, which \
+             holds a live blocking grant — {act} would disarm it, and its author cannot \
+             do that alone; a different identity must run this"
+        )),
+        Some(_) => Ok(proposer),
+    }
 }
 
 /// Write the governance settings. Callers ask the user first (§5.4) — this

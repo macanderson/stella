@@ -28,17 +28,25 @@ use super::review::actor;
 pub(crate) fn run_govern(
     root: &Path,
     mode: Option<&str>,
-    separation: bool,
+    separation: Option<bool>,
     yes: bool,
 ) -> Result<(), String> {
-    let current = read_governance(root);
-    let Some(mode) = mode else {
-        return show_governance(root, &current);
+    let current = read_governance(root)?;
+    let target = match mode {
+        Some(mode) => parse_mode(mode)?,
+        // `--separation` with no mode is an update to the current mode, not
+        // a discarded flag (#5328) — it used to fall into the show path and
+        // silently do nothing.
+        None if separation.is_some() => current.mode,
+        None => return show_governance(root, &current),
     };
-    let target = parse_mode(mode)?;
+    // Merge with the document rather than rebuilding it from the flags:
+    // `govern regulated` without `--separation` used to silently turn an
+    // existing separation OFF (#5328). Absent means "keep what is set";
+    // `--separation false` turns it off on the record.
     let next = Governance {
         mode: target,
-        separation,
+        separation: separation.unwrap_or(current.separation),
     };
     if next == current {
         println!(
@@ -63,7 +71,7 @@ pub(crate) fn run_govern(
              records and their enforcement are unchanged until promoted under the new mode. [y/N]",
             current.mode.as_str(),
             target.as_str(),
-            if separation {
+            if next.separation {
                 ", with proposer/approver separation"
             } else {
                 ""
@@ -175,7 +183,7 @@ pub(crate) fn run_promote(
         ));
     }
 
-    let governance = read_governance(root);
+    let governance = read_governance(root)?;
     let events = read_promotions(root)?;
     let current = blocking_grants(&events)
         .get(&lineage)
