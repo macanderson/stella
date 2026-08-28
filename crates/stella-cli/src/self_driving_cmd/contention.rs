@@ -23,7 +23,7 @@
 //! base-fix site must keep seeing every worktree.
 //!
 //! The parsing is split out into pure functions ([`branches_naming`],
-//! [`worktrees_naming`], [`pr_numbers`], [`claims_naming`]) for the ordinary
+//! [`worktrees_naming`], [`prs_naming`], [`claims_naming`]) for the ordinary
 //! reason — the reads need a subprocess and the decisions do not, so only the
 //! decisions can be tested.
 //!
@@ -121,6 +121,29 @@ fn gather(root: &Path, key: &str, own_root: Option<&Path>) -> Contention {
     contention
 }
 
+/// Whether `text` mentions `key` as an issue number, rather than as a run of
+/// digits sitting inside a longer one.
+///
+/// `contains` is the wrong test for a number. Issue 43 is not issue 4300, and a
+/// bare substring cannot tell them apart — so a loop asking about #43 read
+/// every branch, worktree and claim naming #430, #4300 and #1436 as somebody
+/// else working its issue, and deferred. The lower the issue number, the more
+/// of the backlog matched it.
+///
+/// A match counts only where neither neighbouring character is a digit, which
+/// is what makes `i-43` a mention and `i-4300` not one.
+#[must_use]
+fn names_issue(text: &str, key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    text.match_indices(key).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + key.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_digit()) && !after.is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
 /// Remote branch names carrying `key`, from `git ls-remote --heads` output.
 ///
 /// Remote only at both call sites: a *local* branch of the loop's own is not
@@ -130,8 +153,15 @@ fn gather(root: &Path, key: &str, own_root: Option<&Path>) -> Contention {
 pub(super) fn branches_naming(ls_remote: &str, key: &str) -> Vec<String> {
     ls_remote
         .lines()
-        .filter(|line| line.contains(key))
+        // The ref first, then the test. `git ls-remote` prints
+        // `<sha>\trefs/heads/<name>`, so testing the whole line tests the
+        // commit sha as well — and a sha is forty hex characters, which for a
+        // one-digit key contains it about nine times in ten. The loop then
+        // deferred on a branch whose name does not carry the key at all, and
+        // reported that name as its evidence.
         .filter_map(|line| line.split("refs/heads/").nth(1))
+        .map(str::trim)
+        .filter(|name| names_issue(name, key))
         .map(str::to_owned)
         .collect()
 }
@@ -152,24 +182,55 @@ pub(super) fn worktrees_naming(porcelain: &str, key: &str, own_root: Option<&Pat
         .lines()
         .filter_map(|line| line.strip_prefix("worktree "))
         .map(str::trim)
-        .filter(|path| path.contains(key))
+        // Still the whole path, not its last component: a peer laying its
+        // checkouts out differently must still be seen, and a false negative
+        // here is two loops on one issue where a false positive is only a
+        // deferral. [`names_issue`] removes the part that was simply wrong —
+        // #43 matching a worktree for #4300.
+        .filter(|path| names_issue(path, key))
         .filter(|path| own_root.is_none_or(|own| !Path::new(path).starts_with(own)))
         .map(str::to_owned)
         .collect()
 }
 
-/// Pull request numbers from a `gh pr list --json number` payload.
+/// Pull request numbers from a `gh pr list --json number,title,body` payload,
+/// keeping the ones whose text names `key` as an issue.
 ///
-/// Tolerant of a row missing the field rather than failing the whole read: a
-/// payload this build only partly understands still carries the numbers it
-/// does understand, and dropping all of them would turn a forge change into a
-/// silent loss of the strongest cheap signal.
+/// The search that produced this payload is a full-text one on the bare
+/// number, so the forge answers with every open pull request that mentions it
+/// for any reason — "43 files changed", "cuts latency by 43%". Each of those
+/// deferred issue #43, and a deferral writes no `spent` entry, so it deferred
+/// again on the next pass. `deliver::open_prs_for_issue`, in the same file,
+/// already searched the precise form; this one did not.
+///
+/// A mention is `#<key>` with no digit after it, so `#43` names issue 43 and
+/// `#4300` does not. The loop writes `Closes #<key>` into every pull request it
+/// opens, so its own always match.
+///
+/// Two tolerances, both in the direction that keeps a signal rather than losing
+/// one: a row missing `number` is skipped rather than failing the whole read,
+/// and a row carrying **neither** `title` nor `body` counts as contention. This
+/// build cannot tell whether such a row names the issue, and silently dropping
+/// a contention signal it could not read is what ends with two loops on one
+/// issue.
 #[must_use]
-pub(super) fn pr_numbers(raw: &str) -> Vec<String> {
+pub(super) fn prs_naming(raw: &str, key: &str) -> Vec<String> {
     let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(raw) else {
         return Vec::new();
     };
+    let reference = format!("#{key}");
     rows.iter()
+        .filter(|row| {
+            let title = row.get("title").and_then(serde_json::Value::as_str);
+            let body = row.get("body").and_then(serde_json::Value::as_str);
+            match (title, body) {
+                (None, None) => true,
+                _ => [title, body]
+                    .into_iter()
+                    .flatten()
+                    .any(|text| names_issue(text, &reference)),
+            }
+        })
         .filter_map(|row| row.get("number").and_then(serde_json::Value::as_u64))
         .map(|n| n.to_string())
         .collect()
@@ -472,14 +533,110 @@ mod tests {
         assert_eq!(branches_naming(out, "4300"), vec!["stella/4300-fix"]);
     }
 
-    /// A payload with a row this build cannot read still yields the rest.
+    /// A commit sha is not a branch name, and must not be searched as one.
+    ///
+    /// `git ls-remote` prints `<sha>\trefs/heads/<name>`. Testing the whole
+    /// line for the key tested forty hex characters of sha as well: for a
+    /// one-digit key that is a match roughly nine times in ten, so nearly every
+    /// remote branch counted as contention and the loop stopped taking
+    /// low-numbered issues. The evidence it recorded was a branch name that did
+    /// not carry the key at all.
     #[test]
-    fn pr_numbers_survives_a_row_it_cannot_read() {
-        assert_eq!(
-            pr_numbers(r#"[{"number":7},{"title":"no number here"},{"number":9}]"#),
-            vec!["7".to_string(), "9".to_string()]
+    fn a_sha_that_happens_to_contain_the_key_is_not_a_branch_naming_it() {
+        // Two real-shaped shas, both full of digits; neither branch names #7.
+        let out = "4a7b39c17d2e4f5061829304a5b6c7d8e9f00112\trefs/heads/main\n\
+                   77770000111122223333444455556666777788ab\trefs/heads/docs/typo\n";
+
+        assert!(
+            branches_naming(out, "7").is_empty(),
+            "no branch here names issue 7"
         );
-        assert!(pr_numbers("not json at all").is_empty());
+    }
+
+    /// Issue 43 is not issue 4300.
+    #[test]
+    fn a_longer_issue_number_is_not_a_mention_of_its_prefix() {
+        let out = "abc\trefs/heads/self-driving/i-4300\n\
+                   def\trefs/heads/self-driving/i-43\n\
+                   fed\trefs/heads/self-driving/i-143\n";
+
+        assert_eq!(
+            branches_naming(out, "43"),
+            vec!["self-driving/i-43"],
+            "only the branch naming 43 itself"
+        );
+    }
+
+    /// The same rule for worktree paths.
+    #[test]
+    fn a_worktree_for_a_longer_issue_is_not_contention_for_its_prefix() {
+        let seen = porcelain(&[
+            "/w/.stella/private/self-driving/i-4300",
+            "/w/.stella/private/self-driving/i-43",
+        ]);
+
+        assert_eq!(
+            worktrees_naming(&seen, "43", None),
+            vec!["/w/.stella/private/self-driving/i-43".to_string()]
+        );
+    }
+
+    /// A pull request that merely contains the number is not about the issue.
+    ///
+    /// The search behind this payload is full-text on the bare number, so the
+    /// forge returns everything mentioning it. Counting all of them deferred
+    /// the issue, and a deferral writes no `spent` entry, so it deferred again
+    /// every pass.
+    #[test]
+    fn a_pull_request_that_only_mentions_the_number_is_not_contention() {
+        let raw = r#"[
+            {"number":11,"title":"perf: cuts latency by 43%","body":"no issue here"},
+            {"number":12,"title":"43 files changed","body":"a sweep"},
+            {"number":13,"title":"fix: the thing","body":"Closes #43"}
+        ]"#;
+
+        assert_eq!(
+            prs_naming(raw, "43"),
+            vec!["13".to_string()],
+            "only the one that names the issue"
+        );
+    }
+
+    /// `#43` is not `#4300`.
+    #[test]
+    fn a_longer_issue_reference_is_not_a_mention_of_its_prefix() {
+        let raw = r#"[
+            {"number":11,"title":"fix","body":"Closes #4300"},
+            {"number":12,"title":"fix","body":"Refs #43, and more"}
+        ]"#;
+
+        assert_eq!(prs_naming(raw, "43"), vec!["12".to_string()]);
+    }
+
+    /// A row this build cannot read counts as contention rather than vanishing.
+    ///
+    /// The two errors are not symmetric: keeping a row the build cannot
+    /// classify costs a deferral, and dropping it costs two loops working one
+    /// issue. A forge that stops returning `title` and `body` must not silently
+    /// switch this signal off.
+    #[test]
+    fn a_row_with_no_text_at_all_is_kept() {
+        assert_eq!(
+            prs_naming(r#"[{"number":7}]"#, "43"),
+            vec!["7".to_string()],
+            "neither field present: this build cannot tell, so it does not drop it"
+        );
+        // A row with text that simply does not name the issue is still dropped.
+        assert!(prs_naming(r#"[{"number":7,"title":"unrelated"}]"#, "43").is_empty());
+        // And a row with no number is skipped rather than failing the read.
+        assert_eq!(
+            prs_naming(
+                r#"[{"title":"Closes #43"},{"number":9,"body":"Closes #43"}]"#,
+                "43"
+            ),
+            vec!["9".to_string()]
+        );
+        assert!(prs_naming("not json at all", "43").is_empty());
     }
 
     /// One claim, as the ledger would hand it back.

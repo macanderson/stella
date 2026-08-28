@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Every clippy suppression in this crate is an `#[expect(…, reason = "…")]`.
+//! Every clippy suppression in the workspace is an `#[expect(…, reason = "…")]`.
 //!
 //! AGENTS.md's "Code style and conventions" asks that no `#[allow]` on a
 //! clippy lint land without a comment saying why the lint is wrong *here*.
@@ -20,13 +20,44 @@
 //! so this test asserts only the form; whether a reason is *true* is a review
 //! question, exactly as AGENTS.md states it.
 //!
-//! Scoped to this crate because it is the one #3698 audited and the one that
-//! now has zero. Widening it to the workspace is #4918.
+//! **Tree-wide since #4918.** It was scoped to this crate because that is the
+//! one #3698 audited; widening it turned out to cost nothing, because the rest
+//! of the workspace was already at zero: the convention held everywhere
+//! without a guard, and this is what keeps it holding — the crates that never
+//! had a bare allow are exactly the ones nobody would notice acquiring one.
+//!
+//! It stays a **test** rather than becoming a gate step, for the argument
+//! `crates/stella-cli/tests/design_token_parity.rs`'s module doc makes at
+//! length: `make gate` already runs `make test`, and a gate step is five
+//! coupled edits plus another shared cell for two PRs to collide on.
+//! `scripts/check-dead-code-allows.py` is the other tree-wide guard of this
+//! shape and IS a gate step, because it carries a ratchet baseline this one
+//! has no need of — there is nothing to grandfather when the count is zero.
+//!
+//! Living in `stella-cli/tests/` while judging every crate is the one wart.
+//! The alternative is a workspace-root test crate that exists to hold one
+//! file, and the parity test above already set the precedent for keeping such
+//! a check in the binary crate's own suite.
 
 use std::path::{Path, PathBuf};
 
-fn crate_src() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+/// Every crate's `src/` in the workspace.
+///
+/// From this crate's manifest dir rather than the current working directory,
+/// which is not the workspace root under every runner.
+fn crate_sources() -> Vec<PathBuf> {
+    let crates_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates/<name> has a parent")
+        .to_path_buf();
+    let mut roots: Vec<PathBuf> = std::fs::read_dir(&crates_dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", crates_dir.display()))
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("src"))
+        .filter(|src| src.is_dir())
+        .collect();
+    roots.sort();
+    roots
 }
 
 /// Every `.rs` file under `src/`, recursively.
@@ -46,9 +77,23 @@ fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn no_clippy_lint_is_silenced_with_a_bare_allow() {
+    let roots = crate_sources();
+    // The count is a floor, not a pin: a new crate must be judged by this test
+    // the day it lands, and a number here would be one more shared cell for two
+    // PRs to collide on. Twenty-six is what the tree had when #4918 widened it.
+    assert!(
+        roots.len() >= 20,
+        "expected every crate's src/, found {}: {roots:?}",
+        roots.len()
+    );
     let mut sources = Vec::new();
-    rust_sources(&crate_src(), &mut sources);
-    assert!(!sources.is_empty(), "no Rust sources found under src/");
+    for root in &roots {
+        rust_sources(root, &mut sources);
+    }
+    assert!(
+        !sources.is_empty(),
+        "no Rust sources found under crates/*/src"
+    );
 
     let mut offenders: Vec<String> = Vec::new();
     for path in &sources {
@@ -65,7 +110,7 @@ fn no_clippy_lint_is_silenced_with_a_bare_allow() {
 
     assert!(
         offenders.is_empty(),
-        "clippy suppressions in this crate are `#[expect(<lint>, reason = \"…\")]`, \
+        "clippy suppressions in this workspace are `#[expect(<lint>, reason = \"…\")]`, \
          so a suppression that stops being true fails the build instead of \
          outliving its argument (#3698). Found {}:\n  {}",
         offenders.len(),

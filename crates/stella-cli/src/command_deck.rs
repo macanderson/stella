@@ -115,7 +115,7 @@ mod voice;
 mod whistle;
 mod worker_control;
 use driver_support::{
-    handle_supervisor_msg, service_approve_revision, service_registry_action,
+    handle_supervisor_msg, service_approve_revision, service_edit_memory, service_registry_action,
     service_reject_memory, service_rerun_gate, service_undo_delete, spawn_mcp_connect,
     spawn_notification_poller, spawn_pr_monitor,
 };
@@ -1563,6 +1563,7 @@ pub async fn run_deck_session(
                             )
                             && !service_undo_delete(&other, &workspace_path, &in_tx)
                             && !service_reject_memory(&other, &workspace_path, &in_tx)
+                            && !service_edit_memory(&other, &workspace_path, &in_tx)
                             && !inspect_service::service_inspect_action(
                                 &other,
                                 &store,
@@ -1656,12 +1657,18 @@ pub async fn run_deck_session(
             // keep the boundary snapshot current before the next dispatch.
             let _ = crate::session_persist::snapshot_history(&sidecar_dir, &messages);
         }
+        // Set by a `/slug` skill invocation, and handed to this turn's recall
+        // below so the skill is recorded as used (#5232).
+        let mut invoked_skill = None;
         let prompt = match command {
             DeckCommand::Prompt => prompt,
             // A custom command/skill invocation: the transcript already shows
             // what was typed (`PromptStarted` above); the model runs the
             // expanded template.
-            DeckCommand::Expanded(text) => text,
+            DeckCommand::Expanded(expansion) => {
+                invoked_skill = expansion.skill;
+                expansion.prompt
+            }
             DeckCommand::Handled => continue 'session,
             DeckCommand::SessionModel(id) => {
                 session_override::apply_model_override(
@@ -1771,6 +1778,7 @@ pub async fn run_deck_session(
             let recalled = m.recall_block_reported(&prompt, &touched).await;
             recall = crate::memory::inject_opening_recall(&mut messages, recalled);
         }
+        recall.note_invoked_skill(invoked_skill);
         let turn_base = messages.len();
         // Attach any media files the prompt names (including `⌃V`
         // clipboard images, which arrive as their stored payload path).
@@ -1807,6 +1815,7 @@ pub async fn run_deck_session(
             memory.as_mut(),
             &prompt,
             &cfg.workspace_root,
+            &recall.invoked_skills(),
         );
         let started_unix = crate::memory::unix_now_secs();
 
@@ -2170,71 +2179,36 @@ pub async fn run_deck_session(
                                 budget_limit,
                             );
                         }
-                        // MCP tab: a live enable/disable toggle mid-turn is
-                        // honored immediately — it only flips the shared set the
-                        // tool layer already consults, so the next model call in
-                        // this turn sees the change (the tab display refreshes at
-                        // the next idle snapshot). The other MCP actions (search,
-                        // install, remove, auth) touch config/network and are
-                        // serviced between turns; mid-turn they are no-ops.
-                        Some(WorkspaceInput::McpToggle { name }) => {
-                            let mut set =
-                                mcp_disabled.lock().unwrap_or_else(|p| p.into_inner());
-                            if !set.remove(&name) {
-                                set.insert(name);
-                            }
-                        }
-                        // A capability grant IS honored mid-turn, for the
-                        // reason the toggle is: the operator has just answered
-                        // a question that was blocking a server, and the
-                        // shared set the tool layer consults is what the next
-                        // model call reads. Deferring it would leave the tab
-                        // saying `granted` while every call kept being
-                        // refused until the turn ended.
-                        Some(WorkspaceInput::McpGrant { name }) => {
-                            crate::deck_mcp::apply_mcp_grant(cfg, &mcp_session, &name, &in_tx);
-                        }
-                        Some(WorkspaceInput::McpSearch { .. })
-                        | Some(WorkspaceInput::McpInstall { .. })
-                        | Some(WorkspaceInput::McpRemove { .. })
-                        | Some(WorkspaceInput::McpAuth { .. })
-                        | Some(WorkspaceInput::McpRefresh) => {}
-                        // The inspector IS serviced mid-turn: it is a read of
-                        // config + the live tool set + telemetry, and the
-                        // alternative is an overlay the user opened that hangs
-                        // on "gathering server detail…" until the turn ends.
-                        // `lookup` is dropped here rather than honored — a
-                        // registry round-trip is the one part that is not a
-                        // local read, and mid-turn is the wrong time to start
-                        // one; the `r` press is repeatable once the turn ends.
-                        Some(WorkspaceInput::McpInspect { name, .. }) => {
-                            let mcp = mcp_slot.get().cloned();
-                            match crate::deck_mcp::mcp_detail(
-                                cfg,
-                                mcp.as_deref(),
-                                &mcp_disabled,
-                                &name,
-                                stella_tui::McpLookupState::Idle,
-                            )
-                            .await
+                        // MCP tab: every verb is answered, and the answers are
+                        // `service_mcp_action_midturn`'s to make — a toggle,
+                        // a grant, a credential write or a snapshot read runs
+                        // now; a registry round-trip is queued for the turn
+                        // boundary. Four verbs used to be dropped here
+                        // instead, leaving the tab reporting an action the
+                        // code never took (#5177).
+                        Some(
+                            input @ (WorkspaceInput::McpToggle { .. }
+                            | WorkspaceInput::McpGrant { .. }
+                            | WorkspaceInput::McpRefresh
+                            | WorkspaceInput::McpRemove { .. }
+                            | WorkspaceInput::McpAuth { .. }
+                            | WorkspaceInput::McpSearch { .. }
+                            | WorkspaceInput::McpInstall { .. }
+                            | WorkspaceInput::McpInspect { .. }
+                            | WorkspaceInput::McpOauthLogin { .. }),
+                        ) => {
+                            if let crate::deck_mcp::MidTurnMcp::Queue(input) =
+                                crate::deck_mcp::service_mcp_action_midturn(
+                                    input,
+                                    cfg,
+                                    mcp_slot.get().map(Arc::as_ref),
+                                    &mcp_session,
+                                    &in_tx,
+                                )
+                                .await
                             {
-                                Ok(detail) => {
-                                    let _ = in_tx.send(Inbound::McpDetail(Box::new(detail)));
-                                }
-                                Err(error) => {
-                                    let _ = in_tx.send(chrome_note(format!("mcp: {error}\n")));
-                                }
+                                deferred.push_back(*input);
                             }
-                        }
-                        // OAuth login is a spawned browser round-trip — safe
-                        // to start mid-turn (its transport picks the tokens
-                        // up lazily on the next call either way).
-                        Some(WorkspaceInput::McpOauthLogin { server }) => {
-                            crate::deck_mcp::spawn_mcp_oauth_login(
-                                server,
-                                cfg.workspace_root.clone(),
-                                in_tx.clone(),
-                            );
                         }
                         // The SESSIONS overlay and the inbox stay live while a
                         // turn runs — cheap local file reads/writes, exactly
@@ -2275,6 +2249,14 @@ pub async fn run_deck_session(
                         // reader is watching.
                         Some(input @ WorkspaceInput::RejectMemory { .. }) => {
                             service_reject_memory(&input, &workspace_path, &in_tx);
+                        }
+                        // `e edit` likewise (#5231), and for the sharper form
+                        // of the same reason: the reader is rewriting a lesson
+                        // the running turn may recall before it ends, so an
+                        // edit that waited would be recalled in its old words
+                        // by the very turn the reader is watching.
+                        Some(input @ WorkspaceInput::EditMemory { .. }) => {
+                            service_edit_memory(&input, &workspace_path, &in_tx);
                         }
                         // `r rerun gate` likewise: it answers in words rather
                         // than running anything (`service_rerun_gate`), so

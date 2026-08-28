@@ -858,7 +858,8 @@ pub(crate) async fn run_goal_turn(
     // `PipelineChoice::Raw` — so `variant: None` is the honest answer every
     // time, not a placeholder (#3381, #3388): nothing wrapped this round.
     let execution = begin_execution(store, "goal", goal, cfg, session, None);
-    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
+    // No invocation to record: a goal run is given a task, not a `/slug`.
+    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root, &[]);
 
     // Route the VERIFIER role. `Some` only when a distinct-family verifier was
     // selected AND built; the boxed provider must outlive the `run_goal`

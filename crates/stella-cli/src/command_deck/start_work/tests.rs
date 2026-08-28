@@ -19,6 +19,7 @@ fn issue(title: &str, body: &str) -> Issue {
         class: IssueClass::Feature,
         labels: Vec::new(),
         created_at: String::new(),
+        updated_at: String::new(),
         url: String::new(),
         parent: None,
     }

@@ -198,6 +198,37 @@ expect "and warns the cause may be older" 1 "not the commit that broke the tree"
 refute "and never claims the break started there" "canary found \`main\` broken at" \
   --announce --dry-run --manifest-dir "$tmp/red"
 
+# ── the DoD section, and why the repair PR needs one (#5173) ──────────────
+# SCR-003's gate fails any PR whose `Closes #N` names an issue with no
+# "Definition of done" section. A canary-filed issue is the one issue in this
+# repository a PR is structurally guaranteed to have to close — a red `main`
+# reds every other PR, so the repair is what they are all waiting on — and it
+# used to arrive without one. #5171 could not pass its own checks against
+# #5166 until the section was appended by hand.
+expect "the issue carries a Definition of done" 1 "### Definition of done" \
+  --announce --dry-run --manifest-dir "$tmp/red"
+# One box per FAILING check, named. A generic box would not tell the repair
+# author what to run, which is the whole content of this issue's done
+# condition.
+expect "with a box naming the check that failed" 1 \
+  "- [ ] \`lockfile-sync\` passes on a fresh" \
+  --announce --dry-run --manifest-dir "$tmp/red"
+expect "the compile failure names compile, not the lockfile" 1 \
+  "- [ ] \`compile\` passes on a fresh" \
+  --announce --dry-run --manifest-dir "$tmp/nocompile"
+refute "and offers no box for a check that passed" \
+  "- [ ] \`prose\` passes on a fresh" \
+  --announce --dry-run --manifest-dir "$tmp/nocompile"
+# Every box must be tickable BEFORE the merge, or the deadlock is traded for a
+# PR that can never satisfy its own DoD: the gate reads the boxes on the PR,
+# and the canary's own close happens after it.
+refute "and no box waits on the canary's own close" \
+  "- [ ] The canary" \
+  --announce --dry-run --manifest-dir "$tmp/red"
+expect "the section still says who closes the issue" 1 \
+  "closes this issue itself on its next green run" \
+  --announce --dry-run --manifest-dir "$tmp/red"
+
 # The label does not exist in this repository yet, and `gh issue create
 # --label` fails outright on an unknown label — the canary would have broken at
 # the exact moment it first had something to say. Creating it is idempotent.

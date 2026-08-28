@@ -57,6 +57,33 @@ pub const LISTENING_GAP_MS: u64 = 350;
 /// reading as held (a stuck key, a terminal that stopped repeating).
 pub const MAX_HOLD_MS: u64 = 120_000;
 
+/// The longest the deck waits for the driver to answer a finished capture
+/// before releasing the gesture.
+///
+/// Every other phase here defends itself with a deadline — [`ARMING_GAP_MS`],
+/// [`LISTENING_GAP_MS`], [`MAX_HOLD_MS`]. [`VoicePhase::Transcribing`] had
+/// none, and it is the one phase whose exit belongs to *another crate*: only
+/// `Inbound::VoiceTranscript` / `VoiceFailed` clear it. `cancel` refuses
+/// (it acts only while [`VoiceUi::recording`]) and a fresh space press is a
+/// no-op, so an answer that never arrives disabled dictation for the rest of
+/// the session, showing `◌ transcribing…` forever.
+///
+/// Set **above** the driver's own 60s HTTP timeout
+/// (`command_deck::voice::transcribe`): whenever that call can fail on its
+/// own it answers with a reason, and the reason is worth more than this
+/// release. This covers what the request timeout cannot — a capture whose
+/// blocking `finish()` never returns on a wedged audio device, and any future
+/// path that forgets to answer.
+pub const TRANSCRIBE_WAIT_MS: u64 = 90_000;
+
+/// The timeout `command_deck::voice::transcribe` builds its client with.
+const DRIVER_HTTP_TIMEOUT_MS: u64 = 60_000;
+
+/// Releasing before the driver's own request timeout would replace a real
+/// failure reason with silence. A build error rather than a test, because
+/// tuning either number without reading the other is the whole hazard.
+const _: () = assert!(TRANSCRIBE_WAIT_MS > DRIVER_HTTP_TIMEOUT_MS);
+
 /// Where the dictation gesture currently stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VoicePhase {
@@ -239,6 +266,16 @@ impl VoiceUi {
                     VoiceCmd::None
                 }
             }
+            // The driver owes an answer here; this is the deadline for it.
+            // Releasing to Idle restores the gesture rather than reporting a
+            // failure the deck cannot describe — the transcript is already
+            // lost, and a feature that works again is the recoverable half.
+            VoicePhase::Transcribing { since_ms } => {
+                if now_ms.saturating_sub(since_ms) >= TRANSCRIBE_WAIT_MS {
+                    self.phase = VoicePhase::Idle;
+                }
+                VoiceCmd::None
+            }
             _ => VoiceCmd::None,
         }
     }
@@ -272,6 +309,46 @@ impl VoiceUi {
 
 #[cfg(test)]
 mod tests {
+    /// **The witness.** An answer that never arrives releases the gesture
+    /// instead of disabling dictation for the session.
+    ///
+    /// `Transcribing` was the one phase with no deadline, and the one whose
+    /// exit belongs to another crate. `cancel` acts only while `recording()`,
+    /// and a fresh space press maps `Transcribing -> Transcribing`, so before
+    /// this there was no way out of it from inside the deck.
+    #[test]
+    fn a_transcription_that_never_answers_releases_the_gesture() {
+        let mut v = enabled();
+        // Hold through warmup into a recording, then stop.
+        assert!(matches!(
+            hold_through_warmup(&mut v),
+            VoiceCmd::Start { .. }
+        ));
+        assert!(v.recording());
+        // The stream goes quiet: the listening gap ends the recording.
+        let stopped_at = WARMUP_MS + LISTENING_GAP_MS + 100;
+        assert_eq!(v.tick(stopped_at), VoiceCmd::Stop);
+        assert!(matches!(v.phase(), VoicePhase::Transcribing { .. }));
+        let waiting_since = stopped_at;
+
+        // The driver says nothing. Just under the deadline the deck still waits
+        // — the driver's own 60s failure must win when it can produce a reason.
+        v.tick(waiting_since + TRANSCRIBE_WAIT_MS - 1);
+        assert!(
+            matches!(v.phase(), VoicePhase::Transcribing { .. }),
+            "the deck must not give up before the driver's own timeout can answer"
+        );
+
+        // Past it, the gesture is released and dictation works again.
+        v.tick(waiting_since + TRANSCRIBE_WAIT_MS);
+        assert_eq!(v.phase(), VoicePhase::Idle);
+        assert_eq!(v.status_line(waiting_since + TRANSCRIBE_WAIT_MS), None);
+
+        // And a new gesture can start, which is the whole point.
+        v.typed_space(waiting_since + TRANSCRIBE_WAIT_MS);
+        assert!(matches!(v.phase(), VoicePhase::Arming { .. }));
+    }
+
     use super::*;
 
     fn armed(v: &mut VoiceUi, start_ms: u64) {

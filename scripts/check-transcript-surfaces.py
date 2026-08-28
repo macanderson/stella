@@ -194,20 +194,78 @@ def production_sources(repo: Path = REPO) -> list[Path]:
 
 LINE_COMMENT = re.compile(r"//.*$", re.MULTILINE)
 
+# `#[cfg(test)]`, `#[cfg(all(test, …))]` and `#[cfg_attr(test, …)]` — the three
+# spellings this tree uses to mark an item that does not ship.
+CFG_TEST = re.compile(r"#\[cfg(?:_attr)?\(\s*(?:all\(\s*)?test\b")
+
+
+def strip_cfg_test(text: str) -> str:
+    """Remove every `#[cfg(test)]` item, so a test-only call is not adoption.
+
+    `production_sources` drops whole files by path, which is right for the
+    crates that put their tests in a sibling `tests.rs`. It cannot see an
+    inline `#[cfg(test)] mod tests { … }`, and several files here use that
+    form — so a call made only from a file's own test module read as the file
+    having adopted the renderer (#5083).
+
+    The false negative is the costly half: a surface that regressed to its own
+    painter but kept one call in its test module still satisfied rule 1's "a
+    SHARED row's file references the entry point". That is the "the crate
+    exists and two surfaces use it" versus "every surface renders the same"
+    confusion this guard's header says it exists to end. The false positive —
+    a test-only call forcing a non-surface file to declare a row — is what
+    surfaced it.
+
+    A brace-matching scan rather than a Rust parser, because the header sets
+    that bar (*a surface that stops qualifying should re-qualify rather than
+    teach the guard to parse Rust*), and this is the same kind of shallow
+    lexical rule rather than a step past it. Strings and char literals are not
+    tracked, so a `{` inside one could in principle unbalance the scan; a
+    braceless `#[cfg(test)] use …;` item is handled by falling back to the end
+    of the statement.
+    """
+    out: list[str] = []
+    i = 0
+    while True:
+        m = CFG_TEST.search(text, i)
+        if m is None:
+            out.append(text[i:])
+            return "".join(out)
+        out.append(text[i : m.start()])
+        # Find the item's body: the first `{` after the attribute, or the `;`
+        # that ends a braceless item, whichever comes first.
+        brace = text.find("{", m.end())
+        semi = text.find(";", m.end())
+        if brace == -1 or (semi != -1 and semi < brace):
+            i = len(text) if semi == -1 else semi + 1
+            continue
+        depth = 0
+        j = brace
+        while j < len(text):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        i = len(text) if j >= len(text) else j + 1
+
 
 def references(path: Path, entry: str, repo: Path = REPO) -> bool:
-    """Whether `path` calls `entry`, ignoring anything inside a line comment.
+    """Whether `path` calls `entry` in code that ships.
 
-    Comments are stripped because a doc comment naming the renderer is prose,
-    not adoption — `plain/transcript.rs` explains the renderer in its header
-    and calls it in its body, and only the second one is the fact this guard
-    is about.
+    Line comments are stripped because a doc comment naming the renderer is
+    prose, not adoption — `plain/transcript.rs` explains the renderer in its
+    header and calls it in its body, and only the second one is the fact this
+    guard is about. `#[cfg(test)]` items are stripped for the same reason one
+    level down: a call the binary never makes is not adoption either.
     """
     try:
         text = (repo / path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return bool(PATTERNS[entry].search(LINE_COMMENT.sub("", text)))
+    return bool(PATTERNS[entry].search(strip_cfg_test(LINE_COMMENT.sub("", text))))
 
 
 def dependent_crates(repo: Path = REPO) -> set[str]:

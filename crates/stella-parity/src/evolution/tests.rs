@@ -95,14 +95,13 @@ fn every_surface_tag_is_unique_and_snake_case() {
     }
 }
 
-/// A `Planned` row cites the issue deciding it, and a `NotPursued` row cites
-/// the issue where it was dropped — never prose standing in for a reference.
+/// A `Planned` row cites the issue where the surface is being decided — never
+/// prose standing in for a reference.
 #[test]
 fn every_parked_row_cites_an_issue() {
     for row in EVOLUTION_SURFACES {
         let cited = match row.posture {
             EvolutionPosture::Planned { issue, .. } => issue,
-            EvolutionPosture::NotPursued { decided_in, .. } => decided_in,
             _ => continue,
         };
         assert!(
@@ -174,8 +173,7 @@ fn every_row_explains_its_mechanism_and_its_rollback() {
             EvolutionPosture::Shipped { mechanism, .. }
             | EvolutionPosture::ShippedUnwitnessed { mechanism, .. }
             | EvolutionPosture::Experimental { mechanism, .. } => Some(mechanism),
-            EvolutionPosture::Planned { today, .. }
-            | EvolutionPosture::NotPursued { today, .. } => Some(today),
+            EvolutionPosture::Planned { today, .. } => Some(today),
             EvolutionPosture::Prohibited { .. } => None,
         };
         if let Some(mechanism) = mechanism {
@@ -244,9 +242,7 @@ fn liveness_and_witnesses_agree() {
                 assert!(row.posture.is_live());
                 assert!(row.posture.witness().is_none());
             }
-            EvolutionPosture::Planned { .. }
-            | EvolutionPosture::Prohibited { .. }
-            | EvolutionPosture::NotPursued { .. } => {
+            EvolutionPosture::Planned { .. } | EvolutionPosture::Prohibited { .. } => {
                 assert!(!row.posture.is_live());
                 assert!(row.posture.witness().is_none());
             }

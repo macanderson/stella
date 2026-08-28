@@ -168,7 +168,8 @@ fn the_lead_session_still_checkpoints_and_still_discards() {
 /// Stated separately from the witness above because it is the *design*
 /// decision, not the damage: `crate::subsession::run_worker` binds a
 /// [`crate::durability::SessionDurability`] under the lane's own journal key
-/// (`{session}/{lane}`) before building its engine, so the lane is
+/// (`subsession::lane_journal_key`) before building its engine, so
+/// the lane is
 /// independently resumable (#3233) — this is what will fail if a future
 /// change goes back to stripping the sink instead.
 #[test]

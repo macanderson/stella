@@ -862,7 +862,7 @@ pub fn rank_defects(issues: Vec<QueueIssue>) -> Vec<QueueIssue> {
     defects.sort_by(|a, b| {
         a.priority_rank()
             .cmp(&b.priority_rank())
-            .then_with(|| a.created_at.cmp(&b.created_at))
+            .then_with(|| crate::priority::by_age(&a.created_at, &b.created_at))
     });
     defects
 }

@@ -113,11 +113,16 @@ fn a_turn_that_learns_moves_all_three_counters() {
     let learned = tally(root).since(before);
 
     assert_eq!(
-        learned.reflections, 3,
+        learned.reflections,
+        Some(3),
         "every lesson reaches the log, restatements included"
     );
-    assert_eq!(learned.memories, 1, "only the novel lesson became a memory");
-    assert_eq!(learned.proposals, 1);
+    assert_eq!(
+        learned.memories,
+        Some(1),
+        "only the novel lesson became a memory"
+    );
+    assert_eq!(learned.proposals, Some(1));
 
     let mut stats = stella_autonomy::SessionStats::default();
     learned.add_to(&mut stats);
@@ -139,8 +144,8 @@ fn a_restatement_only_turn_logs_a_reflection_and_claims_no_memory() {
     log_lesson(root, "already known");
     let learned = tally(root).since(before);
 
-    assert_eq!(learned.reflections, 1);
-    assert_eq!(learned.memories, 0);
+    assert_eq!(learned.reflections, Some(1));
+    assert_eq!(learned.memories, Some(0));
 }
 
 /// Counting must never create what it counts. A workspace that has learned
@@ -151,7 +156,19 @@ fn counting_an_untouched_workspace_creates_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
 
-    assert_eq!(tally(root), LearningTally::default());
+    // A MEASURED zero, not `default()` — an untouched workspace is a
+    // workspace that has learned nothing, which the tally can state. `None`
+    // is reserved for state it could not read, and the two must not collapse
+    // into one answer or an unread baseline credits a turn with the whole
+    // corpus (see the witness below).
+    assert_eq!(
+        tally(root),
+        LearningTally {
+            reflections: Some(0),
+            memories: Some(0),
+            proposals: Some(0),
+        }
+    );
     assert!(
         !root
             .join(".stella")
@@ -167,14 +184,72 @@ fn counting_an_untouched_workspace_creates_nothing() {
 #[test]
 fn a_shrinking_count_reports_nothing_learned_rather_than_a_negative() {
     let later = LearningTally {
-        reflections: 1,
-        memories: 0,
-        proposals: 2,
+        reflections: Some(1),
+        memories: Some(0),
+        proposals: Some(2),
     };
     let earlier = LearningTally {
-        reflections: 9,
-        memories: 4,
-        proposals: 2,
+        reflections: Some(9),
+        memories: Some(4),
+        proposals: Some(2),
     };
-    assert_eq!(later.since(earlier), LearningTally::default());
+    assert_eq!(
+        later.since(earlier),
+        LearningTally {
+            reflections: Some(0),
+            memories: Some(0),
+            proposals: Some(0),
+        },
+        "a shrunken count is a measured zero, not an unmeasured one"
+    );
+}
+
+/// **The witness.** A baseline that could not be read must not attribute the
+/// whole existing corpus to one turn.
+///
+/// `tally` reports 0 for unreadable state, on the rule that "a counter must
+/// never be able to stop a turn". That rule is right; conflating *unreadable*
+/// with *empty* is what is not. The delta is `after.since(before)`, so a
+/// transient failure to read the BEFORE reading — a locked `context.db`, a
+/// half-written `reflections.jsonl`, and the module doc notes this "runs twice
+/// per turn on somebody's live repository" — makes `before` zero and credits
+/// the turn with everything the workspace had already learned.
+///
+/// The saturating subtraction in `since` covers the other direction (a prune
+/// between readings) and cannot see this one.
+#[test]
+fn an_unreadable_baseline_does_not_credit_a_turn_with_the_whole_corpus() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = workspace.path();
+
+    // A workspace that has already learned a great deal.
+    for i in 0..100 {
+        log_lesson(root, &format!("lesson {i}"));
+    }
+
+    // The BEFORE reading fails — the state root is momentarily unreadable.
+    // `tally` cannot distinguish that from a workspace that has learned
+    // nothing, and returns zeroes either way.
+    let before = LearningTally::default();
+
+    // The AFTER reading succeeds and sees the whole history.
+    let after = tally(root);
+    assert_eq!(
+        after.reflections,
+        Some(100),
+        "the fixture seeded a corpus for the after-reading to find"
+    );
+
+    let learned = after.since(before);
+    assert_eq!(
+        learned.reflections, None,
+        "an unread baseline yields an unmeasured delta, never the corpus; \
+         got {learned:?}"
+    );
+
+    // And an unmeasured delta contributes nothing to the counters a
+    // self-improving loop calibrates on.
+    let mut stats = stella_autonomy::SessionStats::default();
+    learned.add_to(&mut stats);
+    assert_eq!(stats.reflections_logged, 0);
 }

@@ -25,6 +25,7 @@ use stella_protocol::{
 };
 
 mod block_rail;
+mod host_rail;
 mod inline_diff;
 mod mutation_diff_e2e;
 mod palette;
@@ -107,6 +108,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             raw: "{}".into(),
             path: None,
             sub_agent_id: None,
+            task: None,
         },
         TranscriptEntry::ToolResult {
             call_id: "c1".into(),
@@ -194,6 +196,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             name: "reviewer".into(),
             summary: "database review".into(),
             tokens: 1200,
+            trigger: stella_protocol::SkillTrigger::Auto,
         },
         TranscriptEntry::MediaProgress {
             artifact_id: "m1".into(),

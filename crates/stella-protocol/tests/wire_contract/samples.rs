@@ -17,7 +17,8 @@ use stella_protocol::delivery_event::{DeliveryDecline, DeliveryOutcome};
 use stella_protocol::event::{
     BudgetMode, BudgetScope, CiStatus, FileChangeKind, GateBoard, GateRow, GateState,
     MediaJobState, MediaKind, MemoryClass, ModelCallRole, PolicyKind, PrStatus, ProofStep,
-    ProofTree, ScopeProposal, StageKind, SteerCause, TaskItem, TaskStatus, UsageIncompleteReason,
+    ProofTree, ScopeProposal, SkillTrigger, StageKind, SteerCause, TaskItem, TaskStatus,
+    UsageIncompleteReason,
 };
 use stella_protocol::ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation};
 use stella_protocol::receipt::{
@@ -138,6 +139,11 @@ pub(crate) fn all_verbosities() -> Vec<Verbosity> {
 pub(crate) fn all_file_change_kinds() -> Vec<FileChangeKind> {
     use FileChangeKind::*;
     vec![Read, Created, Modified, Deleted]
+}
+
+pub(crate) fn all_skill_triggers() -> Vec<SkillTrigger> {
+    use SkillTrigger::*;
+    vec![Auto, Command]
 }
 
 pub(crate) fn all_proof_trees() -> Vec<ProofTree> {
@@ -524,6 +530,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             name: "oxagen-feature".into(),
             summary: "the 10-layer feature contract".into(),
             tokens: 1200,
+            trigger: SkillTrigger::Auto,
         },
         AgentEvent::StepManifest {
             turn_instance: 1,
@@ -1170,6 +1177,16 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                         task_id: None,
                     },
                 ]
+            }),
+    );
+    events.extend(
+        all_skill_triggers()
+            .into_iter()
+            .map(|trigger| AgentEvent::SkillInjected {
+                name: "backlog-triage".into(),
+                summary: "triage until every facet holds".into(),
+                tokens: 3400,
+                trigger,
             }),
     );
     events.extend(all_file_change_kinds().into_iter().flat_map(|kind| {

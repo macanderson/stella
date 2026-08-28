@@ -645,6 +645,59 @@ pub fn run_memory_forget(id: &str, reason: &str) -> Result<(), String> {
 /// different words" was a contradiction — you got a second memory, and the
 /// first went on being recalled with its old text and its own vector.
 pub fn run_memory_edit(id: &str, text: &str) -> Result<(), String> {
+    let workspace_root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    let previous = edit_memory_text(&workspace_root, id, text)?;
+
+    println!("  {} revised {id}", "✓".green());
+    println!(
+        "    {} {}",
+        "was:".dimmed(),
+        clip(previous.trim(), 68).dimmed()
+    );
+    println!("    {} {}", "now:".dimmed(), clip(text.trim(), 68).dimmed());
+
+    // The lineage tally is this verb's reporting rather than the edit's work,
+    // so it reads the store again after the revision landed. The deck's `e`
+    // path (#5231) answers with one notice line and has no use for it.
+    let Some(context) = open_context(&workspace_root)? else {
+        return Ok(());
+    };
+    let stats = context
+        .memory_lineage_stats()
+        .map_err(|e| format!("cannot read lineage stats: {e}"))?;
+    println!(
+        "    {}",
+        format!(
+            "{} live {}, {} superseded revision{} kept as history",
+            stats.live,
+            if stats.live == 1 {
+                "memory"
+            } else {
+                "memories"
+            },
+            stats.superseded,
+            if stats.superseded == 1 { "" } else { "s" }
+        )
+        .dimmed()
+    );
+    Ok(())
+}
+
+/// [`run_memory_edit`]'s work, over an explicit root and printing nothing.
+///
+/// Split out for the deck's `e edit` (#5231), which drives the same revision
+/// from a transcript row: a reader who edits a memory from the deck and a
+/// reader who runs `stella memory edit` must get the same thing, and two
+/// implementations of "revise on the lineage" would be free to disagree about
+/// the one part that matters — carrying the classification forward.
+///
+/// Returns the text it replaced, which is what the CLI verb prints as `was:`.
+pub fn edit_memory_text(
+    workspace_root: &std::path::Path,
+    id: &str,
+    text: &str,
+) -> Result<String, String> {
     if text.trim().is_empty() {
         return Err(
             "the replacement text must not be empty — use `stella memory forget` to \
@@ -652,9 +705,7 @@ pub fn run_memory_edit(id: &str, text: &str) -> Result<(), String> {
                 .to_string(),
         );
     }
-    let workspace_root =
-        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    let Some(context) = open_context(&workspace_root)? else {
+    let Some(context) = open_context(workspace_root)? else {
         return Err("this workspace has no context store yet — nothing to edit".to_string());
     };
     let Some(node) = context
@@ -696,32 +747,7 @@ pub fn run_memory_edit(id: &str, text: &str) -> Result<(), String> {
         })
         .map_err(|e| format!("cannot write the revision: {e}"))?;
 
-    println!("  {} revised {id}", "✓".green());
-    println!(
-        "    {} {}",
-        "was:".dimmed(),
-        clip(previous.trim(), 68).dimmed()
-    );
-    println!("    {} {}", "now:".dimmed(), clip(text.trim(), 68).dimmed());
-    let stats = context
-        .memory_lineage_stats()
-        .map_err(|e| format!("cannot read lineage stats: {e}"))?;
-    println!(
-        "    {}",
-        format!(
-            "{} live {}, {} superseded revision{} kept as history",
-            stats.live,
-            if stats.live == 1 {
-                "memory"
-            } else {
-                "memories"
-            },
-            stats.superseded,
-            if stats.superseded == 1 { "" } else { "s" }
-        )
-        .dimmed()
-    );
-    Ok(())
+    Ok(previous)
 }
 
 /// Entry point for `stella memory forgotten` — the tombstones in this

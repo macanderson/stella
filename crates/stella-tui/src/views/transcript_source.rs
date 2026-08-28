@@ -27,6 +27,7 @@
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use stella_protocol::SkillTrigger;
 use stella_tui_theme::token;
 
 use super::transcript::{
@@ -75,6 +76,10 @@ pub struct CallFacts {
     /// folded until they do; every other kind ignores it here (its reveal is
     /// the argument body the caller hangs beneath).
     pub expanded: bool,
+    /// The board task the call was tagged with, rendered `→ task 3` (SPEC
+    /// 6.2). Carried straight from `TranscriptEntry::ToolStart`, which is
+    /// where the protocol tag is read; `None` draws no tag (#5030).
+    pub task: Option<u32>,
 }
 
 /// The metal-bearing head of a dispatched call (SPEC 6.2).
@@ -99,6 +104,7 @@ pub fn head_rows(
     // the one place a read never folded (#5030).
     event.collapsed = Some(matches!(event.kind, EventKind::Read { .. }) && !facts.expanded);
     event.duration_ms = facts.duration_ms.unwrap_or(0);
+    event.task = facts.task;
     event.sub_agent_id = facts.sub_agent_id;
     match facts.graph {
         // SPEC 6.3's write footer. A dim trailing line, because it reports
@@ -342,15 +348,14 @@ pub fn compaction_rows(
     )
 }
 
-/// `✦ skill <name> · auto · n tok`, over `injected <summary>` (SPEC 6.3).
+/// `✦ skill <name> · auto|/cmd · n tok`, over `injected <summary>` (SPEC 6.3).
 ///
-/// The trigger reads `auto` because auto-selection is the only channel that
-/// announces itself: a skill reaches the prompt either through the turn's own
-/// steering block, which is what `AgentEvent::SkillInjected` reports, or
-/// through an explicit `/slug`, which `stella-cli`'s `extensions.rs` expands
-/// into prompt text and tells nobody about. Wiring the second is #5232; until
-/// that lands, the literal here is the true reading and a carried field would
-/// be a column with one value.
+/// Both readings of the trigger have a producer since #5232: the turn's
+/// steering block, and an explicit `/slug` that `stella-cli`'s
+/// `extensions.rs` expands into prompt text. The second used to reach the
+/// prompt announcing nothing, which cost more than a missing row — the store
+/// counts a skill's uses from the auto path alone, so an invoked skill
+/// recorded no use and appraisal could retire it for being unused.
 ///
 /// SPEC's `used n× this repo` is **elided**, not zeroed. The store counts it
 /// (`skill_usage`, one row per skill per execution), but no live path carries
@@ -358,10 +363,16 @@ pub fn compaction_rows(
 /// would state the opposite of what happened. #4337 is where the counter's
 /// reader is decided.
 #[must_use]
-pub fn skill_rows(name: &str, summary: &str, tokens: u32, width: usize) -> Vec<Line<'static>> {
+pub fn skill_rows(
+    name: &str,
+    summary: &str,
+    tokens: u32,
+    trigger: SkillTrigger,
+    width: usize,
+) -> Vec<Line<'static>> {
     let mut event = Event::new(
         EventKind::Skill {
-            trigger: "auto".to_string(),
+            trigger: trigger.as_str().to_string(),
             tokens,
         },
         name.to_string(),

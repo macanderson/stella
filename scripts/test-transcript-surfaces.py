@@ -70,6 +70,31 @@ CALLS_GRID = "fn draw() { let _ = grid::render(&run, &state, 100); }\n"
 NO_CALL = "fn draw() { self.paint_my_own_way(); }\n"
 MENTIONS_ONLY = "//! See [`stella_transcript::grid::render`].\nfn draw() { mine(); }\n"
 
+# A file that paints its own way and calls the shared renderer ONLY from its
+# inline test module — the shape #5083 was filed about. `production_sources`
+# drops a sibling `tests.rs` by path and cannot see this one.
+TEST_ONLY_CALL = (
+    "fn draw() { self.paint_my_own_way(); }\n"
+    "\n"
+    "#[cfg(test)]\n"
+    "mod tests {\n"
+    "    use super::*;\n"
+    "    #[test]\n"
+    "    fn renders() {\n"
+    "        let _ = grid::render(&run, &state, 100);\n"
+    "    }\n"
+    "}\n"
+)
+
+# The same, under the two other spellings this tree uses.
+TEST_ONLY_CALL_ALL = TEST_ONLY_CALL.replace("#[cfg(test)]", "#[cfg(all(test, unix))]")
+TEST_ONLY_CALL_ATTR = TEST_ONLY_CALL.replace(
+    "#[cfg(test)]", '#[cfg_attr(test, allow(clippy::all))]'
+)
+
+# Ships a call AND has a test module that also calls: still adoption.
+SHIPS_AND_TESTS = CALLS_GRID + TEST_ONLY_CALL.split("fn draw() { self.paint_my_own_way(); }\n")[1]
+
 
 def only(problems: list[str], needle: str) -> None:
     assert any(needle in p for p in problems), f"expected {needle!r} in {problems}"
@@ -118,6 +143,43 @@ def _():
     root = tree({"a/src/lib.rs": CALLS_GRID, "b/src/lib.rs": CALLS_GRID})
     rows = [Surface("a", "a/src/lib.rs", GRID, True, None, "")]
     only(guard.check(root, rows, []), "b/src/lib.rs calls")
+
+
+@scenario("a call made only from an inline #[cfg(test)] module is not adoption")
+def _():
+    root = tree({"a/src/lib.rs": TEST_ONLY_CALL})
+    rows = [Surface("a", "a/src/lib.rs", GRID, False, 1234, "")]
+    assert guard.check(root, rows, []) == [], (
+        "an OWN row whose only call is in its test module must stay OWN (#5083)"
+    )
+
+
+@scenario("the false-negative direction: a SHARED row cannot be held up by a test-only call")
+def _():
+    # The dangerous half of #5083. A surface that regressed to its own painter
+    # but kept one call in its test module used to satisfy rule 1, which is the
+    # "the crate exists and two surfaces use it" versus "every surface renders
+    # the same" confusion this guard exists to end.
+    root = tree({"a/src/lib.rs": TEST_ONLY_CALL})
+    rows = [Surface("a", "a/src/lib.rs", GRID, True, None, "")]
+    only(guard.check(root, rows, []), "declared SHARED but")
+
+
+@scenario("cfg(all(test, …)) and cfg_attr(test, …) are stripped too")
+def _():
+    for body in (TEST_ONLY_CALL_ALL, TEST_ONLY_CALL_ATTR):
+        root = tree({"a/src/lib.rs": body})
+        rows = [Surface("a", "a/src/lib.rs", GRID, False, 1234, "")]
+        assert guard.check(root, rows, []) == [], f"not stripped: {body[:40]!r}"
+
+
+@scenario("a file that ships a call keeps it, test module or not")
+def _():
+    root = tree({"a/src/lib.rs": SHIPS_AND_TESTS})
+    rows = [Surface("a", "a/src/lib.rs", GRID, True, None, "")]
+    assert guard.check(root, rows, []) == [], (
+        "stripping the test module must not strip the shipping call above it"
+    )
 
 
 @scenario("a doc comment naming the renderer is prose, not adoption")

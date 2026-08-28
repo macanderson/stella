@@ -1914,6 +1914,21 @@
         }
       ]
     },
+    "SkillTrigger": {
+      "description": "Which channel put a skill into the prompt (SPEC 6.3, whose head reads\n`auto|/cmd`).\n\nThe two channels are genuinely different events and were indistinguishable\nuntil #5232: auto-selection is the turn's steering block choosing a skill,\nand an invocation is a person typing its slug. Collapsing them cost more\nthan a label — `skill_usage` is written from a re-run of *auto* selection,\nso an explicitly invoked skill recorded no use at all and appraisal could\nretire it for being unused.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "The turn's steering block selected it and the section's token budget\nadmitted it.",
+          "type": "string"
+        },
+        {
+          "const": "command",
+          "description": "A person typed the skill's slug and the expansion inlined its body.",
+          "type": "string"
+        }
+      ]
+    },
     "StageName": {
       "description": "The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.",
       "examples": [
@@ -3774,7 +3789,7 @@
       "type": "object"
     },
     {
-      "description": "A workspace skill entered this turn's context — one event per skill\nthe steering section actually carried.\n\nEmitted after the section's own token budget has made its cut, so\n`tokens` is what the prompt paid rather than what selection ranked:\nselection routinely scores more skills than the section fits, and an\nevent per *candidate* would bill the turn for text it never sent.",
+      "description": "A workspace skill entered this turn's context — one event per skill\nthat actually reached the prompt, by either channel.\n\nFor [`SkillTrigger::Auto`] it is emitted after the steering section's\nown token budget has made its cut, so `tokens` is what the prompt paid\nrather than what selection ranked: selection routinely scores more\nskills than the section fits, and an event per *candidate* would bill\nthe turn for text it never sent. For [`SkillTrigger::Command`] there is\nno cut to wait for — the expansion inlines the skill's whole body.",
       "properties": {
         "name": {
           "description": "The skill's slug, as its `SKILL.md` frontmatter names it.",
@@ -3785,10 +3800,15 @@
           "type": "string"
         },
         "tokens": {
-          "description": "What this skill's rendered block cost, estimated over the exact\nbytes the section carried.",
+          "description": "What this skill's rendered block cost, estimated over the exact\nbytes the prompt carried.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "trigger": {
+          "$ref": "#/$defs/SkillTrigger",
+          "default": "auto",
+          "description": "Which channel put it there.\n\nAbsent on a journal written before #5232, where the only producer\nwas auto-selection — so the default is the value those events\nmeant."
         },
         "ts": {
           "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",

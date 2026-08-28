@@ -81,6 +81,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + action-pins + cargo-install-pins
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
+                         #   + adr-numbering
                          #   + command-docs + brand-case + file-size
                          #   + website-inputs (a Rust test's website/ inputs
                          #     are declared, and ci.yml's filter is built
@@ -113,6 +114,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + deck-paths (the decks' code-map citations)
                          #   + css-vars (every var() in a token sheet resolves)
                          #   + reserved-paths (no Windows device name in a path)
+                         #   + rendering-facts (no v2 rendering draws a
+                         #     fact SPEC.md retired)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
@@ -1305,6 +1308,6 @@ macanderson org repos.
   follow-up, tech-debt item, or logical next step you noticed. Apply ONLY
   the `triage` label.
 - **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
-  separation of duties:** Never apply priority (`P0`–`P3`) or size labels —
+  separation of duties:** Never apply priority (`P0`–`P4`) or size labels —
   a dedicated triage agent owns sizing and priority; a guard workflow
   strips creator-applied priorities.

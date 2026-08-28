@@ -119,6 +119,20 @@ pub enum TranscriptEntry {
         /// the same name, carried straight through. `None` is the lead's own
         /// call, which is the ordinary case (#4699).
         sub_agent_id: Option<String>,
+        /// The board task this call was tagged with, rendered `→ task 3` on
+        /// the head (SPEC 6.2).
+        ///
+        /// `ToolStart` is a declared task-tag carrier
+        /// (`stella_protocol::event::task_tag`), and the tag was being stamped
+        /// and then dropped here: nothing in this crate read
+        /// `AgentEvent::task_id`, so the head SPEC 6.2 renders the tag on had
+        /// nothing to render (#5030).
+        ///
+        /// A `u32` rather than the protocol's `TaskId`: the board's ids are
+        /// per-session ordinals spelled as strings (`"1"`, `"2"`), and the tag
+        /// is the ordinal. An id that does not parse as one carries no tag
+        /// rather than a tag the reader cannot act on.
+        task: Option<u32>,
     },
     /// A tool invocation finished — `ok` is `false` for a typed tool error.
     ToolResult {
@@ -285,6 +299,8 @@ pub enum TranscriptEntry {
         summary: String,
         /// What the injected block cost.
         tokens: u32,
+        /// Which channel put it in the prompt — the head's `auto|/cmd`.
+        trigger: stella_protocol::SkillTrigger,
     },
     /// Context recall completed; frames are cited by human label, never raw
     /// id (L-C4).

@@ -30,13 +30,15 @@
 //! with a digit — and a surface that can only be tested by driving a TTY is
 //! a surface whose edge cases are tested by users.
 //!
-//! # Known hazard, inherited
+//! # Abandoning a prompt
 //!
-//! [`TtyLineIo`] reads stdin on the blocking pool, and the broker's TTL
-//! cannot cancel that read once it starts — the same hazard
-//! [`crate::approval`] documents for its own io, and the same fix (a
-//! cancellable line reader) would close both. It is tracked in #4219 rather
-//! than hidden here.
+//! [`TtyLineIo`] asks [`crate::stdin_lines`]'s shared reader, which is what
+//! makes this flow safe to abandon. A read in flight still cannot be
+//! cancelled — nothing can cancel a blocking `read_line` — but its line is
+//! held for the next asker instead of being consumed by the prompt that gave
+//! up. That matters most here: this broker's TTL is thirty minutes against
+//! approvals' two, and one call issues a read per question, so a cancel
+//! mid-batch used to strand a reader at each of them (#4219).
 
 use std::sync::Arc;
 
@@ -217,22 +219,14 @@ impl QuestionIo for TtyLineIo {
         use std::io::Write as _;
         print!("{card}");
         std::io::stdout().flush().map_err(|e| e.to_string())?;
-        tokio::task::spawn_blocking(|| {
-            use std::io::BufRead as _;
-            let mut line = String::new();
-            let read = std::io::stdin().lock().read_line(&mut line);
-            match read {
-                // Zero bytes is EOF — the person closed the input. Reporting
-                // it as an error is what makes the flow cancel instead of
-                // spinning on an endless stream of empty lines, each of which
-                // would be read as "take the default".
-                Ok(0) => Err("input stream closed".to_string()),
-                Ok(_) => Ok(line),
-                Err(e) => Err(e.to_string()),
-            }
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        match crate::stdin_lines::stdin_lines().next_line().await? {
+            Some(line) => Ok(line),
+            // End of input — the person closed it. Reporting it as an error is
+            // what makes the flow cancel instead of spinning on an endless
+            // stream of empty lines, each of which would be read as "take the
+            // default".
+            None => Err("input stream closed".to_string()),
+        }
     }
 }
 

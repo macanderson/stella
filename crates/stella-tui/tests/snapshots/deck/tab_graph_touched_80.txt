@@ -1,0 +1,45 @@
+# deck golden · tab_graph_touched_80
+# the GRAPH tab at 80 columns: the hot mark drops its separator, not the turn
+# viewport 80×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION AGENTS TRACES   GRAPH   FILES SKILLS MCP ISSUES SETTINGS       stella*
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ⌕ file:run_turn — engine step driver   / files · q query       6 nodes · det │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ nodes · 6 in file
+╭───────────────────────────╮╭ ▢ Engine ───────────────────────────────────────╮
+│ ƒ run_turn               3││ struct · stella-core/src/engine.rs:48           │
+│ ▢ Engine                 3││ ← called by 1 · uses 1 → · writes 1 →           │
+│ ▢ Router           ● hot 1││ called by ← run_turn                            │
+│ ▢ AgentEvent             1││ uses → Router · edited turn 1                   │
+│ ▢ Ledger                 1││ writes → Ledger                                 │
+│ ▤ driver.rs              1││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           ││                                                 │
+│                           │╰─────────────────────────────────────────────────╯
+│                           │╭ coupling · neighbors by edge count ─────────────╮
+│                           ││Ledger   █  1                                    │
+│                           ││Router   █  1                                    │
+│                           ││run_turn █  1                                    │
+│                           ││                                                 │
+│ ▤ file · ▢ type · ƒ fn    ││                                                 │
+│ right column = edge count ││high coupling = blast radius if you edit this fil│
+╰───────────────────────────╯╰─────────────────────────────────────────────────╯
+ ↵ open file · / files · q query · ↑↓ walk
+ every answer here is deterministic · $0.00
+ ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00     ? help

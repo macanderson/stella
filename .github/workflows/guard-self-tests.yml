@@ -102,6 +102,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-action-pins.sh
 
+      - name: the ADR-numbering guard can still fail
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-adr-numbering.sh
+
       - name: arena start/stop/reap/local scripts
         if: ${{ !cancelled() }}
         run: ./scripts/test-arena-scripts.sh
@@ -145,6 +149,9 @@ jobs:
       - name: deck path guard directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-deck-paths.sh
+
+      - name: The rendering-facts guard can still fail
+        run: ./scripts/test-rendering-facts.sh
 
       - name: diagnostic-code registry failure directions
         if: ${{ !cancelled() }}

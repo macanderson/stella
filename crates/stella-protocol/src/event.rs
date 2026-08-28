@@ -114,8 +114,8 @@ pub use crate::receipt::{
 // `stella_protocol::event::TaskItem` must keep resolving after the split.
 pub use payload::{
     CiStatus, FileChangeKind, GateBoard, GateRow, GateState, HunkProposal, MediaArtifactRef,
-    MediaJobState, MediaKind, PrStatus, ProposedHunk, ScopeProposal, TaskItem, TaskStatus,
-    VerdictEvidence,
+    MediaJobState, MediaKind, PrStatus, ProposedHunk, ScopeProposal, SkillTrigger, TaskItem,
+    TaskStatus, VerdictEvidence,
 };
 
 mod call_role;

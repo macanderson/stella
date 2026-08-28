@@ -649,66 +649,10 @@ pub enum Inbound {
     VoiceFailed { reason: String },
 }
 
-/// One row of the ISSUES tab's browse list — tracker-agnostic: the driver
-/// maps whatever issue source it carries into this shape, and the TUI never
-/// learns which tracker it was.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct IssueRow {
-    /// `#123` (GitHub) or `ENG-123` (Linear).
-    pub key: String,
-    pub title: String,
-    pub state: String,
-    pub labels: Vec<String>,
-    pub assignee: Option<String>,
-    pub url: String,
-    pub updated_at: Option<String>,
-    /// The work this session started for the issue, once it has started any.
-    pub linked: Option<LinkedWork>,
-}
-
-/// The work one session claimed for an issue: what `w start work` opened, and
-/// what that claim's evidence ledger has recorded since (SPEC 9.4).
-///
-/// The ISSUES tab reads this three ways — the inline `plan r3 · task 3 live`
-/// tag on a row, the detail pane's `linked` line, and the
-/// [`touched_files`](Self::touched_files) the heat sort joins against the code
-/// graph (`crate::views::issues`).
-///
-/// **No producer fills it yet.** The deck's own start-work key is refused by
-/// name in `stella-cli`'s `command_deck::issues`'s `issues_act`, because the
-/// claim belongs to the self-driving loop's dispatch ledger rather than to a
-/// tracker status, and the plan-opening event that would name a round lost its
-/// producer when the staged pipeline was removed (#3865). #5197 is the read
-/// path from those ledgers to the deck. Until it lands, every row carries
-/// `None` here and the tab draws the tracker's own fields alone — which is why
-/// each field below is dropped from rendering when it is empty rather than
-/// printed as a zero.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LinkedWork {
-    /// The plan's round label, spelled as the plan panel spells it (`r3`).
-    /// Empty when the claim opened a branch before any plan existed.
-    pub plan: String,
-    /// Tasks that plan has finished.
-    pub tasks_done: usize,
-    /// Tasks that plan holds. Zero means "no plan to count", so the `2/6`
-    /// clause is dropped rather than rendered as `0/0`.
-    pub tasks_total: usize,
-    /// The 1-based task the loop is executing right now, when one is live.
-    pub live_task: Option<usize>,
-    /// The branch the claim opened. Empty when it has opened none.
-    pub branch: String,
-    /// Root-relative paths the evidence ledger recorded the work as touching.
-    /// The heat sort looks each one up in the code graph.
-    pub touched_files: Vec<String>,
-    /// Tests the evidence ledger holds passing.
-    pub tests_passed: usize,
-    /// Tests it ran. Zero drops the `4/4 tests` clause, for the same reason
-    /// [`tasks_total`](Self::tasks_total) does.
-    pub tests_total: usize,
-}
-
+// The ISSUES tab's read models. Re-exported rather than moved behind a
+// path, so no consumer has to learn where they went.
 mod issues;
-pub use issues::{EntityField, EntityHit, IssueAction};
+pub use issues::{EntityField, EntityHit, IssueAction, IssueRow, LinkedWork};
 
 /// The session-registry lifecycle phase, exactly the grouping the SESSIONS
 /// overlay shows. A TUI-local mirror of `stella-store`'s `SessionStatus`
@@ -1295,6 +1239,13 @@ pub enum WorkspaceInput {
     /// the same lesson under a new one. The driver answers with
     /// [`Inbound::Notice`].
     RejectMemory { memory_id: String, text: String },
+    /// `e edit` on a logged memory row (SPEC 6.3): a revision on the memory's
+    /// lineage, so the old words stop being served and the id does not change.
+    ///
+    /// `text` is the replacement only. [`Self::RejectMemory`] carries the old
+    /// words too, because a tombstone has to recognise a re-mined paraphrase;
+    /// an edit names a lineage the id already identifies.
+    EditMemory { memory_id: String, text: String },
     /// `r` on a highlighted gate board: ask for one gate to be evaluated
     /// again — SPEC 8.1's `r rerun gate`.
     ///

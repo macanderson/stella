@@ -308,7 +308,8 @@ pub(crate) async fn run_goal_wrapped_turn(
     // already hold the classic arm to.
     let variant = bound.variant();
     let execution = begin_execution(store, "goal", goal, cfg, session, Some(variant.as_str()));
-    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
+    // No invocation to record: a goal run is given a task, not a `/slug`.
+    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root, &[]);
 
     let configured = crate::config::discover_configured_providers();
     let routed_verifier =

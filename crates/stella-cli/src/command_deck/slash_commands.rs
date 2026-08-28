@@ -25,7 +25,11 @@ pub(super) enum DeckCommand {
     Prompt,
     /// A custom command/skill invocation — run the model turn with this
     /// expanded prompt instead of the raw `/name args` input.
-    Expanded(String),
+    ///
+    /// The whole [`crate::extensions::Expansion`] rather than its prompt,
+    /// because a skill invocation also has to be reported (#5232) and the
+    /// prompt text no longer says which kind of definition produced it.
+    Expanded(crate::extensions::Expansion),
     /// Handled as a command; skip the model turn.
     Handled,
     /// `/init` finished successfully; skip the turn AND refresh the session's
@@ -295,7 +299,7 @@ pub(super) async fn run_deck_command(
             // thing` stays a model prompt even if a custom `init` exists).
             // An AGENT invocation additionally records a usage-telemetry
             // row (agent, pinned version, task) on the registry's ledger.
-            if let Some(expanded) = custom.expand(trimmed, &skills::deck_reserved()) {
+            if let Some(expanded) = custom.expansion(trimmed, &skills::deck_reserved()) {
                 authoring::record_agent_invocation(trimmed, custom, registry);
                 return DeckCommand::Expanded(expanded);
             }

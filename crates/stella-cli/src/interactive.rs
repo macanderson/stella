@@ -85,8 +85,14 @@ pub trait AskUserIo: Send + Sync {
     async fn prompt(&self, question: &str, options: &[String]) -> Result<String, String>;
 }
 
-/// Production io: prints the card to stdout and reads one line from stdin.
-/// Safe to use while a turn is in flight — the REPL's own read loop is
+/// Production io: prints the card to stdout and asks the shared stdin reader
+/// for one line.
+///
+/// Safe to **abandon**: this used to own an uncancellable `spawn_blocking`
+/// read, so an approval that hit its TTL left a parked reader that ate the
+/// person's next message (#4219). [`crate::stdin_lines`] carries the argument.
+///
+/// Safe to use while a turn is in flight, too — the REPL's own read loop is
 /// suspended awaiting the turn, so stdin has exactly one reader.
 pub struct TtyAskUserIo;
 
@@ -103,18 +109,14 @@ impl AskUserIo for TtyAskUserIo {
         print!("  {} ", "answer (number or text):".dimmed());
         std::io::stdout().flush().map_err(|e| e.to_string())?;
 
-        // Blocking stdin read off the async runtime's worker threads.
-        tokio::task::spawn_blocking(|| {
-            use std::io::BufRead as _;
-            let mut line = String::new();
-            std::io::stdin()
-                .lock()
-                .read_line(&mut line)
-                .map(|_| line)
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        // End of input reads as an empty answer here, which the approvals
+        // plane already treats as "no choice made". `ask_question` cancels its
+        // flow on the same signal instead; the shared reader reports it and
+        // lets each surface keep its own policy.
+        Ok(crate::stdin_lines::stdin_lines()
+            .next_line()
+            .await?
+            .unwrap_or_default())
     }
 }
 

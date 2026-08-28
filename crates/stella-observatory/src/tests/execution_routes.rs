@@ -477,6 +477,78 @@ fn model_card_degrades_a_catalog_older_than_its_columns() {
 /// drawer's last-seen `seq` — the incremental fetch a still-running
 /// execution's poll uses instead of re-downloading the whole transcript
 /// every tick.
+/// **The witness (#5261).** A verify turn's gate board reaches a reader who is
+/// not sitting at a terminal.
+///
+/// `gate_board` (#5042) had exactly one consumer: the command deck folds it
+/// into a `TranscriptEntry` and paints it. That is rendering with no branch,
+/// and interactive mode renders every case by construction — so a gate failure
+/// was invisible to every non-interactive reader of a recorded stream, which
+/// is the shape AGENTS.md's tenth rule exists to stop. The journal query did
+/// not name the tag, so the row was not even fetched.
+///
+/// The assertion is about the FAILED gate specifically. A board is mostly
+/// green by the time anyone reads it, and a route that carried the count but
+/// not the failing case would satisfy "the tag has a consumer" while still not
+/// answering the only question a reader opens a failed verify turn to ask.
+#[test]
+fn execution_journal_carries_a_gate_boards_failed_and_undecided_rows() {
+    let ws = seeded_workspace();
+    // Execution 2 carries no seeded events, so this board is the whole
+    // journal — and the shared fixture's rows keep the seq numbers the tests
+    // around it address them by. One green gate, one failed, one undecided.
+    let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+    conn.execute_batch(
+        r#"INSERT INTO events (execution_id, seq, event_type, payload) VALUES
+             (2, 0, 'gate_board', '{"type":"gate_board","board":{"patch":"patch-7","gates":[{"name":"tests","state":"green","deterministic":true},{"name":"flip","state":{"failed":{"case":"witness did not go red","log":"expected exit 1, got 0\nassertion left == right"}},"deterministic":true},{"name":"lint","state":{"undecided":{"reason":"the plugin reported no lint evidence"}},"deterministic":true}]}}');"#,
+    )
+    .unwrap();
+    drop(conn);
+
+    let response = respond(ws.path(), "/api/execution-journal?id=2");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let rows = v.as_array().expect("the journal is an array");
+    let board = rows
+        .iter()
+        .find(|r| r["type"] == "gate_board")
+        .expect("the gate board must reach the journal at all");
+
+    assert_eq!(board["patch"], "patch-7", "the board names what it judged");
+    assert_eq!(board["total"], 3);
+    assert_eq!(board["green"], 1);
+
+    // Both non-green rows are carried, and the green one is not: "the evidence
+    // could not decide" is a real outcome and reporting it as a pass is the
+    // false claim this board exists to prevent.
+    let unresolved = board["unresolved"].as_array().expect("unresolved rows");
+    assert_eq!(unresolved.len(), 2, "{unresolved:?}");
+    let names: Vec<&str> = unresolved
+        .iter()
+        .map(|g| g["name"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(names, vec!["flip", "lint"]);
+
+    // The failing case, in the words the evidence used — the thing a reader
+    // came for.
+    assert_eq!(
+        unresolved[0]["state"]["failed"]["case"],
+        "witness did not go red"
+    );
+    assert!(
+        unresolved[0]["state"]["failed"]["log"]
+            .as_str()
+            .unwrap_or("")
+            .contains("expected exit 1"),
+        "{unresolved:?}"
+    );
+    assert_eq!(
+        unresolved[1]["state"]["undecided"]["reason"],
+        "the plugin reported no lint evidence"
+    );
+    // And the price the row claims, which SPEC 8.1 renders as `det`.
+    assert_eq!(unresolved[0]["deterministic"], true);
+}
+
 #[test]
 fn execution_journal_after_seq_returns_only_newer_rows() {
     let ws = seeded_workspace();

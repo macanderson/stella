@@ -102,7 +102,21 @@ pub(super) fn report(durable: &Durable, tally: &Tally, budget: &RunBudget) -> Re
             // (#4353). Printed whether or not a ceiling was set: an operator
             // deciding what to set next time needs the number from the run that
             // did not have one.
-            format_args!(", ${:.2} spent", budget.spent()),
+            //
+            // A turn that could not report its cost is charged its whole
+            // remaining ceiling, so a run carrying one has a total that is an
+            // upper bound rather than a measurement — and says so. An operator
+            // setting next run's ceiling from a number that silently mixed the
+            // two would be calibrating against the wrong quantity.
+            if budget.unreported() == 0 {
+                format!(", ${:.2} spent", budget.spent())
+            } else {
+                format!(
+                    ", at most ${:.2} spent ({} turn(s) could not report, each charged its ceiling)",
+                    budget.spent(),
+                    budget.unreported(),
+                )
+            },
         ),
     );
     Ok(())

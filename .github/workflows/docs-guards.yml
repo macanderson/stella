@@ -100,6 +100,7 @@ on:
       - "**/*.md"
       - "**/*.rs"
       - "scripts/check-doc-links.py"
+      - "scripts/check-adr-numbering.py"
       - "scripts/check-invariants.sh"
       - "website/**"
       - "scripts/check-command-docs.sh"
@@ -122,6 +123,8 @@ on:
       - "scripts/contrast-baseline.txt"
       - "scripts/light-clamp-baseline.txt"
       - "design/tokens/**"
+      - "design/tui-v2/renderings/**"
+      - "scripts/check-rendering-facts.sh"
       - ".github/workflows/docs-guards.yml"
   push:
     branches: [main]
@@ -130,6 +133,7 @@ on:
       - "**/*.md"
       - "**/*.rs"
       - "scripts/check-doc-links.py"
+      - "scripts/check-adr-numbering.py"
       - "scripts/check-invariants.sh"
       - "website/**"
       - "scripts/check-command-docs.sh"
@@ -152,6 +156,8 @@ on:
       - "scripts/contrast-baseline.txt"
       - "scripts/light-clamp-baseline.txt"
       - "design/tokens/**"
+      - "design/tui-v2/renderings/**"
+      - "scripts/check-rendering-facts.sh"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
 
@@ -176,6 +182,10 @@ jobs:
       - name: every doc citation resolves to an identified document
         if: ${{ !cancelled() }}
         run: python3 scripts/check-doc-links.py check
+
+      - name: every ADR number identifies exactly one indexed record
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-adr-numbering.py
 
       - name: the architectural invariants have one home and stable numbering
         if: ${{ !cancelled() }}
@@ -266,6 +276,9 @@ jobs:
       - name: nothing outside docs/design cites docs/design
         if: ${{ !cancelled() }}
         run: bash scripts/check-design-refs.sh
+
+      - name: No v2 rendering draws a fact the SPEC retired
+        run: ./scripts/check-rendering-facts.sh
 
       # The brand kit's two cross-file strings: the install line against
       # README.md, and now the tagline against the kit (#3631). `--check`

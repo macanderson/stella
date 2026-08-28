@@ -260,7 +260,7 @@ async fn a_wrapper_plugin_participates_in_a_turn_and_the_host_decides_its_verdic
     );
 
     let (verdict, continuation, _) = run_turn("make the parser slower on purpose").await;
-    let Verdict::Unmet { unmet } = &verdict else {
+    let Verdict::Unmet { unmet, .. } = &verdict else {
         panic!("p50 118 is outside the 105 budget, got {verdict:?}");
     };
     assert_eq!(unmet.len(), 1);
@@ -435,7 +435,17 @@ async fn an_in_process_handler_reports_its_own_failure_as_a_wrapper_failure() {
             reason: stella_plugin::UndecidedReason::MeasurementMissing {
                 requirement: "within-budget".into(),
                 measurement: "p50".into(),
-            }
+            },
+            // The same fact per requirement (#5267). One requirement here, so
+            // the list is the reason above with its clause named.
+            undecided: vec![stella_plugin::UndecidedRequirement {
+                requirement: "within-budget".into(),
+                statement: "the benchmark p50 stays inside its recorded budget".into(),
+                reason: stella_plugin::UndecidedReason::MeasurementMissing {
+                    requirement: "within-budget".into(),
+                    measurement: "p50".into(),
+                },
+            }],
         }
     );
 }

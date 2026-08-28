@@ -12,11 +12,12 @@
 //! headless and refuses with the structured grant-path message instead of
 //! hanging on stdin that will never answer.
 //!
-//! Known hazard, tracked rather than hidden: [`crate::interactive::TtyAskUserIo`]
-//! reads stdin on the blocking pool, and the broker's TTL cannot cancel
-//! that read once it starts — a timed-out approval leaves the read pending,
-//! and the user's next line answers the dead prompt instead of the REPL.
-//! Fixing it means a cancellable line reader, which is its own change.
+//! A timed-out approval used to leave a stdin read parked on the blocking
+//! pool, and the person's next line answered the dead prompt instead of the
+//! REPL. [`crate::interactive::TtyAskUserIo`] now asks
+//! [`crate::stdin_lines`]'s shared reader, which holds such a line for the
+//! next asker rather than consuming it — so the TTL still cannot cancel a read
+//! in flight, and no longer needs to (#4219).
 
 use std::sync::Arc;
 

@@ -243,6 +243,13 @@ async fn main() -> std::io::Result<()> {
                         "rejected {memory_id} — it will not be recalled or re-learned"
                     )));
                 }
+                // `e` on a memory row, same reasoning: no context store to
+                // revise into, so the demo answers with the driver's notice.
+                WorkspaceInput::EditMemory { memory_id, .. } => {
+                    let _ = react_tx.send(Inbound::Notice(format!(
+                        "edited {memory_id} — later turns recall the new words"
+                    )));
+                }
                 // The budget cap folds straight back through a BudgetTick, the
                 // same stream the real driver's guard reports on.
                 WorkspaceInput::SetBudget { limit_usd } => {

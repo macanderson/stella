@@ -34,8 +34,7 @@
 <text x="72" y="366" font-size="11" fill="#777782">estimate</text>
 <text x="144" y="366" font-size="11" fill="#EFC53F">~$0.40</text>
 <text x="204" y="366" font-size="11" fill="#E8E8EC">~60k tok</text>
-<text x="282" y="366" font-size="11" fill="#A9AAB5">det est 84%</text>
-<text x="384" y="366" font-size="11" fill="#E8E8EC">~8 min</text>
+<text x="282" y="366" font-size="11" fill="#E8E8EC">~8 min</text>
 <line x1="56" y1="382" x2="624" y2="382" stroke="#26262C" stroke-width="1"/>
 <text x="72" y="406" font-size="12" fill="#EFC53F">a approve and start</text>
 <text x="240" y="406" font-size="11" fill="#A9AAB5">e edit tasks</text>
@@ -48,7 +47,6 @@
 <text x="196" y="496" font-size="12" fill="#26262C">░░░░░░░</text>
 <text x="258" y="496" font-size="11" fill="#E8E8EC">27%</text>
 <text x="298" y="496" font-size="11" fill="#EFC53F">$0.45</text>
-<text x="356" y="496" font-size="11" fill="#A9AAB5">det 86%</text>
-<text x="430" y="496" font-size="11" fill="#A9AAB5">✉ 21</text>
+<text x="356" y="496" font-size="11" fill="#A9AAB5">✉ 21</text>
 <text x="606" y="496" font-size="11" fill="#777782">? help</text>
 </svg>

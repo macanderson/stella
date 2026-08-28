@@ -262,6 +262,13 @@ SH
 failures=""
 failed_names=""
 remedies=""
+# One DoD box per failing check, so the issue states its own done condition.
+# SCR-003's gate fails any PR whose `Closes #N` names an issue with no
+# "Definition of done" section — and a canary-filed issue is the one issue in
+# the repository that a PR is structurally guaranteed to have to close, because
+# a red `main` reds every other PR and the repair is what they are all waiting
+# on. Without this the repair PR could not pass its own checks (#5173).
+dod=""
 
 cd "$repo_root"
 
@@ -286,6 +293,11 @@ ${out}
 $(remedy_for "$name")
 \`\`\`
 
+"
+    # Tickable before the merge, by whoever writes the repair: they run the
+    # check on their own tree. A box that could only be ticked afterwards
+    # would trade this deadlock for a PR that can never satisfy it.
+    dod="${dod}- [ ] \`${name}\` passes on a fresh \`main\` with the fix applied
 "
   fi
 done
@@ -364,6 +376,16 @@ git checkout main && git pull
 
 ${remedies}Land it on its own from a fresh \`main\` — do not fold it into an unrelated PR,
 for the reason AGENTS.md gives about the file-size baseline.
+
+### Definition of done
+
+${dod}- [ ] The repair landed on its own from a fresh \`main\`, not folded into an
+      unrelated PR.
+
+Tick these on the repair PR's own tree — each is a command you can run before
+you merge. The canary closes this issue itself on its next green run, so a box
+nobody ticks costs the issue nothing; SCR-003's gate is what reads them, and it
+runs on the PR.
 
 ### Blast radius while this is open
 

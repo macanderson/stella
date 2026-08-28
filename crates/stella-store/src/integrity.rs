@@ -39,6 +39,8 @@ use crate::{
     open_private_sqlite_read_only,
 };
 
+mod salvage;
+
 /// Does this rusqlite error mean the FILE is unusable (as opposed to the
 /// statement being wrong)? `SQLITE_CORRUPT` is a database whose pages no longer
 /// hold a valid b-tree; `SQLITE_NOTADB` is a file whose header is not SQLite's
@@ -485,23 +487,32 @@ pub struct StoreQuarantine {
 ///    successful repair would turn into new corruption. Renames come first
 ///    because they are the part that has to work — after this step the
 ///    workspace is usable again even if everything below fails.
-/// 2. `VACUUM INTO` a new `store.db.salvaged-<epoch>` — a copy of the quarantined
-///    file that succeeds only when SQLite can walk it end to end. Salvage is
-///    recorded in [`StoreQuarantine::salvage_error`] rather than failing the
-///    repair. The read is immutable, so the quarantined evidence is never
-///    modified by the attempt to read it.
+/// 2. Copy what is readable into a new `store.db.salvaged-<epoch>`, by
+///    `VACUUM INTO` where SQLite can walk the file end to end and by a
+///    per-table scan where it cannot (`salvage::salvage`). Salvage is recorded in
+///    [`StoreQuarantine::salvage_error`] rather than failing the repair. The
+///    read is immutable, so the quarantined evidence is never modified by the
+///    attempt to read it.
 ///
-///    **`VACUUM INTO` is all-or-nothing, and on real damage the answer is
-///    usually nothing.** It reads through the b-tree, so one unreadable page on
-///    any path it takes aborts the whole copy — a shredded header and a handful
-///    of bad pages in the middle of a healthy 1 GB file fail it alike. Measured
-///    on the maintainer's store (#4564): six damaged pages across four trees,
-///    `VACUUM INTO` salvaged zero rows, while `.recover` — which rebuilds from
-///    surviving cell records instead of walking the tree — returned 376,129 of
-///    376,140 events and every row of `executions`, `telemetry` and
-///    `tool_calls`. That is why the caller prints the by-hand `.recover` line
-///    beside this result and does not present the salvage attempt as the
-///    recovery: replacing this step with `.recover` is #5282.
+///    **`VACUUM INTO` alone is all-or-nothing, and on real damage the answer
+///    was usually nothing.** It reads through the b-tree, so one unreadable
+///    page on any path it takes aborts the whole copy — a shredded header and
+///    a handful of bad pages in the middle of a healthy 1 GB file failed it
+///    alike. Measured on the maintainer's store (#4564): six damaged pages
+///    across four trees, zero rows salvaged, while `.recover` — which rebuilds
+///    from surviving cell records instead of walking the tree — returned
+///    376,129 of 376,140 events and every row of `executions`, `telemetry` and
+///    `tool_calls`.
+///
+///    The scan added for #5282 closes most of that gap without taking
+///    `.recover`'s dependencies: it reads each table on its own and resumes
+///    past damage where a rowid seek can find a way, so one broken b-tree costs
+///    its own unreadable region and not the file. On the hermetic fixture
+///    (`salvage_recovers_rows_a_vacuum_cannot_reach`, a third of the file
+///    overwritten) that is 667 rows across 28 tables against the vacuum's zero.
+///    It still recovers less than `.recover` does, which is why the caller
+///    keeps printing the by-hand `.recover` line beside a scanned result — and
+///    why that result carries a caveat rather than reading as a complete copy.
 ///
 /// Nothing is deleted and nothing is overwritten — every target name is made
 /// unique first — so the whole operation is undoable with `mv`, and the caller
@@ -547,57 +558,12 @@ pub fn quarantine_corrupt_store(db_path: &Path) -> Result<StoreQuarantine> {
     // the moved file rather than the live path is what keeps SQLite away from
     // the user's sidecars: the names it would create, consult, or delete now
     // belong to the quarantined file, not to anything that was here before.
-    let (salvaged, salvage_error) = salvage(&quarantined, db_path, &stamp);
+    let (salvaged, salvage_error) = salvage::salvage(&quarantined, db_path, &stamp, unique_sibling);
     Ok(StoreQuarantine {
         moved,
         salvaged,
         salvage_error,
     })
-}
-
-/// `VACUUM INTO` a fresh database from `source`, named beside `original`.
-/// Best-effort by construction: the returned error string is a report, not a
-/// failure. The source is opened immutably — the evidence a user may still want
-/// to `.recover` by hand is not modified by the attempt to copy it.
-fn salvage(source: &Path, original: &Path, stamp: &str) -> (Option<PathBuf>, Option<String>) {
-    let target = match unique_sibling(original, &format!("salvaged-{stamp}")) {
-        Ok(target) => target,
-        Err(error) => return (None, Some(error.to_string())),
-    };
-    // `VACUUM INTO` takes an expression, so the path binds as a parameter — no
-    // quoting of a path that may contain apostrophes.
-    let Some(target_str) = target.to_str() else {
-        return (
-            None,
-            Some(format!(
-                "salvage target {} is not valid UTF-8",
-                target.display()
-            )),
-        );
-    };
-    let attempt = open_private_sqlite_read_only(source).and_then(|conn| {
-        conn.execute("VACUUM INTO ?1", [target_str])
-            .map_err(|e| StoreError::Other(format!("VACUUM INTO failed: {e}")))
-    });
-    match attempt {
-        Ok(_) => {
-            // The salvaged copy holds the same transcripts the original did, so
-            // it gets the same owner-only mode the store is created with. A mode
-            // that cannot be set is a leak, not a cosmetic problem: drop the
-            // copy and report it.
-            if let Err(error) = restrict_to_owner(&target) {
-                let _ = std::fs::remove_file(&target);
-                return (None, Some(error.to_string()));
-            }
-            (Some(target), None)
-        }
-        Err(error) => {
-            // A failed VACUUM can leave a partial file behind; it is this
-            // function's own output path, never anything the user had.
-            let _ = std::fs::remove_file(&target);
-            (None, Some(error.to_string()))
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -986,10 +952,9 @@ mod tests {
 
     #[test]
     fn quarantine_salvages_readable_content_into_a_new_owner_only_database() {
-        // Salvage is exercised on an intact file: `VACUUM INTO` on a shredded
-        // header can only fail, so proving the copy actually carries the user's
-        // rows over needs a database SQLite can still read. Localized damage
-        // behaves the same way — that is why the step exists at all.
+        // The healthy path: `VACUUM INTO` succeeds and the scan never runs.
+        // Its own witness is `salvage_recovers_rows_a_vacuum_cannot_reach`
+        // below, on a file damaged past the header.
         let (_dir, db_path) = healthy_workspace();
 
         let quarantine = quarantine_corrupt_store(&db_path).expect("quarantine");
@@ -1020,6 +985,73 @@ mod tests {
                 .mode()
                 & 0o777;
             assert_eq!(mode, 0o600, "the copy holds transcripts: owner-only");
+        }
+    }
+
+    /// **The witness (#5282).** Damage past page 1 no longer costs the whole
+    /// salvage.
+    ///
+    /// `VACUUM INTO` walks the b-tree, so it aborts on the first unreadable
+    /// page and writes nothing — on the maintainer's 1 GB store that was zero
+    /// rows out of 376,140, from a file whose damage was six pages. This
+    /// asserts the two halves that fixes it: a file is produced at all, and it
+    /// holds rows.
+    ///
+    /// The count is asserted as `> 0` rather than pinned. What survives depends
+    /// on where SQLite's b-tree happens to put rows relative to the shredded
+    /// third, and a pinned number here would be a fixture detail masquerading
+    /// as a guarantee — this test would then fail on a page-size change that
+    /// broke nothing. The claim is "readable rows are recovered", and that is
+    /// what it checks.
+    #[test]
+    fn salvage_recovers_rows_a_vacuum_cannot_reach() {
+        let (_dir, db_path) = workspace_needing_an_index_rebuild(4_000);
+        shred_pages_past_the_header(&db_path);
+
+        let quarantine = quarantine_corrupt_store(&db_path).expect("quarantine");
+        let salvaged = quarantine
+            .salvaged
+            .expect("a file damaged past the header still salvages something");
+
+        // The report says the vacuum failed and what ran instead — a partial
+        // salvage is a file AND a caveat, and hiding the caveat would let a
+        // truncated copy read as a complete one.
+        let note = quarantine
+            .salvage_error
+            .expect("a scan salvage reports how it was obtained");
+        assert!(
+            note.contains("VACUUM INTO failed") && note.contains("by scanning instead"),
+            "the report names both halves: {note}"
+        );
+
+        let conn = open_private_sqlite_read_only(&salvaged).expect("open salvaged copy");
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+            .expect("the salvaged copy is a readable database");
+        assert!(
+            events > 0,
+            "the readable rows came across; got {events} of 4000"
+        );
+
+        // And the copy is a real store, not a bag of rows: the executions row
+        // its events belong to is there too, from a different b-tree.
+        let executions: i64 = conn
+            .query_row("SELECT COUNT(*) FROM executions", [], |row| row.get(0))
+            .expect("count executions");
+        assert_eq!(
+            executions, 1,
+            "a table the damage missed comes across whole"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::symlink_metadata(&salvaged)
+                .expect("stat salvaged")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "a scanned copy holds transcripts too");
         }
     }
 

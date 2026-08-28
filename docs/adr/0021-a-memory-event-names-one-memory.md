@@ -1,10 +1,10 @@
 ---
-id: adr/0019-a-memory-event-names-one-memory
-title: "ADR 0019: A memory event names one memory"
+id: adr/0021-a-memory-event-names-one-memory
+title: "ADR 0021: A memory event names one memory"
 status: implemented
 ---
 
-# ADR 0019: A memory event names one memory
+# ADR 0021: A memory event names one memory
 
 - Status: **Implemented** — landed with #5032.
 - Date: 2026-08-27

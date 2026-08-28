@@ -200,7 +200,13 @@ fn running_a_row_records_it_and_completing_one_does_not() {
         &mut c,
         &mut selected,
     );
-    assert_eq!(c.recent(), ["/diff"]);
+    assert_eq!(
+        c.recent()
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect::<Vec<_>>(),
+        ["/diff"]
+    );
 
     c.insert_char('/');
     let menu = c.slash_menu(&cmds, &PaletteState::default()).expect("menu");

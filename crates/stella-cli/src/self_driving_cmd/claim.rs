@@ -176,7 +176,7 @@ pub(super) fn acquire_with(root: &Path, key: &str, owner: &str, ttl: Duration) -
 
     let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX);
     match ledger.claim_dispatch(&issue_claim_key(key), owner, now_ms, ttl_ms) {
-        Ok(ClaimOutcome::Granted(lease)) => Claim::Granted(hold(path, lease)),
+        Ok(ClaimOutcome::Granted(lease)) => hold(path, lease),
         Ok(ClaimOutcome::Held(who)) => Claim::HeldBy(
             who.map(|claim| claim.owner)
                 .unwrap_or_else(|| "another worker".to_string()),
@@ -197,7 +197,7 @@ pub(super) fn owner() -> String {
 }
 
 /// Wrap a granted lease in the guard, and start beating.
-fn hold(path: PathBuf, lease: DispatchLease) -> Lease {
+fn hold(path: PathBuf, lease: DispatchLease) -> Claim {
     let stop = Arc::new(AtomicBool::new(false));
     let beat = {
         let path = path.clone();
@@ -208,11 +208,53 @@ fn hold(path: PathBuf, lease: DispatchLease) -> Lease {
             .spawn(move || beat(&path, lease, &stop))
             .ok()
     };
-    Lease {
-        lease,
-        path,
-        stop,
-        beat,
+    settle(path, lease, stop, beat)
+}
+
+/// Turn a grant plus the heartbeat that was (or was not) started into the
+/// claim to report.
+///
+/// **A lease nothing renews is worse than no lease.** Spawning the heartbeat
+/// can fail — a machine out of threads, which is a state this loop reaches by
+/// design because it fans out. Keeping the grant anyway buys [`LEASE_TTL`] of
+/// protection and then expires *mid-turn*, silently: this process still
+/// believes it holds the key, a peer reclaims it, and two loops work one issue
+/// at the moment the turn is deepest in. Nothing anywhere is watching for that
+/// state, because it is not a state the design has.
+///
+/// Releasing the grant and reporting [`Claim::Unavailable`] trades that for a
+/// state the rest of the loop already understands: this pass works the issue
+/// without a lease, and the three weaker contention signals — a remote branch,
+/// a pull request title, a worktree path — arbitrate as they do whenever the
+/// ledger cannot answer. A collision becomes possible immediately rather than
+/// in five minutes, and it becomes possible where something is looking.
+///
+/// Separate from [`hold`] so the failure is reachable in a test: a thread that
+/// will not spawn is not something a test can ask for.
+fn settle(
+    path: PathBuf,
+    lease: DispatchLease,
+    stop: Arc<AtomicBool>,
+    beat: Option<JoinHandle<()>>,
+) -> Claim {
+    match beat {
+        Some(beat) => Claim::Granted(Lease {
+            lease,
+            path,
+            stop,
+            beat: Some(beat),
+        }),
+        // Built and dropped rather than left alone, so the guard's `Drop`
+        // releases the row we were granted instead of leaving it to expire.
+        None => {
+            drop(Lease {
+                lease,
+                path,
+                stop,
+                beat: None,
+            });
+            Claim::Unavailable
+        }
     }
 }
 
@@ -321,6 +363,85 @@ mod tests {
             Claim::HeldBy(who) => assert_eq!(who, PEER),
             other => panic!("expected the key to be held, got {other:?}"),
         }
+    }
+
+    /// A grant whose heartbeat never started is released, not held.
+    ///
+    /// The heartbeat is spawned with `.ok()`, and a machine out of threads is a
+    /// state this loop reaches by fanning out. Keeping the grant when that
+    /// fails buys `LEASE_TTL` of protection and then expires mid-turn while
+    /// this process still believes it holds the key — a peer reclaims it, two
+    /// loops work one issue, and nothing is watching, because "a lease that
+    /// will lapse" is not a state the design has.
+    ///
+    /// `Claim::Unavailable` is a state it does have: work the issue without a
+    /// lease and let the three weaker contention signals arbitrate.
+    #[test]
+    fn a_grant_whose_heartbeat_never_started_is_released() {
+        let root = workspace();
+        let path = stella_store::workspace_private_sqlite_path(root.path(), "fleet.db")
+            .expect("a private sqlite path");
+
+        // Take a real grant, then settle it as though the spawn had failed.
+        let ledger = Ledger::open(&path).expect("open the ledger");
+        let now = now_ms().expect("a clock");
+        let ClaimOutcome::Granted(lease) = ledger
+            .claim_dispatch(&issue_claim_key("4300"), PEER, now, 300_000)
+            .expect("claim")
+        else {
+            panic!("the key was free, so the claim must be granted");
+        };
+        drop(ledger);
+
+        let claim = settle(path, lease, Arc::new(AtomicBool::new(false)), None);
+
+        assert!(
+            matches!(claim, Claim::Unavailable),
+            "an unrenewable grant is not a claim: {claim:?}"
+        );
+        assert!(
+            super::super::contention::ledger_claims(root.path(), "4300").is_empty(),
+            "and the row is released rather than left to expire mid-turn"
+        );
+        assert!(
+            matches!(acquire(root.path(), "4300"), Claim::Granted(_)),
+            "so the key is free for whoever asks next"
+        );
+    }
+
+    /// The ordinary path is unchanged: a heartbeat that did start is a grant.
+    #[test]
+    fn a_grant_with_a_live_heartbeat_is_still_granted() {
+        let root = workspace();
+        let path = stella_store::workspace_private_sqlite_path(root.path(), "fleet.db")
+            .expect("a private sqlite path");
+
+        let ledger = Ledger::open(&path).expect("open the ledger");
+        let now = now_ms().expect("a clock");
+        let ClaimOutcome::Granted(lease) = ledger
+            .claim_dispatch(&issue_claim_key("4300"), PEER, now, 300_000)
+            .expect("claim")
+        else {
+            panic!("the key was free, so the claim must be granted");
+        };
+        drop(ledger);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let beat = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(STOP_POLL);
+                }
+            })
+        };
+
+        let claim = settle(path, lease, stop, Some(beat));
+        assert!(matches!(claim, Claim::Granted(_)), "{claim:?}");
+        assert_eq!(
+            super::super::contention::ledger_claims(root.path(), "4300"),
+            vec![format!("issue:4300 held by {PEER}")]
+        );
     }
 
     /// A claim on one issue says nothing about another.

@@ -87,6 +87,14 @@ pub const LEFT_DOUBLE_WINDOW: Duration = Duration::from_millis(1500);
 /// from here at all.
 pub const PAGE_COMMANDS: &[&str] = &["/model", "/info", "/models", "/theme", "/help"];
 
+/// The popup's left inset, so a menu name lands in the composer's text column.
+///
+/// One less than [`PROMPT_PREFIX_W`] because each row is drawn as `" {name} "`
+/// — the row's own leading space is the last column of the inset. Derived
+/// rather than written as `3`, so the next change to the prefix moves the
+/// popup with it (#5143).
+const MENU_INSET: u16 = PROMPT_PREFIX_W as u16 - 1;
+
 /// Rows of a command's reply the page shows: enough for a `/model` summary or
 /// a short refusal, and bounded because the page's subject is the fleet — a
 /// reader who wants the whole answer has `esc` and the transcript.
@@ -814,13 +822,21 @@ fn session_head(
 /// The page's popup: a plain selected-row list drawn just above the
 /// composer. Small on purpose — the vocabulary here is a handful of
 /// commands or model specs, not the deck's whole palette.
+///
+/// Its left inset is [`MENU_INSET`], so a name lands in the composer's own
+/// text column. `#5143` reported this as broken after #5051 widened the
+/// prefix; it is not — each row carries a leading space of its own, which
+/// supplies the last column — but the two numbers were literals that agreed
+/// by coincidence, and nothing asserted the agreement. Both now derive from
+/// [`PROMPT_PREFIX_W`], and `the_page_menu_starts_in_the_composers_text_column`
+/// pins the result.
 fn render_menu(ui: &DeckUi, menu: &[String], area: Rect, anchor_y: u16, buf: &mut Buffer) {
     let rows = menu.len().min(8) as u16;
     let y = anchor_y.saturating_sub(rows).max(area.y);
     let popup = Rect {
-        x: area.x + 3,
+        x: area.x + MENU_INSET,
         y,
-        width: area.width.saturating_sub(6).min(60),
+        width: area.width.saturating_sub(MENU_INSET * 2).min(60),
         height: rows.min(area.height),
     };
     Clear.render(popup, buf);

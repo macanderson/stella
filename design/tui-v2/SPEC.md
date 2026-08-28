@@ -121,7 +121,7 @@ One vocabulary across every panel, including plugin-drawn UI:
 | Glyph | Meaning | Metal |
 |---|---|---|
 | `✓` | done, pass | green |
-| `◐` | running (spinner frames `◐◓◑◒`) | gold_bright when acting, silver when observing |
+| `◐` | running | gold_bright |
 | `○` | queued, pending | dim |
 | `◇` | gate (deterministic, merge-blocking) | gold |
 | `✗` | failed, delete | red |
@@ -137,6 +137,15 @@ One vocabulary across every panel, including plugin-drawn UI:
 | `◉` | tool class: mutate — written | takes the row's metal |
 | `⊙` | tool class: execute — external, opaque | takes the row's metal |
 | `↳` | tool class: delegate — handed to another agent | takes the row's metal |
+
+> The running row's metal was `gold_bright when acting, silver when observing`
+> until #5272, and the spinner's `◐◓◑◒` frames were named here too. Both are
+> corrected to what ships rather than the other way round — the call §6.4 made
+> for the diff gutter's tier (#4946). Nothing in a plan step says whether it is
+> changing something or only looking at it, so there is no signal to select a
+> metal on, and a glyph alternating both on a clock would mean neither; the
+> motion is in the tone (`step_style.rs`'s pulse), not in the glyph. #5308
+> holds both halves if a producer ever arrives.
 
 ### 4.1 Tool class is a shape, never a hue
 
@@ -367,7 +376,7 @@ Turn begin, turn end receipt, skill auto-trigger, memory log and promotion, comp
 ### 9.1 GRAPH (rendering `04-graph`)
 
 - Query bar: current selector (`file:...`) plus `q` for free-form graph queries. Right side: `438 nodes · 12ms · det`.
-- Left: node list for the current scope, glyph-typed (`▤ ▢ ƒ`), right column is edge count. `● hot` marks nodes touched this session, tagged with the turn.
+- Left: node list for the current scope, glyph-typed (`▤ ▢ ƒ`), right column is edge count. `● hot` marks nodes touched this session, tagged with the turn — `● hot · turn 14`. The tag is what gives ground as the pane narrows, never the label: below the width that affords the full form it drops the separator (`● hot 14`), and below that the turn, leaving the bare mark. The label is the only cell that says *which* node, so truncating it to keep a refinement of a mark already on the row would trade the row's identity for its detail.
 - Right top: node card with **grouped relations including the reverse direction**: `imports 24 → · ← imported-by 12 · writes 2 · tests 6`, then a short mixed sample of edges. An edge in that sample carries a session tag when this session touched the file at its far end (`← stella-cli::self_driving_cmd · edited turn 14`), in either direction. The verb is the touch's own — `created`, `edited`, `deleted`, `read` — and the tag hangs off the node the line cites, never off the node under the cursor, which already wears `● hot` in the card's own title.
 - Right bottom: **coupling ranking**: neighbors sorted by edge count with gold block-char bars and counts. Caption: `high coupling = blast radius if you edit this file`. This replaces the decorative dot-matrix neighborhood.
 - Footer prices the view: `every answer here is deterministic · $0.00 · 12ms`.
@@ -410,7 +419,9 @@ Keep current information architecture (executions table, installed agents, agent
 - **Fuzzy matching**; matched letters render gold inside each command name, scattered letters included — `ga` lights the `g` and the `a` of `/graph query`. The leading `/` is the sigil that opened the palette and never lights.
 
   **Amended (#5048).** This bullet named `nucleo`. The matcher is `crates/stella-tui/src/composer/fuzzy.rs` instead: a command name is a short ASCII slug, and the palette's order comes from the match kind and from what the session is doing (`relevant now` below), so a fuzzy-finder crate's scoring model would be computed and discarded. Match kind ranks prefix, then substring, then scattered letters, then a description-only match.
-- **Context section first**: `relevant now` derives from session state (verify running surfaces `/gates` with live gate status on the row). Then domain groups (plan, graph, skills, ...), then `recent` — the commands this workspace ran last, kept in `.stella/private/palette-recent.json` so they survive a restart. A `recent` row is a second appearance of a command a domain group already lists, which is what a shortcut is. The section is drawn for the browse list; a typed query returns one flat ranked list with no headings at all (#4338).
+- **Context section first**: `relevant now` derives from session state (a running turn surfaces `/plan`, with its live step count on the row). Then domain groups (plan, graph, skills, ...), then `recent` — the commands this workspace ran last, kept in `.stella/private/palette-recent.json` so they survive a restart, each with how long ago it ran (#5213). A `recent` row is a second appearance of a command a domain group already lists, which is what a shortcut is. The section is drawn for the browse list; a typed query returns one flat ranked list with no headings at all (#4338).
+
+  **Amended (#5214).** This bullet's example was `verify running surfaces /gates with live gate status on the row`. Neither half existed: no rule in `composer/palette.rs`'s `RULES` fires on a verify step, and `/gates` is in no vocabulary, so the sentence named a command nothing answers. The example is now one the deck actually has — the running-turn rule, whose row carries a live value through `deck_render::slash_live_hints`, which is the mechanism the original sentence was really describing. The gate row it wanted needs a gate board first (#5042); when that lands this example can move back.
 - Rows may carry live right-aligned state (`◐ 2/5 green`, `det · $0.00`) and arg hints (`⇥ <name>`).
 - Keys: `↑↓ move · ↵ run · ⇥ args · esc`.
 

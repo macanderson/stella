@@ -197,9 +197,9 @@ mod tests {
         record_work(
             &st,
             LearningTally {
-                reflections: 3,
-                memories: 1,
-                proposals: 2,
+                reflections: Some(3),
+                memories: Some(1),
+                proposals: Some(2),
             },
             &changed(),
         );

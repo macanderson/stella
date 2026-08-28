@@ -38,7 +38,11 @@ use stella_tui_theme::token;
 
 use super::truncate;
 use crate::deck_ui::DeckUi;
+// The crate's one word wrap (#5156). This module carried a copy that differed
+// from the cards' copy in the two ways that mattered — it kept a line break
+// and it guarded width 0 — so the shared one took both and the copy went.
 use crate::envelope::{McpLookupState, McpServerDetail};
+use crate::views::cards::wrap;
 
 /// Label column width, so every `key   value` pair lines up.
 const LABEL: usize = 13;
@@ -383,36 +387,6 @@ fn field(label: &str, value: &str) -> Line<'static> {
     ])
 }
 
-/// Greedy word wrap. Ratatui's own `Wrap` would do this at render time, but
-/// these lines are interleaved with pre-indented ones, and its re-wrap does not
-/// preserve the indent — so paragraphs are wrapped here and the widget's wrap
-/// only ever catches an overlong single token.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    if width == 0 {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    for paragraph in text.lines() {
-        let mut line = String::new();
-        for word in paragraph.split_whitespace() {
-            let extra = if line.is_empty() {
-                word.chars().count()
-            } else {
-                word.chars().count() + 1
-            };
-            if !line.is_empty() && line.chars().count() + extra > width {
-                out.push(std::mem::take(&mut line));
-            }
-            if !line.is_empty() {
-                line.push(' ');
-            }
-            line.push_str(word);
-        }
-        out.push(line);
-    }
-    out
-}
-
 /// The single middle row of `area`, for a centered one-line message.
 fn centered_row(area: Rect) -> Rect {
     Rect {
@@ -574,19 +548,6 @@ mod tests {
         // Idle says nothing at all — no lookup was attempted.
         detail.lookup = McpLookupState::Idle;
         assert!(!rendered(&detail).contains("registry lookup"));
-    }
-
-    #[test]
-    fn wrap_breaks_on_words_and_never_loses_one() {
-        let wrapped = wrap("alpha beta gamma delta", 11);
-        assert_eq!(wrapped, vec!["alpha beta", "gamma delta"]);
-        // A single word longer than the width is emitted whole rather than
-        // dropped; the widget's own wrap catches it.
-        assert_eq!(
-            wrap("supercalifragilistic", 5),
-            vec!["supercalifragilistic"]
-        );
-        assert!(wrap("anything", 0).is_empty());
     }
 
     /// **The witness for the port.** The popup carries the rounded

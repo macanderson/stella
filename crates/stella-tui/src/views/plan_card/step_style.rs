@@ -19,16 +19,34 @@
 //! - **Planned** (`○`) — the whole row in the muted grey, always. Un-started
 //!   work is background, whatever the plan's own state; the moment of approval
 //!   must not light up nine rows nobody is working on.
-//! - **Started** (`◐`) — the ring, the step number, and the title all *pulse*
-//!   between the primary text tone and the muted steps. The pulse is a pure
-//!   function of the deck clock (`model.now_ms`), like every other motion in
-//!   this crate — no timer state, and `no_anim` pins it to the bright frame.
-//!   It steps through palette tokens rather than interpolated RGB because
-//!   [`crate::theme::apply_theme`] is a value-keyed remap: only the tokens in
-//!   [`stella_tui_theme::token`] follow the light theme, so an interpolated
-//!   white would stay white on paper and vanish. [`token::TEXT`] is white on
-//!   `stella-dark` and ink on `stella-light` by construction, which is the
-//!   whole contract.
+//! - **Started** (`◐`) — the indicator in [`token::GOLD_BRIGHT`], and the step
+//!   number and title *pulsing* between the primary text tone and the muted
+//!   steps. Two decisions, and they are separate.
+//!
+//!   The metal is the indicator's, because the indicator is what SPEC 4's
+//!   table is about and `GOLD_BRIGHT`'s own token doc names this cell —
+//!   "tiny live indicators only: spinner, hot marker, drift glyph". The row
+//!   stays in the text ramp, which is what `Verify` and `DriftInserted`
+//!   already do: ring takes the metal, row takes the tone. `Started` painted
+//!   the indicator with the row's ramp until #5272, so the one running step
+//!   on the card was the one state with no metal on it.
+//!
+//!   SPEC 4 asked for two metals here — "gold_bright when acting, silver when
+//!   observing" — and that half is **corrected in the spec rather than the
+//!   code**, the call §6.4 made for the diff gutter's tier (#4946). Nothing in
+//!   [`crate::plan::PlanStep`] says whether a running step is changing
+//!   something or only looking at it, so there is no signal to select on; a
+//!   glyph that alternated both metals on a clock would mean neither. When a
+//!   producer exists the distinction can come back — #5308 is where.
+//!
+//!   The pulse is a pure function of the deck clock (`model.now_ms`), like
+//!   every other motion in this crate — no timer state, and `no_anim` pins it
+//!   to the bright frame. It steps through palette tokens rather than
+//!   interpolated RGB because [`crate::theme::apply_theme`] is a value-keyed
+//!   remap: only the tokens in [`stella_tui_theme::token`] follow the light
+//!   theme, so an interpolated white would stay white on paper and vanish.
+//!   [`token::TEXT`] is white on `stella-dark` and ink on `stella-light` by
+//!   construction, which is the whole contract.
 //! - **Verify** (`◇`) — the gate diamond in gold on the indicator cell, and
 //!   the row in the primary tone. Gold rather than green: the checks have not
 //!   answered yet, and a row that already reads as pass is the self-report
@@ -113,7 +131,16 @@ pub(crate) fn step_visual(state: PlanStepState, now_ms: u64, animate: bool) -> S
             let live = Style::new().fg(tone).add_modifier(Modifier::BOLD);
             StepVisual {
                 glyph: glyph::RUNNING,
-                ring: live,
+                // The indicator takes the metal; the row takes the text tone.
+                // That is this arm's own convention — `Verify`'s ring is gold
+                // over a `TEXT` row, `DriftInserted`'s is gold-bright over one
+                // — and `Started` was the only state that painted the
+                // indicator with the row's ramp (#5272). `GOLD_BRIGHT` because
+                // its token doc names this exact cell: "tiny live indicators
+                // only: spinner, hot marker, drift glyph".
+                ring: Style::new()
+                    .fg(token::GOLD_BRIGHT)
+                    .add_modifier(Modifier::BOLD),
                 num: live,
                 text: live,
                 meta: dim,
@@ -195,10 +222,10 @@ mod tests {
         }
     }
 
-    /// The working row pulses: ring, number and title move together through
-    /// the text ramp, as a pure function of the deck clock.
+    /// The working row pulses: number and title move together through the text
+    /// ramp, as a pure function of the deck clock.
     #[test]
-    fn a_started_step_pulses_ring_number_and_title_together() {
+    fn a_started_step_pulses_its_number_and_title_together() {
         let bright = step_visual(PlanStepState::Started, 0, true);
         assert_eq!(bright.text.fg, Some(token::TEXT));
         // Half a period later the tone has moved down the ramp.
@@ -206,7 +233,6 @@ mod tests {
         assert_ne!(bright.text.fg, dimmed.text.fg, "the pulse must move");
         for v in [bright, dimmed] {
             assert_eq!(v.glyph, glyph::RUNNING);
-            assert_eq!(v.ring.fg, v.text.fg, "the indicator pulses with the text");
             assert_eq!(v.num.fg, v.text.fg, "the number pulses with the text");
             assert!(
                 PULSE_PHASES.contains(&v.text.fg.unwrap()),
@@ -214,6 +240,36 @@ mod tests {
                  the 256/16-colour fallbacks can remap it"
             );
         }
+    }
+
+    /// **The witness (#5272).** The running indicator carries a metal, and it
+    /// is the one `GOLD_BRIGHT`'s token doc names for this cell.
+    ///
+    /// `Started` was the only state that painted its indicator with the row's
+    /// text ramp, so the one step actually running was the one state with no
+    /// metal on it — while `Verify`'s ring is gold over a `TEXT` row and
+    /// `DriftInserted`'s is gold-bright over one. Ring takes the metal, row
+    /// takes the tone; this arm was the outlier.
+    ///
+    /// The metal does not pulse. SPEC 4 asked for two of them here — gold
+    /// bright when acting, silver when observing — and nothing can produce
+    /// that distinction, so alternating them on a clock would make the glyph
+    /// mean neither. That half is corrected in the spec; #5308 is where it
+    /// returns if a producer ever arrives.
+    #[test]
+    fn a_started_steps_indicator_holds_the_live_metal() {
+        for now_ms in [0, PULSE_PERIOD_MS / 4, PULSE_PERIOD_MS / 2, 1_100] {
+            let v = step_visual(PlanStepState::Started, now_ms, true);
+            assert_eq!(
+                v.ring.fg,
+                Some(token::GOLD_BRIGHT),
+                "the indicator's metal must not move with the row's pulse (at {now_ms}ms)"
+            );
+        }
+        // And it is a metal the row never wears, so the two read apart.
+        let v = step_visual(PlanStepState::Started, 0, true);
+        assert_ne!(v.ring.fg, v.text.fg);
+        assert!(!PULSE_PHASES.contains(&token::GOLD_BRIGHT));
     }
 
     /// `no_anim` pins the working row to its bright frame — recordings and

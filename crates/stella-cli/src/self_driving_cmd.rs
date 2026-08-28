@@ -31,6 +31,7 @@ mod hooks;
 mod learning;
 mod lifecycle;
 pub(crate) mod probes;
+mod query;
 mod report;
 pub(crate) mod state;
 mod stats;
@@ -591,19 +592,19 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
             advance,
             reset,
             list,
-        } => aperture(&st, *current, *advance, *reset, *list),
+        } => query::aperture(&st, *current, *advance, *reset, *list),
         SelfDrivingCmd::Seen {
             digest,
             new,
             add,
             count,
-        } => seen(&st, digest, new, add, *count),
+        } => query::seen(&st, digest, new, add, *count),
         SelfDrivingCmd::Calibrate {
             ok,
             resource_fail,
             show,
-        } => calibrate_cmd(&st, *ok, *resource_fail, *show),
-        SelfDrivingCmd::Queue { limit, format } => queue(&st, *limit, *format),
+        } => query::calibrate_cmd(&st, *ok, *resource_fail, *show),
+        SelfDrivingCmd::Queue { limit, format } => query::queue(&st, *limit, *format),
         SelfDrivingCmd::File {
             title,
             body,
@@ -693,6 +694,22 @@ fn gh_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether `git` can run at all here.
+///
+/// The sibling of [`gh_available`], and it exists for the same reason: a check
+/// that **could not run** is a different fact from one that ran and could not
+/// decide. `state::git` returns `None` for both, so without this the two are
+/// indistinguishable — and `watch` would treat a machine with no `git` as a
+/// repository whose `origin/main` it could not resolve, wake on every tick, and
+/// reset the aperture to a full cycle that cannot run either.
+fn git_available() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Every parsed `gh` call goes through here with color force-disabled: ANSI
 /// escapes inside a JSON payload are invisible in a terminal and fatal to
 /// every parser (the CLICOLOR_FORCE lesson, inherited from the shell driver).
@@ -709,7 +726,11 @@ fn gh_plain(args: &[&str]) -> Option<String> {
 }
 
 /// The demand half of the governor, read through the issue port.
-fn demand(root: &std::path::Path) -> Demand {
+///
+/// `Err` when the tracker could not be read. Distinct from a demand of zero,
+/// which is the answer when the backlog really is empty — see
+/// [`backlog::demand_from`].
+fn demand(root: &std::path::Path) -> Result<Demand, String> {
     backlog::demand_from(
         &crate::issue_provider::GhIssueProvider,
         &config::load(root).triage,
@@ -718,7 +739,17 @@ fn demand(root: &std::path::Path) -> Demand {
 
 fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
     let supply = probes::supply(&st.repo_root);
-    let demand = demand(&st.repo_root);
+    // Still sized as though the backlog were empty when the tracker cannot be
+    // read — a refusal to plan is the less survivable answer — but said out
+    // loud. A plan drawn against a demand nobody measured is not the same
+    // plan as one drawn against a measured zero, and the operator reading it
+    // is the one who can tell the difference.
+    let demand = demand(&st.repo_root).unwrap_or_else(|error| {
+        say(&format!(
+            "the tracker could not be read ({error}) — planning as though the backlog were empty"
+        ));
+        Demand::default()
+    });
     let cal = st.calibration();
     let plan =
         stella_autonomy::plan_cycle(supply, demand, &cal, state::floors(), &state::aimd_limits());
@@ -783,11 +814,11 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
 
 fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<(), String> {
     if dry_streak {
-        let streak = stella_autonomy::dry_streak(&st.cycles(), &st.aperture());
+        let streak = stella_autonomy::dry_streak(&st.cycles().rows, &st.aperture());
         println!("{streak}");
         return Ok(());
     }
-    let cycles = st.cycles();
+    let cycles = st.cycles().rows;
     if format == QueryFormat::Json {
         println!(
             "{}",
@@ -853,7 +884,7 @@ fn cycle_begin(st: &LoopState) -> Result<(), String> {
     );
 
     let aperture = st.aperture();
-    let streak = stella_autonomy::dry_streak(&st.cycles(), &aperture);
+    let streak = stella_autonomy::dry_streak(&st.cycles().rows, &aperture);
     println!("SELF_DRIVING_CYCLE={n}");
     println!("SELF_DRIVING_DRY_STREAK_SO_FAR={streak}");
     println!(
@@ -959,7 +990,7 @@ fn cycle_end(
         );
     }
 
-    let streak = stella_autonomy::dry_streak(&st.cycles(), &aperture);
+    let streak = stella_autonomy::dry_streak(&st.cycles().rows, &aperture);
     if streak >= state::dry_streak_target() {
         say(&format!("aperture {aperture} is dry after {streak} cycles"));
         advance_aperture(st, &aperture)?;
@@ -984,118 +1015,6 @@ fn advance_aperture(st: &LoopState, current: &str) -> Result<(), String> {
         println!("aperture {current} -> {next}");
     }
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// aperture / seen / calibrate / queue
-// ---------------------------------------------------------------------------
-
-fn aperture(
-    st: &LoopState,
-    current: bool,
-    advance: bool,
-    reset: bool,
-    list: bool,
-) -> Result<(), String> {
-    let open = st.aperture();
-    if current {
-        println!("{open}");
-    } else if advance {
-        advance_aperture(st, &open)?;
-    } else if reset {
-        st.set_aperture("rubric")?;
-        println!("aperture reset to rubric");
-    } else if list {
-        for l in stella_autonomy::LENSES {
-            let marker = if l.name == open { "*" } else { " " };
-            let heavy = if l.heavy_only { " [heavy tier]" } else { "" };
-            let backing = match l.tooling {
-                Tooling::Command { run, .. } => collapse_ws(run),
-                Tooling::ModelOnly { note } => format!("model-only — {}", collapse_ws(note)),
-            };
-            println!("  {marker} {:<13} {backing}{heavy}", l.name);
-        }
-        let marker = if open == stella_autonomy::WATCH {
-            "*"
-        } else {
-            " "
-        };
-        println!(
-            "  {marker} {:<13} cheap sentinels; any trigger reopens rubric",
-            stella_autonomy::WATCH
-        );
-    }
-    Ok(())
-}
-
-fn seen(
-    st: &LoopState,
-    digest: &[String],
-    new: &[String],
-    add: &[String],
-    count: bool,
-) -> Result<(), String> {
-    if !digest.is_empty() {
-        println!("{}", stella_autonomy::finding_digest(&digest.join(" ")));
-    } else if !new.is_empty() {
-        let known = st.seen();
-        for d in new {
-            if !known.iter().any(|k| k == d) {
-                println!("{d}");
-            }
-        }
-    } else if !add.is_empty() {
-        // The set grows as we append, so a digest repeated within one call
-        // still counts (and lands) exactly once.
-        let mut known: std::collections::HashSet<String> = st.seen().into_iter().collect();
-        let mut added = 0;
-        for d in add {
-            if known.insert(d.clone()) {
-                st.add_seen(d)?;
-                added += 1;
-            }
-        }
-        println!("{added}");
-    } else if count {
-        println!("{}", st.seen_count());
-    }
-    Ok(())
-}
-
-fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> Result<(), String> {
-    if show {
-        let cal = st.calibration();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&cal).map_err(|e| e.to_string())?
-        );
-        return Ok(());
-    }
-    // clap's ArgGroup guarantees exactly one flag; `ok` therefore implies
-    // `!resource_fail` and vice versa.
-    let outcome = match (ok, resource_fail) {
-        (_, true) => CycleOutcome::ResourceFail,
-        _ => CycleOutcome::Ok,
-    };
-    let mut cal = st.calibration();
-    stella_autonomy::calibrate(&mut cal, outcome, &state::aimd_limits());
-    st.write_calibration(&cal)?;
-    println!(
-        "{}",
-        serde_json::to_string(&cal).map_err(|e| e.to_string())?
-    );
-    Ok(())
-}
-
-/// The queue verb: the ranked defect batch this cycle draws from.
-fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
-    backlog::render_queue(
-        st,
-        &crate::issue_provider::GhIssueProvider,
-        &config::load(&st.repo_root).triage,
-        limit,
-        format,
-    )
 }
 
 /// `stella self-driving deliver` — the pull-request rhythm.
@@ -1477,7 +1396,7 @@ fn run_info(st: &LoopState) -> hooks::HookRunInfo {
 fn runs_report(st: &LoopState) -> Result<(), String> {
     let rows = stella_autonomy::fold_runs(
         &st.run_records(),
-        &st.cycles(),
+        &st.cycles().rows,
         st.run_doc().as_ref(),
         now_unix(),
         state::stale_after_secs(),

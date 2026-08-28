@@ -37,6 +37,7 @@ CARGO_SCOPE ?= --workspace
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
+                    adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     tool-error-class \
@@ -44,7 +45,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     bench-suites wire-paths \
                     tokens hue-separation contrast light-clamp transcript-surfaces prose \
                     line-citations \
-                    deck-fit-all-test deck-paths css-vars reserved-paths
+                    deck-fit-all-test deck-paths css-vars reserved-paths rendering-facts
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -275,6 +276,10 @@ repro-wiring: ## Assert both release paths build through scripts/repro-build.sh 
 .PHONY: invariants
 invariants: ## Assert the architectural invariants have one home and stable numbering (#630)
 	@./scripts/check-invariants.sh
+
+.PHONY: adr-numbering
+adr-numbering: ## Assert every ADR number identifies exactly one indexed record
+	@python3 ./scripts/check-adr-numbering.py
 
 .PHONY: doc-links
 doc-links: ## Assert every doc citation resolves to an identified document
@@ -514,6 +519,14 @@ css-vars: ## Assert every var() in a token sheet resolves inside it (#4122)
 .PHONY: reserved-paths
 reserved-paths: ## Assert no tracked path uses a Windows device name, which makes the repo unclonable there (#3550)
 	@./scripts/check-reserved-paths.sh
+
+.PHONY: rendering-facts
+rendering-facts: ## Assert no v2 rendering draws a fact design/tui-v2/SPEC.md retired (#5291)
+	@./scripts/check-rendering-facts.sh
+
+.PHONY: rendering-facts-test
+rendering-facts-test: ## Test the rendering-facts guard's directions (hermetic; not part of `gate`)
+	@./scripts/test-rendering-facts.sh
 
 .PHONY: dead-code-allows
 dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)

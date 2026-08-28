@@ -330,6 +330,48 @@ pub fn paint(
     Paragraph::new(vec![Line::from(keys), Line::from(price)]).render(bands[3], buf);
 }
 
+/// The narrowest label this list will render before the right-hand column has
+/// to give ground.
+///
+/// Below this a row stops being a node list and becomes a column of ellipses:
+/// the label is the only cell that says *which* node, and the turn is a
+/// refinement of a mark that is already visible.
+const MIN_LABEL_COLS: usize = 14;
+
+/// A hot node's right-hand column: the longest form that still leaves the
+/// label [`MIN_LABEL_COLS`] (SPEC 9.1, #5220).
+///
+/// The mark degrades rather than the label truncating, which is the rule this
+/// renderer already follows for every other optional column — an unmeasured
+/// extent draws no column instead of a narrow wrong one. Three rungs:
+///
+/// - `● hot · turn 14` — SPEC 9.1's sentence in full;
+/// - `● hot 14` — the same fact, no separator, for a pane that cannot spare 15
+///   columns;
+/// - `● hot` — the turn dropped, which is what the list said before this and
+///   still true.
+///
+/// A touch that cannot name a turn stays on the last rung whatever the width.
+/// That is the card's own rule for its edge tag ([`SessionTouch::tag`] returns
+/// `None`), and a path the ledger kept across `/clear` is exactly the case:
+/// still touched this session, no turn to attribute it to. Inventing one here
+/// would be the second reading of the ledger ADR 0019 exists to prevent.
+fn hot_mark(touch: &SessionTouch, width: usize) -> String {
+    const MARK: &str = "● hot";
+    let Some(turn) = touch.turn else {
+        return MARK.to_string();
+    };
+    // Longest first; `width` is the pane, and a rung is affordable when the
+    // label keeps its floor. The `+ 4` matches `label_w`'s own arithmetic
+    // below — the glyph cell, its spaces, and the gap before this column.
+    for rung in [format!("{MARK} · turn {turn}"), format!("{MARK} {turn}")] {
+        if width.saturating_sub(rung.chars().count() + 4) >= MIN_LABEL_COLS {
+            return rung;
+        }
+    }
+    MARK.to_string()
+}
+
 /// The node list: glyph, label, then `● hot` or the edge count on the right.
 fn render_list(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
     let dim = Style::new().fg(token::DIM);
@@ -364,10 +406,9 @@ fn render_list(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Bu
     for (i, node) in snapshot.nodes.iter().enumerate().take(end).skip(start) {
         let selected = i == cursor;
         let hot = node.touch.is_some();
-        let right = if hot {
-            "● hot".to_string()
-        } else {
-            snapshot.degree(i).to_string()
+        let right = match &node.touch {
+            Some(touch) => hot_mark(touch, width),
+            None => snapshot.degree(i).to_string(),
         };
         let label_w = width.saturating_sub(right.chars().count() + 4);
         let mut label = node.label.clone();
@@ -533,6 +574,60 @@ mod tests {
 
     use crate::envelope::{AgentMeta, Inbound};
     use stella_protocol::{AgentEvent, FileChangeKind};
+
+    fn touched(turn: Option<u32>) -> SessionTouch {
+        SessionTouch {
+            turn,
+            kind: FileChangeKind::Modified,
+        }
+    }
+
+    /// **The witness (#5220).** A hot node names the turn that touched it, and
+    /// the mark — not the label — is what gives ground as the pane narrows.
+    ///
+    /// SPEC 9.1 asks the node list to tag `● hot` with the turn, and the full
+    /// form is 15 columns against the bare mark's 5. In the 36%-wide left pane
+    /// of an 80-column terminal that would eat most of the label, and the label
+    /// is the only cell saying *which* node — so the ladder degrades the tag
+    /// through three rungs rather than truncating the row's identity.
+    ///
+    /// Pinned at the width each rung takes over rather than at "some narrow
+    /// width", because the boundary is the behavior: a rung that silently
+    /// shifted a column either way would still pass a test that only asked for
+    /// "something shorter".
+    #[test]
+    fn the_hot_mark_gives_ground_before_the_label_does() {
+        let touch = touched(Some(14));
+
+        // Wide: SPEC 9.1's sentence in full.
+        assert_eq!(hot_mark(&touch, 60), "● hot · turn 14");
+        // 15 + 4 + 14 is exactly 33, so 33 is the last width that affords it.
+        assert_eq!(hot_mark(&touch, 33), "● hot · turn 14");
+
+        // One column narrower, the separator goes and the turn stays.
+        assert_eq!(hot_mark(&touch, 32), "● hot 14");
+        // 8 + 4 + 14 is 26, the last width that affords the compact rung.
+        assert_eq!(hot_mark(&touch, 26), "● hot 14");
+
+        // Below that the turn goes too, and the row says what it said before
+        // #5220 — which is still true, just less.
+        assert_eq!(hot_mark(&touch, 25), "● hot");
+        assert_eq!(hot_mark(&touch, 0), "● hot");
+    }
+
+    /// A touch that cannot name a turn stays on the bottom rung at any width.
+    ///
+    /// [`SessionTouch::tag`] already returns `None` there and the card draws a
+    /// bare relation; the list agrees rather than inventing a turn. The case is
+    /// real — a ledger row kept across `/clear` is touched this session with no
+    /// turn to attribute it to — and deriving one here would be the second
+    /// reading of the ledger that ADR 0019 chose a per-frame projection to
+    /// prevent.
+    #[test]
+    fn a_touch_with_no_turn_names_none_however_wide_the_pane() {
+        assert_eq!(hot_mark(&touched(None), 200), "● hot");
+        assert_eq!(hot_mark(&touched(None), 20), "● hot");
+    }
 
     /// The ledger the tab reads is the lane's own `files` vector, carrying the
     /// turn each path was last touched in — which is what turns a `● hot` mark

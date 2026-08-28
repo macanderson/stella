@@ -101,6 +101,12 @@ impl McpConfig {
         let name = name.into();
         match self.servers.get_mut(&name) {
             Some(entry) => {
+                // Withdraw the grant when the alias is being pointed at a
+                // DIFFERENT published server. Asked before `merge_from`, which
+                // overwrites the recorded name with the incoming one.
+                if entry.granted == Some(true) && Self::repoints_elsewhere(&entry.card, &card) {
+                    entry.granted = Some(false);
+                }
                 entry.transport = transport;
                 entry.card.merge_from(card);
             }
@@ -119,6 +125,38 @@ impl McpConfig {
                     },
                 );
             }
+        }
+    }
+
+    /// Whether an incoming install points a granted alias at a different
+    /// published server than the one the grant was made against (#5178).
+    ///
+    /// ADR 0018 keeps a grant across a reinstall because "re-fetching the same
+    /// publisher's transport is not a new question", and re-asking every time
+    /// would train an operator to grant without reading. That reasoning covers
+    /// `stella mcp install <same-name>` after a version bump. It does not cover
+    /// `stella mcp install <other-name> --alias <granted-alias>`, which is the
+    /// case this answers.
+    ///
+    /// The registry name is the join key, so the three cases are:
+    ///
+    /// - **The incoming write names no registry.** A hand edit, or a plain
+    ///   [`McpConfig::upsert`]. Out of scope — nothing observes that write, and
+    ///   withdrawing a grant on it would fire on every local edit.
+    /// - **Nothing is recorded for the existing entry.** Installed before cards
+    ///   were kept, so its publisher is unknown and *cannot be shown to match*.
+    ///   Treated as a repoint: the handshake is re-shown once, which is the
+    ///   conservative answer to a question the config cannot settle.
+    /// - **Both are known.** A grant survives an equal name and is withdrawn by
+    ///   a different one.
+    fn repoints_elsewhere(recorded: &ServerCard, incoming: &ServerCard) -> bool {
+        match (
+            recorded.registry_name.as_deref(),
+            incoming.registry_name.as_deref(),
+        ) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (Some(was), Some(now)) => was != now,
         }
     }
 
@@ -582,6 +620,153 @@ mod tests {
         );
         assert_eq!(card.registry_name.as_deref(), Some("com.acme/payments"));
         assert_eq!(back.get("payments"), cfg.get("payments"));
+    }
+
+    /// **The witness (#5178).** A granted alias cannot come to name a
+    /// different publisher's server without the handshake being re-shown.
+    ///
+    /// ADR 0018 keeps a grant across a reinstall of the SAME registry name —
+    /// re-fetching one publisher's transport is not a new question, and
+    /// re-asking every time trains an operator to grant without reading. Both
+    /// halves are asserted here, because keeping the grant is as much the
+    /// contract as withdrawing it: a test that only checked the withdrawal
+    /// would pass on a version that withdrew unconditionally, which is the
+    /// change ADR 0018 rejected.
+    #[test]
+    fn repointing_a_granted_alias_at_another_publisher_withdraws_the_grant() {
+        fn card(registry_name: &str) -> ServerCard {
+            ServerCard {
+                registry_name: Some(registry_name.into()),
+                ..ServerCard::default()
+            }
+        }
+        fn transport(cmd: &str) -> McpTransport {
+            McpTransport::Stdio {
+                cmd: cmd.into(),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+            }
+        }
+
+        let mut cfg = McpConfig::default();
+        cfg.upsert_with_card("pay", transport("acme-mcp"), card("com.acme/payments"));
+        assert_eq!(
+            cfg.servers["pay"].granted,
+            Some(false),
+            "a new entry arrives ungranted"
+        );
+
+        assert!(cfg.set_granted("pay", true), "the alias exists to grant");
+        assert_eq!(cfg.servers["pay"].granted, Some(true));
+
+        // Same publisher, new transport — the version-bump case. The grant
+        // survives.
+        cfg.upsert_with_card("pay", transport("acme-mcp-v2"), card("com.acme/payments"));
+        assert_eq!(
+            cfg.servers["pay"].granted,
+            Some(true),
+            "re-fetching the same publisher is not a new question (ADR 0018)"
+        );
+
+        // A DIFFERENT publisher under the granted alias — what
+        // `--alias <granted-alias>` does. The grant is withdrawn.
+        cfg.upsert_with_card("pay", transport("evil-mcp"), card("com.evil/payments"));
+        assert_eq!(
+            cfg.servers["pay"].granted,
+            Some(false),
+            "the alias now names somebody else's server, so the gate re-asks"
+        );
+        assert_eq!(
+            cfg.card("pay").and_then(|c| c.registry_name.as_deref()),
+            Some("com.evil/payments"),
+            "and the card records who it actually points at now"
+        );
+    }
+
+    /// A hand edit carries no registry name, and must not withdraw a grant —
+    /// otherwise every local `mcp.toml` tweak re-opens the handshake.
+    #[test]
+    fn an_install_naming_no_registry_leaves_a_grant_alone() {
+        let mut cfg = McpConfig::default();
+        cfg.upsert_with_card(
+            "pay",
+            McpTransport::Stdio {
+                cmd: "acme-mcp".into(),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+            },
+            ServerCard {
+                registry_name: Some("com.acme/payments".into()),
+                ..ServerCard::default()
+            },
+        );
+        assert!(cfg.set_granted("pay", true));
+
+        cfg.upsert(
+            "pay",
+            McpTransport::Stdio {
+                cmd: "acme-mcp".into(),
+                args: vec!["--verbose".into()],
+                env: BTreeMap::new(),
+            },
+        );
+        assert_eq!(
+            cfg.servers["pay"].granted,
+            Some(true),
+            "a plain upsert says nothing about provenance and settles nothing"
+        );
+    }
+
+    /// An entry installed before cards were kept has no recorded publisher, so
+    /// a reinstall cannot be SHOWN to be the same one. The conservative answer
+    /// is to re-ask once rather than to assume.
+    #[test]
+    fn a_grant_on_an_entry_with_no_recorded_publisher_is_re_asked_once() {
+        let mut cfg = McpConfig::default();
+        cfg.upsert(
+            "legacy",
+            McpTransport::Stdio {
+                cmd: "legacy-mcp".into(),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+            },
+        );
+        assert!(cfg.set_granted("legacy", true));
+
+        cfg.upsert_with_card(
+            "legacy",
+            McpTransport::Stdio {
+                cmd: "legacy-mcp".into(),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+            },
+            ServerCard {
+                registry_name: Some("com.legacy/server".into()),
+                ..ServerCard::default()
+            },
+        );
+        assert_eq!(
+            cfg.servers["legacy"].granted,
+            Some(false),
+            "unknown provenance cannot be shown to match, so the gate re-asks"
+        );
+
+        // And having recorded it, the next reinstall of the same name keeps a
+        // fresh grant — the re-ask is once, not every time.
+        assert!(cfg.set_granted("legacy", true));
+        cfg.upsert_with_card(
+            "legacy",
+            McpTransport::Stdio {
+                cmd: "legacy-mcp".into(),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+            },
+            ServerCard {
+                registry_name: Some("com.legacy/server".into()),
+                ..ServerCard::default()
+            },
+        );
+        assert_eq!(cfg.servers["legacy"].granted, Some(true));
     }
 
     #[test]

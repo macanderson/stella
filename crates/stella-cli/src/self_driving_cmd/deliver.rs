@@ -173,14 +173,26 @@ pub(super) fn ci_from(checks: &[Check]) -> CiConclusion {
 /// [`CiConclusion::Green`] — meaning "the base does not excuse this failure" —
 /// because that is the reading the machine needs: it is asking *is this my
 /// fault*, not *is the base perfect*.
+///
+/// `None` is the base nobody could read, and it is **not** a base with no
+/// checks. Blaming the pull request needs evidence that the base is fine, and
+/// an unread base is not that evidence — so an unread base excuses, which the
+/// machine spells `Red` and answers with `BaseBroken` / `Wait`. Waiting costs a
+/// poll; the alternative costs the `PushFix` turn that arm's own comment
+/// forbids spending on somebody else's breakage.
 #[must_use]
-pub(super) fn base_conclusion(pr: &[Check], base: &[Check]) -> CiConclusion {
+pub(super) fn base_conclusion(pr: &[Check], base: Option<&[Check]>) -> CiConclusion {
     let failing_here: Vec<&str> = pr.iter().filter(|c| c.failed()).map(Check::name).collect();
 
     if failing_here.is_empty() {
-        // Nothing failed here, so there is nothing for the base to excuse.
+        // Nothing failed here, so there is nothing for the base to excuse, and
+        // no need to have read it.
         return CiConclusion::Green;
     }
+
+    let Some(base) = base else {
+        return CiConclusion::Red;
+    };
 
     let failing_there = |name: &str| base.iter().any(|c| c.name() == name && c.failed());
 
@@ -253,7 +265,7 @@ pub(super) struct PrView {
 
 /// Assemble the observation the pure machine decides over.
 #[must_use]
-pub(super) fn observation_from(view: &PrView, base_checks: &[Check]) -> Observation {
+pub(super) fn observation_from(view: &PrView, base_checks: Option<&[Check]>) -> Observation {
     Observation {
         ci: ci_from(&view.status_check_rollup),
         base_ci: base_conclusion(&view.status_check_rollup, base_checks),
@@ -478,30 +490,33 @@ fn check_runs_endpoint(branch: &str) -> String {
 /// Naming the branch to the forge has no local state left to be stale. It is
 /// the same rule [`open_prs_for_prefix`] follows: for a question about the
 /// forge, ask the forge.
-pub(super) fn checks_for_branch(branch: &str) -> Vec<Check> {
+pub(super) fn checks_for_branch(branch: &str) -> Option<Vec<Check>> {
     // `gh pr view` is not available for a branch with no pull request, so the
-    // base is read through the ref's check-runs instead. A base with no checks
-    // at all yields an empty list, which `base_conclusion` reads as "does not
-    // excuse anything" — which blames the pull request, so it is only correct
-    // while it means "the base really has no checks".
+    // base is read through the ref's check-runs instead. `Some(empty)` means
+    // "the base really has no checks", which `base_conclusion` may read as
+    // "does not excuse anything"; `None` means nobody could say, which it may
+    // not. An unnamed base is the second of those — `baseRefName` is
+    // `#[serde(default)]`, so an empty string is a field the payload did not
+    // carry, not a branch with no checks.
     if branch.is_empty() {
-        return Vec::new();
+        return None;
     }
     let mut checks = read_jq(
         &check_runs_endpoint(branch),
         ".check_runs[] | {name: .name, conclusion: (.conclusion // \"\"), status: .status}",
-    );
+    )?;
 
     // Commit statuses live behind a different endpoint and speak a different
     // dialect. Read separately and appended, because a pull request's rollup
     // contains both — and a base showing only half of it would fail to excuse
     // exactly the checks most likely to be broken repository-wide, since a
-    // third-party service is what posts a commit status.
+    // third-party service is what posts a commit status. Half of it is what a
+    // failed second read would leave, so that read's failure fails the pair.
     checks.extend(read_jq(
         &statuses_endpoint(branch),
         ".statuses[] | {context: .context, state: .state}",
-    ));
-    checks
+    )?);
+    Some(checks)
 }
 
 /// The forge endpoint carrying a ref's commit statuses.
@@ -513,24 +528,35 @@ fn statuses_endpoint(branch: &str) -> String {
     format!("repos/{{owner}}/{{repo}}/commits/{branch}/status")
 }
 
-/// Run one `gh api` read and parse a [`Check`] per line.
+/// Run one `gh api` read and parse a [`Check`] per line, or `None` if the read
+/// did not succeed.
 ///
-/// An unreachable forge yields no checks, which `base_conclusion` reads as
-/// "excuses nothing" — the direction that blames the pull request, and so the
-/// one that must never be reached by accident. It is reached only when `gh`
-/// itself cannot run.
-fn read_jq(endpoint: &str, jq: &str) -> Vec<Check> {
+/// **The exit status is the read's verdict, not the emptiness of stdout.** This
+/// used to return a bare `Vec` and never look at the status, and its own doc
+/// said the empty result "is reached only when `gh` itself cannot run". That
+/// was false: a 404, an expired token and a rate limit all *run* `gh`, exit
+/// non-zero, and print little or nothing to stdout. `--paginate` widens it
+/// further — a run whose third page fails still has the first two on stdout, so
+/// a partial list came back as a complete one.
+///
+/// It matters because an empty base is what [`base_conclusion`] reads as "the
+/// base does not excuse this failure", and that answer costs a `PushFix` turn
+/// spent on somebody else's breakage.
+fn read_jq(endpoint: &str, jq: &str) -> Option<Vec<Check>> {
     let out = std::process::Command::new("gh")
         .args(["api", endpoint, "--paginate", "--jq", jq])
         .env("NO_COLOR", "1")
-        .output();
-    let Ok(out) = out else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Check>(line).ok())
-        .collect()
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Check>(line).ok())
+            .collect(),
+    )
 }
 
 /// Run `gh` and return stdout, with colour forced off.
@@ -662,7 +688,8 @@ pub(super) fn observe(
     let blocking = stella_autonomy::blocking(&required, &stuck, policy);
     let waived = stella_autonomy::waived(&required, &stuck, policy);
 
-    let base_checks = only_required(checks_for_branch(&view.base_ref_name), &blocking);
+    let base_checks =
+        checks_for_branch(&view.base_ref_name).map(|checks| only_required(checks, &blocking));
 
     // Both sides filtered by the same list, so the base can still excuse a
     // blocking check — and a waived one can no longer condemn.
@@ -677,7 +704,7 @@ pub(super) fn observe(
         view.state.to_ascii_uppercase().as_str(),
         "MERGED" | "CLOSED"
     );
-    let mut observation = observation_from(&view, &base_checks);
+    let mut observation = observation_from(&view, base_checks.as_deref());
 
     // Nothing is left that can gate this pull request remotely, for one of two
     // reasons, and the loop treats them the same because the forge does:
@@ -749,6 +776,7 @@ pub(super) fn base_failure_history(branch: &str, depth: usize) -> Vec<Vec<String
         .take(depth)
         .map(|sha| {
             checks_for_branch(sha)
+                .unwrap_or_default()
                 .into_iter()
                 .filter(Check::failed)
                 .map(|check| check.name().to_owned())
@@ -777,7 +805,10 @@ pub(super) fn base_failure_history(branch: &str, depth: usize) -> Vec<Vec<String
 #[must_use]
 pub(super) fn base_is_broken(branch: &str) -> bool {
     let required = required_contexts(branch);
-    let checks = only_required(checks_for_branch(branch), &required);
+    // `unwrap_or_default` here says the same thing the `is_empty` below
+    // already said: an unreadable forge must not make the loop file a
+    // breakage report about nothing.
+    let checks = only_required(checks_for_branch(branch).unwrap_or_default(), &required);
     if checks.is_empty() {
         return false;
     }
@@ -800,10 +831,21 @@ pub(super) fn base_is_broken(branch: &str) -> bool {
 /// must keep them, and that difference is an argument to one gatherer rather
 /// than a second copy of four reads (#4300).
 pub(super) fn prs_matching(key: &str) -> Result<Vec<String>, String> {
+    // `title,body` as well as `number`: the search is a full-text one on the
+    // bare number, so the forge answers with every open pull request that
+    // mentions it for any reason. The text is what says whether the mention is
+    // this issue — see `contention::prs_naming`.
     let raw = gh(&[
-        "pr", "list", "--state", "open", "--search", key, "--json", "number",
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--search",
+        key,
+        "--json",
+        "number,title,body",
     ])?;
-    Ok(super::contention::pr_numbers(&raw))
+    Ok(super::contention::prs_naming(&raw, key))
 }
 
 /// Open pull requests that say they close `key`.
@@ -996,7 +1038,7 @@ mod tests {
             &required,
         );
         assert_eq!(
-            base_conclusion(&pr, &base),
+            base_conclusion(&pr, Some(&base)),
             CiConclusion::Red,
             "the required check is broken on the base, so this is not ours"
         );
@@ -1062,12 +1104,12 @@ mod tests {
         };
 
         assert_eq!(
-            base_conclusion(&[failing("Vercel")], &[failing("Vercel")]),
+            base_conclusion(&[failing("Vercel")], Some(&[failing("Vercel")])),
             CiConclusion::Red,
             "the base is broken in the same way, so this is not ours to fix"
         );
         assert_eq!(
-            base_conclusion(&[failing("Vercel")], &[]),
+            base_conclusion(&[failing("Vercel")], Some(&[])),
             CiConclusion::Green,
             "and a base that does not share the failure excuses nothing"
         );
@@ -1090,7 +1132,7 @@ mod tests {
             state: "FAILURE".into(),
             ..Check::default()
         };
-        assert_eq!(base_conclusion(&[run], &[status]), CiConclusion::Red);
+        assert_eq!(base_conclusion(&[run], Some(&[status])), CiConclusion::Red);
     }
 
     /// A check link yields a run id, or nothing — never a guess.
@@ -1124,9 +1166,51 @@ mod tests {
     /// blames the pull request. That is only sound when the base genuinely has
     /// no checks — so the empty-name path returns early rather than asking the
     /// forge about a ref spelled `""` and reading its 404 as the same thing.
+    ///
+    /// It now returns `None` rather than an empty list, which is the same
+    /// argument carried in the type: an unnamed base is one nobody read.
+    /// `baseRefName` is `#[serde(default)]`, so an empty string is a field the
+    /// payload did not carry.
     #[test]
     fn an_unnamed_base_asks_the_forge_nothing() {
-        assert!(checks_for_branch("").is_empty());
+        assert!(checks_for_branch("").is_none());
+    }
+
+    /// A base nobody could read does not become a base that excuses nothing.
+    ///
+    /// **The witness.** The test above guarded one route to the empty list;
+    /// `read_jq` left three others open, because it never looked at the exit
+    /// status. A `gh` that runs and exits non-zero — a 404, an expired token, a
+    /// rate limit — printed little or nothing to stdout and was read as a base
+    /// with no checks; `--paginate` adds a fourth, where a failed later page
+    /// still leaves the earlier ones on stdout and a partial list comes back as
+    /// a complete one.
+    ///
+    /// `base_conclusion` returning `Green` means "this failure is yours", and
+    /// the machine answers it with `CiRed` / `PushFix` — a turn spent fixing a
+    /// break the pull request may not have caused. That arm's own comment
+    /// forbids exactly this: *"pushing a fix for it would be fixing somebody
+    /// else's breakage on this PR's budget."* #4014 is the incident.
+    #[test]
+    fn an_unread_base_does_not_blame_the_pull_request() {
+        let pr = [check("build", "FAILURE")];
+
+        assert_eq!(
+            base_conclusion(&pr, None),
+            CiConclusion::Red,
+            "unread means the base is not ruled out, so the loop waits"
+        );
+        assert_eq!(
+            base_conclusion(&pr, Some(&[])),
+            CiConclusion::Green,
+            "a base that genuinely has no checks still excuses nothing"
+        );
+    }
+
+    /// Nothing failing here needs no base read at all.
+    #[test]
+    fn a_green_pull_request_needs_no_base() {
+        assert_eq!(base_conclusion(&[], None), CiConclusion::Green);
     }
 
     fn check(name: &str, conclusion: &str) -> Check {
@@ -1162,7 +1246,7 @@ mod tests {
         ];
 
         assert_eq!(
-            base_conclusion(&pr, &base),
+            base_conclusion(&pr, Some(&base)),
             CiConclusion::Green,
             "the base failing something else is not an excuse — this is our regression"
         );
@@ -1175,7 +1259,7 @@ mod tests {
         let pr = vec![check("fmt + clippy + test", "FAILURE")];
         let base = vec![check("fmt + clippy + test", "FAILURE")];
 
-        assert_eq!(base_conclusion(&pr, &base), CiConclusion::Red);
+        assert_eq!(base_conclusion(&pr, Some(&base)), CiConclusion::Red);
     }
 
     /// A PR failing two checks where the base only shares one is still this
@@ -1185,7 +1269,7 @@ mod tests {
         let pr = vec![check("a", "FAILURE"), check("b", "FAILURE")];
         let base = vec![check("a", "FAILURE"), check("b", "SUCCESS")];
 
-        assert_eq!(base_conclusion(&pr, &base), CiConclusion::Green);
+        assert_eq!(base_conclusion(&pr, Some(&base)), CiConclusion::Green);
     }
 
     /// Nothing failing here means the base has nothing to excuse, whatever
@@ -1195,7 +1279,7 @@ mod tests {
         let pr = vec![check("a", "SUCCESS")];
         let base = vec![check("a", "FAILURE")];
 
-        assert_eq!(base_conclusion(&pr, &base), CiConclusion::Green);
+        assert_eq!(base_conclusion(&pr, Some(&base)), CiConclusion::Green);
     }
 
     /// Red wins over pending: a build that has already failed does not become
@@ -1286,7 +1370,7 @@ mod tests {
             ]
         }"#;
         let view: PrView = serde_json::from_str(raw).expect("the recorded payload parses");
-        let obs = observation_from(&view, &[]);
+        let obs = observation_from(&view, Some(&[]));
 
         assert_eq!(obs.ci, CiConclusion::Pending);
         assert_eq!(obs.mergeable, Mergeability::Clean);

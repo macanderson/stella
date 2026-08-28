@@ -82,7 +82,8 @@ pub(crate) fn entries(
                               'tool_result', 'speculation_discarded',
                               'turn_parked', 'turn_woken', 'file_change',
                               'candidate_delivery', 'turn_complete',
-                              'steering_withheld', 'step_usage', 'sub_agent')
+                              'steering_withheld', 'step_usage', 'sub_agent',
+                              'gate_board')
          ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
@@ -330,6 +331,49 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
                     out["diff"] = payload["diff"].clone();
                 }
             }
+        }
+        // A verify turn's per-gate breakdown (#5042, SPEC 8.1). Selected here
+        // because a gate failure was otherwise invisible to every
+        // non-interactive reader of a recorded stream: the command deck folds
+        // and paints it, and interactive mode renders every case by
+        // construction, so nothing outside a live terminal could answer "which
+        // gate failed, and what did it say" about a finished run (#5261).
+        //
+        // The failing rows are lifted whole and the green ones counted. A
+        // board is mostly green by the time anyone reads it, so listing every
+        // gate would bury the failure under the passes — SPEC 8.1's own
+        // red-scarcity rule, applied to a surface with no colour to spend.
+        "gate_board" => {
+            let gates = payload["board"]["gates"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            out["patch"] = payload["board"]["patch"].clone();
+            out["total"] = json!(gates.len());
+            out["green"] = json!(
+                gates
+                    .iter()
+                    .filter(|g| g["state"] == json!("green"))
+                    .count()
+            );
+            // `state` is internally tagged, so a failed gate is an object with
+            // a `case` and an `undecided` one carries its reason; a green gate
+            // is the bare string above. Anything not green is carried, because
+            // "the evidence could not decide" is a real outcome and reporting
+            // it as a pass is the false claim this board exists to prevent.
+            out["unresolved"] = json!(
+                gates
+                    .iter()
+                    .filter(|g| g["state"] != json!("green"))
+                    .map(|g| {
+                        json!({
+                            "name": g["name"].clone(),
+                            "state": g["state"].clone(),
+                            "deterministic": g["deterministic"].clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            );
         }
         "speculation_discarded" => {
             out["call_id"] = payload["call_id"].clone();

@@ -59,7 +59,7 @@ pub(crate) use turn::role_supplies_the_turns_model;
 // `summarize`'s module doc for why the seam is there and not elsewhere.
 use summarize::{
     INPUT_BUDGET, OUTPUT_BUDGET, cap_input_json, cap_middle, format_tool_input, is_file_mutation,
-    summarize, tool_input_path,
+    summarize, task_ordinal, tool_input_path,
 };
 
 /// How many characters of a tool input / output summary we retain on a
@@ -387,6 +387,10 @@ impl SessionModel {
             AgentEvent::ToolStart {
                 call, sub_agent_id, ..
             } => {
+                // SPEC 6.2's `→ task 3` tag. `ToolStart` is a declared
+                // task-tag carrier, and the tag was stamped and then dropped:
+                // nothing read it, so the head had nothing to render (#5030).
+                let task = task_ordinal(event);
                 let path = tool_input_path(&call.input);
                 // Mark where the claim window stands *before* the call runs, so
                 // its result can tell a change of its own from one already
@@ -403,6 +407,7 @@ impl SessionModel {
                     raw: cap_input_json(&call.input, INPUT_BUDGET),
                     path,
                     sub_agent_id: sub_agent_id.clone(),
+                    task,
                 });
             }
             AgentEvent::ToolResult {
@@ -755,11 +760,13 @@ impl SessionModel {
                 name,
                 summary,
                 tokens,
+                trigger,
             } => {
                 self.transcript.push(TranscriptEntry::Skill {
                     name: name.clone(),
                     summary: summary.clone(),
                     tokens: *tokens,
+                    trigger: *trigger,
                 });
             }
             AgentEvent::MediaProgress {

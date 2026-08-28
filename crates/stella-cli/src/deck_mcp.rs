@@ -557,6 +557,79 @@ pub(crate) async fn service_mcp_action(
     true
 }
 
+/// What the deck did with an MCP-tab action that arrived mid-turn.
+///
+/// Two answers, and no third: there is no "dropped". Anything
+/// this function does not service itself comes back to the caller to be
+/// queued, so a verb added later cannot go missing by being forgotten here:
+/// the worst it can do is run a moment late.
+pub(crate) enum MidTurnMcp {
+    /// Done, now.
+    Serviced,
+    /// Handed back for the caller's `deferred` queue, to run at the turn
+    /// boundary.
+    ///
+    /// Boxed because `WorkspaceInput` is much the larger of the two answers
+    /// and the common one is `Serviced`.
+    Queue(Box<WorkspaceInput>),
+}
+
+/// Service an MCP-tab action that arrived while a turn is running (#5177).
+///
+/// Every verb gets one of three answers, and **none of them is silence**. The
+/// tab sets its status optimistically from the key handler — `set credential
+/// {field} for {server}`, `installing {name}…`, a search spinner — so a
+/// dropped input leaves the tab reporting an action the code never took. Four
+/// verbs used to be dropped exactly that way, and `McpAuth` was the one that
+/// cost: the operator typed a secret at a masked prompt, read `set
+/// credential`, and nothing reached disk.
+///
+/// - **Serviced**: `McpAuth`, `McpRemove` and `McpRefresh` join the toggle,
+///   the grant, the inspector and the OAuth login. Each is one synchronous
+///   local operation — a `.stella/mcp.toml` write, or a read of config plus
+///   the live tool set — of the same class the surrounding arms already run
+///   mid-turn.
+/// - **Queued**: `McpSearch` and `McpInstall` reach the registry over HTTP,
+///   and mid-turn is the wrong time to start a round-trip that can hang. They
+///   go on the driver's `deferred` queue, which the idle arm drains ahead of
+///   the backlog, so the operator's action runs the moment the turn ends.
+///   Anything else that reaches here is queued as well, for the reason
+///   [`MidTurnMcp`] gives for having no third answer.
+pub(crate) async fn service_mcp_action_midturn(
+    input: WorkspaceInput,
+    cfg: &Config,
+    mcp: Option<&stella_mcp::McpToolSet>,
+    session: &McpSession,
+    in_tx: &mpsc::UnboundedSender<Inbound>,
+) -> MidTurnMcp {
+    match input {
+        WorkspaceInput::McpSearch { .. } | WorkspaceInput::McpInstall { .. } => {
+            MidTurnMcp::Queue(Box::new(input))
+        }
+        WorkspaceInput::McpToggle { .. }
+        | WorkspaceInput::McpGrant { .. }
+        | WorkspaceInput::McpRefresh
+        | WorkspaceInput::McpRemove { .. }
+        | WorkspaceInput::McpAuth { .. }
+        | WorkspaceInput::McpInspect { .. }
+        | WorkspaceInput::McpOauthLogin { .. } => {
+            // `McpInspect` mid-turn skips the registry round-trip its
+            // `lookup` flag asks for, for the reason search and install are
+            // queued above. The `r` press is repeatable once the turn ends.
+            let input = match input {
+                WorkspaceInput::McpInspect { name, .. } => WorkspaceInput::McpInspect {
+                    name,
+                    lookup: false,
+                },
+                other => other,
+            };
+            service_mcp_action(&input, cfg, mcp, session, in_tx).await;
+            MidTurnMcp::Serviced
+        }
+        other => MidTurnMcp::Queue(Box::new(other)),
+    }
+}
+
 /// Run the browser OAuth login for an http MCP server in the background.
 /// Progress streams to the MCP tab's status line; the authorize URL and the
 /// final outcome also land in the persist-until-read inbox (the browser may
@@ -615,6 +688,173 @@ pub(crate) fn spawn_mcp_oauth_login(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A workspace holding one configured stdio server.
+    fn workspace_with_a_server() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::mcp_cmd::install(
+            dir.path(),
+            "some",
+            stella_mcp::McpTransport::Stdio {
+                cmd: "npx".into(),
+                args: vec!["-y".into(), "some-mcp".into()],
+                env: std::collections::BTreeMap::new(),
+            },
+            stella_mcp::ServerCard::default(),
+        )
+        .expect("install");
+        dir
+    }
+
+    fn session() -> McpSession {
+        McpSession {
+            disabled: Default::default(),
+            grants: Default::default(),
+        }
+    }
+
+    fn config_at(root: &std::path::Path) -> Config {
+        let mut cfg = Config::for_tests(crate::config::PROVIDERS[0].clone(), "m".to_string());
+        cfg.workspace_root = root.to_path_buf();
+        cfg
+    }
+
+    /// **The witness (#5177).** A credential typed while a turn is running
+    /// reaches `.stella/mcp.toml`.
+    ///
+    /// `McpAuth` was one of four verbs the deck's mid-turn arm matched and
+    /// then did nothing with. The tab's key handler had already set `set
+    /// credential {field} for {server}` — so the operator typed a secret at a
+    /// masked prompt, read that the deck had stored it, and it never left
+    /// memory. A status line is a claim the code has to keep.
+    #[tokio::test]
+    async fn a_credential_typed_mid_turn_reaches_the_config_file() {
+        let dir = workspace_with_a_server();
+        let cfg = config_at(dir.path());
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        // The control: nothing is stored before the verb runs.
+        assert!(
+            !crate::mcp_cmd::load_config(dir.path())
+                .expect("config")
+                .get("some")
+                .expect("the server")
+                .has_credentials()
+        );
+
+        let answer = service_mcp_action_midturn(
+            WorkspaceInput::McpAuth {
+                server: "some".into(),
+                field: "API_KEY".into(),
+                value: stella_tui::Secret::new("secret".to_string()),
+            },
+            &cfg,
+            None,
+            &session(),
+            &tx,
+        )
+        .await;
+
+        assert!(
+            matches!(answer, MidTurnMcp::Serviced),
+            "the credential write was deferred rather than done"
+        );
+        let stored = crate::mcp_cmd::load_config(dir.path()).expect("config");
+        let transport = stored.get("some").expect("the server");
+        assert!(
+            transport.has_credentials(),
+            "the credential never reached disk"
+        );
+        // Stored, and still not printable — the redacted `Debug` is what keeps
+        // a secret out of every log that formats a transport.
+        assert!(!format!("{transport:?}").contains("secret"));
+    }
+
+    /// A server removed mid-turn is removed, not forgotten.
+    #[tokio::test]
+    async fn a_removal_typed_mid_turn_reaches_the_config_file() {
+        let dir = workspace_with_a_server();
+        let cfg = config_at(dir.path());
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let answer = service_mcp_action_midturn(
+            WorkspaceInput::McpRemove {
+                name: "some".into(),
+            },
+            &cfg,
+            None,
+            &session(),
+            &tx,
+        )
+        .await;
+
+        assert!(matches!(answer, MidTurnMcp::Serviced));
+        assert!(
+            crate::mcp_cmd::load_config(dir.path())
+                .expect("config")
+                .names()
+                .is_empty(),
+            "the row is gone from the tab and still in the file"
+        );
+    }
+
+    /// The two registry round-trips come back to be queued, never dropped.
+    ///
+    /// Deferring them is the right call — an HTTP round-trip must not stall a
+    /// live turn — but the tab is already showing `installing {name}…` or a
+    /// search spinner, and a dropped input leaves both running forever.
+    #[tokio::test]
+    async fn the_network_verbs_are_handed_back_rather_than_dropped() {
+        let dir = workspace_with_a_server();
+        let cfg = config_at(dir.path());
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        for input in [
+            WorkspaceInput::McpSearch {
+                query: "stripe".into(),
+            },
+            WorkspaceInput::McpInstall {
+                name: "com.stripe/mcp".into(),
+            },
+        ] {
+            let expected = format!("{input:?}");
+            match service_mcp_action_midturn(input, &cfg, None, &session(), &tx).await {
+                MidTurnMcp::Queue(back) => assert_eq!(format!("{back:?}"), expected),
+                MidTurnMcp::Serviced => {
+                    panic!("{expected} started a registry round-trip inside a live turn")
+                }
+            }
+        }
+    }
+
+    /// A toggle still takes effect on the next model call of the same turn.
+    #[tokio::test]
+    async fn a_toggle_mid_turn_flips_the_set_the_tool_layer_reads() {
+        let dir = workspace_with_a_server();
+        let cfg = config_at(dir.path());
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let session = session();
+
+        let answer = service_mcp_action_midturn(
+            WorkspaceInput::McpToggle {
+                name: "some".into(),
+            },
+            &cfg,
+            None,
+            &session,
+            &tx,
+        )
+        .await;
+
+        assert!(matches!(answer, MidTurnMcp::Serviced));
+        assert!(
+            session
+                .disabled
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains("some")
+        );
+    }
 
     #[test]
     fn first_line_takes_the_first_non_empty_line_and_bounds_it() {

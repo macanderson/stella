@@ -662,6 +662,9 @@ fn an_unparsable_checkpoint_degrades_to_fresh_rather_than_a_userless_transcript(
 #[test]
 fn a_resumed_session_never_re_mints_a_lane_id_that_already_has_a_transcript() {
     let workspace = tempfile::tempdir().expect("workspace");
+    // Its own store, never the process-global `data_dir()` — see
+    // `durability::bind_session_in`.
+    let store = tempfile::tempdir().expect("store");
     let session = "ses-resumed";
 
     // A lane of the previous run, killed mid-turn with a checkpoint on its
@@ -669,14 +672,16 @@ fn a_resumed_session_never_re_mints_a_lane_id_that_already_has_a_transcript() {
     let dead = crate::durability::SessionDurability::default();
     let dead_key = lane_journal_key(session, "req:1");
     assert!(
-        crate::durability::bind_session(&dead, workspace.path(), &dead_key).is_none(),
+        crate::durability::bind_session_in(&dead, store.path(), workspace.path(), &dead_key)
+            .is_none(),
         "the dead lane binds"
     );
     dead.sink().expect("bound").persist(r#"{"lane":"req:1"}"#);
 
     let lead = crate::durability::SessionDurability::default();
     assert!(
-        crate::durability::bind_session(&lead, workspace.path(), session).is_none(),
+        crate::durability::bind_session_in(&lead, store.path(), workspace.path(), session)
+            .is_none(),
         "the lead binds"
     );
 
@@ -690,7 +695,8 @@ fn a_resumed_session_never_re_mints_a_lane_id_that_already_has_a_transcript() {
     let fresh = crate::durability::SessionDurability::default();
     let fresh_key = lane_journal_key(session, &lane);
     assert!(
-        crate::durability::bind_session(&fresh, workspace.path(), &fresh_key).is_none(),
+        crate::durability::bind_session_in(&fresh, store.path(), workspace.path(), &fresh_key)
+            .is_none(),
         "the new lane binds"
     );
     assert_eq!(
@@ -706,14 +712,15 @@ fn a_resumed_session_never_re_mints_a_lane_id_that_already_has_a_transcript() {
 #[test]
 fn another_sessions_lanes_do_not_move_this_sessions_counter() {
     let workspace = tempfile::tempdir().expect("workspace");
+    let store = tempfile::tempdir().expect("store");
 
     let other = crate::durability::SessionDurability::default();
     let other_key = lane_journal_key("ses-other", "req:7");
-    crate::durability::bind_session(&other, workspace.path(), &other_key);
+    crate::durability::bind_session_in(&other, store.path(), workspace.path(), &other_key);
     other.sink().expect("bound").persist(r#"{"lane":"req:7"}"#);
 
     let lead = crate::durability::SessionDurability::default();
-    crate::durability::bind_session(&lead, workspace.path(), "ses-mine");
+    crate::durability::bind_session_in(&lead, store.path(), workspace.path(), "ses-mine");
 
     let mut subs = SubSessions::resuming(&lead, "ses-mine");
     assert_eq!(subs.next_req_lane(), "req:1");

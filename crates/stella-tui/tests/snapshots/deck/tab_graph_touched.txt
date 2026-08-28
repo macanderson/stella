@@ -11,7 +11,7 @@
 ╭────────────────────────────────────────────────────────╮╭ ▢ Engine ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ƒ run_turn                                            3││ struct · stella-core/src/engine.rs:48                                                              │
 │ ▢ Engine                                              3││ ← called by 1 · uses 1 → · writes 1 →                                                              │
-│ ▢ Router                                          ● hot││ called by ← run_turn                                                                               │
+│ ▢ Router                                 ● hot · turn 1││ called by ← run_turn                                                                               │
 │ ▢ AgentEvent                                          1││ uses → Router · edited turn 1                                                                      │
 │ ▢ Ledger                                              1││ writes → Ledger                                                                                    │
 │ ▤ driver.rs                                           1││                                                                                                    │

@@ -117,8 +117,9 @@ pub use event::{
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, GateBoard, GateRow,
     GateState, HunkProposal, KNOWN_TYPE_TAGS, MODEL_CALL_FAILED_PREFIX, ManifestEntry,
     MediaArtifactRef, MediaJobState, MediaKind, MemoryClass, ModelCallRole, PolicyKind, PrStatus,
-    ProofStep, ProposedHunk, ProviderShare, ScopeProposal, StageKind, StageScope, SteerCause,
-    TaskItem, TaskStatus, UNKNOWN_MODEL, UsageIncompleteReason, VerdictEvidence, Withholder,
+    ProofStep, ProposedHunk, ProviderShare, ScopeProposal, SkillTrigger, StageKind, StageScope,
+    SteerCause, TaskItem, TaskStatus, UNKNOWN_MODEL, UsageIncompleteReason, VerdictEvidence,
+    Withholder,
 };
 // The *open* stage vocabulary (`doc:roleless-core`). `StageKind` above stays
 // the closed set of boundaries this host emits; `StageName` is what the wire

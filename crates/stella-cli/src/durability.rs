@@ -73,8 +73,9 @@ use stella_store::work_journal::WorkJournal;
 ///   that will not exist.
 /// - **A deck sub-session** — `agent::subsession_engine_config_for` re-keys it
 ///   to the lane's OWN handle rather than stripping it (#3233): each lane is
-///   bound to its own journal key (`{session}/{lane}`), so it is independently
-///   resumable instead of a second writer of the lead's one resume point. The
+///   bound to its own journal key (`subsession::lane_journal_key`),
+///   so it is independently resumable instead of a second writer of the lead's
+///   one resume point. The
 ///   re-key still has to happen at this seam, invisible to `stella-core`: a
 ///   sub-session is a full engine session built through `Engine::with_sleeper`,
 ///   not a child reached through `run_sub_agent`, so the engine crate never
@@ -524,7 +525,37 @@ pub fn bind_session(
     workspace_root: &Path,
     session_id: &str,
 ) -> Option<String> {
-    match WorkJournal::open(workspace_root, session_id) {
+    bind_session_in(
+        durability,
+        &stella_store::usage::data_dir().join("work"),
+        workspace_root,
+        session_id,
+    )
+}
+
+/// [`bind_session`] against an explicit store root.
+///
+/// The root is a parameter for the reason [`WorkJournal::open_in`] gives for
+/// taking one: `WorkJournal::open` resolves its store through `data_dir()`,
+/// which reads `STELLA_HOME` — a process-global. A caller that binds through
+/// the global form therefore shares one store with every other caller in the
+/// process, and with whatever the developer's real `~/.stella` already holds.
+///
+/// `durability.rs`'s own tests were already avoiding `WorkJournal::open` for
+/// exactly this ("would make these tests fight their siblings over one
+/// process-global"), but every test reaching it through [`bind_session`] was
+/// not — so `subsession`'s bound a fresh temp workspace to the real data dir,
+/// wrote there, and read back whatever the other tests in the binary (and the
+/// other agent sessions on the machine) had left. That is how
+/// `a_resumed_session_never_re_mints_a_lane_id_that_already_has_a_transcript`
+/// passes alone and fails in a full parallel run.
+pub fn bind_session_in(
+    durability: &SessionDurability,
+    store_root: &Path,
+    workspace_root: &Path,
+    session_id: &str,
+) -> Option<String> {
+    match WorkJournal::open_in(store_root, workspace_root, session_id) {
         Ok(journal) => {
             // `bind` establishes this session's tree baseline; see its doc.
             durability.bind(journal);
@@ -562,6 +593,40 @@ mod tests {
     #[test]
     fn an_unbound_handle_offers_no_sink() {
         assert!(SessionDurability::default().sink().is_none());
+    }
+
+    /// **Witness.** Binding through an explicit store root writes into that
+    /// root, not into the process-global one.
+    ///
+    /// [`bind_session`] resolves its store through `data_dir()`, which reads
+    /// `STELLA_HOME`. The helper above avoids `WorkJournal::open` for exactly
+    /// that reason, but every caller reaching it through `bind_session` was
+    /// still sharing one store with every other test in the binary — and, when
+    /// `STELLA_HOME` is unset, with the developer's real `~/.stella`. That is
+    /// why `subsession`'s resumed-lane test passes alone and fails in a full
+    /// parallel run.
+    #[test]
+    fn binding_with_an_explicit_root_writes_only_there() {
+        let store = tempfile::tempdir().expect("store");
+        let workspace = tempfile::tempdir().expect("workspace");
+
+        let durability = SessionDurability::default();
+        assert!(
+            bind_session_in(&durability, store.path(), workspace.path(), "ses-x").is_none(),
+            "the session binds"
+        );
+        durability
+            .sink()
+            .expect("bound")
+            .persist(r#"{"lane":"req:1"}"#);
+
+        assert!(
+            std::fs::read_dir(store.path())
+                .expect("the store root is readable")
+                .next()
+                .is_some(),
+            "the work journal materialised in the root it was handed"
+        );
     }
 
     /// **Witness.** A session's *first* turn reports what it changed.

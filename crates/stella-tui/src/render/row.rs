@@ -17,6 +17,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use stella_tui_theme::token;
+
 use crate::theme;
 use crate::views::transcript::RAIL_W;
 
@@ -133,6 +135,25 @@ pub(crate) enum Rail {
     /// Assistant prose. Deliberately glyph-less: prose is the default voice of
     /// the transcript, and a marker on every paragraph would be noise.
     Agent,
+    /// **Stella's own voice** in the transcript — SPEC 12.4's `silver rail`.
+    ///
+    /// A panel handshake is a consent document, and it is the most
+    /// security-relevant thing the transcript ever carries. It reached the
+    /// screen as [`Rail::Agent`] until #5300, which is the transcript asserting
+    /// that the *model* wrote it: chrome a reader trusts has to be
+    /// distinguishable from a third party's words, and Stella's consent prose
+    /// was wearing the model's (SPEC 12.3).
+    ///
+    /// Silver rather than gold because gold is stella *acting* (SPEC 2) and
+    /// this is stella *speaking*, which is the same tier the other two things
+    /// it says about itself already take — skill and memory rows
+    /// ([`crate::views::transcript::EventKind::metal`]).
+    ///
+    /// The rail is the visual half only. The `▸` marker
+    /// ([`crate::accessible::NOTICE_MARKER`]) stays on the text and remains
+    /// the half that survives being read aloud — `chrome_note`'s doc comment
+    /// carries that argument, and a colour cannot replace it.
+    Host,
 }
 
 impl Rail {
@@ -153,6 +174,10 @@ impl Rail {
             Rail::Fail => " │ ✗ ",
             Rail::User => "▌ ",
             Rail::Agent => "  ",
+            // The rail cell plus the same two-column content offset every
+            // unrailed row uses, so host prose lines up with agent prose and
+            // only the margin differs.
+            Rail::Host => "▏ ",
         }
     }
 
@@ -186,6 +211,7 @@ impl Rail {
             Rail::Fail => Style::new().fg(theme::DANGER),
             Rail::User => Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
             Rail::Agent => Style::new(),
+            Rail::Host => Style::new().fg(token::SILVER),
         }
     }
 }

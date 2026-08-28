@@ -123,6 +123,7 @@ pub fn step_rows(
     }
     let mut rows = Vec::new();
     let mut selected_row = None;
+    let num_w = ordinal_width(&steps);
     for (i, step) in steps.iter().enumerate() {
         if Some(i) == selected {
             selected_row = Some(rows.len());
@@ -138,6 +139,7 @@ pub fn step_rows(
             animate,
             spend,
             width,
+            num_w,
         ));
         // The elaboration, wrapped under the title at the title's indent.
         if let Some(detail) = &step.detail {
@@ -158,8 +160,40 @@ pub fn step_rows(
     (rows, selected_row)
 }
 
+/// The cells `<n>.` occupies, so the ordinal column can be sized from the
+/// widest id in a plan rather than from a constant.
+///
+/// Display width rather than `len()`, on the rule the rest of this renderer
+/// follows (`cards::pad_right`): an id is ASCII today, and a column measured
+/// in bytes is wrong the first time one is not.
+fn display_w(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// The ordinal column's width for a whole plan: the widest `<id>.` in it, plus
+/// the one cell that separates it from the title.
+///
+/// Computed over the plan rather than fixed at three cells (#5271). `{:<3}`
+/// spends its whole budget on `"10."` or a revision's `"3b."`, so the pad adds
+/// nothing and the title butts against the dot — and every plan hits that once
+/// it reaches ten steps or a revision renumbers one. Sizing from the widest id
+/// also lines the titles up, which three cells could only do by accident.
+fn ordinal_width(steps: &[crate::plan::PlanStep]) -> usize {
+    steps
+        .iter()
+        .map(|s| display_w(&format!("{}.", s.id)) + 1)
+        .max()
+        .unwrap_or(3)
+}
+
 /// One step's own row: selection marker, state glyph, ordinal, title, and the
 /// trailing `(note)` / `(owner)` tag.
+///
+/// `num_w` is the ordinal column's width, from `ordinal_width` over the whole
+/// plan so the titles line up. It is a layout parameter, not plan state — the
+/// row stays goldenable one state at a time, which is what the note below is
+/// about. The separator survives whatever is passed: the field is never
+/// narrower than this id plus one cell.
 ///
 /// Split out of [`step_rows`] so a state can be goldened as the row it draws
 /// rather than as the styles behind it: five of the six come off a board
@@ -171,13 +205,21 @@ pub fn step_row(
     selected: bool,
     now_ms: u64,
     animate: bool,
+    num_w: usize,
 ) -> Line<'static> {
     let v = step_style::step_visual(step.state, now_ms, animate);
+    let ordinal = format!("{}.", step.id);
     let mut spans = vec![
         cards::marker(selected),
         Span::styled(v.glyph.to_string(), v.ring),
         Span::styled(" ", v.gap),
-        Span::styled(format!("{:<3}", format!("{}.", step.id)), v.num),
+        Span::styled(
+            format!(
+                "{ordinal:<width$}",
+                width = num_w.max(display_w(&ordinal) + 1)
+            ),
+            v.num,
+        ),
         Span::styled(step.title.clone(), v.text),
     ];
     if let Some(note) = &step.note {
@@ -207,8 +249,9 @@ fn priced_step_row(
     animate: bool,
     spend: Option<&crate::plan::StepSpend>,
     inner_w: usize,
+    num_w: usize,
 ) -> Line<'static> {
-    let row = step_row(step, selected, now_ms, animate);
+    let row = step_row(step, selected, now_ms, animate, num_w);
     Line::from(cards::pad_right(
         row.spans,
         Span::styled(economics::token_cell(spend), Style::new().fg(token::MUTED)),
@@ -528,7 +571,7 @@ mod tests {
             ),
         ];
         for (step, expected) in rows {
-            assert_eq!(text_of(&step_row(&step, false, 0, false)), expected);
+            assert_eq!(text_of(&step_row(&step, false, 0, false, 3)), expected);
         }
         // And the one row the glyph cannot disambiguate says it in words.
         assert_eq!(
@@ -536,9 +579,78 @@ mod tests {
                 &step("7", "drop it", PlanStepState::Blocked, Some("cancelled")),
                 false,
                 0,
-                false
+                false,
+                3
             )),
             "  ✗ 7. drop it  (cancelled)"
+        );
+
+        // **The witness (#5271).** A two-character id keeps its separator.
+        //
+        // `{:<3}` spent its whole budget on `"10."`, so the pad added nothing
+        // and the title butted against the dot — `10.update imports`. Every
+        // plan reaches this at ten steps, and any plan does the moment a
+        // revision renumbers a step `3b`. The width passed here is the one
+        // `ordinal_width` computes for such a plan.
+        assert_eq!(
+            text_of(&step_row(
+                &step("10", "update imports", PlanStepState::Planned, None),
+                false,
+                0,
+                false,
+                4
+            )),
+            "  ○ 10. update imports"
+        );
+        assert_eq!(
+            text_of(&step_row(
+                &step("3b", "fix the borrow", PlanStepState::Planned, None),
+                false,
+                0,
+                false,
+                4
+            )),
+            "  ○ 3b. fix the borrow"
+        );
+        // And the separator does not depend on the caller passing the right
+        // width: too narrow a column still leaves one cell.
+        assert_eq!(
+            text_of(&step_row(
+                &step("10", "update imports", PlanStepState::Planned, None),
+                false,
+                0,
+                false,
+                1
+            )),
+            "  ○ 10. update imports"
+        );
+    }
+
+    /// The ordinal column is sized from the widest id, so the titles line up.
+    ///
+    /// The other half of #5271: a separator alone would leave a ten-step plan
+    /// ragged, with `9.` one cell narrower than `10.` and every title after it
+    /// stepping left.
+    #[test]
+    fn a_plan_past_nine_steps_lines_its_titles_up() {
+        let mut plan = Plan::default();
+        let titles: Vec<String> = (1..=11).map(|n| format!("step {n}")).collect();
+        plan.propose(&proposal(
+            &titles.iter().map(String::as_str).collect::<Vec<_>>(),
+        ));
+        plan.approve();
+
+        let rows = step_rows(&plan, 60, None, 0, false, None).0;
+        let starts: Vec<usize> = rows
+            .iter()
+            .map(text_of)
+            .filter(|t| t.contains("step "))
+            .map(|t| t.find("step ").expect("a title"))
+            .collect();
+        assert_eq!(starts.len(), 11, "one row per step");
+        assert!(
+            starts.windows(2).all(|w| w[0] == w[1]),
+            "titles do not share a column: {starts:?}"
         );
     }
 
@@ -562,8 +674,71 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n")
             .to_lowercase();
-        for banned in ["task", "scope", "issue", "witness", "judge"] {
+        // `task` is NOT banned here any more (#5155): it is stella's own word
+        // — six `task_*` built-ins, a `task` tool family, `TaskId` in the
+        // protocol, a glossary row — and it names the board entity the zoom
+        // shows, not the plan step this card shows. The card still must not
+        // say it, because a plan step is not a task; that is
+        // `the_card_says_plan_step_where_the_zoom_says_task` below, which
+        // states the reason rather than filing it under foreign vocabulary.
+        for banned in ["scope", "issue", "witness", "judge"] {
             assert!(!text.contains(banned), "leaked {banned:?} in:\n{text}");
+        }
+    }
+
+    /// **The witness (#5155).** The two surfaces keep their own word, and the
+    /// guard covers both.
+    ///
+    /// D6 banned `task` from every rendered string as another tool's word,
+    /// while SPEC §7.5 spells it verbatim on the zoom one keypress inside this
+    /// card — so #5041 had to pick one and the deck said `plan step` on one
+    /// card and `task` on the next. The rule was the mistake: `task` is
+    /// stella's own (see `crate::plan`'s D6 note). The words divide by what
+    /// they name — a plan step is a row of the approved plan, a task is a row
+    /// of the board with a contract and evidence — and this pins that both
+    /// halves hold, which the one-surface guard above could not say.
+    #[test]
+    fn the_card_says_plan_step_where_the_zoom_says_task() {
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one"]));
+        plan.approve();
+        let card: String = step_rows(&plan, 52, None, 0, false, None)
+            .0
+            .iter()
+            .map(text_of)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .to_lowercase();
+        assert!(
+            !card.contains("task"),
+            "the plan card names the board's entity:\n{card}"
+        );
+
+        // The zoom's own blocks, which SPEC §7.5 words in tasks. Asserted in
+        // BOTH directions, and the positive half is the one with teeth: a
+        // later reader who decides this contradiction the other way — by
+        // renaming the zoom's copy to `plan step` — passes every
+        // absence-only check and fails here.
+        let zoom: String = crate::views::task_zoom::contract_rows(None, 52)
+            .iter()
+            .chain(crate::views::task_zoom::evidence_rows("3", None, 52).iter())
+            .map(text_of)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .to_lowercase();
+        assert!(
+            zoom.contains("task"),
+            "the zoom must name the board's entity in its own words:\n{zoom}"
+        );
+        assert!(
+            zoom.contains("task:3"),
+            "SPEC §7.5's evidence caption is `every event tagged task:<id>`:\n{zoom}"
+        );
+        for banned in ["scope", "issue", "plan step"] {
+            assert!(
+                !zoom.contains(banned),
+                "the zoom leaked {banned:?} in:\n{zoom}"
+            );
         }
     }
 }

@@ -53,7 +53,8 @@ use std::fmt::Write as _;
 use stella_plugin::{
     CheckOutcome, Continuation, Correction, EvidenceSet, FlipObservation, FlipPolicy, LoopGrant,
     Oracle, Outcome, Participation, RoundState, StopReason, TamperFinding, TamperPolicy,
-    UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext,
+    UndecidedReason, UndecidedRequirement, UnmetBecause, UnmetRequirement, Verdict, VerdictRule,
+    VolatileContext,
 };
 use stella_protocol::{GateBoard, GateRow, GateState};
 
@@ -106,20 +107,24 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
     let Some(oracle) = &rule.oracle else {
         return Verdict::Undecided {
             reason: UndecidedReason::NoOracle,
+            // Rule-wide: decided before any requirement is looked at, so
+            // there is no per-requirement list to carry and the board paints
+            // every row undecided (see `gate_state`).
+            undecided: Vec::new(),
         };
     };
 
     let flip = flip_credit(oracle, evidence);
     let mut unmet: Vec<UnmetRequirement> = Vec::new();
-    // The first undecidable clause in requirement order. `requirements` is a
-    // `BTreeMap`, so "first" is a fact about the manifest rather than about a
-    // hash seed — two runs over the same evidence report the same reason.
-    let mut undecided: Option<UndecidedReason> = None;
-    let mut abstain = |reason: UndecidedReason| {
-        if undecided.is_none() {
-            undecided = Some(reason);
-        }
-    };
+    // Every undecidable clause, in requirement order (#5267). `requirements`
+    // is a `BTreeMap`, so that order is a fact about the manifest rather than
+    // about a hash seed — two runs over the same evidence report the same
+    // list, and the FIRST entry is the single reason a report prints.
+    //
+    // Collected even when a determinate failure is also found. The verdict is
+    // still `Unmet` — a failure outranks an abstention — but the board needs
+    // to know that a clause nobody could decide is not a clause that held.
+    let mut undecided: Vec<UndecidedRequirement> = Vec::new();
 
     for (name, statement) in &rule.requirements {
         // Every check naming this requirement conjoins with every other one
@@ -149,20 +154,30 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
                     detail: None,
                 }),
                 CheckOutcome::MeasurementMissing { measurement } => {
-                    abstain(UndecidedReason::MeasurementMissing {
-                        requirement: name.clone(),
-                        measurement,
-                    });
+                    abstain(
+                        &mut undecided,
+                        name,
+                        statement,
+                        UndecidedReason::MeasurementMissing {
+                            requirement: name.clone(),
+                            measurement,
+                        },
+                    );
                 }
                 // Rejected at load (`ManifestError::UnparsableCheck`), so this
                 // is reachable only for a rule that did not come from a
                 // validated manifest — which must still not read as "the
                 // budget held".
                 CheckOutcome::Unreadable { reason } => {
-                    abstain(UndecidedReason::UnreadableCheck {
-                        requirement: name.clone(),
-                        reason,
-                    });
+                    abstain(
+                        &mut undecided,
+                        name,
+                        statement,
+                        UndecidedReason::UnreadableCheck {
+                            requirement: name.clone(),
+                            reason,
+                        },
+                    );
                 }
             }
         }
@@ -175,7 +190,9 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
                 because: because.clone(),
                 detail: None,
             }),
-            FlipCredit::Undecided(reason) => abstain(reason.clone()),
+            FlipCredit::Undecided(reason) => {
+                abstain(&mut undecided, name, statement, reason.clone());
+            }
             // `flip = "not-applicable"` contributes no conjunct at all — it is
             // the declaration that this oracle's evidence is not a flip, so a
             // check is the only thing that can decide. A requirement no check
@@ -183,19 +200,24 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
             // a hand-built rule reaches it here and abstains rather than
             // crediting.
             FlipCredit::NoFlipPolicy if !decided_by_check => {
-                abstain(UndecidedReason::Undecidable {
-                    requirement: name.clone(),
-                });
+                abstain(
+                    &mut undecided,
+                    name,
+                    statement,
+                    UndecidedReason::Undecidable {
+                        requirement: name.clone(),
+                    },
+                );
             }
             FlipCredit::NoFlipPolicy => {}
         }
     }
 
     if !unmet.is_empty() {
-        return Verdict::Unmet { unmet };
+        return Verdict::Unmet { unmet, undecided };
     }
-    match undecided {
-        Some(reason) => Verdict::Undecided { reason },
+    match undecided.first().map(|u| u.reason.clone()) {
+        Some(reason) => Verdict::Undecided { reason, undecided },
         // Provenance is carried out of the evidence, not consulted on the way
         // in: which arm we reach was decided above, on the flip, the tamper
         // finding and the measurements alone (#3513).
@@ -203,6 +225,31 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
             evidence: evidence.provenance,
         },
     }
+}
+
+/// Record one requirement's abstention, at most once per requirement.
+///
+/// At most once because the clauses of a requirement conjoin: two checks that
+/// both fail to decide it are one undecided row, and a board that drew the
+/// requirement twice would be counting checks where SPEC 8.1 counts
+/// requirements. The FIRST reason is kept for the same reason `judge` reports
+/// the first one overall — it is the one a report prints, and keeping the
+/// first makes that choice a fact about requirement order rather than about
+/// which check ran last.
+fn abstain(
+    undecided: &mut Vec<UndecidedRequirement>,
+    name: &str,
+    statement: &str,
+    reason: UndecidedReason,
+) {
+    if undecided.iter().any(|u| u.requirement == name) {
+        return;
+    }
+    undecided.push(UndecidedRequirement {
+        requirement: name.to_string(),
+        statement: statement.to_string(),
+        reason,
+    });
 }
 
 /// The verdict as a board a reader can look at — SPEC 8.1's `gate board`.
@@ -220,15 +267,25 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
 ///
 /// # Which rows are red
 ///
-/// A requirement named in [`Verdict::Unmet`] failed. Everything else on an
-/// `Unmet` verdict held: [`judge`] reports a determinate failure in preference
-/// to an abstention, so a run with both lands here with the abstention
-/// invisible — and a row that quietly says "green" for a clause nobody could
-/// decide is the flattering claim this whole path exists to prevent. That is
-/// exactly what [`Verdict::Undecided`] costs, and it is why an undecided
-/// verdict paints **every** row undecided rather than guessing which clause the
-/// single reported reason belongs to. Sharpening this needs `judge` to carry
-/// per-requirement abstentions, which is #5267.
+/// A requirement named in [`Verdict::Unmet`]'s `unmet` failed; one named in
+/// its `undecided` could not be decided; everything else held.
+///
+/// The middle case is #5267. `judge` still reports a determinate failure in
+/// preference to an abstention — that is what the verdict concludes — but it
+/// now carries the abstentions beside the failures, so a clause nobody could
+/// decide no longer renders green on an `Unmet` verdict. A row that quietly
+/// says "green" for a clause nobody could decide is the flattering claim this
+/// whole path exists to prevent.
+///
+/// A requirement in **both** lists is red, and that is the conjunction rather
+/// than a tie-break: a determinate failure on one check makes the requirement
+/// unmet whatever a second check could not decide.
+///
+/// An undecided verdict paints the requirements its own list names. When that
+/// list is empty it paints **every** row undecided, which is the old behaviour
+/// and still the right one for the two cases that produce it:
+/// [`UndecidedReason::NoOracle`], decided before any requirement is looked at,
+/// and a verdict deserialized from a payload written before #5267.
 ///
 /// `deterministic` is `true` on every row: [`judge`] is synchronous and
 /// I/O-free, so no model was asked and the decision cost nothing.
@@ -250,25 +307,48 @@ pub fn gate_board(rule: &VerdictRule, verdict: &Verdict, patch: Option<String>) 
 fn gate_state(name: &str, statement: &str, verdict: &Verdict) -> GateState {
     match verdict {
         Verdict::Met { .. } => GateState::Green,
-        Verdict::Undecided { reason } => GateState::Undecided {
-            reason: reason.to_string(),
-        },
-        Verdict::Unmet { unmet } => match unmet.iter().find(|clause| clause.requirement == name) {
-            // `because` is the failing case — the check the manifest wrote, or
-            // the flip that was not observed — and `detail` is the wrapper's
-            // own account of it, which is the excerpt the block shows. The
-            // statement stands in when the plugin reported no detail: it is the
-            // clause the reader is being told went red, and an empty block
-            // under a red row reads as evidence nobody kept.
-            Some(clause) => GateState::Failed {
-                case: clause.because.to_string(),
-                log: clause
-                    .detail
-                    .clone()
-                    .unwrap_or_else(|| statement.to_owned()),
-            },
-            None => GateState::Green,
-        },
+        Verdict::Undecided { reason, undecided } => {
+            // An empty list is a rule-wide abstention (`NoOracle`) or a
+            // pre-#5267 payload; either way the whole verdict says undecided,
+            // so every row does.
+            if undecided.is_empty() {
+                return GateState::Undecided {
+                    reason: reason.to_string(),
+                };
+            }
+            match undecided.iter().find(|clause| clause.requirement == name) {
+                Some(clause) => GateState::Undecided {
+                    reason: clause.reason.to_string(),
+                },
+                // Nothing failed on this verdict, and this clause was decided.
+                None => GateState::Green,
+            }
+        }
+        Verdict::Unmet { unmet, undecided } => {
+            match unmet.iter().find(|clause| clause.requirement == name) {
+                // `because` is the failing case — the check the manifest wrote, or
+                // the flip that was not observed — and `detail` is the wrapper's
+                // own account of it, which is the excerpt the block shows. The
+                // statement stands in when the plugin reported no detail: it is the
+                // clause the reader is being told went red, and an empty block
+                // under a red row reads as evidence nobody kept.
+                Some(clause) => GateState::Failed {
+                    case: clause.because.to_string(),
+                    log: clause
+                        .detail
+                        .clone()
+                        .unwrap_or_else(|| statement.to_owned()),
+                },
+                // Not a failure. Undecided if `judge` could not settle it, and
+                // only then green — the half #5267 added.
+                None => match undecided.iter().find(|clause| clause.requirement == name) {
+                    Some(clause) => GateState::Undecided {
+                        reason: clause.reason.to_string(),
+                    },
+                    None => GateState::Green,
+                },
+            }
+        }
     }
 }
 
@@ -360,14 +440,14 @@ pub fn again(verdict: &Verdict, round: &RoundState, grant: &LoopGrant) -> Contin
                 },
             };
         }
-        Verdict::Undecided { reason } => {
+        Verdict::Undecided { reason, .. } => {
             return Continuation::Stop {
                 outcome: Outcome::Undecided {
                     reason: reason.clone(),
                 },
             };
         }
-        Verdict::Unmet { unmet } => unmet.clone(),
+        Verdict::Unmet { unmet, .. } => unmet.clone(),
     };
 
     if !grant.participation.includes(Participation::Arbiter) {
@@ -436,4 +516,186 @@ fn correction_text(unmet: &[UnmetRequirement]) -> String {
         }
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use stella_plugin::{EvidenceProvenance, Oracle, OracleCheck};
+
+    /// A rule with two requirements: `budget` decided by a check, `flip`
+    /// decided by nothing (no check names it, and the policy declares the
+    /// evidence is not a flip) — so `flip` is undecidable and `budget` is
+    /// whatever its measurement says.
+    fn two_clause_rule() -> VerdictRule {
+        VerdictRule {
+            requirements: BTreeMap::from([
+                ("budget".to_string(), "p50 stays under 100ms".to_string()),
+                (
+                    "flip".to_string(),
+                    "the witness goes red then green".to_string(),
+                ),
+            ]),
+            oracle: Some(Oracle {
+                flip: FlipPolicy::NotApplicable,
+                checks: vec![OracleCheck {
+                    requirement: "budget".to_string(),
+                    rule: "p50 <= 100".to_string(),
+                }],
+                command: None,
+                tamper: TamperPolicy::ArtifactIdentity,
+                measurements: vec!["p50".to_string()],
+            }),
+        }
+    }
+
+    fn evidence(measurements: BTreeMap<String, u64>) -> EvidenceSet {
+        EvidenceSet {
+            provenance: EvidenceProvenance::PluginReported,
+            flip: FlipObservation::NotAttempted,
+            tamper: TamperFinding::NotChecked,
+            measurements,
+        }
+    }
+
+    fn state_of(board: &GateBoard, name: &str) -> GateState {
+        board
+            .gates
+            .iter()
+            .find(|row| row.name == name)
+            .unwrap_or_else(|| panic!("no row for {name}: {board:?}"))
+            .state
+            .clone()
+    }
+
+    /// **The witness (#5267).** One failing clause and one undecidable clause
+    /// draw one red row and one undecided row.
+    ///
+    /// Fails on the old code, which reported the failure and dropped the
+    /// abstention: `Verdict::Unmet` carried only `unmet`, so `gate_state`
+    /// found no entry for `flip` and painted it **green** — a row saying a
+    /// gate held when nobody could tell. That is the direction that costs,
+    /// and it is the claim this whole path exists to prevent.
+    #[test]
+    fn a_failed_clause_and_an_undecidable_one_draw_two_different_rows() {
+        let rule = two_clause_rule();
+        // p50 over budget: `budget` fails determinately. `flip` is decided by
+        // nothing at all.
+        let verdict = judge(&rule, &evidence(BTreeMap::from([("p50".into(), 250)])));
+
+        assert!(
+            matches!(verdict, Verdict::Unmet { .. }),
+            "a determinate failure still outranks an abstention: {verdict:?}"
+        );
+
+        let board = gate_board(&rule, &verdict, None);
+        assert!(
+            matches!(state_of(&board, "budget"), GateState::Failed { .. }),
+            "the failing clause is red: {board:?}"
+        );
+        assert!(
+            matches!(state_of(&board, "flip"), GateState::Undecided { .. }),
+            "the undecidable clause must NOT read as green: {board:?}"
+        );
+        assert_eq!(board.green(), 0, "nothing held, so nothing is green");
+    }
+
+    /// A clause that genuinely held stays green beside an undecided one.
+    ///
+    /// The other side of the same change: painting every row undecided was
+    /// the old behaviour on an undecided verdict, and it understated a clause
+    /// the evidence did decide.
+    #[test]
+    fn an_undecided_verdict_greens_the_clauses_it_did_decide() {
+        let rule = two_clause_rule();
+        // p50 within budget: `budget` holds. `flip` is still undecidable, so
+        // the verdict abstains rather than passing.
+        let verdict = judge(&rule, &evidence(BTreeMap::from([("p50".into(), 40)])));
+        assert!(
+            matches!(verdict, Verdict::Undecided { .. }),
+            "one undecidable clause makes the whole verdict undecided: {verdict:?}"
+        );
+
+        let board = gate_board(&rule, &verdict, None);
+        assert_eq!(state_of(&board, "budget"), GateState::Green);
+        assert!(matches!(
+            state_of(&board, "flip"),
+            GateState::Undecided { .. }
+        ));
+    }
+
+    /// A rule-wide abstention still paints every row, because it names no
+    /// requirement to paint.
+    ///
+    /// `NoOracle` is decided before any requirement is looked at, so its
+    /// per-requirement list is empty — and an empty list must not be read as
+    /// "everything held". A payload written before #5267 deserializes the
+    /// same way, which is what makes the field additive on the wire.
+    #[test]
+    fn a_rule_wide_abstention_paints_every_row_undecided() {
+        let rule = VerdictRule {
+            requirements: BTreeMap::from([
+                ("budget".to_string(), "p50 stays under 100ms".to_string()),
+                ("flip".to_string(), "the witness flips".to_string()),
+            ]),
+            oracle: None,
+        };
+        let verdict = judge(&rule, &evidence(BTreeMap::new()));
+        assert!(matches!(
+            verdict,
+            Verdict::Undecided {
+                reason: UndecidedReason::NoOracle,
+                ..
+            }
+        ));
+
+        let board = gate_board(&rule, &verdict, None);
+        for row in &board.gates {
+            assert!(
+                matches!(row.state, GateState::Undecided { .. }),
+                "no oracle decides nothing, so no row may read as green: {row:?}"
+            );
+        }
+    }
+
+    /// One requirement, two checks that both fail to decide it, is ONE row.
+    ///
+    /// The clauses of a requirement conjoin, so a board that drew it twice
+    /// would be counting checks where SPEC 8.1 counts requirements.
+    #[test]
+    fn two_undecidable_checks_on_one_requirement_are_one_row() {
+        let rule = VerdictRule {
+            requirements: BTreeMap::from([("budget".to_string(), "two numbers hold".to_string())]),
+            oracle: Some(Oracle {
+                flip: FlipPolicy::NotApplicable,
+                checks: vec![
+                    OracleCheck {
+                        requirement: "budget".to_string(),
+                        rule: "p50 <= 100".to_string(),
+                    },
+                    OracleCheck {
+                        requirement: "budget".to_string(),
+                        rule: "p99 <= 400".to_string(),
+                    },
+                ],
+                command: None,
+                tamper: TamperPolicy::ArtifactIdentity,
+                measurements: vec!["p50".to_string(), "p99".to_string()],
+            }),
+        };
+        // Neither measurement reported: both checks abstain on the same
+        // requirement.
+        let verdict = judge(&rule, &evidence(BTreeMap::new()));
+        let Verdict::Undecided { undecided, .. } = &verdict else {
+            panic!("expected an undecided verdict: {verdict:?}");
+        };
+        assert_eq!(
+            undecided.len(),
+            1,
+            "one requirement, one row: {undecided:?}"
+        );
+        assert_eq!(undecided[0].requirement, "budget");
+        assert_eq!(gate_board(&rule, &verdict, None).gates.len(), 1);
+    }
 }
