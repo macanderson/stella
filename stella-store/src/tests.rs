@@ -1,5 +1,11 @@
 use super::*;
 
+// Named witnesses split by concern: private-state permissions, quarantine
+// behaviour, and fail-closed execution accounting.
+mod private_state;
+mod quarantine;
+mod usage_completeness;
+
 #[test]
 fn execution_lifecycle_events_and_telemetry_roundtrip() {
     let store = Store::in_memory().unwrap();

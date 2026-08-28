@@ -561,18 +561,18 @@ mod tests {
     /// the list), never silently (the rotted proof this exists to catch).
     fn cli_sources() -> [&'static str; 8] {
         [
-            include_str!("../../stella-cli/src/agent_tests.rs"),
-            // `agent_tests.rs` is split into submodules by the file-size
+            include_str!("../../stella-cli/src/agent/tests.rs"),
+            // `agent/tests.rs` is split into submodules by the file-size
             // ratchet, so its children have to be listed too — a witness that
             // moved into one of them is not missing, it is one `include_str!`
             // away from being invisible to this sweep.
-            include_str!("../../stella-cli/src/agent_tests/engine_wiring.rs"),
+            include_str!("../../stella-cli/src/agent/tests/engine_wiring.rs"),
             include_str!("../../stella-cli/src/subagent/tests.rs"),
             include_str!("../../stella-cli/src/subsession.rs"),
             include_str!("../../stella-cli/src/command_deck/tests.rs"),
             include_str!("../../stella-cli/src/session_persist.rs"),
             include_str!("../../stella-cli/src/engine_config.rs"),
-            include_str!("../../stella-cli/src/main_tests.rs"),
+            include_str!("../../stella-cli/src/tests.rs"),
         ]
     }
 

@@ -8,6 +8,11 @@
 
 use super::*;
 
+// Named witnesses split by concern: private-state permissions, and the
+// `stella.toml` format port.
+mod private_state;
+mod toml;
+
 fn write(dir: &Path, name: &str, json: &str) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, json).unwrap();

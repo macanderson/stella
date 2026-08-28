@@ -1,4 +1,4 @@
-use super::*;
+use crate::*;
 
 #[test]
 fn quarantine_query_reports_schema_corruption() {

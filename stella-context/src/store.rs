@@ -25,8 +25,6 @@ mod schema;
 // builders for one schema ladder is how a migration test ends up asserting
 // against a shape the ladder never produces.
 #[cfg(test)]
-mod edge_id_tests;
-#[cfg(test)]
 pub(crate) mod tests;
 
 use std::path::{Path, PathBuf};

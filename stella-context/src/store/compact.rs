@@ -110,7 +110,6 @@ use crate::error::ContextError;
 use super::{ContextStore, sha256_hex};
 
 #[cfg(test)]
-#[path = "compact_tests.rs"]
 mod tests;
 
 /// A compaction that reclaims at least this many rows runs `VACUUM` on its own,

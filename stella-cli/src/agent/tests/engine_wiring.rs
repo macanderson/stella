@@ -1,6 +1,6 @@
 //! Which model actually runs, and who wins when several things pin one.
 //!
-//! Split out of `agent_tests.rs` when it grew past its file-size ceiling
+//! Split out of `agent/tests.rs` when it grew past its file-size ceiling
 //! (#629). The guard's rule is that new code goes in its own module rather
 //! than onto the end of an already-oversized file, and these tests were the
 //! growth that tripped it. They are one subject — `resolve_engine_wiring`'s

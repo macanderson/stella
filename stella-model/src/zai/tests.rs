@@ -1684,10 +1684,11 @@ async fn zai_identity_never_sends_reasoning_effort_even_when_pinned() {
     assert!(!body.contains("reasoning_effort"), "{body}");
 }
 
-mod error_classify_tests;
-mod openrouter_effort_tests;
-mod openrouter_stream_tests;
-mod stream_frame_tests;
+mod error_classify;
+mod openrouter_effort;
+mod openrouter_stream;
+mod stream_frame;
+mod vision;
 
 #[test]
 fn rejects_disabled_reasoning_matches_the_upstream_wording_only() {

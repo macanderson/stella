@@ -224,9 +224,9 @@ fn episode_summaries(memory: &SessionMemory) -> Vec<String> {
 #[test]
 fn every_recalling_driver_arms_the_control_first() {
     const DRIVERS: [(&str, &str); 3] = [
-        ("agent.rs", include_str!("../agent.rs")),
-        ("agent/goal.rs", include_str!("../agent/goal.rs")),
-        ("command_deck.rs", include_str!("../command_deck.rs")),
+        ("agent.rs", include_str!("../../agent.rs")),
+        ("agent/goal.rs", include_str!("../../agent/goal.rs")),
+        ("command_deck.rs", include_str!("../../command_deck.rs")),
     ];
     // The two recall doors a driver can take: the full block, and the
     // frames-free block a pipeline-driven turn injects beside its port.

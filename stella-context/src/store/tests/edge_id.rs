@@ -24,7 +24,7 @@ async fn v10_remints_duplicate_edge_ids_and_enforces_uniqueness() {
         )
         .unwrap();
         conn.pragma_update(None, "user_version", 9i64).unwrap();
-        super::schema::migrate(&conn).unwrap();
+        crate::store::schema::migrate(&conn).unwrap();
 
         let ids: Vec<String> = {
             let mut stmt = conn

@@ -2,8 +2,9 @@
 //! read-only/speculation-safe schema claims, and per-tool dispatch.
 //!
 //! Split out of `registry.rs` so the module that ships the tools is not
-//! dominated by the module that checks them, joining the four sibling test
-//! files already here. No test changed in the move.
+//! dominated by the module that checks them. The named single-topic
+//! witnesses (fence, file-change, gate-batch, private-state) are child
+//! modules under `tests/`. No test changed in the move.
 
 use super::*;
 
@@ -805,6 +806,11 @@ async fn exec_ok(reg: &ToolRegistry, name: &str, input: serde_json::Value) {
 }
 
 mod chain;
+mod fence;
+mod file_change;
+mod gate_batch;
+#[cfg(unix)]
+mod private_state;
 mod schema_gate;
 mod touch;
 

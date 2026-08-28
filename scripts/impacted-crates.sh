@@ -44,7 +44,7 @@
 #      depends on `stella-cli`.
 #
 #   3. Run-time escapes. `stella-tools/tests/docs_in_sync.rs` walks
-#      `website/content/docs/agent-tools/*.mdx`; `stella-cli/src/main_tests.rs`
+#      `website/content/docs/agent-tools/*.mdx`; `stella-cli/src/tests.rs`
 #      reads `website/content/docs/commands/meta.json`; and
 #      `stella-protocol/tests/wire_contract.rs` reads `docs/wire/`. These open
 #      files by path at run time, so no static scan can resolve their targets.

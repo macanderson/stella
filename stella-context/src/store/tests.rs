@@ -13,6 +13,8 @@ use super::*;
 use crate::store::edge::{end_world_validity, neighbors_valid_at};
 use tempfile::TempDir;
 
+mod edge_id;
+
 fn tmp_store() -> (TempDir, ContextStore) {
     let dir = TempDir::new().expect("tempdir");
     let path = dir.path().join("context.db");

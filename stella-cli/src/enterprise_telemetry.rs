@@ -1357,3 +1357,6 @@ pub(crate) fn start_best_effort_flush() {
         let _ = handle.block_on(runtime.flush());
     });
 }
+
+#[cfg(test)]
+mod tests;

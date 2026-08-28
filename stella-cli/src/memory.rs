@@ -47,10 +47,6 @@ use stella_pipeline::{ContextRecallPort, RecalledFrame};
 #[cfg(test)]
 use stella_protocol::{CompletionMessage, MessageRole};
 
-// #1221: the A/B recall control — its durable schedule, what a control turn
-// suppresses, and the attribution that separates the arms afterwards.
-#[cfg(test)]
-mod ab_control_tests;
 // Which files a memory is about — shared by the reflection write path and by
 // `stella memory validate`, which must agree on what counts as an anchor.
 pub(crate) mod anchors;
@@ -70,13 +66,7 @@ pub(crate) mod observations;
 mod private_state;
 mod projection;
 pub(crate) mod proposals;
-#[cfg(test)]
-mod quarantine_tests;
 mod recall;
-// Which sessions actually receive the volatile record channel — a separate
-// question from what recall renders, and the one that went unasked (epic #897).
-#[cfg(test)]
-mod record_channel_tests;
 // Phase 4 (#715): reversible retirement of context that stops helping.
 pub(crate) mod retirement;
 pub(crate) mod rules_mining;
@@ -663,7 +653,5 @@ pub(crate) fn unix_now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-#[cfg(test)]
-mod path_token_tests;
 #[cfg(test)]
 mod tests;

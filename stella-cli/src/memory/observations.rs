@@ -176,4 +176,4 @@ pub(crate) fn all_observations(store: &ContextStore, limit: usize) -> Vec<Observ
 }
 
 #[cfg(test)]
-mod observation_tests;
+mod tests;

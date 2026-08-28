@@ -3,7 +3,7 @@
 //! `edit_file` — per touched schema file, on the batch's composed content —
 //! instead of the old blanket refusal.
 
-use super::tests::seeded_snapshot;
+use super::seeded_snapshot;
 use super::*;
 
 fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, ToolRegistry) {

@@ -53,8 +53,6 @@ mod domains;
 mod durability;
 mod engine_config;
 mod enterprise_telemetry;
-#[cfg(test)]
-mod enterprise_telemetry_tests;
 mod env_files;
 mod export;
 mod extensions;
@@ -1074,5 +1072,4 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "main_tests.rs"]
-mod main_tests;
+mod tests;

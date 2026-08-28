@@ -6,8 +6,8 @@
 //! If that test can be made to pass only by weakening it, the port has changed
 //! behavior and the migration is no longer safe to run unattended.
 
-use super::toml_config::{ConfigScope, TomlConfig, load_toml_scope};
-use super::*;
+use crate::settings::toml_config::{ConfigScope, TomlConfig, load_toml_scope};
+use crate::settings::*;
 
 fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
@@ -384,7 +384,7 @@ fn unknown_toml_roots_are_flagged() {
         "stella.toml",
         "[uii]\ntheme = \"x\"\n\n[agents]\ndefault_modle = \"y\"\n",
     );
-    let found = super::unknown::unknown_toml_keys_in(&path);
+    let found = crate::settings::unknown::unknown_toml_keys_in(&path);
     assert!(found.contains(&"uii".to_string()), "{found:?}");
     assert!(
         found.contains(&"agents.default_modle".to_string()),
@@ -403,7 +403,7 @@ fn the_json_spelling_of_a_renamed_key_is_unknown_in_toml() {
         "stella.toml",
         "enable_recap = \"off\"\n\n[agent_engine_config]\ndefault_model = \"x\"\n",
     );
-    let found = super::unknown::unknown_toml_keys_in(&path);
+    let found = crate::settings::unknown::unknown_toml_keys_in(&path);
     assert!(
         found.contains(&"agent_engine_config".to_string()),
         "the JSON name is not a TOML root: {found:?}"
@@ -454,7 +454,7 @@ theme = "stella-dark"
 "#,
     );
     assert_eq!(
-        super::unknown::unknown_toml_keys_in(&path),
+        crate::settings::unknown::unknown_toml_keys_in(&path),
         Vec::<String>::new()
     );
 }
@@ -469,7 +469,7 @@ fn open_maps_are_descended_into_not_flagged() {
         "[tools]\nsome_mcp_tool = \"off\"\n\n[providers.my-own-gateway]\nbase_url = \"http://x\"\n",
     );
     assert_eq!(
-        super::unknown::unknown_toml_keys_in(&path),
+        crate::settings::unknown::unknown_toml_keys_in(&path),
         Vec::<String>::new()
     );
 }
@@ -582,7 +582,7 @@ fn the_shipped_reference_config_loads_with_no_unrecognized_keys() {
         path.display()
     );
 
-    let unknown = super::unknown::unknown_toml_keys_in(&path);
+    let unknown = crate::settings::unknown::unknown_toml_keys_in(&path);
     assert_eq!(
         unknown,
         Vec::<String>::new(),
@@ -634,7 +634,7 @@ fn migrating_a_settings_file_preserves_every_value_it_configured() {
     let json = write(dir.path(), "settings.json", RICH_SETTINGS);
     let toml_path = dir.path().join("stella.toml");
 
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
 
     let before = Settings::load_scope(&json).unwrap();
     let after = load_toml(&toml_path, ConfigScope::User).unwrap();
@@ -657,7 +657,7 @@ fn a_migration_never_deletes_the_json_it_read() {
     let dir = tempfile::tempdir().unwrap();
     let json = write(dir.path(), "settings.json", RICH_SETTINGS);
     let toml_path = dir.path().join("stella.toml");
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
     assert!(json.exists(), "the input survives");
     assert!(toml_path.exists(), "the output was written");
 }
@@ -667,7 +667,7 @@ fn a_dry_run_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let json = write(dir.path(), "settings.json", RICH_SETTINGS);
     let toml_path = dir.path().join("stella.toml");
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, true).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, true).unwrap();
     assert!(!toml_path.exists());
 }
 
@@ -681,10 +681,11 @@ fn an_existing_stella_toml_is_never_overwritten() {
         "# hand-written\n[ui]\ntheme = \"x\"\n",
     );
     let outcome =
-        super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+        crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false)
+            .unwrap();
     assert!(matches!(
         outcome,
-        super::migrate::Outcome::AlreadyMigrated(_)
+        crate::settings::migrate::Outcome::AlreadyMigrated(_)
     ));
     let after = std::fs::read_to_string(&toml_path).unwrap();
     assert!(after.contains("# hand-written"), "untouched: {after}");
@@ -702,7 +703,7 @@ fn a_widened_f32_is_written_back_at_f32_precision() {
         r#"{"agent_engine_config": {"agents": {"judge": {"params": {"temperature": 0.2}}}}}"#,
     );
     let toml_path = dir.path().join("stella.toml");
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
     let rendered = std::fs::read_to_string(&toml_path).unwrap();
     assert!(rendered.contains("temperature = 0.2"), "{rendered}");
     assert!(!rendered.contains("0.20000000"), "{rendered}");
@@ -720,7 +721,7 @@ fn a_whole_number_float_keeps_its_decimal_point() {
         r#"{"context": {"retrieval": {"rrf_k": 60.0}}}"#,
     );
     let toml_path = dir.path().join("stella.toml");
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
     let rendered = std::fs::read_to_string(&toml_path).unwrap();
     assert!(rendered.contains("rrf_k = 60.0"), "{rendered}");
     // And it still loads as a float.
@@ -736,7 +737,7 @@ fn nested_sections_render_as_tables_and_parents_stay_implicit() {
     let dir = tempfile::tempdir().unwrap();
     let json = write(dir.path(), "settings.json", RICH_SETTINGS);
     let toml_path = dir.path().join("stella.toml");
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
     let rendered = std::fs::read_to_string(&toml_path).unwrap();
 
     assert!(rendered.contains("[providers.anthropic]"), "{rendered}");
@@ -760,7 +761,8 @@ fn the_generated_file_declares_its_own_scope_and_version() {
     let dir = tempfile::tempdir().unwrap();
     let json = write(dir.path(), "settings.json", RICH_SETTINGS);
     let toml_path = dir.path().join("stella.toml");
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, false)
+        .unwrap();
     let rendered = std::fs::read_to_string(&toml_path).unwrap();
     assert!(rendered.contains("schema_version = 1"), "{rendered}");
     assert!(rendered.contains(r#"scope = "project""#), "{rendered}");
@@ -775,7 +777,7 @@ fn a_migrated_file_round_trips_through_a_section_save() {
     let dir = tempfile::tempdir().unwrap();
     let json = write(dir.path(), "settings.json", RICH_SETTINGS);
     let toml_path = dir.path().join("stella.toml");
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
 
     let ui = UiSettings {
         theme: Some("stella-light".to_string()),
@@ -816,8 +818,9 @@ fn migrating_an_inline_api_key_to_project_scope_is_refused_and_writes_nothing() 
     let json = write(dir.path(), "settings.json", PROJECT_SETTINGS_WITH_SECRET);
     let toml_path = dir.path().join("stella.toml");
 
-    let err = super::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, false)
-        .expect_err("a committed file must not receive a literal secret");
+    let err =
+        crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, false)
+            .expect_err("a committed file must not receive a literal secret");
 
     // The secret never reaches the filesystem — not even partially written.
     assert!(
@@ -846,7 +849,7 @@ fn render_itself_would_write_the_secret_if_nothing_stopped_it() {
     let json = write(dir.path(), "settings.json", PROJECT_SETTINGS_WITH_SECRET);
     let settings = Settings::load_scope(&json).unwrap();
 
-    let rendered = super::migrate::render(&settings, ConfigScope::Project).unwrap();
+    let rendered = crate::settings::migrate::render(&settings, ConfigScope::Project).unwrap();
 
     assert!(
         rendered.contains("sk-secret"),
@@ -863,7 +866,10 @@ fn a_dry_run_refuses_the_same_project_scope_secret() {
     let json = write(dir.path(), "settings.json", PROJECT_SETTINGS_WITH_SECRET);
     let toml_path = dir.path().join("stella.toml");
 
-    assert!(super::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, true).is_err());
+    assert!(
+        crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, true)
+            .is_err()
+    );
     assert!(!toml_path.exists());
 }
 
@@ -877,7 +883,7 @@ fn migrating_an_inline_api_key_to_user_scope_still_works() {
     let json = write(dir.path(), "settings.json", PROJECT_SETTINGS_WITH_SECRET);
     let toml_path = dir.path().join("stella.toml");
 
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
 
     let settings = load_toml(&toml_path, ConfigScope::User).unwrap();
     assert_eq!(
@@ -900,7 +906,7 @@ fn a_migration_that_succeeds_always_produces_a_loadable_file() {
         let json = write(dir.path(), "settings.json", body);
         let toml_path = dir.path().join("stella.toml");
 
-        if super::migrate::migrate_scope(&json, &toml_path, scope, false).is_err() {
+        if crate::settings::migrate::migrate_scope(&json, &toml_path, scope, false).is_err() {
             // A refusal is a valid outcome; it just must not have written.
             assert!(!toml_path.exists(), "{scope:?} refused but wrote a file");
             continue;
@@ -918,7 +924,7 @@ fn saving_an_empty_engine_config_removes_both_of_its_sections() {
     let dir = tempfile::tempdir().unwrap();
     let json = write(dir.path(), "settings.json", RICH_SETTINGS);
     let toml_path = dir.path().join("stella.toml");
-    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    crate::settings::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
     assert!(
         std::fs::read_to_string(&toml_path)
             .unwrap()
