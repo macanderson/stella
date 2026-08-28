@@ -696,8 +696,10 @@ fn a_touched_path_that_is_not_a_file_is_not_an_anchor() {
     );
 }
 
-/// **Witness (#3437).** One drop line per evicted candidate, whatever its
-/// source, each carrying the remedy its own channel answers to.
+/// **Witness (#3437).** Every dropped source reaches the person watching the
+/// run with the remedy its own channel answers to — and memory drops reach
+/// them as ONE summary line, not one line per evicted memory repeating the
+/// same remedy under an internal id.
 ///
 /// Fails on base, where `report_record_drops` filtered `SteeringSet::dropped`
 /// to `SteeringSource::Record` and emitted through a single producer that hard-
@@ -743,17 +745,30 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
     };
 
     let mut lines = Vec::new();
-    crate::memory::recall::report_steering_drops(&set, |message| lines.push(message));
+    crate::memory::recall::report_steering_drops(&set, 1200, |message| lines.push(message));
 
-    assert_eq!(lines.len(), 4, "one line per reportable source: {lines:?}");
+    assert_eq!(
+        lines.len(),
+        4,
+        "one summary for the memory drops, then one line per remaining \
+         reportable source: {lines:?}"
+    );
     let joined = lines.join("\n");
     assert!(
-        lines[0].contains("^deploy-policy") && lines[0].contains("raise its precedence"),
-        "the record channel's own sentence is unchanged: {joined}"
+        lines[0].contains("1 memories did not fit")
+            && lines[0].contains("1200-token retrieval budget")
+            && lines[0].contains("context.retrieval.max_tokens in stella.toml"),
+        "memory drops are one summary line naming the count, the budget the \
+         turn ran with, and the remedy — not one line per memory under an \
+         internal id: {joined}"
     );
     assert!(
-        lines[1].contains("nod_evicted") && lines[1].contains("`context.retrieval.max_tokens`"),
-        "a frame the merge evicted names the retrieval budget: {joined}"
+        !joined.contains("nod_evicted"),
+        "the summary does not leak the internal handle a user cannot act on: {joined}"
+    );
+    assert!(
+        lines[1].contains("^deploy-policy") && lines[1].contains("raise its precedence"),
+        "the record channel's own sentence is unchanged: {joined}"
     );
     assert!(
         lines[2].contains("seat-loser") && lines[2].contains("`skills.max_skills`"),
