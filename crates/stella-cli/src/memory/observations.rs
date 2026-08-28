@@ -38,6 +38,11 @@
 //! from there is re-scanned next turn. Content-derived ids make that replay a
 //! no-op for the lines that did land.
 //!
+//! The **scan** does not stop there. A lock released a moment later would
+//! otherwise leave every remaining lesson unwritten for no reason, and they are
+//! going to be re-scanned regardless — the cursor is what bounds the work, not
+//! the loop.
+//!
 //! A line the ledger refuses **deterministically** — one whose record cannot be
 //! constructed or serialized at all — is not a barrier. Retrying it can never
 //! succeed, and a cursor parked on it would re-scan the whole log every turn
@@ -144,12 +149,14 @@ pub(crate) fn extract_reflection_observations(store: &ContextStore, log_path: &P
             // either, so a barrier here would park the cursor forever.
             Err(AppendFailure::Unrepresentable) => {}
             // Transient — a concurrent writer holding the lock past the busy
-            // timeout is the case. Stop the cursor here so the next scan sees
-            // this line again; everything after it is re-scanned too, which
-            // content-derived ids make a no-op for whatever did land.
+            // timeout is the case. The cursor stops here so the next scan sees
+            // this line again; the scan itself does NOT stop, because a lock
+            // released a moment later would otherwise leave every remaining
+            // lesson unwritten for no reason. Everything after this point is
+            // re-scanned next turn either way, which content-derived ids make a
+            // no-op replay for whatever did land.
             Err(AppendFailure::LedgerRefused) => {
-                settled = start + offset;
-                break;
+                settled = settled.min(start + offset);
             }
         }
     }

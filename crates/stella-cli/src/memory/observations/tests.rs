@@ -258,16 +258,17 @@ fn a_pre_task_id_log_line_still_parses() {
 /// then lets go, which is the #5323 shape: a concurrent writer the append
 /// cannot outwait.
 ///
-/// - **Base:** the first lesson's append fails and is swallowed; the loop
-///   carries on, the second lesson lands once the lock clears, and the cursor
-///   is then set to 2 — past a line that never appended. The first lesson is
-///   gone, and the next scan starts after it.
-/// - **Here:** the loop stops at the first failure, so nothing appends and the
-///   cursor is not moved. The next scan sees both lines again.
+/// Both codes do the same thing to the lessons on this pass: the first one's
+/// append loses to the lock, the loop carries on, and the second lands once the
+/// lock clears. They differ in one place only — **where the cursor ends up**.
+///
+/// - **Base:** the cursor is set to 2, past a line that never appended. The
+///   first lesson is below it and the next scan starts after it. Gone.
+/// - **Here:** the cursor stops at the first failure, so the next scan sees
+///   both lines again and the first one lands.
 ///
 /// So the discriminating fact is the ledger's contents *after a second scan*:
-/// two observations here, one on the base, forever. The intermediate counts are
-/// asserted too, but that final line is the one that cannot pass both ways.
+/// two observations here, one on the base, forever.
 #[test]
 fn a_lesson_whose_append_failed_is_recovered_on_the_next_scan() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -286,7 +287,8 @@ fn a_lesson_whose_append_failed_is_recovered_on_the_next_scan() {
         let conn = rusqlite::Connection::open(&db).expect("second connection");
         conn.busy_timeout(std::time::Duration::from_millis(0))
             .expect("no wait");
-        conn.execute_batch("BEGIN IMMEDIATE").expect("take the lock");
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .expect("take the lock");
         locked.send(()).expect("announce");
         std::thread::sleep(HELD_FOR);
         conn.execute_batch("ROLLBACK").expect("release the lock");
@@ -295,25 +297,33 @@ fn a_lesson_whose_append_failed_is_recovered_on_the_next_scan() {
 
     assert_eq!(
         extract_reflection_observations(&store, &log),
-        0,
-        "the scan stops at the lesson whose append lost to the lock"
+        1,
+        "the first lesson's append loses to the lock; the second still lands"
     );
     rival.join().expect("rival");
 
+    // The cursor is where the two codes differ: it must not have stepped over
+    // the lesson that never landed.
     assert_eq!(
-        all_observations(&store, 10).len(),
-        0,
-        "and it stopped before the second lesson rather than skipping the first"
+        store
+            .extraction_cursor("reflections.jsonl")
+            .expect("read cursor"),
+        Some("0".to_string()),
+        "the cursor stops at the first line whose append failed"
     );
 
-    // The witness. On the base this is 1 and stays 1: the first lesson sits
-    // below a cursor that advanced past it.
+    // The witness. On the base this appends nothing and the ledger stays at
+    // one: the first lesson sits below a cursor that advanced past it.
     assert_eq!(
         extract_reflection_observations(&store, &log),
-        2,
-        "the next scan recovers both lessons"
+        1,
+        "the next scan recovers the lost lesson, replaying the one that landed"
     );
-    assert_eq!(all_observations(&store, 10).len(), 2, "and nothing was lost");
+    assert_eq!(
+        all_observations(&store, 10).len(),
+        2,
+        "and nothing was lost"
+    );
 }
 
 /// A line that can never be represented is stepped over rather than becoming a
@@ -329,7 +339,11 @@ fn an_unrepresentable_line_does_not_wedge_the_cursor() {
     let (dir, store) = store();
     let log = write_log(
         dir.path(),
-        &[("   ", 100), ("Prefer rg.", 200), ("Pin the toolchain.", 300)],
+        &[
+            ("   ", 100),
+            ("Prefer rg.", 200),
+            ("Pin the toolchain.", 300),
+        ],
     );
 
     assert_eq!(extract_reflection_observations(&store, &log), 2);
