@@ -119,7 +119,8 @@ impl Verdict {
     /// Attach the wrapper's own advisory note to every clause this verdict
     /// found unmet.
     ///
-    /// **After the decision, never before it.** `judge` reads [`EvidenceSet`],
+    /// **After the decision, never before it.** `judge` reads
+    /// [`EvidenceSet`](crate::EvidenceSet),
     /// whose fields are closed by construction so that totality is the
     /// compiler's job; a free-text field on that type would make it an
     /// argument instead. So the host decides first and enriches second, and
@@ -183,7 +184,7 @@ pub struct UnmetRequirement {
     ///
     /// **Never an input to a verdict.** It is attached *after* `judge` has
     /// decided, by `Verdict::with_detail`, so the decision is still made over
-    /// [`EvidenceSet`]'s closed fields alone and `judge` is still total over
+    /// [`EvidenceSet`](crate::EvidenceSet)'s closed fields alone and `judge` is still total over
     /// them. The only thing that reads this is the correction text a held-open
     /// round renders, which is exactly the fidelity the built-in goal loop had
     /// and a plugin did not: `stella_core::goal`'s `verifier_feedback_text`
