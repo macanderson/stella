@@ -386,6 +386,18 @@ fn grant(lineage: &str, reason: &str) -> stella_core::records::promotion::Promot
     }
 }
 
+/// The event that revokes a grant — the one whose removal from the tail turns
+/// a blocking record back on with nothing in the file to show for it (#5327).
+fn retirement(lineage: &str) -> stella_core::records::promotion::PromotionEvent {
+    stella_core::records::promotion::PromotionEvent {
+        from: "active".into(),
+        to: "archived".into(),
+        action: stella_core::records::promotion::LedgerAction::Retired,
+        reason: "the source stopped asserting it".into(),
+        ..grant(lineage, "unused")
+    }
+}
+
 /// The promotion ledger is the repository-visible, hash-chained artifact the
 /// enforcement grants live in, so its append is a durable replacement, not a
 /// truncate in place — and nothing the replacement needs may land in the
@@ -551,5 +563,105 @@ fn a_promotion_grant_does_not_arm_a_record_a_plugin_shipped() {
             .expect("the workspace's own record loads")
             .is_enforced(),
         "the same grant must still arm the repository's own record"
+    );
+}
+
+/// **Witness (#5327).** A ledger truncated after this machine read it is
+/// refused, where the hash chain sees nothing wrong.
+///
+/// Fails on the base, where `read_promotions` ran `parse_and_verify` and
+/// nothing else. Removing the last line satisfies every rule that function has
+/// — the result is a shorter, internally consistent ledger — so a truncated
+/// demotion resurrected the grant it revoked, and `stella context validate`,
+/// whose regulated check keys on `is_enforced()` downstream of that grant,
+/// exited green on it.
+#[test]
+fn a_ledger_truncated_after_it_was_read_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(RULES_DIR)).unwrap();
+    let ledger = root.path().join(PROMOTION_LEDGER);
+
+    // Two events: a grant, then the retirement that revokes it.
+    append_promotion(
+        root.path(),
+        grant("ctx.acme.web.a", "measured over 30 days"),
+    )
+    .expect("grant");
+    append_promotion(root.path(), retirement("ctx.acme.web.a")).expect("retire");
+
+    // The read that establishes this machine's anchor.
+    let seen = read_promotions(root.path()).expect("a healthy ledger reads");
+    assert_eq!(seen.len(), 2);
+
+    // Truncate the retirement away.
+    let text = std::fs::read_to_string(&ledger).unwrap();
+    let kept: String = text.lines().take(1).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&ledger, &kept).unwrap();
+
+    // The chain alone still says it is fine — that is the defect.
+    assert!(
+        stella_core::records::promotion::parse_and_verify(&kept).is_ok(),
+        "precondition: the hash chain cannot see a truncated tail"
+    );
+
+    let refusal = read_promotions(root.path()).expect_err("the anchor must catch it");
+    assert!(
+        refusal.contains("removed from the end"),
+        "and say what happened: {refusal}"
+    );
+}
+
+/// Appending is silent, which is what keeps the anchor usable on an
+/// append-only ledger.
+///
+/// Without this the fix could be satisfied by refusing every ledger that ever
+/// changed, which would refuse every promotion this repository makes.
+#[test]
+fn a_ledger_that_grew_since_the_last_read_is_not_refused() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(RULES_DIR)).unwrap();
+
+    append_promotion(
+        root.path(),
+        grant("ctx.acme.web.a", "measured over 30 days"),
+    )
+    .expect("grant");
+    read_promotions(root.path()).expect("first read anchors");
+
+    append_promotion(root.path(), retirement("ctx.acme.web.a")).expect("retire");
+    let after = read_promotions(root.path()).expect("growth is not a violation");
+
+    assert_eq!(after.len(), 2);
+}
+
+/// The anchor lives under `.stella/private/` and is never a reviewed artifact.
+///
+/// It is one machine's memory of what it last saw. Committing it would make
+/// one developer's clone the authority on another's, and every pull request
+/// touching a grant would have to update it.
+#[test]
+fn the_head_anchor_is_private_and_not_beside_the_ledger() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(RULES_DIR)).unwrap();
+    append_promotion(
+        root.path(),
+        grant("ctx.acme.web.a", "measured over 30 days"),
+    )
+    .expect("grant");
+    read_promotions(root.path()).expect("read");
+
+    assert!(
+        root.path()
+            .join(".stella/private/promotions-head.json")
+            .is_file(),
+        "the anchor is written where private local state lives"
+    );
+    assert!(
+        !root
+            .path()
+            .join(RULES_DIR)
+            .join("promotions-head.json")
+            .exists(),
+        "and never beside the reviewed ledger"
     );
 }
