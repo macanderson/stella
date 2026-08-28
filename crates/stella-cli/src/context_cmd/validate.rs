@@ -117,7 +117,7 @@ pub fn run_validate(root: &Path, format: QueryFormat) -> Result<(), String> {
     // records themselves say — an edited grant is worse than a missing one.
     let promotions = crate::context_records::read_promotions(root)
         .map_err(|violation| format!("promotion ledger failed verification: {violation}"))?;
-    let governance = crate::context_records::read_governance(root);
+    let governance = crate::context_records::read_governance(root)?;
 
     let files = rule_files(root, true, true);
     let now = now_rfc3339();

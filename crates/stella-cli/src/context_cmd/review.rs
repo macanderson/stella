@@ -431,7 +431,17 @@ pub fn run_keep(
             // The accountable supersession event (spec §4, #2728) — file
             // first, ledger second, and a ledger failure is loud: an
             // unrecorded supersession is what the ledger exists to prevent.
-            let governance = crate::context_records::read_governance(root);
+            // The separation gate runs first (#5328): a supersession clears
+            // any blocking grant the lineage holds, so under separation the
+            // author cannot disarm their own enforced record alone.
+            let governance = crate::context_records::read_governance(root)?;
+            let approver = actor();
+            let proposer = crate::context_records::separation_checked_proposer(
+                root,
+                &record.lineage_id,
+                &approver,
+                "superseding it via `stella context keep`",
+            )?;
             crate::context_records::append_promotion(
                 root,
                 stella_core::records::promotion::PromotionEvent {
@@ -441,8 +451,8 @@ pub fn run_keep(
                     lineage_id: record.lineage_id.clone(),
                     from: "active".to_string(),
                     to: "superseded".to_string(),
-                    approver: actor(),
-                    proposer: None,
+                    approver,
+                    proposer,
                     reason: format!(
                         "{old_id} superseded by {} via `stella context keep`",
                         record.record_id.as_deref().unwrap_or("<unstamped>")

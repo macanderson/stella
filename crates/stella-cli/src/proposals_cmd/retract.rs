@@ -209,7 +209,17 @@ fn retract_in_place(published: &mut Published) -> Result<(), String> {
 /// asserting a claim, and the same fold that drops any blocking grant the
 /// lineage held.
 fn record_retraction(workspace_root: &Path, lineage_id: &str, reason: &str) -> Result<(), String> {
-    let governance = crate::context_records::read_governance(workspace_root);
+    let governance = crate::context_records::read_governance(workspace_root)?;
+    // Retirement clears any blocking grant the lineage holds, so the
+    // separation gate runs first (#5328) — same rule as `context keep`'s
+    // supersession path.
+    let approver = crate::context_cmd::actor();
+    let proposer = crate::context_records::separation_checked_proposer(
+        workspace_root,
+        lineage_id,
+        &approver,
+        "retracting it via `stella proposals retract`",
+    )?;
     crate::context_records::append_promotion(
         workspace_root,
         stella_core::records::promotion::PromotionEvent {
@@ -219,8 +229,8 @@ fn record_retraction(workspace_root: &Path, lineage_id: &str, reason: &str) -> R
             lineage_id: lineage_id.to_string(),
             from: RecordStatus::Active.as_str().to_string(),
             to: RecordStatus::Retracted.as_str().to_string(),
-            approver: crate::context_cmd::actor(),
-            proposer: None,
+            approver,
+            proposer,
             reason: format!("retracted by `stella proposals retract`: {}", reason.trim()),
             mode: governance.mode.as_str().to_string(),
             action: stella_core::records::promotion::LedgerAction::Retired,

@@ -196,9 +196,10 @@ pub enum ContextCmd {
         /// New mode; omit to show current governance, policy version, and
         /// every ledger enforcement grant.
         mode: Option<String>,
-        /// Enable proposer/approver separation (regulated mode).
-        #[arg(long)]
-        separation: bool,
+        /// Turn proposer/approver separation on (`--separation false`
+        /// turns it off; omitted, the current setting is kept).
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        separation: Option<bool>,
         /// Confirm a mode change without asking interactively.
         #[arg(long)]
         yes: bool,

@@ -105,8 +105,49 @@ pub(crate) fn extract_reflection_observations(store: &ContextStore, log_path: &P
     // the new content that now sits under the old offset.
     let start = if consumed > lines.len() { 0 } else { consumed };
 
+    let (appended, consumed_to) =
+        consume(&lines, start, |lesson| append_observation(store, lesson));
+
+    // Advanced last and best-effort. If this write fails the next turn re-scans
+    // and re-derives the same ids, which the ledger absorbs as replays.
+    let _ = store.set_extraction_cursor(REFLECTION_SOURCE, &consumed_to.to_string());
+    appended
+}
+
+/// What consuming one log line concluded, as the cursor cares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineOutcome {
+    /// A genuinely new record landed.
+    Appended,
+    /// Consumed with nothing to add: a replay, or a record the
+    /// redaction/typing stage refused. Deterministic either way — re-reading
+    /// the line can never change the answer — so the cursor may move past it.
+    Consumed,
+    /// The ledger write itself failed: SQLITE_BUSY from a concurrent process
+    /// past the busy timeout, a full disk. Transient by nature — the same
+    /// line can succeed on the next scan — so the cursor must not move past
+    /// it.
+    StoreFailed,
+}
+
+/// Consume `lines[start..]`, returning `(newly appended, cursor position)`.
+///
+/// The cursor advances to the first line whose ledger write FAILED, and never
+/// past it (#5323). It used to advance to `lines.len()` unconditionally,
+/// which put every failed line below the cursor forever — the module header's
+/// "a crash costs one re-scan, never a duplicate" held for crashes and not
+/// for failures, and the lexical path (which re-reads the whole log) did not
+/// share the loss, so the two paths diverged exactly here. Later lines are
+/// still consumed in the same pass; their successes replay as no-ops on the
+/// re-scan, which content-derived ids make free.
+fn consume(
+    lines: &[&str],
+    start: usize,
+    mut append: impl FnMut(&ReflectionLesson) -> LineOutcome,
+) -> (usize, usize) {
     let mut appended = 0usize;
-    for line in &lines[start..] {
+    let mut stop: Option<usize> = None;
+    for (offset, line) in lines[start..].iter().enumerate() {
         let Ok(lesson) = serde_json::from_str::<ReflectionLesson>(line) else {
             continue;
         };
@@ -116,25 +157,25 @@ pub(crate) fn extract_reflection_observations(store: &ContextStore, log_path: &P
         // Only a genuinely NEW record counts. A replay reports `AlreadyPresent`
         // and must not inflate the number, or "how many observations did this
         // turn produce" becomes "how many lines did it re-read".
-        if append_observation(store, &lesson) == Some(AppendOutcome::Appended) {
-            appended += 1;
+        match append(&lesson) {
+            LineOutcome::Appended => appended += 1,
+            LineOutcome::Consumed => {}
+            LineOutcome::StoreFailed => {
+                stop.get_or_insert(start + offset);
+            }
         }
     }
-
-    // Advanced last and best-effort. If this write fails the next turn re-scans
-    // and re-derives the same ids, which the ledger absorbs as replays.
-    let _ = store.set_extraction_cursor(REFLECTION_SOURCE, &lines.len().to_string());
-    appended
+    (appended, stop.unwrap_or(lines.len()))
 }
 
-/// Redact, type, and append one lesson. `None` on any failure.
-fn append_observation(store: &ContextStore, lesson: &ReflectionLesson) -> Option<AppendOutcome> {
+/// Redact, type, and append one lesson.
+fn append_observation(store: &ContextStore, lesson: &ReflectionLesson) -> LineOutcome {
     // Redaction happens BEFORE the record is constructed, so no unredacted
     // typed record ever exists — not even transiently in memory as something a
     // later refactor could persist by accident.
     let redaction = redact_secrets(&lesson.lesson);
 
-    let record = ObservationRecord::new(
+    let Ok(record) = ObservationRecord::new(
         ObservationSource::ReflectionLesson,
         format!("reflection:{}", lesson.occurred_at),
         task_id_for(lesson),
@@ -142,23 +183,27 @@ fn append_observation(store: &ContextStore, lesson: &ReflectionLesson) -> Option
         lesson.domains.clone(),
         redaction.redacted,
         rfc3339(lesson.occurred_at),
-    )
-    .ok()?;
+    ) else {
+        return LineOutcome::Consumed;
+    };
 
-    let body = serde_json::to_string(&record).ok()?;
-    let outcome = store
-        .append_record(LedgerAppend {
-            record_id: &record.record_id,
-            lineage_id: &record.lineage_id,
-            record_kind: stella_core::context_record::ContextRecordKind::Observation.as_str(),
-            record_hash: &record.record_hash,
-            schema_version: LIFECYCLE_SCHEMA_VERSION,
-            body: &body,
-            observed_at: &record.observed_at,
-            supersedes: None,
-        })
-        .ok()?;
-    Some(outcome)
+    let Ok(body) = serde_json::to_string(&record) else {
+        return LineOutcome::Consumed;
+    };
+    match store.append_record(LedgerAppend {
+        record_id: &record.record_id,
+        lineage_id: &record.lineage_id,
+        record_kind: stella_core::context_record::ContextRecordKind::Observation.as_str(),
+        record_hash: &record.record_hash,
+        schema_version: LIFECYCLE_SCHEMA_VERSION,
+        body: &body,
+        observed_at: &record.observed_at,
+        supersedes: None,
+    }) {
+        Ok(AppendOutcome::Appended) => LineOutcome::Appended,
+        Ok(_) => LineOutcome::Consumed,
+        Err(_) => LineOutcome::StoreFailed,
+    }
 }
 
 /// Every observation in the ledger, oldest first — what the miner consumes.

@@ -950,6 +950,134 @@ fn separation_refuses_the_authors_own_grant() {
     );
 }
 
+/// #5328 door 1: a governance file that is PRESENT but broken fails closed.
+/// It used to parse-or-default, so a one-character corruption silently
+/// switched a regulated repository to solo — turning off validate's
+/// regulated check and promote's separation gate. An absent file is still
+/// the solo default.
+#[test]
+fn a_corrupt_governance_file_fails_closed_and_an_absent_one_stays_solo() {
+    let root = tempfile::tempdir().unwrap();
+
+    let absent = crate::context_records::read_governance(root.path()).unwrap();
+    assert_eq!(
+        absent.mode,
+        stella_core::records::promotion::GovernanceMode::Solo
+    );
+
+    std::fs::create_dir_all(root.path().join(RULES_DIR)).unwrap();
+    std::fs::write(
+        root.path().join(".stella/rules/governance.toml"),
+        "mode = ]]not toml",
+    )
+    .unwrap();
+    let err = crate::context_records::read_governance(root.path()).unwrap_err();
+    assert!(err.contains("does not parse"), "got: {err}");
+}
+
+/// #5328 door 2: the ledger's latest-event fold clears a lineage's blocking
+/// grant on a supersession or retraction, so disarming is an enforcement
+/// change — under separation, the record's author cannot do it alone, and
+/// an unestablishable author fails closed. A lineage holding no blocking
+/// grant passes untouched: superseding your own advisory record is
+/// authoring, not enforcement.
+#[test]
+fn separation_refuses_the_authors_own_disarm_of_a_blocking_grant() {
+    let root = tempfile::tempdir().unwrap();
+    let lineage = "ctx.acme.web.no-force-push";
+    write_guarded_project_record(root.path(), lineage);
+    let event = stella_core::records::decision::DecisionEvent::keep(
+        "no-force-push-1234abcd",
+        lineage,
+        "author@example.test",
+        "2026-08-01T00:00:00Z",
+        format!("{RULES_DIR}/{lineage}.toml"),
+    );
+    crate::context_records::append_decision(root.path(), &event).unwrap();
+    crate::context_records::write_governance(
+        root.path(),
+        &stella_core::records::promotion::Governance {
+            mode: stella_core::records::promotion::GovernanceMode::Regulated,
+            separation: true,
+        },
+    )
+    .unwrap();
+
+    // No blocking grant yet: the author may retire their own advisory record.
+    crate::context_records::separation_checked_proposer(
+        root.path(),
+        lineage,
+        "author@example.test",
+        "superseding it",
+    )
+    .expect("an advisory record's author may supersede it");
+
+    govern::run_promote(
+        root.path(),
+        lineage,
+        "blocking",
+        "reviewed by a second pair of eyes",
+        Some("lead@example.test"),
+    )
+    .unwrap();
+
+    let refused = crate::context_records::separation_checked_proposer(
+        root.path(),
+        lineage,
+        "author@example.test",
+        "superseding it",
+    )
+    .unwrap_err();
+    assert!(refused.contains("cannot do that alone"), "got: {refused}");
+
+    let proposer = crate::context_records::separation_checked_proposer(
+        root.path(),
+        lineage,
+        "second@example.test",
+        "superseding it",
+    )
+    .unwrap();
+    assert_eq!(
+        proposer.as_deref(),
+        Some("author@example.test"),
+        "the event carries the author it protected"
+    );
+}
+
+/// #5328 door 3: `govern <mode>` merges with the document instead of
+/// rebuilding it from the flags — an omitted `--separation` keeps the
+/// current setting, `--separation false` turns it off on the record, and
+/// `--separation` with no mode updates the current mode instead of being
+/// silently discarded.
+#[test]
+fn govern_keeps_separation_unless_told_otherwise() {
+    let root = tempfile::tempdir().unwrap();
+    crate::context_records::write_governance(
+        root.path(),
+        &stella_core::records::promotion::Governance {
+            mode: stella_core::records::promotion::GovernanceMode::Regulated,
+            separation: true,
+        },
+    )
+    .unwrap();
+
+    govern::run_govern(root.path(), Some("team"), None, true).unwrap();
+    let g = crate::context_records::read_governance(root.path()).unwrap();
+    assert_eq!(
+        g.mode,
+        stella_core::records::promotion::GovernanceMode::Team
+    );
+    assert!(g.separation, "an omitted flag keeps separation on");
+
+    govern::run_govern(root.path(), None, Some(false), true).unwrap();
+    let g = crate::context_records::read_governance(root.path()).unwrap();
+    assert_eq!(
+        g.mode,
+        stella_core::records::promotion::GovernanceMode::Team
+    );
+    assert!(!g.separation, "an explicit false turns it off");
+}
+
 /// #994 acceptance (c): validate fails on a hash mismatch — an edited grant
 /// is a governance failure regardless of what the records say.
 #[test]

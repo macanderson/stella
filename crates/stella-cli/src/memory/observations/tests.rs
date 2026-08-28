@@ -102,6 +102,61 @@ fn a_shrunken_log_restarts_from_the_beginning() {
     assert_eq!(all_observations(&store, 100).len(), 4);
 }
 
+/// #5323's witness. A transient ledger failure (SQLITE_BUSY past the busy
+/// timeout, a full disk) used to be swallowed while the cursor advanced to
+/// `lines.len()` — the failed lessons sat below the cursor forever, lost with
+/// no trace. The cursor now stops at the first failed line; the lines after
+/// it are still consumed in the same pass, and re-scanning them is a no-op
+/// replay.
+#[test]
+fn a_failed_append_holds_the_cursor_at_the_failed_line() {
+    let mk = |text: &str, at: u64| {
+        serde_json::to_string(&ReflectionLesson {
+            lesson: text.to_string(),
+            domains: vec!["testing".into()],
+            occurred_at: at,
+            task_id: String::new(),
+            trigger: String::new(),
+            saves: String::new(),
+            kind: crate::memory::LessonKind::Process,
+        })
+        .expect("serialize")
+    };
+    let owned = [mk("A.", 100), mk("B.", 200), mk("C.", 300)];
+    let lines: Vec<&str> = owned.iter().map(String::as_str).collect();
+
+    // The middle line's write fails; both its neighbors land.
+    let (appended, cursor) = consume(&lines, 0, |lesson| {
+        if lesson.occurred_at == 200 {
+            LineOutcome::StoreFailed
+        } else {
+            LineOutcome::Appended
+        }
+    });
+    assert_eq!(
+        appended, 2,
+        "the lines after the failure are still consumed"
+    );
+    assert_eq!(
+        cursor, 1,
+        "the cursor stops at the failed line, not past it"
+    );
+
+    // With every write landing, the cursor consumes the whole log.
+    let (appended, cursor) = consume(&lines, 0, |_| LineOutcome::Appended);
+    assert_eq!((appended, cursor), (3, 3));
+
+    // A deterministic refusal (redaction/typing) is consumed, never wedges.
+    let (appended, cursor) = consume(&lines, 0, |lesson| {
+        if lesson.occurred_at == 200 {
+            LineOutcome::Consumed
+        } else {
+            LineOutcome::Appended
+        }
+    });
+    assert_eq!((appended, cursor), (2, 3));
+}
+
 #[test]
 fn only_new_lines_are_extracted_after_a_cursor_advance() {
     let (dir, store) = store();
