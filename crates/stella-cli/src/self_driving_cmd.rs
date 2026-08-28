@@ -694,6 +694,22 @@ fn gh_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether `git` can run at all here.
+///
+/// The sibling of [`gh_available`], and it exists for the same reason: a check
+/// that **could not run** is a different fact from one that ran and could not
+/// decide. `state::git` returns `None` for both, so without this the two are
+/// indistinguishable — and `watch` would treat a machine with no `git` as a
+/// repository whose `origin/main` it could not resolve, wake on every tick, and
+/// reset the aperture to a full cycle that cannot run either.
+fn git_available() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Every parsed `gh` call goes through here with color force-disabled: ANSI
 /// escapes inside a JSON payload are invisible in a terminal and fatal to
 /// every parser (the CLICOLOR_FORCE lesson, inherited from the shell driver).

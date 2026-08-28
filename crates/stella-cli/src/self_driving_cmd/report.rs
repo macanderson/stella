@@ -14,7 +14,7 @@
 use serde_json::Value;
 
 use super::state::{self, LoopState};
-use super::{demand, gh_available, gh_plain, say};
+use super::{demand, gh_available, gh_plain, git_available, say};
 
 /// What one watch check established.
 ///
@@ -127,13 +127,21 @@ pub(super) fn watch(st: &LoopState) -> Result<(), String> {
     let mut triggered = false;
     say("watch mode — checking what would invalidate the last clean sweep");
 
-    let head_now = state::git(&st.repo_root, &["rev-parse", "origin/main"]);
-    let calibration = st.calibration();
-    let head_seen = calibration
-        .extra
-        .get("last_clean_head")
-        .and_then(Value::as_str);
-    triggered |= head_verdict(head_now.as_deref(), head_seen).report();
+    // Gated like the `gh` block below, and for the same reason: a check that
+    // could not run contributes nothing, where one that ran and could not
+    // decide wakes. Without the gate a machine with no `git` wakes on every
+    // tick and resets the aperture to a cycle that cannot run either.
+    if git_available() {
+        let head_now = state::git(&st.repo_root, &["rev-parse", "origin/main"]);
+        let calibration = st.calibration();
+        let head_seen = calibration
+            .extra
+            .get("last_clean_head")
+            .and_then(Value::as_str);
+        triggered |= head_verdict(head_now.as_deref(), head_seen).report();
+    } else {
+        println!("  ? git is unavailable — cannot tell whether main moved");
+    }
 
     if gh_available() {
         triggered |= queue_verdict(demand(&st.repo_root).map(|d| d.open_defects)).report();
