@@ -105,7 +105,7 @@ touched them (#3705): [`src/retrieval.rs`](src/retrieval.rs) shed its knobs to
 [`src/retrieval/tuning.rs`](src/retrieval/tuning.rs) and its result vocabulary
 to [`src/retrieval/outcome.rs`](src/retrieval/outcome.rs);
 [`src/retrieval/tests.rs`](src/retrieval/tests.rs) shed the end-to-end half to
-[`src/retrieval/recall_tests.rs`](src/retrieval/recall_tests.rs); and
+[`src/retrieval/tests/recall.rs`](src/retrieval/tests/recall.rs); and
 [`src/writeback.rs`](src/writeback.rs) moved its inline tests to
 [`src/writeback/tests.rs`](src/writeback/tests.rs). No line count is repeated
 here on purpose — `scripts/file-size-baseline.txt` and the guard are the only

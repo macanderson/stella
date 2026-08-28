@@ -1073,14 +1073,7 @@ pub(crate) fn persist_event_detailed(
 }
 
 #[cfg(test)]
-mod pipeline_variant_tests;
-
-#[cfg(test)]
-mod usage_recovery_tests;
-
-// The receipt plane's write path — the arm below had no test of its own.
-#[cfg(test)]
-mod receipt_write_tests;
+mod tests;
 
 #[cfg(test)]
 mod run_terminator_tests {
@@ -1142,9 +1135,6 @@ mod run_terminator_tests {
         );
     }
 }
-
-#[cfg(test)]
-mod stream_tests;
 
 #[cfg(test)]
 mod reactor_tests {

@@ -1007,7 +1007,7 @@ a plan needs and the part that rarely changes:
 |---|---|
 | `stella-cli` | `src/command_deck.rs` |
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
-| `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs` |
+| `stella-model` | `src/zai/tests.rs`, `src/anthropic/tests.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs` |
 

@@ -1,4 +1,4 @@
-use super::*;
+use crate::credential::*;
 
 use std::collections::BTreeMap;
 

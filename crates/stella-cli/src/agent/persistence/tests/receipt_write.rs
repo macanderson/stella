@@ -7,7 +7,7 @@
 //! have been: this is the only test that fails if the arm is deleted, renamed
 //! or given a row it cannot write.
 
-use super::*;
+use crate::agent::persistence::*;
 
 fn manifest_event() -> AgentEvent {
     AgentEvent::StepManifest {

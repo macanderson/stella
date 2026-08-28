@@ -97,23 +97,19 @@ pub(crate) fn adapter_sources() -> &'static [&'static str] {
         include_str!("http/tests.rs"),
         include_str!("anthropic/tests.rs"),
         include_str!("anthropic/tests/cache_breakpoints.rs"),
+        include_str!("anthropic/tests/stream_fallback.rs"),
         include_str!("anthropic/tests/thinking.rs"),
-        // Beside `tests.rs`, not inside `tests/`: both parent `tests.rs`
-        // files sit on the file-size ratchet, so the fan-in witnesses added
-        // by #4163 and the stream-fallback witnesses added by #2746 are
-        // declared from their adapter modules instead — even the one line
-        // that would declare a submodule from `tests.rs` is growth.
+        // Beside `tests.rs` rather than inside `tests/`: the fan-in witnesses
+        // #4163 added predate the topic-module layout.
         include_str!("anthropic/parallel_tool_calls.rs"),
-        include_str!("anthropic/stream_fallback_tests.rs"),
         include_str!("zai/parallel_tool_calls.rs"),
         include_str!("bedrock/tests.rs"),
         include_str!("openai.rs"),
-        // The Responses dialect's own `mod tests` lives in `openai.rs`, which
-        // is a grandfathered god file closed to growth — so its parallel
-        // fan-in witness lives in the sibling that owns the `Provider` impl
-        // the test dispatches through.
+        include_str!("openai/tests.rs"),
+        // The Responses dialect's parallel fan-in witness sits with the
+        // `Provider` impl the test dispatches through.
         include_str!("openai/provider.rs"),
-        include_str!("openai/stream_fallback_tests.rs"),
+        include_str!("openai/tests/stream_fallback.rs"),
         include_str!("gemini/tests.rs"),
         include_str!("gemini/tests/stream_fallback.rs"),
         include_str!("vertex.rs"),

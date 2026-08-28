@@ -254,15 +254,10 @@ crates/stella-cli/src/agent/output.rs interface-jargon 3
 crates/stella-cli/src/agent/persistence.rs filler-adverb 6
 crates/stella-cli/src/agent/persistence.rs interface-jargon 1
 crates/stella-cli/src/agent/persistence.rs rust-jargon 9
-crates/stella-cli/src/agent/persistence/pipeline_variant_tests.rs filler-adverb 1
-crates/stella-cli/src/agent/persistence/pipeline_variant_tests.rs honesty-declaration 3
-crates/stella-cli/src/agent/persistence/pipeline_variant_tests.rs rust-jargon 7
 crates/stella-cli/src/agent/persistence/reasoning_run.rs filler-adverb 1
 crates/stella-cli/src/agent/persistence/reasoning_run.rs rust-jargon 1
-crates/stella-cli/src/agent/persistence/stream_tests.rs filler-adverb 1
+crates/stella-cli/src/agent/persistence/tests/pipeline_variant.rs rust-jargon 2
 crates/stella-cli/src/agent/persistence/turn_door.rs rust-jargon 7
-crates/stella-cli/src/agent/persistence/usage_recovery_tests.rs filler-adverb 1
-crates/stella-cli/src/agent/persistence/usage_recovery_tests.rs honesty-declaration 1
 crates/stella-cli/src/agent/presence.rs filler-adverb 3
 crates/stella-cli/src/agent/presence.rs interface-jargon 7
 crates/stella-cli/src/agent/prompt.rs enumerative-announcement 1
@@ -815,7 +810,6 @@ crates/stella-context/src/retrieval/evidence.rs filler-adverb 1
 crates/stella-context/src/retrieval/outcome.rs filler-adverb 2
 crates/stella-context/src/retrieval/outcome.rs honesty-declaration 2
 crates/stella-context/src/retrieval/ranking.rs filler-adverb 1
-crates/stella-context/src/retrieval/recall_tests.rs honesty-declaration 3
 crates/stella-context/src/retrieval/scope.rs honesty-declaration 1
 crates/stella-context/src/retrieval/tests.rs filler-adverb 1
 crates/stella-context/src/retrieval/tuning.rs filler-adverb 1
@@ -1043,7 +1037,6 @@ crates/stella-model/src/gemini/tests.rs enumerative-announcement 1
 crates/stella-model/src/gemini/tests.rs honesty-declaration 1
 crates/stella-model/src/http.rs filler-adverb 2
 crates/stella-model/src/modelsdev.rs honesty-declaration 1
-crates/stella-model/src/openai.rs enumerative-announcement 1
 crates/stella-model/src/openai.rs filler-adverb 1
 crates/stella-model/src/provider_listing.rs honesty-declaration 1
 crates/stella-model/src/provider_listing.rs ranking-flourish 1

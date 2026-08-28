@@ -181,6 +181,7 @@ fn finished(events: &[AgentEvent]) -> SubAgentPhase {
 }
 
 mod failure_and_events;
+mod fork_scope;
 mod seams;
 mod spend_and_cancellation;
 mod tools_and_budget;

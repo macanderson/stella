@@ -806,6 +806,4 @@ impl BedrockCredentials {
 }
 
 #[cfg(test)]
-mod secondary_credential_tests;
-#[cfg(test)]
 mod tests;

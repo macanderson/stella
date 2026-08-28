@@ -1,7 +1,7 @@
 //! Store-level witnesses for the evidence gate (#2289).
 //!
 //! The scenario throughout is the incident quoted on
-//! [`super::DEFAULT_RECENCY_WEIGHT`]: a workspace whose store holds five stale
+//! [`crate::retrieval::DEFAULT_RECENCY_WEIGHT`]: a workspace whose store holds five stale
 //! notes about deleting test files, asked about something else entirely. On
 //! the old behavior those five filled every recall slot on every prompt —
 //! `max_frames` was a cap that always filled — and the witness stage went
