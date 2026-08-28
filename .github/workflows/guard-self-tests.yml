@@ -32,11 +32,22 @@ name: guard-self-tests
 # each builds throwaway git repositories and the gate is what a contributor
 # runs before every push.
 #
+# **`canary-self-tests`** — one suite, in its own job because it is the one that
+# compiles: scripts/main-canary.sh's `compile` row runs `cargo check`, and under
+# `--manifest-dir` that is a throwaway one-function crate rather than this
+# workspace. It is also the slow one — measured at 5m07s on 2026-08-28, of which
+# the fixture compiles are a small part: `--manifest-dir` redirects only the
+# `lockfile-sync` and `compile` rows, so every one of the suite's ~38 canary
+# invocations still runs `check-prose.py` and `check-file-size.sh` over the live
+# tree (4.7s and 3.7s each). #5417 is where that is being decided; neither
+# property belongs in the `self-tests` job above, which is toolchain-free and
+# seconds (#5356).
+#
 # No `paths:` filter, deliberately, and for a different reason than
 # wire-schema.yml and docs-guards.yml have one. Those two narrow to escape a
-# cost — a toolchain, a browser — that this workflow does not pay: every step
-# below is shell or Python over the tree and the whole run is a couple of
-# minutes. Several suites also assert something about the *live* tree
+# cost — a workspace build, a browser — that this workflow does not pay: the two
+# jobs above are shell and Python over the tree, and the third compiles a
+# fixture crate. Several suites also assert something about the *live* tree
 # (`test-module-reachability.sh`'s R1 is "this repository is clean"), so a
 # filter would make them blind in exactly the direction they exist to watch.
 # file-size.yml made the same call for the same reason.
@@ -95,9 +106,11 @@ jobs:
       # `--workspace` for everything, which is its documented fall-back, and 13
       # of its 25 cases went red in this job before it moved.
       #
-      # The three DELIBERATELY unhosted ones are named in the Makefile's
+      # The deliberately unhosted ones are named in the Makefile's
       # `UNHOSTED_SELF_TESTS`, with the reason each is excluded;
       # scripts/check-gate-parity.sh fails when a suite is in neither place.
+      # test-main-canary.sh is not among them any more — it wants a toolchain,
+      # so it has the job below rather than a step here (#5356).
       - name: action-pins guard covers composite actions
         if: ${{ !cancelled() }}
         run: ./scripts/test-action-pins.sh
@@ -167,8 +180,8 @@ jobs:
       # setup-dev-env.sh's own workspace-shape check requires
       # `crates/stella-core/`. Needs the runner's preinstalled rustfmt for the
       # formatting-hook cases (H6/H6b); ubuntu-latest ships one, so this adds
-      # no toolchain-install step the way test-main-canary.sh/
-      # test-guard-sigpipe.sh's `cargo check`/`cargo build` exclusion would.
+      # no toolchain-install step the way test-guard-sigpipe.sh's
+      # `cargo build` would — that is what keeps this job toolchain-free.
       - name: dev-env setup script and its fmt-file hook
         if: ${{ !cancelled() }}
         run: ./scripts/test-dev-env.sh
@@ -268,3 +281,28 @@ jobs:
       - name: wire-path guard failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-wire-paths.sh
+
+  canary-self-tests:
+    name: post-merge canary self-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # rust-toolchain.toml pins the repo to 1.97.0 and rustup honours it for
+      # every cargo invocation inside the checkout, so this step exists to put
+      # *a* rustup on PATH; the pin is installed by the first cargo call. The
+      # canary runs from the repo root even when checking a fixture, which is
+      # what brings the pin into it.
+      - name: Install Rust (rustup; the pin comes from rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      # Not cached: the fixture workspaces are built in $TMPDIR and thrown away,
+      # so there is no `target/` for Swatinem/rust-cache to carry between runs,
+      # and no dependency to fetch — the fixture crate has none.
+      #
+      # scripts/test-main-canary-live.sh is NOT run here, and that is the whole
+      # point of the split: its cases expect a green verdict, so it reports what
+      # `main` is red on rather than what the canary can do. It is named in the
+      # Makefile's `UNHOSTED_SELF_TESTS` with that reason (#5356).
+      - name: the canary opens, refreshes and explains a main-red issue
+        run: ./scripts/test-main-canary.sh
