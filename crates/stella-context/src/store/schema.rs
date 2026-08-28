@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 11;
+pub(crate) const SCHEMA_VERSION: i64 = 12;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -515,6 +515,19 @@ CREATE TABLE IF NOT EXISTS ab_control_counter (
 );
 ";
 
+/// V12 — **repair the episode rows v8's backfill could not see** (#5324).
+///
+/// `migrate_v8` added `episode.lineage_id` and backfilled
+/// `lineage_id = public_id`, but `insert_episode` kept inserting without the
+/// column — so every episode written after v8 landed carried NULL, and the
+/// one-shot backfill (which only runs when `user_version < 8`) could never
+/// repair them. The insert now writes the column; this step repairs the rows
+/// written in between. Statement-level idempotent: after the first run no row
+/// is NULL.
+pub(crate) const MIGRATION_V12: &str = "\
+UPDATE episode SET lineage_id = public_id WHERE lineage_id IS NULL;
+";
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -639,6 +652,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 11 {
         tx.execute_batch(MIGRATION_V11)?;
     }
+    if version < 12 {
+        tx.execute_batch(MIGRATION_V12)?;
+    }
     // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
     // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its
     // high-water mark. Two branches that each add "the next step" merge
@@ -658,7 +674,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     //   v11: the A/B recall control's durable turn counter (#1221) — TAKEN,
     //        see `MIGRATION_V11`.
     //
-    // The next free step is v12: take it and add your own line here.
+    //   v12: episode lineage repair (#5324) — TAKEN, see `MIGRATION_V12`.
+    //
+    // The next free step is v13: take it and add your own line here.
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())
