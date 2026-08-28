@@ -168,6 +168,10 @@ impl DecisionEvent {
 pub struct CandidateState {
     /// The most recent decision.
     pub decision: Decision,
+    /// The lineage the proposal would publish into — kept through the fold so
+    /// [`blocking_approved`] answers by identity, not by hunting for the id
+    /// inside a file path.
+    pub lineage_id: String,
     /// When it was made.
     pub at: String,
     /// The cooldown deadline, for a decline.
@@ -198,6 +202,7 @@ pub fn fold(events: &[DecisionEvent]) -> BTreeMap<String, CandidateState> {
             event.candidate_id.clone(),
             CandidateState {
                 decision: event.decision,
+                lineage_id: event.lineage_id.clone(),
                 at: event.at.clone(),
                 cooldown_until: event.cooldown_until.clone(),
                 published_to: event.published_to.clone(),
@@ -236,14 +241,15 @@ pub fn should_repropose(
 
 /// Whether a human approved this lineage blocking tool calls — the fact
 /// [`super::bridge::guard_for`] needs and `stella-core` cannot know on its own.
+///
+/// Matched on the event's own `lineage_id`, by equality. It used to hunt for
+/// the id as a *substring* of the published path, which approved every
+/// lineage whose id is a prefix of another's — `ctx.a.b.no-force` rode
+/// `ctx.a.b.no-force-push.toml`'s approval, arming a Tier-2 tool-call guard
+/// no human had approved.
 pub fn blocking_approved(states: &BTreeMap<String, CandidateState>, lineage_id: &str) -> bool {
     states.values().any(|state| {
-        state.approved_blocking
-            && state.decision.publishes()
-            && state
-                .published_to
-                .as_deref()
-                .is_some_and(|path| path.contains(lineage_id))
+        state.approved_blocking && state.decision.publishes() && state.lineage_id == lineage_id
     })
 }
 
@@ -370,6 +376,28 @@ mod tests {
         let states = fold(&[event]);
         assert!(blocking_approved(&states, "ctx.a.b.no-force-push"));
         assert!(!blocking_approved(&states, "ctx.a.b.something-else"));
+    }
+
+    /// An approval must not leak to a lineage whose id is a prefix of the
+    /// approved one. The old check hunted for the queried id as a substring of
+    /// the published *path*, so `ctx.a.b.no-force` rode
+    /// `ctx.a.b.no-force-push.toml`'s approval — a Tier-2 tool-call guard
+    /// armed for a record no human approved.
+    #[test]
+    fn an_approval_does_not_leak_to_a_prefix_lineage() {
+        let mut event = DecisionEvent::keep(
+            "cand-1",
+            "ctx.a.b.no-force-push",
+            "mac",
+            NOW,
+            ".stella/rules/ctx.a.b.no-force-push.toml",
+        );
+        event.approved_blocking = true;
+        let states = fold(&[event]);
+        assert!(
+            !blocking_approved(&states, "ctx.a.b.no-force"),
+            "a prefix of the approved lineage id must not inherit the approval"
+        );
     }
 
     #[test]
