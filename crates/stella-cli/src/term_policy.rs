@@ -99,6 +99,12 @@ pub(crate) struct DeckPresentation {
     /// the user's own screen with settled messages moving into scrollback.
     /// See `stella_tui::DeckOptions::accessible`.
     pub(crate) accessible: bool,
+    /// Mouse capture requested ([`mouse_requested`]): tab-row clicks and
+    /// wheel scroll, at the price of native text selection. Forced off
+    /// downstream when [`Self::accessible`] is set
+    /// (`stella_tui::accessible::mouse_capture_enabled`), so this is the
+    /// request, never the last word.
+    pub(crate) mouse: bool,
 }
 
 /// Whether the Command Deck runs in accessible mode: the `--accessible` flag
@@ -114,12 +120,22 @@ pub(crate) struct DeckPresentation {
 /// once, in their shell profile, rather than remember a flag on every
 /// invocation — the flag is the exception, not the habit.
 pub(crate) fn accessible_mode(accessible_flag: bool) -> bool {
-    accessible_flag || accessible_env(std::env::var_os("STELLA_ACCESSIBLE").as_deref())
+    accessible_flag || truthy_env(std::env::var_os("STELLA_ACCESSIBLE").as_deref())
 }
 
-/// The env half of [`accessible_mode`], kept pure so the convention is
-/// testable without touching the process environment.
-pub(crate) fn accessible_env(value: Option<&std::ffi::OsStr>) -> bool {
+/// Whether the deck captures the mouse: the `--mouse` flag or its
+/// `STELLA_MOUSE` env synonym, for a user who wants it in every session.
+/// Accessible mode still forces capture off downstream
+/// (`stella_tui::accessible::mouse_capture_enabled`) — a captured mouse takes
+/// the selection away from the assistive technology that needs it.
+pub(crate) fn mouse_requested(mouse_flag: bool) -> bool {
+    mouse_flag || truthy_env(std::env::var_os("STELLA_MOUSE").as_deref())
+}
+
+/// The env half of [`accessible_mode`] and [`mouse_requested`] — the house
+/// boolean convention (set and not `0`), kept pure so it is testable without
+/// touching the process environment.
+pub(crate) fn truthy_env(value: Option<&std::ffi::OsStr>) -> bool {
     value.is_some_and(|v| !v.is_empty() && v != "0")
 }
 

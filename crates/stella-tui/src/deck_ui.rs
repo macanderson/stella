@@ -2515,7 +2515,7 @@ fn handle_pick_version_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 /// same first-visit affordance as the INSTALLED AGENTS pane. Rides
 /// [`DeckUi::pending_inputs`] because the tab switch itself already is the
 /// key's returned action.
-fn queue_issues_first_load(ui: &mut DeckUi) {
+pub(crate) fn queue_issues_first_load(ui: &mut DeckUi) {
     if ui.tab == DeckTab::Issues && !ui.issues.loaded && !ui.issues.busy {
         let seq = ui.issues.bump_seq();
         ui.issues.list_wait = seq;

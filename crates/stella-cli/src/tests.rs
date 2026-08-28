@@ -16,7 +16,7 @@ use super::build_info::{
     BUILD_VERSION_IDENTITY, long_version_static, version_static, version_string,
 };
 use super::term_policy::{
-    PlainReason, accessible_env, animation_disabled, deck_decision, dumb_terminal,
+    PlainReason, animation_disabled, deck_decision, dumb_terminal, truthy_env,
 };
 use super::{
     AuthCmd, Cli, Command, OutputFormat, TelemetryCmd, error_summary_json, fleet_verbs,
@@ -247,21 +247,22 @@ fn a_dumb_terminal_disables_colour_unless_the_user_forces_it() {
     assert!(!dumb_terminal(None, None));
 }
 
-/// `--accessible` has an env synonym so a screen-reader user can set it once,
-/// in their shell profile, instead of remembering a flag on every invocation
-/// (#1258). It follows this CLI's house convention for boolean env vars, where
-/// an explicit `0` means off — the same rule `STELLA_PLAIN` and
-/// `STELLA_NO_ENV_FILE` follow, so there is one convention to learn.
+/// `--accessible` and `--mouse` have env synonyms (`STELLA_ACCESSIBLE`,
+/// `STELLA_MOUSE`) so a user can set either once, in their shell profile,
+/// instead of remembering a flag on every invocation (#1258). Both read the
+/// CLI's house convention for boolean env vars, where an explicit `0` means
+/// off — the same rule `STELLA_PLAIN` and `STELLA_NO_ENV_FILE` follow, so
+/// there is one convention to learn.
 #[test]
-fn the_accessible_env_var_follows_the_house_boolean_convention() {
+fn the_flag_env_synonyms_follow_the_house_boolean_convention() {
     use std::ffi::OsStr;
     let v = |s: &str| Some(OsStr::new(s)).map(|o| o.to_owned());
 
-    assert!(accessible_env(v("1").as_deref()));
-    assert!(accessible_env(v("yes").as_deref()));
-    assert!(!accessible_env(v("0").as_deref()));
-    assert!(!accessible_env(v("").as_deref()));
-    assert!(!accessible_env(None));
+    assert!(truthy_env(v("1").as_deref()));
+    assert!(truthy_env(v("yes").as_deref()));
+    assert!(!truthy_env(v("0").as_deref()));
+    assert!(!truthy_env(v("").as_deref()));
+    assert!(!truthy_env(None));
 }
 
 /// Accessible mode is a mode ON the deck, not a third surface beside it — so

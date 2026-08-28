@@ -75,6 +75,7 @@ pub mod envelope;
 pub mod fleet_dashboard;
 pub mod graph;
 pub mod markdown;
+pub mod mouse;
 pub mod notice;
 pub mod palette;
 pub mod panel_deck;

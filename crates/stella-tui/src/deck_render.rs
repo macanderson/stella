@@ -178,7 +178,6 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let slash = ui
         .composer
         .slash_menu(&ui.slash_commands, &palette_state(model, ui));
-    let slash_open = slash.as_ref().is_some_and(|m| !m.is_empty());
     if let Some(menu) = slash.filter(|m| !m.is_empty()) {
         let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
         let popup = slash_popup_area(area, bands[3], crate::render::display_rows(&menu).len());
@@ -319,12 +318,34 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // Position the hardware cursor at the composer caret so the terminal (and
     // anything anchored to it — CJK/IME candidate windows, screen readers,
     // cursor-following tmux panes) has something to track. Suppressed under
-    // any overlay that owns the keyboard ahead of the composer — matching the
-    // precedence `handle_key` already applies — so the caret doesn't sit in
-    // the composer while the user is typing into a dialog. The startup
-    // notice is deliberately excluded: it is non-modal, and a key still
-    // reaches the composer while it's showing (see `handle_key`).
-    let overlay_owns_keyboard = ui.help_open
+    // any overlay that owns the keyboard ahead of the composer — so the caret
+    // doesn't sit in the composer while the user is typing into a dialog. The
+    // startup notice is deliberately excluded: it is non-modal, and a key
+    // still reaches the composer while it's showing (see `handle_key`).
+    if !overlay_owns_keyboard(model, ui)
+        && let Some(pos) = composer_cursor
+    {
+        frame.set_cursor_position(pos);
+    }
+}
+
+/// Whether an overlay owns the keyboard ahead of the composer — the
+/// precedence `handle_key_inner` applies, read from state rather than from
+/// the key chain, so the cursor suppression above and the mouse dispatch
+/// (`crate::mouse`) share one answer instead of each keeping a list that
+/// drifts.
+pub(crate) fn overlay_owns_keyboard(model: &WorkspaceModel, ui: &DeckUi) -> bool {
+    let slash_open = ui
+        .composer
+        .slash_menu(&ui.slash_commands, &palette_state(model, ui))
+        .is_some_and(|m| !m.is_empty());
+    let arg_open = !crate::composer::args::arg_matches(
+        &ui.composer,
+        "/model",
+        &crate::views::picker::typeahead_candidates(model, ui),
+    )
+    .is_empty();
+    ui.help_open
         // Both parked asks are claimed ahead of everything else in
         // `handle_key_inner`, so either owns the keyboard while it is up.
         || parked::owns_keyboard(ui)
@@ -357,10 +378,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         // The SETTINGS tab's ENGINE / TOOLS config editors own the keyboard
         // (inline edit buffers, model/picker filters) while focused.
         || (ui.tab == DeckTab::Settings && ui.engine.focused)
-        || (ui.tab == DeckTab::Settings && ui.tools.focused);
-    if !overlay_owns_keyboard && let Some(pos) = composer_cursor {
-        frame.set_cursor_position(pos);
-    }
+        || (ui.tab == DeckTab::Settings && ui.tools.focused)
 }
 
 /// The slash popup's live description overrides, read from the model at

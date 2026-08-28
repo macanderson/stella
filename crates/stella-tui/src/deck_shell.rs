@@ -60,9 +60,10 @@ const SHELL_OUTPUT_CAP: usize = 4000;
 #[derive(Debug, Clone, Default)]
 pub struct DeckOptions {
     /// Enable mouse capture. Off by default so native terminal selection
-    /// keeps working (L-T2). NOTE: no mouse events are handled yet — the
-    /// event loop discards them — so turning this on currently only costs
-    /// selection; it exists as the seam for click/scroll/reorder to land.
+    /// keeps working (L-T2). Opted in, events dispatch through
+    /// [`crate::mouse::handle_deck_mouse`] — a tab-row click switches tabs,
+    /// the wheel scrolls the Session transcript — at the price of the
+    /// terminal's own text selection.
     pub mouse_capture: bool,
     /// Structured debug log path (`STELLA_DEBUG=1`), or `None` for a no-op sink.
     pub debug_log_path: Option<PathBuf>,
@@ -858,16 +859,20 @@ pub async fn run_deck(
                         ui.voice.interrupt();
                     }
                     // Any mouse event dismisses the startup notice, exactly as
-                    // any key does.
-                    //
-                    // NOTE: mouse capture is OFF by default (L-T2 — enabling
-                    // it takes the terminal's own text selection away), so
-                    // this arm only fires for sessions that opted in via
-                    // `DeckOptions::mouse_capture`. On a default session the
-                    // keypress and the dwell timer are the dismissal paths,
-                    // and no click ever reaches the process to be handled.
-                    Some(Event::Mouse(_)) => {
+                    // any key does, then dispatches (tab-row clicks, wheel
+                    // scroll — `crate::mouse`). This arm only fires for
+                    // sessions that opted in via `DeckOptions::mouse_capture`
+                    // (L-T2 — capture takes the terminal's own text selection
+                    // away); on a default session the keypress and the dwell
+                    // timer are the notice's dismissal paths, and no click
+                    // ever reaches the process. The dispatch returns only
+                    // Handled/Ignored by contract (`handle_deck_mouse`), so
+                    // this arm carries none of the key arm's queue or quit
+                    // plumbing.
+                    Some(Event::Mouse(mouse)) => {
                         ui.notice.dismiss();
+                        let width = terminal.size()?.width;
+                        crate::mouse::handle_deck_mouse(mouse, width, &model, &mut ui);
                     }
                     // Resize / focus change: the next draw picks them up.
                     Some(_) => {}

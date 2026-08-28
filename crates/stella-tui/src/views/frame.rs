@@ -103,8 +103,10 @@ pub fn render_chrome_row(
     Paragraph::new(Line::from(spans)).render(row, buf);
 }
 
-/// Draw the tab row into the top row of `area`.
-pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+/// The tab row's trailing hint (the plan-card chord, Session only) — shared
+/// by [`render_tab_row`] and [`tab_row_hit`] so the budget both compute from
+/// it is one number.
+fn tab_row_trailing(model: &WorkspaceModel, ui: &DeckUi) -> Vec<Span<'static>> {
     let mut trailing: Vec<Span<'static>> = Vec::new();
     if ui.tab == DeckTab::Session && plan_of(model, ui).is_some_and(|p| !p.is_empty()) {
         // The chord comes from the keymap, never from a literal here: this
@@ -116,7 +118,31 @@ pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut
         ));
         trailing.push(Span::raw("   "));
     }
+    trailing
+}
 
+/// The tab a click on `column` of the tab row selects, or `None`: on the
+/// Session breadcrumb (which names plan steps, not tabs), on the air between
+/// titles, or past the list. `width` is the frame's — the same rectangle
+/// [`render_tab_row`] drew into — so the budget, the rung, and therefore
+/// every title's column match what is on screen.
+pub fn tab_row_hit(
+    model: &WorkspaceModel,
+    ui: &DeckUi,
+    width: u16,
+    column: u16,
+) -> Option<DeckTab> {
+    if ui.tab == DeckTab::Session && breadcrumb_spans(model, ui).is_some() {
+        return None;
+    }
+    let trailing = tab_row_trailing(model, ui);
+    let budget = (width as usize).saturating_sub(right_edge_reserve(&trailing));
+    tab_list::hit(ui.tab, budget, column as usize)
+}
+
+/// Draw the tab row into the top row of `area`.
+pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+    let trailing = tab_row_trailing(model, ui);
     let budget = (area.width as usize).saturating_sub(right_edge_reserve(&trailing));
     let left = match ui.tab {
         DeckTab::Session => {

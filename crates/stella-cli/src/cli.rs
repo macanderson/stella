@@ -259,6 +259,15 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, hide_short_help = true)]
     pub(crate) no_anim: bool,
 
+    /// Capture the mouse in interactive mode
+    ///
+    /// A click on the tab row switches tabs and the wheel scrolls the
+    /// transcript, at the price of the terminal's own text selection (use
+    /// shift+drag to select while captured). Off by default for that reason;
+    /// forced off by --accessible. Env: STELLA_MOUSE=1.
+    #[arg(long, global = true, hide_short_help = true)]
+    pub(crate) mouse: bool,
+
     /// Diagnostics: -v info, -vv debug, -vvv trace
     ///
     /// Turns on the diagnostic plane — the stream that explains why stella
