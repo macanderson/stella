@@ -778,36 +778,8 @@ impl SessionMemory {
         let latency_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         // Phase 2 (#713): the host's cross-provider merge is a second budget
         // pass and reported nothing at all, so anything it cut vanished
-        // without a trace — a silent truncation `L-C5` bans. The report is a
-        // single summary line rather than one line per frame: five evicted
-        // memories are one fact (the budget is too small for this turn), said
-        // once, with the remedy and the budget the turn actually ran with.
-        // A required item it could not honor is the loudest case and is named
-        // first: the caller pointed at that file, and being told it did not
-        // fit is the whole difference between a budget and a lie.
-        let required_over = recalled
-            .dropped
-            .iter()
-            .filter(|d| d.reason == stella_context::DropReason::RequiredOverBudget)
-            .count();
-        if required_over > 0 {
-            report(format!(
-                "recall could not fit {required_over} anchored frame(s) — each exceeds the \
-                 {max_tokens}-token budget on its own; raise context.retrieval.max_tokens in \
-                 stella.toml to include them"
-            ));
-        }
-        let budget_drops = recalled
-            .dropped
-            .iter()
-            .filter(|d| d.reason == stella_context::DropReason::TokenBudget)
-            .count();
-        if budget_drops > 0 {
-            report(format!(
-                "{budget_drops} memories did not fit this turn's {max_tokens}-token retrieval \
-                 budget — raise context.retrieval.max_tokens in stella.toml to include them"
-            ));
-        }
+        // without a trace — a silent truncation `L-C5` bans.
+        report_budget_drops(&recalled.dropped, max_tokens, &mut report);
         // ...and the same report goes to the ledger, which is the half that
         // used to end here (#3358): the stderr line above is a warning a human
         // sees once, on one of the several surfaces that recall, while
@@ -830,6 +802,41 @@ impl SessionMemory {
             },
             dropped,
         }
+    }
+}
+
+/// The host-merge drop report: a single summary line per class rather than
+/// one line per frame. Five evicted memories are one fact — the budget is too
+/// small for this turn — said once, with the remedy and the budget the turn
+/// actually ran with, and without the internal handle a user cannot act on.
+/// A required item the merge could not honor is the loudest case and is named
+/// first: the caller pointed at that file, and being told it did not fit is
+/// the whole difference between a budget and a lie.
+pub(super) fn report_budget_drops(
+    dropped: &[crate::contextgraph::HostDroppedFrame],
+    max_tokens: u32,
+    report: &mut impl FnMut(String),
+) {
+    let required_over = dropped
+        .iter()
+        .filter(|d| d.reason == stella_context::DropReason::RequiredOverBudget)
+        .count();
+    if required_over > 0 {
+        report(format!(
+            "recall could not fit {required_over} anchored frame(s) — each exceeds the \
+             {max_tokens}-token budget on its own; raise context.retrieval.max_tokens in \
+             stella.toml to include them"
+        ));
+    }
+    let budget_drops = dropped
+        .iter()
+        .filter(|d| d.reason == stella_context::DropReason::TokenBudget)
+        .count();
+    if budget_drops > 0 {
+        report(format!(
+            "{budget_drops} memories did not fit this turn's {max_tokens}-token retrieval \
+             budget — raise context.retrieval.max_tokens in stella.toml to include them"
+        ));
     }
 }
 

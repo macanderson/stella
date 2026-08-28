@@ -786,3 +786,67 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
         "no source invents a line it has no producer for: {joined}"
     );
 }
+
+/// **Witness (#5444, frame-query half).** The host merge's drop report is one
+/// summary line per class — never one line per evicted frame repeating the
+/// same remedy under a citation label.
+///
+/// Fails on base, where the `RequiredOverBudget` loop in
+/// `recalled_frames_anchored` formatted one line per dropped frame
+/// ("recall could not fit an anchored frame: {label} ({cost} tokens) …") and
+/// ordinary budget evictions said nothing at all. The merge's own drop
+/// *shapes* are exercised where they are produced (the CGP composition
+/// conformance run in `contextgraph::tests`); what is pinned here is the
+/// report's shape, which is this module's own contract.
+#[test]
+fn the_merge_drop_report_is_one_summary_line_per_class() {
+    use crate::contextgraph::HostDroppedFrame;
+
+    fn evicted(id: &str, reason: stella_context::DropReason) -> HostDroppedFrame {
+        HostDroppedFrame {
+            provider: "local".into(),
+            id: id.into(),
+            citation_label: format!("[{id}]"),
+            token_cost: 120,
+            reason,
+        }
+    }
+
+    let dropped = vec![
+        evicted("nod_a", stella_context::DropReason::TokenBudget),
+        evicted("nod_b", stella_context::DropReason::TokenBudget),
+        evicted("nod_c", stella_context::DropReason::TokenBudget),
+        evicted("nod_d", stella_context::DropReason::TokenBudget),
+        evicted("nod_e", stella_context::DropReason::TokenBudget),
+        evicted("anchored", stella_context::DropReason::RequiredOverBudget),
+        // A count-limit eviction is not budget pressure: advising a bigger
+        // token budget for it would be a remedy that cannot help.
+        evicted("over_count", stella_context::DropReason::FrameCount),
+    ];
+
+    let mut lines = Vec::new();
+    crate::memory::recall::report_budget_drops(&dropped, 1200, &mut |m| lines.push(m));
+
+    assert_eq!(
+        lines.len(),
+        2,
+        "one line per budget class, not one per frame: {lines:?}"
+    );
+    assert!(
+        lines[0].contains("1 anchored frame(s)") && lines[0].contains("1200-token budget"),
+        "the required-over-budget class is named first, with the budget: {lines:?}"
+    );
+    assert_eq!(
+        lines[1],
+        "5 memories did not fit this turn's 1200-token retrieval budget — raise \
+         context.retrieval.max_tokens in stella.toml to include them",
+        "the exact line a user reads: count, budget, remedy, no internal id"
+    );
+    let joined = lines.join("\n");
+    for id in ["nod_a", "nod_b", "nod_c", "nod_d", "nod_e", "over_count"] {
+        assert!(
+            !joined.contains(id),
+            "no per-frame handle leaks into the summary: {joined}"
+        );
+    }
+}
