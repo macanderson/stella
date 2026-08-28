@@ -8,18 +8,44 @@
 //! a process can prove is that the command is reachable without a provider or
 //! API key, that the state files land where the observatory reads them, and
 //! that exit codes carry the verdicts (`watch` SLEEP is exit 1, not an
-//! error). `PATH` is cleared so the child can find no `gh` and no `git`:
-//! hermetic by construction, the same posture as `scripts/test-self-driving.sh`.
+//! error). `PATH` is an empty directory so the child can find no `gh` and no
+//! `git`: hermetic by construction, the same posture as
+//! `scripts/test-self-driving.sh`.
 
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::OnceLock;
+
+/// A directory that exists and holds nothing, handed to the child as its whole
+/// `PATH`.
+///
+/// This was `PATH=""`, which reads as "search no directory" to only some
+/// resolvers. glibc's `execvp` treats an empty value as a single empty entry
+/// and still reaches the runner's real `git` and `gh`, so on Linux the child
+/// that was meant to be hermetic ran the host's tools; macOS resolved nothing
+/// and the suite was green here and red in CI off the same source.
+///
+/// It stayed invisible while an unreadable `origin/main` and an unreachable
+/// tracker were both flattened to "nothing changed". Once `watch` learned to
+/// tell a check that *could not run* from one that ran and decided nothing,
+/// the non-hermetic child started waking on a tmpdir that is not a repository
+/// — a real behaviour difference reported as a platform-only test failure.
+///
+/// A real directory with nothing in it is the same instruction to every libc.
+/// The `TempDir` lives in a `static`, which is never dropped, so it outlives
+/// every child it is handed to.
+fn empty_path_dir() -> &'static Path {
+    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+    DIR.get_or_init(|| tempfile::tempdir().expect("tempdir for an empty PATH"))
+        .path()
+}
 
 fn stella(workspace: &Path, state: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_stella"))
         .current_dir(workspace)
         .env_clear()
         .env("SELF_DRIVING_STATE_DIR", state)
-        .env("PATH", "")
+        .env("PATH", empty_path_dir())
         .arg("self-driving")
         .args(args)
         .output()
@@ -118,7 +144,7 @@ fn plan_emits_the_evalable_decision_for_a_pinned_machine() {
         .current_dir(tmp.path())
         .env_clear()
         .env("SELF_DRIVING_STATE_DIR", tmp.path().join("state"))
-        .env("PATH", "")
+        .env("PATH", empty_path_dir())
         .env("SELF_DRIVING_PROBE_CPU", "8")
         .env("SELF_DRIVING_PROBE_LOAD1", "1")
         .env("SELF_DRIVING_PROBE_MEM_TOTAL_GB", "16")
