@@ -67,9 +67,17 @@ what preregistration exists to prevent.
   ran a model we trained.
 - **stella:** $78.25 total → **$1.35 per solved task** (78.25 / 58). The
   committed score table (`score.json`) extracts $75.83 → $1.31 from the trial
-  rows; the published results page extracts $78.25 from the trajectories. The
-  difference is the extraction layer, not the run. **The deck quotes the
-  higher figure.**
+  rows; the published results page extracts $78.25 from the trajectories.
+  **$78.25 is the canonical figure, and the deck quotes it.**
+
+  The $2.41 gap is now reconciled rather than merely disclosed (#2372, and
+  `bench/evidence/tb21-hh10-20260731/README.md` carries the working). It is
+  not spread across the run: the 54 trials whose accounting completed agree to
+  −$0.0001, and the whole difference sits on the 35 that hit
+  `AgentTimeoutError`. A trial row's `usd` is what the *agent reported*, and an
+  agent the harness kills mid-call never reports that call — the model was
+  billed for it anyway. So the trial rows undercount by exactly what those 35
+  timed-out trials were spending when they were stopped.
 - **The arms' costs are not comparable**, for three independent reasons, any
   one of which is enough: (1) the arms bill through different providers, so a
   dollar difference is at least as likely route pricing as agent behavior;
