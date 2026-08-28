@@ -414,6 +414,7 @@ fn user_block_kind(content: &str) -> BlockKind {
         || content.starts_with(crate::driver::user_hooks::STOP_HOOK_MARKER_PREFIX)
         || content.starts_with(crate::skills::invoke::SKILL_INVOCATION_PREFIX)
         || content.starts_with(crate::waiting::WAKE_MARKER)
+        || content.starts_with(crate::driver::deadline_notice::DEADLINE_MARKER_PREFIX)
     {
         BlockKind::Steered
     } else if content.starts_with(RECALL_MARKER) {

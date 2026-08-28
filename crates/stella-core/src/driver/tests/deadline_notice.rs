@@ -107,7 +107,7 @@ async fn a_near_deadline_reaches_the_model_with_advice() {
     let texts = provider.user_texts();
     let notice = texts
         .iter()
-        .find(|text| text.starts_with("[time]"))
+        .find(|text| text.starts_with(crate::driver::deadline_notice::DEADLINE_MARKER_PREFIX))
         .unwrap_or_else(|| panic!("no deadline notice in the transcript: {texts:?}"));
     assert!(
         notice.contains("submit your best answer"),
@@ -124,7 +124,9 @@ async fn no_deadline_puts_no_clock_in_the_prompt() {
 
     let texts = provider.user_texts();
     assert!(
-        !texts.iter().any(|text| text.starts_with("[time]")),
+        !texts
+            .iter()
+            .any(|text| text.starts_with(crate::driver::deadline_notice::DEADLINE_MARKER_PREFIX)),
         "an unarmed deadline must add nothing: {texts:?}"
     );
 }
@@ -138,7 +140,9 @@ async fn a_distant_deadline_puts_no_clock_in_the_prompt() {
 
     let texts = provider.user_texts();
     assert!(
-        !texts.iter().any(|text| text.starts_with("[time]")),
+        !texts
+            .iter()
+            .any(|text| text.starts_with(crate::driver::deadline_notice::DEADLINE_MARKER_PREFIX)),
         "a distant deadline must add nothing: {texts:?}"
     );
 }
