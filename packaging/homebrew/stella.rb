@@ -16,8 +16,8 @@
 class Stella < Formula
   desc "Fast, BYOK, model-agnostic terminal coding agent"
   homepage "https://github.com/macanderson/stella"
-  url "https://github.com/macanderson/stella.git", tag: "v0.9.273"
-  version "0.9.273"
+  url "https://github.com/macanderson/stella.git", tag: "v0.9.274"
+  version "0.9.274"
   license "AGPL-3.0-only"
   head "https://github.com/macanderson/stella.git", branch: "main"
   depends_on "rust" => :build
