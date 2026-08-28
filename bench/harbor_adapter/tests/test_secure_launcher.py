@@ -1002,12 +1002,12 @@ class _FakePublicIntentReader:
 
     def get_tree(self, commit_sha: str) -> dict[str, object]:
         assert isinstance(commit_sha, str) and len(commit_sha) == 40
+        # Read off the launcher rather than re-listed: a hand-copied second list
+        # here goes stale the moment a source joins the frozen set, and reds
+        # every test in this file for a reason that is about the copy (#5108).
         paths = (
             *launcher_module._FIXED_ADAPTER_SOURCE_PATHS,
-            launcher_module._FIXED_ANALYZER_PATH,
-            launcher_module._FIXED_PUBLIC_TIMING_PATH,
-            launcher_module._FIXED_PROTOCOL_PATH,
-            *launcher_module._FIXED_READINESS_SOURCE_PATHS,
+            *launcher_module._FIXED_NON_ADAPTER_SOURCE_PATHS,
         )
         return {
             "truncated": False,

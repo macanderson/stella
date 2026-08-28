@@ -110,6 +110,28 @@ _FIXED_LEDGER_PATH = "bench/evidence/stella-tb21-run-ledger.json"
 _FIXED_MANIFEST_PATH = "bench/evidence/stella-tb21-study-manifest.json"
 _FIXED_ANALYZER_PATH = "bench/terminal_bench_analysis/tb21_analysis.py"
 _FIXED_PUBLIC_TIMING_PATH = "bench/terminal_bench_analysis/github_public_timing.py"
+# The analyzer's sibling, split out of it by #2549 as "a size boundary, not a
+# new address" — `tb21_analysis` imports it at module scope and re-exports its
+# names. It joins the frozen set for the same reason the analyzer is in it: its
+# bytes decide what the replay computes.
+#
+# Without this the loader execed the analyzer with nothing supplying
+# `tb21_posture_schema`, so the import at the top of that file resolved only
+# when some earlier importer had already put the analyzer's directory on
+# `sys.path`. Running the launcher's own test file alone did not, and the two
+# refusal tests there got "replay analyzer could not be loaded" instead of the
+# specific refusal they assert — a launcher whose refusal reason depends on
+# import-order luck (#5108).
+_FIXED_POSTURE_SCHEMA_PATH = "bench/terminal_bench_analysis/tb21_posture_schema.py"
+# Pinned here rather than derived, because a hash the loader computes from the
+# file it is about to run proves nothing. This literal lives in a file that is
+# itself in `_FIXED_ADAPTER_SOURCE_PATHS`, so it is covered by `adapter_sha256`
+# and byte-compared against the published commit — the same chain that already
+# authorises the analyzer. `test_posture_schema_pin_matches_the_frozen_file`
+# fails the moment the two drift.
+_FIXED_POSTURE_SCHEMA_SHA256 = (
+    "be6c8ac5bd142aece32b73f4565b422db73eb7fc366c66482ca61de5091f08d3"
+)
 _FIXED_PROTOCOL_PATH = "bench/terminal-bench-2.1-protocol.md"
 # Every Python source in the adapter package, enumerated rather than globbed:
 # the public-tree check compares this exact set against the published commit,
@@ -154,6 +176,21 @@ _FIXED_READINESS_SOURCE_PATHS = (
     "bench/readiness/synthetic-adapter-sentinel/instruction.md",
     "bench/readiness/synthetic-adapter-sentinel/task.toml",
     "bench/readiness/synthetic-adapter-sentinel/tests/test.sh",
+)
+# The frozen sources outside the adapter package: byte-compared against the
+# published commit like the adapter's own, but not folded into `adapter_sha256`.
+#
+# A name rather than a tuple built at the one call site, so the tests can drive
+# the check against the same list it enforces. The fake published tree in
+# `test_secure_launcher.py` used to re-list these by hand, and adding
+# `_FIXED_POSTURE_SCHEMA_PATH` reddened thirty tests that were each correct
+# about a list that no longer matched.
+_FIXED_NON_ADAPTER_SOURCE_PATHS = (
+    _FIXED_ANALYZER_PATH,
+    _FIXED_PUBLIC_TIMING_PATH,
+    _FIXED_POSTURE_SCHEMA_PATH,
+    _FIXED_PROTOCOL_PATH,
+    *_FIXED_READINESS_SOURCE_PATHS,
 )
 _RUN_LEDGER_SCHEMA = "stella-tb21-run-ledger-v2"
 _GITHUB_ATTESTATION_SCHEMA = "stella-tb21-github-attestation-v2"
@@ -1619,13 +1656,27 @@ def _validate_confirmatory_manifest(
 
 
 def _load_frozen_replay_analyzer(runtime_identity: Mapping[str, Any]) -> ModuleType:
-    """Execute the exact source-bound analyzer bytes without consulting ``.pyc``."""
+    """Execute the exact source-bound analyzer bytes without consulting ``.pyc``.
+
+    Three modules, not two. ``tb21_analysis`` imports ``tb21_posture_schema`` at
+    module scope, so the analyzer cannot execute without it — and nothing here
+    supplied it, nor put its directory on ``sys.path``. The import therefore
+    resolved on whatever some earlier importer happened to have done, which made
+    the launcher's refusal reason depend on import order (#5108).
+
+    The schema is supplied the same way the timing verifier is, rather than by
+    widening ``sys.path``: an entry on the path would let *any* importable
+    ``tb21_posture_schema`` execute here, and executing unverified bytes is the
+    one thing this function exists to prevent.
+    """
     repository_root = Path(__file__).resolve().parents[3]
     analyzer_path = repository_root / _FIXED_ANALYZER_PATH
     timing_path = repository_root / _FIXED_PUBLIC_TIMING_PATH
+    schema_path = repository_root / _FIXED_POSTURE_SCHEMA_PATH
     try:
         analyzer_raw = analyzer_path.read_bytes()
         timing_raw = timing_path.read_bytes()
+        schema_raw = schema_path.read_bytes()
     except OSError as exc:
         raise RuntimeError(
             "prior-stage replay cannot read the frozen analyzer"
@@ -1636,19 +1687,34 @@ def _load_frozen_replay_analyzer(runtime_identity: Mapping[str, Any]) -> ModuleT
         "analysis_sha256"
     ) or timing_sha256 != runtime_identity.get("public_timing_sha256"):
         raise RuntimeError("prior-stage replay analyzer bytes drifted")
+    # Against the pin above rather than against `runtime_identity`, which has no
+    # field for it: the study manifest is preregistered at a fixed version, and
+    # adding a field would refuse every manifest already recorded. The pin is in
+    # this file, which `adapter_sha256` covers and the public-tree check
+    # byte-compares, so the chain of authority is unbroken.
+    if hashlib.sha256(schema_raw).hexdigest() != _FIXED_POSTURE_SCHEMA_SHA256:
+        raise RuntimeError("prior-stage replay posture schema bytes drifted")
 
     timing_module = ModuleType("github_public_timing")
     timing_module.__file__ = str(timing_path)
     timing_module.__package__ = ""
+    schema_module = ModuleType("tb21_posture_schema")
+    schema_module.__file__ = str(schema_path)
+    schema_module.__package__ = ""
     analyzer_module = ModuleType("_stella_tb21_paid_stage_replay")
     analyzer_module.__file__ = str(analyzer_path)
     analyzer_module.__package__ = ""
     previous_timing = sys.modules.get("github_public_timing")
+    previous_schema = sys.modules.get("tb21_posture_schema")
     previous_analyzer = sys.modules.get(analyzer_module.__name__)
     try:
         sys.modules["github_public_timing"] = timing_module
         exec(  # noqa: S102 - exact verified source bytes are the replay authority
             compile(timing_raw, str(timing_path), "exec"), timing_module.__dict__
+        )
+        sys.modules["tb21_posture_schema"] = schema_module
+        exec(  # noqa: S102 - exact verified source bytes are the replay authority
+            compile(schema_raw, str(schema_path), "exec"), schema_module.__dict__
         )
         sys.modules[analyzer_module.__name__] = analyzer_module
         exec(  # noqa: S102 - exact verified source bytes are the replay authority
@@ -1662,6 +1728,10 @@ def _load_frozen_replay_analyzer(runtime_identity: Mapping[str, Any]) -> ModuleT
             sys.modules.pop("github_public_timing", None)
         else:
             sys.modules["github_public_timing"] = previous_timing
+        if previous_schema is None:
+            sys.modules.pop("tb21_posture_schema", None)
+        else:
+            sys.modules["tb21_posture_schema"] = previous_schema
         if previous_analyzer is None:
             sys.modules.pop(analyzer_module.__name__, None)
         else:
@@ -2407,12 +2477,7 @@ def _verify_public_runtime_sources(
     adapter_prefix = "bench/harbor_adapter/stella_harbor/"
     expected_adapter_paths = set(_FIXED_ADAPTER_SOURCE_PATHS)
     expected_readiness_paths = set(_FIXED_READINESS_SOURCE_PATHS)
-    fixed_paths = (
-        _FIXED_ANALYZER_PATH,
-        _FIXED_PUBLIC_TIMING_PATH,
-        _FIXED_PROTOCOL_PATH,
-        *_FIXED_READINESS_SOURCE_PATHS,
-    )
+    fixed_paths = _FIXED_NON_ADAPTER_SOURCE_PATHS
     local_bytes: dict[str, bytes] = {}
     for relative in (*_FIXED_ADAPTER_SOURCE_PATHS, *fixed_paths):
         path = repository_root / relative
