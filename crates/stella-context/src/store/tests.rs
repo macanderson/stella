@@ -770,6 +770,123 @@ fn as_of_reconstructs_half_open_transaction_interval() {
     assert_eq!(neighbor_ids(&conn, a, Some(T3)), Vec::<i64>::new());
 }
 
+/// A correction backdated to before the closed edge's own `valid_from` must
+/// not write `valid_to < valid_from` (#5325): the inverted interval matches
+/// the half-open world-time test at NO instant, so the old belief would be
+/// retroactively erased from every world-time query while belief-time queries
+/// still showed it. The close clamps to `valid_from` — a well-formed empty
+/// interval, which is what "wrong from the start" honestly is.
+#[test]
+fn a_backdated_close_cannot_invert_the_world_interval() {
+    let (_dir, store) = tmp_store();
+    let conn = store.conn();
+    let (a, b) = (concept(&conn, "a"), concept(&conn, "b"));
+    let props = serde_json::json!({});
+    // World-valid from T2; corrected at T3 with a valid_to backdated to T1.
+    let e = insert_edge(
+        &conn,
+        "relates_to",
+        a,
+        b,
+        1.0,
+        &props,
+        Some(T2),
+        None,
+        T2,
+        None,
+    )
+    .unwrap();
+    close_edge(&conn, e, T3, T1).unwrap();
+
+    let (from, to): (String, String) = conn
+        .query_row(
+            "SELECT valid_from, valid_to FROM edge WHERE id = ?1",
+            params![e],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(from, T2);
+    assert_eq!(
+        to, T2,
+        "the close clamps to valid_from instead of inverting"
+    );
+
+    // A close after the start is untouched by the clamp.
+    let e2 = insert_edge(
+        &conn,
+        "relates_to",
+        a,
+        b,
+        1.0,
+        &props,
+        Some(T1),
+        None,
+        T1,
+        None,
+    )
+    .unwrap();
+    close_edge(&conn, e2, T3, T2).unwrap();
+    let to2: String = conn
+        .query_row(
+            "SELECT valid_to FROM edge WHERE id = ?1",
+            params![e2],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(to2, T2);
+}
+
+/// An episode row carries its lineage from birth (#5324): `migrate_v8`'s
+/// backfill established `lineage_id = public_id` and only runs once, so the
+/// insert has to keep the column populated or every later row decays to NULL.
+#[test]
+fn an_episode_is_born_with_its_own_lineage() {
+    let (_dir, store) = tmp_store();
+    let conn = store.conn();
+    insert_episode(
+        &conn,
+        "epi_test",
+        "a summary",
+        &serde_json::json!([]),
+        "success",
+        0.5,
+        T1,
+        T1,
+        T1,
+    )
+    .unwrap();
+    let lineage: Option<String> = conn
+        .query_row(
+            "SELECT lineage_id FROM episode WHERE public_id = 'epi_test'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(lineage.as_deref(), Some("epi_test"));
+}
+
+/// Two lineages cannot share one revision id (#5322). Revising lineage B onto
+/// text lineage A already carries used to conflict on A's row and re-parent
+/// it into B — lineage A kept its live mirror node and lost every revision,
+/// with no error anywhere. The insert now refuses, and A's history survives.
+#[test]
+fn a_revision_cannot_steal_another_lineages_row() {
+    let (_dir, store) = tmp_store();
+    let conn = store.conn();
+    insert_memory(&conn, "mem_a", "mem_a", "reflection", "the text", 0.5, T1).unwrap();
+
+    let err = insert_memory(&conn, "mem_a", "mem_b", "reflection", "the text", 0.5, T2)
+        .expect_err("a cross-lineage identity collision must refuse");
+    assert!(
+        err.to_string().contains("already belongs to lineage"),
+        "the refusal names the collision: {err}"
+    );
+
+    let history = memory_revisions(&conn, "mem_a").unwrap();
+    assert_eq!(history.len(), 1, "lineage A keeps its revision");
+    assert!(history[0].is_current());
+}
+
 #[test]
 fn as_of_ignores_world_validity_valid_from_valid_to() {
     // THE DISCRIMINATOR. An edge whose world-validity window closed in the

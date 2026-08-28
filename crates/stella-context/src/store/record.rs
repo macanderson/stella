@@ -25,9 +25,14 @@ pub(crate) fn insert_episode(
     now: &str,
 ) -> Result<i64, ContextError> {
     let files = serde_json::to_string(files_touched)?;
+    // `lineage_id = public_id`: an episode is its own lineage's first (and so
+    // far only) revision, the invariant migrate_v8's backfill established.
+    // The insert has to keep establishing it — rows written without the
+    // column carried NULL from the moment v8 landed, which is what
+    // migrate_v12 repairs.
     let id: i64 = conn.query_row(
-        "INSERT INTO episode (public_id, summary, files_touched, outcome, salience, started_at, ended_at, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "INSERT INTO episode (public_id, lineage_id, summary, files_touched, outcome, salience, started_at, ended_at, recorded_at)
+         VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(public_id) DO UPDATE SET
              summary = excluded.summary,
              files_touched = excluded.files_touched,
@@ -58,6 +63,31 @@ pub(crate) fn insert_memory(
     salience: f64,
     now: &str,
 ) -> Result<i64, ContextError> {
+    // Two lineages cannot share one revision id. `public_id` is a hash of
+    // kind + content, so revising lineage B onto text an existing memory of
+    // lineage A already carries conflicts on A's row — and the upsert below
+    // would re-parent that row into B, leaving lineage A with zero revisions
+    // and a live mirror node, with no error anywhere (#5322). That is a
+    // merge of two memories, which is not something a revision may do
+    // silently; refuse it the way the ledger refuses two records claiming
+    // one id.
+    let held_by: Option<String> = conn
+        .query_row(
+            "SELECT lineage_id FROM memory WHERE public_id = ?1",
+            params![public_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(existing) = held_by
+        && existing != lineage_id
+    {
+        return Err(ContextError::InvalidInput(format!(
+            "memory revision `{public_id}` already belongs to lineage `{existing}` — \
+             revising lineage `{lineage_id}` onto the same text would merge two \
+             memories and erase one's history; edit or retire the existing memory \
+             instead"
+        )));
+    }
     conn.execute(
         "UPDATE memory SET superseded_at = ?3
          WHERE lineage_id = ?1 AND public_id <> ?2 AND superseded_at IS NULL",
