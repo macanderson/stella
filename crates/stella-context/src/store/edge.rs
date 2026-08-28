@@ -181,6 +181,13 @@ pub(crate) fn insert_edge(
 /// Close an edge's intervals: set `superseded_at` (transaction time) and, if
 /// not already ended, `valid_to` (world time). **Never deletes** (`L-C3`) — the
 /// row survives so "what did we believe at T1" still answers.
+///
+/// The world interval may not invert (#5325): a correction backdated to
+/// before this edge's own `valid_from` clamps to it, so the edge ends the
+/// instant it began rather than before — `valid_to < valid_from` would match
+/// `neighbors_valid_at`'s half-open test at *no* instant, retroactively
+/// erasing the old belief from every world-time query while belief-time
+/// queries still show it.
 pub(crate) fn close_edge(
     conn: &Connection,
     edge_id: i64,
@@ -188,7 +195,9 @@ pub(crate) fn close_edge(
     valid_to: &str,
 ) -> Result<(), ContextError> {
     conn.execute(
-        "UPDATE edge SET superseded_at = ?2, valid_to = COALESCE(valid_to, ?3) WHERE id = ?1",
+        "UPDATE edge SET superseded_at = ?2,
+             valid_to = COALESCE(valid_to, MAX(COALESCE(valid_from, ?3), ?3))
+         WHERE id = ?1",
         params![edge_id, superseded_at, valid_to],
     )?;
     Ok(())
