@@ -81,9 +81,23 @@ Take a staged tool all the way to a usable one:
 # cannot see it: jq.toml (with a [foundry] table) + jq.sh.
 stella tools --validate .stella/tools/proposed
 stella tools --adopt jq          # run its witness; records the proof, stays disabled
-stella tools --enable jq         # the one human approval
+stella tools --enable jq         # the one human approval — prints what it grants and asks
 stella tools --foundry           # what was adopted, and what it has been worth
 ```
+
+<Callout type="warn">
+  **`--enable` asks, and refuses when nobody can answer.** It prints the script
+  the model would run, the witness on file, and what that witness does *not*
+  establish, then waits for a `y`. With no terminal attached it refuses rather
+  than proceeding — otherwise an agent holding the `bash` tool could stage,
+  adopt and enable its own tool inside one turn, and "the approval a machine
+  never grants itself" would be enforced only by the habit that a CLI
+  invocation comes from a person. Pass `--yes` for a provisioning script, where
+  granting it is something somebody wrote down.
+
+  `--disable` asks nobody: withdrawing the authority must never be blocked by
+  the absence of a terminal.
+</Callout>
 
 ## Self-authored tools
 

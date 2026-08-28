@@ -364,3 +364,113 @@ fn relocation_rewrites_exactly_the_command() {
     );
     assert!(relocate_command("command = [\"./other.sh\"]", "jq").is_err());
 }
+
+/// **Witness (#5332).** A non-interactive `--enable` is refused, and says why.
+///
+/// The evolution ledger requires deterministic proof *plus a local human* for
+/// an executable tool. The proof half was real; the human half was enforced by
+/// nothing but the convention that a CLI invocation comes from a person — which
+/// an agent holding the `bash` tool falsifies. It could stage, adopt and enable
+/// its own authored tool inside one turn.
+///
+/// This drives `set_enabled_in`'s caller-side gate through its testable half:
+/// the refusal fires wherever no terminal is attached, which is exactly what a
+/// test process is.
+#[test]
+fn a_non_interactive_enable_is_refused_rather_than_granted() {
+    let (ws, store) = workspace();
+    let name = author_cat(ws.path(), &store);
+    adopt_in(ws.path(), &store, &name).expect("adopt");
+
+    // No terminal here — the same condition an agent's shell presents.
+    assert!(
+        !crate::interactive::human_is_present(true),
+        "precondition: a test process has no terminal to ask at"
+    );
+
+    let refusal = run_tools_enable_in(ws.path(), &store, &name, true, false)
+        .expect_err("a machine must not grant itself this approval");
+    assert!(
+        refusal.contains("--yes"),
+        "the refusal names the way through: {refusal}"
+    );
+
+    assert!(
+        !store
+            .adopted_foundry_tool(&name)
+            .expect("read")
+            .expect("adopted")
+            .enabled,
+        "and nothing was granted"
+    );
+}
+
+/// `--yes` is the documented way through, so the check above is a discipline
+/// rather than a wall.
+///
+/// Without this the refusal could be satisfied by making `--enable` impossible,
+/// which would break every provisioning script that legitimately has no
+/// terminal.
+#[test]
+fn an_explicit_yes_still_enables_without_a_terminal() {
+    let (ws, store) = workspace();
+    let name = author_cat(ws.path(), &store);
+    adopt_in(ws.path(), &store, &name).expect("adopt");
+
+    run_tools_enable_in(ws.path(), &store, &name, true, true).expect("--yes grants it");
+
+    assert!(
+        store
+            .adopted_foundry_tool(&name)
+            .expect("read")
+            .expect("adopted")
+            .enabled
+    );
+}
+
+/// Disabling asks nobody. The direction that needs a human is the one that lets
+/// a model call new code; withdrawing that authority must never be blocked by
+/// the absence of a terminal, or a compromised tool could not be switched off
+/// from a script.
+#[test]
+fn disabling_needs_no_human_and_no_yes() {
+    let (ws, store) = workspace();
+    let name = author_cat(ws.path(), &store);
+    adopt_in(ws.path(), &store, &name).expect("adopt");
+    run_tools_enable_in(ws.path(), &store, &name, true, true).expect("enable");
+
+    run_tools_enable_in(ws.path(), &store, &name, false, false).expect("disable asks nobody");
+
+    assert!(
+        !store
+            .adopted_foundry_tool(&name)
+            .expect("read")
+            .expect("adopted")
+            .enabled
+    );
+}
+
+/// The consent text names what is actually being granted — the script the model
+/// will run — rather than the name the caller typed.
+///
+/// A prompt that echoed the argument would be a confirmation of the reader's
+/// own typing, which is not consent to anything.
+#[test]
+fn the_consent_text_names_the_script_and_the_witness() {
+    let (ws, store) = workspace();
+    let name = author_cat(ws.path(), &store);
+    let adopted = adopt_in(ws.path(), &store, &name).expect("adopt");
+
+    let text = enable_consent_text(ws.path(), &store, &name).expect("render");
+
+    assert!(text.contains("cat.sh"), "the script it runs: {text}");
+    assert!(text.contains(&adopted.witness), "the proof on file: {text}");
+    assert!(
+        text.contains("Read one file's contents."),
+        "the manifest's own description: {text}"
+    );
+    assert!(
+        text.contains("not proof that the script is safe"),
+        "and what the witness does NOT establish: {text}"
+    );
+}

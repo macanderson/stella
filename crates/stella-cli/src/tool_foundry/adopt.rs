@@ -65,11 +65,31 @@ pub(crate) fn run_tools_adopt(name: &str) -> Result<(), String> {
 }
 
 /// `stella tools --enable <name>` / `--disable <name>`.
-pub(crate) fn run_tools_enable(name: &str, enabled: bool) -> Result<(), String> {
+///
+/// # Why enabling asks and disabling does not
+///
+/// The evolution ledger requires deterministic proof **plus a local human** for
+/// an executable tool, and the proof half was real: `adopt_in` runs the
+/// capability witness, adoption lands disabled, re-adoption revokes approval,
+/// and enabling re-checks the bytes. The human half was enforced by nothing but
+/// the convention that a CLI invocation comes from a person — which an agent
+/// holding the `bash` tool falsifies. It could stage, adopt and enable its own
+/// authored tool inside one turn, and the next session's model could call it
+/// (#5332).
+///
+/// So `--enable` renders what is being granted and asks, exactly the way
+/// `stella plugin install` does, and refuses with no terminal attached unless
+/// `--yes` says a human already read it. Disabling withdraws authority and asks
+/// nobody: the direction that needs a person is the one that lets a model call
+/// new code.
+pub(crate) fn run_tools_enable(name: &str, enabled: bool, yes: bool) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let store = Store::open(&root).map_err(|e| format!("cannot open the workspace store: {e}"))?;
-    set_enabled_in(&root, &store, name, enabled)?;
+    if !run_tools_enable_in(&root, &store, name, enabled, yes)? {
+        println!("not enabled.");
+        return Ok(());
+    }
 
     if enabled {
         crate::plain::section_header("Tool enabled");
@@ -198,6 +218,108 @@ pub(crate) fn adopt_in(root: &Path, store: &Store, name: &str) -> Result<Adopted
         .adopt_foundry_tool(&record)
         .map_err(|e| format!("cannot record the adoption: {e}"))?;
     Ok(record)
+}
+
+/// The consent gate and the ledger write. The testable core of
+/// [`run_tools_enable`]: no cwd, no reporting.
+///
+/// `Ok(false)` means a human was asked and said no — the one outcome that is
+/// neither a grant nor an error.
+pub(crate) fn run_tools_enable_in(
+    root: &Path,
+    store: &Store,
+    name: &str,
+    enabled: bool,
+    yes: bool,
+) -> Result<bool, String> {
+    // Before the ledger write, and rendered from the manifest on disk rather
+    // than from the name the caller typed: the thing being approved is the
+    // script the model will run.
+    if enabled && !yes {
+        print!("{}", enable_consent_text(root, store, name)?);
+        // `true` for the first input: this is a plain text command, so the only
+        // questions are whether stdio is a terminal.
+        if !crate::interactive::human_is_present(true) {
+            return Err(format!(
+                "nothing here can ask you to approve `{name}` — no terminal is attached. \
+                 Enabling a self-authored tool is the one approval in this protocol a machine \
+                 never grants itself; re-run with --yes if you have read the declaration above \
+                 and accept it."
+            ));
+        }
+        if !confirm_enable(name)? {
+            return Ok(false);
+        }
+    }
+
+    set_enabled_in(root, store, name, enabled)?;
+    Ok(true)
+}
+
+/// What enabling `name` would grant, in the words of the manifest on disk.
+///
+/// Rendered from the files rather than the ledger, and from the files rather
+/// than the caller's argument: the thing a human is approving is the script the
+/// model will run, so that is what is shown. Pure over the workspace so the
+/// text is testable without a terminal — the presence check around it is the
+/// half a test cannot drive.
+pub(crate) fn enable_consent_text(
+    root: &Path,
+    store: &Store,
+    name: &str,
+) -> Result<String, String> {
+    use std::fmt::Write as _;
+
+    let record = store
+        .adopted_foundry_tool(name)
+        .map_err(|e| format!("cannot read the adoption ledger: {e}"))?
+        .ok_or_else(|| {
+            format!(
+                "`{name}` has not been adopted — prove it first with \
+                 `stella tools --adopt {name}`"
+            )
+        })?;
+    let manifest_path = root.join(ADOPTED_DIR).join(format!("{name}.toml"));
+    let script_path = root.join(ADOPTED_DIR).join(format!("{name}.sh"));
+    let text = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("cannot read {}: {e}", manifest_path.display()))?;
+    let tool = custom::parse_manifest(&text, &manifest_path)?;
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "\nEnabling `{name}` offers it to the model every turn."
+    );
+    let _ = writeln!(out, "\n  description  {}", tool.description);
+    let _ = writeln!(out, "  runs         {}", script_path.display());
+    let _ = writeln!(out, "  witness      {}", record.witness);
+    let _ = writeln!(
+        out,
+        "\nIt was authored by the foundry, not by you. The witness above is proof that the \
+         call fails without it and succeeds with it — it is not proof that the script is \
+         safe to run, which is the question only you can answer."
+    );
+    Ok(out)
+}
+
+/// The yes/no on an `--enable`.
+///
+/// A bare `y`/`yes` and nothing else, matching `plugin install` — anything a
+/// caller pipes in that is not an explicit yes is a no.
+fn confirm_enable(name: &str) -> Result<bool, String> {
+    use std::io::{BufRead as _, Write as _};
+
+    print!("\nEnable `{name}`? [y/N] ");
+    std::io::stdout()
+        .flush()
+        .map_err(|e| format!("cannot write the prompt: {e}"))?;
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| format!("cannot read your answer: {e}"))?;
+    let answer = line.trim().to_ascii_lowercase();
+    Ok(answer == "y" || answer == "yes")
 }
 
 /// Flip one adoption's enablement, refusing to enable a tool whose bytes no
