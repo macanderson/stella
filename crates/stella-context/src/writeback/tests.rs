@@ -270,9 +270,130 @@ async fn a_memory_anchors_to_the_files_it_is_about() {
     paths.sort();
     assert_eq!(paths, vec!["src/main.rs", "src/registry.rs"]);
     assert!(
-        open.iter().all(|a| a.memory.contains("registry.rs")),
+        open.iter().all(|a| a.source.contains("registry.rs")),
         "each anchor names the memory it came from, so a scan can report it"
     );
+}
+
+/// **The witness (#5338).** An episode's `files_touched` become `observed_in`
+/// edges, so "what happened to this file" reaches the turns that touched it.
+///
+/// The paths were stored as a JSON array on the `episode` row and nowhere
+/// else, which is a column a traversal cannot follow: the graph channel the
+/// anchors design exists for reached memories and stopped there.
+#[tokio::test]
+async fn an_episode_anchors_to_every_file_it_touched() {
+    let clock = FixedClock::shared(1_000);
+    let (_dir, store) = store_at(clock.clone());
+
+    let receipt = store
+        .upsert(
+            ContextDelta::new().with_episode(
+                EpisodeInput::new(
+                    "split the registry",
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-01T00:05:00Z",
+                )
+                .with_files(["src/registry.rs", "src/main.rs"])
+                .with_domains(["core"]),
+            ),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(receipt.anchors_written, 2);
+    let open = store.open_anchors().unwrap();
+    let mut paths: Vec<String> = open.iter().map(|a| a.path.clone()).collect();
+    paths.sort();
+    assert_eq!(paths, vec!["src/main.rs", "src/registry.rs"]);
+    assert!(
+        open.iter().all(|a| a.source.contains("split the registry")),
+        "each anchor names the record it came from, so a scan can report it"
+    );
+}
+
+/// The same de-duplication memories get. A session that re-writes an episode
+/// over the same window updates one row, and must not grow one edge per pass.
+#[tokio::test]
+async fn re_anchoring_an_episodes_files_writes_nothing_new() {
+    let clock = FixedClock::shared(1_000);
+    let (_dir, store) = store_at(clock.clone());
+
+    let delta = || {
+        ContextDelta::new().with_episode(
+            EpisodeInput::new(
+                "split the registry",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:05:00Z",
+            )
+            .with_files(["src/registry.rs"]),
+        )
+    };
+    let first = store.upsert(delta()).await.unwrap();
+    clock.advance(1_000);
+    let second = store.upsert(delta()).await.unwrap();
+
+    assert_eq!(first.anchors_written, 1);
+    assert_eq!(second.anchors_written, 0, "the anchor already held");
+    assert_eq!(store.open_anchors().unwrap().len(), 1);
+}
+
+/// The staleness scan sees episode anchors on the same terms as memory ones:
+/// a deleted file ends world validity, and belief is untouched. Anything else
+/// would leave episode anchors pointing at files that are gone forever, since
+/// the scan is the only thing that ends them.
+#[tokio::test]
+async fn an_episode_anchor_ends_world_validity_like_a_memory_anchor() {
+    let clock = FixedClock::shared(1_000);
+    let (_dir, store) = store_at(clock.clone());
+    store
+        .upsert(
+            ContextDelta::new().with_episode(
+                EpisodeInput::new(
+                    "split the registry",
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-01T00:05:00Z",
+                )
+                .with_files(["src/registry.rs"]),
+            ),
+        )
+        .await
+        .unwrap();
+
+    let anchor = store.open_anchors().unwrap().remove(0);
+    clock.advance(1_000);
+    let gone_at = store.clock().now_rfc3339();
+    assert!(store.end_anchor_validity(anchor.edge_id, &gone_at).unwrap());
+    assert!(
+        store.open_anchors().unwrap().is_empty(),
+        "the anchor stopped holding in the world"
+    );
+    assert!(
+        store
+            .facts_as_of(None)
+            .unwrap()
+            .iter()
+            .any(|f| f.predicate == crate::writeback::ANCHOR_REL),
+        "the anchor is still BELIEVED; only the present stops seeing it"
+    );
+}
+
+/// An episode that touched nothing writes no edges and no file nodes — the
+/// common case for a summary with no `files_touched`.
+#[tokio::test]
+async fn an_episode_touching_no_files_anchors_nothing() {
+    let clock = FixedClock::shared(1_000);
+    let (_dir, store) = store_at(clock.clone());
+    let receipt = store
+        .upsert(ContextDelta::new().with_episode(EpisodeInput::new(
+            "thought about it",
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:05:00Z",
+        )))
+        .await
+        .unwrap();
+    assert_eq!(receipt.anchors_written, 0);
+    assert!(store.open_anchors().unwrap().is_empty());
 }
 
 /// Re-learning the same lesson must not grow the graph. The reflection loop

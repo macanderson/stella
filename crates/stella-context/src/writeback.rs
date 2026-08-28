@@ -22,7 +22,9 @@ use crate::store::{
 };
 use crate::warm;
 
-/// `edge.rel` for a memory-to-file anchor: *this memory is about that file*.
+/// `edge.rel` for a record-to-file anchor: *this record is about that file*.
+/// Minted from memories (the files a lesson is about) and from episodes (the
+/// files a turn touched, #5338).
 ///
 /// One string, exported, because three planes have to agree on it — the write
 /// side in [`ContextStore::upsert`], the staleness scan that ends its world
@@ -78,8 +80,15 @@ pub struct EpisodeInput {
     /// content and (truncated) its citation label, so this is the text recall
     /// actually embeds and surfaces.
     pub summary: String,
-    /// Workspace-relative paths the episode touched, stored as a JSON array on
-    /// the `episode` row.
+    /// Workspace-relative paths the episode touched.
+    ///
+    /// Stored two ways, because they answer two questions. The JSON array on
+    /// the `episode` row is the record of what this turn did. The
+    /// [`ANCHOR_REL`] edges minted from the mirror node are what a *traversal*
+    /// follows, so "what happened to this file" reaches the turns that touched
+    /// it — a JSON column cannot be walked, and until #5338 that was the only
+    /// place these lived, which left the graph channel reaching memories and
+    /// stopping there.
     pub files_touched: Vec<String>,
     /// How the episode ended.
     pub outcome: EpisodeOutcome,
@@ -123,6 +132,17 @@ impl EpisodeInput {
         S: Into<String>,
     {
         self.domains = domains.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Record the files this episode touched. See [`Self::files_touched`].
+    #[must_use]
+    pub fn with_files<I, S>(mut self, files: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.files_touched = files.into_iter().map(Into::into).collect();
         self
     }
 
@@ -548,7 +568,8 @@ pub struct UpsertReceipt {
     pub embeddings_reused: usize,
     /// New domain-tag associations written across all records this batch.
     pub domain_tags_added: usize,
-    /// `observed_in` anchor edges inserted from a memory to a file it is about.
+    /// `observed_in` anchor edges inserted from a memory or an episode to a
+    /// file it is about.
     /// Re-asserting an anchor that is already open on both time axes inserts
     /// nothing and is not counted; an anchor whose world validity was ended by
     /// the staleness scan *is* re-opened, because a file that came back is a
@@ -556,7 +577,9 @@ pub struct UpsertReceipt {
     pub anchors_written: usize,
 }
 
-/// An open memory→file anchor, as the staleness scan sees it.
+/// An open record→file anchor, as the staleness scan sees it. The source is a
+/// memory or an episode; the scan treats both the same, because the question
+/// it asks — is this file still here — does not depend on which.
 #[derive(Debug, Clone)]
 pub struct AnchorView {
     /// Edge rowid — pass to [`ContextStore::end_anchor_validity`].
@@ -567,8 +590,9 @@ pub struct AnchorView {
     /// to test for existence. Anchors are written relative (matching
     /// `record_taxonomy`), so this joins onto the workspace root directly.
     pub path: String,
-    /// The anchoring memory's text, so a report can name what goes stale.
-    pub memory: String,
+    /// The anchoring record's text — a memory's content or an episode's
+    /// summary — so a report can name what goes stale.
+    pub source: String,
 }
 
 /// A fact resolved to human labels for point-in-time queries (`L-C4`: cite by
@@ -717,6 +741,9 @@ impl ContextStore {
             receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, &now)?;
             receipt.nodes_upserted += 1;
             receipt.episodes_written += 1;
+            // The files this turn touched, as edges rather than only as the
+            // JSON column written above (#5338).
+            anchor_to_files(&tx, id, &ep.files_touched, &ep.domains, &now, &mut receipt)?;
         }
 
         for memory in &delta.memories {
@@ -741,38 +768,14 @@ impl ContextStore {
             // node's identity is minted in this loop — a caller would have to
             // reconstruct `memory://{lineage}` by hand and would silently
             // anchor to nothing the day that spelling changed.
-            for path in &memory.anchors {
-                let file = NodeInput::new(NodeKind::File, path.as_str())
-                    .with_uri(format!("file://{path}"))
-                    .with_domains(memory.domains.clone());
-                let dst = upsert_node(&tx, &file, &now)?;
-                receipt.domain_tags_added += tag_node_domains(&tx, dst, &file.domains, &now)?;
-                receipt.nodes_upserted += 1;
-                // Open on BOTH axes, not merely un-superseded: an anchor whose
-                // file was deleted has `valid_to` set and `superseded_at` null,
-                // and re-learning the same lesson after the file comes back
-                // must open a new interval rather than be swallowed as a
-                // duplicate. `live_triple_exists` checks belief only, which is
-                // right for `apply_fact` and wrong here.
-                if !open_anchor_exists(&tx, id, ANCHOR_REL, dst)? {
-                    insert_edge(
-                        &tx,
-                        ANCHOR_REL,
-                        id,
-                        dst,
-                        1.0,
-                        &serde_json::json!({}),
-                        // No `valid_from`: we know the memory is about this
-                        // file now, not when that started being true. NULL is
-                        // "unbounded in the past", which is the honest claim.
-                        None,
-                        None,
-                        &now,
-                        None,
-                    )?;
-                    receipt.anchors_written += 1;
-                }
-            }
+            anchor_to_files(
+                &tx,
+                id,
+                &memory.anchors,
+                &memory.domains,
+                &now,
+                &mut receipt,
+            )?;
         }
 
         for fact in &delta.facts {
@@ -792,7 +795,7 @@ impl ContextStore {
         Ok(receipt)
     }
 
-    /// Every memory→file anchor still believed and still holding in the world.
+    /// Every record→file anchor still believed and still holding in the world.
     ///
     /// This is a *reader*, not a scan. The store knows which
     /// anchors are open; it does not know which files exist, and it must not
@@ -807,7 +810,7 @@ impl ContextStore {
                 edge_id: a.edge_id,
                 path: a.uri.strip_prefix("file://").unwrap_or(&a.uri).to_string(),
                 uri: a.uri,
-                memory: a.memory,
+                source: a.source,
             })
             .collect())
     }
@@ -986,6 +989,57 @@ fn live_triple_exists(
         |r| r.get(0),
     )?;
     Ok(n > 0)
+}
+
+/// Mint an [`ANCHOR_REL`] edge from `src` to every path in `paths`, upserting
+/// the file node each one needs.
+///
+/// One helper for both record kinds rather than a copy in each loop. A memory
+/// and an episode make the *same* claim about a file — this record is about
+/// that file — and the discipline it has to keep is the subtle half: the
+/// bi-temporal duplicate check below, and `valid_from: None`. Two copies of
+/// that would be two chances to get it wrong, and the divergence would be
+/// invisible until a scan reported one kind of anchor and not the other.
+fn anchor_to_files(
+    tx: &rusqlite::Transaction<'_>,
+    src: i64,
+    paths: &[String],
+    domains: &[String],
+    now: &str,
+    receipt: &mut UpsertReceipt,
+) -> Result<(), ContextError> {
+    for path in paths {
+        let file = NodeInput::new(NodeKind::File, path.as_str())
+            .with_uri(format!("file://{path}"))
+            .with_domains(domains.to_vec());
+        let dst = upsert_node(tx, &file, now)?;
+        receipt.domain_tags_added += tag_node_domains(tx, dst, &file.domains, now)?;
+        receipt.nodes_upserted += 1;
+        // Open on BOTH axes, not merely un-superseded: an anchor whose file
+        // was deleted has `valid_to` set and `superseded_at` null, and
+        // re-asserting it after the file comes back must open a new interval
+        // rather than be swallowed as a duplicate. `live_triple_exists` checks
+        // belief only, which is right for `apply_fact` and wrong here.
+        if !open_anchor_exists(tx, src, ANCHOR_REL, dst)? {
+            insert_edge(
+                tx,
+                ANCHOR_REL,
+                src,
+                dst,
+                1.0,
+                &serde_json::json!({}),
+                // No `valid_from`: we know the record is about this file now,
+                // not when that started being true. NULL is "unbounded in the
+                // past", which is the honest claim.
+                None,
+                None,
+                now,
+                None,
+            )?;
+            receipt.anchors_written += 1;
+        }
+    }
+    Ok(())
 }
 
 /// Does an anchor exist that is open on **both** time axes?
