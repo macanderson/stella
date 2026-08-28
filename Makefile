@@ -843,6 +843,14 @@ main-red-claim: ## Ask whether somebody is already repairing a red `main` (reads
 main-red-claim-test: ## Test the red-main claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
 	./scripts/test-main-red-claim.sh
 
+.PHONY: issue-claim
+issue-claim: ## Ask whether somebody is already implementing an issue: make issue-claim N=5045
+	@./scripts/issue-claim.sh check $(N)
+
+.PHONY: issue-claim-test
+issue-claim-test: ## Test the issue-claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
+	./scripts/test-issue-claim.sh
+
 .PHONY: check
 check: $(GATE_GUARDS) $(GATE_NO_BUILD) lint ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy, no rustdoc and no tests
 	@./scripts/check-hooks-installed.sh

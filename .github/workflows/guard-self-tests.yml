@@ -193,6 +193,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-red-claim.sh
 
+      - name: the issue-claim pre-flight, standing-down branch included
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-issue-claim.sh
+
       - name: the retired-hex ban in every notation, and the citation check
         if: ${{ !cancelled() }}
         run: ./scripts/test-tokens.sh
