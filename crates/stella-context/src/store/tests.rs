@@ -775,7 +775,7 @@ fn as_of_reconstructs_half_open_transaction_interval() {
 /// the half-open world-time test at NO instant, so the old belief would be
 /// retroactively erased from every world-time query while belief-time queries
 /// still showed it. The close clamps to `valid_from` — a well-formed empty
-/// interval, which is what "wrong from the start" honestly is.
+/// interval, which is what "wrong from the start" is.
 #[test]
 fn a_backdated_close_cannot_invert_the_world_interval() {
     let (_dir, store) = tmp_store();

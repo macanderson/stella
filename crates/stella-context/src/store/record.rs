@@ -26,7 +26,7 @@ pub(crate) fn insert_episode(
 ) -> Result<i64, ContextError> {
     let files = serde_json::to_string(files_touched)?;
     // `lineage_id = public_id`: an episode is its own lineage's first (and so
-    // far only) revision, the invariant migrate_v8's backfill established.
+    // far only) revision, the rule migrate_v8's backfill established.
     // The insert has to keep establishing it — rows written without the
     // column carried NULL from the moment v8 landed, which is what
     // migrate_v12 repairs.
