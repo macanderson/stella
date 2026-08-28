@@ -1065,6 +1065,10 @@ mod pipeline_variant_tests;
 #[cfg(test)]
 mod usage_recovery_tests;
 
+// The receipt plane's write path — the arm below had no test of its own.
+#[cfg(test)]
+mod receipt_write_tests;
+
 #[cfg(test)]
 mod run_terminator_tests {
     use super::*;
