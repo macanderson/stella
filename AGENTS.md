@@ -89,6 +89,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + god-files
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
+                         #   + core-reachability (a stella-core module is
+                         #     reachable from the engine's step path; down-only)
                          #   + typed-errors
                          #   + tool-error-class (#3167 unclassified-ToolOutput::error ratchet)
                          #   + dead-code-allows
@@ -680,6 +682,28 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    wiring `authorises` into each publication path is tracked separately, and
    the rows say plainly where today's evidence falls short of what they
    require.
+12. **`stella-core` holds the step path.** A module that lives there is one the
+   engine reaches — from `driver`, `step` or `ports`, transitively, through
+   paths it actually names. Anything else is in the crate because somebody put
+   it there, and belongs in its own.
+
+   Reachability from the **crate root** is not this: `search.rs`, `records/`
+   and `skills/` are all reachable from `lib.rs`, which is why
+   `module-reachability` passes on every one of them, and how a 15k-LOC
+   subsystem lands here behind a `pub mod` line. That is how the record plane
+   arrived (#5113).
+
+   A `#[cfg(test)]` reference does **not** count. A subsystem the engine
+   touches only from its own tests is a subsystem the engine does not need —
+   `driver/restore.rs`'s test module names `crate::skills`, and reading that
+   as reachability would make the whole skill plane look like engine code.
+
+   Enforced by `scripts/check-core-reachability.py` (`make core-reachability`),
+   a **down-only ratchet** over `scripts/core-reachability-baseline.txt`. The
+   baseline records the residents that predate the guard, so it lands green;
+   `--update` refuses to add an entry, so a red run is cleared by moving the
+   module or by making the engine genuinely use it, never by recording it. It
+   is meant to reach empty, and each eviction under #5113 deletes a line.
 ---
 
 ## The definition of done: witness tests
