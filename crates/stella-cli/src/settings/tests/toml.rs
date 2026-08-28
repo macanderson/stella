@@ -814,6 +814,7 @@ const RICH_SETTINGS: &str = r#"{
   "ui": {"theme": "stella-dark"},
   "mcp": {"registry_url": "https://registry.example"},
   "context": {"retrieval": {"rrf_k": 60.0, "mmr_lambda": 0.7, "ann_probes": 12}},
+  "reward": {"deterministic_weight": 0.25, "per_usd": 0.75},
   "hooks": {"PreToolUse": [
     {"matcher": "bash", "hooks": [{"type": "command", "command": "./audit.sh", "timeoutMs": 5000}]}
   ]}
@@ -843,6 +844,19 @@ fn migrating_a_settings_file_preserves_every_value_it_configured() {
     assert_eq!(before.mcp, after.mcp, "mcp");
     assert_eq!(before.context, after.context, "context");
     assert_eq!(before.hooks, after.hooks, "hooks");
+    // **Witness (#2629).** `render` wrote no `[reward]` section, so a user with
+    // tuned weights ran `migrate config`, was told the file was "serialized
+    // from the settings.json beside it, not transcribed", deleted the JSON as
+    // the header instructs, and silently lost their weights to the defaults.
+    //
+    // This test's own name claimed it covered everything, which is what let
+    // the gap survive: `RICH_SETTINGS` simply had no `[reward]` block to lose.
+    assert_eq!(before.reward, after.reward, "reward");
+    assert_eq!(
+        after.reward_policy().unwrap().outcome.deterministic,
+        0.25,
+        "and the migrated weight resolves into the policy, not just the struct"
+    );
 }
 
 /// A retired key does not survive the migration into a freshly-generated file

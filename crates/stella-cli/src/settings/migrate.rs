@@ -95,6 +95,19 @@ pub fn render(settings: &Settings, scope: ConfigScope) -> Result<String, String>
     {
         doc["ui"] = toml_io::item_for(ui, "ui")?;
     }
+    // The reward weights. Omitted here until #2629, while the header told the
+    // reader the document was "serialized from the settings.json beside it, not
+    // transcribed, so nothing here can disagree with what stella read" and then
+    // instructed them to delete the JSON — so a migration silently reset a
+    // tuned `[reward]` block to the defaults.
+    //
+    // `settings.enterprise_telemetry` is NOT migrated, and that is not the
+    // same omission: it is a private field, managed-scope only, and a
+    // user-scope `stella.toml` carrying it would be a document claiming
+    // authority its scope does not have.
+    if let Some(reward) = &settings.reward {
+        doc["reward"] = toml_io::item_for(reward, "reward")?;
+    }
     if let Some(authority) = &settings.managed_authority {
         doc["authority"] = toml_io::item_for(authority, "authority")?;
     }
