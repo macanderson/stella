@@ -176,6 +176,34 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         re.compile(r"(?:^|[.;:!?]\s+)[Ss]ee #\d+\.?\s*$"),
         "say what the issue decided; keep the number beside it",
     ),
+    (
+        "issue-reference",
+        # An issue number in prose sends the reader to a tracker to find out
+        # what the sentence means. The sentence must say it instead. Tracking
+        # markers (TODO and friends) keep their numbers: a gate requires them
+        # there, and they are bookkeeping, not explanation.
+        re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #)).*?(#\d{2,})"),
+        "say the fact; drop the issue number from the prose",
+    ),
+    (
+        "historical-reference",
+        # Prose about what the code did before. The reader has today's code;
+        # yesterday's belongs in git history and the tracker, not in comments
+        # they must read past.
+        re.compile(
+            r"\b[Nn]o longer\b|\b[Pp]reviously\b|\b[Hh]istorically\b"
+            r"|\b[Ww]as once\b|\b[Bb]ack when\b"
+            r"|\b[Tt]he old (?:behaviou?r|way|code|shape|design)\b"
+            r"|(?<!is )(?<!be )(?<!are )(?<!was )(?<!were )(?<!een )\b[Uu]sed to\b"
+        ),
+        "delete the history; describe what the code does now",
+    ),
+    (
+        "complex-word",
+        # Words with a plain replacement. Say dependency, rule, unrelated.
+        re.compile(r"\b[Cc]oncretions?\b|\b[Rr]eif(?:y|ies|ied|ication)\b|\b[Oo]rthogonal(?:ly|ity)?\b"),
+        "use the plain word: dependency, rule, unrelated",
+    ),
 ]
 
 HEADER = """\
