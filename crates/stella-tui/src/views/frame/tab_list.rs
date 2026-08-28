@@ -42,11 +42,34 @@ const RUNGS: [Rung; 3] = [Rung::Full, Rung::Short, Rung::Solo];
 /// `budget` is what [`super::right_edge_reserve`] leaves — never the whole
 /// row, which is what makes the mark survive every width.
 pub(super) fn spans(active: DeckTab, budget: usize) -> Vec<Span<'static>> {
+    rung_spans(active, chosen_rung(active, budget))
+}
+
+/// The rung [`spans`] renders into `budget`: the widest that fits, or
+/// [`Rung::Solo`] when nothing does.
+fn chosen_rung(active: DeckTab, budget: usize) -> Rung {
     RUNGS
         .iter()
-        .map(|rung| rung_spans(active, *rung))
-        .find(|spans| width(spans) <= budget)
-        .unwrap_or_else(|| rung_spans(active, Rung::Solo))
+        .copied()
+        .find(|rung| width(&rung_spans(active, *rung)) <= budget)
+        .unwrap_or(Rung::Solo)
+}
+
+/// The tab under `column` of the row [`spans`] renders into `budget`, or
+/// `None` for a column on the air between titles or past the list — the hit
+/// test for a click on the tab row. Derived from the same cells and the same
+/// rung choice as [`spans`], so the two cannot disagree about where a title
+/// sits.
+pub(super) fn hit(active: DeckTab, budget: usize, column: usize) -> Option<DeckTab> {
+    let mut x = 0;
+    for (tab, span) in rung_cells(active, chosen_rung(active, budget)) {
+        let w = span.width();
+        if (x..x + w).contains(&column) {
+            return tab;
+        }
+        x += w;
+    }
+    None
 }
 
 /// The columns a rendering occupies.
@@ -56,31 +79,54 @@ fn width(spans: &[Span<'static>]) -> usize {
 
 /// The active tab in gold with a cell of air either side, the rest muted.
 fn rung_spans(active: DeckTab, rung: Rung) -> Vec<Span<'static>> {
+    rung_cells(active, rung)
+        .into_iter()
+        .map(|(_, span)| span)
+        .collect()
+}
+
+/// One rendering as cells: each span with the tab a click on it lands on —
+/// `None` for the air between titles and for [`Rung::Solo`]'s `4/9` note.
+/// [`rung_spans`] and [`hit`] both derive from this, which is what keeps the
+/// pixels drawn and the columns hit-tested the same list.
+fn rung_cells(active: DeckTab, rung: Rung) -> Vec<(Option<DeckTab>, Span<'static>)> {
     let muted = Style::new().fg(token::MUTED);
     let dim = Style::new().fg(token::DIM);
     let lit = Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD);
-    let mut spans = vec![Span::raw(" ")];
+    let mut cells = vec![(None, Span::raw(" "))];
     if rung == Rung::Solo {
-        spans.push(Span::styled(format!("  {}  ", active.title()), lit));
-        spans.push(Span::styled(
-            format!("{}/{}", active.index() + 1, DeckTab::ALL.len()),
-            dim,
+        cells.push((
+            Some(active),
+            Span::styled(format!("  {}  ", active.title()), lit),
         ));
-        return spans;
+        cells.push((
+            None,
+            Span::styled(
+                format!("{}/{}", active.index() + 1, DeckTab::ALL.len()),
+                dim,
+            ),
+        ));
+        return cells;
     }
     for (i, tab) in DeckTab::ALL.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::raw(" "));
+            cells.push((None, Span::raw(" ")));
         }
         if *tab == active {
-            spans.push(Span::styled(format!("  {}  ", tab.title()), lit));
+            cells.push((
+                Some(*tab),
+                Span::styled(format!("  {}  ", tab.title()), lit),
+            ));
         } else if rung == Rung::Short {
-            spans.push(Span::styled(short_title(*tab).to_string(), muted));
+            cells.push((
+                Some(*tab),
+                Span::styled(short_title(*tab).to_string(), muted),
+            ));
         } else {
-            spans.push(Span::styled(tab.title(), muted));
+            cells.push((Some(*tab), Span::styled(tab.title(), muted)));
         }
     }
-    spans
+    cells
 }
 
 /// A tab's three-letter form: the first three letters of [`DeckTab::title`].
@@ -204,6 +250,51 @@ mod tests {
             assert!(row.contains(tab.title()), "{row}");
             assert!(row.contains(&format!("/{}", DeckTab::ALL.len())), "{row}");
         }
+    }
+
+    /// A click on a full title lands on that tab, and the air between titles
+    /// lands on nothing. The expected column comes from the rendered text, so
+    /// this holds [`hit`] to what a reader actually sees, not to the cells it
+    /// shares with the renderer.
+    #[test]
+    fn a_click_on_a_full_title_lands_on_its_tab() {
+        for active in DeckTab::ALL {
+            let row = text(active, 65);
+            for tab in DeckTab::ALL {
+                let col = row.find(tab.title()).expect("title on the row");
+                assert_eq!(hit(active, 65, col), Some(tab), "{tab:?} in {row}");
+            }
+        }
+        // The leading column of air, and any column past the list.
+        assert_eq!(hit(DeckTab::Session, 65, 0), None);
+        assert_eq!(hit(DeckTab::Session, 65, 200), None);
+    }
+
+    /// The abbreviated rung is clickable on the same terms: a three-letter
+    /// form selects its tab.
+    #[test]
+    fn a_click_on_a_short_title_lands_on_its_tab() {
+        let row = text(DeckTab::Graph, 50);
+        for tab in DeckTab::ALL {
+            let needle = if tab == DeckTab::Graph {
+                tab.title()
+            } else {
+                short_title(tab)
+            };
+            let col = row.find(needle).expect("form on the row");
+            assert_eq!(hit(DeckTab::Graph, 50, col), Some(tab), "{tab:?} in {row}");
+        }
+    }
+
+    /// [`Rung::Solo`] names one tab, so a click selects the tab already
+    /// selected — and the `4/9` position note selects nothing.
+    #[test]
+    fn the_solo_rung_hits_only_the_active_tab() {
+        let row = text(DeckTab::Settings, 17);
+        let title = row.find("SETTINGS").expect("title on the row");
+        assert_eq!(hit(DeckTab::Settings, 17, title), Some(DeckTab::Settings));
+        let note = row.find("9/9").expect("note on the row");
+        assert_eq!(hit(DeckTab::Settings, 17, note), None);
     }
 
     /// The abbreviated rung still names all nine tabs, and the active one in

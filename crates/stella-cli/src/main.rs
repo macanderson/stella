@@ -612,6 +612,7 @@ fn deck_presentation(globals: &cli::GlobalArgs) -> term_policy::DeckPresentation
     term_policy::DeckPresentation {
         no_anim: term_policy::animation_disabled(globals.no_anim),
         accessible: term_policy::accessible_mode(globals.accessible),
+        mouse: term_policy::mouse_requested(globals.mouse),
     }
 }
 

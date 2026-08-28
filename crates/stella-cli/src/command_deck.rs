@@ -405,6 +405,7 @@ pub async fn run_deck_session(
     let crate::term_policy::DeckPresentation {
         no_anim,
         accessible,
+        mouse,
     } = presentation;
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Deck,
@@ -799,9 +800,9 @@ pub async fn run_deck_session(
         recent_path: Some(palette_recent_path(&cfg.workspace_root)),
         no_anim,
         accessible,
+        mouse_capture: mouse,
         mid_turn_prompt: steer::mid_turn_prompt_policy(cfg),
         voice_enabled: voice::enabled(cfg),
-        ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering
     // never waits on the driver (and vice versa).

@@ -230,6 +230,11 @@ The cards below are in `stella --help`'s own order, for the same reason the subc
     Freeze all deck animation to a static frame, for CI and asciinema-style recordings.
     Env `STELLA_NO_ANIM` / `NO_COLOR`.
   </OptionCard>
+  <OptionCard name="--mouse" defaultValue="off">
+    Capture the mouse in interactive mode: click a tab to switch to it, wheel-scroll the
+    transcript. Costs the terminal's own text selection (shift+drag still selects), which
+    is why it is off by default. Env `STELLA_MOUSE=1`.
+  </OptionCard>
   <OptionCard name="-v / --verbose" defaultValue="warn">
     Diagnostics: `-v` info, `-vv` debug, `-vvv` trace. See
     [below](#diagnostics--v---log-level---log-file).
