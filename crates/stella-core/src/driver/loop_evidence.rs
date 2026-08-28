@@ -35,10 +35,19 @@ use crate::receipts::TranscriptRevision;
 /// reaching this rule, so a stuck-loop scan silently reset on the exact two
 /// injections that mean the turn is still running (#2837).
 ///
+/// The once-per-turn completion nudges (`confident_zero::is_engine_nudge` —
+/// the prove-it ask and the live-service assertion) are engine-authored
+/// user-role text too, and are excluded for the same reason: they carry no
+/// bracketed marker, so the table alone cannot recognize them, and a window
+/// that reset on one erased the turn's pre-nudge activity — a mutating turn
+/// answering the prove-it ask with a read-only test run could then be
+/// aborted as a confident zero for doing exactly what the nudge asked.
+///
 /// Shared by [`recent_call_records`] (loop-detection evidence) and
-/// `driver::confident_zero` (turn-activity evidence for #1477): both need
-/// exactly this same window, and a second copy of the boundary rule would be
-/// a second place for it to drift out of sync with the first.
+/// `driver::confident_zero` (turn-activity evidence for #1477, and both
+/// gates' once-only scans): all need exactly this same window, and a second
+/// copy of the boundary rule would be a second place for it to drift out of
+/// sync with the first.
 pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
     messages
         .iter()
@@ -47,6 +56,7 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
                 && !crate::engine_markers::ENGINE_MARKERS
                     .iter()
                     .any(|marker| m.content.starts_with(marker))
+                && !super::confident_zero::is_engine_nudge(&m.content)
         })
         .map(|i| i + 1)
         .unwrap_or(0)
@@ -220,6 +230,34 @@ mod tests {
                 "{marker:?} is engine-written, so the prompt at index 1 still \
                  bounds the window — a scan starting after {marker:?} loses the \
                  evidence the consumer is about to read"
+            );
+        }
+    }
+
+    /// The once-per-turn completion nudges carry no bracketed marker, so the
+    /// table loop above cannot cover them — and a window that reset on one
+    /// erased the turn's pre-nudge activity from every consumer at once
+    /// (loop detection and the confident-zero tally). Fails before
+    /// `turn_start_index` read `is_engine_nudge`.
+    #[test]
+    fn an_engine_nudge_does_not_reset_the_turn_window() {
+        for nudge in [
+            super::super::confident_zero::PROVE_IT_PREFIX,
+            super::super::live_services::SERVICES_PREFIX,
+        ] {
+            let messages = vec![
+                CompletionMessage::system("sys"),
+                CompletionMessage::user("fix the flaky test"),
+                CompletionMessage::assistant("working"),
+                CompletionMessage::user(format!("{nudge} engine-authored ask")),
+                CompletionMessage::assistant("answering the ask"),
+            ];
+
+            assert_eq!(
+                turn_start_index(&messages),
+                2,
+                "{nudge:?} is engine-written, so the prompt at index 1 still \
+                 bounds the window"
             );
         }
     }

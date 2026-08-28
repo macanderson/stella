@@ -208,6 +208,50 @@ async fn a_turn_with_nothing_running_is_left_untouched() {
     );
 }
 
+/// A Length-truncated declaration reaches the service assertion once the
+/// continuation allowance is spent — and the declaration the assertion
+/// appends must be the elided form (`retained_partial`'s contract for
+/// everything history keeps of a truncated step), not the raw cut-off
+/// narration. Before the fix the raw partial rode into history verbatim,
+/// re-sent on every later step of the turn.
+#[tokio::test]
+async fn a_truncated_declaration_reaches_history_elided_not_raw() {
+    let tools = Serving::with(vec![service("proc-1", Some("docs"))]);
+    let long_partial = "the fix is coming ".repeat(200); // > 2000 chars, elidable
+    let truncated = || CompletionResultAlias {
+        upstream_provider: None,
+        text: long_partial.clone(),
+        tool_calls: vec![],
+        usage: CompletionUsage::reported_zero(),
+        model: "scripted".into(),
+        cost_usd: 0.0001,
+        finish_reason: Some(FinishReason::Length),
+    };
+    // start, four continuations, the allowance-spent truncation that reaches
+    // the assertion, then the answer.
+    let mut script = vec![start_call()];
+    script.extend((0..5).map(|_| truncated()));
+    script.push(text_result("Confirmed reachable. Leaving it running."));
+    let (outcome, messages, _) = run(&tools, script).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let question = messages
+        .iter()
+        .position(|m| m.content.contains("still running"))
+        .expect("the assertion fires on the allowance-spent truncation");
+    let declaration = &messages[question - 1];
+    assert_eq!(declaration.role, MessageRole::Assistant);
+    assert!(
+        declaration.content.contains("elided"),
+        "history must keep the elided form of a truncated declaration, not \
+         {} raw chars of cut-off narration",
+        declaration.content.len()
+    );
+}
+
 /// The bound. The service stays up (the model confirmed it should), so the
 /// executor reports it at the second declaration too — and the turn must
 /// still complete rather than looping the question forever. This is the
