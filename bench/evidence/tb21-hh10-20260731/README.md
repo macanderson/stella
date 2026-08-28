@@ -119,3 +119,66 @@ python bench/evidence/score_dev_baseline.py score \
 
 Both intervals are deterministic given the committed rows: the bootstrap is
 seeded (`20260729`, 50,000 draws) and Clopper–Pearson needs no seed.
+
+## The two spend figures, reconciled ($75.83 vs $78.25) — #2372
+
+Two committed extractions over this one run published different Arm A totals.
+Both are correct about what they measure, and **$78.25 is the canonical spend**.
+
+| extraction | figure | per solved task |
+| --- | --- | --- |
+| `score.json` → `descriptive.usd_total`, summing `trials.jsonl`'s `usd` | $75.8325 | $1.31 |
+| `docs/benchmarks/terminal-bench-2-1-glm-5-2.json`, summing the trajectories | $78.2467 | $1.35 |
+
+### What the difference is
+
+It is not spread across the run. Split the 89 trials by `accounting_state`:
+
+| trials | delta (trajectory − trial row) |
+| --- | --- |
+| 54 with `accounting_state: complete` | **−$0.0001** total; largest single task 4.9e-5 |
+| 35 with `accounting_state: incomplete` | **+$2.4143** total — the entire discrepancy |
+
+Every one of those 35 carries `exception_type: AgentTimeoutError`, and every
+one of them is higher in the trajectory extraction. The complete-accounting
+trials agree to within the fourth decimal the JSON stores, which is rounding.
+
+### The ruling, and why
+
+`trials.jsonl`'s `usd` is **the agent's own reported accounting**, and a run the
+harness kills on its timeout never reports the call that was in flight. The
+model was still billed for it. The trajectory extraction sums the calls that
+actually happened, so it captures that last one.
+
+So the trial rows **undercount by exactly the money spent on the calls 35
+timed-out trials were making when they were stopped**. $78.25 is what the run
+cost; $75.83 is what the agent got to report before it was killed.
+
+That is the unflattering direction, and it is the true one. It also means the
+already-published figure needs no correction: `docs/benchmarks/` and
+`website/public/presentations/BENCHMARK_METHODOLOGY.md` quote $78.25 / $1.35.
+
+### What was NOT changed
+
+`trials.jsonl` and `score.json` are preregistered history and are untouched.
+`descriptive.usd_total` still reads $75.8325, and that number is still the
+right answer to the question it asks — "what did the agents report spending" —
+which is a different question from "what did this run cost". Rewriting it would
+destroy the evidence that the two differ, which is the finding.
+
+Reproduce:
+
+```bash
+python3 - <<'PY'
+import json, pathlib
+d = json.loads(pathlib.Path("docs/benchmarks/terminal-bench-2-1-glm-5-2.json").read_text())
+docs = {r["task"]: r["stella"]["cost_usd"] for r in d["rows"]}
+tr = [json.loads(l) for l in
+      pathlib.Path("bench/evidence/tb21-hh10-20260731/trials.jsonl").read_text().splitlines() if l.strip()]
+trials = {t["task_name"].split("/", 1)[-1]: t for t in tr}
+for state in ("complete", "incomplete"):
+    d_ = sum(docs[k] - trials[k]["usd"] for k in docs
+             if (trials[k]["accounting_state"] == "incomplete") == (state == "incomplete"))
+    print(f"{state:11s} {d_:+.4f}")
+PY
+```
