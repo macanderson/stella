@@ -35,13 +35,14 @@ name: guard-self-tests
 # **`canary-self-tests`** — one suite, in its own job because it is the one that
 # compiles: scripts/main-canary.sh's `compile` row runs `cargo check`, and under
 # `--manifest-dir` that is a throwaway one-function crate rather than this
-# workspace. It is also the slow one — measured at 5m07s on 2026-08-28, of which
-# the fixture compiles are a small part: `--manifest-dir` redirects only the
-# `lockfile-sync` and `compile` rows, so every one of the suite's ~38 canary
-# invocations still runs `check-prose.py` and `check-file-size.sh` over the live
-# tree (4.7s and 3.7s each). #5417 is where that is being decided; neither
-# property belongs in the `self-tests` job above, which is toolchain-free and
-# seconds (#5356).
+# workspace. It is also the slow one: 8m16s on this runner and 5m07s on an M-series
+# laptop, both measured 2026-08-28. The fixture compiles are a small part of that.
+# `--manifest-dir` redirects only the `lockfile-sync` and `compile` rows, so every
+# one of the suite's ~38 canary invocations still runs `check-prose.py` and
+# `check-file-size.sh` over the live tree — 4.7s and 3.7s each on the laptop, which
+# accounts for essentially all of its 5m07s. #5417 is where that is being decided;
+# neither property belongs in the `self-tests` job above, which is toolchain-free
+# and seconds (#5356).
 #
 # No `paths:` filter, deliberately, and for a different reason than
 # wire-schema.yml and docs-guards.yml have one. Those two narrow to escape a
