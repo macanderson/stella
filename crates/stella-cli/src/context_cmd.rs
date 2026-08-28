@@ -196,9 +196,14 @@ pub enum ContextCmd {
         /// New mode; omit to show current governance, policy version, and
         /// every ledger enforcement grant.
         mode: Option<String>,
-        /// Enable proposer/approver separation (regulated mode).
-        #[arg(long)]
-        separation: bool,
+        /// Enable proposer/approver separation (regulated mode). `--separation
+        /// false` turns it off; omitting it leaves it as it is.
+        ///
+        /// `Option<bool>` rather than a flag, because absent and `false` must
+        /// not be the same request: as a bare flag, `stella context govern
+        /// regulated` silently turned an existing separation OFF (#5328).
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        separation: Option<bool>,
         /// Confirm a mode change without asking interactively.
         #[arg(long)]
         yes: bool,

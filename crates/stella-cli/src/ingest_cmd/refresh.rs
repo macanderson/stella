@@ -201,7 +201,7 @@ fn published_from_source(root: &Path, rel: &str) -> Vec<PublishedFile> {
 /// revokes any blocking grant the lineage held, which is correct: a retired
 /// record must not keep the authority to deny tool calls.
 fn record_retirement(root: &Path, rel: &str, claim: &PublishedClaim) -> Result<(), String> {
-    let governance = crate::context_records::read_governance(root);
+    let governance = crate::context_records::read_governance(root)?;
     crate::context_records::append_promotion(
         root,
         stella_core::records::promotion::PromotionEvent {

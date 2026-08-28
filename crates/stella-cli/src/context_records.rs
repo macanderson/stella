@@ -76,12 +76,42 @@ pub(crate) const GOVERNANCE_FILE: &str = ".stella/rules/governance.toml";
 const PROMOTION_LOCK: &str = ".stella/private/promotions.lock";
 
 /// Read the governance settings; absent file = solo defaults (§5.1).
-pub(crate) fn read_governance(root: &Path) -> stella_core::records::promotion::Governance {
+///
+/// **Absent is a default; unreadable is an error.** These two used to be the
+/// same answer, and the answer was `Solo` — the least governed tier — so one
+/// corrupt character in `governance.toml` silently switched off `validate`'s
+/// regulated check and `promote`'s separation check. The strictest-tier
+/// selector was the least defended artifact in the directory, while a broken
+/// `promotions.jsonl` beside it failed loudly (#5328).
+///
+/// A file that exists says the repository has an opinion about its own
+/// governance. Failing to parse it is a failure to read that opinion, and
+/// substituting the weakest one is the direction that cannot be recovered
+/// from: nothing downstream can tell it from a repository that chose `Solo`.
+pub(crate) fn read_governance(
+    root: &Path,
+) -> Result<stella_core::records::promotion::Governance, String> {
     let path = root.join(GOVERNANCE_FILE);
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| toml::from_str(&text).ok())
-        .unwrap_or_default()
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        // Only "it is not there" is the default. A permission error or an I/O
+        // failure is a file this process could not read, not one that is
+        // absent.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(stella_core::records::promotion::Governance::default());
+        }
+        Err(error) => {
+            return Err(format!("cannot read {}: {error}", path.display()));
+        }
+    };
+    toml::from_str(&text).map_err(|error| {
+        format!(
+            "{} is not readable governance policy: {error}\n\
+             Governance decides who may grant enforcement, so this is refused \
+             rather than defaulted — repair the file, or delete it to mean solo.",
+            path.display()
+        )
+    })
 }
 
 /// Write the governance settings. Callers ask the user first (§5.4) — this

@@ -553,3 +553,65 @@ fn a_promotion_grant_does_not_arm_a_record_a_plugin_shipped() {
         "the same grant must still arm the repository's own record"
     );
 }
+
+/// **Witness (#5328, door 1).** A `governance.toml` this build cannot parse is
+/// an error, not a silent demotion to solo.
+///
+/// Fails on the base, where the read was `.ok().and_then(parse).unwrap_or_default()`
+/// — so one corrupt character switched off `validate`'s regulated check and
+/// `promote`'s separation check, and nothing downstream could tell the result
+/// from a repository that had chosen `Solo`. The strictest-tier selector was
+/// the least defended artifact in the directory, while a broken
+/// `promotions.jsonl` beside it failed loudly.
+#[test]
+fn an_unparseable_governance_file_is_refused_rather_than_read_as_solo() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(RULES_DIR)).unwrap();
+    std::fs::write(
+        root.path().join(GOVERNANCE_FILE),
+        "mode = \"regulated\"\nseparation = tru",
+    )
+    .unwrap();
+
+    let read = read_governance(root.path());
+    let message = read.expect_err("a corrupt policy file must not read as a policy");
+    assert!(
+        message.contains("governance"),
+        "the refusal names what it could not read: {message}"
+    );
+}
+
+/// Absent still means solo — the default the spec gives (§5.1), and the half
+/// that must survive door 1's fix.
+///
+/// Without this, "fail closed" could be satisfied by refusing every repository
+/// that has never run `stella context govern`, which is nearly all of them.
+#[test]
+fn an_absent_governance_file_is_still_the_solo_default() {
+    let root = tempfile::tempdir().unwrap();
+
+    assert_eq!(
+        read_governance(root.path()).expect("absent is a default, not a failure"),
+        stella_core::records::promotion::Governance::default()
+    );
+}
+
+/// A file that parses is read as written, so the refusal above cannot be
+/// satisfied by refusing everything.
+#[test]
+fn a_well_formed_governance_file_is_read_as_written() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(RULES_DIR)).unwrap();
+    std::fs::write(
+        root.path().join(GOVERNANCE_FILE),
+        "mode = \"regulated\"\nseparation = true\n",
+    )
+    .unwrap();
+
+    let governance = read_governance(root.path()).expect("well-formed policy reads");
+    assert_eq!(
+        governance.mode,
+        stella_core::records::promotion::GovernanceMode::Regulated
+    );
+    assert!(governance.separation);
+}

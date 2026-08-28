@@ -209,7 +209,7 @@ fn retract_in_place(published: &mut Published) -> Result<(), String> {
 /// asserting a claim, and the same fold that drops any blocking grant the
 /// lineage held.
 fn record_retraction(workspace_root: &Path, lineage_id: &str, reason: &str) -> Result<(), String> {
-    let governance = crate::context_records::read_governance(workspace_root);
+    let governance = crate::context_records::read_governance(workspace_root)?;
     crate::context_records::append_promotion(
         workspace_root,
         stella_core::records::promotion::PromotionEvent {

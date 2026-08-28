@@ -431,7 +431,38 @@ pub fn run_keep(
             // The accountable supersession event (spec §4, #2728) — file
             // first, ledger second, and a ledger failure is loud: an
             // unrecorded supersession is what the ledger exists to prevent.
-            let governance = crate::context_records::read_governance(root);
+            let governance = crate::context_records::read_governance(root)?;
+            let approver = actor();
+            // The same separation check `promote` runs, and for the same
+            // reason: the latest-event fold drops any blocking grant the
+            // lineage held, so superseding an armed record revokes enforcement.
+            // That is the act separation governs, and this path used to perform
+            // it with `proposer: None` and no check at all (#5328).
+            //
+            // Scoped to a lineage that actually holds a grant, which is what
+            // keeps ordinary editing of an advisory record possible in a
+            // regulated repository. `promote` guards the transition INTO
+            // blocking; this guards the one that silently undoes it.
+            let holds_a_grant = stella_core::records::promotion::blocking_grants(
+                &crate::context_records::read_promotions(root)?,
+            )
+            .contains_key(&record.lineage_id);
+            let proposer = if holds_a_grant {
+                crate::context_cmd::govern::separation_cleared(
+                    root,
+                    &governance,
+                    &record.lineage_id,
+                    // The lineage id, because this `Record` carries no handle —
+                    // it is also what the ledger event is keyed by, so a human
+                    // reading the refusal can find the event it prevented.
+                    &record.lineage_id,
+                    &approver,
+                    "supersede its own enforced record",
+                    "make this change — it revokes a live blocking grant",
+                )?
+            } else {
+                None
+            };
             crate::context_records::append_promotion(
                 root,
                 stella_core::records::promotion::PromotionEvent {
@@ -441,8 +472,8 @@ pub fn run_keep(
                     lineage_id: record.lineage_id.clone(),
                     from: "active".to_string(),
                     to: "superseded".to_string(),
-                    approver: actor(),
-                    proposer: None,
+                    approver,
+                    proposer,
                     reason: format!(
                         "{old_id} superseded by {} via `stella context keep`",
                         record.record_id.as_deref().unwrap_or("<unstamped>")
