@@ -1177,6 +1177,13 @@ this before assuming two of them mean the same thing:
 - **Name things for what they are, not what they were.** If you rename a
   concept, chase it through comments and docs in the same PR — stale comments
   are treated as bugs in review.
+- **A code file may not sit beside a folder with the same name.**
+  `src/anthropic.rs` next to `src/anthropic/` is not allowed. Split the
+  file into modules inside the folder, and re-export them from
+  `anthropic/mod.rs` so every existing import keeps working. This is also
+  how a file near the size limit gets its room: more hierarchy under
+  `src/`, smaller files, same public names. Existing pairs are tracked for
+  cleanup; do not add new ones.
 - **Doc comments on public items**, and on any function whose *why* isn't
   obvious from its body. No comments that narrate the next line.
 - **No new dependencies casually.** Every new crate in `Cargo.toml` gets a

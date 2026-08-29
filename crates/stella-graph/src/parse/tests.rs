@@ -30,7 +30,7 @@ fn load_is_cached_process_wide() {
     let second = Grammars::load().expect("grammars compile");
     assert!(
         std::sync::Arc::ptr_eq(&first, &second),
-        "second load() must hand back the same Arc, not recompile (#4782)"
+        "second load() must hand back the same Arc, not recompile"
     );
 }
 

@@ -1101,3 +1101,114 @@ proptest::proptest! {
         proptest::prop_assert_eq!(parsed.origin, SkillOrigin::AutoCreated);
     }
 }
+
+// ---- #5335: a mined skill's description is vocabulary selection can match ----
+
+/// The lesson the witness below mines. Its discriminating words — `sqlx`,
+/// `directory` — sit past the 40 characters `slugify` keeps, so the candidate
+/// name cannot carry them and the description is the only place they can
+/// reach the scorer.
+const SQLX_LESSON: &str = "Always add a down migration to every schema change \
+                           that touches the sqlx migrations directory";
+
+/// **The witness (#5335).** A mined skill whose lesson is about sqlx
+/// migrations is selected for a prompt about sqlx migrations.
+///
+/// It was not, and the reason was structural rather than a tuning miss. The
+/// miner wrote `description: "Learned from N observations."` while
+/// `select_skills_reporting` scores `name + description` and nothing else, so
+/// a learned skill's entire searchable vocabulary was its 40-character slug
+/// plus two words that match no prompt ever written. The mechanism that mints
+/// skills and the mechanism that surfaces them were tuned against each other.
+#[test]
+fn a_mined_skill_is_selected_for_a_prompt_about_its_own_lesson() {
+    let obs: Vec<SkillObservation> = (1..=3).map(|i| observation(SQLX_LESSON, i)).collect();
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
+    assert_eq!(candidates.len(), 1);
+    let candidate = &candidates[0];
+
+    // The words the prompt will share are genuinely absent from the name, so
+    // this test cannot pass by accident through the slug.
+    assert!(
+        !candidate.name.contains("sqlx"),
+        "the slug truncates before `sqlx`, which is the whole premise: {}",
+        candidate.name
+    );
+
+    let skill = Skill {
+        name: candidate.name.clone(),
+        description: candidate.description.clone(),
+        domains: candidate.domains.clone(),
+        body: candidate.body.clone(),
+        origin: SkillOrigin::AutoCreated,
+        source_path: format!(".stella/skills/{}/SKILL.md", candidate.name),
+        contributed_by: None,
+    };
+
+    let selection = select_skills_reporting(
+        std::slice::from_ref(&skill),
+        "how should I write the sqlx migrations for this schema change",
+        &[],
+        &SelectionConfig::default(),
+    );
+    assert_eq!(
+        selection.selected.len(),
+        1,
+        "the mined skill must be reachable by its own subject matter; \
+         description was {:?}",
+        skill.description
+    );
+    assert!(
+        selection.selected[0]
+            .matched_terms
+            .contains(&"sqlx".to_string()),
+        "matched on {:?}",
+        selection.selected[0].matched_terms
+    );
+}
+
+/// The frontmatter writer emits `description:` on one line
+/// ([`render_skill_markdown`]), so a description carrying a newline would
+/// produce a `SKILL.md` that parses back as something else. The boilerplate it
+/// replaces was single-line by construction; a lesson's own words are not.
+#[test]
+fn a_mined_description_is_one_line_and_round_trips_through_the_file() {
+    let lesson = "Prefer `ripgrep` over grep.\nIt is faster\r\nand respects .gitignore.";
+    let obs: Vec<SkillObservation> = (1..=3).map(|i| observation(lesson, i)).collect();
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
+    assert_eq!(candidates.len(), 1);
+    let candidate = &candidates[0];
+    assert!(
+        !candidate.description.contains('\n') && !candidate.description.contains('\r'),
+        "a multi-line description corrupts the frontmatter: {:?}",
+        candidate.description
+    );
+
+    let rendered = render_skill_markdown(candidate);
+    let parsed = skill_from_file(".stella/skills/x/SKILL.md", &rendered).unwrap();
+    assert_eq!(parsed.description, candidate.description);
+    assert_eq!(parsed.origin, SkillOrigin::AutoCreated);
+}
+
+/// The provenance the description used to carry is not lost — it moves into
+/// the written file, where a person reading the skill can still see how many
+/// observations minted it and whether one was salient.
+#[test]
+fn the_written_skill_still_records_how_many_observations_minted_it() {
+    let obs: Vec<SkillObservation> = (1..=3).map(|i| observation(SQLX_LESSON, i)).collect();
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
+    let rendered = render_skill_markdown(&candidates[0]);
+    assert!(
+        rendered.contains("3 observation"),
+        "the occurrence count must survive somewhere a reader can find it:\n{rendered}"
+    );
+}
+
+/// A one-word lesson has no sentence to cut and must still describe itself
+/// rather than falling back to prose no prompt matches.
+#[test]
+fn a_short_lesson_becomes_its_own_description() {
+    let obs: Vec<SkillObservation> = (1..=3).map(|i| observation("use pnpm", i)).collect();
+    let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
+    assert_eq!(candidates[0].description, "use pnpm");
+}

@@ -236,8 +236,9 @@ pub(crate) struct OpenAnchor {
     pub edge_id: i64,
     /// The anchored node's `uri`, e.g. `file://stella-cli/src/agent.rs`.
     pub uri: String,
-    /// The anchoring memory's content, for reporting which memory goes stale.
-    pub memory: String,
+    /// The anchoring record's content — a memory's text or an episode's
+    /// summary — for reporting which record goes stale.
+    pub source: String,
 }
 
 /// Every `rel` anchor still believed *and* still holding in the world.
@@ -265,7 +266,7 @@ pub(crate) fn open_anchors(conn: &Connection, rel: &str) -> Result<Vec<OpenAncho
         Ok(OpenAnchor {
             edge_id: r.get(0)?,
             uri: r.get(1)?,
-            memory: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            source: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
         })
     })?;
     let mut out = Vec::new();

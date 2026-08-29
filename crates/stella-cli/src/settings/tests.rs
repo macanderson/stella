@@ -10,6 +10,7 @@ mod auto_trust_project;
 mod private_state;
 mod toml;
 mod trust;
+mod voice;
 
 use super::*;
 

@@ -647,6 +647,21 @@ pub enum Inbound {
     /// refused transcription request). Ingest returns the voice state to
     /// rest and raises `reason` as a transient notice.
     VoiceFailed { reason: String },
+    /// Dictation was switched on, off, or between modes by `/voice`, which
+    /// runs on the driver side and has just persisted the same values to
+    /// settings.
+    ///
+    /// Without this the deck would keep the enablement and mode it read at
+    /// startup, so `/voice tap` would report success and change nothing until
+    /// the next session — and "first use is one command" is the whole point
+    /// of the command (#5347). Any gesture in flight is returned to rest:
+    /// the keys mean something different the instant the mode changes, and a
+    /// half-finished hold folded by tap-mode rules is a capture nobody can
+    /// stop.
+    VoiceConfig {
+        enabled: bool,
+        mode: crate::voice::VoiceMode,
+    },
 }
 
 // The ISSUES tab's read models. Re-exported rather than moved behind a

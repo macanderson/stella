@@ -696,14 +696,16 @@ fn a_touched_path_that_is_not_a_file_is_not_an_anchor() {
     );
 }
 
-/// **Witness (#3437).** One drop line per evicted candidate, whatever its
-/// source, each carrying the remedy its own channel answers to.
+/// **Witness (#3437).** Every dropped source reaches the person watching the
+/// run with the remedy its own channel answers to — and memory drops reach
+/// them as ONE summary line, not one line per evicted memory repeating the
+/// same remedy under an internal id.
 ///
 /// Fails on base, where `report_record_drops` filtered `SteeringSet::dropped`
 /// to `SteeringSource::Record` and emitted through a single producer that hard-
 /// coded the record channel's precedence advice. A skill that lost its seat
 /// every turn and a frame the recall host's merge evicted were both queryable
-/// on the ledger (#3358) and said nothing to the person watching the run.
+/// on the ledger and said nothing to the person watching the run.
 ///
 /// The two skill classes are the part that needs care: a skill cut by the
 /// section's own token budget appears in `selected` **and** `dropped` by
@@ -743,17 +745,30 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
     };
 
     let mut lines = Vec::new();
-    crate::memory::recall::report_steering_drops(&set, |message| lines.push(message));
+    crate::memory::recall::report_steering_drops(&set, 1200, |message| lines.push(message));
 
-    assert_eq!(lines.len(), 4, "one line per reportable source: {lines:?}");
+    assert_eq!(
+        lines.len(),
+        4,
+        "one summary for the memory drops, then one line per remaining \
+         reportable source: {lines:?}"
+    );
     let joined = lines.join("\n");
     assert!(
-        lines[0].contains("^deploy-policy") && lines[0].contains("raise its precedence"),
-        "the record channel's own sentence is unchanged: {joined}"
+        lines[0].contains("1 memories did not fit")
+            && lines[0].contains("1200-token retrieval budget")
+            && lines[0].contains("context.retrieval.max_tokens in stella.toml"),
+        "memory drops are one summary line naming the count, the budget the \
+         turn ran with, and the remedy — not one line per memory under an \
+         internal id: {joined}"
     );
     assert!(
-        lines[1].contains("nod_evicted") && lines[1].contains("`context.retrieval.max_tokens`"),
-        "a frame the merge evicted names the retrieval budget: {joined}"
+        !joined.contains("nod_evicted"),
+        "the summary does not leak the internal handle a user cannot act on: {joined}"
+    );
+    assert!(
+        lines[1].contains("^deploy-policy") && lines[1].contains("raise its precedence"),
+        "the record channel's own sentence is unchanged: {joined}"
     );
     assert!(
         lines[2].contains("seat-loser") && lines[2].contains("`skills.max_skills`"),
@@ -770,4 +785,68 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
         !joined.contains("bash"),
         "no source invents a line it has no producer for: {joined}"
     );
+}
+
+/// **Witness (#5444, frame-query half).** The host merge's drop report is one
+/// summary line per class — never one line per evicted frame repeating the
+/// same remedy under a citation label.
+///
+/// Fails on base, where the `RequiredOverBudget` loop in
+/// `recalled_frames_anchored` formatted one line per dropped frame
+/// ("recall could not fit an anchored frame: {label} ({cost} tokens) …") and
+/// ordinary budget evictions said nothing at all. The merge's own drop
+/// *shapes* are exercised where they are produced (the CGP composition
+/// conformance run in `contextgraph::tests`); what is pinned here is the
+/// report's shape, which is this module's own contract.
+#[test]
+fn the_merge_drop_report_is_one_summary_line_per_class() {
+    use crate::contextgraph::HostDroppedFrame;
+
+    fn evicted(id: &str, reason: stella_context::DropReason) -> HostDroppedFrame {
+        HostDroppedFrame {
+            provider: "local".into(),
+            id: id.into(),
+            citation_label: format!("[{id}]"),
+            token_cost: 120,
+            reason,
+        }
+    }
+
+    let dropped = vec![
+        evicted("nod_a", stella_context::DropReason::TokenBudget),
+        evicted("nod_b", stella_context::DropReason::TokenBudget),
+        evicted("nod_c", stella_context::DropReason::TokenBudget),
+        evicted("nod_d", stella_context::DropReason::TokenBudget),
+        evicted("nod_e", stella_context::DropReason::TokenBudget),
+        evicted("anchored", stella_context::DropReason::RequiredOverBudget),
+        // A count-limit eviction is not budget pressure: advising a bigger
+        // token budget for it would be a remedy that cannot help.
+        evicted("over_count", stella_context::DropReason::FrameCount),
+    ];
+
+    let mut lines = Vec::new();
+    crate::memory::recall::report_budget_drops(&dropped, 1200, &mut |m| lines.push(m));
+
+    assert_eq!(
+        lines.len(),
+        2,
+        "one line per budget class, not one per frame: {lines:?}"
+    );
+    assert!(
+        lines[0].contains("1 anchored frame(s)") && lines[0].contains("1200-token budget"),
+        "the required-over-budget class is named first, with the budget: {lines:?}"
+    );
+    assert_eq!(
+        lines[1],
+        "5 memories did not fit this turn's 1200-token retrieval budget — raise \
+         context.retrieval.max_tokens in stella.toml to include them",
+        "the exact line a user reads: count, budget, remedy, no internal id"
+    );
+    let joined = lines.join("\n");
+    for id in ["nod_a", "nod_b", "nod_c", "nod_d", "nod_e", "over_count"] {
+        assert!(
+            !joined.contains(id),
+            "no per-frame handle leaks into the summary: {joined}"
+        );
+    }
 }

@@ -1,122 +1,36 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/main-canary.sh (#3332).
+# The hermetic tests for scripts/main-canary.sh (#3332, split at #5356).
 #
-# Hermetic: the red cases drive the canary at a throwaway workspace via
-# --manifest-dir, and every announcing case runs under --dry-run, so nothing
-# here needs a network, a GH_TOKEN, or the repository's real issues. A monitor
-# that files issues is precisely the kind of script you cannot test by running
-# it for real.
+# Every case here is decided by a fixture tree under `--manifest-dir`, and every
+# announcing case runs under `--dry-run`, so nothing needs a network, a
+# GH_TOKEN, or the repository's real issues. A monitor that files issues is
+# precisely the kind of script you cannot test by running it for real.
+#
+# Hermetic in the sense that matters for CI: each case asserts something about
+# what the CANARY does, so it holds whatever `main` is red on. The canary's
+# `file-size` and `prose` rows still read the live tree — they take no
+# `--manifest-dir` — but a fixture that is already red stays red whatever those
+# two report, and a needle asserted about the fixture's own failure is there
+# either way. The cases that expect a GREEN verdict cannot say that, and live in
+# scripts/test-main-canary-live.sh.
 #
 # The cases that matter are the announcing branches. A canary that cannot be
-# shown to open an issue when main is red, and to CLOSE it when main recovers,
-# is indistinguishable from one that always says "green" — and a monitor
-# trusted on that basis is worse than no monitor, because it is also an excuse
-# not to look.
+# shown to open an issue when main is red is indistinguishable from one that
+# always says "green" — and a monitor trusted on that basis is worse than no
+# monitor, because it is also an excuse not to look. The recovery half of that
+# argument — closing the issue when main comes back — needs a green verdict, so
+# it is the live suite's.
+#
+# Run: ./scripts/test-main-canary.sh   (or `make main-canary-test`, which runs
+# both suites)
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-canary="$repo_root/scripts/main-canary.sh"
+# shellcheck source=scripts/lib/main-canary-harness.sh
+. "$(dirname "$0")/lib/main-canary-harness.sh"
 
-if ! command -v cargo >/dev/null 2>&1; then
-  echo "skip test-main-canary — no cargo toolchain on PATH"
-  exit 0
-fi
-
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-
-pass=0
-fail=0
-
-# A minimal, network-free workspace at $1 whose lock matches its manifests.
-make_workspace() {
-  dir="$1"
-  mkdir -p "$dir/crates/demo/src"
-  cat >"$dir/Cargo.toml" <<'TOML'
-[workspace]
-members = ["crates/demo"]
-resolver = "2"
-
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-TOML
-  cat >"$dir/crates/demo/Cargo.toml" <<'TOML'
-[package]
-name = "demo"
-version.workspace = true
-edition.workspace = true
-TOML
-  echo 'pub fn demo() {}' >"$dir/crates/demo/src/lib.rs"
-  (cd "$dir" && cargo generate-lockfile --offline >/dev/null 2>&1)
-}
-
-expect() {
-  name="$1"
-  want_code="$2"
-  needle="$3"
-  shift 3
-  set +e
-  out="$("$canary" "$@" 2>&1)"
-  code=$?
-  set -e
-  if [ "$code" -ne "$want_code" ]; then
-    echo "FAIL  $name — exit $code, wanted $want_code"
-    printf '      %s\n' "$out"
-    fail=$((fail + 1))
-    return
-  fi
-  case "$out" in
-  *"$needle"*) ;;
-  *)
-    echo "FAIL  $name — output did not contain: $needle"
-    printf '      %s\n' "$out"
-    fail=$((fail + 1))
-    return
-    ;;
-  esac
-  echo "ok    $name"
-  pass=$((pass + 1))
-}
-
-refute() {
-  name="$1"
-  needle="$2"
-  shift 2
-  set +e
-  out="$("$canary" "$@" 2>&1)"
-  set -e
-  case "$out" in
-  *"$needle"*)
-    echo "FAIL  $name — output should NOT have contained: $needle"
-    printf '      %s\n' "$out"
-    fail=$((fail + 1))
-    ;;
-  *)
-    echo "ok    $name"
-    pass=$((pass + 1))
-    ;;
-  esac
-}
-
-# ── green ─────────────────────────────────────────────────────────────────
-make_workspace "$tmp/clean"
-expect "a composing tree passes" 0 "OK — main composes green" --manifest-dir "$tmp/clean"
-
-# A green run must not file anything. This is the case that keeps the canary
-# worth reading: a monitor that comments on healthy days gets muted.
-refute "a green run announces nothing" "gh issue create" \
-  --announce --dry-run --manifest-dir "$tmp/clean"
-
-# The prose row RUNS, rather than merely being present in the checks array
-# (#4828). It cannot be exercised the way `compile` and `lockfile-sync` are:
-# those two take `--manifest-dir` and can be pointed at a broken fixture,
-# while `check-prose` reads the live tree and has no such switch — the same
-# reason `file-size` has no red fixture case here either. So the assertion
-# available is that the row reports its verdict at all, which is exactly what
-# was missing when the canary called a prose-red `main` green.
-expect "the prose row runs and reports" 0 "ok   prose" --manifest-dir "$tmp/clean"
+require_cargo test-main-canary
+canary_scratch
 
 # ── red: the 2026-08-16 incident ──────────────────────────────────────────
 # The shared-cell shape: the version moved and the lock did not. Both PRs that
@@ -205,6 +119,10 @@ refute "and never claims the break started there" "canary found \`main\` broken 
 # reds every other PR, so the repair is what they are all waiting on — and it
 # used to arrive without one. #5171 could not pass its own checks against
 # #5166 until the section was appended by hand.
+#
+# These four are why this suite had to leave the live-tree file (#5356): they
+# guard against reintroducing that deadlock, they are decided entirely by the
+# fixture, and until the split no workflow ran them.
 expect "the issue carries a Definition of done" 1 "### Definition of done" \
   --announce --dry-run --manifest-dir "$tmp/red"
 # One box per FAILING check, named. A generic box would not tell the repair
@@ -215,9 +133,6 @@ expect "with a box naming the check that failed" 1 \
   --announce --dry-run --manifest-dir "$tmp/red"
 expect "the compile failure names compile, not the lockfile" 1 \
   "- [ ] \`compile\` passes on a fresh" \
-  --announce --dry-run --manifest-dir "$tmp/nocompile"
-refute "and offers no box for a check that passed" \
-  "- [ ] \`prose\` passes on a fresh" \
   --announce --dry-run --manifest-dir "$tmp/nocompile"
 # Every box must be tickable BEFORE the merge, or the deadlock is traded for a
 # PR that can never satisfy its own DoD: the gate reads the boxes on the PR,
@@ -235,15 +150,6 @@ expect "the section still says who closes the issue" 1 \
 expect "the label is provisioned before the issue" 1 "gh label create main-red" \
   --announce --dry-run --manifest-dir "$tmp/red"
 
-# ── recovery: the branch that keeps this worth reading ────────────────────
-# A canary that only ever opens issues becomes a stale-issue generator and gets
-# muted, at which point it is worse than nothing. Recovery only runs when an
-# issue is already open, hence --fixture-open-issue.
-expect "main going green closes the open issue" 0 "gh issue close 42" \
-  --announce --dry-run --fixture-open-issue 42 --manifest-dir "$tmp/clean"
-expect "and says so on the way out" 0 "main recovered — closed #42" \
-  --announce --dry-run --fixture-open-issue 42 --manifest-dir "$tmp/clean"
-
 # ── a red main that stays red is ONE issue, not one per merge ─────────────
 # Ten merges against a broken tree must produce ten comments on one issue. The
 # opposite — an issue per run — is how a monitor earns a mute filter.
@@ -253,9 +159,10 @@ refute "and does not open a second issue" "gh issue create" \
   --announce --dry-run --fixture-open-issue 42 --manifest-dir "$tmp/red"
 
 # ── argument handling ─────────────────────────────────────────────────────
+# These three are decided before any check runs, so no fixture is needed at all.
 # --dry-run alone reads as a configured monitor while reporting to nobody.
 expect "--dry-run without --announce is refused" 2 "only means something with --announce" \
-  --dry-run --manifest-dir "$tmp/clean"
+  --dry-run --manifest-dir "$tmp/red"
 expect "an unknown argument exits 2" 2 "unknown argument" --nope
 expect "--label with no value exits 2" 2 "--label needs a value" --label
 
@@ -282,6 +189,4 @@ else
   fail=$((fail + 1))
 fi
 
-echo
-echo "test-main-canary: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+canary_tally test-main-canary

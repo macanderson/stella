@@ -879,6 +879,66 @@ pub struct SkillRejection {
 /// against. Those three must agree byte-for-byte or a rejection silently
 /// misses — and `migration_contract::candidate_identity_is_pinned_to_a_literal`
 /// is the literal all three are pinned to.
+/// The longest a mined description may be. Descriptions are one-liners —
+/// rendered into a single frontmatter field, listed in a fixed-width column,
+/// and read by the scorer as a bag of words, where every extra term the
+/// prompt does not share lowers `coverage`'s ratio. A lesson longer than this
+/// is cut at a word boundary.
+const DESCRIPTION_MAX_CHARS: usize = 200;
+
+/// The shortest a first sentence may be before a `.`/`!`/`?` is believed to
+/// end it. Without this, a lesson opening `e.g. ` or `cf. ` describes itself
+/// in four characters. Any real sentence clears it, so the guard costs
+/// nothing it was not meant to catch.
+const SENTENCE_MIN_CHARS: usize = 24;
+
+/// The one-line description a mined candidate is **found** by.
+///
+/// [`select_skills_reporting`] scores `name + description` and nothing else,
+/// so this string is half of a learned skill's entire searchable vocabulary —
+/// and the other half, [`candidate_id`], is a slug `slugify` truncates at 40
+/// characters. This used to be `"Learned from N observations."`: two words
+/// that match no prompt anyone will ever write, occupying the one field that
+/// decides whether the skill is reachable at all. A skill was therefore
+/// findable only through whatever fragment of its lesson survived those 40
+/// characters — the mechanism that mints skills and the mechanism that
+/// surfaces them tuned against each other (#5335).
+///
+/// So the lesson describes itself: its first sentence, whitespace collapsed
+/// (the frontmatter writer emits `description:` on one line, and a lesson
+/// mined from a multi-line note would otherwise produce a `SKILL.md` that
+/// parses back as something else), capped at [`DESCRIPTION_MAX_CHARS`].
+///
+/// The provenance it replaced is not lost — [`render_skill_markdown`] writes
+/// it into the file, which is where a person reading the skill looks for it
+/// and where no scorer is charged for it.
+fn candidate_description(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut end = flat.len();
+    let mut taken = 0usize;
+    for (i, ch) in flat.char_indices() {
+        taken += 1;
+        if matches!(ch, '.' | '!' | '?') && taken >= SENTENCE_MIN_CHARS {
+            let rest = &flat[i + ch.len_utf8()..];
+            if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                end = i;
+                break;
+            }
+        }
+    }
+    let sentence = flat[..end].trim_end_matches(['.', '!', '?', ' ']);
+    if sentence.chars().count() <= DESCRIPTION_MAX_CHARS {
+        return sentence.to_string();
+    }
+    // Cut at a word boundary rather than mid-word: a half word is neither
+    // readable nor a term the scorer can match.
+    let capped: String = sentence.chars().take(DESCRIPTION_MAX_CHARS).collect();
+    match capped.rsplit_once(char::is_whitespace) {
+        Some((head, _)) if !head.is_empty() => format!("{head}…"),
+        _ => capped,
+    }
+}
+
 pub fn candidate_id(text: &str) -> String {
     format!(
         "{}-{}",
@@ -971,15 +1031,13 @@ pub fn mine_skill_candidates(
             })
             .collect();
 
-        let plural = if occurrences == 1 { "" } else { "s" };
-        let salience_note = if salient {
-            " (includes a salient signal)"
-        } else {
-            ""
-        };
         candidates.push(SkillCandidate {
             name: candidate_id(&text),
-            description: format!("Learned from {occurrences} observation{plural}{salience_note}."),
+            // The lesson's own words, so the skill is reachable by its
+            // subject matter (#5335). The occurrence count that used to sit
+            // here is written into the file instead — see
+            // `candidate_description` and `render_skill_markdown`.
+            description: candidate_description(&text),
             domains,
             occurrences,
             salient,
@@ -1001,7 +1059,8 @@ pub fn mine_skill_candidates(
 /// Render the exact `SKILL.md` content for `candidate` — the same frontmatter
 /// shape [`skill_from_file`] parses back, including the `origin: auto` marker
 /// so a reload tags it [`SkillOrigin::AutoCreated`], plus an `## Evidence`
-/// section listing the backing occurrences. Writing this to disk is the I/O
+/// section opening with the provenance line and listing the backing
+/// occurrences. Writing this to disk is the I/O
 /// half `stella-cli` owns; this half is pure and round-trips through the
 /// parser above.
 pub fn render_skill_markdown(candidate: &SkillCandidate) -> String {
@@ -1014,7 +1073,20 @@ pub fn render_skill_markdown(candidate: &SkillCandidate) -> String {
     out.push_str("origin: auto\n");
     out.push_str("---\n\n");
     out.push_str(&candidate.body);
-    out.push_str("\n\n## Evidence\n\n");
+    // The provenance line, which the `description` field used to carry until
+    // #5335 gave that field to the lesson's own vocabulary. Here it costs the
+    // scorer nothing and sits where a person reading the skill looks for it,
+    // directly above the occurrences it counts.
+    let plural = if candidate.occurrences == 1 { "" } else { "s" };
+    let salience_note = if candidate.salient {
+        " (includes a salient signal)"
+    } else {
+        ""
+    };
+    out.push_str(&format!(
+        "\n\n## Evidence\n\nLearned from {} observation{plural}{salience_note}.\n\n",
+        candidate.occurrences
+    ));
     for e in &candidate.evidence {
         out.push_str(&format!(
             "- `{}` (observed at {}): {}\n",

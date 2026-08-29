@@ -14,7 +14,7 @@
 │ │  e               edit the selected skill                                       !cmd            run a shell command NOW (skips the queue)                 │ │
 │ │  p               pin / unpin                                                   /               slash commands — ↑↓ pick · tab completes · ⏎ runs         │ │
 │ │  n               new skill — drafted by the LLM                                ctrl-v          paste — a copied image is attached to the prompt          │ │
-│ │  ctrl-o          preview                                                       space (hold)    dictate — keep holding until listening, release to inser… │ │
+│ │  ctrl-o          preview                                                       space           dictate — hold until listening, or tap to start and stop… │ │
 │ │  ctrl-x ×2       delete (press twice to confirm)                               ctrl-a          SUB-AGENTS — o open · n nudge · f flag · x stop · xx del… │ │
 │ │  type            search skills                                                 ctrl-t          the queue editor                                          │ │
 │ │                                                                                ctrl-e          SESSIONS — every session on this machine                  │ │

@@ -1,4 +1,9 @@
-//! The staleness scan: which memory anchors stopped holding, and recording it.
+//! The staleness scan: which anchors stopped holding, and recording it.
+//!
+//! Covers memory anchors (the files a lesson is about) and episode anchors
+//! (the files a turn touched, #5338) on the same terms — the question it asks
+//! is whether the file is still there, which does not depend on which kind of
+//! record pointed at it.
 //!
 //! This is the *policy* half of #775. `stella-context` owns the semantics —
 //! ending world validity is not supersession, and never deletes — while the
@@ -18,7 +23,9 @@ use stella_context::{Clock, ContextStore, SystemClock};
 struct StaleAnchor {
     edge_id: i64,
     path: String,
-    memory: String,
+    /// The anchoring record's text — a memory's content or an episode's
+    /// summary — so the report can name what goes stale.
+    source: String,
 }
 
 /// Walk the open `observed_in` anchors and report — or end — the ones whose
@@ -57,15 +64,12 @@ pub(crate) fn scan_stale_anchors(
         .map(|a| StaleAnchor {
             edge_id: a.edge_id,
             path: a.path,
-            memory: a.memory,
+            source: a.source,
         })
         .collect();
 
     if stale.is_empty() {
-        println!(
-            "\n  {} every memory anchor still points at a file",
-            "✓".green()
-        );
+        println!("\n  {} every anchor still points at a file", "✓".green());
         return Ok(());
     }
 
@@ -78,7 +82,7 @@ pub(crate) fn scan_stale_anchors(
         println!(
             "    {} — {}",
             a.path.yellow(),
-            a.memory.chars().take(60).collect::<String>().dimmed()
+            a.source.chars().take(60).collect::<String>().dimmed()
         );
     }
 

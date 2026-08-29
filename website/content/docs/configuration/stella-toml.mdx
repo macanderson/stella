@@ -377,8 +377,12 @@ mid_turn_prompt = "queue"   # queue | ask | spawn
 
 ### `[voice]`
 
-Push-to-talk dictation: hold Space in the composer, speak, release, and the transcript
-lands at the cursor. Whole-block last-wins, like `[ui]`. Off by default — recording
+Dictation from the composer: speak, and the transcript lands at the cursor. Hold Space
+through a warmup and release, or set `mode = "tap"` to tap Space on an empty prompt to
+start and tap again to stop — the mode to pick when holding Space never starts anything,
+because your terminal reports no key releases and OS key repeat is off. `/voice tap`,
+`/voice hold` and `/voice off` write these fields for you. Whole-block last-wins, like
+`[ui]`. Off by default — recording
 streams microphone audio to the provider named below, an egress you opt into by name.
 The provider id resolves through `[providers]` (or the built-in table) for its endpoint
 and API key, so this section holds no credential of its own; any provider with an
@@ -387,6 +391,7 @@ OpenAI-compatible `audio/transcriptions` endpoint works, a local Whisper server 
 ```toml title="stella.toml"
 [voice]
 enabled = true
+mode = "hold"                # hold | tap
 provider = "openai"          # any [providers] entry with a compatible base_url
 model = "whisper-1"
 language = "en"              # BCP 47 hint; omit to auto-detect

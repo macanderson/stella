@@ -478,17 +478,27 @@ the theme removes the `ui` key rather than leaving an empty `{}` behind.
 
 ## The `voice` section
 
-Push-to-talk dictation: hold Space in the composer, speak, release, and the transcript
-lands at the cursor. Off by default — recording streams microphone audio to the provider
-named below, an egress you opt into by name. The provider id resolves through
-`providers` (or the built-in table) for its endpoint and API key, so this section holds
-no credential of its own; any provider with an OpenAI-compatible `audio/transcriptions`
-endpoint works, a local Whisper server included.
+Dictation from the composer: speak, and the transcript lands at the cursor. Off by
+default — recording streams microphone audio to the provider named below, an egress you
+opt into by name. The provider id resolves through `providers` (or the built-in table)
+for its endpoint and API key, so this section holds no credential of its own; any
+provider with an OpenAI-compatible `audio/transcriptions` endpoint works, a local
+Whisper server included.
+
+`/voice tap`, `/voice hold` and `/voice off` write both fields below and take effect in
+the session that runs them, so nothing here has to be edited by hand.
 
 <CardGrid size="md">
   <OptionCard name="enabled" defaultValue="false">
-    Whether holding Space records at all. Until this is `true`, a held spacebar just
-    types spaces.
+    Whether Space records at all. Until this is `true`, the spacebar just types spaces.
+  </OptionCard>
+  <OptionCard name="mode" defaultValue="hold">
+    Which gesture dictates. `hold` holds Space through a short warmup and stops on
+    release; `tap` taps Space on an empty prompt to start and taps again to stop.
+
+    Pick `tap` if holding Space never starts a recording: hold mode needs either a
+    terminal that reports key releases or OS key repeat, and with neither one a hold
+    cannot be told from a tap. Tap mode needs neither.
   </OptionCard>
   <OptionCard name="provider" defaultValue="openai">
     The provider id whose `audio/transcriptions` endpoint transcribes. Any `providers`
@@ -504,7 +514,7 @@ endpoint works, a local Whisper server included.
 
 ```json title="<workspace>/.stella/settings.json"
 {
-  "voice": { "enabled": true, "provider": "openai", "model": "whisper-1" }
+  "voice": { "enabled": true, "mode": "tap", "provider": "openai", "model": "whisper-1" }
 }
 ```
 

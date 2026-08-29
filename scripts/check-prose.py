@@ -32,6 +32,16 @@ add a pair, so the only way past a failure is to delete the prose. Per
 pattern rather than per file so a file cannot pay for new prose of one kind
 by deleting prose of another.
 
+Keyed by path, which means a file that MOVES takes its debt with it or the
+same sentences are read as newly written the moment they land somewhere else.
+`--update` therefore asks git what was renamed and carries each entry to the
+file's new path first (`renamed_paths`). The ratchet is unchanged by this: a
+carried entry still goes through the same `min`, so a move can lower a count
+and never raise one, and a genuinely new file still starts at zero. Without
+it, splitting a module means rewording prose nobody was editing — #5420 hit
+this and had to hand-edit the baseline, which is the one thing this file is
+supposed to make unnecessary.
+
 Adding a pattern is the one case a count legitimately goes up, and
 `--adopt=<name>` is the only door: it records that pattern's pre-existing
 hits and refuses to touch any other pattern's numbers, or to run twice for
@@ -176,6 +186,34 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         re.compile(r"(?:^|[.;:!?]\s+)[Ss]ee #\d+\.?\s*$"),
         "say what the issue decided; keep the number beside it",
     ),
+    (
+        "issue-reference",
+        # An issue number in prose sends the reader to a tracker to find out
+        # what the sentence means. The sentence must say it instead. Tracking
+        # markers (TODO and friends) keep their numbers: a gate requires them
+        # there, and they are bookkeeping, not explanation.
+        re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #)).*?(#\d{2,})"),
+        "say the fact; drop the issue number from the prose",
+    ),
+    (
+        "historical-reference",
+        # Prose about what the code did before. The reader has today's code;
+        # yesterday's belongs in git history and the tracker, not in comments
+        # they must read past.
+        re.compile(
+            r"\b[Nn]o longer\b|\b[Pp]reviously\b|\b[Hh]istorically\b"
+            r"|\b[Ww]as once\b|\b[Bb]ack when\b"
+            r"|\b[Tt]he old (?:behaviou?r|way|code|shape|design)\b"
+            r"|(?<!is )(?<!be )(?<!are )(?<!was )(?<!were )(?<!een )\b[Uu]sed to\b"
+        ),
+        "delete the history; describe what the code does now",
+    ),
+    (
+        "complex-word",
+        # Words with a plain replacement. Say dependency, rule, unrelated.
+        re.compile(r"\b[Cc]oncretions?\b|\b[Rr]eif(?:y|ies|ied|ication)\b|\b[Oo]rthogonal(?:ly|ity)?\b"),
+        "use the plain word: dependency, rule, unrelated",
+    ),
 ]
 
 HEADER = """\
@@ -229,6 +267,46 @@ DENSITY_HEADER = """\
 # many sentences. A file can be entirely within the first and three times
 # longer than it needs to be.
 """
+
+
+def renamed_paths(root: Path) -> dict[str, str]:
+    """Old path -> new path, for every file git sees as renamed against HEAD.
+
+    Only `--update` consults this. The plain check judges the tree as it
+    stands, so a move fails until someone runs `--update` — the same workflow
+    the file-size ratchet has.
+
+    Fails open at every unknown (no git, no HEAD, an unreadable tree): an
+    empty map means no entry is carried, which is the behaviour this had
+    before, so a broken git can never turn a red gate green.
+
+    Detection is git's, not ours, which is why the move must be staged —
+    `git mv`, or `git add` after a plain `mv`. An unstaged move looks like a
+    delete plus an untracked file, and nothing can honestly pair those.
+
+    It is also why a move that rewrites most of the file carries nothing: git
+    reports a delete beside an add once similarity drops far enough, and there
+    is no rename to follow. That is the right answer rather than a gap — a
+    file rewritten in transit is new prose, and it should be read as new.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "-M", "--name-status", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    moved: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) == 3 and fields[0].startswith("R"):
+            moved[fields[1]] = fields[2]
+    return moved
 
 
 def tracked_files(root: Path) -> list[str]:
@@ -538,6 +616,23 @@ def main() -> int:
         return 0
 
     if "--update" in flagset:
+        # A moved file's debt follows it, so the same sentences in a new home
+        # are not read as newly written. Applied before anything else looks at
+        # `baseline`, so the carried entry goes through the identical `min`
+        # below and a move can still only lower a count.
+        moved = renamed_paths(root)
+        if moved:
+            baseline = {
+                (moved.get(path, path), pattern): n
+                for (path, pattern), n in baseline.items()
+            }
+            carried = sorted(
+                (old, new)
+                for old, new in moved.items()
+                if any(path == new for path, _ in baseline)
+            )
+            for old, new in carried:
+                print(f"check-prose: carried {old} -> {new}")
         # A pair absent from the baseline is held to zero, so `.get(pair, 0)`
         # is what makes --update refuse to grandfather a first-time offender.
         merged = {p: min(n, baseline.get(p, 0)) for p, n in per_pair.items()}
@@ -555,7 +650,11 @@ def main() -> int:
                 print(f"  {path} [{pattern}]: {was} -> {now}", file=sys.stderr)
             print(
                 "\nDelete the constructions instead. "
-                "`./scripts/check-prose.py --report` names every line.",
+                "`./scripts/check-prose.py --report` names every line.\n"
+                "If one of these files was MOVED rather than written, stage "
+                "the move (`git mv`, or `git add` after `mv`) and re-run: an "
+                "unstaged move reads as a delete plus a new file, so its "
+                "entry cannot be carried.",
                 file=sys.stderr,
             )
             return 1

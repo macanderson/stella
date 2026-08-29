@@ -444,5 +444,123 @@ else
   ok "D9 a missing density baseline refuses"
 fi
 
+# ── R: a moved file takes its debt with it ───────────────────────────────────
+#
+# The baseline is keyed by path, so before this a rename read as prose someone
+# had just written: the entry stayed stranded at the old path and the same
+# sentences were judged at zero allowance in their new home. Splitting a module
+# then meant rewording comments nobody was editing, and #5420 hand-edited the
+# baseline instead — the one move this file exists to make unnecessary.
+#
+# R1 is the witness: it fails before `--update` learned to ask git what moved.
+# R3 and R4 are the direction that must NOT change — carrying a debt forward is
+# not forgiving one.
+
+# $1 = root. Commit, so HEAD exists and git can answer what was renamed.
+commit_all() {
+  (cd "$1" &&
+    git config user.email test@example.com &&
+    git config user.name "Test" &&
+    git add -A &&
+    git commit -qm fixture) >/dev/null 2>&1
+}
+
+# $1 = root, $2 = old path, $3 = new path. Staged, which is what git needs to
+# report a rename rather than a delete beside an untracked file.
+move() {
+  (cd "$1" && git mv "$2" "$3") >/dev/null 2>&1
+}
+
+# $1 = case name, $2 = root. `--update` must succeed.
+expect_update_ok() {
+  if python3 "$SCRIPT" --update "$2" >/dev/null 2>&1; then
+    ok "$1"
+  else
+    no "$1" "--update exited non-zero"
+  fi
+}
+
+r="$(new_root r1)"
+doc "$r" docs/old.md <<'EOF'
+The cost is deliberate: the retention it buys is not worth the residue.
+EOF
+baseline "$r" docs/old.md filler-adverb 1
+commit_all "$r"
+move "$r" docs/old.md docs/new.md
+expect_fail "R1 a moved file fails the plain check until the tree is updated" "$r"
+expect_update_ok "R1 --update accepts the move" "$r"
+expect_line "R1 the entry lands at the new path" "$r" "docs/new.md filler-adverb 1"
+expect_absent "R1 the old path is gone" "$r" "docs/old.md"
+expect_pass "R1 the tree passes once the entry moved" "$r"
+
+# R2: the count carried is the file's own, not a fresh grant. Rewording during
+# the move must lower it, and the lower number is what gets written.
+#
+# The body is long and only one line changes, because the carry rides on git's
+# similarity detection: rewrite most of a short file and git reports a delete
+# beside an add, no rename to follow, and the entry is correctly not carried.
+# That is the honest limit, and it is why a real split — which moves text
+# verbatim — carries cleanly while a rewrite does not.
+r="$(new_root r2)"
+doc "$r" docs/old.md <<'EOF'
+The store keys every child table off `executions.id`.
+The hub replicates above a durable per-project cursor.
+The cost is deliberate, and this clause is deliberately redundant.
+Retention is opt-in, and dropping an execution cascades.
+Reads never touch a project store.
+The canary re-asks the composition questions after the merge.
+EOF
+baseline "$r" docs/old.md filler-adverb 2
+commit_all "$r"
+move "$r" docs/old.md docs/new.md
+doc "$r" docs/new.md <<'EOF'
+The store keys every child table off `executions.id`.
+The hub replicates above a durable per-project cursor.
+The cost is deliberate, and this clause repeats it.
+Retention is opt-in, and dropping an execution cascades.
+Reads never touch a project store.
+The canary re-asks the composition questions after the merge.
+EOF
+expect_update_ok "R2 --update accepts a move that also reworded" "$r"
+expect_line "R2 the carried count is the lower one" "$r" "docs/new.md filler-adverb 1"
+
+# R3: a move is not an amnesty. Prose ADDED while the file moved is still new
+# prose, and `--update` must refuse it exactly as it would in place.
+r="$(new_root r3)"
+doc "$r" docs/old.md <<'EOF'
+The cost is deliberate: the retention it buys is not worth the residue.
+EOF
+baseline "$r" docs/old.md filler-adverb 1
+commit_all "$r"
+move "$r" docs/old.md docs/new.md
+doc "$r" docs/new.md <<'EOF'
+The cost is deliberate, and the second clause is deliberately redundant.
+EOF
+expect_update_refused "R3 --update refuses prose added while moving" "$r"
+
+# R4: carrying one file's debt must not forgive another file's. A rename
+# alongside a first-time offender is still refused, on the offender.
+r="$(new_root r4)"
+doc "$r" docs/old.md <<'EOF'
+The cost is deliberate: the retention it buys is not worth the residue.
+EOF
+baseline "$r" docs/old.md filler-adverb 1
+commit_all "$r"
+move "$r" docs/old.md docs/new.md
+doc "$r" docs/fresh.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+EOF
+expect_update_refused "R4 a rename does not grandfather an unrelated file" "$r"
+
+# R5: no HEAD to diff against — a fresh repository with nothing committed.
+# The rename map fails open, so the guard behaves exactly as it did before it
+# could ask: a broken or absent git never turns a red gate green.
+r="$(new_root r5)"
+doc "$r" docs/a.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+EOF
+baseline "$r"
+expect_update_refused "R5 an unaskable git still refuses a first-time offender" "$r"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

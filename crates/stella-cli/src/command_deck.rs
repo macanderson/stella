@@ -112,6 +112,7 @@ mod steering;
 mod task_tap;
 mod theme_cmd;
 mod voice;
+mod voice_cmd;
 mod whistle;
 mod worker_control;
 use driver_support::{
@@ -803,6 +804,7 @@ pub async fn run_deck_session(
         mouse_capture: mouse,
         mid_turn_prompt: steer::mid_turn_prompt_policy(cfg),
         voice_enabled: voice::enabled(cfg),
+        voice_mode: voice::mode(cfg),
     };
     // The deck owns its channel ends and runs on its own task so rendering
     // never waits on the driver (and vice versa).

@@ -19,7 +19,12 @@
 //! * **byte-identical skill files** — the exact `SKILL.md` bytes for a fixed
 //!   candidate. This is the gate criterion "existing skill files are
 //!   byte-identical after migration", reduced to the one function that decides
-//!   it.
+//!   it. The literal moved once, in #5335, and the reason is on the test: a
+//!   provenance line joined the `## Evidence` section when the `description`
+//!   field was given to the lesson's own vocabulary. Identity did not move
+//!   with it — `candidate_id` hashes the lesson text, not the description —
+//!   so no file on disk was orphaned or duplicated, which is the failure this
+//!   contract exists to catch.
 //! * **the per-session cap** and **never clobbering a hand-edited file**,
 //!   including the order they are checked in.
 //!
@@ -76,11 +81,27 @@ fn candidate_identity_is_pinned_to_a_literal() {
 /// literal. Frontmatter key order, the `origin: auto` marker, the blank-line
 /// placement, and the `## Evidence` line format are all required: the
 /// parser round-trips them, and a user's `git diff` sees every one.
+///
+/// **This literal moved once (#5335)**: the provenance
+/// sentence left the `description` field — where it was the only thing the
+/// selection scorer could read, and matched no prompt — and became the first
+/// line of `## Evidence`. What that costs is bounded and was checked rather
+/// than assumed. Nothing re-renders a `SKILL.md` that already exists (the
+/// miner's `already_captured` guard and the no-clobber check below), so no
+/// file on disk was rewritten; and `candidate_id` hashes the lesson text
+/// rather than the description, so `candidate_identity_is_pinned_to_a_literal`
+/// is untouched and no skill was orphaned or duplicated. Only skills minted
+/// from here on carry the new shape.
+///
+/// The `description` below is what `candidate_description` now yields for
+/// `PINNED_LESSON`, so these bytes are the bytes a real mining pass writes
+/// today rather than a shape only this test produces.
 #[test]
 fn rendered_skill_bytes_are_pinned() {
     let candidate = SkillCandidate {
         name: "prefer-updating-witness-test-assertions-e2010443".into(),
-        description: "Learned from 2 observations.".into(),
+        description: "Prefer updating witness-test assertions to match the live renderer output"
+            .into(),
         domains: vec!["testing".into(), "cli".into()],
         body: PINNED_LESSON.into(),
         occurrences: 2,
@@ -103,7 +124,7 @@ fn rendered_skill_bytes_are_pinned() {
         render_skill_markdown(&candidate),
         "---\n\
          name: prefer-updating-witness-test-assertions-e2010443\n\
-         description: Learned from 2 observations.\n\
+         description: Prefer updating witness-test assertions to match the live renderer output\n\
          domains: [testing, cli]\n\
          origin: auto\n\
          ---\n\
@@ -111,6 +132,8 @@ fn rendered_skill_bytes_are_pinned() {
          Prefer updating witness-test assertions to match the live renderer output.\n\
          \n\
          ## Evidence\n\
+         \n\
+         Learned from 2 observations.\n\
          \n\
          - `reflection:101` (observed at 101): Prefer updating witness-test assertions to match the live renderer output.\n\
          - `reflection:100` (observed at 100): Prefer updating witness-test assertions to match the live renderer output.\n"

@@ -1,8 +1,8 @@
 mod stream_fallback;
 
 use super::*;
-// The port itself, since the impl moved to `openai/provider.rs` and this
-// file no longer imports the trait these tests dispatch through.
+// The port itself: the impl lives in `openai/provider.rs`, so this file
+// does not import the trait these tests dispatch through.
 use crate::provider::Provider;
 // The result types the delivery paths return: `openai.rs` itself no
 // longer names them, since assembly moved to `stream.rs`/`unary.rs`.
@@ -97,8 +97,7 @@ fn user_attachments_map_to_input_image_and_input_file_parts() {
 /// that posture's contract is "the telemetry lands in
 /// `CompletionUsage`". Until the usage assertion below existed, the
 /// cited witness proved only the request key — the telemetry parse was
-/// proven by an uncited pricing test the matrix guard could not see
-/// (#1285).
+/// proven by an uncited pricing test the matrix guard could not see.
 #[tokio::test]
 async fn complete_sends_a_session_stable_prompt_cache_key() {
     let server = MockServer::start().await;
@@ -172,7 +171,7 @@ async fn temperature_is_omitted_for_a_gpt5_reasoning_model() {
         .complete(CompletionRequest {
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
-            temperature: Some(0.0), // the engine default that used to 400
+            temperature: Some(0.0), // the engine default this dialect rejects
             effort: None,
             tools: vec![],
             reasoning: None,
@@ -336,8 +335,8 @@ async fn observed_stream(sse_body: &'static str) -> (CompletionResult, Recording
     (result, observer)
 }
 
-/// #612 -- OpenAI already streamed on the wire; only `complete_observed_ref`
-/// was missing, so it inherited the trait's silent default and the deck
+/// OpenAI already streamed on the wire; only `complete_observed_ref` was
+/// missing, so it inherited the trait's silent default and the deck
 /// stayed blank for the whole turn.
 #[tokio::test]
 async fn complete_observed_streams_answer_deltas_in_order() {
@@ -756,8 +755,8 @@ async fn complete_returns_err_on_response_failed_not_truncated_ok() {
 /// Hitting the output cap must arrive as `FinishReason::Length`, not as a
 /// terminal error.
 ///
-/// This test previously asserted the opposite, and that assertion was the
-/// bug held in place: every sibling adapter (zai, Anthropic, Gemini/Vertex,
+/// This test asserted the opposite, and that assertion was the bug held
+/// in place: every sibling adapter (zai, Anthropic, Gemini/Vertex,
 /// Bedrock) reports a cap hit as `Length`, and the driver answers it with
 /// an in-turn continuation. Returning `Terminal` made this one dialect the
 /// place where the same event killed the turn outright — and
@@ -1088,8 +1087,8 @@ async fn every_request_opts_out_of_server_side_storage() {
 
 /// The engine branches on `finish_reason` (the driver's truncation
 /// diagnostics, and anything downstream distinguishing "the model wants a
-/// tool" from "the model is done"). OpenAI used to hard-code `None`, so it
-/// was the one provider where that distinction was unavailable — both
+/// tool" from "the model is done"). OpenAI hard-coded `None`, making it
+/// the one provider where that distinction was unavailable — both
 /// mappings are pinned here.
 #[tokio::test]
 async fn complete_maps_finish_reason_to_stop_and_tool_calls() {
