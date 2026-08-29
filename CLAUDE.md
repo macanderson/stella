@@ -146,7 +146,11 @@
     it has its own door: `make prose-adopt PATTERN=<name>` records that
     pattern's pre-existing hits, once, and refuses to touch any other
     pattern's numbers. A backticked span or a fenced block is exempt: naming
-    a banned construction in order to ban it is a citation.
+    a banned construction in order to ban it is a citation. A file that
+    **moves** takes its entry with it: `--update` asks git what was renamed
+    and carries each one to the new path before applying the same `min`, so a
+    move can still only lower a count. Stage the move (`git mv`) or git
+    reports a delete beside an untracked file and there is nothing to follow.
   - **The same command holds density**, over
     `scripts/prose-density-baseline.txt`: the mean length of every crate's
     leading `//!` blocks, ratcheted down only. A count of banned phrases
