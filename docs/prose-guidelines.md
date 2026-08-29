@@ -22,6 +22,52 @@ point your contributor guide at it.
 
 Everything below is that rule applied to a specific habit.
 
+---
+
+## The hard rules
+
+Every rule below is absolute. The CI gate (`make prose`) checks the ones a
+machine can check. A reviewer checks the rest.
+
+1. **Be brief.** Say it once, in short sentences. Cut every word the reader
+   does not need.
+2. **Never say you are telling the truth.** No `honestly`, `frankly`, `to be
+   clear`, `stated plainly`. State the fact. *(Gated: `honesty-declaration`,
+   `meta-writing`.)*
+3. **Never count points before stating them.** Not `Three things about X:
+   1... 2... 3...`. Just write "1... 2... 3...". *(Gated:
+   `enumerative-announcement`.)*
+4. **Problem before solution.** Say what is wrong first. Then say the fix.
+   Never the other way around. *(Reviewer-checked.)*
+5. **Write at a 5th grade reading level.** Short sentences. Common words.
+   One idea per sentence. If a 10-year-old cannot follow the sentence,
+   rewrite it. *(Gate tracked separately; reviewer-checked until it lands.)*
+6. **No jargon and no complex words.** Say "dependency", not `concretion`.
+   Say "rule", not `invariant`. Say "unrelated", not `orthogonal`. *(Gated:
+   `rust-jargon`, `interface-jargon`, `complex-word`.)*
+7. **No issue numbers in prose.** A sentence must not need a bug tracker to
+   be understood. Say the fact itself. Tracking markers (`TODO(#123)`) and
+   commit trailers (`Closes #123`) keep their numbers — they are
+   bookkeeping, not explanation. *(Gated: `issue-reference`.)*
+8. **Never describe what the code did before.** The reader has today's
+   code. Yesterday's code lives in git history. No `used to`, `no longer`,
+   `previously`. *(Gated: `historical-reference`.)*
+
+Bad:
+
+```
+Three things about the cache, honestly stated: 1. it is keyed by path,
+2. a miss is a hard error, 3. it no longer warms on boot (#4172).
+```
+
+Good:
+
+```
+1. The cache is keyed by path.
+2. A miss is a hard error.
+3. It warms on first use.
+```
+
 Prose that carries no information is a defect, in the same way an unused
 variable is a defect. It costs the reader time, it hides the sentence that
 does carry information, and it grows without limit because no compiler
