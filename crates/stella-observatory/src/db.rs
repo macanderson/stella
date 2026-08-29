@@ -633,6 +633,14 @@ impl Observatory {
 
     /// Per-(provider, model) usage — the same rows `stella stats` prints,
     /// same semantics (`resolved` = outcome `completed`, `off-grid` = local).
+    ///
+    /// `WHERE e.kind != 'system'` excludes standalone system calls
+    /// (reflection, skill authorship) from both `runs` and `resolved` — they
+    /// are not doors, and counting them here is the same measurement
+    /// artifact `stella-store`'s `usage_stats_scoped` was fixed for.
+    /// This crate reads the store file directly rather than through
+    /// `stella-store`'s API, so the literal is duplicated rather than shared
+    /// via a constant.
     pub fn models(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
@@ -656,6 +664,7 @@ impl Observatory {
                                sum(duration_ms)        AS duration_ms
                         FROM telemetry GROUP BY execution_id) t
                ON t.execution_id = e.id
+             WHERE e.kind != 'system'
              GROUP BY e.provider, e.model
              ORDER BY total_cost_usd DESC, e.provider ASC, e.model ASC",
             |r| {

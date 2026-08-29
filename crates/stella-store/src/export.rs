@@ -32,6 +32,7 @@ use base64::Engine as _;
 use rusqlite::ToSql;
 use serde::Serialize;
 
+use crate::migrations::SYSTEM_NON_DOOR;
 use crate::{Result, Store, UsageStatsRow};
 
 /// Which executions an analytics read covers.
@@ -229,11 +230,26 @@ impl Store {
 
     /// One SQL body, both scopes. See [`ExportScope`] for why this is not two
     /// functions.
+    ///
+    /// A standalone system call (`kind = 'system'` — reflection, skill
+    /// authorship) is excluded from both `runs` and `resolved`: it is not a
+    /// door, `EXECUTIONS_DDL`'s doc states the rule, and counting it here
+    /// pulls `resolve_rate` toward 1 and `cost_per_resolved_usd` down every
+    /// time a workspace does more reflection. This predicate is
+    /// local to the usage aggregate rather than folded into
+    /// [`ExportScope::executions_where`], which the raw `/export` dump also
+    /// uses and must keep every row, system included.
     fn usage_stats_scoped(&self, scope: ExportScope<'_>) -> Result<Vec<UsageStatsRow>> {
         let conn = self.lock();
         // The inner aggregate stays unfiltered on purpose: it is joined by
         // `execution_id` to an already-scoped `executions`, so a telemetry row
         // from another session has no surviving row to attach to.
+        let scope_where = scope.executions_where("e.");
+        let doors_where = if scope_where.is_empty() {
+            format!("WHERE e.kind != '{SYSTEM_NON_DOOR}'")
+        } else {
+            format!("{scope_where} AND e.kind != '{SYSTEM_NON_DOOR}'")
+        };
         let sql = format!(
             "SELECT e.provider,
                     e.model,
@@ -256,10 +272,9 @@ impl Store {
                FROM telemetry
                GROUP BY execution_id
              ) t ON t.execution_id = e.id
-             {}
+             {doors_where}
              GROUP BY e.provider, e.model
-             ORDER BY total_cost_usd DESC, e.provider ASC, e.model ASC",
-            scope.executions_where("e.")
+             ORDER BY total_cost_usd DESC, e.provider ASC, e.model ASC"
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(scope.bindings().as_slice(), |row| {
@@ -650,6 +665,43 @@ mod tests {
 
         let workspace = store.usage_stats().expect("workspace");
         assert_eq!(workspace.len(), 3, "all three executions: {workspace:?}");
+    }
+
+    /// A standalone system call (reflection, skill
+    /// authorship) is not a door — `EXECUTIONS_DDL`'s doc states the rule —
+    /// so it must not be counted as a run or, worse, a resolved task: doing
+    /// so pulls `resolve_rate` toward 1 and `cost_per_resolved_usd` down
+    /// every time a workspace does more reflection, which is a measurement
+    /// artifact in the flattering direction.
+    ///
+    /// Fails on the pre-fix code with `runs = 2, resolved = 2`: the `system`
+    /// execution below closes `completed` exactly like the `deck` one, and
+    /// nothing distinguished them.
+    #[test]
+    fn a_completed_system_call_is_not_counted_as_a_resolved_door() {
+        let store = Store::in_memory().expect("store");
+
+        let door = store
+            .begin_execution("deck", "make it faster", "anthropic", "m")
+            .expect("door execution");
+        store
+            .finish_execution(door, "completed", 1.0)
+            .expect("close door");
+
+        let system = store
+            .begin_execution("system", "reflect on the last turn", "anthropic", "m")
+            .expect("system execution");
+        store
+            .finish_execution(system, "completed", 0.01)
+            .expect("close system call");
+
+        let stats = store.usage_stats().expect("stats");
+        assert_eq!(stats.len(), 1, "one (provider, model) pair: {stats:?}");
+        assert_eq!(stats[0].runs, 1, "the system call must not count as a run");
+        assert_eq!(
+            stats[0].resolved, 1,
+            "the system call must not count as resolved"
+        );
     }
 
     /// A session with no executions of its own must export nothing — not fall
