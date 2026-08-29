@@ -331,7 +331,9 @@ impl SessionMemory {
             &selected,
             record.as_ref(),
         );
-        report_steering_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
+        report_steering_drops(&set, self.retrieval.max_tokens, |message| {
+            eprintln!("  {} {message}", "!".yellow())
+        });
 
         let frames = kept_frames(&recall.frames, &set);
         let kept = kept_skills(&selected.selected, &set);
@@ -463,7 +465,9 @@ impl SessionMemory {
             &selected,
             record.as_ref(),
         );
-        report_steering_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
+        report_steering_drops(&set, self.retrieval.max_tokens, |message| {
+            eprintln!("  {} {message}", "!".yellow())
+        });
 
         // The per-frame cut this block exists to make. It runs AFTER the plane
         // has packed, not before the query: the drop is about what the model
@@ -652,7 +656,8 @@ impl SessionMemory {
 
     async fn recalled_frames(&self, goal: &str) -> RecalledFrames {
         let anchors = goal_path_anchors(goal, &self.workspace_root);
-        self.recalled_frames_anchored(goal, anchors, |message| {
+        let max_tokens = self.retrieval.max_tokens;
+        self.recalled_frames_anchored_reporting(goal, anchors, max_tokens, |message| {
             eprintln!("  {} {message}", "!".yellow())
         })
         .await
@@ -669,7 +674,8 @@ impl SessionMemory {
         report: impl FnMut(String),
     ) -> Recall {
         let anchors = goal_path_anchors(goal, &self.workspace_root);
-        self.recalled_frames_anchored(goal, anchors, report)
+        let max_tokens = self.retrieval.max_tokens;
+        self.recalled_frames_anchored_reporting(goal, anchors, max_tokens, report)
             .await
             .recall
     }
@@ -682,6 +688,22 @@ impl SessionMemory {
         &self,
         goal: &str,
         anchors: Vec<String>,
+        report: impl FnMut(String),
+    ) -> RecalledFrames {
+        let max_tokens = self.retrieval.max_tokens;
+        self.recalled_frames_anchored_reporting(goal, anchors, max_tokens, report)
+            .await
+    }
+
+    /// The one frame-query body every recall path funnels through, with the
+    /// turn's retrieval budget explicit: the budget-pressure summary the
+    /// query emits names this number, so it is a parameter rather than a
+    /// second read of `self.retrieval` the caller could disagree with.
+    async fn recalled_frames_anchored_reporting(
+        &self,
+        goal: &str,
+        anchors: Vec<String>,
+        max_tokens: u32,
         mut report: impl FnMut(String),
     ) -> RecalledFrames {
         // Both withholding switches live HERE, at the frame query the rendered
@@ -756,19 +778,8 @@ impl SessionMemory {
         let latency_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         // Phase 2 (#713): the host's cross-provider merge is a second budget
         // pass and reported nothing at all, so anything it cut vanished
-        // without a trace — a silent truncation `L-C5` bans. A required item
-        // it could not honor is the loudest case and is named first: the
-        // caller pointed at that file, and being told it did not fit is the
-        // whole difference between a budget and a lie.
-        for drop in &recalled.dropped {
-            if drop.reason == stella_context::DropReason::RequiredOverBudget {
-                report(format!(
-                    "recall could not fit an anchored frame: {} ({} tokens) exceeds the \
-                     {}-token budget — raise context.retrieval.max_tokens to include it",
-                    drop.citation_label, drop.token_cost, query.max_tokens
-                ));
-            }
-        }
+        // without a trace — a silent truncation `L-C5` bans.
+        report_budget_drops(&recalled.dropped, max_tokens, &mut report);
         // ...and the same report goes to the ledger, which is the half that
         // used to end here (#3358): the stderr line above is a warning a human
         // sees once, on one of the several surfaces that recall, while
@@ -791,6 +802,41 @@ impl SessionMemory {
             },
             dropped,
         }
+    }
+}
+
+/// The host-merge drop report: a single summary line per class rather than
+/// one line per frame. Five evicted memories are one fact — the budget is too
+/// small for this turn — said once, with the remedy and the budget the turn
+/// actually ran with, and without the internal handle a user cannot act on.
+/// A required item the merge could not honor is the loudest case and is named
+/// first: the caller pointed at that file, and being told it did not fit is
+/// the whole difference between a budget and a lie.
+pub(super) fn report_budget_drops(
+    dropped: &[crate::contextgraph::HostDroppedFrame],
+    max_tokens: u32,
+    report: &mut impl FnMut(String),
+) {
+    let required_over = dropped
+        .iter()
+        .filter(|d| d.reason == stella_context::DropReason::RequiredOverBudget)
+        .count();
+    if required_over > 0 {
+        report(format!(
+            "recall could not fit {required_over} anchored frame(s) — each exceeds the \
+             {max_tokens}-token budget on its own; raise context.retrieval.max_tokens in \
+             stella.toml to include them"
+        ));
+    }
+    let budget_drops = dropped
+        .iter()
+        .filter(|d| d.reason == stella_context::DropReason::TokenBudget)
+        .count();
+    if budget_drops > 0 {
+        report(format!(
+            "{budget_drops} memories did not fit this turn's {max_tokens}-token retrieval \
+             budget — raise context.retrieval.max_tokens in stella.toml to include them"
+        ));
     }
 }
 
@@ -1064,6 +1110,11 @@ fn record_section_text(rendered: RenderedChannel) -> Option<String> {
 /// because `SKILLS_SECTION_TOKEN_BUDGET` is a constant and nothing
 /// configurable widens it until #3243 Phase 4 collapses the two budgets.
 ///
+/// Memory drops return `None`: the frame query already reported them as ONE
+/// summary line naming the budget and the remedy, and repeating the same
+/// advice once per evicted memory — with an internal id a user cannot act on
+/// — is the noise that line exists to replace.
+///
 /// `None` for a source this path never produces — a tool schema or a
 /// plugin-contributed candidate. Silence there is the absence of a producer,
 /// not a withheld report.
@@ -1079,10 +1130,7 @@ fn drop_message(
              record budget: ^{handle} — raise its precedence, or trim the records that \
              outrank it"
         )),
-        SteeringSource::Memory => Some(format!(
-            "a memory recalled for this turn did not fit the retrieval budget: {handle} \
-             — raise `context.retrieval.max_tokens`"
-        )),
+        SteeringSource::Memory => None,
         SteeringSource::Skill if still_selected => Some(format!(
             "a skill matching this turn did not fit the skills section's token budget: \
              {handle} — nothing configurable widens that budget yet (#3243)"
@@ -1103,6 +1151,12 @@ fn drop_message(
 /// to the person watching the run — the #2709 observability gap in its other
 /// half.
 ///
+/// Memory drops are summarized, not enumerated: `memory_budget` is the
+/// `context.retrieval.max_tokens` the turn ran with, and the report is one
+/// line — how many memories missed the budget, the budget itself, and the
+/// knob that widens it — instead of one line per memory repeating the same
+/// remedy under an internal id.
+///
 /// Two recall-side filters are deliberately **not** reported here, and that is
 /// a decision rather than an omission. `project_recalled_frame` drops a frame
 /// the citation-label rule cannot name, and `is_suppressed_local_frame` drops
@@ -1115,8 +1169,20 @@ fn drop_message(
 /// already accounted for by the usage report captured above the filters.
 pub(super) fn report_steering_drops(
     set: &stella_core::steering::SteeringSet,
+    memory_budget: u32,
     mut report: impl FnMut(String),
 ) {
+    let memory_drops = set
+        .dropped
+        .iter()
+        .filter(|d| d.source == stella_core::steering::SteeringSource::Memory)
+        .count();
+    if memory_drops > 0 {
+        report(format!(
+            "{memory_drops} memories did not fit this turn's {memory_budget}-token retrieval \
+             budget — raise context.retrieval.max_tokens in stella.toml to include them"
+        ));
+    }
     for drop in &set.dropped {
         let still_selected = set
             .selected
