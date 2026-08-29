@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 #
 # Sourced helper: the fixtures and assertion vocabulary both main-canary test
-# suites drive scripts/main-canary.sh with (#5356).
+# suites drive scripts/main-canary.sh with.
 #
 # The suites are split by what a case NEEDS, not by what it tests:
 #

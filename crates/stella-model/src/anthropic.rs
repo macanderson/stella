@@ -1206,6 +1206,4 @@ fn map_stop_reason(stop_reason: Option<&str>) -> Option<FinishReason> {
 #[cfg(test)]
 mod parallel_tool_calls;
 #[cfg(test)]
-mod stream_fallback_tests;
-#[cfg(test)]
 mod tests;

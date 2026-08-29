@@ -1778,4 +1778,5 @@ fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
 mod cache_breakpoints;
 mod context_editing;
 mod overload;
+mod stream_fallback;
 mod thinking;

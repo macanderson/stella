@@ -8,14 +8,14 @@
 //! this suite grows with every door that gains a wrapper driver (#3695 added
 //! the third).
 
-use super::*;
+use crate::agent::persistence::*;
 
 /// **The A/B witness.** The wrapper that ran is recorded on the executions
-/// row — the actual variant id, not a constant.
+/// row — the actual `variant` id, not a constant.
 ///
 /// Failing before #3494 because the only writer was
 /// [`begin_pipeline_execution`], which passed
-/// [`PIPELINE_VARIANT_CLASSIC`] unconditionally: two variants produced the
+/// [`PIPELINE_VARIANT_CLASSIC`] unconditionally: two wrappers produced the
 /// same value in the column both are supposed to be distinguished by, so
 /// the comparison `doc:pipeline-as-plugins` §7 justifies the whole
 /// extraction with could not be made. The `TurnDoor` this asserts through
@@ -31,7 +31,7 @@ fn the_wrapper_that_ran_is_the_variant_the_row_records() {
     assert_eq!(door.kind, "run", "the door is the command, not the wrapper");
     store
         .set_pipeline_variant(wrapped, door.variant.expect("a wrapper ran"))
-        .expect("record the variant");
+        .expect("record it");
     assert_eq!(
         store.pipeline_variant(wrapped).expect("read"),
         Some("budget-v1".to_string()),
@@ -60,7 +60,7 @@ fn the_wrapper_that_ran_is_the_variant_the_row_records() {
     assert_eq!(store.pipeline_variant(bare).expect("read"), None);
 }
 
-/// **Pins the goal/fleet honesty fix's call shape (#3381, #3388, #3684).**
+/// **Pins the goal/fleet attribution fix's call shape (#3381, #3388, #3684).**
 /// `goal.rs`'s `run_goal_pipeline_turn` and `fleet_cmd.rs`'s `run_task`
 /// used to call `begin_execution(..., None)` even while the staged
 /// pipeline drove the round, so `NULL` meant "raw OR classic" there —
@@ -83,8 +83,8 @@ fn goal_and_fleet_write_classic_honestly_never_a_false_null() {
 
     for door in ["goal", "fleet"] {
         // Classic arm: the wrapper that ran is named, not dropped. Raw
-        // arm: NULL is the honest answer here, not a gap.
-        let msg = format!("{door}: honesty rule");
+        // arm: NULL is the answer here, not a gap.
+        let msg = format!("{door}: attribution rule");
         assert_eq!(
             written(door, Some(PIPELINE_VARIANT_CLASSIC)),
             Some(PIPELINE_VARIANT_CLASSIC.to_string()),
@@ -95,12 +95,12 @@ fn goal_and_fleet_write_classic_honestly_never_a_false_null() {
 }
 
 /// **Witness (#3695).** A wrapped `goal` or `fleet` attempt records the
-/// *installed plugin's own* variant id, the same rule
+/// *installed plugin's own* `variant` id, the same rule
 /// [`the_wrapper_that_ran_is_the_variant_the_row_records`] already held
 /// the `run` door to. It fails on code where those two doors could only
 /// ever write `classic` or NULL — which is what
 /// `wrapper_plugin::reject_plugin_variant_for_door` guaranteed for
-/// `fleet` by refusing a named variant outright before the run started,
+/// `fleet` by refusing a named `variant` outright before the run started,
 /// so no `fleet` row in that build can carry a plugin id at all.
 ///
 /// The call shape it pins is the one argument each door now passes:
@@ -135,7 +135,7 @@ fn a_wrapped_goal_or_fleet_row_records_the_plugins_own_id() {
 /// `PIPELINE_VARIANT_CLASSIC` is now a pure historical literal (the crate
 /// it used to cross-check against, `stella_pipeline::variant`, is gone —
 /// see the constant's own doc comment). This only pins the literal's
-/// spelling so an edit to it is a deliberate, reviewed change to a join
+/// spelling so an edit to it is a reviewed change to a join
 /// key already-written rows depend on.
 #[test]
 fn the_classic_id_literal_is_unchanged() {

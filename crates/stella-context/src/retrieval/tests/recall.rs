@@ -1,14 +1,11 @@
 //! End-to-end recall over a real store — the public-API integration half of
 //! the retrieval tests, driving [`ContextStore::recall`] against a seeded
-//! SQLite workspace rather than the pure ranking units in
-//! [`super::tests`](super::tests).
+//! SQLite workspace rather than the pure ranking units in [`super`].
 //!
 //! Split out of `retrieval/tests.rs` before that file crossed the gate's
-//! 1500-line ceiling (#3705); it is a sibling test module like
-//! [`super::evidence_tests`](super::evidence_tests), not a submodule of the
-//! unit tests, because it shares nothing with them but `super::*`.
+//! 1500-line ceiling (#3705), alongside [`super::evidence`].
 
-use super::*;
+use crate::retrieval::*;
 
 use crate::clock::FixedClock;
 use crate::embed::HashEmbedder;
@@ -234,7 +231,7 @@ async fn the_drop_report_counts_candidates_considered_not_the_corpus() {
     // (df = N), so the evidence gate would rightly abstain and leave no
     // shortlist to measure. The denominator arithmetic being pinned here is
     // independent of admission; the gate has its own witnesses in
-    // `evidence_tests`.
+    // `evidence`.
     let store = ContextStore::open_with(
         &path,
         Arc::new(HashEmbedder::default()),
@@ -400,7 +397,7 @@ async fn recall_reports_dropped_frames_under_a_tight_frame_budget() {
 async fn recall_falls_back_to_labeled_lexical_when_no_vectors_under_fingerprint() {
     // Seed vectors under fingerprint rev "1", then recall through a store
     // whose active embedder is rev "2": its vector index is empty for this
-    // content, so coverage is 0 and retrieval honestly falls back to
+    // content, so coverage is 0 and retrieval falls back to
     // lexical search — and labels those frames (`L-C6`). This also proves
     // retrieval never mixes fingerprints (`L-C2`).
     let dir = TempDir::new().unwrap();
@@ -671,7 +668,7 @@ async fn tuning_reaches_the_ranking() {
 /// requested frame count, at three corpus sizes spanning two orders of
 /// magnitude.
 ///
-/// "Ungated" is in the name because it is the honest scope: under the default
+/// "Ungated" is in the name because it is the true scope: under the default
 /// evidence gate (#2289) every recall also pays one streaming term pass, so
 /// the shipped default's bytes are corpus-linear by declared design — that
 /// cost is budgeted by `recall_reads_one_term_pass_plus_only_the_candidates_bodies`
@@ -680,7 +677,7 @@ async fn tuning_reaches_the_ranking() {
 /// to the default path. What survives here meanwhile is the two-phase
 /// candidate load: with the gate off, content bytes must come out
 /// *byte-identical* across a 100x corpus, and the cosine scan — the one
-/// honest exception, since "most similar" is not something SQLite can
+/// exception, since "most similar" is not something SQLite can
 /// `ORDER BY` without an ANN index — must stay linear rather than quadratic.
 ///
 /// It measures work, not wall clock. A wall-clock assertion cannot tell

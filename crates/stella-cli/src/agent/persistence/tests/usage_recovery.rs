@@ -4,9 +4,9 @@
 //!
 //! Split out of `persistence.rs` when that file crowded the 1500-line
 //! ceiling (#3776) — a pure move, following the same out-of-line pattern as
-//! `stream_tests` and `pipeline_variant_tests` beside it.
+//! `stream` and `pipeline_variant` beside it.
 
-use super::*;
+use crate::agent::persistence::*;
 
 fn partial(input: u64, cached: u64, output: u64, cost: f64) -> stella_protocol::PartialUsage {
     stella_protocol::PartialUsage {
@@ -301,7 +301,7 @@ fn the_warning_names_one_call_and_reports_what_was_recovered() {
     assert!(message.contains("130 output"), "{message}");
     assert!(message.contains("0.0213"), "{message}");
 
-    // With nothing recovered it stays honest about the gap, and still
+    // With nothing recovered it still reports the gap, and still
     // scopes itself to the one attempt.
     let bare = PersistOutcome::UsageIncomplete {
         partial: None,
@@ -332,7 +332,7 @@ fn the_warning_names_one_call_and_reports_what_was_recovered() {
 /// frame; on a call that died it asserts a success that did not happen.
 ///
 /// Driven through `persist_event_detailed` rather than by building a
-/// `PersistOutcome` by hand, deliberately: the fix changes that enum's
+/// `PersistOutcome` by hand: the fix changes that enum's
 /// shape, so a hand-built witness would fail to *compile* on the parent
 /// commit rather than fail its assertion, which proves nothing about the
 /// behaviour. Feeding the real event through the real path compiles on

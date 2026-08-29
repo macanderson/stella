@@ -18,8 +18,8 @@ use stella_protocol::{
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
-use super::*;
 use crate::budget::BudgetGuard;
+use crate::driver::*;
 use crate::ports::SteeringRequery;
 use crate::retry::Sleeper;
 

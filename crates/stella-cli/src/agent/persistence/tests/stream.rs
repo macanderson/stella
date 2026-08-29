@@ -4,7 +4,7 @@
 //! file over the 1500-line limit. The guard refuses to grandfather a new god
 //! file, and it is right to: the remedy is a submodule, not a bigger ceiling.
 
-use super::*;
+use crate::agent::persistence::*;
 
 #[test]
 fn run_complete_is_final_even_when_later_events_arrive() {
@@ -174,7 +174,7 @@ fn reasoning_blocks(rows: &[stella_store::SessionEventRecord]) -> Vec<&str> {
 
 /// `seq` is monotonic and strictly increasing across everything the drain
 /// wrote — the property `UNIQUE (execution_id, seq)` and `journal::entries`'
-/// `after_seq` poll both stand on. It is deliberately NOT asserted gapless:
+/// `after_seq` poll both stand on. It is NOT asserted gapless:
 /// a coalesced run spends one `seq` for many fragments, and no reader counts
 /// events by it.
 fn assert_seq_is_strictly_increasing(rows: &[stella_store::SessionEventRecord]) {

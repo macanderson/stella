@@ -3,8 +3,11 @@
 //!
 //! The end-to-end integration over a real store — and the two cost guards
 //! that pin recall's complexity and I/O class rather than its wall clock —
-//! live beside this file in [`super::recall_tests`](super::recall_tests),
-//! split out before this one crossed the gate's 1500-line ceiling (#3705).
+//! live in [`recall`], split out before this file crossed the gate's
+//! 1500-line ceiling (#3705).
+
+mod evidence;
+mod recall;
 
 use super::*;
 

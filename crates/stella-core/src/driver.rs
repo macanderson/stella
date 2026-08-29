@@ -1671,8 +1671,3 @@ pub const SOFT_STOP_REASON: &str = "stopped at step boundary by user — complet
 
 #[cfg(test)]
 mod tests;
-
-// #3243 Phase 3: the step-boundary re-query port's witnesses. A separate
-// file because `tests.rs` is closed to growth under the file-size ratchet.
-#[cfg(test)]
-mod requery_tests;

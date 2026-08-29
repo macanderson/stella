@@ -705,7 +705,7 @@ fn a_touched_path_that_is_not_a_file_is_not_an_anchor() {
 /// to `SteeringSource::Record` and emitted through a single producer that hard-
 /// coded the record channel's precedence advice. A skill that lost its seat
 /// every turn and a frame the recall host's merge evicted were both queryable
-/// on the ledger (#3358) and said nothing to the person watching the run.
+/// on the ledger and said nothing to the person watching the run.
 ///
 /// The two skill classes are the part that needs care: a skill cut by the
 /// section's own token budget appears in `selected` **and** `dropped` by

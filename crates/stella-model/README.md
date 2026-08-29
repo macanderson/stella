@@ -90,7 +90,6 @@ moves witnesses into a new file fails the witness checks until that list gains
 the file.
 
 - [`src/anthropic/tests.rs`](src/anthropic/tests.rs)
-- [`src/openai.rs`](src/openai.rs)
 - [`src/zai/tests.rs`](src/zai/tests.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
@@ -200,8 +199,9 @@ make test-model          # or: cargo test -p stella-model
 ```
 
 Adapter tests are `wiremock`-based and live beside the code: inline
-`#[cfg(test)] mod tests` in `openai.rs` and `vertex.rs`, out-of-line in
+`#[cfg(test)] mod tests` in `vertex.rs`, out-of-line in
 [`src/anthropic/tests.rs`](src/anthropic/tests.rs),
+[`src/openai/tests.rs`](src/openai/tests.rs),
 [`src/zai/tests.rs`](src/zai/tests.rs),
 [`src/gemini/tests.rs`](src/gemini/tests.rs) and
 [`src/bedrock/tests.rs`](src/bedrock/tests.rs). They assert both directions — the exact

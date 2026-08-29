@@ -2,12 +2,11 @@
 //! C, C++, and PHP — symbols, each language's import mechanisms, call
 //! sites, and the extension routing.
 //!
-//! A sibling file rather than a module inside [`super`]: `parse.rs` sits at
-//! the gate's 1500-line ratchet, and the crate README names it as the one
-//! to split before the next language arrives. C++ is that language (#3184),
-//! so the split happens here.
+//! A topic module of [`super`] rather than one file with the rest: these
+//! arrived per language (C++ was #3184), and each one lands as its own
+//! suite.
 
-use super::*;
+use crate::parse::*;
 
 fn parse(lang: Language, src: &str) -> Parsed {
     let grammars = Grammars::load().expect("grammars load");

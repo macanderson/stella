@@ -118,7 +118,7 @@ crossing the limit fails the gate outright, and
 approaches the limit, split it before it crosses.
 [`src/parse.rs`](src/parse.rs) was the one approaching it, and C++ (#3184) was
 the language that pushed it over: its later-language tests now live in
-[`src/parse/added_language_tests.rs`](src/parse/added_language_tests.rs). The
+[`src/parse/tests/added_language.rs`](src/parse/tests/added_language.rs). The
 file still holds every decoder, so the next language should extract
 per-language decoding into a sibling under `src/parse/` rather than grow it
 again.
@@ -272,7 +272,7 @@ cargo test -p stella-graph -- --ignored    # adds the real-FS notify smoke test
 The query-compile guard (`all_queries_compile`) and the first four languages'
 extraction tests live in a `#[cfg(test)]` module inside
 [`src/parse.rs`](src/parse.rs); Go, Java, C, C++ and PHP are tested in
-[`src/parse/added_language_tests.rs`](src/parse/added_language_tests.rs). The
+[`src/parse/tests/added_language.rs`](src/parse/tests/added_language.rs). The
 integration tests are fixture-driven over real files in tempdirs:
 [`tests/languages.rs`](tests/languages.rs) (end-to-end indexing, Python
 relative and TS `index.ts` resolution, byte-compat skip),
@@ -313,7 +313,7 @@ To add a language:
 6. Add tests: `all_queries_compile` in `src/parse.rs` fails immediately if a
    query string does not compile; add a symbols-and-imports test beside
    `go_symbols_and_grouped_imports` in
-   [`src/parse/added_language_tests.rs`](src/parse/added_language_tests.rs),
+   [`src/parse/tests/added_language.rs`](src/parse/tests/added_language.rs),
    and extend `new_extensions_classify` (same file) and
    `extensions_map_to_languages` (`src/lang.rs`).
 

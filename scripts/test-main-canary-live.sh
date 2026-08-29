@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The live-tree tests for scripts/main-canary.sh (#3332, split out at #5356).
+# The live-tree tests for scripts/main-canary.sh.
 #
 # Every case here expects the canary to report GREEN, and it can only do that
 # when this repository is green: the `file-size` and `prose` rows take no
@@ -35,8 +35,8 @@ expect "a composing tree passes" 0 "OK — main composes green" --manifest-dir "
 refute "a green run announces nothing" "gh issue create" \
   --announce --dry-run --manifest-dir "$tmp/clean"
 
-# The prose row RUNS, rather than merely being present in the checks array
-# (#4828). It cannot be exercised the way `compile` and `lockfile-sync` are:
+# The prose row RUNS, rather than merely being present in the checks array.
+# It cannot be exercised the way `compile` and `lockfile-sync` are:
 # those two take `--manifest-dir` and can be pointed at a broken fixture,
 # while `check-prose` reads the live tree and has no such switch — the same
 # reason `file-size` has no red fixture case here either. So the assertion
@@ -44,7 +44,7 @@ refute "a green run announces nothing" "gh issue create" \
 # was missing when the canary called a prose-red `main` green.
 expect "the prose row runs and reports" 0 "ok   prose" --manifest-dir "$tmp/clean"
 
-# ── one DoD box per FAILING check, and none for the rest (#5173) ──────────
+# ── one DoD box per FAILING check, and none for the rest ──────────────────
 # The other three boxes-in-the-issue cases are hermetic and live in the CI
 # suite. This one is not: `prose` is named as the check that must NOT get a
 # box, so a prose-red tree fails it for a reason that has nothing to do with
@@ -59,9 +59,10 @@ refute "and offers no box for a check that passed" \
 # A canary that only ever opens issues becomes a stale-issue generator and gets
 # muted, at which point it is worse than nothing. Recovery only runs when an
 # issue is already open, hence --fixture-open-issue.
-expect "main going green closes the open issue" 0 "gh issue close 42" \
-  --announce --dry-run --fixture-open-issue 42 --manifest-dir "$tmp/clean"
-expect "and says so on the way out" 0 "main recovered — closed #42" \
-  --announce --dry-run --fixture-open-issue 42 --manifest-dir "$tmp/clean"
+open_issue=42
+expect "main going green closes the open issue" 0 "gh issue close $open_issue" \
+  --announce --dry-run --fixture-open-issue "$open_issue" --manifest-dir "$tmp/clean"
+expect "and says so on the way out" 0 "main recovered — closed #$open_issue" \
+  --announce --dry-run --fixture-open-issue "$open_issue" --manifest-dir "$tmp/clean"
 
 canary_tally test-main-canary-live

@@ -15,8 +15,8 @@ use async_trait::async_trait;
 use stella_protocol::{BudgetMode, CompletionRequestRef, CompletionResult, ProviderError};
 use tokio::sync::mpsc;
 
-use super::tests::{MixedTools, NoSleep, ScriptedProvider, text_result, tool_call_result};
-use super::*;
+use super::{MixedTools, NoSleep, ScriptedProvider, text_result, tool_call_result};
+use crate::subagent::*;
 
 // ---- forked-skill scoping: allowed_tools + effort (#2682) ---------------
 
