@@ -74,11 +74,16 @@ GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings doc-warnings-schema \
 # They stay out of `make gate` for the separate reason that they build
 # throwaway git repositories; that exclusion is not what this variable records.
 #
-#   test-main-canary.sh   — its cases run the canary against the LIVE tree and
-#                           expect it green, so it reports whatever `main` is
+#   test-main-canary-live.sh
+#                         — its cases expect the canary to report GREEN, which
+#                           it can only do when the LIVE tree is green: the
+#                           `file-size` and `prose` rows take no
+#                           `--manifest-dir`. So it reports whatever `main` is
 #                           red on rather than the canary's own capability —
 #                           which is main-canary.yml's job, after the merge.
-#                           It also pays a `cargo check --workspace`.
+#                           The canary's other cases are decided by a fixture
+#                           tree, hold whatever `main` is red on, and run in
+#                           guard-self-tests.yml as test-main-canary.sh (#5356).
 #   test-guard-sigpipe.sh — same shape: every case asserts a real guard exits 0
 #                           on this tree with its reader gone, so a genuinely
 #                           red guard fails it for the wrong reason, and
@@ -90,7 +95,7 @@ GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings doc-warnings-schema \
 # workspace-shape check requires `crates/stella-core/`, a mismatch dating to
 # this workspace's move under `crates/` long after the fixture was written.
 # Fixed by reshaping the fixture to match; it now runs in guard-self-tests.yml.
-UNHOSTED_SELF_TESTS := test-main-canary.sh test-guard-sigpipe.sh
+UNHOSTED_SELF_TESTS := test-main-canary-live.sh test-guard-sigpipe.sh
 
 .PHONY: help
 help: ## Show this help
@@ -804,8 +809,9 @@ main-canary: ## Ask whether main still composes green (check only; no issue is f
 	@./scripts/main-canary.sh
 
 .PHONY: main-canary-test
-main-canary-test: ## Test the post-merge canary, announcements included (hermetic; not part of `gate`)
+main-canary-test: ## Test the post-merge canary, announcements included (both suites; not part of `gate`)
 	./scripts/test-main-canary.sh
+	./scripts/test-main-canary-live.sh
 
 .PHONY: deleted-tests-test
 deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handling (hermetic; not part of `gate`; #4495)
