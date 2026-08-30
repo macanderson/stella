@@ -444,6 +444,44 @@ fn stray_stop_and_hold_is_a_no_op() {
 
 // ISSUES tab: entity-hit assembly
 
+/// **The witness for the composer's red mode.** An interrupt at the lead
+/// front-queues the words ahead of the parked backlog, latches the soft stop
+/// (completed steps kept — never the hard cancel), injects nothing into the
+/// dying turn, and tells the deck what will happen.
+#[test]
+fn an_interrupt_front_queues_the_words_and_asks_the_turn_to_stop() {
+    use stella_core::ports::TurnSteering as _;
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let dir = std::env::temp_dir().join(format!("stella-interrupt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.clone());
+    queue.push_back("older parked prompt".to_string());
+    let tap = crate::subsession::SteeringTap::default();
+    let lead_pause = lead_control::LeadPause::new();
+    steer::interrupt_lead(
+        &tap,
+        &lead_pause,
+        &mut queue,
+        vec!["do this instead".to_string()],
+        &tx,
+    );
+    assert_eq!(
+        queue.iter().next().map(String::as_str),
+        Some("do this instead"),
+        "the interrupt outranks the backlog"
+    );
+    assert!(
+        tap.soft_stop_requested(),
+        "the turn is asked to stop at its next boundary"
+    );
+    assert!(
+        tap.drain_steering().is_empty(),
+        "nothing is injected into a turn that is being stopped"
+    );
+    assert!(rx.try_recv().is_ok(), "the deck is told what will happen");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `requeue_front` front-inserts in push order and mirrors every insert
 /// to the deck as `PromptRequeued`, so the driver's backlog and the
 /// deck's queue view (which front-inserts each mirror in turn) agree.

@@ -936,6 +936,12 @@ pub enum WorkspaceInput {
     /// the turn going. See [`steering`] for why this is not a cancel, and why
     /// the whole queue travels in one message.
     Steer { agent: AgentId, texts: Vec<String> },
+    /// The composer's red mode: soft-stop `agent`'s running turn (completed
+    /// steps kept, exactly the first-Esc stop) and run `texts` next, ahead of
+    /// the parked backlog. With no running turn it degrades to "run this
+    /// now", and at a worker lane it lands as a steer — a lane's next prompt
+    /// is the lead's, so there is nothing for the words to outrank there.
+    Interrupt { agent: AgentId, texts: Vec<String> },
     /// The composer's broadcast address (`>@all …`, `>@<session-id> …`,
     /// optionally `--deep`): send `message` to the other live sessions on
     /// this machine over their whistle sockets — every live one when

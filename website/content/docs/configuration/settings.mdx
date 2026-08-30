@@ -454,8 +454,10 @@ section behaves exactly as the defaults.
     What happens when you type a plain prompt while an agent is **running**. `queue`
     waits as the next turn, so `Esc` can steer the whole backlog into the turn in
     progress. `ask` raises a routing card per prompt (`s` steer / `n` next turn / `p`
-    sidecar). `spawn` forks every plain prompt to a sidecar sub-session. An unrecognized
-    value keeps the default.
+    sidecar). `spawn` forks every plain prompt to a sidecar sub-session. `steer` sends
+    it straight into the running turn at its next step boundary — the composer's
+    chevron turns teal while the turn runs, so the line reads as a correction rather
+    than a queued prompt. An unrecognized value keeps the default.
     See [Typing while a turn is running](/docs/commands/chat#typing-while-a-turn-is-running).
   </OptionCard>
 </CardGrid>

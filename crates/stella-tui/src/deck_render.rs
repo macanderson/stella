@@ -20,6 +20,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::cache_panel;
 use crate::composer::{ComposerLayout, PaletteState, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, WorkspaceModel};
+use crate::deck_ui::composer_mode::ComposerMode;
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_arg_popup, render_slash_popup, scroll_window_start, slash_popup_area};
@@ -163,7 +164,13 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         }
     });
     guarded_band(buf, bands[3], "composer", |b| {
-        render_composer(&c_layout, bands[3], b, ui.voice.recording())
+        render_composer(
+            &c_layout,
+            bands[3],
+            b,
+            ui.voice.recording(),
+            crate::deck_ui::composer_mode::effective(ui, model),
+        )
     });
     guarded_band(buf, bands[4], "hints", |b| {
         crate::views::frame::render_hint_row(model, ui, bands[4], b)
@@ -1064,7 +1071,27 @@ fn caret_style(recording: bool) -> Style {
     }
 }
 
-fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer, recording: bool) {
+/// The chevron's style for the composer's mode — the one place the mode is
+/// painted, pure for the reason [`caret_style`] is: golden frames strip
+/// styling, so a unit test is what holds the color decision
+/// (`deck_render/tests.rs`). Gold stays the identity default; the two
+/// non-default intents take tones the palette already separates from it —
+/// teal to steer, the danger red to interrupt.
+fn prompt_prefix_style(mode: ComposerMode) -> Style {
+    match mode {
+        ComposerMode::Dispatch => Style::default().fg(theme::ACCENT),
+        ComposerMode::Steer => Style::default().fg(theme::TEAL),
+        ComposerMode::Interrupt => Style::default().fg(theme::DANGER),
+    }
+}
+
+fn render_composer(
+    layout: &ComposerLayout,
+    area: Rect,
+    buf: &mut Buffer,
+    recording: bool,
+    mode: ComposerMode,
+) {
     let visible = (area.height as usize).max(1);
     let total = layout.rows.len();
     let first = composer_scroll_first(layout.cursor_row, visible);
@@ -1072,12 +1099,9 @@ fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer, record
     let cursor_style = caret_style(recording).add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, row) in layout.rows.iter().enumerate().skip(first).take(visible) {
-        // The accent `>>> ` prefix rides every row and scrolls with it —
-        // exactly the four columns `PROMPT_PREFIX_W` reserves.
-        let mut spans = vec![Span::styled(
-            PROMPT_PREFIX,
-            Style::default().fg(theme::ACCENT),
-        )];
+        // The `>>> ` prefix rides every row and scrolls with it — exactly the
+        // four columns `PROMPT_PREFIX_W` reserves — in the mode's color.
+        let mut spans = vec![Span::styled(PROMPT_PREFIX, prompt_prefix_style(mode))];
         if i == layout.cursor_row {
             let (before, under, after) = split_row_at(row, layout.cursor_col);
             let under_ch = under.map(String::from).unwrap_or_else(|| " ".into());
