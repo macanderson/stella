@@ -33,6 +33,13 @@ name: release-reconcile
 # still going, since full-LTO plus the independent rebuild arm takes the better
 # part of an hour. Running more often than the grace window would just re-ask a
 # question whose answer cannot have changed.
+#
+# ── Two hops, two jobs ───────────────────────────────────────────────────────
+#
+# `reconcile` asks whether every tag has a published release. `tap` asks whether
+# the Homebrew tap serves the newest one, which is a different question with a
+# different remedy: a release can publish perfectly and still never reach
+# `brew install` (#5551).
 
 on:
   schedule:
@@ -70,4 +77,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./scripts/check-releases-published.sh \
+            --grace-secs "${{ inputs.grace-secs || '5400' }}"
+
+  # The same question one hop further down the pipeline (#5551). A published
+  # release does not mean `brew install macanderson/tap/stella` serves it: the
+  # `homebrew` job in release.yml warns and exits 0 when neither tap credential
+  # is set, so an expired deploy key would leave the tap frozen while the job
+  # above, every release, and every tag all keep reporting success. Nothing
+  # asked this question until now, which is why #5551 could be filed against a
+  # tap that was in fact current — no surface could answer it either way.
+  #
+  # Its own job rather than a second step, so a frozen tap and an unpublished
+  # tag are two findings a maintainer can see at once instead of whichever one
+  # happens to fail first hiding the other.
+  tap:
+    name: the Homebrew tap serves the newest release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No history needed: this reads the release list and the tap's formula,
+      # never a tag date.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Reconcile the tap formula against published releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./scripts/check-tap-current.sh \
             --grace-secs "${{ inputs.grace-secs || '5400' }}"

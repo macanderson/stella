@@ -29,15 +29,21 @@ entirely unrelated software on the PATH. The only safe spelling is
 tap-qualified:
 
 ```bash
-brew install macanderson/stella/stella      # correct
-brew upgrade macanderson/stella/stella      # correct
-brew install stella                         # WRONG — Atari emulator, exit 0
+brew install macanderson/tap/stella      # correct
+brew upgrade macanderson/tap/stella      # correct
+brew install stella                      # WRONG — Atari emulator, exit 0
 ```
 
-The tap is `macanderson/stella` →
-`https://github.com/macanderson/homebrew-tap.git`. The formula builds from
-source at the release tag (`cargo install --locked`), so an upgrade needs a Rust
-toolchain and takes a few minutes.
+The tap is `macanderson/tap`, which Homebrew maps to the repo
+`https://github.com/macanderson/homebrew-tap.git`. The formula installs the
+**prebuilt binary** from the GitHub Release — no Rust toolchain, and an upgrade
+is a download rather than a build. (`packaging/homebrew/stella.rb` in this
+repository is the from-source formula, and it is not what the tap serves.)
+
+`upgrade` also untaps `macanderson/stella` if it finds it. That name reaches the
+same repo, so a machine can end up with two taps for it — two clones that fetch
+independently, one of which can sit at an old commit and answer `brew info` with
+a version nobody is shipping.
 
 **2. There is no alias to remove — it is a PATH prepend.**
 

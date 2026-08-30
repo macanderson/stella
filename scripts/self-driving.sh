@@ -48,8 +48,19 @@ set -uo pipefail
 # Homebrew-core owns the name `stella` (an Atari 2600 emulator, 245 installs a
 # year). `brew install stella` therefore installs the WRONG software and exits
 # 0. The tap-qualified name is the only safe spelling; never shorten it.
-readonly BREW_FORMULA="macanderson/stella/stella"
-readonly BREW_TAP="macanderson/stella"
+#
+# The tap is `macanderson/tap`, which Homebrew maps to the repo
+# `macanderson/homebrew-tap`. That is the spelling README.md, RELEASING.md and
+# the website all tell a user to add, and this script must match them: naming it
+# `macanderson/stella` and passing the remote explicitly also works — `brew tap
+# <name> <url>` believes whatever name it is given — and leaves the machine with
+# TWO taps for one repo. Each is a real clone with its own fetch state, so one
+# can sit at an old commit while the other is current, and `brew info` then
+# answers with a version nobody is shipping depending on which name was asked.
+# `upgrade` retires the duplicate when it finds one.
+readonly BREW_FORMULA="macanderson/tap/stella"
+readonly BREW_TAP="macanderson/tap"
+readonly BREW_TAP_LEGACY="macanderson/stella"
 readonly BREW_TAP_REMOTE="https://github.com/macanderson/homebrew-tap.git"
 
 # The PATH entry that shadows a released install with the local dev build. The
@@ -181,7 +192,7 @@ require_stella() {
   # probe is a whole extra binary spawn each time otherwise.
   [ "$STELLA_SELF_DRIVING_OK" = "1" ] && return 0
   have stella || die "this verb lives in \`stella self-driving\` and needs stella on PATH.
-   Install:  brew install macanderson/stella/stella
+   Install:  brew install $BREW_FORMULA
    Dev:      cargo build --release -p stella-cli  (then target/release/stella)"
   if ! stella self-driving --help >/dev/null 2>&1; then
     die "the stella on PATH ($(command -v stella)) predates \`stella self-driving\` — upgrade it (see \`$0 upgrade\`)"
@@ -769,10 +780,11 @@ cmd_upgrade() {
     case "$1" in
       --dry-run) apply=0; shift ;;
       --no-dev-alias) keep_dev_alias=0; shift ;;
-      # The two halves are independent on purpose: the formula builds from
-      # source and takes minutes, while the PATH surgery is instant and is the
-      # part that can go wrong. Being able to run either alone is what makes
-      # the risky half testable without paying for the slow half.
+      # The two halves are independent on purpose: the Homebrew half reaches
+      # the network and can fail for reasons that have nothing to do with this
+      # machine, while the PATH surgery is instant and is the part that can go
+      # wrong. Being able to run either alone is what makes the risky half
+      # testable without paying for the network half.
       --skip-brew) skip_brew=1; shift ;;
       --rc) rc="${2:?}"; shift 2 ;;
       *) die "upgrade: unknown flag $1" ;;
@@ -799,6 +811,23 @@ upgrade_brew() {
     pass "tapped $BREW_TAP"
   else
     warn "would run: brew tap $BREW_TAP $BREW_TAP_REMOTE"
+  fi
+
+  # Retire the duplicate tap if this machine carries one. Two taps for one repo
+  # fetch independently, so the stale one answers `brew info` with a version
+  # nobody is shipping. Untapping is safe here because the formula is always
+  # installed by its fully qualified `macanderson/tap/stella` name, so nothing
+  # resolves through the duplicate.
+  if brew tap 2>/dev/null | grep -qx "$BREW_TAP_LEGACY"; then
+    if [ "$apply" -eq 1 ]; then
+      if brew untap "$BREW_TAP_LEGACY" >/dev/null 2>&1; then
+        pass "untapped the duplicate $BREW_TAP_LEGACY"
+      else
+        warn "could not untap $BREW_TAP_LEGACY — run \`brew untap $BREW_TAP_LEGACY\` by hand"
+      fi
+    else
+      warn "would run: brew untap $BREW_TAP_LEGACY  (duplicate of $BREW_TAP)"
+    fi
   fi
 
   say "2. Formula"
@@ -858,7 +887,7 @@ for ln in lines:
         out.append("# --- NOTE: the commentary above is HISTORICAL as of the line below. ---")
         out.append("# `scripts/self-driving.sh upgrade` disabled this prepend. It used to shadow")
         out.append("# the Homebrew release with the local dev build; `stella` now resolves to")
-        out.append("# the tap build (macanderson/stella/stella), which is what a user gets.")
+        out.append("# the tap build (macanderson/tap/stella), which is what a user gets.")
         out.append("# " + shadow)
         if keep:
             out.append("# The dev build is still one word away:")

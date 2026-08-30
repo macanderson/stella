@@ -191,21 +191,30 @@ the outcome — the version-sync PR opened and auto-merged, `CHANGELOG.md` rolle
 and every manifest was stamped. Only the last two jobs of `release.yml` skipped.
 Every surface a maintainer glances at said "released" (#1464).
 
-Two checks now catch it, each on a different failure:
+Three checks now catch it, each on a different failure:
 
 - **`smoke`** (in `release.yml`) unpacks the artifact and runs it before
   anything is published, so a release that *builds* but does not *work* cannot
   reach the Homebrew tap (#1626).
-- **`release-reconcile.yml`** runs hourly and compares `git tag -l 'v*'` against
-  `gh release list`, failing when a tag older than 90 minutes has no release.
-  That window is deliberate: full-LTO plus the independent rebuild arm takes the
-  better part of an hour, so "not published yet" is the normal state for a long
-  time after every merge.
+- **`release-reconcile.yml`**'s `reconcile` job runs hourly and compares
+  `git tag -l 'v*'` against `gh release list`, failing when a tag older than 90
+  minutes has no release. That window is deliberate: full-LTO plus the
+  independent rebuild arm takes the better part of an hour, so "not published
+  yet" is the normal state for a long time after every merge.
+- **`release-reconcile.yml`**'s `tap` job asks the same question one hop later:
+  does `brew install macanderson/tap/stella` actually serve the newest release?
+  A release can publish perfectly and never reach the tap — the `homebrew` job
+  warns and exits 0 when neither tap credential is set, so an expired deploy key
+  or a revoked token freezes the formula while every other surface still reports
+  success. Before this job, nothing anywhere could answer that question — which
+  is its own hazard: a report that the tap is stale could be neither confirmed
+  nor refuted without reading the tap by hand.
 
-Run it yourself at any time:
+Run them yourself at any time:
 
 ```bash
-make releases-published
+make releases-published   # every tag has a release
+make tap-current          # the tap serves the newest one
 ```
 
 It compares state rather than watching the dispatched run, which catches
@@ -329,6 +338,20 @@ The installer detects the platform, downloads the matching tarball from the
 GitHub Release, verifies it against `SHA256SUMS`, and falls back to
 `cargo install` where no prebuilt binary matches. Upgrades are
 `brew upgrade stella` or re-running the installer.
+
+**`brew` reporting an old version is usually a stale local clone, not a stale
+tap.** A tap is a git clone on the machine, and `brew info` reads whatever
+commit that clone is sitting on — it does not fetch. Run `brew update` first,
+then compare against `make tap-current`, which reads the tap over the API and
+answers whether the *published* formula is behind. A clone left unfetched for a
+few days can be dozens of releases behind a tap that is perfectly current.
+
+**Add the tap as `macanderson/tap` and nothing else.** GitHub still redirects
+the repo's former name, so `brew tap macanderson/stella <url>` succeeds and
+leaves the machine with two taps for one repo. They fetch independently, so one
+goes stale while the other is current, and `brew info` then answers differently
+depending on which name was asked. `brew untap macanderson/stella` retires the
+duplicate; `stella self-driving upgrade` does it too.
 
 ## Formula templates
 
