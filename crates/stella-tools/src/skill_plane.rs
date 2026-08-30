@@ -1,43 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The mounted skill-invocation plane — the session layer
-//! `stella_core::skills::invoke` and [`crate::skill_grant`] were both written
-//! for and that, until this module, no shipped surface mounted.
+//! The mounted skill-invocation plane. [`SkillInvocationPlane`] tracks the
+//! skill invocations live in a session's tool stack, each carrying its
+//! frontmatter `allowed-tools` grant as [`ToolPolicy`] algebra;
+//! [`SkillScopedTools`], composed above the operator's `PolicyToolSet`,
+//! advertises and executes only `operator ∧ grant` per concrete name, so a
+//! grant can select within the operator surface but never re-enable a tool
+//! the operator denied below.
 //!
-//! [`SkillInvocationPlane`] tracks which skill invocations are live in a
-//!   session's tool stack, each with the `allowed-tools` grant its frontmatter
-//!   declared. It is the tools-side twin of
-//!   `stella_core::skills::invoke::ActiveSkillInvocations` — the same
-//!   guard-drop span discipline — carrying the one thing the pure half cannot:
-//!   the grant as [`ToolPolicy`] algebra, which is this crate's vocabulary.
-//! - [`SkillScopedTools`] is the enforcement view: composed **above** the
-//!   operator's `PolicyToolSet` (the position `skill_grant`'s module docs
-//!   specify), it advertises and executes only what every live grant allows.
-//!   The effective surface is therefore `operator ∧ grant` per concrete name —
-//!   the exact intersection [`crate::skill_grant::effective_allows`] states,
-//!   taken structurally by stacking the two layers, so a grant can select
-//!   within the operator surface but can never re-enable a tool the operator
-//!   denied below.
-//!
-//! # No new callable tool
-//!
-//! This plane is how a skill's invoke directives reach execution **without**
-//! restoring `invoke_skill`, which stays in
-//! [`crate::catalog::RETIRED_TOOL_NAMES`] under the 12-tool cap. A skill
-//! is invoked by the human — `stella skill run <slug>` or an in-session
-//! `/slug` — never by the model calling a tool; the plane only narrows what
-//! the model may do while that invocation is live.
-//!
-//! # `active_skill_slugs` answers non-empty at last
-//!
-//! [`SkillScopedTools::active_skill_slugs`] is the first production
-//! implementation of `ToolExecutor::active_skill_slugs` that answers non-empty
-//! (`crates/stella-core/src/ports.rs`; every other shipped executor answers
-//! the empty default). The decorator pass-throughs above it (`ReadOnlyTools`,
-//! `GrantedTools`, `GatedToolSet`, the deck's `TaskTap`) forward, so the
-//! engine's overflow-summarization seam (`driver::restore`) sees a
-//! live invocation's slug through any shipped composition.
+//! No new callable tool: `invoke_skill` stays in
+//! [`crate::catalog::RETIRED_TOOL_NAMES`]; a skill is invoked by the human
+//! (`stella skill run <slug>` or an in-session `/slug`), never by the model
+//! calling a tool. [`SkillScopedTools::active_skill_slugs`] is the first
+//! shipped `ToolExecutor::active_skill_slugs` to answer non-empty, and the
+//! decorator pass-throughs forward it, so the engine's
+//! overflow-summarization seam sees a live invocation's slug through any
+//! shipped composition.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
