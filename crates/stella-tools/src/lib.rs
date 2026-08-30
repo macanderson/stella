@@ -69,6 +69,7 @@ pub mod rootfd;
 pub mod scratch;
 pub mod search;
 pub mod skill_grant;
+pub mod skill_plane;
 pub mod staleness;
 pub mod subagent;
 /// Shared environment policy for every subprocess that can execute model- or

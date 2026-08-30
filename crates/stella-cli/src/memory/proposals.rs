@@ -156,6 +156,12 @@ pub(crate) fn induce_proposals(
         } else {
             RecordProposalStatus::Collecting
         };
+        // An observation whose hash does not match its content is evidence
+        // nothing vouches for; a candidate resting on one is skipped the same
+        // way an unscorable one is.
+        let Ok(pool) = EvidencePool::from_observations(supporting) else {
+            continue;
+        };
         let Ok(proposal) = ProposalRecord::new(
             RecordProposalKind::Knowledge,
             status,
@@ -163,7 +169,7 @@ pub(crate) fn induce_proposals(
             &candidate.description,
             &candidate.body,
             candidate.domains.clone(),
-            EvidencePool::from_observations(supporting),
+            pool,
             score,
             confidence,
             proposal_observed_at(&candidate),

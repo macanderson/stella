@@ -67,7 +67,7 @@ pub use render::{
 pub use select::{TurnFacts, applies_this_turn};
 pub use sweep::{Disposition, ExpiryAction, SweepInput, disposition, honored_probe, probe_is_due};
 pub use trust::Trust;
-pub use validate::{Conflict, check_record, detect_conflicts, is_suspended, validate_records};
+pub use validate::{Conflict, check_record, detect_conflicts, is_suspended};
 
 /// One record as the engine sees it: the typed record, where it came from, the
 /// name it can be cited by, and everything wrong with it.
@@ -182,8 +182,9 @@ pub enum RecordFinding {
         /// Which field the forbidden content was found in.
         field: &'static str,
     },
-    /// The record asked for a gated probe (`command_succeeds`, `http_ok`) on an
-    /// origin where gated probes are never honored. Reported, not honored.
+    /// The record declared a gated probe (`command_succeeds`, `http_ok`) that
+    /// [`sweep::honored_probe`] refuses for its origin or truth basis, so the
+    /// claim will never be re-checked. Reported, not honored.
     GatedProbeRefused(ProbeKind),
     /// The record asked to block at the tool boundary and was refused. See
     /// [`BlockingRefusal`] for which precondition failed.
@@ -243,8 +244,9 @@ impl std::fmt::Display for RecordFinding {
             ),
             Self::GatedProbeRefused(kind) => write!(
                 f,
-                "probe kind {} runs a command or reaches the network, which is never \
-                 honored on an imported or inferred record",
+                "probe kind {} runs a command or reaches the network, which is honored \
+                 only on a decreed record a named human verified — this claim will \
+                 never be re-checked",
                 kind.as_str()
             ),
             Self::BlockingRefused(refusal) => write!(f, "{refusal}"),

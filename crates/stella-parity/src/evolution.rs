@@ -315,6 +315,29 @@ evolution_surfaces! {
          `queued_candidates` — carries `#[allow(dead_code)]` for want of a production caller, \
          so a promoted skill that later regresses is demoted by nothing. Tracked in #5086";
 
+    /// How a skill's own invoke directives reach execution — the
+    /// skill-function surface, distinct from the [`Self::Skill`] row above:
+    /// that row governs which skills exist, this one governs what an
+    /// existing skill's frontmatter may make an invocation *do*.
+    SkillInvocation => "skill_invocation",
+        EvolutionPosture::Shipped {
+            mechanism: "a skill's frontmatter declares invoke directives — `context:` \
+                        inline/fork, `allowed-tools:`, `model:`, `effort:` — parsed by \
+                        `parse_invoke_directives` and mounted by `stella-tools`' skill_plane: \
+                        the grant is enforced as the per-name operator ∧ grant intersection \
+                        over the assembled session stack, so a directive can only narrow the \
+                        surface, never widen it. Invocation is human-only — `stella skill \
+                        run <slug>` or an in-session `/slug` expansion; `invoke_skill` stays \
+                        in RETIRED_TOOL_NAMES, so no model call can invoke a skill",
+            witness: "a_skill_grant_over_the_session_stack_denies_disallowed_and_never_widens",
+        },
+        EvolutionTiming::BetweenTurns,
+        ImpactClass::SteeringDirective,
+        "delete the directive keys from the skill's frontmatter (a directive-less skill is \
+         plain context again), or disable the skill from the SKILLS tab — the sidecar's \
+         `disabled` list excludes it from loading while the file stays on disk. The narrowing \
+         itself needs no rollback: it lifts structurally when the invocation span ends";
+
     /// Executable capability Stella adds to its own working surface.
     Tool => "tool",
         EvolutionPosture::Shipped {
@@ -409,7 +432,7 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 7] {
+fn evolution_sources() -> [&'static str; 8] {
     [
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),
@@ -418,6 +441,9 @@ fn evolution_sources() -> [&'static str; 7] {
         include_str!("../../stella-cli/src/tool_foundry/adopt/tests.rs"),
         include_str!("../../stella-cli/src/tool_foundry/autonomy.rs"),
         include_str!("../../stella-cli/src/memory/self_tuning.rs"),
+        // The SkillInvocation row's witness lives beside the session
+        // stack it proves the grant holds over.
+        include_str!("../../stella-cli/src/agent/tool_stack.rs"),
     ]
 }
 

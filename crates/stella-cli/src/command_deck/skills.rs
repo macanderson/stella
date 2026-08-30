@@ -407,11 +407,23 @@ pub(super) fn rank_hits(hits: &[SkillSearchHit], request: &str) -> Vec<String> {
 }
 
 /// The system prompt for one-shot skill authoring.
+///
+/// The invoke-directive paragraph is kept in lockstep with
+/// `stella_core::skills::invoke::parse_invoke_directives` — the four keys it
+/// names are exactly the four the parser recognizes — and with the verbatim
+/// copy in `docs/prompts/skill-author.md`.
 const SKILL_AUTHOR_SYSTEM: &str = "You author `SKILL.md` files for a coding agent. A skill is reusable \
 know-how (a convention, procedure, or preference) the agent applies when relevant. Output ONLY the \
 file content: YAML frontmatter delimited by `---` with `name:` (a short kebab-case slug), \
 `description:` (one line — the primary selection signal), and optional `domains:` (comma-separated \
-tags), followed by a concise markdown body. No commentary before or after.";
+tags), followed by a concise markdown body. No commentary before or after.\n\
+A skill that is a runnable procedure (invoked as `stella skill run <slug>` or `/slug`, with the \
+invocation's arguments replacing `$ARGUMENTS` in the body) may also declare invoke directives in \
+the same frontmatter: `context:` (`inline` to expand into the session, `fork` to run in a fresh \
+context), `allowed-tools:` (comma-separated tool names/groups the run is narrowed to — it can only \
+narrow the operator's surface, never widen it), `model:` (a provider/slug the skill asks to run \
+under), and `effort:` (`low`|`medium`|`high`|`xhigh`|`max`). Declare a directive only when the \
+procedure needs it; plain know-how should carry none.";
 
 /// Assemble the user prompt for LLM-assisted creation: the request plus the
 /// ranked registry candidates the model may borrow from (whole or in part,

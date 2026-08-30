@@ -818,7 +818,8 @@ fn real_context_workspace() -> (tempfile::TempDir, String, String) {
         "Grep before you guess",
         "Search the tree before assuming a symbol's location.",
         Vec::new(),
-        EvidencePool::from_observations(std::slice::from_ref(&observation)),
+        EvidencePool::from_observations(std::slice::from_ref(&observation))
+            .expect("constructor-built observations hash clean"),
         ProposalScore {
             occurrences: 4,
             distinct_tasks: 3,

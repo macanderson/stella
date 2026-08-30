@@ -314,6 +314,7 @@ reference page on [stella.oxagen.sh](https://stella.oxagen.sh/docs/commands).
 | [`storage <cmd>`](https://stella.oxagen.sh/docs/commands/storage)           | Inspect the storage map: layers, namespaces, relations, fields, drift (offline)                                   |
 | [`tools`](https://stella.oxagen.sh/docs/commands/tools)                     | List every tool available this session; `--validate` checks custom manifests                                      |
 | [`commands <cmd>`](https://stella.oxagen.sh/docs/commands/commands)         | List this workspace's custom slash commands, or convert markdown ones to TOML                                     |
+| [`skill run <slug>`](https://stella.oxagen.sh/docs/commands/skill)          | Run a skill as a scoped one-shot (`stella skill run <slug>`)                                                      |
 | [`plugin <cmd>`](https://stella.oxagen.sh/docs/commands/plugin)             | Install, list, and remove plugins — `install` shows the declaration before it acts                                |
 | [`models`](https://stella.oxagen.sh/docs/commands/models)                   | List configured providers and available models                                                                    |
 | [`auth <cmd>`](https://stella.oxagen.sh/docs/commands/auth)                 | Manage BYOK provider keys in `~/.stella/credentials.toml` — never prints a secret                                 |

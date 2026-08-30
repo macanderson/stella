@@ -165,7 +165,38 @@ LIMIT=1500
 CROWDING_MARGIN=50
 CROWDING_SHOW=10
 
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+# `--manifest-dir DIR` points the whole check at a fixture tree instead of
+# the real repository — the post-merge canary's own self-tests need this to
+# construct a hermetic red case, the same way `check-lockfile-sync.sh` and
+# `cargo check --manifest-path` already let it. `--absolute` is read here too
+# rather than only below, because both flags must be consumed before
+# `repo_root` is computed regardless of which one the caller wrote first —
+# the canary passes `--absolute --manifest-dir DIR`, so a check that only
+# recognized `--manifest-dir` as the leading argument would silently never
+# fire and fall back to `$0`'s own real location.
+MANIFEST_DIR=""
+ABSOLUTE_MODE=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --manifest-dir)
+    if [ "$#" -lt 2 ]; then
+      echo "check-file-size: --manifest-dir needs a path." >&2
+      exit 2
+    fi
+    MANIFEST_DIR="$2"
+    shift 2
+    ;;
+  --absolute)
+    ABSOLUTE_MODE=1
+    shift
+    ;;
+  *)
+    break
+    ;;
+  esac
+done
+
+repo_root="${MANIFEST_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$repo_root"
 
 baseline="scripts/file-size-baseline.txt"
@@ -233,14 +264,9 @@ current_sizes() {
   done
 }
 
-# See `resolve_base_commit` for what this changes and why only the canary wants
-# it. Read before the `--update` arm below so the two flags cannot be confused:
-# `--update` rewrites the baseline, `--absolute` only judges against it.
-ABSOLUTE_MODE=""
-if [ "${1:-}" = "--absolute" ]; then
-  ABSOLUTE_MODE=1
-  shift
-fi
+# `ABSOLUTE_MODE` is set above, before `repo_root`. See `resolve_base_commit`
+# for what it changes and why only the canary wants it: `--update` rewrites
+# the baseline, `--absolute` only judges against it.
 
 if [ "${1:-}" = "--update" ]; then
   shift

@@ -168,7 +168,13 @@ checks=(
   # commits old by the time anyone looked, passes that test cleanly. Verified
   # by simulation before this row was added: with the baseline set back to
   # 4010, the default invocation still reported ok.
-  "file-size|./scripts/check-file-size.sh --absolute"
+  #
+  # `--manifest-dir` points the guard at the fixture instead of the live
+  # repository, the same way `check-lockfile-sync.sh` does above — without it
+  # this row always read the real tree regardless of what the canary's own
+  # self-tests were constructing, so no fixture could ever pin a file-size
+  # failure hermetically.
+  "file-size|./scripts/check-file-size.sh --absolute${manifest_dir:+ --manifest-dir $manifest_dir}"
   # Does the merged tree still BUILD? This row costs more than the two above
   # put together, and it earns that on the admission rule rather than despite
   # it: a shared cell does not have to be a file. It can be a *seam*.
@@ -216,7 +222,15 @@ checks=(
   #
   # No `--absolute` equivalent is needed or available: the guard is already
   # whole-tree, which is the property that makes it belong here.
-  "prose|python3 ./scripts/check-prose.py"
+  #
+  # The trailing positional argument is `check-prose.py`'s own `ROOT` — it
+  # already resolves the baseline and walks the tree relative to whatever
+  # root it is given, so passing the fixture here needed no change to the
+  # guard itself, only to this row. Without it, the row always read
+  # the real repository, so the canary's own fixture-based self-tests could
+  # never construct a hermetic prose failure — a fixture already red on
+  # something else stayed red, but for the wrong row's reason.
+  "prose|python3 ./scripts/check-prose.py${manifest_dir:+ $manifest_dir}"
 )
 
 # The remediation for ONE failing check. Per-check on purpose: this block used

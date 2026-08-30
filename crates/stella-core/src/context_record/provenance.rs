@@ -29,6 +29,7 @@
 
 use stella_protocol::provenance::ProvenanceGrade;
 
+use super::hash::record_hash;
 use super::lifecycle::{ObservationRecord, ObservationSource};
 
 /// The evidence grade an observation of this source carries.
@@ -59,11 +60,34 @@ pub fn observation_grade(source: ObservationSource) -> ProvenanceGrade {
     }
 }
 
+/// An observation whose stored `record_hash` does not match its own content.
+///
+/// [`ObservationRecord`]'s fields are public (the CLI and the observatory read
+/// them), so nothing stops a caller literal-constructing one instead of going
+/// through the hashing constructor. The pool re-derives the hash and refuses a
+/// mismatch, because folding such a record would mint a grade from evidence
+/// whose identity nothing vouches for.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "observation {record_id} carries record_hash \"{stored}\", but its content \
+     hashes to {recomputed} — a grade cannot fold over evidence whose identity \
+     nothing vouches for"
+)]
+pub struct EvidenceIntegrityError {
+    /// The observation's claimed id.
+    pub record_id: String,
+    /// The hash the record carried.
+    pub stored: String,
+    /// The hash its content actually has.
+    pub recomputed: String,
+}
+
 /// The observations behind a proposal, together with the grade they fold to.
 ///
 /// Construction is the enforcement: [`EvidencePool::from_observations`] is the
-/// only public way to make one, so a proposal's grade is always a fold over
-/// records that exist rather than a value chosen by whoever is promoting.
+/// only public way to make one, and it re-verifies each observation's
+/// `record_hash`, so a proposal's grade is always a fold over records that
+/// exist rather than a value chosen by whoever is promoting.
 ///
 /// An empty pool is [`None`] rather than a pool with a weak grade — no
 /// evidence is not weak evidence, and rounding the two together is what lets a
@@ -75,18 +99,32 @@ pub struct EvidencePool {
 }
 
 impl EvidencePool {
-    /// Fold real observations into a pool, or [`None`] if there are none.
+    /// Fold real observations into a pool, or `Ok(None)` if there are none.
     ///
     /// The grade is [`ProvenanceGrade::weakest`] over the pool, so adding a
     /// weak observation to a strong pool weakens it and adding a strong one to
-    /// a weak pool does not lift it.
-    #[must_use]
+    /// a weak pool does not lift it. Each observation's `record_hash` is
+    /// re-derived from its content first — see [`EvidenceIntegrityError`] —
+    /// and an unhashable record fails the same way, since a record the
+    /// canonical hash cannot cover is one nothing can vouch for either.
     pub fn from_observations<'a>(
         observations: impl IntoIterator<Item = &'a ObservationRecord>,
-    ) -> Option<Self> {
+    ) -> Result<Option<Self>, EvidenceIntegrityError> {
         let mut grade: Option<ProvenanceGrade> = None;
         let mut observation_ids = Vec::new();
         for observation in observations {
+            let recomputed = record_hash(observation).map_err(|err| EvidenceIntegrityError {
+                record_id: observation.record_id.clone(),
+                stored: observation.record_hash.clone(),
+                recomputed: format!("(unhashable: {err})"),
+            })?;
+            if recomputed != observation.record_hash {
+                return Err(EvidenceIntegrityError {
+                    record_id: observation.record_id.clone(),
+                    stored: observation.record_hash.clone(),
+                    recomputed,
+                });
+            }
             let observed = observation_grade(observation.source);
             grade = Some(match grade {
                 Some(current) => current.min(observed),
@@ -94,10 +132,10 @@ impl EvidencePool {
             });
             observation_ids.push(observation.record_id.clone());
         }
-        grade.map(|grade| Self {
+        Ok(grade.map(|grade| Self {
             grade,
             observation_ids,
-        })
+        }))
     }
 
     /// The grade this evidence folds to.

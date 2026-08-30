@@ -42,7 +42,29 @@ and that was the whole budget, thinking included. It is now declared by
 
 ```text
 You author `SKILL.md` files for a coding agent. A skill is reusable know-how (a convention, procedure, or preference) the agent applies when relevant. Output ONLY the file content: YAML frontmatter delimited by `---` with `name:` (a short kebab-case slug), `description:` (one line — the primary selection signal), and optional `domains:` (comma-separated tags), followed by a concise markdown body. No commentary before or after.
+A skill that is a runnable procedure (invoked as `stella skill run <slug>` or `/slug`, with the invocation's arguments replacing `$ARGUMENTS` in the body) may also declare invoke directives in the same frontmatter: `context:` (`inline` to expand into the session, `fork` to run in a fresh context), `allowed-tools:` (comma-separated tool names/groups the run is narrowed to — it can only narrow the operator's surface, never widen it), `model:` (a provider/slug the skill asks to run under), and `effort:` (`low`|`medium`|`high`|`xhigh`|`max`). Declare a directive only when the procedure needs it; plain know-how should carry none.
 ```
+
+## The invoke directives
+
+The second paragraph teaches the **skill-function** vocabulary — the four
+optional frontmatter keys `parse_invoke_directives`
+(`crates/stella-core/src/skills/invoke.rs`) recognizes:
+
+| Key | Values | What it does at invocation |
+|---|---|---|
+| `context:` | `inline` (default) / `fork` | Expand into the session, or run in a fresh context (`stella skill run` is already fresh; in-session fork runs scoped in place) |
+| `allowed-tools:` | comma/space-separated names or groups | The run's tool grant, enforced as the intersection with operator policy (`stella-tools`' `skill_grant` + `skill_plane`) — it can only narrow |
+| `model:` | a `provider/slug` | The model the skill asks for; resolved like `--model`, and an explicit flag still wins |
+| `effort:` | `low`…`max` | Reasoning-effort override for the invocation |
+
+Behavior is the **skill's**, never a parameter's (AGENTS.md #9): how an
+invocation runs is declared here, in the authored file, and the invocation
+carries only the slug and its arguments. There is no
+`invoke_skill` tool — a skill function runs only when a human asks,
+via `stella skill run <slug>` or an in-session `/slug` expansion. Unknown
+values of these keys degrade to the default with a diagnostic; they never
+refuse the skill.
 
 ## User message (template)
 
