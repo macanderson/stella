@@ -710,7 +710,7 @@ mkdir -p "$r/scripts"
   printf '#!/bin/sh\n'
   i=0
   while [ "$i" -lt 30 ]; do
-    printf 'organizational_infrastructure_configuration="$(comprehensive_architectural_documentation --institutional)" ; verification.\n'
+    printf 'organizational_infrastructure_configuration=comprehensive_architectural_documentation ; institutional_verification.\n'
     i=$((i + 1))
   done
 } >"$r/scripts/run.sh"
