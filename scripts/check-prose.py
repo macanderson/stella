@@ -95,6 +95,10 @@ Usage:
                   create the density baseline alone; the same one-time door,
                   for the tree that already had a count baseline when the
                   density ratchet arrived
+    --bootstrap-grade
+                  create the reading-grade baseline alone; the same one-time
+                  door, for the tree that already had the other baselines
+                  when the grade ratchet arrived
     --report      print every offending line, grouped by file, then each
                   unit's mean header length; changes nothing
     --absolute    judge every unit's density against its baseline alone,
@@ -295,6 +299,35 @@ DENSITY_HEADER = """\
 """
 
 
+GRADE_BASELINE = "scripts/prose-grade-baseline.txt"
+
+# The ceiling a file with no baseline entry is held to, in hundredths of a
+# grade. The rule (docs/prose-guidelines.md, hard rule 5) asks for a 5th
+# grade reading level; 6.00 is the gate so a sentence at the target has room
+# to breathe. A file already above it keeps its recorded grade as the
+# ceiling and may only come down.
+NEW_FILE_GRADE = 600
+
+# Files with less prose than this many words are not scored. A grade needs
+# enough sentences to mean something; a two-line comment does not.
+GRADE_WORD_FLOOR = 100
+
+GRADE_HEADER = """\
+# Down-only ratchet on reading grade, per file (docs/prose-guidelines.md,
+# hard rule 5: write at a 5th grade level).
+#
+# Each line is `<path> <grade>` -- the file's Flesch-Kincaid reading grade,
+# in hundredths. A file may lower its grade; it may never raise it, and a
+# file absent from this list is held to 6.00. Files with under 100 words of
+# prose are not scored. Regenerate with `make prose-update`, which refuses
+# to raise a number.
+#
+# This file is meant to reach empty. Do not add a line here to turn the
+# gate green -- rewrite the sentences instead. `make prose-report` names
+# the worst ones.
+"""
+
+
 def renamed_paths(root: Path) -> dict[str, str]:
     """Old path -> new path, for every file git sees as renamed against HEAD.
 
@@ -449,6 +482,101 @@ def density(root: Path, paths: list[str]) -> dict[str, int]:
     return {unit: round(total[unit] * 100 / files[unit]) for unit in total}
 
 
+# A comment marker is not a word: the leading `//!`, `///`, `#`, `*` and
+# list markers are stripped before sentences are counted.
+GRADE_MARKER = re.compile(r"^\s*(?://[!/]{0,2}|#{1,6}|\*+|<!--|-->|-\s|\d+\.\s)\s*")
+GRADE_WORD = re.compile(r"\b[A-Za-z][a-zA-Z']*\b")
+
+
+def _syllables(word: str) -> int:
+    """A close-enough syllable count: vowel groups, minus a silent final e."""
+    w = word.lower()
+    groups = re.findall(r"[aeiouy]+", w)
+    n = len(groups)
+    if n > 1 and w.endswith("e") and not w.endswith(("le", "ee", "ye")):
+        n -= 1
+    return max(n, 1)
+
+
+def _sentence_grade(words: list[str]) -> float:
+    syllables = sum(_syllables(w) for w in words)
+    return 0.39 * len(words) + 11.8 * (syllables / len(words)) - 15.59
+
+
+def reading_grade(lines: list[str]) -> tuple[int, list[tuple[float, str]]] | None:
+    """A file's Flesch-Kincaid grade in hundredths, with its worst sentences.
+
+    Scores the prose the pattern scan already isolates: fenced blocks and
+    backticked spans are blanked before this runs, so code and identifiers
+    do not count as words. Words that look like CamelCase names are skipped
+    too. Returns None when the file holds too little prose to score.
+    """
+    text = " ".join(GRADE_MARKER.sub("", line) for line in lines)
+    sentences: list[tuple[str, list[str]]] = []
+    for raw in re.split(r"(?<=[.!?])\s+", text):
+        words = [
+            w for w in GRADE_WORD.findall(raw)
+            if not any(c.isupper() for c in w[1:])
+        ]
+        if len(words) >= 3:
+            sentences.append((" ".join(raw.split()), words))
+    total_words = sum(len(words) for _, words in sentences)
+    if not sentences or total_words < GRADE_WORD_FLOOR:
+        return None
+    total_syllables = sum(
+        _syllables(w) for _, words in sentences for w in words
+    )
+    grade = (
+        0.39 * (total_words / len(sentences))
+        + 11.8 * (total_syllables / total_words)
+        - 15.59
+    )
+    worst = sorted(
+        ((_sentence_grade(words), text) for text, words in sentences),
+        key=lambda pair: -pair[0],
+    )[:3]
+    return max(round(grade * 100), 0), worst
+
+
+def grades(root: Path, paths: list[str]) -> dict[str, tuple[int, list]]:
+    """Per-file reading grade for every file with enough prose to score."""
+    out: dict[str, tuple[int, list]] = {}
+    for path in paths:
+        try:
+            text = (root / path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        scored = reading_grade(prose_only(text))
+        if scored is not None:
+            out[path] = scored
+    return out
+
+
+def read_grade_baseline(path: Path) -> dict[str, int]:
+    baseline: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) != 2:
+            raise SystemExit(
+                f"check-prose: {path} line {line!r} is not `<path> <grade>`. "
+                "Regenerate it with `make prose-update`."
+            )
+        baseline[fields[0]] = int(round(float(fields[1]) * 100))
+    return baseline
+
+
+def write_grade_baseline(path: Path, data: dict[str, int]) -> None:
+    body = "".join(
+        f"{file_path} {n / 100:.2f}\n"
+        for file_path, n in sorted(data.items())
+        if n > NEW_FILE_GRADE
+    )
+    path.write_text(GRADE_HEADER + body, encoding="utf-8")
+
+
 def _git(root: Path, args: list[str]) -> str:
     """`git <args>` from `root`, or "" on any failure. Fails closed: a
     broken or absent git must never grant base-relative leniency."""
@@ -579,6 +707,8 @@ def main() -> int:
     baseline_path = root / BASELINE
     density_path = root / DENSITY_BASELINE
     per_unit = density(root, tracked)
+    grade_path = root / GRADE_BASELINE
+    per_grade = grades(root, tracked)
 
     if "--report" in flagset:
         total = sum(per_pair.values())
@@ -599,6 +729,15 @@ def main() -> int:
             ceiling = allowed.get(unit, NEW_UNIT_MEAN)
             mark = "  OVER" if mean > ceiling else ""
             print(f"  {mean / 100:>7.2f}  (ceiling {ceiling / 100:.2f})  {unit}{mark}")
+        graded = read_grade_baseline(grade_path) if grade_path.exists() else {}
+        print("\nreading grade, worst first (top 20)")
+        by_grade = sorted(per_grade.items(), key=lambda kv: -kv[1][0])[:20]
+        for path, (grade, worst) in by_grade:
+            ceiling = graded.get(path, NEW_FILE_GRADE)
+            mark = "  OVER" if grade > ceiling else ""
+            print(f"  {grade / 100:>7.2f}  (ceiling {ceiling / 100:.2f})  {path}{mark}")
+            for sentence_grade, sentence in worst[:1]:
+                print(f"           worst: [{sentence_grade:.1f}] {sentence[:110]}")
         return 0
 
     if "--bootstrap" in flagset:
@@ -613,10 +752,14 @@ def main() -> int:
             return 1
         write_baseline(baseline_path, per_pair)
         write_density_baseline(density_path, per_unit)
+        write_grade_baseline(
+            grade_path, {path: grade for path, (grade, _) in per_grade.items()}
+        )
         print(
             f"check-prose: wrote {BASELINE} with "
             f"{sum(per_pair.values())} construction(s) in {len(files)} file(s), "
-            f"and {DENSITY_BASELINE} with {len(per_unit)} unit(s)."
+            f"{DENSITY_BASELINE} with {len(per_unit)} unit(s), "
+            f"and {GRADE_BASELINE}."
         )
         return 0
 
@@ -641,6 +784,28 @@ def main() -> int:
         )
         return 0
 
+    if "--bootstrap-grade" in flagset:
+        if grade_path.exists():
+            print(
+                "check-prose: refusing to bootstrap -- "
+                f"{GRADE_BASELINE} already exists. Use --update, which only "
+                "ever lowers a grade.",
+                file=sys.stderr,
+            )
+            return 1
+        write_grade_baseline(
+            grade_path, {path: grade for path, (grade, _) in per_grade.items()}
+        )
+        over_count = sum(
+            1 for grade, _ in per_grade.values() if grade > NEW_FILE_GRADE
+        )
+        print(
+            f"check-prose: wrote {GRADE_BASELINE} with {over_count} file(s) "
+            f"above grade {NEW_FILE_GRADE / 100:.0f}. Every one is debt; "
+            "take it down."
+        )
+        return 0
+
     if not density_path.exists():
         print(
             f"check-prose: {DENSITY_BASELINE} is missing. It records what each "
@@ -653,8 +818,20 @@ def main() -> int:
         )
         return 2
 
+    if not grade_path.exists():
+        print(
+            f"check-prose: {GRADE_BASELINE} is missing. It records each "
+            "file's reading grade, and without it every file is held to "
+            f"{NEW_FILE_GRADE / 100:.2f}. Restore it from git rather than "
+            "regenerating it: a fresh one records today's tree as the "
+            "ceiling.",
+            file=sys.stderr,
+        )
+        return 2
+
     baseline = read_baseline(baseline_path)
     density_baseline = read_density_baseline(density_path)
+    grade_baseline = read_grade_baseline(grade_path)
 
     # `--adopt=<pattern>[,<pattern>]` records the debt of a pattern added to
     # PATTERNS after the baseline was written, and touches no other pattern's
@@ -776,6 +953,37 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        if moved:
+            grade_baseline = {
+                moved.get(path, path): n for path, n in grade_baseline.items()
+            }
+        grade_raised = {
+            path: (grade_baseline.get(path, NEW_FILE_GRADE), grade)
+            for path, (grade, _) in per_grade.items()
+            if grade > grade_baseline.get(path, NEW_FILE_GRADE)
+        }
+        if grade_raised:
+            print(
+                "check-prose: refusing to update -- these files' reading "
+                "grade rose:",
+                file=sys.stderr,
+            )
+            for path, (was, now) in sorted(grade_raised.items()):
+                print(
+                    f"  {path}: {was / 100:.2f} -> {now / 100:.2f}",
+                    file=sys.stderr,
+                )
+            print(
+                "\nRewrite the sentences instead. "
+                "`./scripts/check-prose.py --report` names the worst ones.",
+                file=sys.stderr,
+            )
+            return 1
+        merged_grades = {
+            path: min(grade, grade_baseline.get(path, NEW_FILE_GRADE))
+            for path, (grade, _) in per_grade.items()
+        }
+        write_grade_baseline(grade_path, merged_grades)
         # Pairs that reached zero drop out entirely; the ratchet retightens.
         for pair in baseline:
             if pair not in per_pair:
@@ -849,6 +1057,36 @@ def main() -> int:
         )
         return 1
 
+    grade_failures = []
+    for path, (grade, worst) in sorted(per_grade.items()):
+        allowed_grade = grade_baseline.get(path, NEW_FILE_GRADE)
+        if grade > allowed_grade:
+            grade_failures.append((path, allowed_grade, grade, worst))
+
+    if grade_failures:
+        print(
+            "check-prose: FAIL -- prose got harder to read.\n",
+            file=sys.stderr,
+        )
+        for path, allowed_grade, grade, worst in grade_failures:
+            print(
+                f"  {path}: grade {allowed_grade / 100:.2f} allowed, "
+                f"{grade / 100:.2f} found",
+                file=sys.stderr,
+            )
+            for sentence_grade, sentence in worst:
+                print(
+                    f"      [{sentence_grade:.1f}] {sentence[:110]}",
+                    file=sys.stderr,
+                )
+        print(
+            "\nShorten the sentences and use plainer words. The target is a "
+            "5th grade reading level (docs/prose-guidelines.md, hard rule 5). "
+            f"Do not add a line to {GRADE_BASELINE}.",
+            file=sys.stderr,
+        )
+        return 1
+
     if over:
         print(
             "check-prose: FAIL -- module headers got longer.\n",
@@ -874,7 +1112,8 @@ def main() -> int:
     print(
         f"check-prose: OK -- {total} grandfathered construction(s) "
         f"in {len(files)} file(s), none added; "
-        f"{len(per_unit)} unit(s) within their header-length ceiling."
+        f"{len(per_unit)} unit(s) within their header-length ceiling; "
+        f"{len(per_grade)} file(s) within their reading-grade ceiling."
     )
     return 0
 

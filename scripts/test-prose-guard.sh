@@ -81,10 +81,50 @@ baseline() {
   if [ ! -f "$root/scripts/prose-density-baseline.txt" ]; then
     printf '# test density baseline\n' >"$root/scripts/prose-density-baseline.txt"
   fi
+  if [ ! -f "$root/scripts/prose-grade-baseline.txt" ]; then
+    printf '# test grade baseline\n' >"$root/scripts/prose-grade-baseline.txt"
+  fi
   while [ $# -gt 2 ]; do
     printf '%s %s %s\n' "$1" "$2" "$3" >>"$root/scripts/prose-baseline.txt"
     shift 3
   done
+}
+
+# $1 = root, then `path grade` pairs.
+grade_baseline() {
+  root="$1"
+  shift
+  printf '# test grade baseline\n' >"$root/scripts/prose-grade-baseline.txt"
+  while [ $# -gt 1 ]; do
+    printf '%s %s\n' "$1" "$2" >>"$root/scripts/prose-grade-baseline.txt"
+    shift 2
+  done
+}
+
+# $1 = root, $2 = relative path, $3 = sentence count. Writes prose that reads
+# far above grade 6: long sentences full of long words.
+hard_doc() {
+  mkdir -p "$(dirname "$1/$2")"
+  : >"$1/$2"
+  i=0
+  while [ "$i" -lt "$3" ]; do
+    printf 'Considerable organizational infrastructure necessitates comprehensive architectural documentation regarding institutional configuration management, alongside verification.\n' >>"$1/$2"
+    i=$((i + 1))
+  done
+  (cd "$1" && git add -A) >/dev/null 2>&1
+}
+
+# $1 = root, $2 = relative path, $3 = sentence count. Plain prose at a low
+# grade, long enough to clear the scoring floor.
+easy_doc() {
+  mkdir -p "$(dirname "$1/$2")"
+  : >"$1/$2"
+  i=0
+  while [ "$i" -lt "$3" ]; do
+    printf 'The cache is keyed by path. A miss is a hard error. The store owns one file.\n' >>"$1/$2"
+    i=$((i + 1))
+  done
+  (cd "$1" && git add -A) >/dev/null 2>&1
 }
 
 # $1 = root, then `unit mean` pairs.
@@ -632,6 +672,69 @@ if python3 "$SCRIPT" --absolute "$r" >/dev/null 2>&1; then
   no "B3 --absolute still sees inherited drift" "the guard passed"
 else
   ok "B3 --absolute still sees inherited drift"
+fi
+
+# ── G1: plain prose within grade 6 passes ────────────────────────────────────
+r="$(new_root g1)"
+easy_doc "$r" docs/a.md 12
+baseline "$r"
+expect_pass "G1 plain prose passes the grade gate" "$r"
+
+# ── G2: hard prose with no baseline entry fails (the witness) ────────────────
+r="$(new_root g2)"
+hard_doc "$r" docs/a.md 8
+baseline "$r"
+expect_fail "G2 first-time hard prose fails the grade gate" "$r"
+
+# ── G3: a grandfathered grade passes ─────────────────────────────────────────
+r="$(new_root g3)"
+hard_doc "$r" docs/a.md 8
+baseline "$r"
+grade_baseline "$r" docs/a.md 60.00
+expect_pass "G3 grandfathered grade passes" "$r"
+
+# ── G4: --update refuses to raise a grade ────────────────────────────────────
+r="$(new_root g4)"
+hard_doc "$r" docs/a.md 8
+baseline "$r"
+grade_baseline "$r" docs/a.md 7.00
+expect_fail "G4 prose above its grade ceiling fails" "$r"
+expect_update_refused "G4 --update refuses to raise a grade" "$r"
+
+# ── G5: a missing grade baseline refuses ─────────────────────────────────────
+r="$(new_root g5)"
+easy_doc "$r" docs/a.md 12
+printf '# test baseline\n' >"$r/scripts/prose-baseline.txt"
+printf '# test density baseline\n' >"$r/scripts/prose-density-baseline.txt"
+if python3 "$SCRIPT" "$r" >/dev/null 2>&1; then
+  no "G5 a missing grade baseline refuses" "the guard exited 0"
+else
+  ok "G5 a missing grade baseline refuses"
+fi
+
+# ── G6: --bootstrap-grade refuses to overwrite ───────────────────────────────
+r="$(new_root g6)"
+easy_doc "$r" docs/a.md 12
+baseline "$r"
+if python3 "$SCRIPT" --bootstrap-grade "$r" >/dev/null 2>&1; then
+  no "G6 --bootstrap-grade refuses to overwrite" "it exited 0"
+else
+  ok "G6 --bootstrap-grade refuses to overwrite"
+fi
+
+# ── G7: --update lowers a grade entry that improved ──────────────────────────
+r="$(new_root g7)"
+easy_doc "$r" docs/a.md 12
+baseline "$r"
+grade_baseline "$r" docs/a.md 30.00
+if python3 "$SCRIPT" --update "$r" >/dev/null 2>&1; then
+  if grep -q "^docs/a.md 30.00$" "$r/scripts/prose-grade-baseline.txt"; then
+    no "G7 --update lowers an improved grade" "the 30.00 entry survived"
+  else
+    ok "G7 --update lowers an improved grade"
+  fi
+else
+  no "G7 --update lowers an improved grade" "--update exited non-zero"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
