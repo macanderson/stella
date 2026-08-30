@@ -344,7 +344,10 @@ pub struct PromotionEventRecord {
     /// Never `Blocking` for a system actor — see [`Self::new`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enforcement: Option<DirectiveEnforcement>,
-    /// A user's replacement text, for an `Edit`. Absent for every other action.
+    /// The reviewer's replacement text. Carried only on a `Confirmed` event —
+    /// a review edit confirms the proposal with new text, and that is the one
+    /// action whose materialization reads this field. [`Self::new`] refuses it
+    /// on every other action, where it would record an edit nothing performs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited_body: Option<String>,
     /// Human-readable justification. Required — a governance decision with no
@@ -374,6 +377,14 @@ pub enum PromotionEventError {
     /// A governance decision must record why it was made.
     #[error("a promotion event must carry a reason")]
     MissingReason,
+    /// Replacement text travels only on the `Confirmed` event a review edit
+    /// produces. On any other action nothing reads it, so carrying it there
+    /// records an edit that never happened.
+    #[error("edited_body travels only on a confirmed promotion, not on {action}")]
+    EditedBodyOutsideConfirmed {
+        /// The action that tried to carry it.
+        action: &'static str,
+    },
     /// The record could not be hashed. Flattened to a message rather than
     /// wrapping [`RecordHashError`], which is neither `Clone` nor `PartialEq`
     /// (it carries a `serde_json::Error`) — and a governance error a caller
@@ -403,6 +414,11 @@ impl PromotionEventRecord {
         let reason = reason.into();
         if reason.trim().is_empty() {
             return Err(PromotionEventError::MissingReason);
+        }
+        if edited_body.is_some() && action != PromotionAction::Confirmed {
+            return Err(PromotionEventError::EditedBodyOutsideConfirmed {
+                action: action.as_str(),
+            });
         }
         if enforcement == Some(DirectiveEnforcement::Blocking) {
             if actor == PromotionActor::System {

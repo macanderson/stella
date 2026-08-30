@@ -249,12 +249,13 @@ guard_deny_command = "git push --force*"
         "an imported record must never start blocking, however it is committed"
     );
     assert!(
-        registry
-            .diagnostics
+        entry
+            .record
+            .findings
             .iter()
-            .any(|d| d.detail.contains("no-force-push") && d.detail.contains("origin is imported")),
+            .any(|finding| finding.to_string().contains("origin is imported")),
         "the refusal must be reported so the author knows the guard is inert: {:?}",
-        registry.diagnostics
+        entry.record.findings
     );
     assert!(
         !registry
@@ -551,12 +552,13 @@ fn a_repository_record_cannot_approve_its_own_blocking() {
         "a repository record reaches the tool boundary only through the ledger"
     );
     assert!(
-        registry
-            .diagnostics
+        registry.entries[0]
+            .record
+            .findings
             .iter()
-            .any(|d| d.detail.contains("approve it locally")),
+            .any(|finding| finding.to_string().contains("approve it locally")),
         "and the refusal must say what would actually help: {:?}",
-        registry.diagnostics
+        registry.entries[0].record.findings
     );
 }
 

@@ -846,7 +846,8 @@ mod tests {
             "money is minor units",
             "money amounts must be stored as minor units",
             Vec::new(),
-            EvidencePool::from_observations([&observation]),
+            EvidencePool::from_observations([&observation])
+                .expect("constructor-built observations hash clean"),
             score,
             confidence,
             "2026-01-01T00:00:00Z",

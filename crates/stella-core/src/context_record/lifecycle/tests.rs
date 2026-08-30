@@ -46,7 +46,8 @@ fn proposal(score: ProposalScore) -> ProposalRecord {
             observation("task-1", "Prefer rg over grep."),
             observation("task-2", "Prefer rg over grep."),
             observation("task-3", "Prefer rg over grep."),
-        ]),
+        ])
+        .expect("constructor-built observations hash clean"),
         score,
         confidence_from_score(&score).expect("confidence"),
         AT,
@@ -263,6 +264,37 @@ fn a_promotion_event_must_carry_a_reason() {
         ),
         Err(PromotionEventError::MissingReason)
     ));
+}
+
+/// Replacement text on anything but a confirmation records an edit nothing
+/// performs — the confirmed promotion is the only action whose projection
+/// reads the field — so every other action refuses to carry it.
+#[test]
+fn edited_body_travels_only_on_a_confirmation() {
+    for action in [
+        PromotionAction::Proposed,
+        PromotionAction::AutoActivated,
+        PromotionAction::Published,
+        PromotionAction::Rejected,
+        PromotionAction::Retired,
+        PromotionAction::Reverted,
+    ] {
+        assert!(
+            matches!(
+                PromotionEventRecord::new(
+                    "prp_x",
+                    action,
+                    PromotionActor::User,
+                    None,
+                    Some("replacement text".into()),
+                    "trying it on",
+                    AT,
+                ),
+                Err(PromotionEventError::EditedBodyOutsideConfirmed { .. })
+            ),
+            "{action:?} carried replacement text"
+        );
+    }
 }
 
 // ---- GATE: Keep/Edit/Ignore replay identically from the event log ----
