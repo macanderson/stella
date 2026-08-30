@@ -100,3 +100,4 @@ pub(super) fn migrate_v39_to_v40(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     tx.execute_batch(PLAN_EDGES_DDL)?;
     Ok(())
 }
+

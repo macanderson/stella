@@ -41,7 +41,8 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::ddl::{
     AGENT_USES_DDL, CONTEXT_BLOCKS_DDL, EXECUTION_REFLECTION_DDL, EXECUTIONS_DDL, FORGOTTEN_DDL,
-    FOUNDRY_TOOLS_DDL, MCP_USAGE_DDL, MEMORY_CITATIONS_DDL, PLAN_EDGES_DDL, PLAN_REVISIONS_DDL,
+    FOUNDRY_INVOCATIONS_DDL, FOUNDRY_TOOL_VERSIONS_DDL, FOUNDRY_TOOLS_DDL, MCP_USAGE_DDL,
+    MEMORY_CITATIONS_DDL, PLAN_EDGES_DDL, PLAN_REVISIONS_DDL,
     PULL_REQUESTS_DDL, REFLECTIONS_DDL, RULES_TABLE, SESSION_TURN_DIFFS_DDL, SKILL_USAGE_DDL,
     STEP_MANIFEST_DDL, STEP_RECEIPT_DDL, TABLES, TASKS_DDL, TELEMETRY_INDEX, TOOL_CALLS_INDEXES,
     UNCHANGED_TABLES, events_ddl, files_touched_ddl, telemetry_ddl, tool_calls_ddl,
@@ -57,6 +58,7 @@ mod dispatched_executions;
 mod error_class;
 mod execution_plane;
 mod execution_role;
+mod foundry_plane;
 mod legacy_rebuild;
 mod live_tool_calls;
 mod partial_reflection;
@@ -86,6 +88,7 @@ use execution_plane::{
     migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10, migrate_v21_to_v22, migrate_v22_to_v23,
 };
 use execution_role::migrate_v26_to_v27;
+use foundry_plane::migrate_v40_to_v41;
 pub(crate) use execution_role::{ROLE_KINDS, SYSTEM_NON_DOOR};
 use legacy_rebuild::{migrate_v0_to_v1, migrate_v1_to_v2};
 use live_tool_calls::migrate_v17_to_v18;
@@ -107,7 +110,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 40] = [
+pub(crate) const MIGRATIONS: [Migration; 41] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -331,6 +334,12 @@ pub(crate) const MIGRATIONS: [Migration; 40] = [
     // table changes shape, and nothing is backfilled because nothing recorded
     // either lane before now. See the module's own doc.
     migrate_v39_to_v40,
+    // v40 → v41: the autonomous-foundry plane (#5453) — the additive
+    // `foundry_tool_versions` (rollback history) and `foundry_invocations`
+    // (per-launch telemetry) tables, plus `foundry_tools.disabled_reason`,
+    // the circuit breaker's recorded answer to "why is this tool off". See
+    // the module's own doc.
+    migrate_v40_to_v41,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -387,7 +396,8 @@ pub(crate) const MIGRATIONS: [Migration; 40] = [
     //   v38 → v39: CLAIMED above by `events.task_id` (#5039).
     //   v39 → v40: CLAIMED above by the plan graph's `plan_revisions` and
     //              `plan_edges` tables (#5037).
-    // Nothing is reserved now: take v40 → v41 and add your own line here.
+    //   v40 → v41: CLAIMED above by the autonomous-foundry plane (#5453).
+    // Nothing is reserved now: take v41 → v42 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
@@ -425,6 +435,8 @@ pub(crate) fn create_latest_schema(tx: &rusqlite::Transaction<'_>) -> Result<()>
     tx.execute_batch(STEP_RECEIPT_DDL)?;
     tx.execute_batch(FORGOTTEN_DDL)?;
     tx.execute_batch(FOUNDRY_TOOLS_DDL)?;
+    tx.execute_batch(FOUNDRY_TOOL_VERSIONS_DDL)?;
+    tx.execute_batch(FOUNDRY_INVOCATIONS_DDL)?;
     tx.execute_batch(SESSION_TURN_DIFFS_DDL)?;
     tx.execute_batch(PLAN_REVISIONS_DDL)?;
     tx.execute_batch(PLAN_EDGES_DDL)?;

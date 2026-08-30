@@ -1065,8 +1065,12 @@ fn skill_usage_records_per_execution_version_rows() {
     //       `plan_revisions` + `plan_edges` (#5037) — the plan graph SPEC
     //       §7.4 specifies: `[:NEXT]` for the planned path, `[:THEN]` for the
     //       actual one, and one plan node per revision so an inserted task
-    //       authors r{n+1} beside its predecessor.
-    assert_eq!(SCHEMA_VERSION, 40);
+    //       authors r{n+1} beside its predecessor. v41 the autonomous-foundry
+    //       plane (#5453) — `foundry_tool_versions` (rollback history, bytes
+    //       included), `foundry_invocations` (per-launch telemetry the
+    //       circuit breaker folds over), and `foundry_tools.disabled_reason`
+    //       (the breaker's recorded verdict; `''` means no breaker spoke).
+    assert_eq!(SCHEMA_VERSION, 41);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

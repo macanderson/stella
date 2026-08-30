@@ -16,6 +16,7 @@ fn adopted(name: &str) -> AdoptedTool {
         witness_expect: "alpha-contents".into(),
         enabled: false,
         adopted_at: String::new(),
+        disabled_reason: String::new(),
     }
 }
 
@@ -250,4 +251,163 @@ fn an_untouched_workspace_reports_no_adoptions() {
     let store = Store::in_memory().expect("store");
     assert!(store.adopted_foundry_tools().expect("read").is_empty());
     assert!(store.foundry_reuse().expect("reuse").is_empty());
+}
+
+/// Version history is append-only and counts up per tool; the bytes round-trip
+/// exactly, which is the whole rollback contract (#5453).
+#[test]
+fn version_rows_append_and_their_bytes_round_trip() {
+    let store = Store::in_memory().expect("store");
+    let v1 = store
+        .record_foundry_version("cat_file", b"manifest-1", b"script-1", "m1", "s1", "adopt")
+        .expect("v1");
+    let v2 = store
+        .record_foundry_version("cat_file", b"manifest-2", b"script-2", "m2", "s2", "adopt")
+        .expect("v2");
+    assert_eq!((v1, v2), (1, 2));
+    // A second tool starts its own count.
+    assert_eq!(
+        store
+            .record_foundry_version("other", b"m", b"s", "m", "s", "adopt")
+            .expect("other"),
+        1
+    );
+
+    let versions = store.foundry_versions("cat_file").expect("versions");
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].version, 1);
+    assert_eq!(versions[1].manifest_digest, "m2");
+
+    let (manifest, script) = store
+        .foundry_version_bytes("cat_file", 1)
+        .expect("bytes")
+        .expect("v1 exists");
+    assert_eq!(manifest, b"manifest-1");
+    assert_eq!(script, b"script-1");
+    assert!(
+        store
+            .foundry_version_bytes("cat_file", 9)
+            .expect("query")
+            .is_none(),
+        "a version that never existed is None, not an error"
+    );
+}
+
+/// Invocation telemetry lands one row per launch, and the breaker's window
+/// reads newest-first — the order a consecutive-failure count needs.
+#[test]
+fn invocation_outcomes_read_newest_first() {
+    let store = Store::in_memory().expect("store");
+    for ok in [true, true, false, false, false] {
+        store
+            .record_foundry_invocation(&FoundryInvocation {
+                name: "cat_file".into(),
+                script_digest: "s1".into(),
+                gap_id: "g1".into(),
+                duration_ms: 5,
+                ok,
+                timed_out: false,
+                output_bytes: 12,
+            })
+            .expect("record");
+    }
+    let outcomes = store
+        .recent_foundry_outcomes("cat_file", 3)
+        .expect("outcomes");
+    assert_eq!(outcomes, vec![false, false, false]);
+    let wider = store
+        .recent_foundry_outcomes("cat_file", 10)
+        .expect("outcomes");
+    assert_eq!(wider, vec![false, false, false, true, true]);
+    assert!(
+        store
+            .recent_foundry_outcomes("other", 10)
+            .expect("outcomes")
+            .is_empty()
+    );
+}
+
+/// The breaker's disable records its reason; a later human enable clears it,
+/// and a repin (rollback) clears it while re-pinning the digests.
+#[test]
+fn a_breaker_disable_records_its_reason_and_a_new_version_clears_it() {
+    let store = Store::in_memory().expect("store");
+    store
+        .adopt_foundry_tool(&adopted("cat_file"))
+        .expect("adopt");
+    assert!(
+        store
+            .disable_foundry_tool_with_reason("cat_file", "3 consecutive failures")
+            .expect("disable")
+    );
+    let row = store
+        .adopted_foundry_tool("cat_file")
+        .expect("read")
+        .expect("row");
+    assert!(!row.enabled);
+    assert_eq!(row.disabled_reason, "3 consecutive failures");
+
+    // Rollback re-pins the digests, re-enables, and clears the verdict.
+    assert!(
+        store
+            .repin_foundry_tool("cat_file", "m9", "s9")
+            .expect("repin")
+    );
+    let row = store
+        .adopted_foundry_tool("cat_file")
+        .expect("read")
+        .expect("row");
+    assert!(row.enabled);
+    assert_eq!(row.disabled_reason, "");
+    assert_eq!(row.manifest_digest, "m9");
+    assert_eq!(row.script_digest, "s9");
+
+    // And repin on a name that was never adopted flips nothing.
+    assert!(!store.repin_foundry_tool("ghost", "m", "s").expect("repin"));
+}
+
+/// The gap detector's feeder: finished bash calls come back oldest-first with
+/// their success bit, and rows whose recorded input carries no command are
+/// skipped rather than guessed at.
+#[test]
+fn recent_shell_invocations_read_finished_bash_calls_in_order() {
+    let store = Store::in_memory().expect("store");
+    let id = store
+        .begin_execution("run", "p", "zai", "glm-5.2")
+        .expect("execution");
+    let row = |seq: i64, args: &str, state: ToolCallState| ToolCallRow {
+        error_class: None,
+        call_id: format!("c{seq}"),
+        name: "bash".into(),
+        surface: "native".into(),
+        args_json: args.into(),
+        args_digest: "d".into(),
+        reason: String::new(),
+        state,
+        error: String::new(),
+        bytes_out: 0,
+        duration_ms: 1,
+        sub_agent_id: None,
+    };
+    store
+        .record_tool_calls(
+            id,
+            &[
+                row(0, r#"{"command":"jq '.a' a.json"}"#, ToolCallState::Ok),
+                row(1, r#"{"command":"jq '.b' b.json"}"#, ToolCallState::Error),
+                row(2, r#"{"no_command":true}"#, ToolCallState::Ok),
+                row(3, r#"{"command":"still running"}"#, ToolCallState::Running),
+            ],
+        )
+        .expect("record");
+
+    let history = store.recent_shell_invocations(50).expect("history");
+    assert_eq!(
+        history,
+        vec![
+            ("jq '.a' a.json".to_string(), true),
+            ("jq '.b' b.json".to_string(), false),
+        ],
+        "oldest first, command-less and in-flight rows skipped"
+    );
 }
