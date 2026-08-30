@@ -1051,7 +1051,7 @@ impl TurnDriver for RawTurnDriver<'_> {
                 // Cloned, not taken, unlike the events above: the scope is
                 // an instruction to the turn driver, not a report, and a
                 // wrapped skill invocation's narrowing must hold on every
-                // driven round, not just the first (#5456).
+                // driven round, not just the first.
                 skill_scope: self.recall.skill_scope.clone(),
             },
             self.memory.as_deref_mut(),

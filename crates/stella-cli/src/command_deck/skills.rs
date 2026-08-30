@@ -408,7 +408,7 @@ pub(super) fn rank_hits(hits: &[SkillSearchHit], request: &str) -> Vec<String> {
 
 /// The system prompt for one-shot skill authoring.
 ///
-/// The invoke-directive paragraph (#5456) is kept in lockstep with
+/// The invoke-directive paragraph is kept in lockstep with
 /// `stella_core::skills::invoke::parse_invoke_directives` — the four keys it
 /// names are exactly the four the parser recognizes — and with the verbatim
 /// copy in `docs/prompts/skill-author.md`.

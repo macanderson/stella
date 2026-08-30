@@ -347,7 +347,7 @@ mod tests {
         assert!(skill.body.contains(ARGUMENTS_PLACEHOLDER));
     }
 
-    /// **The #5456 directive parse table.** Every directive key, both
+    /// **The skill-invocation directive parse table.** Every directive key, both
     /// spellings of the grant key, every separator the grant list accepts,
     /// and the absent case — one row per shape a skill author can write, so
     /// the vocabulary `stella skill run` and the in-session expansion parse

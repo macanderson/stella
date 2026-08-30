@@ -40,7 +40,7 @@
 //! forms agree. The properties below pin this one.
 //!
 //! Enforcement sites: [`crate::skill_plane`] is the mounted session layer
-//! (#5456) — it holds the grant for an inline skill's span and takes the
+//! — it holds the grant for an inline skill's span and takes the
 //! per-name intersection structurally above the operator's policy layer —
 //! and a forked skill's grant is resolved to concrete names
 //! ([`resolve_grant`]) and enforced by `stella_core::ports::GrantedTools`

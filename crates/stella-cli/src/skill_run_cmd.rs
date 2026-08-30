@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! `stella skill run <slug> [args…]` — the CLI door of the skill-function
-//! invocation surface (#5456).
+//! invocation surface.
 //!
 //! A skill's own frontmatter declares how it runs
 //! (`stella_core::skills::invoke`): `context:` inline or fork,
@@ -16,7 +16,7 @@
 //!
 //! # No new callable tool
 //!
-//! This verb is the surface #3244 left room for: `invoke_skill` stays in
+//! This verb is the surface left room for: `invoke_skill` stays in
 //! `stella_tools::catalog::RETIRED_TOOL_NAMES`, so a skill function runs only
 //! when a human asks — here, or as an in-session `/slug` expansion — never
 //! because the model called a tool.
@@ -165,7 +165,7 @@ pub(crate) async fn run(
         budget_limit,
         format,
         // The raw loop, always: a skill's directives are the whole contract
-        // of this door, and a wrapper variant is `stella run --pipeline`'s
+        // of this door, and a wrapper option is `stella run --pipeline`'s
         // business.
         crate::wrapper_plugin::PipelineChoice::resolve(false, None).map_err(CliFailure::from)?,
         None,
@@ -202,7 +202,7 @@ mod tests {
 
     /// The user tier redirected to an empty sandbox, so the developer's real
     /// `~/.stella/skills` cannot leak into a slug resolution whose whole
-    /// subject is a temp directory (#4980's lesson).
+    /// subject is a temp directory.
     fn sandboxed_home(home: &Path) -> crate::paths::TestHomeGuard {
         crate::paths::test_user_home(home.to_path_buf())
     }
@@ -219,7 +219,7 @@ mod tests {
         .unwrap();
     }
 
-    /// **The #5456 CLI-verb witness.** `plan` resolves the slug through the
+    /// **The skill-run CLI-verb witness.** `plan` resolves the slug through the
     /// production loader, parses the file's own directives, substitutes the
     /// arguments, and hands back exactly the scope the turn driver enforces
     /// — grant, effort, mode — plus the invocation-marker prompt.

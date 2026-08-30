@@ -661,11 +661,11 @@ fn a_hidden_user_tier_hides_commands_and_agents_as_it_already_hid_skills() {
     );
 }
 
-/// **The #5456 expansion witness.** A skill whose file carries invoke
-/// directives expands as the engine-recognized invocation message — marker
-/// line, $ARGUMENTS substituted — and hands back the turn scope its
+/// **The skill-invocation expansion witness.** A skill whose file carries
+/// invoke directives expands as the engine-recognized invocation message —
+/// marker line, $ARGUMENTS substituted — and hands back the turn scope its
 /// directives ask for; a directive-less skill keeps the plain wrapper and
-/// scopes nothing. Never a callable tool either way (#3244).
+/// scopes nothing. Never a callable tool either way.
 #[test]
 fn a_directive_carrying_skill_expands_as_an_invocation_with_its_scope() {
     let dir = tempfile::tempdir().unwrap();

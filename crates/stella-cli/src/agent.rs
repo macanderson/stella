@@ -125,7 +125,7 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
     clippy::too_many_arguments,
     reason = "the one-shot door mirrors `run_raw_one_shot` parameter-for-parameter, and both \
               follow `run_turn`, whose own expect names the plan: bundling the turn-entry \
-              arguments is worth doing across all entry points at once (#4916), not here alone"
+              arguments is worth doing across all entry points at once, not here alone"
 )]
 pub async fn run_one_shot(
     cfg: &Config,
@@ -135,7 +135,7 @@ pub async fn run_one_shot(
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     test_command: Option<&str>,
     require_verdict: bool,
-    // `stella skill run` (#5456): the invoked skill and its turn scope,
+    // `stella skill run`: the invoked skill and its turn scope,
     // `None` for a plain `stella run` — see `run_raw_one_shot`.
     invoked_skill: Option<crate::extensions::InvokedSkill>,
 ) -> Result<(), CliFailure> {
@@ -1255,7 +1255,7 @@ pub(crate) async fn run_turn(
     // Mid-turn fallback (#2679): on an exhausted retry ladder the engine
     // re-resolves the worker role through this session router.
     let fallback = engine::SessionFallback::new(router);
-    // A directive-carrying skill invocation (#5456): its span is live for the
+    // A directive-carrying skill invocation: its span is live for the
     // whole turn — `active_skill_slugs` reports it, and when the skill
     // declared `allowed-tools` the plane narrows every dispatch to
     // operator ∧ grant. The guard drops with this function, lifting the
@@ -1283,7 +1283,7 @@ pub(crate) async fn run_turn(
             stella_tools::skill_plane::SkillScopedTools::new(&permitted, skill_plane.clone());
         let mut config = engine::engine_config_for_kind(cfg, door.kind);
         if let Some(effort) = skill_effort {
-            // The invoked skill's `effort:` override (#5456), for this turn.
+            // The invoked skill's `effort:` override, for this turn.
             config.effort = Some(effort);
         }
         let mut engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
@@ -1308,7 +1308,7 @@ pub(crate) async fn run_turn(
             tool_stack::session_stack(base_tools, custom_tools.to_vec(), cfg, Principal::User, bus);
         // Above the whole session chain, for the same reason as the
         // process-free arm: the grant narrows the assembled surface —
-        // customs and MCP included — and can never widen it (#5456).
+        // customs and MCP included — and can never widen it.
         let tools = stella_tools::skill_plane::SkillScopedTools::new(&tools, skill_plane.clone());
         let hook_runner = HostHookRunner;
         // A PreToolUse hook's `require_approval` parks on the #2676 broker
@@ -1317,7 +1317,7 @@ pub(crate) async fn run_turn(
         let hook_approvals = stella_tools::hook_bridge::BrokerApprovalRoute::for_registry(registry);
         let mut config = engine::engine_config_for_kind(cfg, door.kind);
         if let Some(effort) = skill_effort {
-            // The invoked skill's `effort:` override (#5456), for this turn.
+            // The invoked skill's `effort:` override, for this turn.
             config.effort = Some(effort);
         }
         let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)

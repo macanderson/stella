@@ -115,8 +115,8 @@ fn bare_loop_config(cfg: &Config) -> Config {
 #[expect(
     clippy::too_many_arguments,
     reason = "this is `run_turn`'s door-side twin and follows its expect: the turn-entry \
-              argument bundle is worth introducing across all four entry points at once \
-              (#4916), not piecemeal here"
+              argument bundle is worth introducing across all four entry points at once, \
+              not piecemeal here"
 )]
 pub(crate) async fn run_raw_one_shot(
     full_cfg: &Config,
@@ -126,7 +126,7 @@ pub(crate) async fn run_raw_one_shot(
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     test_command: Option<&str>,
     require_verdict: bool,
-    // `stella skill run` (#5456): the invoked skill this one-shot runs, with
+    // `stella skill run`: the invoked skill this one-shot runs, with
     // the turn scope its directives asked for — the grant narrowing and
     // effort override `run_turn` applies while the invocation is live.
     // `None` for a plain `stella run`, which is every caller there was
@@ -283,7 +283,7 @@ pub(crate) async fn run_raw_one_shot(
     }
     // After recall, exactly where the interactive loop notes its `/slug`
     // expansions: the skill's injection event and its turn scope ride the
-    // same seam whichever door invoked it (#5456).
+    // same seam whichever door invoked it.
     recall.note_invoked_skill(invoked_skill);
 
     let started_unix = crate::memory::unix_now_secs();

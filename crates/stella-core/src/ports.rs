@@ -143,7 +143,7 @@ pub trait ToolExecutor: Send + Sync {
     /// another" seam as [`Self::drain_wait_request`], for the same
     /// structural reason: invocation tracking belongs to the tool stack,
     /// and the engine only ever sees the stack through this trait. The
-    /// shipped mount is `stella-tools`' `skill_plane` (#5456): the CLI's
+    /// shipped mount is `stella-tools`' `skill_plane`: the CLI's
     /// turn drivers compose its `SkillScopedTools` view over their session
     /// stacks, and a live invocation's slug answers here through every
     /// forwarding decorator between the view and the engine. A leaf with no

@@ -96,10 +96,10 @@ pub(crate) struct OpeningRecall {
     /// The frames, skills and records the opening block rendered, by steering
     /// handle — the re-query adapter's seed.
     pub(crate) produced: super::steering::ProducedSteering,
-    /// The turn scope an invoked skill's directives asked for (#5456) — the
+    /// The turn scope an invoked skill's directives asked for — the
     /// grant narrowing and effort override the turn driver applies while the
     /// invocation is live. `None` for every turn no directive-carrying skill
-    /// was invoked into, which is every turn there was before #5456.
+    /// was invoked into.
     pub(crate) skill_scope: Option<crate::extensions::SkillTurnScope>,
 }
 
@@ -118,7 +118,7 @@ impl OpeningRecall {
             // The scope rides beside the event rather than inside it: the
             // event is the transcript's record that a skill was injected,
             // and the scope is a turn-driver instruction the transcript
-            // never needs (#5456).
+            // never needs.
             self.skill_scope = skill.scope;
             self.events
                 .push(stella_protocol::AgentEvent::SkillInjected {
@@ -164,7 +164,7 @@ pub(crate) fn inject_opening_recall(
         events,
         produced: recalled.produced,
         // The auto-selected block scopes nothing: a directive-carrying skill
-        // reaches a scope only through explicit invocation (#5456), where a
+        // reaches a scope only through explicit invocation, where a
         // human chose to run it — never through passive selection, which
         // must not be able to narrow a turn the user did not ask narrowed.
         skill_scope: None,

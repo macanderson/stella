@@ -45,7 +45,7 @@ You author `SKILL.md` files for a coding agent. A skill is reusable know-how (a 
 A skill that is a runnable procedure (invoked as `stella skill run <slug>` or `/slug`, with the invocation's arguments replacing `$ARGUMENTS` in the body) may also declare invoke directives in the same frontmatter: `context:` (`inline` to expand into the session, `fork` to run in a fresh context), `allowed-tools:` (comma-separated tool names/groups the run is narrowed to — it can only narrow the operator's surface, never widen it), `model:` (a provider/slug the skill asks to run under), and `effort:` (`low`|`medium`|`high`|`xhigh`|`max`). Declare a directive only when the procedure needs it; plain know-how should carry none.
 ```
 
-## The invoke directives (#5456)
+## The invoke directives
 
 The second paragraph teaches the **skill-function** vocabulary — the four
 optional frontmatter keys `parse_invoke_directives`
@@ -60,8 +60,8 @@ optional frontmatter keys `parse_invoke_directives`
 
 Behavior is the **skill's**, never a parameter's (AGENTS.md #9): how an
 invocation runs is declared here, in the authored file, and the invocation
-carries only the slug and its arguments. There is deliberately no
-`invoke_skill` tool (#3244) — a skill function runs only when a human asks,
+carries only the slug and its arguments. There is no
+`invoke_skill` tool — a skill function runs only when a human asks,
 via `stella skill run <slug>` or an in-session `/slug` expansion. Unknown
 values of these keys degrade to the default with a diagnostic; they never
 refuse the skill.

@@ -315,7 +315,7 @@ evolution_surfaces! {
          `queued_candidates` — carries `#[allow(dead_code)]` for want of a production caller, \
          so a promoted skill that later regresses is demoted by nothing. Tracked in #5086";
 
-    /// How a skill's own invoke directives reach execution (#5456) — the
+    /// How a skill's own invoke directives reach execution — the
     /// skill-function surface, distinct from the [`Self::Skill`] row above:
     /// that row governs which skills exist, this one governs what an
     /// existing skill's frontmatter may make an invocation *do*.
@@ -328,7 +328,7 @@ evolution_surfaces! {
                         over the assembled session stack, so a directive can only narrow the \
                         surface, never widen it. Invocation is human-only — `stella skill \
                         run <slug>` or an in-session `/slug` expansion; `invoke_skill` stays \
-                        in RETIRED_TOOL_NAMES (#3244), so no model call can invoke a skill",
+                        in RETIRED_TOOL_NAMES, so no model call can invoke a skill",
             witness: "a_skill_grant_over_the_session_stack_denies_disallowed_and_never_widens",
         },
         EvolutionTiming::BetweenTurns,
@@ -426,7 +426,7 @@ fn evolution_sources() -> [&'static str; 7] {
         include_str!("../../stella-core/src/skills/appraisal/tests.rs"),
         include_str!("../../stella-cli/src/tool_foundry/adopt/tests.rs"),
         include_str!("../../stella-cli/src/memory/self_tuning.rs"),
-        // The SkillInvocation row's witness (#5456) lives beside the session
+        // The SkillInvocation row's witness lives beside the session
         // stack it proves the grant holds over.
         include_str!("../../stella-cli/src/agent/tool_stack.rs"),
     ]

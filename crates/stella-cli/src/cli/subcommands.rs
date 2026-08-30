@@ -17,13 +17,13 @@ pub(crate) enum SkillCmd {
     ///
     /// Launches a one-shot run whose prompt is the skill's body with the
     /// trailing arguments substituted for $ARGUMENTS. The skill's own
-    /// frontmatter declares how it runs (#5456): `context:` inline or fork,
+    /// frontmatter declares how it runs: `context:` inline or fork,
     /// `allowed-tools:` a tool grant enforced as the intersection with
     /// operator policy (it can only narrow, never re-enable), `model:` a
     /// model override (an explicit --model flag still wins), and `effort:` a
-    /// reasoning-effort override. There is deliberately no invoke_skill tool
-    /// (#3244): a skill function runs only when a human asks — this verb, or
-    /// an in-session /slug expansion.
+    /// reasoning-effort override. There is no invoke_skill tool: a skill
+    /// function runs only when a human asks — this verb, or an in-session
+    /// /slug expansion.
     Run {
         /// The skill's slug (its frontmatter `name:`), as listed by the
         /// SKILLS tab and the ⚡ slash menu.
@@ -38,8 +38,8 @@ pub(crate) enum SkillCmd {
         /// Output shape: text, json, or stream-json
         ///
         /// Declared here rather than globally for the reason `run` declares
-        /// its own (#1493): this is a promise about what reaches stdout, and
-        /// only the commands that keep it may make it.
+        /// its own: this is a promise about what reaches stdout, and only
+        /// the commands that keep it may make it.
         #[arg(long, env = "STELLA_OUTPUT_FORMAT", value_enum, default_value = "text")]
         output_format: crate::OutputFormat,
     },

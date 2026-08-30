@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The mounted skill-invocation plane (#5456) — the session layer
+//! The mounted skill-invocation plane — the session layer
 //! `stella_core::skills::invoke` and [`crate::skill_grant`] were both written
 //! for and that, until this module, no shipped surface mounted.
 //!
-//! Two halves, both structural:
-//!
-//! - [`SkillInvocationPlane`] tracks which skill invocations are live in a
+//! [`SkillInvocationPlane`] tracks which skill invocations are live in a
 //!   session's tool stack, each with the `allowed-tools` grant its frontmatter
 //!   declared. It is the tools-side twin of
 //!   `stella_core::skills::invoke::ActiveSkillInvocations` — the same
@@ -26,7 +24,7 @@
 //!
 //! This plane is how a skill's invoke directives reach execution **without**
 //! restoring `invoke_skill`, which stays in
-//! [`crate::catalog::RETIRED_TOOL_NAMES`] under #3244's 12-tool cap. A skill
+//! [`crate::catalog::RETIRED_TOOL_NAMES`] under the 12-tool cap. A skill
 //! is invoked by the human — `stella skill run <slug>` or an in-session
 //! `/slug` — never by the model calling a tool; the plane only narrows what
 //! the model may do while that invocation is live.
@@ -35,10 +33,10 @@
 //!
 //! [`SkillScopedTools::active_skill_slugs`] is the first production
 //! implementation of `ToolExecutor::active_skill_slugs` that answers non-empty
-//! (`crates/stella-core/src/ports.rs` — previously every shipped executor
-//! answered the default). The decorator pass-throughs above it (`ReadOnlyTools`,
+//! (`crates/stella-core/src/ports.rs`; every other shipped executor answers
+//! the empty default). The decorator pass-throughs above it (`ReadOnlyTools`,
 //! `GrantedTools`, `GatedToolSet`, the deck's `TaskTap`) forward, so the
-//! engine's overflow-summarization seam (#2685, `driver::restore`) now sees a
+//! engine's overflow-summarization seam (`driver::restore`) sees a
 //! live invocation's slug through any shipped composition.
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -227,7 +225,7 @@ impl ToolExecutor for SkillScopedTools<'_> {
     }
 
     /// Forwarded: a view that restricts *which* tools may run is not a
-    /// narrower policy plane (#2793).
+    /// narrower policy plane.
     fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
         self.inner.dispatch_gate()
     }
@@ -240,7 +238,7 @@ impl ToolExecutor for SkillScopedTools<'_> {
 
     /// Forwarded: a granted tool legitimately parks on external state, and
     /// its probe replays through this same view, so the narrowing holds
-    /// while parked too (#1471's regression otherwise).
+    /// while parked too.
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.inner.drain_wait_request()
     }
@@ -265,7 +263,7 @@ impl ToolExecutor for SkillScopedTools<'_> {
     }
 
     /// Forwarded unfiltered: a live service is state the workspace is in,
-    /// not a capability this view hands out (#2764).
+    /// not a capability this view hands out.
     fn live_services(&self) -> Vec<LiveService> {
         self.inner.live_services()
     }
@@ -317,7 +315,7 @@ mod tests {
         }
     }
 
-    /// **The #5456 witness.** While a skill invocation with an
+    /// **The skill-invocation grant witness.** While a skill invocation with an
     /// `allowed-tools` grant is live, a disallowed tool call is DENIED at
     /// execution time (the leaf never sees it), an allowed call runs
     /// (anti-vacuity), the narrowed surface is what `schemas()` advertises,

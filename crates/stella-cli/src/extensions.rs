@@ -658,19 +658,19 @@ pub struct InvokedSkill {
     pub summary: String,
     /// What the expansion cost, estimated over the prompt it produced.
     pub tokens: u32,
-    /// The turn scope its invoke directives ask for (#5456), when the skill
+    /// The turn scope its invoke directives ask for, when the skill
     /// carries any — `None` for the common directive-less skill, which stays
     /// what it always was: injected context, unscoped.
     pub scope: Option<SkillTurnScope>,
 }
 
-/// What a directive-carrying skill invocation scopes its turn with (#5456):
+/// What a directive-carrying skill invocation scopes its turn with:
 /// the narrowing the turn drivers apply while the invocation is live. The
 /// grant rides as the raw `allowed-tools` names — resolution against the
 /// operator surface is `stella_tools::skill_plane`'s job (the per-name
 /// `operator ∧ grant` intersection of `skill_grant`), never this module's.
 ///
-/// The `model:` directive is deliberately absent: a live session cannot swap
+/// The `model:` directive is absent because a live session cannot swap
 /// providers mid-conversation, so the model override is honored only where a
 /// fresh scoped run is being launched (`stella skill run`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -687,9 +687,9 @@ pub struct SkillTurnScope {
     pub mode: stella_core::skills::invoke::SkillInvocationMode,
 }
 
-/// Parse a skill's invoke directives from its own file (#5456).
+/// Parse a skill's invoke directives from its own file.
 ///
-/// The raw bytes are re-read because [`Skill`] deliberately carries only the
+/// The raw bytes are re-read because [`Skill`] carries only the
 /// parsed name/description/body; a file that cannot be re-read (a contributed
 /// skill whose package moved, an opaque source label) degrades to the default
 /// directives — the same no-directive tolerance the parser itself guarantees,
@@ -873,12 +873,12 @@ impl CustomExtensions {
         Some(match self.lookup(head)? {
             Invocation::Command(cmd) => Expansion::plain(expand_command(&cmd.body, args)),
             Invocation::Skill(skill) => {
-                // A directive-carrying skill (#5456) expands as an
+                // A directive-carrying skill expands as an
                 // invocation — the engine-recognized marker message, with
                 // $ARGUMENTS substituted — and hands its scope out for the
                 // turn driver to enforce. A directive-less one keeps the
                 // shape it has always had. Never a callable tool either way:
-                // `invoke_skill` stays retired (#3244).
+                // there is no `invoke_skill` tool.
                 let directives = invoke_directives_for(skill);
                 let scope = skill_turn_scope(&skill.name, &directives);
                 let prompt = if scope.is_some() {

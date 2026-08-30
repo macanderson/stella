@@ -1092,7 +1092,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     test_command.as_deref(),
                     require_verdict,
                     // A plain run invokes no skill; `stella skill run` is
-                    // the door that does (#5456).
+                    // the door that does.
                     None,
                 ),
             )?;

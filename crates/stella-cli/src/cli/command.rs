@@ -375,7 +375,7 @@ pub(crate) enum Command {
 
     /// Run a skill as a scoped one-shot (`stella skill run <slug>`)
     ///
-    /// The skill-function invocation surface (#5456): a skill's own
+    /// The skill-function invocation surface: a skill's own
     /// frontmatter declares how it runs — context (inline/fork), an
     /// allowed-tools grant that can only narrow the operator surface, and
     /// model/effort overrides — and `stella skill run <slug> [args…]`

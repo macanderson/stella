@@ -84,7 +84,7 @@ pub(super) async fn run_lead_turn(
     // the path that ends normally — whichever of the two runs, exactly one
     // holds the handle, because the future either completes or is dropped.
     *drain.lock().unwrap_or_else(|p| p.into_inner()) = Some(forwarder);
-    // A directive-carrying skill invocation (#5456), read off the recall
+    // A directive-carrying skill invocation, read off the recall
     // seam before its events are drained below: the span is live for the
     // whole turn, `active_skill_slugs` reports it, and a declared
     // `allowed-tools` grant narrows the surface to operator ∧ grant through
@@ -138,7 +138,7 @@ pub(super) async fn run_lead_turn(
         let plan = PlanSetup::for_turn(messages, cfg);
         let turn = execution.as_ref().map(|(_, id)| *id);
         let tap = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx), plan, turn);
-        // The invocation plane rides outermost (#5456): the grant narrows
+        // The invocation plane rides outermost: the grant narrows
         // the deck's whole assembled surface and can never widen it. Inert
         // — a pure pass-through — on every turn with no live invocation.
         let scoped_tap =
@@ -146,7 +146,7 @@ pub(super) async fn run_lead_turn(
         let hook_runner = HostHookRunner;
         let mut engine_config = agent::engine_config_for(cfg);
         if let Some(effort) = skill_scope.as_ref().and_then(|scope| scope.effort) {
-            // The invoked skill's `effort:` override (#5456), for this turn.
+            // The invoked skill's `effort:` override, for this turn.
             engine_config.effort = Some(effort);
         }
         let mut engine = Engine::with_sleeper(provider, &scoped_tap, engine_config, &TokioSleeper)

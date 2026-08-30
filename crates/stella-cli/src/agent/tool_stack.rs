@@ -509,8 +509,8 @@ mod tests {
         );
     }
 
-    /// **The #5456 witness, through the shipped composition.** The skill
-    /// invocation plane composed over the assembled session chain — the
+    /// **The skill-invocation witness, through the shipped composition.**
+    /// The skill invocation plane composed over the assembled session chain — the
     /// position every turn driver mounts it at — is exactly the
     /// `operator ∧ grant` intersection: a live grant DENIES a disallowed
     /// tool at execution time, a tool the operator switched off stays off
