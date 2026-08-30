@@ -318,16 +318,30 @@ evolution_surfaces! {
     /// Executable capability Stella adds to its own working surface.
     Tool => "tool",
         EvolutionPosture::Shipped {
-            mechanism: "the foundry's authored → staged → adopted → enabled protocol: a \
-                        staged tool is invisible to discovery, an adopted one is still \
-                        uncallable until enabled, and `recheck_before_launch` re-digests the \
-                        bytes on every call, so a script rewritten mid-session stops launching",
-            witness: "a_tool_is_unreachable_until_it_is_both_proven_and_approved",
+            mechanism: "the autonomous foundry (#5453): the end-of-turn hook mines recent \
+                        shell history into the gap ledger, and under `foundry.autonomy = \
+                        \"auto\"` a gap is authored, lint-checked, witness-proven, adopted, \
+                        and enabled without a human — behind standing controls instead of a \
+                        ceremony. Every foundry tool spawns with the network denied by the \
+                        OS (`netdeny`; no working mechanism degrades autonomy to \
+                        draft-only), every launch is telemetered, a circuit breaker \
+                        auto-disables on repeated failure with a recorded reason, and \
+                        `recheck_before_launch` still re-digests the bytes on every call, \
+                        so a script rewritten mid-session stops launching. The adoption \
+                        gate itself is unchanged — unproven or unapproved tools stay \
+                        unreachable (`a_tool_is_unreachable_until_it_is_both_proven_and_\
+                        approved`), the breaker trip is pinned by `the_breaker_trips_after_\
+                        configured_failures_and_blocks_the_next_launch`, and the rollback \
+                        by `rollback_round_trips_a_prior_version_and_the_gate_accepts_it`",
+            witness: "a_synthetic_gap_is_autonomously_adopted_and_its_network_call_is_denied",
         },
-        EvolutionTiming::OfflineBatch,
+        EvolutionTiming::BetweenTurns,
         ImpactClass::ExecutableTool,
-        "`stella tools --disable <name>` stops offering an adopted tool while keeping its \
-         proof on file; `forget_foundry_tool` removes the adoption and its approval outright";
+        "`stella tools --rollback <name> [--to <version>]` restores a prior version's exact \
+         bytes from the append-only history and re-digests them; `--disable <name>` stops \
+         offering a tool while keeping its proof on file; `foundry.autonomy = \"off\"` is \
+         the kill switch; `forget_foundry_tool` removes an adoption and its approval \
+         outright";
 
     /// How Stella configures its own runs.
     Workflow => "workflow",
@@ -395,13 +409,14 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 6] {
+fn evolution_sources() -> [&'static str; 7] {
     [
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),
         include_str!("../../stella-cli/src/memory/validation/tests.rs"),
         include_str!("../../stella-core/src/skills/appraisal/tests.rs"),
         include_str!("../../stella-cli/src/tool_foundry/adopt/tests.rs"),
+        include_str!("../../stella-cli/src/tool_foundry/autonomy.rs"),
         include_str!("../../stella-cli/src/memory/self_tuning.rs"),
     ]
 }
