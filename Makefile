@@ -40,7 +40,6 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability core-reachability \
-                    module-siblings \
                     typed-errors \
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
@@ -75,16 +74,14 @@ GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings doc-warnings-schema \
 # They stay out of `make gate` for the separate reason that they build
 # throwaway git repositories; that exclusion is not what this variable records.
 #
-#   test-main-canary-live.sh
-#                         — its cases expect the canary to report GREEN, which
-#                           it can only do when the LIVE tree is green: the
-#                           `file-size` and `prose` rows take no
-#                           `--manifest-dir`. So it reports whatever `main` is
-#                           red on rather than the canary's own capability —
-#                           which is main-canary.yml's job, after the merge.
-#                           The canary's other cases are decided by a fixture
-#                           tree, hold whatever `main` is red on, and run in
-#                           guard-self-tests.yml as test-main-canary.sh (#5356).
+#   test-main-canary-live.sh used to be here: its cases expected the canary to
+#                           report GREEN, which it could only do when the LIVE
+#                           tree was green, because the `file-size` and `prose`
+#                           rows took no `--manifest-dir`. Once every row read
+#                           the fixture, its six cases became facts about the
+#                           canary rather than about `main`, and moved into
+#                           test-main-canary.sh, which runs in
+#                           guard-self-tests.yml; the file itself was deleted.
 #   test-guard-sigpipe.sh — same shape: every case asserts a real guard exits 0
 #                           on this tree with its reader gone, so a genuinely
 #                           red guard fails it for the wrong reason, and
@@ -96,7 +93,7 @@ GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings doc-warnings-schema \
 # workspace-shape check requires `crates/stella-core/`, a mismatch dating to
 # this workspace's move under `crates/` long after the fixture was written.
 # Fixed by reshaping the fixture to match; it now runs in guard-self-tests.yml.
-UNHOSTED_SELF_TESTS := test-main-canary-live.sh test-guard-sigpipe.sh
+UNHOSTED_SELF_TESTS := test-guard-sigpipe.sh
 
 .PHONY: help
 help: ## Show this help
@@ -774,18 +771,6 @@ core-reachability: ## Assert a stella-core module is reachable from the engine's
 core-reachability-update: ## Shrink the core-reachability baseline after an eviction (refuses to grow)
 	@python3 ./scripts/check-core-reachability.py --update
 
-.PHONY: module-siblings
-module-siblings: ## Assert no NEW `foo.rs` sits beside a `foo/` directory
-	@python3 ./scripts/check-module-siblings.py
-
-.PHONY: module-siblings-update
-module-siblings-update: ## Shrink the module-siblings baseline after a cleanup (refuses to grow)
-	@python3 ./scripts/check-module-siblings.py --update
-
-.PHONY: module-siblings-test
-module-siblings-test: ## Test the module-siblings ratchet's direction (hermetic; not part of `gate`)
-	./scripts/test-module-siblings.sh
-
 .PHONY: core-reachability-test
 core-reachability-test: ## Test the core-reachability walker (hermetic; not part of `gate`)
 	./scripts/test-core-reachability.sh
@@ -822,9 +807,8 @@ main-canary: ## Ask whether main still composes green (check only; no issue is f
 	@./scripts/main-canary.sh
 
 .PHONY: main-canary-test
-main-canary-test: ## Test the post-merge canary, announcements included (both suites; not part of `gate`)
+main-canary-test: ## Test the post-merge canary, announcements included (not part of `gate`)
 	./scripts/test-main-canary.sh
-	./scripts/test-main-canary-live.sh
 
 .PHONY: deleted-tests-test
 deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handling (hermetic; not part of `gate`; #4495)

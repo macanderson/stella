@@ -81,7 +81,8 @@ fn propose(store: &ContextStore, candidate_id: &str) {
         "Prefer rg over grep",
         "Use ripgrep instead of grep in this repository.",
         vec!["tooling".into()],
-        EvidencePool::from_observations(&supporting_observations()),
+        EvidencePool::from_observations(&supporting_observations())
+            .expect("constructor-built observations hash clean"),
         score,
         confidence_from_score(&score).expect("confidence"),
         "2026-07-26T12:00:00Z",

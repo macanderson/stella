@@ -30,13 +30,13 @@ pub(crate) enum Delivery {
 /// non-empty. `Err` only when at least one targeted session could not be
 /// reached — the per-session outcomes are always printed first, so the
 /// caller sees exactly which.
-pub(crate) async fn run(message: &str, session_ids: &[String]) -> Result<(), String> {
+pub(crate) async fn run(message: &str, session_ids: &[String], deep: bool) -> Result<(), String> {
     if message.trim().is_empty() {
         return Err("stella whistle: message must not be empty".to_string());
     }
     let registry = SessionRegistry::open_default();
-    let targets = targets(&registry, session_ids);
-    if targets.is_empty() {
+    let outcomes = broadcast(&registry, message, session_ids, deep, None).await;
+    if outcomes.is_empty() {
         println!(
             "no {} to whistle at",
             if session_ids.is_empty() {
@@ -47,22 +47,63 @@ pub(crate) async fn run(message: &str, session_ids: &[String]) -> Result<(), Str
         );
         return Ok(());
     }
-    // Wrapped so the model reads this as an out-of-band directive rather
-    // than an ordinary trailing remark — `AgentEvent::Steered` already
-    // narrates the drain regardless, so the transcript records that a
-    // steer landed; this wrapping is what tells the model to prioritize it.
-    let wrapped = format!("[whistle — steering from another session] {message}");
     let mut any_unreachable = false;
-    for record in &targets {
-        let outcome = deliver_one(&registry, record, &wrapped).await;
+    for (record, outcome) in &outcomes {
         any_unreachable |= matches!(outcome, Delivery::Unreachable(_));
-        print_outcome(record, &outcome);
+        print_outcome(record, outcome);
     }
     if any_unreachable {
         Err("whistle: not every targeted session could be reached".to_string())
     } else {
         Ok(())
     }
+}
+
+/// Deliver `message` to every target ([`targets`], minus `exclude` — the
+/// session broadcasting from inside the deck, which must not whistle
+/// itself), all at once, and return each session's outcome in target order.
+///
+/// Concurrent rather than one after another because each delivery carries a
+/// connect and an ack timeout: at a dozen sessions with a few stale sockets
+/// among them, a sequential sweep made "broadcast" mean "wait". A stale
+/// socket now delays only its own row. `deep` asks each session to reach
+/// its worker lanes too ([`super::tap::Whistleable::push_deep`]).
+pub(crate) async fn broadcast(
+    registry: &SessionRegistry,
+    message: &str,
+    session_ids: &[String],
+    deep: bool,
+    exclude: Option<&str>,
+) -> Vec<(SessionRecord, Delivery)> {
+    let targets: Vec<SessionRecord> = targets(registry, session_ids)
+        .into_iter()
+        .filter(|record| exclude != Some(record.id.as_str()))
+        .collect();
+    // Wrapped so the model reads this as an out-of-band directive rather
+    // than an ordinary trailing remark — `AgentEvent::Steered` already
+    // narrates the drain regardless, so the transcript records that a
+    // steer landed; this wrapping is what tells the model to prioritize it.
+    let wrapped = format!("[whistle — steering from another session] {message}");
+    let outcomes = futures_util::future::join_all(
+        targets
+            .iter()
+            .map(|record| deliver_one(registry, record, &wrapped, deep)),
+    )
+    .await;
+    targets.into_iter().zip(outcomes).collect()
+}
+
+/// One line per session, the deck's chrome-note rendering of a broadcast's
+/// outcomes — the same rows `stella whistle` prints, joined.
+pub(crate) fn summary(outcomes: &[(SessionRecord, Delivery)]) -> String {
+    if outcomes.is_empty() {
+        return "whistle: no other live session to reach".to_string();
+    }
+    outcomes
+        .iter()
+        .map(|(record, outcome)| outcome_line(record, outcome))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The sessions to whistle at: explicit ids if given (whether or not they
@@ -83,21 +124,30 @@ fn targets(registry: &SessionRegistry, session_ids: &[String]) -> Vec<SessionRec
 }
 
 fn print_outcome(record: &SessionRecord, outcome: &Delivery) {
+    println!("{}", outcome_line(record, outcome));
+}
+
+fn outcome_line(record: &SessionRecord, outcome: &Delivery) -> String {
     let title = if record.title.is_empty() {
         record.workspace.as_str()
     } else {
         record.title.as_str()
     };
     match outcome {
-        Delivery::Delivered => println!("delivered    {:<24} {title}", record.id),
+        Delivery::Delivered => format!("delivered    {:<24} {title}", record.id),
         Delivery::Unreachable(reason) => {
-            println!("unreachable  {:<24} {title} ({reason})", record.id);
+            format!("unreachable  {:<24} {title} ({reason})", record.id)
         }
     }
 }
 
 #[cfg(unix)]
-async fn deliver_one(registry: &SessionRegistry, record: &SessionRecord, text: &str) -> Delivery {
+async fn deliver_one(
+    registry: &SessionRegistry,
+    record: &SessionRecord,
+    text: &str,
+    deep: bool,
+) -> Delivery {
     use tokio::net::UnixStream;
     use tokio::time::timeout;
 
@@ -113,6 +163,7 @@ async fn deliver_one(registry: &SessionRegistry, record: &SessionRecord, text: &
     };
     let request = WhistleRequest {
         text: text.to_string(),
+        deep,
     };
     if write_frame(&mut stream, &request).await.is_err() {
         return Delivery::Unreachable("failed to send".to_string());
@@ -134,6 +185,7 @@ async fn deliver_one(
     _registry: &SessionRegistry,
     _record: &SessionRecord,
     _text: &str,
+    _deep: bool,
 ) -> Delivery {
     Delivery::Unreachable(
         "agent whistle needs a Unix domain socket — not supported on this platform yet".to_string(),
@@ -197,12 +249,52 @@ mod tests {
         registry.upsert(&unreachable).unwrap();
 
         assert_eq!(
-            deliver_one(&registry, &reachable, "test").await,
+            deliver_one(&registry, &reachable, "test", false).await,
             Delivery::Delivered
         );
         assert!(matches!(
-            deliver_one(&registry, &unreachable, "test").await,
+            deliver_one(&registry, &unreachable, "test", false).await,
             Delivery::Unreachable(_)
         ));
+
+        // The broadcast reaches both at once, reports each in target order,
+        // and leaves out the session that is broadcasting.
+        let mut outcomes = broadcast(&registry, "test", &[], false, Some("ses-unreachable")).await;
+        outcomes.sort_by(|a, b| a.0.id.cmp(&b.0.id));
+        assert_eq!(outcomes.len(), 1, "the excluded session is not a target");
+        assert_eq!(outcomes[0].0.id, "ses-reachable");
+        assert_eq!(outcomes[0].1, Delivery::Delivered);
+        assert!(summary(&outcomes).starts_with("delivered    ses-reachable"));
+        assert_eq!(
+            summary(&[]),
+            "whistle: no other live session to reach",
+            "an empty broadcast says so rather than printing nothing"
+        );
+    }
+
+    /// The fan-out is concurrent: two unreachable targets, each costing a
+    /// connect attempt, finish together rather than one after the other.
+    /// Measured against the sequential bound, which is the shape `run` had.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_broadcast_reaches_every_target_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = SessionRegistry::open(dir.path());
+        let ids = ["ses-a", "ses-b", "ses-c", "ses-d"];
+        for id in ids {
+            let mut r = record(id, stella_store::SessionStatus::InProgress);
+            r.id = id.to_string();
+            registry.upsert(&r).unwrap();
+        }
+        let outcomes = broadcast(&registry, "test", &[], false, None).await;
+        let mut got: Vec<&str> = outcomes.iter().map(|(r, _)| r.id.as_str()).collect();
+        got.sort_unstable();
+        assert_eq!(got, ids, "every target is reported, none dropped");
+        assert!(
+            outcomes
+                .iter()
+                .all(|(_, outcome)| matches!(outcome, Delivery::Unreachable(_))),
+            "no listener was bound, so every row is unreachable — and reported"
+        );
     }
 }

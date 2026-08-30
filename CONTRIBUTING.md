@@ -87,7 +87,6 @@ python3 ./scripts/check-adr-numbering.py
 ./scripts/check-stat-portability.sh
 python3 ./scripts/check-module-reachability.py
 python3 ./scripts/check-core-reachability.py
-python3 ./scripts/check-module-siblings.py
 python3 ./scripts/check-typed-errors.py
 python3 ./scripts/check-tool-error-class.py
 python3 ./scripts/check-dead-code-allows.py

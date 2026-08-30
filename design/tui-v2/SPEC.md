@@ -94,10 +94,10 @@ The stand-in for every token, by the ANSI name rather than by ratatui's spelling
 | `hl` | bright black |
 | `border` | bright black |
 | `rule` | bright black |
-| `gold` | yellow |
-| `gold_bright` | yellow |
+| `gold` | bright yellow |
+| `gold_bright` | bright yellow |
 | `silver` | white |
-| `silver_type` | white |
+| `silver_type` | bright white |
 | `text` | bright white |
 | `muted` | bright black |
 | `dim` | bright black |

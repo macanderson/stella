@@ -404,7 +404,8 @@ pattern = "20"
 "#;
     let mut records = load_context_file(".stella/rules/acme.web.toml", file).expect("loads");
     assign_handles(&mut records);
-    let conflicts = validate_records(&mut records);
+    records.iter_mut().for_each(validate::check_record);
+    let conflicts = validate::detect_conflicts(&mut records);
     assert!(conflicts.is_empty(), "{conflicts:?}");
     assert_eq!(
         records
@@ -908,4 +909,59 @@ fn an_explicitly_scoped_record_without_a_trigger_is_named() {
             .contains(&RecordFinding::ScopedWithoutTrigger),
         "a derived retrieved record carries no scoped-without-trigger finding"
     );
+}
+
+/// A record that asked to block and was refused carries the refusal as a
+/// finding on the record itself, where `stella context explain` and `validate`
+/// already look. A registry-level diagnostic describes a file, so a refusal
+/// surfaced only there is invisible to everything that reads a record's own
+/// findings.
+#[test]
+fn a_refused_blocking_request_is_a_finding_on_the_record() {
+    let corpus = r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+sharing_scope = "repository"
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.acme.web.no-force-push"
+kind = "constraint"
+statement = "Never force-push to main."
+
+[record.steering]
+force = "must"
+precedence = 60
+
+[record.enforcement]
+mode = "hard"
+guard_tool = "Bash"
+guard_deny_command = "git push --force*"
+"#;
+    let files = [crate::rules::RuleFile {
+        path: ".stella/rules/acme.web.toml".to_string(),
+        contents: corpus.to_string(),
+        contributed_by: None,
+    }];
+    let facts = registry::Facts {
+        verdicts: std::collections::BTreeMap::new(),
+        last_checked: std::collections::BTreeMap::new(),
+        approved_blocking: std::collections::BTreeSet::new(),
+        now: "2026-08-08T00:00:00Z",
+    };
+    let loaded = registry::load(&[], &files, &facts);
+    let entry = loaded.entries.first().expect("the record loaded");
+    assert!(
+        entry
+            .record
+            .findings
+            .iter()
+            .any(|finding| matches!(finding, RecordFinding::BlockingRefused(_))),
+        "the refusal must be visible on the record: {:?}",
+        entry.record.findings
+    );
+    assert!(entry.guard.guard.is_none(), "a refused guard must not arm");
 }

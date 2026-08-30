@@ -169,10 +169,18 @@ fn a_gated_probe_is_stripped_and_the_claim_is_unfalsifiable() {
     // The gated probe never reaches the record.
     let truth = proposal.record.truth.as_ref().expect("truth");
     assert!(truth.probe.is_none(), "a gated probe must be stripped");
-    // With no honored probe, the claim is honestly unfalsifiable.
+    // With no honored probe, the claim is honestly unfalsifiable — and the
+    // reviewer is told the probe was refused rather than that none was offered.
     let refutation = proposal.refutation.as_ref().expect("refutation");
     assert_eq!(refutation.verdict, Verdict::Unfalsifiable);
     assert_eq!(refutation.probe_kind, ProbeKind::None);
+    assert!(
+        refutation
+            .detail
+            .contains("never honored on imported content"),
+        "the reviewer is not told the probe was refused: {}",
+        refutation.detail
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

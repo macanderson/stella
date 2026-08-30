@@ -120,7 +120,7 @@ pub const COMPOSITION_SEAMS: &[&str] = &[
 /// forces this DOWN in the same PR (the win is recorded), and adding a new
 /// unwitnessed claim forces it UP — a visible review decision instead of a
 /// silent one.
-pub const UNWITNESSED_BASELINE: usize = 4;
+pub const UNWITNESSED_BASELINE: usize = 3;
 
 /// The matrix. Ordered by area; ids are stable and unique.
 pub static CAPABILITIES: &[Capability] = &[
@@ -248,7 +248,11 @@ pub static CAPABILITIES: &[Capability] = &[
             mechanism: "`stella whistle <message>` — one Unix domain socket per session inside \
                         its SessionRegistry sidecar, discovered exactly as `stella resume --list` \
                         discovers sessions; interactive mode reaches it through a session-scoped \
-                        relay, since its own steering tap exists only during a turn",
+                        relay, since its own steering tap exists only during a turn. `--deep` \
+                        fans the same text into the session's live worker lanes \
+                        (`a_deep_whistle_reaches_the_lead_and_every_live_lane`), and the deck's \
+                        `>@all` / `>@<id>` address broadcasts from inside a session \
+                        (`the_broadcast_address_parses_its_target_depth_and_message`)",
             witness: "a_message_sent_over_a_deck_sessions_socket_reaches_its_next_turn",
         },
         // Not "serve has POST /v1/turns/{id}/steer, so it is covered". It has
@@ -456,14 +460,13 @@ pub static CAPABILITIES: &[Capability] = &[
                       the #2684 stdout-decision plane in hooks::decision) and the observer-only \
                       HookBus",
         engine_entries: &["with_hooks", "with_bus", "with_hook_approval_route"],
-        cli: SurfacePosture::ShippedUnwitnessed {
+        cli: SurfacePosture::Shipped {
             mechanism: "workspace hooks wired via with_session_hook_context on every driver \
                         path. SessionStart firing is a HOST obligation (#2674): the engine \
                         has no method for it — a host fires hooks::run_hooks once \
                         while it assembles the system prompt, before any Engine exists, and \
                         owns surfacing the diagnostics the no-I/O engine cannot print",
-            missing: "a CLI-side test pinning that a configured workspace hook actually fires \
-                      through agent wiring (core has hook tests; the CLI wiring has none)",
+            witness: "a_configured_session_start_hook_reaches_the_system_prompt",
         },
         api: SurfacePosture::Shipped {
             mechanism: "operator-installed ServeExtensions on a per-turn HookBus (#1298): \
@@ -707,7 +710,7 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 14] {
+    fn cli_sources() -> [&'static str; 15] {
         [
             // The deck's session-scoped whistle relay (#4768) — home of the
             // `turn.whistle` witness.
@@ -732,6 +735,9 @@ mod tests {
             // moved into one of them is not missing, it is one `include_str!`
             // away from being invisible to this sweep.
             include_str!("../../stella-cli/src/agent/tests/engine_wiring.rs"),
+            // Home of `a_configured_session_start_hook_reaches_the_system_prompt`
+            // — the `hooks.lifecycle` CLI witness.
+            include_str!("../../stella-cli/src/agent/tests/hook_wiring.rs"),
             include_str!("../../stella-cli/src/subagent/tests.rs"),
             // `subsession.rs` crossed the ratchet with #4334 and its tests
             // moved out the same way — the `turn.steer` witness lives here.

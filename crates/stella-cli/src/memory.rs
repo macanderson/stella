@@ -65,6 +65,7 @@ mod private_state;
 mod projection;
 pub(crate) mod proposals;
 mod recall;
+mod records_refresh;
 // #2304: the trace-replay learning harness — the learning machinery driven from
 // recorded traces with zero model calls. Test-only by construction: the crate is
 // bin-only, so an in-crate module is the only place this can reach
@@ -366,11 +367,24 @@ pub struct SessionMemory {
     /// cacheable, facts are only worth tokens when they apply. The *registry* is
     /// stored rather than a pre-rendered string because rendering is per turn:
     /// `applies_to` selection needs the turn's prompt to decide which scoped
-    /// records are worth their tokens right now. Set once per session by
-    /// [`Self::open_for_session`] from the already-resolved rule registry —
-    /// re-deriving it here would re-walk the rule directories and re-run the
-    /// truth sweep on every turn.
-    record_registry: Option<stella_core::records::Registry>,
+    /// records are worth their tokens right now. Seeded per session by
+    /// [`Self::open_for_session`] from the already-resolved rule registry, and
+    /// refreshed mid-session when the rule files' bytes move — see
+    /// [`records_refresh`]. Behind a lock because the freshness check runs at
+    /// the re-query boundary, where the turn holds this memory by `&`.
+    record_registry: std::sync::RwLock<Option<stella_core::records::Registry>>,
+    /// Bumped on every mid-session registry swap and folded into the
+    /// re-query fingerprint, so a swap forces exactly one re-query at the
+    /// next boundary — path drift alone would never notice it.
+    records_generation: std::sync::atomic::AtomicU64,
+    /// Content digest of the rule files behind the loaded registry
+    /// ([`records_refresh::rules_digest`]), so the per-boundary freshness
+    /// check is a read-and-hash and a reload runs only when bytes moved.
+    records_fingerprint: std::sync::Mutex<u64>,
+    /// A one-shot section the next recall block leads with — what a
+    /// mid-session swap could not fully apply (a pinned change that binds
+    /// next session, a file that stopped parsing).
+    records_note: std::sync::Mutex<Option<String>>,
     /// The turn's selection→offer join, noted at turn start by
     /// [`Self::note_turn_skills`] and consumed at turn end by the trial
     /// recorder inside [`Self::record_episode`].
@@ -596,7 +610,10 @@ impl SessionMemory {
                     suppression::suppression_reader(workspace_root, store.clone()),
                 );
                 Some(Self {
-                    record_registry: None,
+                    record_registry: std::sync::RwLock::new(None),
+                    records_generation: std::sync::atomic::AtomicU64::new(0),
+                    records_fingerprint: std::sync::Mutex::new(0),
+                    records_note: std::sync::Mutex::new(None),
                     store,
                     host,
                     domains,

@@ -1,11 +1,11 @@
 ---
 title: stella proposals
-description: Review what the adaptive-context loop wants to make durable — the induced proposals, the evidence behind each, and Keep/Edit/Ignore/Retract as events.
+description: Review what stella wants to remember long-term, see the evidence behind each idea, and keep, edit, ignore, or retract it.
 ---
 
-`stella proposals` is the review surface for the adaptive-context loop. As you work, the loop reflects on turns and induces proposals: things it believes are worth making durable. This command shows you what is pending, the evidence behind each one, and lets you accept it, reword it, or decline it — **before** it steers anything.
+`stella proposals` is where you review ideas from stella's adaptive-context loop, the part of stella that reflects on your work and suggests things worth remembering long-term. As you work, it looks back on your turns and creates proposals: things it thinks are worth keeping. This command shows you each pending proposal and the evidence behind it. You can accept it, change its wording, or turn it down, all **before** it affects how stella behaves.
 
-Every decision is recorded as an immutable event, so the review history replays exactly and Ignore is reversible rather than permanent. Offline: reads and appends to `.stella/private/context.db` only, no API key.
+Every decision you make is saved as a permanent record. This means the full review history can always be replayed exactly, and choosing "ignore" can be undone later; it isn't final. This command works offline. It only reads and writes to `.stella/private/context.db`, and it doesn't need an API key.
 
 ## Synopsis
 
@@ -20,9 +20,9 @@ stella proposals refresh
 
 ## What it does
 
-A learning loop that silently rewrites its own steering is not auditable. The design here is the opposite: the loop may *propose*, but adoption is a decision a person makes on the record. That is why every verb takes a reason and why nothing is ever destroyed — a governance decision with no reason is not auditable, and a decision that cannot be revisited is not a review.
+stella never changes its own behavior silently. It can only *propose* changes. A person decides whether to adopt them, and that decision is recorded. That's why every command here asks for a reason, and why nothing is ever deleted. A decision with no reason can't be checked later, and a decision you can't revisit isn't really a review.
 
-A proposal must recur across **distinct tasks** to be induced at all, not merely many times within one. One task that mentions the same thing twenty times is one piece of evidence, not twenty.
+For stella to create a proposal, the same idea must show up across **different tasks**, not just many times in one task. If one task mentions something twenty times, that counts as one piece of evidence, not twenty.
 
 ### `stella proposals list`
 
@@ -44,14 +44,14 @@ stella proposals list --all --limit 100
 
 ### `stella proposals keep`
 
-Accept a proposal as written. Recorded as an advisory confirmation — it becomes active steering, at advisory enforcement.
+Accept a proposal exactly as written. It then becomes active guidance for stella, at "advisory" strength, meaning stella treats it as a suggestion rather than a strict rule.
 
 <CardGrid size="md">
   <OptionCard name="<id>" required>
     The proposal's candidate id, as shown by `list`.
   </OptionCard>
   <OptionCard name="--reason <text>" defaultValue="kept from the review surface">
-    Why. Recorded on the event.
+    The reason you're keeping it. This is saved with the record.
   </OptionCard>
 </CardGrid>
 
@@ -61,7 +61,7 @@ stella proposals keep cand-3f21 --reason "matches how we actually release"
 
 ### `stella proposals edit`
 
-Accept a proposal with different wording. The replacement text is what becomes durable; the original stays in the ledger.
+Accept a proposal but change its wording. Your replacement text is what stella keeps long-term. The original wording stays in the record too.
 
 <CardGrid size="md">
   <OptionCard name="<id>" required>
@@ -71,7 +71,7 @@ Accept a proposal with different wording. The replacement text is what becomes d
     The replacement text.
   </OptionCard>
   <OptionCard name="--reason <text>" defaultValue="edited from the review surface">
-    Why.
+    The reason for the edit.
   </OptionCard>
 </CardGrid>
 
@@ -81,14 +81,14 @@ stella proposals edit cand-3f21 "Run \`make gate\` before pushing — not \`carg
 
 ### `stella proposals ignore`
 
-Decline a proposal. It will not be re-proposed while the decision stands — and because the decision is an event rather than a deletion, you can revisit it.
+Decline a proposal. stella will not suggest it again while your decision stands. Because this is recorded as an event, not a deletion, you can change your mind later.
 
 <CardGrid size="md">
   <OptionCard name="<id>" required>
     The proposal's candidate id.
   </OptionCard>
   <OptionCard name="--reason <text>" defaultValue="declined from the review surface">
-    Why.
+    The reason for declining it.
   </OptionCard>
 </CardGrid>
 
@@ -98,18 +98,18 @@ stella proposals ignore cand-7ab0 --reason "true last quarter, not now"
 
 ### `stella proposals retract`
 
-Take back a rule that was already published, so it stops steering.
+Take back a rule you already accepted, so it stops guiding stella.
 
-`ignore` prevents a write; `retract` reverses one. A kept directive lands as a TOML record under `.stella/rules/`, which the loader reads into the system prefix — and until this verb the only way back was `rm` or a git revert, neither of which leaves any record that the rule was ever believed.
+`ignore` stops a proposal from being written in the first place. `retract` undoes one that was already written. When you keep a proposal, it's saved as a file under `.stella/rules/`, and stella loads those files as part of its instructions.
 
-Retraction appends rather than deletes. The record file stays on disk with `status = "retracted"`, and the retraction goes into the hash-chained `.stella/rules/promotions.jsonl` with who made it and why. The registry stops selecting a non-active record, so the rule is out of the prefix on the next load; `stella context validate` reports it under *Retired* and does not fail.
+Retracting a rule doesn't delete it. The rule's file stays on disk, but its status changes to `retracted`. The retraction itself is added to `.stella/rules/promotions.jsonl`, a tamper-evident log, along with who did it and why. After this, stella stops using the rule the next time it loads its instructions. Running `stella context validate` shows the rule as *Retired* instead of failing.
 
 <CardGrid size="md">
   <OptionCard name="<id>" required>
-    The published rule's candidate id, as shown by [`stella context list`](/docs/commands/context) — or its full `ctx.<set>.<id>` lineage when the short form names more than one.
+    The rule's id, as shown by [`stella context list`](/docs/commands/context). If the short id matches more than one rule, use the full `ctx.<set>.<id>` form instead.
   </OptionCard>
   <OptionCard name="--reason <text>" defaultValue="retracted from the review surface">
-    Why. Recorded on the ledger event; an empty reason is refused.
+    The reason for retracting it. This is required; an empty reason is not allowed.
   </OptionCard>
 </CardGrid>
 
@@ -119,34 +119,34 @@ stella proposals retract migration-order-3f21 --reason "the migration order chan
 
 ### `stella proposals refresh`
 
-Extract observations from the reflection log and induce proposals over them, without waiting for a turn to reflect.
+Look through stella's reflection log and create proposals from it right away, without waiting for a new turn to trigger reflection.
 
-The loop already does this after every reflection. This verb exists so the review surface is usable on its own: *"show me what is pending"* is a useless question if the only way to populate it is to run a turn and hope. Replay-idempotent like the loop's own pass — running it twice changes nothing.
+stella already does this automatically after every reflection. This command exists so you can check for proposals on demand, without needing to run a new turn first. Running it more than once is safe: running it twice in a row makes no extra changes.
 
 ```bash
 stella proposals refresh && stella proposals list
 ```
 
 <Callout type="info">
-`context.lifecycle.enabled: false` in [`settings.json`](/docs/configuration/settings) restores every pre-adaptive behavior wholesale, including turning induction off.
+Setting `context.lifecycle.enabled: false` in [`settings.json`](/docs/configuration/settings) turns off this whole adaptive-context feature, including proposal creation.
 </Callout>
 
-## Not the same as `stella ingest`
+## Proposals vs. ingest
 
 <Callout type="warn">
-[`stella ingest`](/docs/commands/ingest) and `stella proposals` are two different review surfaces with two different authority models, and they do not share storage. `stella proposals` reads the adaptive-context ledger in `.stella/private/context.db` — what the loop induced from your *sessions*. Ingest writes TOML proposals to `.stella/proposals/` from *documents*, and those are reviewed by editing the files. A document you ingest will not appear here.
+[`stella ingest`](/docs/commands/ingest) and `stella proposals` are two separate systems with separate storage. `stella proposals` shows ideas stella noticed from your *sessions*, stored in `.stella/private/context.db`. `stella ingest` creates proposal files from *documents* you feed it, stored in `.stella/proposals/`, and you review those by editing the files directly. A document you ingest will not show up in `stella proposals`.
 </Callout>
 
 ## Related
 
 <CardGrid size="sm">
   <SpecCard title="Context Engine" href="/docs/context-engine">
-    How proposals become recall, and what a context frame carries.
+    How proposals become memories stella recalls later, and what's inside a context frame.
   </SpecCard>
   <SpecCard title="stella memory" href="/docs/commands/memory">
-    The citation feedback loop, selection health, and reversible retirement.
+    How stella tracks memory citations, checks their health, and can retire them (and undo that).
   </SpecCard>
   <SpecCard title="stella ingest" href="/docs/commands/ingest">
-    The document half — markdown into TOML context-record proposals.
+    Turns documents into proposals you can review.
   </SpecCard>
 </CardGrid>

@@ -1,9 +1,9 @@
 ---
 title: stella storage
-description: Inspect the storage map — every layer, namespace, relation, and field, with intent and boundaries from stella.storage.toml — and bound the store's growth.
+description: See every storage layer, namespace, table, and field in your workspace, with its purpose, and control how much history your store keeps.
 ---
 
-`stella storage` inspects the **storage map**: every storage layer, namespace, relation, and field in your workspace, annotated with intent and boundaries from `stella.storage.toml`. It reads the local index built by [`stella init`](/docs/commands/init) (`.stella/private/codegraph.db`) plus the manifest, so it is fully offline and needs no API key. One verb — `prune` — also does the store's retention housekeeping.
+`stella storage` shows the **storage map**: every storage layer, namespace, relation, and field in your workspace, along with its purpose and limits, taken from `stella.storage.toml`. It reads the local index that [`stella init`](/docs/commands/init) builds (`.stella/private/codegraph.db`), plus that manifest file, so it works fully offline and needs no API key. One command, `prune`, also manages how much history your store keeps.
 
 ## Synopsis
 
@@ -17,26 +17,28 @@ stella storage prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] 
 
 ## What it does
 
-The storage map is stella's vendor-agnostic index of where your data lives — SQL tables, key-value namespaces, document collections, and their fields — so the agent (and you) can reason about persistence without re-deriving the schema every time. It is the zero-drift companion to [`stella search`](/docs/commands/search): search answers "who calls what," the storage map answers "what is stored where, and what does it mean."
+The storage map is stella's index of where your data actually lives: SQL tables, key-value namespaces, document collections, and their fields. It works the same way no matter what database or storage system you use, so the agent (and you) can understand how data is stored without re-reading the schema every time. It pairs with [`stella search`](/docs/commands/search): search answers "who calls what," and the storage map answers "what is stored where, and what does it mean."
 
 <CardGrid size="md">
   <OptionCard name="tree">
-    The full map — `layer → namespace → relation` tree, each with its declared intent.
+    The whole map, as a tree: `layer → namespace → relation`. Each one shows its
+    stated purpose.
   </OptionCard>
   <OptionCard name="show <address>">
-    One relation's card: fields, constraints, meaning, and provenance. Accepts a
-    `store://` address, a bare address, or a relation name.
+    Details for one relation: its fields, constraints, meaning, and where that
+    information came from. Accepts a `store://` address, a plain address, or just the
+    relation's name.
   </OptionCard>
   <OptionCard name="grep <name>">
-    Every relation and field whose normalized name contains the query.
+    Every relation and field whose name contains your search text.
   </OptionCard>
   <OptionCard name="drift">
-    A report-only drift check: near-duplicate relations, orphaned manifest meanings, and
-    intent coverage. Changes nothing.
+    Checks for problems without changing anything: near-duplicate relations, manifest
+    entries with no matching relation, and how much of your data has a stated purpose.
   </OptionCard>
   <OptionCard name="prune">
-    The one verb here that writes. Bounds `store.db`'s growth by dropping whole
-    executions and every row keyed to them — see [below](#stella-storage-prune).
+    The only command here that changes anything. It limits how big `store.db` gets by
+    deleting whole executions and every row linked to them — see [below](#stella-storage-prune).
   </OptionCard>
 </CardGrid>
 
@@ -48,18 +50,17 @@ stella storage drift
 ```
 
 <Callout type="info">
-The map is only as current as the last [`stella init`](/docs/commands/init). Intent and boundaries come from `stella.storage.toml`; `stella storage drift` tells you where that manifest has fallen behind the code.
+The map is only as up to date as your last [`stella init`](/docs/commands/init) run. Purpose and limits come from `stella.storage.toml`; run `stella storage drift` to see where that file has fallen behind your actual code.
 </Callout>
 
 ### stella storage prune
 
-Bound the growth of this workspace's session store, `<workspace>/.stella/private/store.db`
-— dropping whole executions past `--older-than` and `--max-rows`, along with every row
-keyed to them. It is the same implementation as
-[`stella stats prune`](/docs/commands/stats#bounding-the-store--stella-stats-prune) mounted
-at a second entry point: one `PruneArgs`, the same five flags, the same engine, so store
-retention is reachable both from where you notice the store is too big and from where the
-rest of the store verbs live.
+Limits the size of this workspace's session store, `<workspace>/.stella/private/store.db`,
+by deleting whole executions past `--older-than` and `--max-rows`, along with every row
+linked to them. This is the exact same feature as
+[`stella stats prune`](/docs/commands/stats#stella-stats-prune),
+just available under a second name — same five flags, same engine, so you can manage
+store retention from wherever you happen to be looking.
 
 ```bash
 # What would go, without touching anything.
@@ -74,27 +75,27 @@ stella storage prune --max-rows 5000
 
 <CardGrid size="sm">
   <OptionCard name="--older-than <AGE>">
-    Drop executions older than this window — `90d`, `12w`, `720h`, `3mo`.
+    Deletes executions older than this amount of time — `90d`, `12w`, `720h`, `3mo`.
   </OptionCard>
   <OptionCard name="--max-rows <N>">
-    Hard ceiling on retained executions.
+    The most executions to keep.
   </OptionCard>
   <OptionCard name="--dry-run">
-    Report what would be pruned and delete nothing.
+    Shows what would be deleted. Deletes nothing.
   </OptionCard>
   <OptionCard name="--vacuum">
-    `VACUUM` afterwards, handing freed pages back to the filesystem.
+    Runs `VACUUM` afterward, returning freed space to your filesystem.
   </OptionCard>
   <OptionCard name="--force">
-    Also drop executions whose telemetry has not reached the usage hub. Irreversible.
+    Also deletes executions whose telemetry hasn't reached the usage hub yet.
+    Irreversible.
   </OptionCard>
 </CardGrid>
 
-Each flag is documented in full — units, the replication-safety guarantee, and what
-`--force` actually costs you — on
-[`stella stats prune`](/docs/commands/stats#bounding-the-store--stella-stats-prune).
+Every flag is explained in full, including units, the replication-safety guarantee,
+and what `--force` actually costs you, on
+[`stella stats prune`](/docs/commands/stats#stella-stats-prune).
 
 <Callout type="warn">
-Unlike the other `stella storage` verbs, `prune` is not a read. It deletes rows from
-`store.db`, and only `--dry-run` makes it safe to run without thinking first.
+Unlike the other `stella storage` commands, `prune` does not just read data. It deletes rows from `store.db`, and only `--dry-run` makes it safe to run without thinking first.
 </Callout>

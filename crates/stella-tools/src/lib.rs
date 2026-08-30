@@ -60,6 +60,7 @@ pub mod hook_bridge;
 pub mod hook_runner;
 pub mod input;
 pub mod loop_comparability;
+pub mod netdeny;
 pub mod own_change;
 pub mod policy;
 pub mod read;
@@ -68,6 +69,7 @@ pub mod rootfd;
 pub mod scratch;
 pub mod search;
 pub mod skill_grant;
+pub mod skill_plane;
 pub mod staleness;
 pub mod subagent;
 /// Shared environment policy for every subprocess that can execute model- or

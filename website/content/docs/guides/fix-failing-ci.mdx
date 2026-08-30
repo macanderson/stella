@@ -3,11 +3,11 @@ title: Fix a failing CI run
 description: A branch is red. Walk it to green with stella monitor — what it does each round, what happens when a fix doesn't hold, and what "green" means here.
 ---
 
-You pushed a branch and CI went red. You want it green, you would rather not
-read four thousand lines of log to find out why, and you want the fix to be a
-real fix rather than a test deletion.
+You pushed a branch and CI went red. You want it green, you'd rather not read
+four thousand lines of logs to find out why, and you want a real fix, not
+just a deleted test.
 
-This is the task [`stella monitor`](/docs/commands/monitor) exists for.
+This is the task [`stella monitor`](/docs/commands/monitor) is built for.
 
 ## The whole thing, first
 
@@ -16,86 +16,86 @@ This is the task [`stella monitor`](/docs/commands/monitor) exists for.
 stella --spend-limit 5.00 monitor feature/payments-refactor
 ```
 
-That is the guide. The rest of this page is what that command is doing, how to
-tell whether it worked, and what to do when it doesn't.
-
 <Callout type="warn">
-The `target` argument defaults to **`main`**. `monitor` commits and pushes its
-fixes to the branch it is watching, so a bare `stella monitor` pushes commits
-directly to `main`. Name your branch or PR explicitly — `feature/…`, or `"#128"`
-for a pull request.
+The `target` argument defaults to **`main`**. `monitor` commits and pushes
+its fixes to whatever branch it's watching, so running a bare
+`stella monitor` pushes commits straight to `main`. Always name your branch
+or pull request — `feature/…`, or `"#128"` for a pull request.
 </Callout>
 
 ## Before you start
 
 <CardGrid size="md">
   <OptionCard name="gh, installed and authenticated">
-    `monitor` reads CI state through GitHub's `gh` CLI.
-    `gh auth status` should be clean. Without it, the run fails at
-    the first status check rather than silently doing nothing.
+    `monitor` reads CI status through GitHub's `gh` command-line tool.
+    `gh auth status` should come back clean. Without it, the run fails at
+    the first status check instead of silently doing nothing.
   </OptionCard>
   <OptionCard name="A branch you are willing to have pushed to">
-    Fixes are committed and pushed between checks — that is how the next CI run gets
-    triggered at all. There is no dry-run mode; the feedback loop *is* the remote.
+    Fixes get committed and pushed between checks — that's how the next CI
+    run gets triggered at all. There's no dry-run mode. The feedback loop
+    *is* the remote branch.
   </OptionCard>
   <OptionCard name="A spend limit, realistically">
-    Reading failure logs is input-token-heavy. `--spend-limit` is a
-    [global flag](/docs/commands#global-flags), so it goes before the subcommand.
+    Reading failure logs uses a lot of input tokens. `--spend-limit` is a
+    [global flag](/docs/commands#global-flags), so it goes before the
+    subcommand.
   </OptionCard>
 </CardGrid>
 
 ## What each round actually does
 
-`monitor` is not a bespoke CI robot. It is [goal mode](/docs/agent-modes#outcome-driven-goal-mode)
-with one fixed objective compiled in:
+`monitor` isn't a special-purpose CI robot. It's
+[goal mode](/docs/agent-modes#outcome-driven-goal-mode) with one fixed
+objective built in:
 
-> Drive CI for `<target>` to fully green. Watch the latest runs, read the failure
-> logs, fix each root cause in the code, commit and push the fix, then re-check.
-> The goal is met only when the latest CI run has completed with every check
-> successful.
+> Drive CI for `<target>` to fully green. Watch the latest runs, read the
+> failure logs, fix each root cause in the code, commit and push the fix,
+> then re-check. The goal is met only when the latest CI run has completed
+> with every check successful.
 
-Which means it inherits goal mode's machinery wholesale, and that machinery is
-the interesting part:
+That means it uses all of goal mode's machinery, and that machinery is the
+interesting part:
 
-1. **Watch.** The engine waits until the latest run for the target finishes,
-   then reads its conclusion and the failing jobs' logs.
-2. **Diagnose and fix.** A working round is a step-loop turn over the failing
-   jobs' logs. `monitor` takes no wrapper flag of its own — it is
-   [goal mode](/docs/agent-modes#outcome-driven-goal-mode) with the objective
-   pinned to "CI is green", and the outer goal verifier is what judges it.
-3. **Commit and push.** The remote is the only thing that can produce the next
-   round's evidence.
-4. **Verifier.** A separate verifier model — by preference from a
-   [different family](/docs/api-providers/models) than the
-   worker — assesses whether the objective is met. It reads the CI state
-   itself, so it is checking the run rather than reading the worker's account of
-   the run.
-5. **Repeat**, up to a hard cap of **8** judged rounds.
+1. **Watch.** The engine waits for the latest run on the target to finish,
+   then reads its result and the logs from any jobs that failed.
+2. **Diagnose and fix.** A round of work steps through the failing jobs'
+   logs. `monitor` doesn't add any flag of its own here — it's
+   [goal mode](/docs/agent-modes#outcome-driven-goal-mode) with the goal set
+   to "CI is green," and the outer verifier is what judges whether that's
+   true.
+3. **Commit and push.** The remote branch is the only thing that can
+   produce evidence for the next round.
+4. **Verify.** A separate verifier model — ideally from a
+   [different family](/docs/api-providers/models) than the model doing the
+   work — checks whether the goal is met. It reads the CI status itself,
+   so it's checking the actual run, not trusting the worker's account of it.
+5. **Repeat**, up to a hard limit of **8** checked rounds.
 
-## "Fixed" means something specific here
+## What "fixed" means here
 
-This is where `monitor` differs from a script that retries until the exit code
-is zero, and it is worth being precise about, because it is the whole reason to
-use it.
+This is where `monitor` is different from a script that just retries until
+the exit code is zero, and it's worth understanding, because it's the whole
+reason to use this tool instead.
 
-**Inside each round**, an installed [verification plugin](/docs/plugins) can run
-the deterministic evidence ladder before any model is asked for an opinion. The
-required rung is the **flip oracle**: the relevant test must have *failed
-before* the change and *passed after* it. A suite that was already green proves
-nothing about the fix, so it cannot be used to claim one. That structurally
-excludes the failure mode you actually fear — a change that makes the red go
-away without making the bug go away.
+**Inside each round**, an installed [verification plugin](/docs/plugins) can
+run a set of deterministic checks before any model gives an opinion. The
+required check is the **flip test**: the relevant test must have *failed
+before* the change and *passed after* it. A test suite that was already
+green proves nothing about the fix, so it can't be used as proof of one.
+That rules out the exact failure you're worried about — a change that makes
+the red go away without actually fixing the bug.
 
-**Across rounds**, the outer goal verifier only ends the loop when the *latest CI
-run for the target has completed with every check successful*. Not "the tests I
-ran locally passed". Not "I believe this is fixed". A run on the remote, green,
-that you can open in a browser.
+**Across rounds**, the outer verifier only ends the loop when the *latest CI
+run for the target has finished with every check passing*. Not "the tests I
+ran locally passed." Not "I believe this is fixed." An actual run on the
+remote, green, that you can open in a browser.
 
 <Callout type="info">
-Rounds wrapped by a verification plugin mean **double verification**: the
-plugin's own evidence covers each round's work, and the outer goal verifier
-checks the objective. A fix that passes locally but doesn't turn CI green gets
-caught by the second one.
+Rounds wrapped by a verification plugin get checked **twice**: the plugin's
+own evidence covers each round's work, and the outer verifier checks the
+overall goal. A fix that passes locally but doesn't turn CI green gets
+caught by the second check.
 </Callout>
 
 ## When the fix doesn't hold
@@ -104,87 +104,90 @@ The interesting cases are the ones where it doesn't just work.
 
 ### The next run is red for a different reason
 
-This is the normal case and needs nothing from you. The round ends "not met",
-the new failure logs come back with the next status check, and the next round
-works on the new root cause. That is what the round loop is for.
+This is normal, and needs nothing from you. The round ends "not met," the
+new failure logs come back with the next status check, and the next round
+works on the new root cause. That's exactly what the round loop is for.
 
 ### The same failure comes back
 
-A revision whose candidate has already deterministically failed a **second** time
-(the failures need not be consecutive) re-enters the revise loop
-carrying the sealed, redacted account of the test that went red, and nothing else. The
-worker is told what failed, not what to do about it.
+Once a fix has deterministically failed the **same** check a **second**
+time (the two failures don't need to be back to back), the next attempt
+gets the full, unedited record of what failed, and nothing else. The worker
+is told what failed, not what to do about it.
 
-There is no model **distress-guidance** call here — no verifier reading the diff and
-appending a course-correction note to the evidence. A model's reading of a bounded diff
-is a claim, a claim appended to a measurement inherits that measurement's authority, and
-a worker cannot tell the two apart. The failing test is already conclusive; there is
-nothing a reviewer could add to it except a way to be wrong about it.
+There's no model **guidance step** here — no verifier reading the diff and
+adding a note about how to fix it. A model reading a limited diff is making
+a guess, and a guess attached to a measurement can look like it carries the
+same authority as that measurement, even though a worker can't tell the two
+apart. The failing test already proves the point. There's nothing a
+reviewer could add to it except a way to get it wrong.
 
-### It hits the round cap
+### It hits the round limit
 
-At 8 judged rounds `monitor` **stops and reports the goal as not met**, even
-with CI still red. It is not a daemon and it will not sit on your branch
-overnight. Re-run it to continue — the branch state carries over, so a second
-invocation resumes from the work the first one landed.
+At 8 checked rounds, `monitor` **stops and reports the goal as not met**,
+even if CI is still red. It isn't a background daemon and won't sit on your
+branch overnight. Run it again to keep going — the branch state carries
+over, so a second run picks up from where the first one left off.
 
-That cap exists because the failure it protects against is expensive: an agent
-looping on an infrastructure problem it cannot fix from the code. If two
-`monitor` invocations in a row end at the cap, the constraint is usually not in
-the diff — read on.
+That limit exists because the failure it protects against is expensive: an
+agent stuck looping on an infrastructure problem it has no way to fix from
+the code. If two `monitor` runs in a row both hit the limit, the problem is
+usually not in the code — see the next section.
 
 ### It cannot be fixed from the code
 
-Some red CI is not a code problem: an expired token, a billing cap, a runner
-that no longer exists, a required check whose workflow file never starts. stella
-will keep proposing code changes because code changes are what it can make. The
-tell is a CI conclusion that never reaches the test step at all — a job
-that fails in setup, or a run whose conclusion is `startup_failure`.
+Some red CI isn't a code problem: an expired token, a billing limit, a
+runner that no longer exists, a required check whose workflow file never
+even starts. stella will keep proposing code changes, because code changes
+are what it knows how to make. The tell is a CI result that never reaches
+the test step at all — a job that fails during setup, or a run whose result
+is `startup_failure`.
 
-Read the raw job yourself at that point:
+Check the raw job yourself at that point:
 
 ```bash
 gh run list --branch feature/payments-refactor --limit 5
 gh run view <run-id> --log-failed
 ```
 
-### The spend limit aborts it
+### The spend limit stops it
 
-`--spend-limit` is a hard cap, checked **between** steps and stages — never
-mid-tool-call, so you are never left with a half-applied edit. An aborted run
-leaves its already-pushed commits in place; nothing is rolled back. Raise the
-cap and re-run, or see [Work within a spend limit](/docs/guides/spend-limit).
+`--spend-limit` is a hard cap, checked **between** steps and stages, never
+in the middle of a tool call — so you never end up with a half-finished
+edit. A stopped run leaves its already-pushed commits in place. Nothing is
+rolled back. Raise the limit and run it again, or see
+[Work within a spend limit](/docs/guides/spend-limit).
 
-## Confirming it, afterwards
+## Confirming it, afterward
 
-`monitor` renders human-readable text and does **not** take
-`--output-format` (it is an interactive mode; passing the flag is a parse
-error). So the confirmation is the same one anybody else on your team would
-use:
+`monitor` prints plain text for people to read and does **not** support
+`--output-format` (it's meant to be watched live; passing that flag is an
+error). So confirm it the same way anyone else on your team would:
 
 ```bash
 gh pr checks 128
 ```
 
-Then read what it cost you:
+Then check what it cost you:
 
 ```bash
 stella stats --format text
 ```
 
 <Callout type="info">
-Want a machine-readable verdict instead? Drive the objective through
-[`stella run`](/docs/commands/run) with `--output-format json` and your own test
-command, and gate on `verdict.deterministic` — the
-[scripting guide](/docs/scripting) has the full pattern for CI-side automation.
+Want a machine-readable result instead? Run the same goal through
+[`stella run`](/docs/commands/run) with `--output-format json` and your own
+test command, and check `verdict.deterministic` in the result. The
+[scripting guide](/docs/scripting) has the full pattern for automating this
+from CI.
 </Callout>
 
 ## Running it *from* CI instead of *at* CI
 
-`monitor` watches a remote CI run from your machine. The other arrangement —
-stella running headlessly *inside* a CI job — is a different setup with
-different requirements (a non-TTY surface, JSON output, an explicit scope-review
-bypass):
+`monitor` watches a remote CI run from your own machine. Running stella
+headlessly *inside* a CI job is a different setup, with different
+requirements (no interactive terminal, JSON output, and skipping the scope
+review manually):
 
 ```bash
 stella --spend-limit 2.00 \
@@ -193,23 +196,24 @@ stella --spend-limit 2.00 \
   | jq -e '.status == "completed"'
 ```
 
-There is no scope-review gate to opt past here, and the
-`agent_engine_config.headless_scope_bypass` key is inert — setting it changes
-nothing. See [Scripting](/docs/scripting).
+There's no scope-review step to skip here, and the
+`agent_engine_config.headless_scope_bypass` setting does nothing — turning
+it on changes nothing. See [Scripting](/docs/scripting).
 
 ## Next
 
 <CardGrid size="sm">
   <SpecCard title="stella monitor" href="/docs/commands/monitor">
-    The reference: synopsis, flags, exit behavior.
+    The reference: syntax, flags, and exit behavior.
   </SpecCard>
   <SpecCard title="Goal mode" href="/docs/agent-modes#outcome-driven-goal-mode">
     The round loop `monitor` is built on, and how the verifier is chosen.
   </SpecCard>
   <SpecCard title="Work within a spend limit" href="/docs/guides/spend-limit">
-    Where the abort lands, and how to make the money go further.
+    Where a stopped run leaves off, and how to make the money go further.
   </SpecCard>
   <SpecCard title="stella fleet" href="/docs/commands/fleet">
-    Several red branches at once — `--watch` reconciles each one's CI and PR status.
+    Several red branches at once — `--watch` keeps each one's CI and pull
+    request status in sync.
   </SpecCard>
 </CardGrid>

@@ -134,14 +134,22 @@ impl SubAgentPolicy {
         if !self.enabled || !requested.enabled {
             return None;
         }
+        // Floored once, so both branches below answer the same ceiling, and
+        // `min`/`max` rather than `clamp`: `clamp` asserts `min <= max`, and
+        // the floor here is a literal while the ceiling is a `pub` field no
+        // constructor validates. `max_child_steps: 0` — a plausible reading of
+        // "cap children at nothing" — panicked on any request that named
+        // `max_steps`, and the release profile builds with `panic = "abort"`,
+        // so that ends the whole server rather than the one request.
+        let child_ceiling = self.max_child_steps.max(1);
         Some(EffectiveSubAgents {
             pool_usd: requested
                 .pool_limit_usd
                 .map_or(self.max_pool_usd, |asked| asked.min(self.max_pool_usd))
                 .max(0.0),
-            child_steps: requested.max_steps.map_or(self.max_child_steps, |asked| {
-                asked.clamp(1, self.max_child_steps)
-            }),
+            child_steps: requested
+                .max_steps
+                .map_or(child_ceiling, |asked| asked.max(1).min(child_ceiling)),
             provider_id: requested.provider_id,
         })
     }
@@ -1042,6 +1050,42 @@ mod tests {
         assert_eq!(effective.pool_usd, 0.25);
         assert_eq!(effective.child_steps, 4);
         assert_eq!(effective.provider_id, None);
+    }
+
+    /// The same reading applied to the operator's own ceiling.
+    ///
+    /// `max_child_steps` is a `pub` field no constructor validates, so an
+    /// operator reading it as "cap children at nothing" can set it to zero.
+    /// The ceiling reached `clamp(1, 0)`, which asserts `min <= max` and
+    /// panicked on any request naming `max_steps` — and the release profile
+    /// sets `panic = "abort"`, so that ended the server rather than the
+    /// request. Both branches answer the floored ceiling, so an unasked
+    /// request and an asked one cannot disagree.
+    #[test]
+    fn a_zero_operator_ceiling_floors_at_one_instead_of_panicking() {
+        let zeroed = SubAgentPolicy {
+            max_child_steps: 0,
+            ..SubAgentPolicy::allowed()
+        };
+        let asked = zeroed
+            .clamp(SubAgentRequest {
+                enabled: true,
+                max_steps: Some(5),
+                ..SubAgentRequest::default()
+            })
+            .expect("allowed");
+        assert_eq!(asked.child_steps, 1);
+
+        let unasked = zeroed
+            .clamp(SubAgentRequest {
+                enabled: true,
+                ..SubAgentRequest::default()
+            })
+            .expect("allowed");
+        assert_eq!(
+            unasked.child_steps, 1,
+            "naming max_steps or not must not change the ceiling"
+        );
     }
 
     /// Zero steps is not a request for a zero-step child (which would abort

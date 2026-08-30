@@ -15,7 +15,7 @@
 //! Two records at equal precedence matching the same paths with different
 //! enforcement is a governance failure, not an input to a tiebreak. §12 is explicit:
 //! the frame carries a conflict record and **enforcement falls back to the less
-//! restrictive behavior** until an owner resolves it. So [`validate_records`] does
+//! restrictive behavior** until an owner resolves it. So [`detect_conflicts`] does
 //! both — it attaches the conflict to both records *and* suspends the more
 //! restrictive one's enforcement. Picking a winner silently would mean a repository
 //! could start hard-blocking tool calls because of an ordering accident.
@@ -68,19 +68,7 @@ pub struct Conflict {
     pub suspended: String,
 }
 
-/// Run every publication check over the whole loaded set.
-///
-/// Findings are attached to the records in place; conflicts are also returned so a
-/// caller can report them as a set (a conflict belongs to a pair, not to a record).
-/// Call after [`super::assign_handles`] — conflict detail names records by handle.
-pub fn validate_records(records: &mut [LoadedRecord]) -> Vec<Conflict> {
-    for loaded in records.iter_mut() {
-        check_record(loaded);
-    }
-    detect_conflicts(records)
-}
-
-/// The per-record half of [`validate_records`] — the checks that need no
+/// The per-record half of the validation pass — the checks that need no
 /// neighbours.
 ///
 /// Separate from the conflict pass because the two apply to different populations:
@@ -116,7 +104,7 @@ pub fn detect_conflicts(records: &mut [LoadedRecord]) -> Vec<Conflict> {
 }
 
 /// Whether this record's enforcement is suspended by a conflict — the caller must
-/// not arm its guard. Derived from the conflicts [`validate_records`] returned.
+/// not arm its guard. Derived from the conflicts [`detect_conflicts`] returned.
 pub fn is_suspended(handle: &str, conflicts: &[Conflict]) -> bool {
     conflicts
         .iter()
@@ -131,7 +119,27 @@ fn check_one(record: &Record) -> Vec<RecordFinding> {
     findings.extend(unknown_tasks(record));
     findings.extend(atomicity(record));
     findings.extend(scoped_without_trigger(record));
+    findings.extend(gated_probe_refused(record));
     findings
+}
+
+/// A declared gated probe (`command_succeeds`/`http_ok`) the staleness sweep
+/// will never run: [`super::sweep::honored_probe`] refuses it for this record's
+/// origin or truth basis. Without this finding the record loads clean and its
+/// claim silently never gets re-checked — the author believes a probe is
+/// standing guard, and nothing is.
+fn gated_probe_refused(record: &Record) -> Vec<RecordFinding> {
+    let declared = record
+        .truth
+        .as_ref()
+        .and_then(|truth| truth.probe.as_ref())
+        .filter(|probe| probe.kind.is_gated());
+    match declared {
+        Some(probe) if super::sweep::honored_probe(record).is_none() => {
+            vec![RecordFinding::GatedProbeRefused(probe.kind)]
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// An explicit `tier = "scoped"` with no `applies_to` trigger (#2709). Only
@@ -403,7 +411,7 @@ pub fn globs_overlap(left: &str, right: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::ingest::record::Enforcement;
+    use super::super::super::ingest::record::{Enforcement, Probe, ProbeKind, Truth, TruthBasis};
     use super::super::tests::{hard_guard, loaded_from, record_named, with_scope};
     use super::*;
 
@@ -447,7 +455,8 @@ mod tests {
                 50,
             ),
         ];
-        let conflicts = validate_records(&mut records);
+        records.iter_mut().for_each(check_record);
+        let conflicts = detect_conflicts(&mut records);
         assert_eq!(conflicts.len(), 1, "{conflicts:?}");
         let conflict = &conflicts[0];
         assert!(
@@ -492,7 +501,8 @@ mod tests {
             ),
             at("general", EnforcementMode::None, &["routes/**"], 50),
         ];
-        assert!(validate_records(&mut records).is_empty());
+        records.iter_mut().for_each(check_record);
+        assert!(detect_conflicts(&mut records).is_empty());
     }
 
     #[test]
@@ -501,7 +511,8 @@ mod tests {
             at("one", EnforcementMode::None, &["src/api/**"], 50),
             at("two", EnforcementMode::None, &["src/api/**"], 50),
         ];
-        assert!(validate_records(&mut records).is_empty());
+        records.iter_mut().for_each(check_record);
+        assert!(detect_conflicts(&mut records).is_empty());
     }
 
     #[test]
@@ -510,7 +521,8 @@ mod tests {
             at("web", EnforcementMode::Hard, &["apps/web/**"], 50),
             at("api", EnforcementMode::None, &["services/api/**"], 50),
         ];
-        assert!(validate_records(&mut records).is_empty());
+        records.iter_mut().for_each(check_record);
+        assert!(detect_conflicts(&mut records).is_empty());
     }
 
     #[test]
@@ -519,7 +531,8 @@ mod tests {
             at("scoped", EnforcementMode::Hard, &["src/api/**"], 50),
             at("unscoped", EnforcementMode::None, &[], 50),
         ];
-        let conflicts = validate_records(&mut records);
+        records.iter_mut().for_each(check_record);
+        let conflicts = detect_conflicts(&mut records);
         assert_eq!(conflicts.len(), 1);
         assert!(
             conflicts[0].detail.contains("unscoped"),
@@ -661,6 +674,61 @@ mod tests {
     }
 
     // Atomicity on publish
+
+    // Gated probes — a declared probe the sweep will never run must be reported.
+
+    fn probing(kind: ProbeKind, basis: TruthBasis, verified_by: Option<&str>) -> Record {
+        let mut record = record_named("ctx.a.b.c");
+        record.truth = Some(Truth {
+            basis,
+            confidence: None,
+            verified_by: verified_by.map(str::to_string),
+            verified_at: None,
+            valid_from: None,
+            ttl: None,
+            on_expiry: None,
+            review_every: None,
+            probe: Some(Probe {
+                kind,
+                path: None,
+                pattern: None,
+                expect: None,
+                note: None,
+            }),
+        });
+        record
+    }
+
+    #[test]
+    fn a_gated_probe_the_sweep_refuses_is_reported_not_silently_inert() {
+        let findings = check_one(&probing(ProbeKind::HttpOk, TruthBasis::Measured, None));
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f, RecordFinding::GatedProbeRefused(ProbeKind::HttpOk))),
+            "{findings:?}"
+        );
+        assert_eq!(
+            findings.iter().map(RecordFinding::severity).max(),
+            Some(super::super::Severity::Warning),
+            "reported, not blocking — the record still steers, it just never re-checks"
+        );
+    }
+
+    #[test]
+    fn a_gated_probe_on_a_decreed_human_verified_record_is_honored_silently() {
+        let mut record = probing(ProbeKind::CommandSucceeds, TruthBasis::Decree, Some("mac"));
+        // `record_named` stamps an imported origin, which the sweep refuses on
+        // its own; the honored case needs the trusted one.
+        record.origin = Some(super::super::super::context_record::kind::Origin::User);
+        assert!(check_one(&record).is_empty(), "{:?}", check_one(&record));
+    }
+
+    #[test]
+    fn an_ungated_probe_is_never_reported() {
+        let record = probing(ProbeKind::FileContains, TruthBasis::Measured, None);
+        assert!(check_one(&record).is_empty(), "{:?}", check_one(&record));
+    }
 
     #[test]
     fn a_compound_statement_edited_in_after_ingest_is_caught_on_load() {

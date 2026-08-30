@@ -3,14 +3,14 @@ title: Fix a backlog in parallel
 description: A list of independent fixes and one afternoon. Decompose it into a fleet plan, run the workers concurrently under file claims, and review what actually landed.
 ---
 
-You have a list. Eleven clippy warnings across four crates, a dozen modules with
-no test coverage, every `TODO(deprecate)` left over from a migration. Each item
-is small, none of them depend on each other, and doing them one at a time is an
-afternoon of watching a progress bar.
+You have a list. Eleven clippy warnings across four crates, a dozen modules
+with no test coverage, every `TODO(deprecate)` left over from a migration.
+Each item is small, none of them depend on each other, and doing them one at
+a time would eat your whole afternoon watching a progress bar.
 
-This is what [`stella fleet`](/docs/commands/fleet) is for: many tasks at once,
-each handled by a full stella worker, coordinated so they don't overwrite each
-other.
+This is what [`stella fleet`](/docs/commands/fleet) is for: many tasks at
+once, each one handled by a full stella worker, coordinated so they don't
+overwrite each other.
 
 ## The whole thing, first
 
@@ -21,45 +21,48 @@ stella --spend-limit 6 fleet \
   "Add unit tests for the plan parser in stella-fleet"
 ```
 
-Three workers, running together in your repository root, committing to your
-current branch as they finish. That is the guide for a short list. The rest of
-this page is how to make a *long* list work, and how to tell what you got.
+Three workers run together in your repository root, committing to your
+current branch as each one finishes. That's all a short list needs.
 
 <Callout type="warn">
-Workers commit to the branch you are on. Start from a branch you are willing to
-have committed to — not `main` — and start from a **clean tree**, so
-`git log` afterwards separates their work from yours.
+Workers commit to the branch you're on. Start from a branch you're willing
+to have things committed to — not `main` — and start from a **clean
+working tree**, so `git log` afterward clearly separates their work from
+yours.
 </Callout>
 
-## Decide this first: does the list share files?
+## Check for shared files first
 
-Everything downstream follows from one question, and it is worth thirty seconds
+Everything else follows from one question, and it's worth thirty seconds
 before you type anything.
 
 <CardGrid size="md">
   <OptionCard name="Disjoint files → inline prompts">
-    Each item touches its own crate, module or directory. Nothing to declare. Pass
-    the prompts on the command line and let claim-on-first-write handle the rest.
+    Each item touches its own crate, module, or folder. Nothing to declare.
+    Pass the prompts on the command line and let claim-on-first-write handle
+    the rest.
   </OptionCard>
   <OptionCard name="Overlapping files → a plan with claims">
-    Two items might both edit `src/store/schema.rs`. Declare the paths up front so
-    the second dispatch fails *by name* instead of racing. This is the common case
-    for anything over about five items.
+    Two items might both edit `src/store/schema.rs`. Declare the paths up
+    front, so the second attempt fails *by name* instead of racing the
+    first. This is the common case for anything over about five items.
   </OptionCard>
   <OptionCard name="Ordered work → depends_on">
-    Item B only makes sense after item A lands — a migration before its read path.
-    Dependencies order the waves; they are not a performance hint.
+    Item B only makes sense after item A lands — a database migration
+    before the code that reads from it. Dependencies control the order
+    tasks run in. They are not just a speed hint.
   </OptionCard>
   <OptionCard name="Competing answers → isolation">
-    Two attempts at the *same* file, and you want to compare them. This is the one
-    case for `isolation = "isolated"`; see [when to isolate](#when-to-isolate-instead).
+    Two attempts at the *same* file, where you want to compare them. This
+    is the one case for `isolation = "isolated"`; see
+    [when to isolate](#when-to-isolate-instead).
   </OptionCard>
 </CardGrid>
 
 ## Turning a backlog into a plan
 
-For anything beyond a handful of prompts, write the list down. A plan file is a
-`.toml` (or `.json`) with one `[[tasks]]` entry per item:
+For anything beyond a handful of prompts, write the list down. A plan file
+is a `.toml` (or `.json`) file with one `[[tasks]]` entry per item:
 
 ```toml title="cleanup.toml"
 [[tasks]]
@@ -86,94 +89,101 @@ claims = ["Cargo.toml"]
 stella --spend-limit 6 fleet --plan cleanup.toml --max-concurrency 3
 ```
 
-Two crates get cleaned concurrently in wave one; the workspace-wide tidy runs
-alone in wave two, once both have actually succeeded. The
+Two crates get cleaned up at the same time in the first wave. The
+workspace-wide tidy-up runs alone in the second wave, once both earlier
+tasks have actually succeeded. The
 [full plan schema](/docs/agent-fleets#plan-files) has every field.
 
 <Callout type="info">
-Plans are validated **before** anything runs. A duplicate `id`, a self-dependency,
-an unknown dependency, or a cycle is rejected up front with the offending task
-named — so a typo costs you a message, not half a run.
+Plans get checked **before** anything runs. A duplicate `id`, a task that
+depends on itself, an unknown dependency, or a cycle gets rejected up front,
+with the problem task named — so a typo costs you one message, not half a
+run.
 </Callout>
 
 ### Writing prompts that survive being run alone
 
-The failure mode specific to fleets is the prompt that reads fine in a list and
-is ambiguous in isolation. Each worker sees **only its own prompt** — not the
-other tasks, not your intent, not the conversation you would have had.
+The mistake specific to fleets is a prompt that reads fine in a list but
+turns out ambiguous by itself. Each worker sees **only its own prompt** —
+not the other tasks, not your intent, not the conversation you'd have had
+with a person.
 
-Three habits that pay for themselves:
+Three habits that pay off:
 
-- **Name the scope in the prompt itself.** "Fix the clippy warnings in
-  `stella-store`" — not "fix the clippy warnings", which invites a worker into
-  the whole workspace and straight into another worker's claims.
-- **Say what a fix is not.** "Do not silence with `#[allow]`", "do not delete the
-  test". Left unsaid, the cheapest path to a green build is sometimes the wrong
-  one.
-- **Give it something deterministic to check.** A prompt that names a test
-  command lets the worker's [verify stage](/docs/plugins)
-  finish on evidence rather than on a verifier's opinion. It is the single biggest
-  lever on both cost and trustworthiness.
+- **Name the scope in the prompt itself.** Write "Fix the clippy warnings in
+  `stella-store`," not "fix the clippy warnings" — which invites a worker
+  into the whole codebase and straight into another worker's claimed files.
+- **Say what a fix should not do.** "Do not silence with `#[allow]`," "do
+  not delete the test." Left unsaid, the cheapest way to get to a green
+  build is sometimes the wrong one.
+- **Give it something it can check on its own.** A prompt that names a test
+  command lets the worker's [verify stage](/docs/plugins) finish based on
+  evidence instead of an opinion. This is the single biggest lever on both
+  cost and trust.
 
-### Claims are the thing that makes it safe
+### Claims are what makes it safe
 
-By default every worker runs in **one shared tree** — your repository root. That
-is a deliberate trade: the build cache stays warm and commits interleave on one
-branch, but two workers editing one file would be a silent race.
+By default, every worker runs in **one shared folder** — your repository
+root. That's a deliberate trade-off: the build cache stays warm and commits
+interleave on one branch, but two workers editing the same file would
+silently race each other.
 
-`claims` is what removes the race. A declared path is held as a cooperative lock
-for the attempt's duration; a second task claiming a held path fails that
-dispatch *by name*, in under a second, with the rival identified. Undeclared
-paths are claimed on first write at the tool layer, so you get the protection
-even for files you did not anticipate.
+`claims` removes that risk. A declared path is locked for the length of that
+task; a second task trying to claim a locked path fails right away, by
+name, in under a second, naming which task is holding it. Paths you didn't
+declare get claimed automatically on first write, so you're protected even
+for files you didn't think to list.
 
 <ClaimLockDiagram />
 
 <Callout type="warn">
-Claims are matched as **exact strings** — they are not path prefixes. Claiming
-`src/store/` does not protect `src/store/write.rs`. Name files, and spell each
-one the same way throughout the plan.
+Claims are matched as **exact strings** — they are not folder prefixes.
+Claiming `src/store/` does not protect `src/store/write.rs`. Name each file
+directly, and spell it the same way everywhere in the plan.
 </Callout>
 
-The locks live in `.stella/private/store.db`, separate from the fleet ledger, so
-they coordinate across *concurrent fleet runs* too — a second `stella fleet` in
-another terminal cannot walk into the first one's files.
+The locks live in `.stella/private/store.db`, separate from the fleet's own
+records, so they also protect you across *separate fleet runs* — a second
+`stella fleet` running in another terminal can't step on the first one's
+files.
 
 ### When to isolate instead
 
-`isolation = "isolated"` gives a task its own git worktree under
-`.stella/worktrees/<slug>`, on a `fleet/<slug>-<hash>` branch. Reach for it when
-the work is genuinely **divergent** — two attempts at the same rewrite, where
-you want both and will pick one — or when a task mutates checkout state.
+`isolation = "isolated"` gives a task its own git worktree, under
+`.stella/worktrees/<slug>`, on a `fleet/<slug>-<hash>` branch. Use it when
+the work is genuinely **different attempts at the same thing** — two takes
+on the same rewrite, where you want to see both and pick one — or when a
+task needs to change files outside the normal checkout.
 
-It is not the safer default. Isolation costs a cold build cache per tree and
-defers every conflict to integration time. For a backlog of independent fixes,
-claims are cheaper and catch the collision an hour earlier.
+It is not the safer default. Isolation means a cold build cache for every
+tree, and it pushes every merge conflict to later, when you combine the
+work. For a backlog of independent fixes, claims are cheaper, and they
+catch a collision an hour earlier.
 
 ## What the spend limit actually does here
 
-`--spend-limit` is a [global flag](/docs/commands#global-flags), and in a fleet it is
-divided, not shared: each child worker is guarded by
-`spend limit ÷ max-concurrency`. The fleet stops launching new waves once total
-metered spend crosses the cap.
+`--spend-limit` is a [global flag](/docs/commands#global-flags), and in a
+fleet it gets divided, not shared: each worker is limited to
+`spend limit ÷ max-concurrency`. The fleet stops starting new waves once
+total spend crosses the cap.
 
-The practical consequence is that **concurrency and per-task headroom trade off
-against each other**. `--spend-limit 6 --max-concurrency 3` gives each worker $2;
-raising concurrency to 6 halves that, and a task that needed $1.50 now aborts
-partway. If tasks are dying early, lower the concurrency before raising the
-spend limit.
+In practice, this means **concurrency and per-task budget trade off against
+each other**. `--spend-limit 6 --max-concurrency 3` gives each worker $2.
+Raising concurrency to 6 cuts that in half, and a task that needed $1.50
+will now stop partway through. If tasks are dying early, lower the
+concurrency before raising the spend limit.
 
 ## Reading the result
 
-This is the part that distinguishes a fleet from a script, and it is where the
-time you save gets spent if you skip it.
+This is the part that separates a fleet from a script, and it's where the
+time you saved gets spent back if you skip it.
 
-Nothing is retried automatically. A failed task does **not** unblock its
-dependents — they end the run as `skipped`, which is a distinct outcome from
-"failed" and means the work was never attempted.
+Nothing gets retried automatically. A failed task does **not** unblock the
+tasks that depend on it — they end the run marked `skipped`, a different
+outcome from "failed" that means the work was never even attempted.
 
-Start with the ledger, `.stella/private/fleet.db` — local SQLite, like all
-[stella telemetry](/docs/telemetry):
+Start with the ledger, `.stella/private/fleet.db` — a local SQLite file,
+like all [stella telemetry](/docs/telemetry):
 
 ```bash
 # What failed in the most recent run, and what the worker said about it.
@@ -184,71 +194,76 @@ sqlite3 .stella/private/fleet.db \
       AND a.success = 0;"
 ```
 
-Then read the diff, because eleven workers producing eleven small commits on one
-branch is exactly the shape that hides a bad one:
+Then read the diff. Eleven workers each making a small commit on one branch
+is exactly the shape that lets a bad one hide:
 
 ```bash
 git log --oneline main..HEAD
 git diff main...HEAD --stat
 ```
 
-Past runs also surface on the **Fleet runs** card of the
-[Observatory dashboard](/docs/telemetry/dashboard) if you would rather not write
-SQL.
+Past runs also show up on the **Fleet runs** card of the
+[Observatory dashboard](/docs/telemetry/dashboard), if you'd rather not
+write SQL.
 
 <Callout type="info">
-Isolated tasks' worktrees and `fleet/*` branches are deliberately **left in
-place** — those branches *are* the work product. `git worktree list` shows them
-all. Nothing is merged for you.
+Worktrees and `fleet/*` branches from isolated tasks are **left in place** on
+purpose — those branches *are* the finished work. `git worktree list` shows
+all of them. Nothing gets merged for you automatically.
 </Callout>
 
 ## When it doesn't go cleanly
 
 ### A task failed and took its dependents with it
 
-Expected, and the design is deliberate: a dependent that ran anyway would be
-building on work that isn't there. Fix the cause, then re-run — either the whole
-plan (completed work is cheap to redo and the claims still protect you) or a
-trimmed plan containing just the failed subtree.
+This is expected, and it's by design: a dependent task that ran anyway
+would be building on work that isn't actually there. Fix the cause, then
+run it again — either the whole plan (finished work is cheap to redo, and
+the claims still protect you) or a trimmed plan with just the failed
+branch of tasks.
 
-### A dispatch failed naming another task
+### A dispatch failed, naming another task
 
-Your claims overlap. That is the system working — it caught at dispatch what
-would otherwise have been a corrupted file. Either widen the split so the two
-tasks own disjoint files, or add a `depends_on` edge so they run in different
-waves.
+Your claims overlap. That's the system working as intended — it caught at
+launch time what would otherwise have corrupted a file. Either split the
+work so the two tasks own separate files, or add a `depends_on` link so
+they run in different waves.
 
 ### Everything is fighting over one file
 
-If three tasks all need `Cargo.toml`, they are not three tasks. Collapse them
-into one prompt, or sequence them with `depends_on`. A fleet parallelizes work
-that is *already* parallel; it cannot make a serial dependency concurrent.
+If three tasks all need `Cargo.toml`, they aren't really three tasks.
+Combine them into one prompt, or order them with `depends_on`. A fleet
+speeds up work that's *already* independent. It can't turn work that's
+inherently sequential into work that runs at the same time.
 
 ### The workers went wider than you meant
 
-Almost always an under-scoped prompt. Re-read the item as if you knew nothing
-else about the repository — that is the worker's position. Naming the crate,
-directory or file in the prompt fixes it more reliably than any flag.
+This is almost always a prompt that didn't say enough. Re-read the item as
+if you knew nothing else about the codebase — that's exactly the worker's
+position. Naming the crate, folder, or file in the prompt fixes this more
+reliably than any flag does.
 
 ## Following it through to CI
 
-If your task prompts push their branches and open PRs, `--watch` keeps the run
-alive afterwards to watch each branch's CI to completion and reconcile PR status
-through `gh`. It exits non-zero if any watched branch ends red.
+If your task prompts push branches and open pull requests, `--watch` keeps
+the fleet run alive afterward, watching each branch's CI until it finishes
+and checking pull request status through `gh`. It exits with an error if any
+watched branch ends up red.
 
 ```bash
 stella --spend-limit 8 fleet --plan cleanup.toml --watch
 ```
 
-It needs `gh` installed and authenticated, and it only does something once the
-branches are actually pushed — watching an unpushed branch has nothing to watch.
+It needs `gh` installed and signed in, and it can only watch a branch once
+it's actually pushed — there's nothing to watch on a branch that never left
+your machine.
 
 ## Next
 
 <CardGrid size="sm">
   <SpecCard title="Agent Fleets" href="/docs/agent-fleets">
-    The concept page: wave scheduling, the full plan schema, and how file claims
-    work underneath.
+    The concept page: how waves are scheduled, the full plan schema, and how
+    file claims work underneath.
   </SpecCard>
   <SpecCard title="stella fleet" href="/docs/commands/fleet">
     The reference — every flag, the ledger layout, exit behavior.
@@ -257,6 +272,7 @@ branches are actually pushed — watching an unpushed branch has nothing to watc
     One branch instead of many, driven to green by `stella monitor`.
   </SpecCard>
   <SpecCard title="Work within a spend limit" href="/docs/guides/spend-limit">
-    Why per-worker headroom is the number that matters, and where an abort lands.
+    Why per-worker budget is the number that matters, and where a stopped
+    run leaves off.
   </SpecCard>
 </CardGrid>

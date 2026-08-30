@@ -1177,14 +1177,10 @@ fn finalization_stays_successful_when_telemetry_host_state_is_rejected() {
         .unwrap();
     let registry = stella_tools::ToolRegistry::new(workspace.clone());
 
-    assert!(crate::agent::record_execution_end(
-        &store,
-        id,
-        &registry,
-        "completed",
-        0.01,
-        true,
-    ));
+    assert!(
+        crate::agent::record_execution_end(&store, id, &registry, "completed", 0.01, true)
+            .fully_recorded()
+    );
     assert_eq!(
         store
             .execution_rollup(id, &workspace)

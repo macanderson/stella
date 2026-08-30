@@ -1,11 +1,11 @@
 ---
 title: Work within a spend limit
-description: A hard dollar ceiling, and what stella does as it approaches one — where the abort lands and what the scope gate stops before you spend anything.
+description: A hard dollar ceiling, and what stella does as it approaches one — where the run stops and what the scope gate stops before you spend anything.
 ---
 
-You have a number in mind and you do not want to find out you passed it
-afterwards. This guide is about the mechanisms that hold a ceiling, in the order
-they fire — one of them before any money is spent at all.
+You have a number in mind, and you don't want to find out you went over it
+afterward. Several mechanisms hold that ceiling. One of them fires before you
+spend anything at all.
 
 <BudgetGuardDiagram />
 
@@ -15,100 +15,102 @@ they fire — one of them before any money is spent at all.
 stella --spend-limit 2.00 run "port the utils module to the new API"
 ```
 
-`--spend-limit` is a [global flag](/docs/commands#global-flags), so it can go on
-either side of the subcommand — but the habit of putting it first is a good one,
-because it reads as a property of the whole invocation, which is what it is.
+`--spend-limit` is a [global flag](/docs/commands#global-flags), so it can
+go on either side of the subcommand. Putting it first is a good habit,
+since it reads as a property of the whole command, which is what it is.
 
 <CardGrid size="md">
   <SpecCard title="Observed — no --spend-limit">
-    The default. Spend is metered for the end-of-run cost summary and the local store,
-    but never blocks. Use it to find out what a class of task actually costs before
-    picking a ceiling for it.
+    The default. Spend is tracked for the end-of-run cost summary and the
+    local store, but it never stops a run. Use this to find out what a kind
+    of task actually costs before you pick a ceiling for it.
   </SpecCard>
   <SpecCard title="Enforced — --spend-limit <usd>">
-    A hard cap on the **whole run or session** — not per turn, not per round. Must be
-    positive and finite.
+    A hard cap on the **whole run or session** — not per turn, not per
+    round. Must be a positive, finite number.
   </SpecCard>
 </CardGrid>
 
-Set it once for a shell or a CI job instead:
+Set it once for a whole shell session or CI job instead:
 
 ```bash
 export STELLA_SPEND_LIMIT=5
 ```
 
-## Where the abort lands
+## Where the run stops
 
-This is the part worth trusting, because it determines whether a tripped spend limit
-leaves you with work or with wreckage.
+This part is worth trusting, because it decides whether a stopped run leaves
+you with usable work or a mess.
 
-The meter is checked **between steps and stages** — never in the middle of a
-tool call. An abort therefore never leaves a half-applied edit, a partially
-written file, or a tool whose side effects landed but whose result never made it
-back into the transcript. Work already committed to disk stays; nothing is
-rolled back.
+Spend is checked **between** steps and stages, never in the middle of a
+tool call. So stopping a run never leaves a half-finished edit, a partly
+written file, or a tool whose changes happened but never got recorded. Work
+already saved to disk stays there. Nothing gets rolled back.
 
-The exit code is `1`, the same as any other failure. If you need to distinguish
-*the spend limit stopped this* from *this failed*, read the JSON:
+The exit code is `1`, the same as any other failure. If you need to tell
+*the spend limit stopped this* apart from *this just failed*, read the
+JSON output:
 
 ```bash
 stella --spend-limit 2.00 run --output-format json "…" | jq '{status, cost_usd, files_touched}'
 ```
 
 <Callout type="info">
-`--spend-limit` is metered against **catalog prices**. Local and air-gapped models
-have no catalog price, so the dollar columns read zero and a spend limit has nothing
-to meter against. Bound those runs with a verification plugin's `--test-command`
-oracle and goal-mode round caps instead — see
+`--spend-limit` is measured against **published catalog prices**. Local and
+offline models have no catalog price, so their cost always reads zero, and
+a spend limit has nothing to measure against for them. Instead, bound those
+runs with a verification plugin's `--test-command` check and goal-mode
+round limits — see
 [Local and air-gapped](/docs/examples#local-and-air-gapped).
 </Callout>
 
-## The gate that fires *before* you spend
+## The check that runs *before* you spend
 
 <Callout type="warn">
-**This gate is not built into stella.** A plain `stella run` does not have it,
-and the `agent_engine_config.headless_scope_bypass` key is inert — setting it
-changes nothing either way. The section below describes what a scope gate is
-*for*, because that shape is what a verification plugin implements on its own
-side of the wrapper socket; treat it as the contract to look for in a plugin,
-not as behavior this binary has.
+**This check is not built into stella itself.** A plain `stella run` does
+not have it, and the `agent_engine_config.headless_scope_bypass` setting
+does nothing either way. The section below describes what a scope review is
+*for*, because that behavior is something a verification plugin can add on
+its own side of the connection. Treat it as something to look for in a
+plugin, not as behavior this program has by default.
 </Callout>
 
-A spend limit stops a run partway. A scope review stops it *before the first
-edit*, which is usually the outcome you actually wanted.
+A spend limit stops a run partway through. A scope review stops it *before
+the first edit*, which is usually what you actually wanted.
 
-When a plan's blast radius crosses any of three thresholds, stella pauses and
-shows you the plan:
+When a plan's size crosses any of three limits, stella pauses and shows you
+the plan:
 
 <CardGrid size="sm">
   <OptionCard name="max_steps" defaultValue="5">
     More than this many steps in the plan.
   </OptionCard>
   <OptionCard name="max_files" defaultValue="8">
-    Estimated files-touched count above this.
+    Estimated number of files touched above this.
   </OptionCard>
   <OptionCard name="max_cost_usd" defaultValue="1.00">
     Estimated cost above this.
   </OptionCard>
 </CardGrid>
 
-Every comparison is a strict `>`, so a plan sitting exactly on a threshold
-passes without a gate. At the card, `a` approves, `t` trims to the largest
-prefix that would not have tripped review, and `x` aborts. Anything longer than
-one of those words is read as *what you want changed*, sending the plan back to
-the planner with your note attached.
+Every check is a strict "greater than," so a plan that lands exactly on a
+limit passes without pausing. When it pauses, `a` approves the plan, `t`
+trims it down to the largest version that would not have triggered the
+pause, and `x` cancels it. Anything longer than one of those letters is
+read as *what you want changed*, and sends the plan back with your note
+attached.
 
-The rule a headless run needs from a gate like this is that it must never
-silently auto-approve itself: with nobody to ask, a plan over the thresholds
-should end the run rather than wave itself through, because a scope gate that
-approves itself in CI is not a scope gate. That is a property to check a
-verification plugin for — it is not something this binary decides any more, and
-no setting here turns it on or off.
+A gate like this needs one rule to be useful in an unattended run: it must
+never approve itself automatically. With nobody there to answer, a plan
+that's over the limits should stop the run, not wave itself through —
+because a scope check that approves itself in CI isn't really a check.
+That's something to verify a plugin actually does. It isn't a setting this
+program controls, and no flag here turns it on or off.
 
 ## What the money is actually spent on
 
-Before tuning anything, know the shape of the bill — most attempts to economize
-target the wrong stage.
+Before you tune anything, know the shape of the bill. Most attempts to save
+money target the wrong stage.
 
 | Stage | Model calls | Cost share |
 | --- | --- | --- |
@@ -116,21 +118,22 @@ target the wrong stage.
 | Plan | 1 (+1 repair, rarely) | small |
 | Witness | ~1 engine turn | only when you pass no `--test-command` |
 | **Execute** | **5–40+ steps** | **most of the bill** |
-| Verify | 0 | free — the deterministic ladder |
+| Verify | 0 | free — the deterministic checks |
 | Verifier | 0–1 per verification | cents |
 
-Three consequences follow, and they are most of what you need:
+Three things follow from that, and they're most of what you need to know:
 
-1. **The worker's output price dominates.** Moving the worker to a cheaper model
-   changes the bill several-fold. Moving the verifier barely changes it at all.
-2. **A flagship verifier is cheap insurance.** One verifier call is a few thousand
-   input tokens and under a thousand out. Keep it in a *different family* than
-   the worker.
-3. **`--test-command` is the strongest cost flag on a wrapped run.** It arms the
-   bound plugin's deterministic flip oracle, so most runs finish on evidence
-   alone with the **verifier skipped entirely** — and it skips the
-   witness-author call too. It is refused on the raw loop, which spends none of
-   those calls in the first place.
+1. **The worker's model price dominates the bill.** Switching the worker to
+   a cheaper model changes the total by several times over. Switching the
+   verifier barely moves it at all.
+2. **A top-tier verifier is cheap insurance.** One verifier call is a few
+   thousand input tokens and under a thousand output tokens. Keep it on a
+   *different model family* than the worker.
+3. **`--test-command` is the strongest cost-saving flag on a wrapped run.**
+   It arms the plugin's built-in fail-then-pass check, so most runs finish
+   on that evidence alone, **skipping the verifier entirely** — and it also
+   skips the witness-writing call. It's not accepted on the raw loop, which
+   never makes those calls in the first place.
 
 ```bash
 # Cheapest correct shape when the result must carry evidence:
@@ -141,68 +144,75 @@ stella --spend-limit 1.50 run --pipeline my-verifier \
 
 ## The multipliers
 
-A ceiling only helps if you know what is pushing against it.
+A ceiling only helps if you know what's pushing against it.
 
 <CardGrid size="md">
   <OptionCard name="Goal mode">
-    Repeats judged rounds until the objective is met, up to **8**. Each round is a
-    full working turn. `stella monitor` is goal mode, so it has the same shape.
+    Repeats checked rounds until the goal is met, up to **8**. Each round is
+    a full working turn. `stella monitor` runs on goal mode, so it costs the
+    same way.
   </OptionCard>
   <OptionCard name="Fleets">
-    One engine run per task. Worker spend meters into the **parent** spend limit, so
-    `--spend-limit` is a single shared ceiling across the whole fan-out rather than a
-    per-worker allowance — and the run stops early once it trips.
+    One engine run per task. Worker spend counts against the **parent**
+    spend limit, so `--spend-limit` is one shared ceiling across the whole
+    group of tasks, not a separate allowance per worker — and the whole run
+    stops early once it's used up.
   </OptionCard>
   <OptionCard name="Best-of-N">
-    Generates N candidate executions and keeps the best by verification score, at N×
-    the execution cost. Strictly opt-in, for exactly this reason.
+    Runs N different attempts and keeps the best one by verification score,
+    at N times the normal cost. This is strictly something you turn on, for
+    exactly this reason.
   </OptionCard>
   <OptionCard name="Revisions">
-    A failed verification sends the worker back with the evidence, bounded at 2
-    revision turns by default.
+    A failed verification sends the worker back with the evidence attached,
+    limited to 2 revision attempts by default.
   </OptionCard>
 </CardGrid>
 
-## When the transcript outgrows the window
+## When the conversation outgrows the window
 
-A long run's cost is not only what it does — it is how much conversation it
-carries while doing it. When the transcript approaches the compaction budget
-(**150,000 tokens** by default), stella compacts it and keeps going, rather than
-failing or silently truncating.
+A long run's cost isn't only what it does. It's also how much conversation
+it has to carry while doing it. When the conversation gets close to the
+compaction budget (**150,000 tokens** by default), stella shortens it and
+keeps going, instead of failing or silently cutting content.
 
-Compaction applies four mechanisms, **least-lossy first**:
+Shortening happens in four steps, from **least to most lossy**:
 
-1. **Dedup.** A byte-identical tool output appearing more than once keeps only
-   its earliest copy; later ones become a pointer to it.
-2. **Supersession.** When the same call ran twice with identical input, only the
-   latest result reflects current state — the older ones are stale by
-   construction and get stubbed.
-3. **Aging.** Still over budget, large old outputs are middle-out truncated to
-   head plus tail. The head carries the tool's framing (a `PASSED`/`FAILED` line,
-   file headers) and the tail carries the errors, so what survives is the part
-   worth reading.
-4. **Eviction.** Only then are the oldest large tool outputs replaced with a
-   stub — and a result whose call is still the most recent one is never evicted.
+1. **Remove duplicates.** If the exact same tool output appears more than
+   once, only the earliest copy is kept — later copies just point back to
+   it.
+2. **Remove outdated results.** When the same call ran twice with the same
+   input, only the newest result reflects the current state, so the older
+   ones are stripped out as stale.
+3. **Trim old content.** If it's still over budget, large old outputs get
+   cut down to their beginning and end. The beginning keeps the tool's
+   framing (a `PASSED`/`FAILED` line, file headers), and the end keeps the
+   errors — so what's left is the part worth reading.
+4. **Drop content entirely.** Only after that are the oldest large outputs
+   replaced with a placeholder — and a result that's still the most recent
+   one for its call is never dropped.
 
-The system message and the latest user message are never touched.
+The system message and your latest message are never touched.
 
 <Callout type="info">
-Dedup keeps the **earliest** copy on purpose. Byte-identical content is
-position-independent, so stubbing the later one puts the change in the *newest*
-part of the conversation and leaves the provider's prompt-cache prefix
-byte-identical. Compacting the other way around would save tokens and then lose
-far more money to a cold cache than it saved.
+Deduplication keeps the **earliest** copy.
+Identical content doesn't depend on where it sits, so shortening the later
+copy instead would put the change in the *newest* part of the conversation
+and break the provider's cached prefix. Doing it the other way would save a
+few tokens and then lose much more money to a cold cache than it saved.
 </Callout>
 
-If a conversation is still over budget after all four passes, an **overflow
-summarizer** runs — a real extra model call, recorded at `--call-seq 1` for that
-step. Seeing those in [`stella inspect`](/docs/commands/inspect) is the sign a
-run's transcript, not its work, is what got expensive.
+If a conversation is still over budget after all four steps, an **overflow
+summarizer** runs — a real, extra model call, recorded as `--call-seq 1` for
+that step. Seeing these in [`stella inspect`](/docs/commands/inspect) is
+the sign that a run's conversation, not its actual work, is what got
+expensive.
 
 ## Picking the number
 
-Set the spend limit by observation, not by intuition. Run the class of task once
-unbounded, read what it cost, then set a ceiling with headroom:
+Set your spend limit from what you've actually seen, not a guess. Run the
+kind of task once with no limit, check what it cost, then set a ceiling
+with some room to spare:
 
 ```bash
 stella run "the representative task"           # observed mode
@@ -210,25 +220,27 @@ stella stats --format text                    # what it actually cost
 stella --spend-limit 2.00 run "the next one"   # now with a ceiling
 ```
 
-The number to steer on over time is **$/resolved**, not sticker price — a cheap
-model that needs three attempts is not cheap. The
-[Observatory](/docs/telemetry/dashboard) tracks it per model, and
-[Examples & recipes](/docs/examples) has complete configurations at four
-different price points.
+The number worth tracking over time is **cost per task solved**, not the
+sticker price — a cheap model that needs three tries isn't actually cheap.
+The [Observatory](/docs/telemetry/dashboard) tracks this per model, and
+[Examples & recipes](/docs/examples) has full setups at four different
+price points.
 
 ## Next
 
 <CardGrid size="sm">
   <SpecCard title="Telemetry & budget" href="/docs/telemetry#budget-observed-vs-enforced">
-    The reference for observed vs. enforced, and what the local store records.
+    The reference for observed versus enforced spend, and what the local
+    store records.
   </SpecCard>
   <SpecCard title="Examples & recipes" href="/docs/examples">
-    Complete settings files from dirt-cheap to maximum-quality, with cost estimates.
+    Complete settings files from very cheap to maximum quality, with cost
+    estimates.
   </SpecCard>
   <SpecCard title="Find out what a run cost" href="/docs/guides/what-a-run-cost">
     Accounting for a run after the fact, down to the individual model call.
   </SpecCard>
   <SpecCard title="Plugins" href="/docs/plugins">
-    Every stage, what it costs, and when it is skipped.
+    Every stage, what it costs, and when it gets skipped.
   </SpecCard>
 </CardGrid>

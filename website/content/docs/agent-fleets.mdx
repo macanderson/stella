@@ -1,15 +1,15 @@
 ---
 title: Agent Fleets
-description: Fan a dependency-ordered task DAG out to parallel workers in one shared tree, coordinated by file claims — with per-task worktree isolation as the opt-in.
+description: Run many tasks at once with parallel workers in one shared tree, coordinated by file claims. Turn on worktree isolation per task when you need it.
 ---
 
-`stella fleet` runs **many tasks at once** — each task handled by a full
-stella worker. By default the workers share **one tree**: every worker runs
-in the repository root, coordinated by cooperative file claims, so conflicts
-surface at write time with the rival named, commits interleave on one
-branch, and the build cache stays warm. A task marked
-`isolation = "isolated"` instead gets its **own git worktree** on its own
-branch, isolated from your working copy and from every other worker.
+`stella fleet` runs many tasks at once. Each task gets its own full stella worker. By
+default, all the workers share one tree: every worker runs in the repository root,
+coordinated by cooperative file claims. If two workers try to touch the same file, the
+conflict shows up right away and names which worker is holding it. Commits from
+different workers interleave on one branch, and the build cache stays warm. A task
+marked `isolation = "isolated"` instead gets its own git worktree on its own branch,
+kept separate from your working copy and from every other worker.
 
 ```bash
 stella fleet \
@@ -22,38 +22,34 @@ stella fleet \
 
 ## How a fleet run works
 
-1. **Plan.** Task prompts (inline, or from a `--plan` file) form a DAG:
-   tasks with `depends_on` wait for their dependencies. Plans are validated
-   up front — a duplicate id, a self-dependency, an unknown dependency, or a
-   dependency cycle is rejected before anything runs, with the offending
-   task (or cycle path) named.
-2. **Share — or isolate.** By default every worker runs directly in the
-   repository root under the cooperative claim discipline (see
-   [file claims](#file-claims--cooperative-locks) below). A task marked
-   `isolation = "isolated"` instead gets a fresh git worktree under
-   `.stella/worktrees/<slug>`, branched from a pinned base commit (the
-   current `HEAD`, or `--base-ref`, resolved to a SHA at start so mid-run
-   commits can't drift the base) onto a `fleet/<slug>-<hash>` branch. The
-   16-hex-digit hash suffix keeps re-runs — which reuse task ids like `t1` —
-   from colliding with branches and worktrees you kept from an earlier
-   fleet. Isolated workers can't see each other's uncommitted work and can't
-   touch your checkout.
-3. **Dispatch in waves.** Dependency-ordered waves run up to
-   `--max-concurrency` tasks at once (default 4). A failed task does **not**
-   unblock its dependents — they end the run as `skipped` — and nothing is
-   retried automatically: the ledger records every attempt, but re-running
-   is your call.
-4. **Work.** Each worker is a full engine run — the raw step loop by
-   default, with the standard toolbelt, honoring your
-   [agent-engine config](/docs/configuration/agent-engine-config).
-   Workers are headless by design: no MCP, no interactive prompts, nothing
-   that can block on stdin. Pass `--pipeline <variant>` to route each worker
-   through an installed [wrapper plugin](/docs/plugins) instead.
-5. **Record.** Every attempt, commit, and dollar lands in the fleet ledger
-   at `.stella/private/fleet.db` — local SQLite, like all
-   [stella telemetry](/docs/telemetry), with `runs`, `tasks`, `attempts`,
-   and `commits` tables you can query directly. Past runs also surface on
-   the **Fleet runs** card of the
+1. **Plan.** Task prompts, whether typed inline or loaded from a `--plan` file, form a
+   dependency graph: tasks with `depends_on` wait for their dependencies to finish
+   first. Plans are checked before anything runs. A duplicate id, a task that depends on
+   itself, an unknown dependency, or a dependency cycle gets rejected, and stella names
+   the task or cycle that caused it.
+2. **Share or isolate.** By default, every worker runs directly in the repository root,
+   using the cooperative file claims described [below](#file-claims--cooperative-locks).
+   A task marked `isolation = "isolated"` instead gets a fresh git worktree under
+   `.stella/worktrees/<slug>`, branched from a pinned base commit. That base is the
+   current `HEAD` or `--base-ref`, locked to a specific commit at the start of the run so
+   later commits can't shift it. The worktree lands on a `fleet/<slug>-<hash>` branch.
+   The 16-character hash keeps re-runs, which reuse task ids like `t1`, from colliding
+   with branches and worktrees left over from an earlier fleet. Isolated workers can't
+   see each other's uncommitted work and can't touch your checkout.
+3. **Dispatch in waves.** Tasks run in dependency order, in waves of up to
+   `--max-concurrency` tasks at once (4 by default). A failed task does not unblock the
+   tasks waiting on it; those end the run marked `skipped`. Nothing retries
+   automatically. The ledger records every attempt, but re-running is up to you.
+4. **Work.** Each worker runs the full engine: the plain step loop by default, with the
+   standard set of tools, following your
+   [agent-engine config](/docs/configuration/agent-engine-config). Workers run headless
+   on purpose: no MCP, no interactive prompts, nothing that can get stuck waiting for
+   input. Pass `--pipeline <variant>` to route each worker through an installed
+   [wrapper plugin](/docs/plugins) instead.
+5. **Record.** Every attempt, commit, and dollar spent lands in the fleet ledger at
+   `.stella/private/fleet.db`. Like all [stella telemetry](/docs/telemetry), it's a
+   local SQLite database, with `runs`, `tasks`, `attempts`, and `commits` tables you can
+   query directly. Past runs also show up on the Fleet runs card of the
    [Observatory dashboard](/docs/telemetry/dashboard).
 
    ```bash
@@ -65,21 +61,18 @@ stella fleet \
          AND a.success = 0;"
    ```
 
-   Under the shared tree the `commits` table records the commits each worker
-   was **observed** making. A commit runs while its worker holds a
-   workspace-wide commit lane, so no sibling can move `HEAD` inside that
-   window; the advance belongs to exactly one task. The trade is
-   deliberate — a commit made some other way in a shared tree (through the
-   shell, which is off by default) is left out of the table rather than
-   stamped onto whichever task happened to be open. An isolated task has one
-   writer in its own worktree, so its whole range of commits is recorded,
-   however they were made.
+   In the shared tree, the `commits` table records the commits each worker was observed
+   making. While a worker commits, it holds a workspace-wide commit lane, so no other
+   worker can move `HEAD` during that window. Each commit belongs to exactly one task.
+   If a commit happens some other way in the shared tree, for example through the shell
+   (which is off by default), it's left out of the table rather than guessed at. An
+   isolated task has only one writer in its own worktree, so every commit it makes gets
+   recorded, no matter how it was made.
 
-6. **Review.** Shared-tree work lands directly on your current branch as
-   interleaved commits. Isolated tasks' worktrees and `fleet/*` branches are
-   deliberately **left in place** — those branches *are* the work product.
-   Inspect, test, and merge them on your terms; `git worktree list` shows
-   them all.
+6. **Review.** Shared-tree work lands directly on your current branch as interleaved
+   commits. Isolated tasks' worktrees and `fleet/*` branches stay in place on purpose;
+   those branches are the actual work product. Inspect, test, and merge them whenever
+   you're ready. `git worktree list` shows all of them.
 
 ## Plan files
 
@@ -100,55 +93,54 @@ prompt = "Update the release notes for 1.4.0 from the merged PRs"
 depends_on = ["t1"]
 ```
 
-Every task field, in the shape the plan parser accepts:
+The task fields the plan parser accepts:
 
 <CardGrid size="md">
   <OptionCard name="id" required>
-    Stable, plan-unique identifier. It is what `depends_on` edges reference, the
-    dispatch tie-break, and the seed for this task's worktree directory and
-    branch name.
+    A unique identifier within the plan. It's what `depends_on` refers to, what breaks
+    ties when dispatching, and what names this task's worktree directory and branch.
   </OptionCard>
   <OptionCard name="title" required>
-    One-line human label, shown in the run report and stored on the ledger's
-    `tasks` row. Never interpreted.
+    A one-line label for people, shown in the run report and stored in the ledger's
+    `tasks` row. stella doesn't read any meaning into it.
   </OptionCard>
   <OptionCard name="prompt" required>
-    What the worker is asked to do — a full stella prompt.
+    What the worker is asked to do. A full stella prompt.
   </OptionCard>
   <OptionCard name="depends_on" defaultValue="[]">
-    Ids that must succeed before this task dispatches; this is what orders the
-    waves. Every id must name a task in the same plan.
+    Ids of tasks that must succeed before this one starts. This is what decides the wave
+    order. Every id must name a task in the same plan.
   </OptionCard>
   <OptionCard name="isolation" defaultValue="shared_tree">
-    `shared_tree` runs directly in the repo root under the cooperative claim
-    discipline. `isolated` gets its own worktree on its own branch — the
-    explicit opt-in for genuinely *divergent* work: best-of-N attempts producing
-    competing versions of the same files, or tasks that mutate checkout state.
-    Claims can't help there — the conflict is the point — and the costs are
-    real: a cold build cache per tree, and conflicts deferred to integration
-    time.
+    `shared_tree` runs directly in the repo root, using cooperative file claims.
+    `isolated` gets its own worktree on its own branch. Choose this when the work is
+    genuinely meant to diverge, like several competing attempts at the same files, or a
+    task that changes checkout state in ways that would affect other workers. File
+    claims can't help there, since conflict is the whole point. The trade-off is real:
+    each worktree starts with a cold build cache, and any conflicts get pushed to when
+    you merge the work back.
   </OptionCard>
   <OptionCard name="claims" defaultValue="[]">
-    Workspace-relative paths held as cooperative file locks for the attempt's
-    duration. Matched as exact strings, so spell each path one way throughout
-    the plan.
+    Paths, relative to the workspace root, held as file locks for the length of the
+    attempt. Paths are matched as exact strings, so spell each one the same way
+    everywhere in the plan.
   </OptionCard>
   <OptionCard name="test_command" defaultValue="none">
-    The command that decides this task — the oracle a wrapper plugin runs under
-    `--pipeline <variant>` to observe red-before/green-after on the attempt's
-    own tree. Per task, because two tasks touching different subsystems are
-    decided by different commands. It must be one the host's closed runner
-    vocabulary accepts (`cargo`, `pytest`, `sh`, …); anything else fails that
-    task's dispatch by name and leaves the rest of the fan-out running. A task
-    that declares none — every positional `stella fleet "…"` prompt included —
-    gives a witness-flavoured plugin no flip to observe, so it reports
-    `Undecided` for that task rather than crediting one.
+    The command that decides whether this task passed. Under `--pipeline <variant>`, a
+    wrapper plugin runs this command before and after the attempt to check whether it
+    went from failing to passing on that task's own tree. Set per task, since two tasks
+    touching different parts of the codebase are checked with different commands. It
+    must be a command type stella recognizes (`cargo`, `pytest`, `sh`, and a few
+    others); anything else fails that one task by name and leaves the rest of the run
+    going. A task with no `test_command` set, including every task typed directly as a
+    `stella fleet "…"` prompt, gives an evidence-gathering plugin nothing to check, so it
+    reports that task as `Undecided` instead of a pass.
   </OptionCard>
 </CardGrid>
 
-A plan exercising all of it — three waves, one isolated task, and claims that
-keep the parallel writers apart. Claims are matched as **exact strings**, so
-name files, not directories:
+This plan uses all of it: three waves, one isolated task, and claims that keep the
+parallel writers apart. Claims match as exact strings, so name individual files, not
+directories:
 
 ```toml title="feature-buildout.toml"
 [[tasks]]
@@ -183,97 +175,96 @@ isolation = "isolated"
 stella --spend-limit 6 fleet --plan feature-buildout.toml
 ```
 
-`schema` runs alone in wave one. `reader` and `writer` run together in wave two
-with disjoint claims. `docs` runs last in wave three, in its own worktree on its
-own `fleet/docs-<hash>` branch — divergent work, so isolation rather than
-claims. Had `reader` and `writer` both claimed `src/store/schema.rs`, the second
-dispatch would have failed by name instead of racing.
+`schema` runs alone in wave one. `reader` and `writer` run together in wave two, each
+with its own claims so they don't overlap. `docs` runs last, in wave three, in its own
+worktree on its own `fleet/docs-<hash>` branch, since it's divergent work that needs
+isolation rather than claims. If `reader` and `writer` had both claimed
+`src/store/schema.rs`, the second one to dispatch would have failed by name instead of
+racing the first.
 
 ### File claims — cooperative locks
 
-A task that declares `claims` (workspace-relative paths it intends to touch)
-holds them as **cooperative file locks** for the attempt's duration. A second
-task — or a second fleet run — that claims an already-held path fails that
-dispatch *by name* instead of silently racing another agent into the same
-file. The locks live in the `file_locks` table of `.stella/private/store.db`,
-separate from the fleet ledger, so they coordinate across concurrent fleet
-runs too.
+A task that declares `claims` (paths it plans to touch, relative to the workspace) holds
+those paths as file locks for as long as the attempt runs. If a second task, or even a
+second fleet run, tries to claim a path that's already held, that dispatch fails by name
+instead of silently racing another worker for the same file. The locks live in the
+`file_locks` table of `.stella/private/store.db`, separate from the fleet ledger, so they
+coordinate across fleet runs happening at the same time too.
 
 ## Spend limit across a fleet
 
-The spend limit comes from the **global** `--spend-limit` flag (or `STELLA_SPEND_LIMIT`), which
-goes *before* the subcommand:
+The spend limit comes from the global `--spend-limit` flag (or `STELLA_SPEND_LIMIT`),
+which goes before the subcommand:
 
 ```bash
 stella --spend-limit 5 fleet --plan release-prep.toml
 # equivalently: STELLA_SPEND_LIMIT=5 stella fleet --plan release-prep.toml
 ```
 
-It is enforced twice. Each child runs under its own guard — the aggregate cap
-divided across the concurrency width (`spend limit ÷ max-concurrency`) — so one
-wave's in-flight children can't collectively overshoot, and the fleet stops
-launching new waves once total metered spend crosses the cap. In-flight
-siblings settle cleanly — never a mid-tool kill.
+It's enforced in two ways. Each worker runs under its own guard, which is the total cap
+divided by the concurrency width (`spend limit ÷ max-concurrency`), so one wave's
+workers can't collectively spend more than their share. On top of that, the fleet stops
+launching new waves once total spend crosses the cap. Workers already running are
+allowed to finish cleanly; stella never kills one mid-task.
 
-## Watching CI: `--watch`
+## Watch CI: `--watch`
 
-After the fan-out, `--watch` holds a **fleet monitor** on every branch that
-carries successful work: it watches each branch's CI to completion via the
-`gh` CLI, reconciles PR status live, and exits non-zero if any watched branch
-ends red. It polls every 30 seconds, allows CI 10 minutes of startup grace to
-appear, gives up on a branch after 20 minutes without progress, and caps the
-whole watch at 2 hours of wall time.
+After the fan-out finishes, `--watch` keeps an eye on every branch that has successful
+work on it. It watches each branch's CI run through to completion using the `gh` CLI,
+keeps PR status updated live, and exits with a non-zero code if any watched branch ends
+up red. It checks every 30 seconds, gives CI 10 minutes to start showing up, gives up on
+a branch after 20 minutes with no progress, and stops watching entirely after 2 hours.
 
 ```bash
 stella fleet --plan release-prep.toml --max-concurrency 2 --watch
 ```
 
 <Callout type="warn">
-  `--watch` only has something to watch once branches are pushed — for
-  example when your task prompts push and open PRs. It requires an installed,
-  authenticated `gh`.
+  `--watch` only has something to watch once branches are pushed, for example when your
+  task prompts push and open pull requests. It needs `gh` installed and logged in.
 </Callout>
 
 ## Flags
 
 <CardGrid size="md">
   <OptionCard name="<task>..." required>
-    One or more task prompts, each becoming an independent shared-tree task.
-    Required unless `--plan` is given — the two are mutually exclusive.
+    One or more task prompts, each becoming its own shared-tree task. Required unless
+    you pass `--plan`; you can't use both at once.
   </OptionCard>
   <OptionCard name="--plan <FILE>">
-    A `.json` or `.toml` plan with `[[tasks]]` entries instead of inline
-    prompts — the only way to declare `depends_on`, `claims`, or `isolation`.
+    A `.json` or `.toml` file with `[[tasks]]` entries instead of inline prompts. This
+    is the only way to set `depends_on`, `claims`, or `isolation`.
   </OptionCard>
   <OptionCard name="--max-concurrency <N>" defaultValue="4">
-    Max tasks dispatched at once within one wave.
+    The most tasks that can run at once within one wave.
   </OptionCard>
   <OptionCard name="--base-ref <ref>" defaultValue="current HEAD">
-    Git ref the `isolation = "isolated"` worktrees branch from, resolved to a
-    SHA at start so mid-run commits can't drift the base. Shared-tree tasks
-    ignore it.
+    The git ref that `isolation = "isolated"` worktrees branch from. It's locked to a
+    specific commit at the start of the run, so later commits can't shift the base.
+    Shared-tree tasks ignore this flag.
   </OptionCard>
   <OptionCard name="--watch">
-    After the fan-out, watch each fleet branch's CI to completion and reconcile
-    its PR status via `gh`. Exits non-zero if any watched branch ends red.
+    After the fan-out, watch each fleet branch's CI through to completion and keep its
+    PR status updated using `gh`. Exits with a non-zero code if any watched branch ends
+    red.
   </OptionCard>
   <OptionCard name="--pipeline <VARIANT>">
-    Route each worker through the installed wrapper plugin whose manifest
-    declares this `[wrapper] id`. Omit it for the raw step loop.
+    Route each worker through the installed wrapper plugin whose manifest declares this
+    `[wrapper] id`. Leave it off to use the plain step loop.
   </OptionCard>
 </CardGrid>
 
-The spend-limit flag is **global**, so it goes before the subcommand — the one
-ordering mistake worth memorizing:
+The spend-limit flag is global, so it goes before the subcommand. This is the one
+ordering mistake worth remembering:
 
 ```bash
 stella --spend-limit 8 fleet --plan release-prep.toml --max-concurrency 3 --watch
 ```
 
-## Cleaning up
+## Clean up
 
-When you've merged (or rejected) the branches your isolated tasks left —
-the branch names carry a hash suffix, so list them rather than guessing:
+Once you've merged, or rejected, the branches your isolated tasks left behind, clean
+them up. The branch names carry a hash suffix, so list them instead of guessing:
 
 ```bash
 git worktree list                  # what the fleet left in .stella/worktrees/
@@ -282,7 +273,7 @@ git branch --list 'fleet/*'        # the fleet branches
 git branch -D fleet/<slug>-<hash>  # per branch, exactly as listed
 ```
 
-Once every branch is merged or rejected, the whole sweep in two lines:
+Once every branch is merged or rejected, this sweeps them all in two lines:
 
 ```bash
 git worktree list --porcelain | awk '/^worktree .*\.stella\/worktrees\//{print $2}' \
@@ -291,19 +282,19 @@ git branch --list 'fleet/*' --format='%(refname:short)' | xargs -r git branch -D
 ```
 
 <Callout type="warn">
-  That second pair deletes every `fleet/*` branch, merged or not — the branches
-  *are* the work product for isolated tasks. Run `git branch --list 'fleet/*'`
-  on its own first and confirm the list is one you are finished with.
+  That second command deletes every `fleet/*` branch, merged or not. For isolated
+  tasks, those branches are the work product. Run `git branch --list 'fleet/*'` by
+  itself first, and make sure the list only has branches you're really done with.
 </Callout>
 
 ## Next
 
 <CardGrid size="sm">
   <SpecCard title="Fix a backlog in parallel" href="/docs/guides/parallel-fixes">
-    The task-shaped walkthrough: decomposing a real list, writing prompts that
-    survive being run alone, and reviewing what the workers landed.
+    A walkthrough built around a real task list: breaking it down, writing prompts that
+    work when run alone, and reviewing what the workers produced.
   </SpecCard>
   <SpecCard title="stella fleet" href="/docs/commands/fleet">
-    The reference — every flag, the ledger layout, exit behavior.
+    The full reference: every flag, the ledger layout, and exit behavior.
   </SpecCard>
 </CardGrid>

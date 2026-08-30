@@ -254,51 +254,26 @@ fn ansi_index(color: Color) -> Option<u8> {
 /// a 16-colour terminal?* — about the same hex, reached by different paths:
 /// `degrade_buffer` for the v1 deck, `fallback::ansi16` for the v2 surfaces.
 /// Each had a coverage test and neither had ever been compared to the other,
-/// so five rows disagree and nothing said so (#5000).
+/// so five rows disagreed and nothing said so. `gold`, `gold-bright` and
+/// `silver-type` are settled: `ansi16` now takes the deck's own answer, which
+/// carried the only written reasoning either table had for its choice — see
+/// `stella_tui_theme::fallback::ansi16`'s doc comment.
 ///
-/// It is one decision made twice, not five: `FALLBACKS` takes the **bright**
-/// half of the sixteen for every chromatic token and `ansi16` takes the
-/// **standard** half. `design/tui-v2/SPEC.md` §3.5 states `ansi16`'s answers
-/// and `crates/stella-tui/tests/spec_palette.rs` holds it there, so the spec
-/// governs one table and nothing governs the other.
-///
-/// Which half ships is a design call and #5000 is where it is being made — the
-/// values a reader sees on a 16-colour terminal are a product decision, not a
-/// tidy-up. Declaring the rows is the half that is not: a sixth divergence
-/// cannot now arrive unnoticed, and repainting one table without the other
-/// fails here rather than in someone's `xterm`. That is
+/// `green` and `red` remain open. Unlike gold and silver-type, no comment on
+/// either table's row explains *why* it picked bright over standard or the
+/// reverse, so settling them is a genuine design call rather than a reading
+/// of reasoning already on record — tracked separately rather than decided
+/// here by guessing. That is
 /// `crates/stella-model/src/provider_parity.rs`'s posture — a matrix checked
 /// from both sides, with every gap named and issue-cited (AGENTS.md #10).
 const DEGRADATION_DIVERGENCE: &[(&str, u8, u8, &str)] = &[
-    (
-        "gold",
-        11,
-        3,
-        "the deck lifts the identity to bright yellow so the mark still reads \
-         as the mark; §3.5 says yellow. #5000",
-    ),
-    (
-        "gold-bright",
-        11,
-        3,
-        "the live stop collapses onto whichever yellow `gold` takes, so this \
-         row is decided by the one above it. #5000",
-    ),
-    (
-        "silver-type",
-        15,
-        7,
-        "the deck shares bright white with `text` — the two are one value step \
-         apart and there is no third white; §3.5 drops it to white beside \
-         `silver` instead. Same two values, opposite collapse. #5000",
-    ),
     (
         "green",
         10,
         2,
         "bright green against §3.5's green: the palette's `#74C991` is a pale \
          mint, and which ANSI green is nearer depends on the reader's own \
-         sixteen. #5000",
+         sixteen. Refs #5000",
     ),
     (
         "red",
@@ -306,7 +281,7 @@ const DEGRADATION_DIVERGENCE: &[(&str, u8, u8, &str)] = &[
         1,
         "bright red against §3.5's red, the same question as `green` and the \
          one row where the deck's answer is the nearer of the two against \
-         xterm's defaults. #5000",
+         xterm's defaults. Refs #5000",
     ),
 ];
 

@@ -15,16 +15,20 @@ The optional `target` is a branch or PR to watch. When omitted, it defaults to `
 
 ## What it does
 
-`stella monitor` watches the CI runs for the given `target` through whatever CI tooling the session offers — a workspace [custom tool](/docs/agent-tools/custom-tools) or an [MCP server](/docs/agent-tools/mcp). It works iteratively — inspecting each failure, fixing its root cause, then **committing and pushing the fix** before re-checking — and treats the job as a goal that is met **only when the latest CI run is all-green**.
+`stella monitor` watches CI runs for the `target` you give it. It uses whatever CI tool your session has available: a workspace [custom tool](/docs/agent-tools/custom-tools) or an [MCP server](/docs/agent-tools/mcp). It works step by step: it looks at each failure, fixes the root cause, then **commits and pushes the fix** before checking again. It only considers the job done **when the latest CI run is fully green**.
 
-Under the hood, `monitor` is [goal mode](/docs/agent-modes#outcome-driven-goal-mode) with a fixed CI objective, so it inherits goal mode's mechanics wholesale: a cross-family verifier confirms the green run from evidence, and the same backstops apply — the default hard cap of **8** judged rounds (it stops there and reports the goal as not met even if CI is still red), the `--spend-limit` cap, and a worker-turn abort. It is not an unbounded daemon; re-run it to keep going.
+Behind the scenes, `monitor` runs on [goal mode](/docs/agent-modes#outcome-driven-goal-mode) with a fixed goal: get CI green. That means it uses goal mode's safety limits too. A separate verifier checks the evidence that CI is actually green. There's a hard cap of **8** rounds by default: if CI is still red after 8 rounds, stella stops and reports the goal as not met. The `--spend-limit` cap and a worker-turn abort also apply. `monitor` does not run forever. If it stops before CI is green, run it again to keep going.
 
 <Callout type="warn">
-`monitor` commits and pushes its fixes to the target branch between CI runs. Because the default target is `main`, a bare `stella monitor` will push commits directly to `main` — pass a feature branch or PR as the `target` if that is not what you want.
+`monitor` commits and pushes its fixes straight to the target branch between CI runs. Since the
+default target is `main`, running `stella monitor` with no arguments pushes commits directly to
+`main`. If that's not what you want, pass a feature branch or PR as the `target`.
 </Callout>
 
 <Callout type="info">
-`stella monitor` needs the session to offer a way to read CI state — a GitHub [MCP server](/docs/agent-tools/mcp), or a [custom tool](/docs/agent-tools/custom-tools) wrapping the `gh` CLI, are the usual shapes. Without one, the agent cannot observe the runs it is asked to drive green.
+`stella monitor` needs some way to read CI state. This is usually a GitHub [MCP server](/docs/agent-tools/mcp),
+or a [custom tool](/docs/agent-tools/custom-tools) that wraps the `gh` CLI. Without one of these,
+the agent can't see the runs it's supposed to fix.
 </Callout>
 
 ## Flags
@@ -41,7 +45,8 @@ Under the hood, `monitor` is [goal mode](/docs/agent-modes#outcome-driven-goal-m
 </CardGrid>
 
 <Callout type="info">
-`monitor` is an interactive mode and always renders human-readable text; it does **not** take `--output-format` (passing it is a parse error).
+`monitor` is an interactive mode. It always shows plain, human-readable text, and it does **not**
+accept `--output-format`. Passing that flag causes a parse error.
 </Callout>
 
 ## Examples

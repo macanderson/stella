@@ -149,6 +149,91 @@ fn apply_voice_cmd(
     }
 }
 
+/// Apply one dispatch outcome to the deck, whichever device produced it —
+/// the key arm and the mouse arm both land here, so the queue mirror, the
+/// shell lane, and quit have one mutation site. Returns `true` when the
+/// session should end; the caller owns the loop and the `break`.
+fn apply_deck_action(
+    action: DeckAction,
+    model: &mut WorkspaceModel,
+    ui: &mut DeckUi,
+    submissions: &UnboundedSender<WorkspaceInput>,
+    local_tx: &UnboundedSender<Inbound>,
+    shell_active: &Arc<AtomicUsize>,
+    debug: &DebugLog,
+) -> bool {
+    match action {
+        DeckAction::Quit => {
+            debug.note("user quit");
+            let _ = submissions.send(WorkspaceInput::Quit);
+            true
+        }
+        DeckAction::Send(input) => {
+            // Queue edits are reflected locally so they show
+            // immediately, then forwarded for dispatch — the
+            // input path never blocks on a busy agent. (The
+            // queue is the labeled out-of-band fold of the
+            // OUTBOUND stream; this is its one mutation site.)
+            match &input {
+                WorkspaceInput::Enqueue { text } | WorkspaceInput::EnqueueNext { text } => {
+                    model.queue.enqueue(text.clone(), model.now_ms);
+                }
+                // The first submission after a double-Esc
+                // hold: front-insert, exactly as the
+                // driver will (it runs before the prompt
+                // the hold returned to the queue).
+                WorkspaceInput::EnqueueFront { text } => {
+                    model.queue.enqueue_front(text.clone(), model.now_ms);
+                }
+                WorkspaceInput::QueueRemove { index } => {
+                    model.queue.remove(*index);
+                }
+                WorkspaceInput::QueueClear => model.queue.clear(),
+                // Esc-with-something-to-say drains the
+                // backlog into the running turn, so the
+                // deck's mirror of it empties here — the
+                // same one-mutation-site discipline every
+                // other queue edit follows. Leaving the
+                // rows up would show prompts as "waiting"
+                // that are already in the model's hands.
+                WorkspaceInput::Steer { .. } => model.queue.clear(),
+                // `/clear`: a session reset to seq-0 has no
+                // backlog — the transcript itself resets on
+                // the driver's `Inbound::SessionReset`, so
+                // stale in-flight events can never repaint
+                // a pane the deck already blanked.
+                WorkspaceInput::SessionClear => model.queue.clear(),
+                _ => {}
+            }
+            let _ = submissions.send(input);
+            false
+        }
+        DeckAction::Shell(cmd) => {
+            // `!` commands run NOW — never queued, never
+            // waiting on the engine. Output returns on the
+            // local lane as ordinary events.
+            //
+            // It lands in the transcript the user is
+            // reading — the focused agent's — so `! pwd`
+            // answers where they asked, like Claude Code.
+            // Before any agent registers there is no such
+            // lane, and only then does it fall back to the
+            // synthetic one.
+            debug.note(&format!("shell: {cmd}"));
+            let target = focused_id(model, ui);
+            spawn_shell_command(
+                cmd,
+                local_tx.clone(),
+                model.now_ms,
+                shell_active.clone(),
+                target,
+            );
+            false
+        }
+        DeckAction::Handled | DeckAction::Ignored => false,
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -802,74 +887,17 @@ pub async fn run_deck(
                         let space = is_plain_space(key);
                         let before_len = ui.composer.buffer().len();
                         let before_cursor = ui.composer.cursor();
-                        match handle_deck_key(key, &model, &mut ui) {
-                            DeckAction::Quit => {
-                                debug.note("user quit");
-                                let _ = submissions.send(WorkspaceInput::Quit);
-                                break 'run;
-                            }
-                            DeckAction::Send(input) => {
-                                // Queue edits are reflected locally so they show
-                                // immediately, then forwarded for dispatch — the
-                                // input path never blocks on a busy agent. (The
-                                // queue is the labeled out-of-band fold of the
-                                // OUTBOUND stream; this is its one mutation site.)
-                                match &input {
-                                    WorkspaceInput::Enqueue { text }
-                                    | WorkspaceInput::EnqueueNext { text } => {
-                                        model.queue.enqueue(text.clone(), model.now_ms);
-                                    }
-                                    // The first submission after a double-Esc
-                                    // hold: front-insert, exactly as the
-                                    // driver will (it runs before the prompt
-                                    // the hold returned to the queue).
-                                    WorkspaceInput::EnqueueFront { text } => {
-                                        model.queue.enqueue_front(text.clone(), model.now_ms);
-                                    }
-                                    WorkspaceInput::QueueRemove { index } => {
-                                        model.queue.remove(*index);
-                                    }
-                                    WorkspaceInput::QueueClear => model.queue.clear(),
-                                    // Esc-with-something-to-say drains the
-                                    // backlog into the running turn, so the
-                                    // deck's mirror of it empties here — the
-                                    // same one-mutation-site discipline every
-                                    // other queue edit follows. Leaving the
-                                    // rows up would show prompts as "waiting"
-                                    // that are already in the model's hands.
-                                    WorkspaceInput::Steer { .. } => model.queue.clear(),
-                                    // `/clear`: a session reset to seq-0 has no
-                                    // backlog — the transcript itself resets on
-                                    // the driver's `Inbound::SessionReset`, so
-                                    // stale in-flight events can never repaint
-                                    // a pane the deck already blanked.
-                                    WorkspaceInput::SessionClear => model.queue.clear(),
-                                    _ => {}
-                                }
-                                let _ = submissions.send(input);
-                            }
-                            DeckAction::Shell(cmd) => {
-                                // `!` commands run NOW — never queued, never
-                                // waiting on the engine. Output returns on the
-                                // local lane as ordinary events.
-                                //
-                                // It lands in the transcript the user is
-                                // reading — the focused agent's — so `! pwd`
-                                // answers where they asked, like Claude Code.
-                                // Before any agent registers there is no such
-                                // lane, and only then does it fall back to the
-                                // synthetic one.
-                                debug.note(&format!("shell: {cmd}"));
-                                let target = focused_id(&model, &ui);
-                                spawn_shell_command(
-                                    cmd,
-                                    local_tx.clone(),
-                                    model.now_ms,
-                                    shell_active.clone(),
-                                    target,
-                                );
-                            }
-                            DeckAction::Handled | DeckAction::Ignored => {}
+                        let action = handle_deck_key(key, &model, &mut ui);
+                        if apply_deck_action(
+                            action,
+                            &mut model,
+                            &mut ui,
+                            &submissions,
+                            &local_tx,
+                            &shell_active,
+                            &debug,
+                        ) {
+                            break 'run;
                         }
                         // A dispatched palette row changed the `recent` list;
                         // every other keystroke leaves this a no-op.
@@ -909,14 +937,25 @@ pub async fn run_deck(
                     // (L-T2 — capture takes the terminal's own text selection
                     // away); on a default session the keypress and the dwell
                     // timer are the notice's dismissal paths, and no click
-                    // ever reaches the process. The dispatch returns only
-                    // Handled/Ignored by contract (`handle_deck_mouse`), so
-                    // this arm carries none of the key arm's queue or quit
-                    // plumbing.
+                    // ever reaches the process. The outcome is applied by the
+                    // same `apply_deck_action` a key's is: a wheel notch over
+                    // a modal overlay re-enters the key dispatch (synthesized
+                    // arrows), so its action can be anything a key's can.
                     Some(Event::Mouse(mouse)) => {
                         ui.notice.dismiss();
                         let width = terminal.size()?.width;
-                        crate::mouse::handle_deck_mouse(mouse, width, &model, &mut ui);
+                        let action = crate::mouse::handle_deck_mouse(mouse, width, &model, &mut ui);
+                        if apply_deck_action(
+                            action,
+                            &mut model,
+                            &mut ui,
+                            &submissions,
+                            &local_tx,
+                            &shell_active,
+                            &debug,
+                        ) {
+                            break 'run;
+                        }
                     }
                     // Resize / focus change: the next draw picks them up.
                     Some(_) => {}

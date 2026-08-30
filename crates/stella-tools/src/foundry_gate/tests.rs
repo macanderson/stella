@@ -17,6 +17,7 @@ fn provenance() -> FoundryProvenance {
         signature: "cat <path>".into(),
         occurrences: 3,
         witness_input: json!({ "p1": "a.txt" }),
+        gap_id: String::new(),
         approved: None,
     }
 }
@@ -41,6 +42,7 @@ fn on_disk(root: &Path, name: &str, foundry: Option<FoundryProvenance>) -> Custo
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        foundry_runtime: Default::default(),
         contributed_by: None,
     }
 }
@@ -56,6 +58,7 @@ fn record(name: &str, enabled: bool) -> AdoptedTool {
         witness_expect: "alpha".into(),
         enabled,
         adopted_at: "2026-08-04 00:00:00".into(),
+        disabled_reason: String::new(),
     }
 }
 
@@ -90,6 +93,30 @@ fn adoption_alone_does_not_enable() {
         decision,
         GateDecision::Withhold(WithholdReason::AwaitingEnablement)
     );
+}
+
+/// A mechanism's recorded verdict outranks the generic "not enabled yet"
+/// sentence: a breaker-disabled tool is withheld with the reason on it, and
+/// the remedy it names is a new version, not `--enable`.
+#[test]
+fn a_breaker_disabled_tool_is_withheld_with_its_reason() {
+    let ws = tempfile::tempdir().unwrap();
+    let tool = on_disk(ws.path(), "cat_file", Some(provenance()));
+    let observed = observe(&tool, ws.path()).unwrap();
+    let mut tripped = record("cat_file", false);
+    tripped.disabled_reason = "circuit breaker: 3 consecutive failures".into();
+    let decision = decide(tool.foundry.as_ref(), Ok(&observed), Some(&tripped));
+    let GateDecision::Withhold(reason) = decision else {
+        panic!("a tripped tool must not register");
+    };
+    assert_eq!(
+        reason,
+        WithholdReason::Disabled {
+            reason: "circuit breaker: 3 consecutive failures".into()
+        }
+    );
+    assert!(reason.sentence().contains("circuit breaker"));
+    assert!(reason.sentence().contains("--rollback"));
 }
 
 /// The hole the staging directory could not close: a foundry manifest that

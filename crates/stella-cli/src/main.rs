@@ -113,6 +113,7 @@ mod settings;
 mod settings_check;
 mod signals;
 mod skill_manager;
+mod skill_run_cmd;
 // Reads this crate's own source so a security chokepoint's "these are all
 // the sites" claim can be asserted rather than reviewed (#3521, #4426).
 #[cfg(test)]
@@ -279,7 +280,7 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
 // the per-command modules keep addressing their own subcommand enum as
 // `crate::AuthCmd`, `crate::McpCmd`, … regardless of which file defines it.
 pub(crate) use cli::{
-    AuthCmd, Cli, Command, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
+    AuthCmd, Cli, Command, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, SkillCmd, TelemetryCmd,
 };
 
 /// How this invocation meets the supervisor (#1552, #1607).
@@ -665,13 +666,26 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             yes,
             disable,
             foundry,
+            draft,
+            rollback,
+            to,
+            status,
         }) => {
             // The tool-foundry protocol's decisions are flags, in the order a
-            // tool travels through them: adopt (prove) -> enable (approve).
-            // `clap` makes them mutually exclusive, so this is a first-match
-            // chain rather than a state machine.
+            // tool travels through them: draft (author) -> adopt (prove) ->
+            // enable (approve), with rollback/status alongside. `clap` makes
+            // them mutually exclusive, so this is a first-match chain rather
+            // than a state machine.
             return match validate {
                 _ if *foundry => tool_foundry::adopt::run_tools_foundry_report(),
+                _ if *status => tool_foundry::ops::run_tools_status(),
+                _ if draft.is_some() => {
+                    tool_foundry::ops::run_tools_draft(draft.as_deref().unwrap_or_default())
+                }
+                _ if rollback.is_some() => tool_foundry::ops::run_tools_rollback(
+                    rollback.as_deref().unwrap_or_default(),
+                    *to,
+                ),
                 _ if adopt.is_some() => {
                     tool_foundry::adopt::run_tools_adopt(adopt.as_deref().unwrap_or_default())
                 }
@@ -953,15 +967,22 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
             }
         }
-        Some(Command::Whistle { message, session }) => {
+        Some(Command::Whistle {
+            message,
+            session,
+            deep,
+        }) => {
             // A local broadcast over each target session's own control
             // socket — the local registry and a handful of Unix sockets, no
             // provider needed. This runs before provider resolution for the
             // same reason `Command::Daemon` does: an operator reaching for
             // this is trying to redirect work that is already running,
             // whatever this invocation's own model config looks like.
-            return signals::block_on_interruptible(rt()?, whistle::cmd::run(message, session))
-                .map_err(failure::CliFailure::from);
+            return signals::block_on_interruptible(
+                rt()?,
+                whistle::cmd::run(message, session, *deep),
+            )
+            .map_err(failure::CliFailure::from);
         }
         _ => {}
     }
@@ -1090,9 +1111,43 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     pipeline_choice,
                     test_command.as_deref(),
                     require_verdict,
+                    // A plain run invokes no skill; `stella skill run` is
+                    // the door that does.
+                    None,
                 ),
             )?;
         }
+        Command::Skill { cmd } => match cmd {
+            SkillCmd::Run {
+                slug,
+                args,
+                output_format,
+            } => {
+                // Planned before any provider work: a typo'd slug or an
+                // unreadable skill fails free of charge, naming what exists.
+                let plan = skill_run_cmd::plan(&cfg.workspace_root, &cfg.authority, &slug, &args)
+                    .map_err(failure::CliFailure::from)?;
+                // A `model:` directive re-resolves the config through the
+                // same door `--model` takes — and only when no explicit flag
+                // pinned the model, so the most specific statement wins.
+                let cfg = match plan.model.as_deref() {
+                    Some(model) if !cfg.model_pinned_by_flag => {
+                        let mut fresh = config::Config::load(
+                            Some(model),
+                            cli.globals.api_key.as_deref(),
+                            cli.globals.base_url.as_deref(),
+                        )?;
+                        skill_run_cmd::carry_stamped_flags(&mut fresh, &cfg);
+                        fresh
+                    }
+                    _ => cfg,
+                };
+                signals::block_on_interruptible(
+                    rt()?,
+                    skill_run_cmd::run(&cfg, plan, cli.globals.spend_limit, output_format),
+                )?;
+            }
+        },
         Command::Arena {
             task_dir,
             journal,

@@ -5,13 +5,13 @@ description: Review, publish, and explain context records — the reviewable ste
 
 `stella ingest` writes proposals. `stella context` is what acts on them.
 
-Extraction turns markdown you already wrote into atomic, probed claims sitting in
-`.stella/proposals/*.toml`. Until you decide on one, it steers nothing. This
-command is the deciding surface: read what was proposed and what its truth probe
+Extraction turns markdown you already wrote into small, checked claims sitting in
+`.stella/proposals/*.toml`. Until you decide on one, it changes nothing. This
+command is the deciding surface: read what was proposed and what its truth check
 found, publish the claims that are actually true, decline the ones that are not,
-and afterwards ask any live record why it applied.
+and later ask any live record why it applied.
 
-Every subcommand reads and writes **local files only** — no API key, no network.
+Every subcommand reads and writes local files only. No API key, no network.
 
 ## Synopsis
 
@@ -44,143 +44,141 @@ stella context list          # confirm what now steers this workspace
 
 ### `stella context review [--all]`
 
-What ingest proposed, with the evidence behind each claim and the verdict its
-truth probe returned. Nothing steers until you keep it, so this is a reading
-surface with no side effects.
+Shows what ingest proposed, with the evidence behind each claim and the result of its
+truth check. Nothing takes effect until you keep it, so this command only reads and
+never changes anything.
 
-`--all` additionally shows the **dismissed** proposals — the compound claims
-extraction refused to split, and the executable content it quarantined. Those
-are worth a look when a document you expected to produce ten records produced
-six.
+`--all` also shows the dismissed proposals: compound claims that extraction
+refused to split, and executable content it set aside. These are worth a look when a
+document you expected to produce ten records produced six.
 
 ### `stella context keep <candidate> [--enforce]`
 
-Publish a proposal as a record the engine loads. It writes
-`.stella/rules/<lineage>.toml` — or `~/.stella/rules/` for a personal record —
-and **never overwrites an existing file**.
+Publishes a proposal as a record the engine loads. It writes
+`.stella/rules/<lineage>.toml` (or `~/.stella/rules/` for a personal record)
+and never overwrites an existing file.
 
 <Callout type="info">
-`--enforce` is a **separate grant on purpose**. Keeping a record means the engine
-loads it as steering. Authorizing it to *block a matching tool call* is a
-different decision with a different blast radius, so it is a different flag
-rather than a property of keeping.
+`--enforce` is a separate choice on purpose. Keeping a record means the engine
+loads it as guidance. Allowing it to block a matching tool call is a
+different decision with bigger consequences, so it's a separate flag
+rather than something `keep` does automatically.
 </Callout>
 
 ### `stella context edit <candidate> --statement <text> [--enforce]`
 
-Publish your wording instead of the extractor's. The claim keeps its lineage and
-its evidence; only the statement becomes yours. Use it when the claim is right
-but the phrasing was inherited from prose that said it badly.
+Publishes your own wording instead of the extractor's. The claim keeps its lineage and
+its evidence; only the wording changes. Use this when the claim is right
+but the phrasing came from prose that said it badly.
 
 ### `stella context amend <rule> [--precedence <N>] [--paths <glob>…] [--tasks <task>…] [--keywords <word>…]`
 
-Change a **published** record's scope or precedence, and re-stamp its identity.
-`edit` rewrites a *proposal's* wording; this is the verb for a record that is
-already steering.
+Changes a published record's scope or precedence, and gives it a new identity stamp.
+`edit` rewrites a proposal's wording; `amend` is for a record that is
+already active.
 
-Scope is the field most likely to need changing after publication, because a
-scope defect is invisible until the record meets its neighbours. In this
-repository `read-crate-readme-first` was published with `paths = ["crates"]` at
-the default precedence and suspended eight architecture-rule records across
-the whole crate tree. `validate` named the remedies — an explicit exclusion, a
-different precedence, a supersession link — and none of them was reachable from
-the CLI.
+Scope is the field most likely to need changing after publishing, because a
+scope mistake is invisible until the record runs into others nearby. For example, a rule
+named `read-crate-readme-first` was published with `paths = ["crates"]` at
+default precedence, and it ended up blocking eight other rules across
+the whole codebase. `validate` pointed to the fixes (an explicit exclusion, a
+different precedence, a link marking it as a replacement) but none of them could be
+applied from the command line before `amend` existed.
 
-A named list **replaces** rather than appends, because the usual repair is
-narrowing: `--paths crates/stella-core` after `paths = ["crates"]` matched
-everything. Empty values are dropped, so `--paths ''` unscopes — clap has no way
-to spell "this flag was given no values", and a record scoped to `""` would match
-nothing while reading as scoped.
+A list you pass here replaces the existing one instead of adding to it, because the usual fix
+is narrowing scope: `--paths crates/stella-core` after `paths = ["crates"]` matched
+everything. Empty values are dropped, so `--paths ''` removes the scope entirely.
 
-**With no flags it re-stamps and changes nothing else**, which is the repair for
-a file somebody has already hand-edited. `record_hash` is a two-pass hash over an
-RFC 8785 canonical preimage, so a hand-edit leaves the file describing bytes that
-no longer exist and every load reports `record_hash mismatch … loaded as a new
-revision`. Nothing else re-stamps: every other publication path mints a *new*
-record.
+**With no flags, `amend` re-stamps the record and changes nothing else.** This is the fix
+for a file someone has already edited by hand. `record_hash` is a checksum over the
+record's contents, so a hand-edit leaves the file describing bytes that
+no longer match, and every load reports a `record_hash mismatch … loaded as a new
+revision` message. No other command re-stamps this way. Every other way of publishing
+creates a brand new record.
 
-`record_id` moves, because it is derived from the content. That is a new revision
-of the same lineage, which is what a content-derived id is for — the statement,
-the lineage, the evidence and the provenance are untouched.
+`record_id` changes too, because it's built from the content. That's a new revision
+of the same lineage, which is what a content-based id is for. The statement,
+the lineage, the evidence, and the origin are untouched.
 
-**Enforcement is not amendable here.** `enforcement.mode` is what
-[`promote`](#stella-context-promote-rule---to-level---reason-why) governs, with
-an approver, a reason, and an immutable ledger event. A flag on this command
-would be a second route to the same grant with none of that behind it.
+**You can't change enforcement here.** `enforcement.mode` is controlled by
+[`promote`](#stella-context-promote-rule---to-level---reason-why), which requires
+an approver, a reason, and a permanent log entry. Adding that ability to this command
+would create a second way to grant the same power with none of those checks.
 
 ### `stella context ignore <candidate> [--reason <why>] [--cooldown <ISO-8601>]`
 
-Decline a proposal. This records **negative evidence** and a re-proposal
-cooldown — default `P90D` — so the next ingest of the same document does not ask
-again.
+Declines a proposal. This records the decision and sets a
+cooldown before it can be proposed again — 90 days by default — so the next time you
+ingest the same document, it doesn't ask again.
 
-Supply `--reason`. A decline with no reason is evidence nobody can act on later,
-including you.
+Always give a `--reason`. A decline with no reason is a decision nobody, including you,
+can understand or act on later.
 
 ### `stella context list [--format <text|json>]`
 
-What currently steers this workspace: every loaded record, its handle, its
-force, and whether it actually blocks anything.
+Shows what currently steers this workspace: every loaded record, its handle, its
+force level, and whether it actually blocks anything.
 
-**Force** selects the injection channel, which is also its cost:
+**Force** decides how a record is delivered to the model, which also affects its cost:
 
 <CardGrid size="md">
   <OptionCard name="must">
-    Binding. Always injected into the cached system prefix.
+    Required. Always included in the cached system prompt.
   </OptionCard>
   <OptionCard name="should">
-    Strong. Always injected into the cached system prefix.
+    Strongly recommended. Always included in the cached system prompt.
   </OptionCard>
   <OptionCard name="may">
-    Relevant-when-selected. Rides the volatile block after the prefix.
+    Included only when relevant. Sent in the part of the prompt that changes each time.
   </OptionCard>
   <OptionCard name="info">
-    Informational. Rides the volatile block.
+    For reference only. Sent in the part of the prompt that changes each time.
   </OptionCard>
 </CardGrid>
 
-`must` and `should` are always present, which is what makes them binding — and
-also what makes them the ones to be sparing with. `may` and `info` are selected
-by relevance.
+`must` and `should` records are always present, which is what makes them binding, and
+also why you should use them sparingly. `may` and `info` records are chosen
+based on relevance.
 
-**Enforcement** is orthogonal to force:
+**Enforcement** is a separate setting from force:
 
 <CardGrid size="sm">
   <OptionCard name="hard">
-    Blocked at the tool boundary by a guard.
+    Blocked automatically when a tool call would break the rule.
   </OptionCard>
   <OptionCard name="soft">
-    Warned, not blocked.
+    A warning is shown, but nothing is blocked.
   </OptionCard>
   <OptionCard name="none">
-    Advisory only.
+    For reference only.
   </OptionCard>
 </CardGrid>
 
 ### `stella context validate [--format <text|json>]`
 
-Re-run every claim's truth probe now and report the result, plus every
-validation finding and every equal-precedence conflict. It **exits non-zero when
-something must not steer**, which makes it usable as a gate:
+Re-runs every claim's truth check right now and reports the result, along with every
+validation finding and every conflict between records with the same precedence. It
+exits with a non-zero code when something should not be steering the agent, which makes
+it usable as a gate:
 
 ```bash
 stella context validate || echo "steering needs review before this merges"
 ```
 
-A record you **retired** is the one thing that does not fail it. Retirement
-archives the record in place — the file stays in `.stella/rules/` as history and
-the loader stops selecting it — so `validate` lists it under "Retired" and moves
-on. A refuted claim still fails, and so does an archived record that also carries
-a blocking finding.
+A record you retired is the one thing that doesn't cause a failure. Retiring
+archives the record in place. The file stays in `.stella/rules/` for the record,
+and the loader stops using it, so `validate` lists it under "Retired" and moves
+on. A claim that fails its truth check still fails validation, and so does an archived
+record that still carries a blocking issue.
 
-This is the answer to the problem inherited documentation always has: a record
-extracted from a README that was true in 2024 is a confident, wrong instruction
-today. The probe is declarative and runs against the tree, so staleness is
-detected rather than assumed away.
+This solves a common problem with inherited documentation: a record
+pulled from a README that was true two years ago is a confident, wrong instruction
+today. The check runs directly against the current codebase, so it catches
+outdated claims instead of assuming they're still true.
 
 ### `stella context explain <rule>`
 
-Why did that rule apply? Prints provenance, evidence, enforcement, and efficacy
+Why did that rule apply? Shows the origin, evidence, enforcement setting, and effectiveness
 for one record.
 
 ```bash
@@ -188,88 +186,88 @@ stella context explain ^pnpm-only
 stella context explain ctx.acme.web.pkg-manager
 ```
 
-Truth basis is part of that answer, and the four values are meaningfully
-different:
+Part of that answer is how the claim was judged true, and the four possible values mean
+different things:
 
 <CardGrid size="sm">
   <OptionCard name="decree">
-    True because an owner said so — unrefutable by construction.
+    True because an owner said so. Cannot be disputed by design.
   </OptionCard>
   <OptionCard name="measured">
-    True because the world was measured and agreed.
+    True because it was checked against the codebase and confirmed.
   </OptionCard>
   <OptionCard name="derived">
     True because it follows from other records.
   </OptionCard>
   <OptionCard name="asserted">
-    Asserted without a machine-checkable basis.
+    Stated as true with no automatic way to check it.
   </OptionCard>
 </CardGrid>
 
 ### `stella context propose <rule> [--commit]`
 
-Turn a record into a reviewable change: a branch, a single-concern diff, and a
-PR body. Without `--commit` it prints the plan; with it, the branch and commit
-are created locally.
+Turns a record into a reviewable change: a branch, a focused diff, and a
+pull request description. Without `--commit` it just prints the plan; with it, the branch
+and commit are created locally.
 
 This exists because steering that changes how an agent behaves for a whole team
-deserves the same review as code that does — and a single-concern diff is what
+deserves the same review as code does, and a focused diff is what
 makes that review possible.
 
 ### `stella context promote <rule> --to <level> --reason <why>`
 
-Change a record's enforcement **accountably**. Every transition — `advisory` →
-`blocking` and back — is appended as an immutable, hash-chained event to the
-repository-visible ledger (`.stella/rules/promotions.jsonl`), naming the
+Changes a record's enforcement level with accountability. Every change, from `advisory`
+to `blocking` and back, is added as a permanent, tamper-evident entry to a
+log visible in the repository (`.stella/rules/promotions.jsonl`), naming the
 approver (defaults to `git config user.email`, override with `--approver`),
 the record's author when known, the stated reason, and the policy version the
-event creates. The ledger — not a private per-machine approval — is what arms
-a repository record's guard, so the grant travels with the repository and is
-reviewed through the same pull requests as the rule it governs.
+change creates. This log, not a private approval on one machine, is what activates
+a repository record's enforcement, so the permission travels with the repository and is
+reviewed through the same pull requests as the rule it controls.
 
-Promotion to `blocking` requires the record to declare evaluable guard keys —
-a natural-language statement never silently becomes blocking behavior. An
-edited, dropped, or reordered ledger line breaks the chain, `stella context
-validate` fails on it, and a broken ledger grants nothing.
+Promoting a record to `blocking` requires the record to name specific, checkable
+conditions. A plain-language statement can never silently become blocking behavior. An
+edited, deleted, or reordered log entry breaks the chain, `stella context
+validate` fails on it, and a broken log grants no permissions at all.
 
 ### `stella context govern [solo|team|regulated] [--separation] [--yes]`
 
-Show or change the governance mode. With no argument it prints the mode, the
-current policy version, and every ledger enforcement grant with its approver
-and reason. A mode change always asks first (`--yes` confirms
-non-interactively); personal records stay private across the transition. In
-regulated mode with `--separation`, the identity that authored a record
-cannot approve its own enforcement grant — and an author that cannot be
-established fails closed.
+Shows or changes the governance mode. With no argument, it prints the current mode, the
+current policy version, and every enforcement permission in the log with its approver
+and reason. Changing the mode always asks for confirmation first (`--yes` skips the
+prompt); personal records stay private through the change. In
+regulated mode with `--separation`, the person who wrote a record
+cannot approve its own enforcement permission, and if the author can't be
+identified, the request is denied.
 
-## Two proposal substrates, separate
+## Two separate systems
 
 <Callout type="warn">
 `stella context` and [`stella proposals`](/docs/commands/proposals) review
 different things and do not share storage.
 
-- **`stella context`** reviews **file-based** proposals extracted from documents,
+- **`stella context`** reviews proposals extracted from documents and stored as files,
   in `.stella/proposals/*.toml`.
-- **`stella proposals`** reviews **behavioral** proposals mined from what the
-  agent actually did, in `.stella/private/context.db`.
+- **`stella proposals`** reviews proposals based on what the
+  agent actually did, stored in `.stella/private/context.db`.
 
-The split is about **authority**, not plumbing. An explicit instruction in a
-tracked file is eligible immediately; a pattern mined from sessions must first
-clear a distinct-task threshold. One review surface over both would apply one of
-those two gates to content it does not fit.
+The two are split because they need different levels of trust. An explicit instruction in a
+tracked file can be reviewed right away. A pattern noticed across sessions must first
+clear a threshold showing it happened across distinct tasks. One review tool for
+both would apply the wrong check to one or the other.
 </Callout>
 
 ## Related
 
 <CardGrid size="sm">
   <SpecCard title="stella ingest" href="/docs/commands/ingest">
-    The extraction half — what produces the proposals this command reviews.
+    The extraction step — what produces the proposals this command reviews.
   </SpecCard>
   <SpecCard title="stella proposals" href="/docs/commands/proposals">
-    The adaptive-context ledger: behavioral proposals, a separate substrate.
+    The adaptive-context log: proposals based on behavior, a separate system.
   </SpecCard>
   <SpecCard title="Context engine" href="/docs/context-engine">
-    How records become recall, and the two injection channels force selects.
+    How records get used, and the two ways they're delivered to the model.
   </SpecCard>
   <SpecCard title="Unfamiliar codebase" href="/docs/guides/unfamiliar-codebase">
     Where ingest and context fit when you inherit a repository.

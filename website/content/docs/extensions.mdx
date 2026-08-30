@@ -1,24 +1,25 @@
 ---
 title: Extension hooks
-description: A typed, in-process event bus that lets extensions observe stella's activity and gate sensitive actions with allow, modify, deny, or require-approval.
+description: An event bus that lets extensions watch what stella does, and approve, block, or change sensitive actions before they run.
 ---
 
-stella's engine (`stella-core`) exposes a typed **event bus** that extensions and embedders
-use to *observe* everything the agent does and, on an explicit allowlist of
-policy-sensitive actions, to *intercept* it. Every event flows through one uniform
-envelope, and every subscription is disposable and cleanup-safe.
+stella's engine (`stella-core`) exposes an **event bus** that extensions and
+embedders use to *watch* everything the agent does. For a specific, listed
+set of sensitive actions, they can also *intercept* it. Every event uses the
+same format, and every subscription cleans up after itself.
 
 <Callout type="info">
-  Two different things are both called "hooks" in stella. **[Lifecycle hooks](/docs/agent-tools/hooks)**
-  are shell commands you declare in `settings.json` — no code required. **Extension hooks**
-  (this page) are the *programmatic* in-process bus you register handlers against when you
-  embed stella's engine as a library. They share the event vocabulary but not the wiring.
+  stella uses "hooks" for two different things. **[Lifecycle hooks](/docs/agent-tools/hooks)**
+  are shell commands you write in `settings.json` — no code needed.
+  **Extension hooks** (this page) are code you write and register when you
+  embed stella's engine as a library. Both use the same event names, but
+  they connect differently.
 </Callout>
 
 ## The event envelope
 
-Every event — whether an observer notification or a policy decision point — is delivered as
-a `HookEvent`:
+Every event, whether it's just a notification or a point where you can make
+a decision, arrives as a `HookEvent`:
 
 ```ts
 type HookEvent<TPayload = unknown> = {
@@ -33,21 +34,28 @@ type HookEvent<TPayload = unknown> = {
 };
 ```
 
-`sequence` is monotonic per session, so a consumer that needs a total order across threads
-sorts by it. The timestamp is fixed-width, so lexicographic order equals time order.
+`sequence` always increases within a session, so sort by it if you need a
+strict order across threads. The timestamp has a fixed width, so sorting it
+as text gives you time order too.
 
 ## Two kinds of handler
 
-### Observers — watch everything, change nothing
+### Observers
 
-Observers subscribe with `on` and are notified via `emit`. They **cannot** veto, fail, or
-corrupt the primary operation — an observer that returns an `Err` is logged, surfaced as an
-`extension.error` event, and skipped; the operation continues regardless. Observers do run
-**inline on the emitting thread**, though, so a slow handler *delays* the operation — move
-expensive work off-thread (e.g. `forward_to`) rather than blocking in the handler. Returning
-`Err` is the supported failure signal: a panic is only contained in unwinding (debug/test)
-builds, and under the release profile's `panic = "abort"` a panicking observer aborts the
-whole process.
+Observers watch everything and change nothing. Subscribe with `on`, and
+stella notifies you through `emit`. An observer **cannot** block, fail, or
+corrupt the action it's watching. If an observer returns an `Err`, stella
+logs it, raises an `extension.error` event, and skips it — the original
+operation continues either way.
+
+Observers run **inline on the same thread that emitted the event**, so a
+slow handler *delays* the operation it's watching. Move expensive work
+off-thread (for example with `forward_to`) instead of blocking inside the
+handler.
+
+Return `Err` to signal a failure — that's the safe way. A panic is only
+caught in debug and test builds. In a release build, where the process is
+set to abort on panic, a panicking observer takes down the whole process.
 
 ```rust
 // exact name, namespace wildcard, or "*" for everything
@@ -61,24 +69,25 @@ Matching:
 
 <CardGrid size="sm">
   <OptionCard name="file.read">
-    An exact name — exactly that event, nothing else.
+    Matches only that exact event.
   </OptionCard>
   <OptionCard name="file.*">
-    A namespace wildcard — `file.read`, `file.created`, `file.diff.computed`, and the rest
-    of the namespace.
+    Matches every event in that group: `file.read`, `file.created`,
+    `file.diff.computed`, and more.
   </OptionCard>
   <OptionCard name="tool.*">
-    Likewise: `tool.call.requested`, `tool.call.completed`, …
+    Same idea: `tool.call.requested`, `tool.call.completed`, and more.
   </OptionCard>
   <OptionCard name="*">
     Every event the host emits.
   </OptionCard>
 </CardGrid>
 
-### Policy hooks — gate the sensitive actions
+### Policy hooks
 
-Policy hooks subscribe with `on_blocking` and run **sequentially, in registration order**,
-*before* a policy-sensitive action proceeds. Each returns a decision:
+Policy hooks gate sensitive actions. Subscribe with `on_blocking`, and each
+hook runs **in order, one after another**, *before* the sensitive action
+happens. Each hook returns a decision:
 
 ```ts
 type HookDecision =
@@ -88,12 +97,12 @@ type HookDecision =
   | { action: "modify"; payload: unknown };
 ```
 
-The chain folds every `modify` into the payload (the next handler sees the modified version)
-and **stops at the first `deny` or `require_approval`**. A chain that only ever allows or
-modifies ends in `allow`. A policy handler that panics fails closed **only in unwinding
-(debug/test) builds**; the release profile compiles with `panic = "abort"`, where a panic
-aborts the whole process instead of denying — so signal refusal by returning `deny`, never
-by panicking.
+Each `modify` decision updates the payload before the next handler sees it.
+The chain **stops at the first `deny` or `require_approval`**. If every
+handler only allows or modifies, the final result is `allow`. A policy
+handler that panics fails safely **only in debug and test builds**. In a
+release build, a panic aborts the whole process instead of denying the
+action — so always signal refusal by returning `deny`, never by panicking.
 
 ```rust
 // Require a human for production deploys.
@@ -112,7 +121,7 @@ bus.on_blocking("file.updated", |event| {
 });
 ```
 
-Only these events are interceptable — the explicit allowlist of policy-sensitive actions:
+Only these events can be intercepted:
 
 ```text
 tool.call.requested   file.created   file.updated   file.deleted
@@ -120,29 +129,30 @@ command.started       git.commit.requested          git.push.requested
 pull_request.requested                               deployment.requested
 ```
 
-Every gated action records its outcome as a `policy.evaluated` event plus one of
-`policy.allowed` / `policy.blocked` / `approval.requested`.
+Every gated action logs its outcome as a `policy.evaluated` event, plus one
+of `policy.allowed`, `policy.blocked`, or `approval.requested`.
 
 ## Payload hygiene
 
 The bus never exposes secrets or full file contents to observers by default:
 
-- The **raw** payload of a blocking event (which may hold a whole file or a shell command)
-  reaches only **blocking handlers** — the explicitly privileged interception point. Never
-  an observer.
-- Observable tool events carry a **sanitized** input: content-bearing fields (`content`,
-  `new_string`, `old_string`) are replaced with `"<omitted: N bytes, M lines>"`.
-- Writes are scanned for high-precision secret shapes (PEM keys, AWS / GitHub / Slack /
-  Google / `sk-` tokens) → a `secret.detected` event that names only the *kind*, never the
-  match. Touches to credential-shaped paths (`.env*`, `*.pem`, `id_rsa`, …) →
-  `sensitive_operation.detected` with the path only.
+- The **raw** payload of a blocking event, which can include a whole file or
+  a shell command, only reaches **blocking handlers** — never an observer.
+- Tool events sent to observers carry **sanitized** input. Fields that hold
+  content (`content`, `new_string`, `old_string`) are replaced with
+  `"<omitted: N bytes, M lines>"`.
+- Writes are scanned for secret patterns (PEM keys, AWS, GitHub, Slack,
+  Google, and `sk-` tokens). A match raises a `secret.detected` event that
+  names only the *kind* of secret, never the actual value. Writes to
+  credential-shaped paths (`.env*`, `*.pem`, `id_rsa`, and similar) raise
+  `sensitive_operation.detected` with just the path.
 
 ## Disposal
 
-`on` / `on_blocking` return a subscription. **Dropping it unsubscribes** — cleanup is
-automatic. Call `.detach()` to keep a handler for the session's lifetime, or
-`.unsubscribe()` to remove it explicitly. Removal is idempotent and safe even after the bus
-is gone.
+`on` and `on_blocking` both return a subscription. **Dropping it removes the
+handler automatically.** Call `.detach()` to keep a handler for the whole
+session, or `.unsubscribe()` to remove it yourself. Removing a handler is
+safe to call more than once, and safe even after the bus itself is gone.
 
 ```rust
 let sub = bus.on("*", audit);
@@ -152,8 +162,8 @@ sub.unsubscribe();          // or: drop(sub);  — same effect
 
 ## The event catalog
 
-The host emits events across these namespaces. Extensions may also emit their own names —
-the catalog is the contract for what the *host* emits.
+stella emits events grouped into these categories. Extensions can also emit
+their own event names — this list only covers what *stella itself* emits.
 
 <CardGrid size="md">
   <OptionCard name="session.*">
@@ -196,22 +206,25 @@ the catalog is the contract for what the *host* emits.
   </OptionCard>
 </CardGrid>
 
-`extension.quarantined` is the one worth knowing about before you need it: an observer
-that repeatedly overruns its per-dispatch time budget is **quarantined** — skipped for the
-rest of the session — and the event is how you find out. Observers run inline on the
-emitting thread, so this is the resilience valve that stops a wedged extension from
-silently stalling the agent. If your handler is doing real work, move it off-thread rather
-than discovering it in a quarantine event.
+`extension.quarantined` is worth knowing about ahead of time. If an observer
+repeatedly takes too long to run, stella **quarantines** it — skips it for
+the rest of the session — and raises this event to tell you. Since observers
+run on the same thread that triggered them, this is what stops a slow
+extension from silently stalling the whole agent. If your handler does real
+work, move it off-thread now, rather than finding out through a quarantine
+event later.
 
-## Relationship to file-touch telemetry
+## File events and telemetry
 
-The bus is how you react to file changes *as they happen*: the same
-[file-touch telemetry](/docs/telemetry) that stella records also drives `file.created`,
-`file.updated`, `file.deleted`, and `files_touched.updated` events, each carrying the path,
-reason, and line deltas of the touch (never the file contents).
+The bus is how you react to file changes *as they happen*. The same
+[file-touch telemetry](/docs/telemetry) stella records also drives
+`file.created`, `file.updated`, `file.deleted`, and `files_touched.updated`
+events. Each one carries the path, the reason, and the line changes, but
+never the file's actual contents.
 
 <Callout type="warn">
-  The extension hook bus is the in-process API surfaced by `stella-core` for embedders. If
-  you only need to run a shell command on a tool call, reach for the config-driven
-  [lifecycle hooks](/docs/agent-tools/hooks) instead — no code, no build.
+  The extension hook bus is the in-process API that `stella-core` exposes
+  for embedders. If you just need to run a shell command on a tool call, use
+  [lifecycle hooks](/docs/agent-tools/hooks) instead — no code, no build
+  required.
 </Callout>

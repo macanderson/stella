@@ -74,6 +74,7 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "ui",
     "voice",
     "reward",
+    "foundry",
     "plan_review",
     "context",
     "context_providers",
@@ -116,6 +117,23 @@ const REWARD_FIELDS: &[&str] = &[
     "per_step",
     "per_usd",
     "per_revision",
+];
+
+/// `foundry` — [`super::FoundrySettings`]. Closed: a mistyped threshold key
+/// silently leaves the shipped floor in place, and a mistyped autonomy key
+/// silently leaves autonomy at its default — both are the "my setting does
+/// nothing" report this walker exists to prevent.
+const FOUNDRY_FIELDS: &[&str] = &[
+    "min_occurrences",
+    "min_distinct_arguments",
+    "min_reuse_ratio",
+    "require_success",
+    "max_examples",
+    "autonomy",
+    "breaker_consecutive_failures",
+    "breaker_window",
+    "breaker_failure_rate",
+    "network_allowlist",
 ];
 
 /// Keys that were correct in a shipped release and read nothing now, each with
@@ -488,6 +506,7 @@ pub(super) const TOML_ROOT_FIELDS: &[&str] = &[
     "ui",
     "voice",
     "reward",
+    "foundry",
     "plan_review",
     "authority",
     "enterprise_telemetry",
@@ -599,6 +618,7 @@ fn scan_toml_root(root: &Value, found: &mut Vec<String>) {
             "mcp" => closed("mcp", value, TOML_MCP_FIELDS, found),
             "ui" => closed("ui", value, UI_FIELDS, found),
             "reward" => closed("reward", value, REWARD_FIELDS, found),
+            "foundry" => closed("foundry", value, FOUNDRY_FIELDS, found),
             "plan_review" => closed("plan_review", value, PLAN_REVIEW_FIELDS, found),
             "hooks" => closed("hooks", value, &hook_events(), found),
             "providers" => {
@@ -681,6 +701,7 @@ fn scan_root(root: &Value, found: &mut Vec<String>) {
             "mcp" => closed("mcp", value, MCP_FIELDS, found),
             "ui" => closed("ui", value, UI_FIELDS, found),
             "reward" => closed("reward", value, REWARD_FIELDS, found),
+            "foundry" => closed("foundry", value, FOUNDRY_FIELDS, found),
             "plan_review" => closed("plan_review", value, PLAN_REVIEW_FIELDS, found),
             "hooks" => closed("hooks", value, &hook_events(), found),
             "agent_engine_config" => scan_engine(value, found),

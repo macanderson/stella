@@ -35,14 +35,16 @@ name: guard-self-tests
 # **`canary-self-tests`** — one suite, in its own job because it is the one that
 # compiles: scripts/main-canary.sh's `compile` row runs `cargo check`, and under
 # `--manifest-dir` that is a throwaway one-function crate rather than this
-# workspace. It is also the slow one: 8m16s on this runner and 5m07s on an M-series
-# laptop, both measured 2026-08-28. The fixture compiles are a small part of that.
-# `--manifest-dir` redirects only the `lockfile-sync` and `compile` rows, so every
-# one of the suite's ~38 canary invocations still runs `check-prose.py` and
-# `check-file-size.sh` over the live tree — 4.7s and 3.7s each on the laptop, which
-# accounts for essentially all of its 5m07s. #5417 is where that is being decided;
-# neither property belongs in the `self-tests` job above, which is toolchain-free
-# and seconds (#5356).
+# workspace. Every row of the canary honors `--manifest-dir` now, so a fixture
+# run judges only the fixture — `check-prose.py` and `check-file-size.sh`
+# included, which ran over the live tree on every one of the suite's ~38
+# canary invocations while only `lockfile-sync` and `compile` were redirected.
+# Measured 2026-08-30: 41.6s for the full suite on an M-series laptop, now 34
+# cases including six moved back in from the file this fix retired — against
+# 8m16s on this runner and 5m07s on the same laptop for 28 cases, measured
+# 2026-08-28. This job stays separate from the `self-tests` job above for the
+# reason that has not changed: it compiles, and that one is toolchain-free and
+# seconds.
 #
 # No `paths:` filter, deliberately, and for a different reason than
 # wire-schema.yml and docs-guards.yml have one. Those two narrow to escape a
@@ -227,10 +229,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-core-reachability.sh
 
-      - name: the module-siblings ratchet direction
-        if: ${{ !cancelled() }}
-        run: ./scripts/test-module-siblings.sh
-
       - name: the unverified-main detector, and that it fails open
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-verified.sh
@@ -304,10 +302,5 @@ jobs:
       # Not cached: the fixture workspaces are built in $TMPDIR and thrown away,
       # so there is no `target/` for Swatinem/rust-cache to carry between runs,
       # and no dependency to fetch — the fixture crate has none.
-      #
-      # scripts/test-main-canary-live.sh is NOT run here, and that is the whole
-      # point of the split: its cases expect a green verdict, so it reports what
-      # `main` is red on rather than what the canary can do. It is named in the
-      # Makefile's `UNHOSTED_SELF_TESTS` with that reason (#5356).
       - name: the canary opens, refreshes and explains a main-red issue
         run: ./scripts/test-main-canary.sh

@@ -1,13 +1,13 @@
 ---
 title: stella inspect
-description: Show the exact context a past model call was sent, rebuilt from recorded receipts and verified against the digests taken at emission.
+description: Show the exact context a past model call was sent, rebuilt from recorded receipts and checked against the digests taken when it was sent.
 ---
 
-Answer "what did the model actually see?" for any past call. `stella inspect` rebuilds the exact message array a model was sent — system prompt included — from the receipts recorded at the time, and re-checks it against the digests taken at emission. Entirely local; no API key, no network, and it never writes.
+Answer "what did the model actually see?" for any past call. `stella inspect` rebuilds the exact message array a model was sent, system prompt included, from the receipts recorded at the time. It checks that rebuild against the digests taken when the call was made. It is entirely local: no API key, no network, and it never writes anything.
 
-Add [`--diff`](#--diff--what-changed-not-what-was-sent) to ask the other question: what did *this* call see that the last one didn't — rendered as a unified diff, including against the prompt you actually typed.
+Add [`--diff`](#--diff) to ask a different question: what did *this* call see that the last one didn't? It renders the answer as a unified diff, and can even compare against the prompt you actually typed.
 
-Add [`--system-prompt`](#--system-prompt--which-setting-put-each-span-there) to ask a third: of the hundreds of stable lines in that prompt, which setting put each one there.
+Add [`--system-prompt`](#--system-prompt) to ask a third question: of the hundreds of stable lines in that prompt, which setting put each one there?
 
 ## Synopsis
 
@@ -16,14 +16,14 @@ stella inspect                                   # executions that have receipts
 stella inspect <EXEC>                            # that execution's model calls
 stella inspect <EXEC> --step <N> [--turn <T>] [--call-seq <S>]
 stella inspect <EXEC> --step <N> --diff [prev|first|prompt] [--only system]
-stella inspect <EXEC> --step <N> --system-prompt   # the prompt, by provenance
+stella inspect <EXEC> --step <N> --system-prompt   # the prompt, by source
 ```
 
 ## What it does
 
-Every model call records a **receipt**: the ordered list of context blocks it sent, plus the bytes of the blocks the event journal cannot otherwise resolve (the system prefix and the assembled user/recall message). `stella inspect` replays that receipt against the journal to reconstruct the call's `Vec<CompletionMessage>`.
+Every model call records a **receipt**: the ordered list of context blocks it sent, plus the bytes of the blocks the event journal can't otherwise resolve (the system prefix and the assembled user/recall message). `stella inspect` replays that receipt against the journal to rebuild the call's full message list.
 
-It reads `<workspace>/.stella/private/store.db` only. Like `stella stats`, it refuses to create `.stella/` as a side effect of being asked a question — if there's no store yet, it says so.
+It reads `<workspace>/.stella/private/store.db` only. Like `stella stats`, it never creates `.stella/` just because you asked it a question. If there's no store yet, it says so.
 
 ## Flags
 
@@ -32,43 +32,43 @@ It reads `<workspace>/.stella/private/store.db` only. Like `stella stats`, it re
     Turn instance within the execution.
   </OptionCard>
   <OptionCard name="--step <N>">
-    Step to reconstruct. Omit it to list the execution's calls instead.
+    Step to rebuild. Omit it to list the execution's calls instead.
   </OptionCard>
   <OptionCard name="--call-seq <S>" defaultValue="0">
-    Which model call at that step — see below for why a step can have several.
+    Which model call at that step. See below for why a step can have several.
   </OptionCard>
   <OptionCard name="--format <text|json>" defaultValue="text">
-    `text` prints a role-delimited transcript; `json` gives the messages plus the
-    verification verdict.
+    `text` prints a role-by-role transcript. `json` gives the messages plus the
+    verification result.
   </OptionCard>
   <OptionCard name="--full">
-    Print message bodies in full instead of eliding long ones.
+    Print message bodies in full instead of shortening long ones.
   </OptionCard>
   <OptionCard name="--diff [BASE]">
-    Render what *changed* instead of the whole context. `prev` (the default),
-    `first`, or `prompt` — see below.
+    Show what *changed* instead of the whole context. `prev` (the default),
+    `first`, or `prompt`. See below.
   </OptionCard>
   <OptionCard name="--only <ROLE>" defaultValue="all">
-    Restrict a `--diff` to one message role. `system` is the usual reason to
+    Limit a `--diff` to one message role. `system` is the usual reason to
     reach for it.
   </OptionCard>
   <OptionCard name="--context <N>" defaultValue="3">
     Unchanged lines printed around each change.
   </OptionCard>
   <OptionCard name="--system-prompt">
-    Show only this call's system prompt, split into provenance-labelled
-    sections — see below.
+    Show only this call's system prompt, split into labelled sections that
+    name where each one came from. See below.
   </OptionCard>
 </CardGrid>
 
-## `--diff` — what changed, not what was sent
+## `--diff`
 
-The full transcript answers *what did the model see*. It is the wrong tool for
-*what did this call see that the last one didn't*: a system prompt is hundreds
-of stable lines, and spotting the paragraph that moved by reading two of them
-side by side is not something a person can do reliably.
+The full transcript answers *what did the model see*. It's the wrong tool for
+*what did this call see that the last one didn't*. A system prompt runs to
+hundreds of stable lines, and finding the one paragraph that moved by reading
+two versions side by side is not something a person can do reliably.
 
-`--diff` renders the same reconstruction as a unified diff — the `@@` hunks,
+`--diff` renders the same rebuilt context as a unified diff: the `@@` hunks,
 `+`/`-` gutter, and `---`/`+++` headers you already read in `git diff`.
 
 ```bash
@@ -89,45 +89,46 @@ stella inspect 32 --step 0 --diff --only system
 
 Each prompt you submit opens a new **execution** row, and those rows share a
 `session_id`. `turn_instance` counts sub-turns *inside* one execution (goal
-rounds, subagents) and is `0` for nearly every real call — so the comparison a
-person means by "the previous turn" is a comparison across executions.
+rounds, subagents) and is `0` for nearly every real call. So what most people
+mean by "the previous turn" is really a comparison across executions.
 
-`--diff prev` therefore searches the whole session, not just the execution you
-named. That matters because a system prompt is **byte-stable across the steps of
-one execution by design** — that is the prompt-cache rule — so the only
-place it can drift is across turns. A diff that stopped at the execution
-boundary would print "no change" for exactly the comparison worth making. When
-the baseline comes from an earlier execution the `---` header says so, so the
-crossing is never silent.
+`--diff prev` searches the whole session, not just the execution you named.
+That matters because a system prompt stays byte-for-byte the same across the
+steps of one execution by design (this is what keeps the prompt cache
+working), so the only place it can change is between turns. A diff that
+stopped at the execution boundary would print "no change" for exactly the
+comparison worth making. When the comparison reaches back into an earlier
+execution, the `---` header says so.
 
 ### The three baselines
 
 <CardGrid size="md">
   <OptionCard name="prev" defaultValue="default">
-    Whatever ran immediately before in the same role — the previous step, or the
-    last call of the previous turn when this is a turn's first call.
+    Whatever ran immediately before in the same role: the previous step, or
+    the last call of the previous turn when this is a turn's first call.
   </OptionCard>
   <OptionCard name="first">
-    The first call of this role in the whole session: the first ever turn.
+    The first call of this role in the whole session: the very first turn.
   </OptionCard>
   <OptionCard name="prompt">
-    This turn's prompt exactly as you submitted it, before any context was
+    This turn's prompt exactly as you submitted it, before anything else was
     added.
   </OptionCard>
 </CardGrid>
 
-Baselines are always **same-role**. A step that ran the worker and a verifier holds
-two unrelated prompts; diffing across them produces noise, not a delta.
+Baselines always compare the **same role** against itself. A step that ran the
+worker and a verifier holds two unrelated prompts, so diffing across them
+would only produce noise.
 
-### Why the prompt is a baseline at all
+### Why the prompt counts as a baseline
 
-The prompt you type is all you know exists when you submit it. Everything else —
-the system prefix, recalled context, skills, memories — is added afterwards, and
-no other view shows that mutation, because the transcript shows the *sum* and
-never the *delta*.
+The prompt you type is all you know exists when you submit it. Everything
+else, such as the system prefix, recalled context, skills, and memories, gets
+added afterward. No other view shows that addition, because the transcript
+only ever shows the total, never the change.
 
-So the session's very first call, which genuinely has no predecessor, is
-compared against your own words:
+So the session's very first call, which truly has no earlier call to compare
+against, is compared to your own words instead:
 
 ```bash
 stella inspect 32 --step 0 --diff
@@ -142,26 +143,28 @@ stella inspect 32 --step 0 --diff
 +You are Stella, a fast terminal coding agent…
 ```
 
-Three words in, 8,730 lines out. `--diff prompt` forces that comparison for any
-call, not just the first.
+Three words in, 8,730 lines out. `--diff prompt` forces that same comparison
+for any call, not just the first.
 
 <Callout type="info">
-"no change" is a result, not a failure. `--only system` reporting the prompt
-byte-identical to the previous turn is a direct check that the prompt-cache
+"No change" is a result, not a failure. `--only system` reporting the prompt
+as identical to the previous turn is a direct check that the prompt-cache
 stability rule is holding.
 </Callout>
 
-## `--system-prompt` — which setting put each span there
+## `--system-prompt`
 
-A system prompt is assembled, not written. The base persona comes from one
-place, the session-environment block from another, workspace memories from
-`.stella/memories/`, workspace rules from `.stella/rules/`, and a SessionStart
-hook can append to the end of it. By the time a call is made, all of that is one
-undifferentiated wall of text — and "which of my settings produced this
-paragraph?" is not a question you can answer by reading it.
+A system prompt is assembled from several sources, not written as one piece.
+The base persona comes from one place, the session-environment block from
+another, workspace memories from `.stella/memories/`, workspace rules from
+`.stella/rules/`, and a SessionStart hook can add more to the end. By the time
+a call is made, all of that reads as one solid block of text, so "which of my
+settings produced this paragraph?" is not something you can answer just by
+reading it.
 
-`--system-prompt` splits the exact bytes the call was sent on the assembler's
-own section headings and labels each span with the surface behind it:
+`--system-prompt` splits the exact bytes the call was sent using the same
+section headings the assembler uses, and labels each part with where it came
+from:
 
 ```bash
 stella inspect 42 --step 0 --system-prompt --full
@@ -192,39 +195,56 @@ from: .stella/rules/*.toml context records (edit via `stella context`)
 …
 ```
 
-The boundaries are found by scanning for the assembler's headings, so a memory
-that quotes one can move a boundary. The whole is exact either way: **the
-sections concatenate, in order, to the bytes the call was sent**, which is what
-lets you trust the view without having to trust the heuristic. `--format json`
-gives the same split with unelided bodies, plus a `found` flag so a script can
-tell an absent prompt from an empty one.
+The section boundaries are found by scanning for the assembler's own
+headings, so a memory that happens to quote one of those headings can shift a
+boundary. Even so, the sections always add up, in order, to the exact bytes
+the call was sent, so you can trust the view without having to trust how the
+boundaries were found. `--format json` gives the same split with full,
+unshortened bodies, plus a `found` flag so a script can tell an absent prompt
+from an empty one.
 
 A call whose receipt holds no system prefix says `no system_prefix block
-resolved` rather than printing an empty prompt — "nothing was recorded" and
-"the model was sent nothing" are different claims, and only the first is true.
+resolved` instead of printing an empty prompt. "Nothing was recorded" and "the
+model was sent nothing" are different claims, and only the first one is true
+here.
 
 <Callout type="info">
-The same view is in interactive mode: `⌃g` (or `/inspect`) opens the recorded
-calls, and the system message of the one you select renders as these sections
-rather than one wall. The two surfaces split with the same table, so they
-cannot disagree.
+The same view is available in interactive mode: `⌃g` (or `/inspect`) opens
+the recorded calls, and the system message of the one you select renders as
+these same sections instead of one wall of text. Both surfaces use the same
+splitting logic, so they can't disagree.
 </Callout>
 
-`--system-prompt` and `--diff` are two whole-output views of one call, so asking
-for both is refused rather than letting one win. For the prompt's *delta* alone,
-`--diff --only system` is the flag pair you want.
+`--system-prompt` and `--diff` are both whole-output views of one call, so
+asking for both at once is refused rather than letting one silently win. To
+see just the prompt's change, use `--diff --only system` instead.
 
 ## Why `--call-seq` exists
 
-A single step can involve more than one model call. The engine's own worker call is always `0`; the overflow summarizer that may run during that step's compaction is `1`; a wrapper plugin's management roles allocate `2` and up.
+A single step can involve more than one model call. The engine's own worker
+call is always `0`. The overflow summarizer that may run during that step's
+compaction is `1`. A wrapper plugin's management roles take `2` and up.
 
-Which roles appear depends on the wrapper — a verification plugin typically issues `triage`, `research`, `plan`, `worker`, and `witness_author`, plus the two repair calls that follow their principal, `plan_repair` and `witness_repair`. Notably **absent**: the `verdict` call and the `distress_guidance` call. Nothing issues either, structurally rather than by default — there is no settings spelling that switches them back on. [Verification is deterministic](/docs/plugins): a fail→pass flip of one normalized command, or `Unverified`.
+Which roles show up depends on the wrapper. A verification plugin typically
+issues `triage`, `research`, `plan`, `worker`, and `witness_author`, plus the
+two repair calls that follow their main call, `plan_repair` and
+`witness_repair`. There is no `verdict` call and no `distress_guidance` call:
+nothing issues either one, and there is no setting that turns them back on.
+[Verification is deterministic](/docs/plugins): a command flips from failing
+to passing, or the result is `Unverified`.
 
 <Callout type="info">
-You can still meet `verdict` (recorded as `judge` in older sessions) and `distress_guidance` on a **stored** execution from before that change — `inspect` reads the record as it was written, and this page describes what a run issues *today*, not what every archived run contains.
+Older stored executions can still show a `verdict` call (recorded as `judge`
+in some of them) and a `distress_guidance` call. `inspect` reads the record
+exactly as it was written, so what you see for an older execution can differ
+from what a run issues today.
 </Callout>
 
-These auxiliary calls assemble their own prompts — a role task prompt, an optional settings-supplied system override, and a rendered transcript that exists nowhere else — so their receipt is the only record of what they sent. `stella inspect <EXEC>` lists every recorded call with its role, so you rarely have to guess a sequence number.
+These extra calls assemble their own prompts: a role task prompt, an optional
+settings-supplied system override, and a rendered transcript that exists
+nowhere else. Their receipt is the only record of what they sent.
+`stella inspect <EXEC>` lists every recorded call with its role, so you rarely
+have to guess a sequence number.
 
 ## Reading the verification banner
 
@@ -234,63 +254,79 @@ execution 42 · turn 0 · step 3 · call-seq 0
 verified: every journal-resolved block re-hashed to its recorded digest
 ```
 
-Two failure modes are reported separately, because they mean very different things:
+Two kinds of problems are reported separately, because they mean very
+different things:
 
 <CardGrid size="md">
   <OptionCard name="! N block(s) could not be resolved">
-    A documented coverage gap — budget-abort synthetic tool results, discarded
-    speculation, or attachments. The rest of the transcript is still faithful.
+    An expected gap: budget-abort placeholder results, discarded
+    speculation, or attachments. The rest of the transcript is still trustworthy.
   </OptionCard>
   <OptionCard name="!! N block(s) did NOT re-hash">
-    Nothing routine accounts for these bytes. Treat the reconstruction as untrustworthy.
+    Nothing normal explains these bytes. Treat the rebuilt transcript as
+    untrustworthy.
   </OptionCard>
   <OptionCard name="! N block(s) did NOT re-hash … as a matter of course">
-    An older journal. Compaction rewrote a tool result in place without recording
-    the replacement, so replay recovers the pre-compaction bytes. Ordinary.
+    An older journal. Compaction rewrote a tool result in place without
+    recording the replacement, so the rebuild recovers the older bytes
+    instead. This is expected.
   </OptionCard>
 </CardGrid>
 
-The last two are the same failure read against different journals, and which one you get is not a guess: every execution records the journal era its writer could produce. A journal written before compaction recorded its rewrites mismatches on every compacted block, forever — reporting that as an integrity breach would be an alarm that fires on routine housekeeping, so it does not. A journal that records every rewrite has no such explanation available, and the alarm is the right reading. `--format json` reports both halves as `journal_era` (`compaction_journaled` / `compaction_unjournaled`) and `digest_mismatch_severity` (`none` / `compaction` / `integrity`).
+The last two look like the same problem but come from different journals, and
+you don't have to guess which one you're looking at: every execution records
+which kind of journal wrote it. A journal written before compaction started
+recording its own rewrites will always mismatch on compacted blocks, so
+treating that as a real problem would raise an alarm on routine, harmless
+behavior, and it doesn't. A journal that records every rewrite has no such
+explanation available, so there the alarm is the right read. `--format json`
+reports both as `journal_era` (`compaction_journaled` /
+`compaction_unjournaled`) and `digest_mismatch_severity` (`none` /
+`compaction` / `integrity`).
 
-The system prefix and the assembled user message are stored as local bytes rather than resolved from the journal, so their digest check is tautological and is deliberately **not** counted as evidence. The proof lives in the journal-resolved kinds.
+The system prefix and the assembled user message are stored as local bytes
+rather than rebuilt from the journal, so checking their digest would just
+confirm they match themselves. That check is deliberately **not** counted as
+evidence. The real proof comes from the journal-resolved blocks.
 
 ## Examples
 
-Start from the index — which executions have receipts at all:
+Start from the index: which executions have receipts at all?
 
 ```bash
 stella inspect
 ```
 
-Then list one execution's recorded calls, with their roles and sequence numbers:
+List one execution's recorded calls, with their roles and sequence numbers:
 
 ```bash
 stella inspect 42
 ```
 
-Reconstruct the worker call at step 3 and read it as a transcript:
+Rebuild the worker call at step 3 and read it as a transcript:
 
 ```bash
 stella inspect 42 --step 3
 ```
 
-Read the verifier's prompt instead of the worker's — the auxiliary calls at that step:
+Read the verifier's prompt instead of the worker's, one of the extra calls at
+that step:
 
 ```bash
 stella inspect 42 --step 3 --call-seq 2 --full
 ```
 
-Check the verdict from a script without reading the transcript — `verified`, the two
-failure lists behind it, and what a mismatch means on this journal:
+Check the result from a script without reading the transcript: `verified`,
+the two problem lists behind it, and what a mismatch means for this journal:
 
 ```bash
 stella inspect 42 --step 3 --format json |
   jq '{verified, unresolved, digest_mismatches, digest_mismatch_severity}'
 ```
 
-Assert in CI that the system prompt did not drift between turns — `base` reports
-which baseline was actually resolved, since `prev` becomes `prompt` when nothing
-preceded the call:
+Check in CI that the system prompt didn't drift between turns. `base` reports
+which baseline was actually used, since `prev` becomes `prompt` when there
+was no earlier call to compare against:
 
 ```bash
 stella inspect 42 --step 0 --diff --only system --format json |
@@ -299,11 +335,11 @@ stella inspect 42 --step 0 --diff --only system --format json |
 
 ## What it can't show you
 
-- **Executions from before the receipts plane landed.** They have no receipt rows and are omitted from the index rather than listed as empty.
-- **The literal wire bytes.** Receipts are taken before the provider adapter runs, and adapters transform the system block on the way out — Anthropic keeps only the last system message and inserts cache breakpoints, OpenAI and Gemini join system messages with `\n\n`. A receipt is the canonical pre-adapter view of the call.
-- **Tool JSON schemas.** The manifest records the messages, not the tool definitions sent alongside them.
-- **Which vendor served a gateway-routed call.** `step_receipt.provider` is the provider you configured — `openrouter` for every OpenRouter call, whichever vendor actually answered. That upstream is recorded, just not by this command — see [Telemetry → who actually served a gateway-routed call](/docs/telemetry#who-actually-served-a-gateway-routed-call).
+- **Executions recorded before receipts existed.** They have no receipt rows, so they're left out of the index instead of shown as empty.
+- **The literal bytes sent over the wire.** Receipts are taken before the provider adapter runs, and adapters change the system block on the way out. Anthropic keeps only the last system message and inserts cache breakpoints; OpenAI and Gemini join system messages with a blank line. A receipt shows the call before any of that happens.
+- **Tool JSON schemas.** The receipt records the messages, not the tool definitions sent alongside them.
+- **Which vendor actually served a gateway-routed call.** `step_receipt.provider` is the provider you configured, such as `openrouter` for every OpenRouter call, no matter which vendor actually answered. The real upstream is recorded elsewhere. See [Who served the call](/docs/telemetry#who-served-the-call).
 
 <Callout type="info">
-Receipts never leave your machine. The content-free export boundary (`stella-store`'s egress guard) strips prompts, paths, and tool payloads from anything replicated off-box, and is enforced by a compile-time column allowlist plus a sentinel-poisoning test. See [Telemetry](/docs/telemetry).
+Receipts never leave your machine. A separate safeguard strips prompts, paths, and tool payloads from anything sent off your machine. See [Telemetry](/docs/telemetry).
 </Callout>

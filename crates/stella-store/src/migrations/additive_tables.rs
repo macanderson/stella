@@ -11,7 +11,8 @@
 //! was added*, which is what each doc comment records.
 //!
 //! A step that adds a table **and** touches an existing one does not belong
-//! here — [`super::execution_plane`] holds those.
+//! here — [`super::execution_plane`] holds those, and the autonomous-foundry
+//! step (v40 → v41) lives in [`super::foundry_plane`] for the same reason.
 
 use crate::Result;
 use crate::ddl::{

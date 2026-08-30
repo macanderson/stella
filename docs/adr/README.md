@@ -89,6 +89,7 @@ open; nothing before Phase 3 forces it.
 | [0020](0020-voice-dictation-push-to-talk.md) | Voice Dictation Is a Held Spacebar, and Transcription Is BYOK | Proposed |
 | [0021](0021-a-memory-event-names-one-memory.md) | A Memory Event Names One Memory | Implemented — landed with #5032 |
 | [0022](0022-adopt-standing-decisions-scr-corpus.md) | Adopt Org Standing Decisions as a Steering Context Record Corpus | Accepted |
+| [0023](0023-autonomous-tool-foundry.md) | Reconnect the Gap Detector; the Foundry Runs Autonomously Behind Standing Controls | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible

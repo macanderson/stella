@@ -1,9 +1,9 @@
 ---
 title: stella usage
-description: Report, replicate, and prune the cross-project telemetry hub at ~/.stella/usage.db — the same cost numbers as stella stats, across every project.
+description: Report on, replicate, and prune the cross-project usage hub at ~/.stella/usage.db, the same cost numbers as stella stats, across every project.
 ---
 
-`stella stats` answers "what did *this* workspace cost." `stella usage` answers the same question across every project on this machine, by reading the **usage hub** — one SQLite database per developer at `~/.stella/usage.db`. It needs no provider and no API key, and nothing it does sends anything anywhere.
+`stella stats` answers "what did *this* project cost." `stella usage` answers the same question across every project on this machine, by reading the **usage hub**, a single SQLite file per developer at `~/.stella/usage.db`. It needs no provider and no API key, and nothing it does sends any data anywhere.
 
 ## Synopsis
 
@@ -14,65 +14,69 @@ stella usage sync [--all]
 stella usage prune [--older-than <AGE>] [--max-rows <N>] [--gc-deleted] [--force] [--vacuum] [--dry-run]
 ```
 
-A bare `stella usage` is `stella usage report` with the defaults. The flags belong to the subcommand, so name `report` explicitly when you pass one.
+A bare `stella usage` runs `stella usage report` with its defaults. Flags belong to a specific subcommand, so spell out `report` whenever you pass one.
 
 ## What it does
 
-Every project keeps its own source of truth at `<workspace>/.stella/private/store.db` — that is the store [`stella stats`](/docs/commands/stats) and [`stella inspect`](/docs/commands/inspect) read. The hub is **derived** from those stores: each finished turn rolls its telemetry up into `~/.stella/usage.db` so a cross-project question can be answered without opening every project database in turn.
+Every project keeps its own record at `<workspace>/.stella/private/store.db`. That's the file [`stella stats`](/docs/commands/stats) and [`stella inspect`](/docs/commands/inspect) read from. The hub is **built from** those project files: each time a turn finishes, its numbers get copied into `~/.stella/usage.db`, so you can answer a question across all your projects without opening each project's database one by one.
 
-Two properties fall out of that design, and they are the reason the command exists:
+This design gives you two things:
 
-- **It reads even when the project stores are busy.** A report from the hub does not contend with a live session holding `store.db`.
-- **It outlives the checkout.** A project you deleted six months ago still contributes to the totals, because its rows were replicated before the directory went away.
+- **It still works when a project's own database is busy.** Reading from the hub does not compete with a live session that's using `store.db`.
+- **It outlives the project folder.** A project you deleted six months ago still counts toward your totals, because its rows were already copied into the hub before the folder was removed.
 
-Flow is strictly one way — `store.db` → `usage.db`. Nothing here writes back into a project store, and a hub that is missing or briefly unopenable never fails a turn; replication is best-effort by design.
+Data only ever flows one way, from `store.db` to `usage.db`. Nothing here writes back into a project's own file, and if the hub is missing or briefly can't be opened, it never fails your turn. Copying data into the hub is always best-effort.
 
 <Callout type="info">
-The hub stores **metadata and rollups**, never source code or tool output. Prompts are reduced to a digest plus a short preview. Registration with [`stella cloud`](/docs/commands/cloud) changes which ids the rows carry, not what is in them, and does not upload anything today.
+The hub stores **summaries and metadata only**, never your source code or tool output. Prompts are reduced to a short digest and preview. Registering with [`stella cloud`](/docs/commands/cloud) changes which ids your rows carry, not what's in them, and it does not upload anything on its own.
 </Callout>
 
 ## Subcommands
 
 <CardGrid size="md">
   <OptionCard name="report">
-    Per (org, provider, model) totals across every replicated project: calls, tokens,
-    cache reads, cost, and how many distinct projects contributed. The default.
+    Totals grouped by org, provider, and model, across every project copied into the hub:
+    calls, tokens, cache reads, cost, and how many different projects contributed. This is
+    the default.
   </OptionCard>
   <OptionCard name="sync">
-    Replicate this workspace's telemetry into the hub from a cursor. Safe to re-run;
-    `--all` heals every project the hub has ever seen.
+    Copies this project's usage data into the hub, picking up where it left off. Safe to
+    run again; `--all` repairs every project the hub has ever seen.
   </OptionCard>
   <OptionCard name="prune">
-    Bound the hub's growth — by age, by a row ceiling, and by GC of projects whose
-    checkout is gone.
+    Keeps the hub from growing forever, by age, by a row limit, or by clearing out projects
+    whose folder is gone.
   </OptionCard>
 </CardGrid>
 
 ### `stella usage report`
 
-Group every hub row by org, provider, and model, and total it. Rows are ordered by cost, descending.
+Groups every row in the hub by org, provider, and model, and totals them up. Rows are sorted by cost, highest first.
 
 <CardGrid size="md">
   <OptionCard name="--format <text|json|csv>" defaultValue="text">
-    `text` prints aligned columns with a `TOTAL` row (`table` still parses as an alias); `json` (under the versioned query envelope) and `csv` are for piping
-    into other tools. The three text columns in CSV are RFC-4180 escaped, so an org id or
-    a model slug containing a comma cannot shift the following columns.
+    `text` prints lined-up columns with a `TOTAL` row at the bottom (`table` also works as
+    another name for the same thing). `json` (wrapped in a versioned envelope) and `csv` are
+    meant for piping into other tools. The three text columns in CSV follow the RFC-4180
+    escaping rule, so an org id or model name containing a comma can never shift the columns
+    after it.
   </OptionCard>
   <OptionCard name="--org <id>">
-    Only rows replicated under this org id. Rows written before you registered carry no
-    org and are excluded by any `--org` filter.
+    Only shows rows recorded under this org id. Rows written before you registered have no
+    org attached, so an `--org` filter always leaves those out.
   </OptionCard>
   <OptionCard name="--by-tool">
-    Per-tool reliability instead of per-model spend: cross-project calls, errors, and the
-    derived error rate per `(tool, surface)`, read from the hub's tool rollup. Each row also
-    splits its errors by `ErrorClass` token
-    (`errors_by_class` in JSON/CSV, `CLASSES` in the table; `unclassified` for calls recorded
-    before their error site was audited), so "bash's error rate excluding `invalid_input`"
-    is arithmetic, not string matching. This is the
-    scriptable surface for a tool-reliability ceiling — the same numbers the Observatory
-    leaderboard draws, unwindowed and pipeable. Cannot combine with `--org` (the rollup is
-    project-keyed, and a silently unhonored filter would misreport). Named `--by-tool`
-    because `--tools` is the session-wide [tool-policy global](/docs/commands#--tools-narrowing-for-one-run).
+    Shows tool reliability instead of spend: calls, errors, and the error rate for each
+    `(tool, surface)` pair, across every project, read from the hub's tool summary. Each
+    row also breaks its errors down by `ErrorClass`
+    (`errors_by_class` in JSON/CSV, `CLASSES` in the table view; `unclassified` covers calls
+    recorded before their error type was tracked), so a question like "bash's error rate,
+    not counting `invalid_input`" is simple math, not text matching. This gives you the same
+    numbers behind the Observatory leaderboard, but with no time window and in a form you
+    can pipe to other tools. It cannot be combined with `--org`, because this summary is
+    keyed by project, not by org, and silently ignoring the filter would give you a wrong
+    answer. It's called `--by-tool` rather than `--tools`, because `--tools` is already
+    used for the session-wide [tool-policy setting](/docs/commands#--tools-narrowing-for-one-run).
   </OptionCard>
 </CardGrid>
 
@@ -83,7 +87,7 @@ stella usage report --org acme --format csv > acme-spend.csv
 stella usage report --by-tool --format json | jq '.rows[] | select(.error_rate > 0.03)'
 ```
 
-Representative table output (illustrative):
+Sample table output (for illustration only):
 
 ```text
 ORG            PROVIDER   MODEL                           CALLS        INPUT       OUTPUT   CACHE-READ       COST  PROJECTS
@@ -92,30 +96,31 @@ ORG            PROVIDER   MODEL                           CALLS        INPUT    
 TOTAL                                                       680     12115559       699324      8023214    36.3259
 ```
 
-An unregistered installation reports its rows under `(local)` — the display for a `NULL` org id. An empty hub says so and points you at `stella usage sync`.
+An installation that isn't registered shows its rows under `(local)`, which is what stella prints for a missing org id. An empty hub tells you so and points you to `stella usage sync`.
 
 ### `stella usage sync`
 
-Replication normally happens on its own: each finished turn ships its telemetry into the hub best-effort. `sync` is the explicit and the repair path — it walks the hub's per-project cursor forward, so re-running it is safe and only ever ships rows the hub does not already have.
+Normally, copying into the hub just happens on its own: each finished turn ships its data over best-effort. `sync` is the manual and the repair option. It moves each project's saved position forward, so running it again is always safe and only sends rows the hub doesn't already have.
 
 <CardGrid size="md">
   <OptionCard name="--all">
-    Walk every project in the hub's registry instead of just the current directory. This
-    is the repair path: a project whose best-effort sync failed mid-turn has a cursor that
-    fell behind, and `--all` heals all of them in one pass. A registered project with no
-    local `store.db` is reported as skipped rather than treated as an error.
+    Walks every project the hub already knows about, instead of just the current folder.
+    Use this to repair things: if a project's background sync failed partway through, its
+    position falls behind, and `--all` fixes every project like that in one pass. A
+    registered project whose local `store.db` is missing is reported as skipped, not as an
+    error.
   </OptionCard>
 </CardGrid>
 
 ```bash
-# This workspace only.
+# This project only.
 stella usage sync
 
 # Every project the hub knows about — the repair pass.
 stella usage sync --all
 ```
 
-The single-workspace form reports one number; `--all` reports per project first:
+Syncing one project reports a single number. `--all` reports each project first:
 
 ```text
 acme-api                 128 row(s)
@@ -126,79 +131,81 @@ replicated 128 telemetry row(s) across 3 project(s)
 
 ### `stella usage prune`
 
-The hub keeps one telemetry row per model call, across every project, forever — including rows from checkouts that no longer exist. `prune` is the retention control. It refuses to run with none of `--older-than`, `--max-rows`, or `--gc-deleted` set, so a bare `stella usage prune` can never mean "delete something."
+The hub keeps one row per model call, from every project, forever, including projects that no longer exist. `prune` controls how much it keeps. It refuses to run unless you give it at least one of `--older-than`, `--max-rows`, or `--gc-deleted`, so a bare `stella usage prune` can never accidentally delete anything.
 
 <CardGrid size="md">
   <OptionCard name="--older-than <AGE>">
-    Drop rows older than this window. `N` followed by `d`, `w`, `h`, `mo`, or `y` — `90d`,
-    `12w`, `720h`, `3mo`, `1y`. A bare number means days. The window must be positive: `0`
-    would prune everything older than now, which is almost always a typo.
+    Deletes rows older than this window. Use a number followed by `d`, `w`, `h`, `mo`, or
+    `y`, for example `90d`, `12w`, `720h`, `3mo`, `1y`. A bare number means days. The value
+    must be positive; `0` would delete everything up to right now, which is almost always a
+    mistake.
   </OptionCard>
   <OptionCard name="--max-rows <N>">
-    Hard ceiling on retained telemetry rows; the oldest prunable ones are evicted until
-    the hub is at or under it.
+    A hard cap on how many rows the hub keeps. The oldest deletable rows are removed until
+    the hub is at or under this number.
   </OptionCard>
   <OptionCard name="--gc-deleted">
-    Also drop everything the hub holds for a project whose checkout is gone *and* that was
-    never org-registered — its telemetry, its rollups, its sync cursor, and its registry
-    row. "Gone" means the project root is missing while its parent directory still exists,
-    which is a deletion. A whole volume being absent — an unplugged drive, a down network
-    share — is deliberately **not** a deletion, so an unmounted disk never GCs your local
-    history. A project that does come back re-replicates on its next sync.
+    Also removes everything the hub holds for a project whose folder is gone *and* that was
+    never registered to an org: its usage data, its summaries, its saved sync position, and
+    its entry in the hub. "Gone" means the project's own folder is missing while its parent
+    folder still exists, since that's what a real deletion looks like. A whole drive being
+    unavailable, like an unplugged drive or an offline network share, is deliberately
+    **not** treated as a deletion, so a temporarily disconnected disk never wipes out your
+    local history. A project that comes back gets re-added on its next sync.
   </OptionCard>
   <OptionCard name="--dry-run">
-    Compute the report and delete nothing. Worth running first.
+    Shows what would be deleted, without deleting anything. Worth running first.
   </OptionCard>
   <OptionCard name="--vacuum">
-    `VACUUM` afterwards, handing freed pages back to the filesystem, and re-anchor the
-    cloud cursors across it. Also runs automatically after a large prune.
+    Runs SQLite's `VACUUM` afterward, giving the freed disk space back to your filesystem,
+    and resets the cloud sync positions to match. This also runs automatically after a
+    large prune.
   </OptionCard>
   <OptionCard name="--force">
-    Also drop un-acked cloud rows, breaking a pending drain. Off by default.
+    Also deletes rows that haven't been confirmed as sent to the cloud yet, which breaks a
+    pending upload. Off by default.
   </OptionCard>
 </CardGrid>
 
 ```bash
-# What would go, without touching anything.
+# See what would be removed, without touching anything.
 stella usage prune --older-than 1y --dry-run
 
-# A year of history, plus everything held for repos you have since deleted.
+# A year of history, plus everything held for projects you've since deleted.
 stella usage prune --older-than 1y --gc-deleted --vacuum
 
-# Or bound it by row count instead of age.
+# Or limit by row count instead of age.
 stella usage prune --max-rows 100000
 ```
 
 <Callout type="warn">
-Prune is **cloud-safe by default**: a row belonging to a registered org that the cloud
-drain has not yet acknowledged is never dropped, even when it falls inside the age window.
-Those rows are reported back to you as kept — `--force` is the deliberate override, and it
-breaks the pending drain permanently. Rollup rows never drain, so they age out
-unconditionally.
+Prune is **safe for cloud users by default**. A row that belongs to a registered org and
+that the cloud upload hasn't confirmed yet is never deleted, even if it falls inside your
+age window. Those rows are reported back to you as kept. `--force` is the deliberate way to
+override that, and it permanently breaks the pending upload. Summary rows never get
+uploaded, so they age out and get deleted no matter what.
 </Callout>
 
-If the ceiling could not be met because the excess rows were un-acked, `prune` says so rather than silently leaving the hub over budget: drain them, or re-run with `--force`.
+If a row limit can't be reached because the extra rows are all unconfirmed uploads, `prune` tells you that directly instead of quietly leaving the hub over its limit. Either wait for the upload to finish, or run again with `--force`.
 
 ## Relationship to `stella stats`
 
 <CardGrid size="md">
   <OptionCard name="stella stats">
-    One workspace. Reads `<workspace>/.stella/private/store.db`, the source of truth, with
-    the per-run cache-economics columns. Its `prune` bounds *that* store.
+    One project. Reads `<workspace>/.stella/private/store.db`, the original source of the
+    data, including the per-run cache-cost columns. Its `prune` only affects *that* file.
   </OptionCard>
   <OptionCard name="stella usage">
-    Every workspace. Reads `~/.stella/usage.db`, derived from the above. Its `prune` bounds
-    *the hub*, and the two retention commands are independent — pruning one never touches
-    the other.
+    Every project. Reads `~/.stella/usage.db`, which is built from the file above. Its
+    `prune` only affects *the hub*. Pruning one never touches the other.
   </OptionCard>
 </CardGrid>
 
-The two `--older-than` vocabularies are shared code precisely so `--older-than 3mo` cannot work on one command and fail on the other.
+Both commands use the same `--older-than` format on purpose, so `--older-than 3mo` always works the same way on either command.
 
 ## Examples
 
-Your five most expensive models across every project — the rows already arrive sorted by
-cost:
+Your five most expensive models across every project, since rows already come back sorted by cost:
 
 ```bash
 stella usage report --format json | jq '.rows[0:5] | .[] | {provider, model, cost_usd}'
@@ -210,7 +217,7 @@ Find the models you use across the most projects:
 stella usage report --format json | jq '.rows[] | select(.projects > 2) | {provider, model, projects, cost_usd}'
 ```
 
-Heal every stale cursor after a stretch of interrupted sessions, then report:
+Fix every out-of-date project after a stretch of interrupted sessions, then report:
 
 ```bash
 stella usage sync --all
@@ -224,7 +231,7 @@ stella usage prune --older-than 6mo --gc-deleted --vacuum
 ```
 
 <Callout type="info">
-The hub is a real SQLite file at `~/.stella/usage.db` (`STELLA_DATA_DIR` overrides the
-directory). Beyond this command you can query it with any SQLite client — see
+The hub is a real SQLite file at `~/.stella/usage.db` (set `STELLA_DATA_DIR` to use a
+different folder). Beyond this command, you can query it with any SQLite client. See
 [Telemetry &amp; budget](/docs/telemetry).
 </Callout>

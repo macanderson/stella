@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Mouse dispatch for the deck: a click on the tab row switches tabs, the
-//! wheel scrolls the Session transcript, and a click while the splash is up
-//! skips it — each routed to the state change its key equivalent makes.
-//! Capture is opt-in ([`crate::deck_shell::DeckOptions::mouse_capture`],
-//! L-T2), so a default session never reaches this module and keeps the
-//! terminal's own text selection.
+//! Mouse dispatch for the deck: a tab-row click switches tabs, the wheel
+//! scrolls the body or list under the reader — a tab's own, or a modal
+//! dialog's — and a click skips the splash. Capture is opt-in
+//! ([`crate::deck_shell::DeckOptions::mouse_capture`], L-T2), so a default
+//! session keeps the terminal's own text selection.
 
-use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::WorkspaceModel;
 use crate::deck::DeckTab;
-use crate::deck_ui::{DeckAction, DeckUi, queue_issues_first_load};
+use crate::deck_ui::{DeckAction, DeckUi, handle_deck_key, queue_issues_first_load};
 
-/// Transcript lines one wheel notch moves. Three is the terminal-emulator
-/// convention (xterm and its descendants), so the deck scrolls at the speed
-/// the rest of the user's terminal does.
+/// Lines (or list items) one wheel notch moves. Three is the
+/// terminal-emulator convention (xterm and its descendants), so the deck
+/// scrolls at the speed the rest of the user's terminal does.
 const WHEEL_LINES: usize = 3;
 
 /// Route one mouse event to the deck.
@@ -25,11 +24,9 @@ const WHEEL_LINES: usize = 3;
 /// the tab hit test needs it because the tab row narrows with the frame
 /// (`views::frame::tab_row_hit`).
 ///
-/// Returns [`DeckAction::Handled`] or [`DeckAction::Ignored`] and nothing
-/// else, by construction: no mouse verb submits, quits, or runs a shell
-/// command, which is what lets `deck_shell`'s mouse arm stay free of the key
-/// arm's queue and quit plumbing. A future verb that sends must grow that
-/// arm to match the key arm's dispatch.
+/// The outcome goes through the same `apply_deck_action` a key's does
+/// (`deck_shell`): a wheel notch over a modal dialog re-enters the key
+/// dispatch, so this can return anything [`handle_deck_key`] can.
 ///
 /// Not wrapped in `accessible::announce`: accessible mode forces mouse
 /// capture off (`accessible::mouse_capture_enabled`), so no event reaches
@@ -50,11 +47,17 @@ pub fn handle_deck_mouse(
         return DeckAction::Ignored;
     }
     // A modal dialog owns the mouse on the terms it owns the keyboard: a
-    // click or a wheel notch must not reach the surface behind it. The
-    // AGENTS page replaces the bands outright, so the tab row a click would
-    // hit is not even drawn.
+    // click must not reach the surface behind it, and a wheel notch drives
+    // the dialog's own body. The AGENTS page replaces the bands outright —
+    // the tab row a click would hit is not even drawn — and its own key
+    // handler takes the same route.
     if ui.agents_page.open || crate::deck_render::overlay_owns_keyboard(model, ui) {
-        return DeckAction::Ignored;
+        return match ev.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                wheel_as_arrows(ev.kind == MouseEventKind::ScrollUp, model, ui)
+            }
+            _ => DeckAction::Ignored,
+        };
     }
     match ev.kind {
         // The tab row is the frame's top row (`deck_render`'s first band).
@@ -70,17 +73,87 @@ pub fn handle_deck_mouse(
                 None => DeckAction::Ignored,
             }
         }
-        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if ui.tab == DeckTab::Session => {
-            let (total, height) = (ui.metrics.session_total, ui.metrics.session_height);
-            if ev.kind == MouseEventKind::ScrollUp {
-                ui.session_scroll.scroll_up(WHEEL_LINES, total, height);
-            } else {
-                ui.session_scroll.scroll_down(WHEEL_LINES, total, height);
-            }
-            DeckAction::Handled
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+            wheel_on_tab(ev.kind == MouseEventKind::ScrollUp, model, ui)
         }
         _ => DeckAction::Ignored,
     }
+}
+
+/// A wheel notch while a dialog owns the keyboard, re-entered as arrow keys
+/// so the dialog's own handler moves its own body — `list_nav`'s vocabulary,
+/// which every overlay that scrolls or selects already speaks, so there is
+/// no list of overlays here to fall out of date.
+///
+/// Synthesis is safe here and only here: on a bare tab, `↑`/`↓` carry
+/// affordances a wheel must not trigger — an empty-composer `↑` on SESSION
+/// opens the queue editor — which is why [`wheel_on_tab`] moves scroll state
+/// directly instead. An action other than Handled/Ignored is returned
+/// immediately, so nothing a dialog decides is dropped.
+fn wheel_as_arrows(up: bool, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
+    let code = if up { KeyCode::Up } else { KeyCode::Down };
+    let key = KeyEvent::new(code, KeyModifiers::NONE);
+    let mut last = DeckAction::Ignored;
+    for _ in 0..WHEEL_LINES {
+        match handle_deck_key(key, model, ui) {
+            DeckAction::Handled => last = DeckAction::Handled,
+            DeckAction::Ignored => {}
+            other => return other,
+        }
+    }
+    last
+}
+
+/// A wheel notch on a bare tab: the tab's primary body or list, moved
+/// [`WHEEL_LINES`] at a time through `list_nav`'s wheel entries.
+///
+/// Each arm names the same state and count the tab's own key handler hands
+/// `list_nav::scroll` / `list_nav::select`, so the wheel and the arrows move
+/// one thing. A tab whose list moves elsewhere must move here in the same
+/// change.
+fn wheel_on_tab(up: bool, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
+    use crate::deck_ui::list_nav::{scroll_wheel, select_wheel};
+    let n = WHEEL_LINES;
+    let m = ui.metrics;
+    match ui.tab {
+        DeckTab::Session => {
+            scroll_wheel(
+                up,
+                n,
+                &mut ui.session_scroll,
+                m.session_total,
+                m.session_height,
+            );
+        }
+        DeckTab::Traces => {
+            scroll_wheel(up, n, &mut ui.trace_scroll, m.trace_total, m.trace_height);
+        }
+        // The FILES tab is a list until a diff is open, then a body — the
+        // same split `handle_files_key` makes.
+        DeckTab::Files if ui.files_diff_open => {
+            scroll_wheel(
+                up,
+                n,
+                &mut ui.files_diff_scroll,
+                m.files_diff_total,
+                m.files_diff_height,
+            );
+        }
+        DeckTab::Files => select_wheel(up, n, &mut ui.files_sel, model.ledger.records.len()),
+        DeckTab::Agents => select_wheel(up, n, &mut ui.installed.sel, ui.installed.entries.len()),
+        DeckTab::Graph => {
+            let count = ui.graph.as_ref().map(|g| g.nodes.len()).unwrap_or(0);
+            select_wheel(up, n, &mut ui.graph_cursor, count);
+        }
+        DeckTab::Skills => select_wheel(up, n, &mut ui.skills.sel, ui.skills.view.rows.len()),
+        DeckTab::Mcp => select_wheel(up, n, &mut ui.mcp.selected, ui.mcp.servers.len()),
+        DeckTab::Issues => select_wheel(up, n, &mut ui.issues.sel, ui.issues.rows.len()),
+        // SETTINGS is two focus-claimed editors (modal while focused, so
+        // they take the synthesis path above); unfocused, the tab has no
+        // list for the wheel to move.
+        DeckTab::Settings => return DeckAction::Ignored,
+    }
+    DeckAction::Handled
 }
 
 #[cfg(test)]
@@ -188,6 +261,71 @@ mod tests {
             DeckAction::Ignored
         );
         assert_eq!(ui.tab, DeckTab::Session);
+    }
+
+    /// The wheel scrolls whichever tab is up, through the same state its
+    /// arrows move: a body tab (TRACES) by scroll state, a list tab with
+    /// nothing in it without panicking, and FILES as a body once a diff is
+    /// open.
+    #[test]
+    fn the_wheel_moves_every_tabs_own_surface() {
+        let (model, mut ui) = fixture();
+        ui.set_tab(DeckTab::Traces);
+        ui.metrics.trace_total = 40;
+        ui.metrics.trace_height = 8;
+        let action = handle_deck_mouse(wheel(MouseEventKind::ScrollUp), 100, &model, &mut ui);
+        assert_eq!(action, DeckAction::Handled);
+        assert_eq!(ui.trace_scroll.top, 40 - 8 - WHEEL_LINES);
+
+        ui.set_tab(DeckTab::Agents);
+        assert_eq!(
+            handle_deck_mouse(wheel(MouseEventKind::ScrollDown), 100, &model, &mut ui),
+            DeckAction::Handled
+        );
+        assert_eq!(ui.installed.sel, 0, "an empty list stays put");
+
+        ui.set_tab(DeckTab::Files);
+        ui.files_diff_open = true;
+        ui.metrics.files_diff_total = 30;
+        ui.metrics.files_diff_height = 6;
+        handle_deck_mouse(wheel(MouseEventKind::ScrollUp), 100, &model, &mut ui);
+        assert_eq!(ui.files_diff_scroll.top, 30 - 6 - WHEEL_LINES);
+    }
+
+    /// A wheel notch while a modal dialog is up drives the dialog's body —
+    /// the help overlay here — and leaves the transcript behind it alone.
+    #[test]
+    fn a_wheel_notch_over_a_modal_scrolls_the_dialog_not_the_tab() {
+        let (model, mut ui) = fixture();
+        ui.help_open = true;
+        ui.metrics.help_total = 100;
+        ui.metrics.help_height = 10;
+        ui.metrics.session_total = 100;
+        ui.metrics.session_height = 10;
+        // Down, not up: help opens pinned to its top, where an upward notch
+        // is already a no-op.
+        let action = handle_deck_mouse(wheel(MouseEventKind::ScrollDown), 100, &model, &mut ui);
+        assert_eq!(action, DeckAction::Handled);
+        assert_eq!(ui.help_scroll.window(100, 10).start, WHEEL_LINES);
+        assert!(
+            ui.session_scroll.follow,
+            "the transcript behind it did not move"
+        );
+        assert!(ui.help_open, "scrolling does not close the overlay");
+    }
+
+    /// The wheel is not an arrow key on a bare tab: an empty-composer `↑` on
+    /// SESSION with prompts queued opens the queue editor, and a wheel notch
+    /// in the same state must scroll instead.
+    #[test]
+    fn a_wheel_notch_on_session_never_opens_the_queue_editor() {
+        let (mut model, mut ui) = fixture();
+        model.queue.enqueue("queued prompt".into(), 0);
+        ui.metrics.session_total = 100;
+        ui.metrics.session_height = 10;
+        handle_deck_mouse(wheel(MouseEventKind::ScrollUp), 100, &model, &mut ui);
+        assert!(!ui.queue_open, "the queue editor stayed closed");
+        assert_eq!(ui.session_scroll.top, 100 - 10 - WHEEL_LINES);
     }
 
     /// The wheel scrolls the Session transcript by [`WHEEL_LINES`], against

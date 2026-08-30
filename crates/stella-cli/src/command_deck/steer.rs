@@ -108,6 +108,33 @@ pub(super) fn steer_lead(tap: &SteeringTap, queue: &mut DurableQueue, texts: Vec
     }
 }
 
+/// Deliver the composer's red mode at the LEAD: the words are claimed and
+/// front-inserted so they run next — ahead of the parked backlog, which is
+/// what "interrupt" outranks — and the turn is asked to stop at its next
+/// boundary, keeping every completed step. Front-insertion happens before the
+/// stop is requested, so a turn that settles between the two still dispatches
+/// the words rather than losing them behind an older backlog.
+pub(super) fn interrupt_lead(
+    tap: &SteeringTap,
+    lead_pause: &super::lead_control::LeadPause,
+    queue: &mut DurableQueue,
+    texts: Vec<String>,
+    in_tx: &UnboundedSender<Inbound>,
+) {
+    for text in &texts {
+        claim(queue, text);
+    }
+    for text in texts.into_iter().rev() {
+        queue.push_front(unmarked(&text).to_string());
+    }
+    tap.request_soft_stop();
+    // A paused turn can never reach the stop's boundary on its own.
+    lead_pause.release_for_soft_stop();
+    let _ = in_tx.send(super::chrome_note(
+        "stopping at the next step boundary — your prompt runs next".to_string(),
+    ));
+}
+
 /// A plain stop (the first Esc) at a lead with prompts still parked: deliver
 /// the backlog into the running turn and keep it going. `false` when there
 /// was nothing parked, so the caller's soft stop still runs.

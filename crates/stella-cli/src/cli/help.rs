@@ -60,7 +60,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Steer what the agent knows",
-        &["ingest", "context", "proposals", "memory"],
+        &["ingest", "context", "proposals", "memory", "skill"],
     ),
     (
         "What it cost, what happened",

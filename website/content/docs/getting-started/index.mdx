@@ -1,17 +1,20 @@
 ---
 title: Getting Started
-description: Install stella, set a provider key, initialize your repo, and run your first verified change — in under five minutes.
+description: Install stella, set a provider key, start your repo, and run your first change. Takes under five minutes.
 ---
 
-This walks you from zero to a verified change:
-**[install](/docs/getting-started/installation)** the binary, set a provider
-key, **[initialize](/docs/getting-started/initialization)** the repo, and run.
-The full provider matrix (OpenRouter, local servers, Vertex, Bedrock, custom
-gateways) lives in **[Providers & models](/docs/getting-started/providers)**.
+## Quick path
+
+1. **[Install](/docs/getting-started/installation)** stella.
+2. Set a provider key.
+3. **[Start](/docs/getting-started/initialization)** your repo.
+4. Run a task.
+
+Need a provider besides the big ones? OpenRouter, local servers, Vertex, Bedrock, and custom gateways are covered in **[Providers & models](/docs/getting-started/providers)**.
 
 <QuickstartDiagram />
 
-If you would rather paste one block and read afterwards, this is the whole path:
+Want the whole thing in one block? Paste this:
 
 ```bash
 # 1. Install.
@@ -29,14 +32,14 @@ stella run "explain what this repository does, then list the riskiest files"
 
 ## 1. Set an API key
 
-stella is bring-your-own-key. Export a key for any one provider — stella auto-detects it:
+stella is bring-your-own-key. Export a key for any provider, and stella finds it for you:
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here   # or OPENAI_API_KEY, GEMINI_API_KEY, ZAI_API_KEY, …
 ```
 
-No key handy? Point stella at a local OpenAI-compatible server instead — see
-[Providers &amp; models](/docs/getting-started/providers#local--any-openai-compatible-server).
+No key handy? Point stella at a local OpenAI-compatible server instead. See
+[Providers &amp; models](/docs/getting-started/providers#local-servers).
 
 Confirm what stella resolved:
 
@@ -44,7 +47,7 @@ Confirm what stella resolved:
 stella config    # provider, model, redacted key, base URL, workspace
 ```
 
-## 2. Initialize the repo (recommended)
+## 2. Start your repo (recommended)
 
 From inside a project directory:
 
@@ -52,33 +55,35 @@ From inside a project directory:
 stella init
 ```
 
-This infers a domain taxonomy and builds the tree-sitter code graph the agent
-queries instead of grepping blind — see
-[Repo initialization](/docs/getting-started/initialization). It's optional
-(and offline-safe), but every session afterwards starts smarter.
+This scans your code, builds a searchable map called the code graph, and guesses
+your project's domains (like auth, storage, api). See
+[Repo initialization](/docs/getting-started/initialization) for details. It's
+optional and works offline, but every session after this one will be smarter
+for it.
 
-## 3. Run a one-shot prompt
+## 3. Run once
+
+`stella run` does one task and prints the result. No back-and-forth. By
+default it uses a single, raw step loop. Add `--pipeline <variant>` to run it
+through an installed [wrapper plugin](/docs/plugins) instead. It can read
+files, run commands, and edit code as it works.
 
 ```bash
 stella run "explain what this repository does, then list the riskiest files"
 ```
 
-`stella run` runs a one-shot, non-interactive task and prints the result. By default it runs
-a single raw step loop; pass `--pipeline <variant>` to route it through an installed
-[wrapper plugin](/docs/plugins) instead. It can read files, run
-commands, and edit code as needed.
+## 4. Chat
 
-## 4. Chat interactively
-
-Running `stella` with no subcommand opens the **Command Deck**, a tabbed terminal UI. Pass
-`--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead:
+Run `stella` with no arguments to open the **Command Deck**, a tabbed
+terminal window. Want a simpler view? Pass `--plain` (or set
+`STELLA_PLAIN=1`) for a plain, line-by-line chat instead:
 
 ```bash
 stella
 ```
 
-Inside the deck, type a message to send it, or use a slash command to open a tab. The ones
-worth knowing on day one:
+Type a message to send it. Type a slash command to open a tab. Here are the
+ones worth knowing on day one:
 
 <CardGrid size="sm">
   <OptionCard name="/help">Show help.</OptionCard>
@@ -91,21 +96,24 @@ worth knowing on day one:
   <OptionCard name="/clear">Clear the session.</OptionCard>
 </CardGrid>
 
-Press **Ctrl-C** to quit. That is a partial list — see [`stella chat`](/docs/commands/chat)
-for the full deck command set, and for the plain REPL's separate, smaller one.
+Press **Ctrl-C** to quit. This is a partial list. See
+[`stella chat`](/docs/commands/chat) for the full command set for the deck,
+and the smaller one for the plain REPL.
 
 ## 5. Give it a goal
 
-Goal mode works in judged rounds until a **separate verifier model** confirms the objective
-is met from evidence — not just because the worker says so:
+Goal mode runs in rounds. After each round, a **separate verifier model**
+checks the evidence and confirms whether the goal is actually met. It won't
+stop just because the worker says it's done:
 
 ```bash
 stella goal "the test suite passes and there are no clippy warnings"
 ```
 
-See [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) for how the verifier is chosen and how the loop ends.
+See [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) for how the
+verifier is chosen and how the loop ends.
 
-## 6. Pin a specific model (optional)
+## 6. Pin a model (optional)
 
 By default stella auto-detects the provider. Pin one explicitly with `--model`:
 
@@ -116,7 +124,7 @@ stella --model zai/glm-5.2 goal "CI is green on the current branch"
 
 ## Where to go next
 
-The fastest next step is a real task rather than another reference page:
+The fastest next step is a real task, not another reference page:
 
 <CardGrid size="sm">
   <SpecCard title="Fix a failing CI run" href="/docs/guides/fix-failing-ci">
@@ -133,7 +141,7 @@ The fastest next step is a real task rather than another reference page:
   </SpecCard>
 </CardGrid>
 
-Then, when you want the underlying account:
+When you want more detail:
 
 - **[Providers &amp; models](/docs/getting-started/providers)** — the full provider matrix and the
   credential chain.

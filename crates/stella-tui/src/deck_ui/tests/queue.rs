@@ -393,8 +393,9 @@ fn slash_on_the_mcp_tab_opens_the_command_menu_not_search() {
         "`/` no longer enters MCP search"
     );
     assert_eq!(ui.composer.buffer(), "/", "the slash query is typing");
+    let state = crate::deck_render::palette_state(&model, &ui);
     assert!(
-        !slash_matches(&model, &ui).is_empty(),
+        !slash_popup_matches(&ui.composer, &ui.slash_commands, &state).is_empty(),
         "…and the command menu is open over it"
     );
 }

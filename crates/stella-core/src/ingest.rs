@@ -332,11 +332,29 @@ fn segments(path: &str) -> Vec<String> {
 pub fn supersession_marker(content: &str) -> Option<String> {
     content.lines().take(HEAD_LINES).find_map(|line| {
         let lower = line.to_ascii_lowercase();
-        SUPERSESSION_PHRASES
-            .iter()
-            .find(|phrase| lower.contains(**phrase))
-            .map(|phrase| (*phrase).to_string())
+        SUPERSESSION_PHRASES.iter().find_map(|phrase| {
+            let start = lower.find(*phrase)?;
+            (!negated(&lower[..start])).then(|| (*phrase).to_string())
+        })
     })
+}
+
+/// Whether the text leading up to a matched phrase negates it. "This document
+/// is not deprecated" asserts the opposite of what the bare phrase says, and
+/// demoting on it would demote a document for stating that it is current.
+/// Only the last two words of the same clause are read: a phrase after a
+/// clause boundary is a fresh claim, whatever the earlier clause said.
+fn negated(before: &str) -> bool {
+    const NEGATORS: &[&str] = &["not", "never", "isn't", "isn\u{2019}t", "aren't", "wasn't"];
+    let clause = before
+        .rsplit(['.', ';', ',', ':', '!', '?'])
+        .next()
+        .unwrap_or(before);
+    clause
+        .split_whitespace()
+        .rev()
+        .take(2)
+        .any(|word| NEGATORS.contains(&word))
 }
 
 /// `true` when the body is a table of contents pointing at sibling documents.

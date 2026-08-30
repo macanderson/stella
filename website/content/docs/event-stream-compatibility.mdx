@@ -1,23 +1,22 @@
 ---
 title: Event stream compatibility
-description: The versioning contract behind stella's event stream — what stays stable, what may change, and what a client must do to keep working across upgrades.
+description: What stays the same, what can change, and what your client needs to do to keep working after a stella upgrade.
 ---
 
-Every machine-readable surface stella exposes carries the same event objects:
+Every machine-readable output stella produces uses the same event objects:
 
 - [`--output-format stream-json`](/docs/scripting) — one event per line on stdout
 - `--output-format json` — the same objects, batched under an `events` key
 - the session journal stella writes to `.stella/private/` and replays on `stella resume`
 
-So there is one compatibility contract to learn, and it applies everywhere. This
-page is that contract, stated for someone writing a client in a language other
-than Rust.
+Learn this contract once, and it works for every one of these surfaces,
+whether your client is written in Rust or anything else.
 
 ## The guarantee
 
-**A client written against one version of stella keeps working against later
-versions, without changes.** Concretely, upgrading stella will not make your
-parser fail on a stream it used to handle.
+**A client built against one version of stella keeps working with later
+versions, unchanged.** Upgrading stella will not break a parser that already
+works.
 
 That holds in both directions:
 
@@ -38,7 +37,8 @@ That holds in both directions:
       { label: "Newer client", value: "never appears", mono: false },
     ]}
   >
-    An unknown event must survive the round trip, not abort the parse.
+    An event your client doesn't recognize must pass through safely, not
+    break the parser.
   </SpecCard>
   <SpecCard
     title="A renamed event type"
@@ -47,83 +47,75 @@ That holds in both directions:
       { label: "Newer client", value: "never sees the old name", mono: false },
     ]}
   >
-    Rare, and it has happened once — see the rename below. A rename is a breaking
-    change, announced as one, not a routine event.
+    Rare. A rename is a breaking change, and stella always announces it as
+    one — never as a routine update.
   </SpecCard>
 </CardGrid>
 
-Field names are never repurposed once shipped: a field that is renamed keeps the
-old spelling as an accepted alias, so a recorded stream never stops parsing. `text`
-carries `#[serde(alias = "delta")]` for exactly this reason, and `text_delta`
-accepts the reverse.
+A field's name is never reused for something else once it ships. If a field
+is renamed, the old name still works as an alias, so a recorded stream keeps
+parsing. That's why `text` accepts `#[serde(alias = "delta")]`, and
+`text_delta` accepts the reverse.
 
-**Event type names are a weaker promise, and one rename has happened.** The
-terminal event was `complete` until [#3379](https://github.com/macanderson/stella/issues/3379).
-The problem it fixed: one word meant "this turn is over" when the engine said it
-and "the whole job is over" when a wrapper — a wrapper plugin, goal mode — said
-it, and nothing reading the journal could tell which contract it was holding. So
-the word was split in two:
+**Event type names are a weaker promise than field names.** They can be
+renamed, though rarely. Two separate events mark completion today:
 
-| Today | Means | Fires |
+| Event | Means | Fires |
 | --- | --- | --- |
-| `turn_complete` | One turn finished | Once per turn, several times in a wrapped run |
+| `turn_complete` | One turn finished | Once per turn — several times in a wrapped run |
 | `run_complete` | The run finished — the stream's terminator | Exactly once, last, on success |
 
-`complete` is **not** aliased to either; every call site was moved. A client
-written before #3379 that waits for `{"type":"complete"}` will read the whole
-stream, treat the terminator as an unrecognized event under rule 1 below, and
-then wait forever. Match on `run_complete` for "nothing more is coming", and on
-`turn_complete` if you want per-turn boundaries.
+Match on `run_complete` to know that nothing more is coming. Match on
+`turn_complete` if you want per-turn boundaries. There is no event called
+`complete` — build your client around the two names above, not the single
+word you might expect from other tools.
 
-This is the case the vocabulary tries hard to avoid, and the reason the row above
-says "rare" rather than "ruled out": the contract is that new facts get new
-names, and that a rename is a breaking change announced as one.
+## The two rules
 
-## The two rules that matter
-
-Everything above reduces to a single distinction that your client should mirror,
-because stella's own reader enforces it exactly:
+Everything above comes down to one distinction. stella's own reader enforces
+it exactly, and your client should too:
 
 <EventContractDiagram />
 
 **1. An event `type` you do not recognize is normal. Skip it and keep going.**
 
-It means the stream came from a newer stella than your client knows about. It is
-not an error, and it is not a reason to stop reading. stella's own decoder
-preserves such events whole rather than failing the line.
+It means the stream came from a newer version of stella than your client
+knows about. This is not an error, and it's not a reason to stop reading.
+stella's own decoder keeps these events whole instead of failing on that
+line.
 
-**2. A `type` you *do* recognize, carrying a body that does not fit, is a real
-error. Fail loudly.**
+**2. A `type` you *do* recognize, carrying a body that does not fit, is a
+real error. Fail loudly.**
 
-That is not a version skew — it is corruption, or a bug in whatever produced the
-stream. Treating it as "probably just something new" converts a loud failure into
-silent data loss, which is how a bad record ends up in your database instead of
-in your logs.
+That's not a version mismatch. It's corruption, or a bug in whatever
+produced the stream. Treating it as "probably just something new" turns a
+loud failure into silent data loss — a bad record ends up in your database
+instead of in your error log.
 
 <Callout type="warn">
-  The tempting shortcut is a single `try { parse } catch { skip }` around each
-  line. Do not do that. It collapses both rules into rule 1 and will quietly
-  swallow malformed events that you needed to hear about. Branch on whether the
-  `type` is one you know, *then* parse.
+  It's tempting to wrap each line in a single `try { parse } catch { skip }`.
+  Don't. That treats every failure like rule 1 and quietly swallows
+  malformed events you needed to know about. Check whether the `type` is one
+  you recognize first, *then* parse.
 </Callout>
 
 ## What a client must do
 
 A conforming client:
 
-1. Reads the stream **line by line** and parses each line as an independent JSON
-   object. Never buffer the whole stream and parse it as one document.
+1. Reads the stream **line by line** and parses each line as an independent
+   JSON object. Never buffer the whole stream and parse it as one document.
 2. Dispatches on the `"type"` string.
-3. On an unrecognized `"type"`: does not fail, does not warn loudly, and does not
-   guess at semantics from the name. Count it, log it at debug level, or pass it
-   through — nothing more.
-4. On a recognized `"type"` whose body does not parse: surfaces a real error.
+3. On an unrecognized `"type"`, doesn't fail, doesn't warn loudly, and
+   doesn't guess what it means from its name. Counts it, logs it at debug
+   level, or passes it through — nothing more.
+4. On a recognized `"type"` whose body doesn't parse, raises a real error.
 5. Ignores unknown *fields* on events it does recognize.
-6. Tolerates a torn final line. A writer killed mid-line leaves a partial JSON
-   object; the clean prefix before it is still valid.
+6. Tolerates a cut-off final line. A process killed mid-write can leave a
+   partial JSON object at the end — everything before it is still valid.
 
-Point 6 matters more than it sounds — a crashed or cancelled run is a normal
-occurrence, not an exceptional one.
+Point 6 matters more than it looks. A crashed or cancelled run is normal, not
+an edge case.
 
 ```ts
 // TypeScript: the shape the contract asks for.
@@ -157,8 +149,8 @@ for (const line of stream) {
 
 ## Unrecognized events in practice
 
-Suppose a future stella adds a `quantum_reticulation` event. A client built before
-it existed sees:
+Suppose a future stella adds a `quantum_reticulation` event. A client built
+before it existed sees:
 
 ```json
 {"type":"stage","name":"execute","scope":"run"}
@@ -167,89 +159,95 @@ it existed sees:
 {"type":"run_complete","model":"m","cost_usd":0.002}
 ```
 
-It processes `stage`, `text`, and `run_complete` exactly as before, and treats
-line 2 as inert. The run is fully usable. Nothing is lost that the client could
-have understood anyway.
+It processes `stage`, `text`, and `run_complete` exactly as before, and
+treats line 2 as inert. The run is fully usable. Nothing is lost that the
+client could have understood anyway.
 
-That is not a hypothetical spelling: `quantum_reticulation` is one of the two
-invented types in the conformance fixture below, so this snippet is a slice of a
-file you can actually run your client against.
+This isn't just a made-up example. `quantum_reticulation` is one of two
+invented event types in the conformance fixture below, so this snippet comes
+straight from a file you can run your own client against.
 
-If your client re-emits or stores events, keep unrecognized ones **whole**. A
-proxy or recorder that drops them silently degrades the stream for whatever reads
-it next, which may be a newer client that would have understood them.
+If your client re-emits or stores events, keep unrecognized ones **whole**.
+A proxy or recorder that drops them quietly weakens the stream for whatever
+reads it next — which might be a newer client that would have understood
+them fine.
 
 <Callout type="info">
-  Object key order is not part of the contract and may change — JSON object keys
-  are unordered by definition. Compare parsed values, never raw lines.
+  Object key order isn't part of the contract and can change, since JSON
+  keys are unordered by definition. Compare parsed values, never raw lines.
 </Callout>
 
 ## The `ts` stamp
 
-Every line carries an optional `ts`: the wall-clock instant the sink wrote it, in
-milliseconds since the Unix epoch (UTC).
+Every line carries an optional `ts`: the wall-clock instant the sink wrote
+it, in milliseconds since the Unix epoch (UTC).
 
 ```json
 {"ts":1754582400123,"type":"tool_result","call_id":"c1","duration_ms":4200}
 ```
 
-It is stamped by the *sink*, not carried by the event, and three consequences
-follow that a client has to hold:
+It's stamped by the *sink*, not by the event itself.
 
-- **It is optional forever.** A line recorded before the field existed has none —
-  which is every archived `stella-events.jsonl` — so read it as
-  `ts ?? null`, never as a required key.
-- **It is not monotonic.** It comes from the system clock, so an NTP step can put
-  a later line before an earlier one. Clamp a negative delta to zero rather than
-  rendering it.
-- **It measures the write, not the event.** The same event published to two sinks
-  carries each sink's own instant. Use it for offsets within one stream; do not
-  align two streams to the millisecond with it.
+### What that means for a client
 
-Durations remain the right tool for spans: `tool_result` and `step_usage` carry a
-`duration_ms` measured by the engine, which is exact where `ts` is only an
-anchor.
+- **It is optional forever.** Lines recorded before this field existed have
+  none of it — that includes every archived `stella-events.jsonl` file — so
+  read it as `ts ?? null`, never as a required field.
+- **It isn't guaranteed to increase.** It comes from the system clock, so a
+  clock correction can put a later line before an earlier one. Clamp a
+  negative time difference to zero instead of displaying it.
+- **It measures when the line was written, not when the event happened.**
+  The same event sent to two different sinks gets each sink's own
+  timestamp. Use it to compare timing within one stream, not to line up two
+  different streams to the millisecond.
 
-## What is *not* guaranteed
+For measuring how long something took, use durations instead. `tool_result`
+and `step_usage` carry a `duration_ms` measured directly by the engine,
+which is exact where `ts` is only a rough anchor.
 
-- **Ordering between event types** beyond what this page documents. `text_delta`
-  lines interleave with other events.
-- **That `stage` events form one sequence.** Two disjoint authorities emit them,
-  and `scope` says which: the engine emits its own vocabulary once per turn with
-  `"scope":"turn"`, while a wrapper — a wrapper plugin, a goal loop — emits its
-  own once per run with `"scope":"run"`. A client that branches on stage
-  transitions must select on `scope` first, or it reads two interleaved
-  vocabularies as one and sees a wrapper's backwards-looking boundary as an engine
-  regression.
-- **A monotonic `ts`.** See above: it is a wall clock, and it can repeat or move
-  backwards.
-- **That every event has a stable meaning to you.** `text_delta` is an explicit
-  best-effort preview: the `text` event that follows carries the authoritative
-  step text, and you must *replace* accumulated deltas with it rather than append
-  (a retried model call re-streams its deltas from the start). See
+## What isn't guaranteed
+
+- **Ordering between event types** beyond what this page documents.
+  `text_delta` lines interleave with other events.
+- **That `stage` events form one single sequence.** Two separate sources
+  emit them, and the `scope` field tells you which. The engine emits its
+  own set once per turn with `"scope":"turn"`. A wrapper — a plugin or a
+  goal loop — emits its own set once per run with `"scope":"run"`. If your
+  client tracks stage transitions, check `scope` first. Otherwise you'll
+  read two separate sequences as one, and mistake a wrapper's boundary for
+  an engine problem.
+- **A `ts` that always increases.** As covered above, it's a wall clock, and
+  it can repeat or move backward.
+- **That every event always means the same thing to you.** `text_delta` is
+  a best-effort preview only. The `text` event that follows it carries the
+  final, correct text for that step, and you must *replace* your
+  accumulated deltas with it rather than appending to them (a retried model
+  call re-streams its deltas from the start). See
   [Scripting & automation](/docs/scripting).
-- **Internal lifecycle events.** stella's adaptive-context machinery emits its own
-  versioned envelope, kept off this stream. Do not build on it.
+- **Internal lifecycle events.** stella's context-management system emits
+  its own separate, versioned events that never appear on this stream.
+  Don't build against them.
 - **Byte-level stability.** Whitespace and key order may vary.
 
 ## Conformance
 
-The repository ships a `from_a_newer_stella.jsonl` fixture whose only purpose is
-to break clients that get rule 1 wrong.
+stella ships a `from_a_newer_stella.jsonl` fixture whose only job is to
+break clients that get rule 1 wrong.
 
-It is a well-formed turn containing two event types that do not exist. A client
-that parses it end to end, reports two unrecognized events, and reconstructs the
-run from the rest is forward compatible. A client that throws is not — however
-well it handles today's vocabulary.
+It's a well-formed turn that contains two event types that don't exist. A
+client that parses it from end to end, reports two unrecognized events, and
+reconstructs the run from everything else is forward compatible. A client
+that throws an error is not, no matter how well it handles today's event
+types.
 
-If you maintain a stella client, run it against that fixture in CI. It is the
-cheapest possible guard against the failure mode this contract exists to
-prevent, and it costs one test.
+If you maintain a stella client, run it against that fixture in CI. It's the
+cheapest possible guard against the exact failure this contract is meant to
+prevent, and it only costs one test.
 
 ## Detecting a version gap
 
-You do not need to know stella's version to consume the stream correctly — that
-is the point of rule 1. But if you want to *report* a gap ("this run used
-features your dashboard cannot display"), count unrecognized types and surface
-the count. stella's Rust decoder exposes the same information through the
-`KNOWN_TYPE_TAGS` list in `stella-protocol`.
+You don't need to know stella's version to read the stream correctly —
+that's the whole point of rule 1. But if you want to *report* a gap
+(something like "this run used features your dashboard can't display"),
+count the unrecognized event types and show that count. stella's own Rust
+decoder tracks the same list, called `KNOWN_TYPE_TAGS`, in `stella-protocol`.

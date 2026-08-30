@@ -1,12 +1,11 @@
 ---
 title: stella completions
-description: Print a shell completion script for stella to stdout — bash, zsh, fish, PowerShell, or elvish. Offline, writes nothing, needs no API key.
+description: Print a shell completion script for stella to stdout — bash, zsh, fish, PowerShell, or elvish. Works offline, writes nothing, needs no API key.
 ---
 
-Print a shell completion script for `stella` to **stdout**. It writes nothing
-itself — where the script lands is your shell's business, and yours.
+Print a shell completion script for `stella` to standard output. It writes nothing itself. Where the script ends up is up to you and your shell.
 
-Offline, and needs no API key.
+Works offline, and needs no API key.
 
 ## Synopsis
 
@@ -16,7 +15,7 @@ stella completions <shell>
 
 <CardGrid size="sm">
   <OptionCard name="bash">
-    Sourced from a completion directory, conventionally `/etc/bash_completion.d/`.
+    Sourced from a completion directory, usually `/etc/bash_completion.d/`.
   </OptionCard>
   <OptionCard name="zsh">
     A `_stella` file on your `$fpath`.
@@ -34,7 +33,7 @@ stella completions <shell>
 
 ## Installing it
 
-Each shell expects the script somewhere different:
+Each shell expects the script in a different place:
 
 ```bash
 # bash
@@ -52,31 +51,22 @@ stella completions fish > ~/.config/fish/completions/stella.fish
 stella completions powershell | Out-String | Invoke-Expression
 ```
 
-Open a new shell afterwards, or re-source your profile.
+Open a new shell afterward, or re-load your profile.
 
 ## What you get
 
-Completion covers the whole CLI surface: every subcommand, every flag, and the
-value enums behind them — so `stella inspect --format <TAB>` offers `text` and
-`json` rather than nothing, and `stella completions <TAB>` offers the five
-shells above.
+Completion covers the whole command line: every subcommand, every flag, and the choices behind them. So `stella inspect --format <TAB>` offers `text` and `json` instead of nothing, and `stella completions <TAB>` offers the five shells above.
 
-The [global flags](/docs/commands#global-flags) are registered with every
-subcommand, so they complete in either position — before the subcommand or after
-it.
+The [global flags](/docs/commands#global-flags) are registered with every subcommand, so they complete in either position, before the subcommand or after it.
 
 <Callout type="info">
-The script is generated from the same command definitions the binary parses with,
-so completions cannot drift away from the flags that actually exist. Re-run the
-command after upgrading stella to pick up new subcommands.
+The script is built from the same command definitions the program itself uses, so completions always match the flags that actually exist. Re-run the command after upgrading stella to pick up new subcommands.
 </Callout>
 
-## Not sure it took?
+## Not sure it worked?
 
 ```bash
 stella completions zsh | head -5    # confirm a script is actually produced
 ```
 
-If the output looks right but completion still does nothing, the problem is
-placement rather than generation — check that the target directory is on your
-shell's completion path, and that you started a fresh shell.
+If the output looks right but completion still does nothing, the problem is likely where you put the file, not how it was generated. Check that the target directory is on your shell's completion path, and that you started a fresh shell.

@@ -1,9 +1,9 @@
 ---
 title: stella resume
-description: Reopen a previous Command Deck session exactly where it stood — transcript, conversation, and pending prompts.
+description: Reopen a past interactive session right where you left off, with its transcript, conversation, and pending prompts.
 ---
 
-Reopen a previous [Command Deck](/docs/commands/chat) session exactly where it stood — transcript, LLM conversation, and the pending prompt backlog. Sessions are durable through quit, Ctrl-C, a killed terminal, and power loss: every fold-relevant event is journaled as it happens, and resuming replays that journal.
+Reopen a past [Command Deck](/docs/commands/chat) session right where it stood: the transcript, the conversation with the model, and any prompts still waiting to run. Sessions survive quitting, pressing Ctrl-C, closing the terminal, or even a power loss. stella saves a record of everything that happens as it happens, and resuming replays that record.
 
 ## Synopsis
 
@@ -13,22 +13,26 @@ stella resume [id] [--list] [global flags]
 
 ## What it does
 
-Every deck session registers itself in a machine-wide registry — one JSON file per session under the user-level stella home (`~/.stella/sessions/` on every platform; `STELLA_DATA_DIR` overrides), with the session's durable state journaled beside it. `stella resume` picks a session from that registry and reopens it in the deck:
+Every interactive session saves itself in a list stored on your machine. Each session gets its own JSON file under `~/.stella/sessions/` on every platform, unless you set `STELLA_DATA_DIR` to a different location. The session's saved state is stored next to that file. `stella resume` picks a session from this list and reopens it in the deck:
 
-- **`stella resume`** (no id) reopens the most recently active resumable session **of the current workspace**. If there is none, it says so and points you at `--list`.
-- **`stella resume <id>`** reopens one specific session by its registry id — ids are minted at session start as `ses-<ms>-<pid>` and shown by `--list`.
+- **`stella resume`** with no id reopens the most recently active session **that can be resumed in your current workspace**. If there isn't one, it tells you and points you to `--list`.
+- **`stella resume <id>`** reopens one specific session by its id. Ids are created when a session starts, in the form `ses-<ms>-<pid>`, and `--list` shows them.
 
-What comes back: the transcript is rebuilt by replaying the session journal, the LLM conversation is restored from its last committed turn boundary, and the pending prompt queue returns exactly as you left it. Prompts an interruption cut short mid-dispatch are requeued at the **front** in their original order — at most the in-flight turn's streamed tail is re-run. The session's cumulative spend is restored too, so a `--spend-limit` cap keeps meaning "this session", not "since the restart".
+When you resume, stella rebuilds the transcript from its saved record and restores the conversation with the model from its last completed turn. Any prompts still waiting to run come back exactly as you left them. If a prompt was interrupted partway through, it goes back to the **front** of the queue, in its original order; at most, the last part of that in-progress turn gets re-run. stella also restores how much you've spent in this session, so a `--spend-limit` cap still applies to "this session," not just "since you restarted."
 
-A session can only be reopened where it belongs: it must not be live in another stella process (there is no attach — stop that session first), it must belong to the current workspace (the deck's tools, memory, and graph are workspace-bound), and it must have durable state on disk (sessions predating session journaling are listed but not resumable).
+A session can only be reopened if it meets three conditions:
+
+- It isn't already running in another stella process. You can't attach to a live session; stop it first.
+- It belongs to your current workspace, since the deck's tools, memory, and code graph are tied to one workspace.
+- It has saved state on disk. Some very old sessions don't have this, so they appear in the list but can't be resumed.
 
 <Callout type="info">
-`stella resume` opens the Command Deck, so it needs a real terminal — it cannot combine with `--plain`, `STELLA_PLAIN`, or a piped stream. `stella resume --list` works anywhere.
+`stella resume` opens the Command Deck, so it needs a real terminal window. It doesn't work with `--plain`, `STELLA_PLAIN`, or a piped stream. `stella resume --list` works anywhere, though.
 </Callout>
 
 ## `--list`
 
-`stella resume --list` prints every session recorded on this machine, newest activity first — local reads only, no API key required. Each row shows the registry id, status (In Progress, Needs Input, Paused, Cancelled, Complete, Archived, Error — a live-status session whose process died reads as Error), and the session title. A `↩` marker means resumable from the current directory; `·` means resumable from its own workspace.
+`stella resume --list` shows every session saved on this machine, with the newest activity first. It only reads local files and doesn't need an API key. Each row shows the session's id, its status, and its title. The status can be In Progress, Needs Input, Paused, Cancelled, Complete, Archived, or Error. A session shows as Error if its process died while it was still marked as live. A `↩` marker means you can resume it from your current folder. A `·` marker means you can resume it, but only from its own workspace.
 
 ```text
    ID                       STATUS       SESSION
@@ -39,21 +43,21 @@ A session can only be reopened where it belongs: it must not be live in another 
 inside the deck: `Ctrl-E` opens SESSIONS, `⏎` reopens a session
 ```
 
-The deck's **SESSIONS** overlay (`Ctrl-E`, or `/sessions`) is the same navigation from inside a session — `⏎` on a row reopens it.
+Inside a session, the **SESSIONS** overlay, opened with `Ctrl-E` or `/sessions`, shows the same list. Press `⏎` on a row to reopen that session.
 
 ## Flags
 
 <CardGrid size="md">
   <OptionCard name="[id]">
-    Registry id (`ses-…`) of the session to reopen. Omitted, the most recently active
-    resumable session of this workspace.
+    The id (`ses-…`) of the session to reopen. If you leave this out, stella reopens the
+    most recently active session that can be resumed in this workspace.
   </OptionCard>
   <OptionCard name="--list">
-    List this machine's sessions, resumable ones marked, and exit.
+    List every session on this machine, with resumable ones marked, then exit.
   </OptionCard>
 </CardGrid>
 
-The [global flags](/docs/commands) apply — `--spend-limit` is re-seeded with the session's prior spend, and `--no-anim` freezes deck animation as usual.
+The [global flags](/docs/commands) still work here. `--spend-limit` picks up from the session's previous spend, and `--no-anim` turns off deck animation as usual.
 
 ## Examples
 

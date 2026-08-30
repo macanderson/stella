@@ -2590,6 +2590,7 @@ crates/stella-runtime/src/lib.rs issue-reference 2
 crates/stella-runtime/src/session.rs interface-jargon 1
 crates/stella-runtime/src/spec.rs interface-jargon 2
 crates/stella-runtime/src/spec.rs issue-reference 1
+crates/stella-runtime/src/wrapper.rs issue-reference 5
 crates/stella-runtime/src/wrapper/candidate_fanout.rs filler-adverb 1
 crates/stella-runtime/src/wrapper/candidate_fanout.rs historical-reference 2
 crates/stella-runtime/src/wrapper/candidate_fanout.rs honesty-declaration 1
@@ -2617,7 +2618,6 @@ crates/stella-runtime/src/wrapper/error.rs issue-reference 5
 crates/stella-runtime/src/wrapper/host_call.rs filler-adverb 1
 crates/stella-runtime/src/wrapper/host_call.rs honesty-declaration 5
 crates/stella-runtime/src/wrapper/host_call.rs issue-reference 12
-crates/stella-runtime/src/wrapper/mod.rs issue-reference 5
 crates/stella-runtime/src/wrapper/subprocess.rs enumerative-announcement 2
 crates/stella-runtime/src/wrapper/subprocess.rs filler-adverb 1
 crates/stella-runtime/src/wrapper/subprocess.rs issue-reference 14

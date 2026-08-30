@@ -920,6 +920,7 @@ fn build_proposal(
         .probe
         .clone()
         .filter(|p| gate::probe_honored(Origin::Imported, p.kind));
+    let refused_as_gated = claim.probe.is_some() && gated_probe.is_none();
     // And keep only probes that could refute the claim they are attached to. A
     // `path_exists` on a cardinality claim goes green whatever the count is
     // (#4262), so it is declined and the claim abstains instead.
@@ -1003,6 +1004,14 @@ fn build_proposal(
     // its validation or quarantine finding.
     let refutation = outcome.is_eligible().then(|| match &honored_probe {
         Some(p) => probe::evaluate(root, p, observed_at),
+        // The refusal is stated: "no probe could judge" would read as an
+        // unfalsifiable claim, when the truth is that a probe was offered and
+        // the gate declined to run it.
+        None if refused_as_gated => abstained(
+            observed_at,
+            "the probe offered runs a command or reaches the network, which is \
+             never honored on imported content",
+        ),
         None if declined_as_indiscriminate => abstained(
             observed_at,
             "the claim states a count, and the probe offered for it could not \

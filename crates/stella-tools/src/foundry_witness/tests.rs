@@ -79,12 +79,14 @@ fn staged(root: &Path, name: &str, body: &str, witness_input: Value) -> CustomTo
             signature: format!("{name} <str>"),
             occurrences: 3,
             witness_input,
+            gap_id: String::new(),
             approved: None,
         }),
         claimed_read_only: false,
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        foundry_runtime: Default::default(),
         contributed_by: None,
     }
 }
@@ -380,6 +382,7 @@ fn a_hand_written_manifest_has_no_witness_input() {
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        foundry_runtime: Default::default(),
         contributed_by: None,
     };
     assert!(witness_input(&tool).is_err());

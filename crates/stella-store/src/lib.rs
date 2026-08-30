@@ -196,7 +196,7 @@ pub use efficacy::FinishedExecution;
 pub use error::StoreError;
 pub use export::ExportExclusions;
 pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppressed};
-pub use foundry::{AdoptedTool, FoundryReuse};
+pub use foundry::{AdoptedTool, FoundryInvocation, FoundryReuse, FoundryVersion};
 pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};
 pub use session_stats::{PROMPT_SAMPLE, SessionStats};
 // The sidecar journal's writer is NOT re-exported at the top

@@ -55,7 +55,13 @@ use crate::envelope::SkillRow;
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let hits = ui.skills.hits.len();
     let registry_h = if ui.skills.focus == SkillsFocus::Search || hits > 0 || ui.skills.searching {
-        (hits as u16 + 4).clamp(4, area.height / 2)
+        // Half the tab at most, and no floor: `hits + 4` is already 4 or more,
+        // so a `clamp(4, ..)` bought nothing and panicked whenever the tab was
+        // shorter than eight rows, because `clamp` asserts `min <= max`.
+        u16::try_from(hits)
+            .unwrap_or(u16::MAX)
+            .saturating_add(4)
+            .min(area.height / 2)
     } else {
         2
     };

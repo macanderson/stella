@@ -960,6 +960,9 @@ pub async fn run_deck_session(
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
     let mut subs = SubSessions::resuming(&cfg.durability, &session_record.id);
+    // Each worker lane's tap is announced to the whistle relay, so a deep
+    // whistle can reach the lanes this session drives — see `whistle`.
+    subs.attach_lane_sink(whistle.clone());
     let mut pending_spawns: VecDeque<subsession::QueuedSpawn> = VecDeque::new();
     // Lanes whose Restart arrived while the worker was still live: stop
     // first, respawn on its Ended.
@@ -1109,6 +1112,22 @@ pub async fn run_deck_session(
                         dispatch.release();
                         text
                     }
+                    // The composer's broadcast address — other sessions'
+                    // whistle sockets, reported as one note (`whistle`).
+                    Some(WorkspaceInput::Whistle {
+                        message,
+                        session,
+                        deep,
+                    }) => {
+                        whistle::broadcast_from_deck(
+                            message,
+                            session,
+                            deep,
+                            &session_record.id,
+                            &in_tx,
+                        );
+                        continue 'session;
+                    }
                     // The agents page's new-task prompt: a lane, never the
                     // lead's next turn — that is this message's whole meaning.
                     Some(WorkspaceInput::SpawnLane { text }) => {
@@ -1127,8 +1146,13 @@ pub async fn run_deck_session(
                         continue 'session;
                     }
                     // A steer at a worker, or one whose lead turn ended
-                    // before this recv read it — see `steer::steer_idle`.
-                    Some(WorkspaceInput::Steer { agent, texts }) if !texts.is_empty() => {
+                    // before this recv read it — see `steer::steer_idle`. An
+                    // interrupt landing here has nothing to stop, so it takes
+                    // the same "run this now" path.
+                    Some(
+                        WorkspaceInput::Steer { agent, texts }
+                        | WorkspaceInput::Interrupt { agent, texts },
+                    ) if !texts.is_empty() => {
                         match steer::steer_idle(&agent, &subs, &mut queue, texts, &in_tx) {
                             Some(first) => {
                                 dispatch.release();
@@ -1975,6 +1999,11 @@ pub async fn run_deck_session(
                                 queue.push_back(text);
                             }
                         }
+                        // A broadcast never waits on the lead's turn: it is
+                        // about other sessions (`whistle`).
+                        Some(WorkspaceInput::Whistle { message, session, deep }) => {
+                            whistle::broadcast_from_deck(message, session, deep, &session_record.id, &in_tx);
+                        }
                         // The agents page's new-task prompt: a lane now,
                         // exactly as at idle — the lead's turn is untouched.
                         Some(WorkspaceInput::SpawnLane { text }) => {
@@ -1994,7 +2023,13 @@ pub async fn run_deck_session(
                         // Esc with something to say — see `steer`.
                         Some(WorkspaceInput::Steer { agent, texts }) if agent == LEAD =>
                             steer::steer_lead(&steering, &mut queue, texts),
-                        Some(WorkspaceInput::Steer { agent, texts }) =>
+                        // The composer's red mode: stop at the boundary, run the
+                        // words next. At a worker lane it lands as a steer — see
+                        // the envelope's `Interrupt` doc.
+                        Some(WorkspaceInput::Interrupt { agent, texts }) if agent == LEAD =>
+                            steer::interrupt_lead(&steering, &lead_pause, &mut queue, texts, &in_tx),
+                        Some(WorkspaceInput::Steer { agent, texts }
+                            | WorkspaceInput::Interrupt { agent, texts }) =>
                             steer::steer_worker(&subs, &mut queue, &agent, texts, &in_tx),
                         // An explicit front-insert stays a front-insert even
                         // if a turn started before it arrived — the deck's

@@ -1048,6 +1048,11 @@ impl TurnDriver for RawTurnDriver<'_> {
                 // an injection that did not happen.
                 events: std::mem::take(&mut self.recall.events),
                 produced: self.recall.produced.clone(),
+                // Cloned, not taken, unlike the events above: the scope is
+                // an instruction to the turn driver, not a report, and a
+                // wrapped skill invocation's narrowing must hold on every
+                // driven round, not just the first.
+                skill_scope: self.recall.skill_scope.clone(),
             },
             self.memory.as_deref_mut(),
             self.controls.clone(),

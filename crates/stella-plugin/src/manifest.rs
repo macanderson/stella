@@ -681,7 +681,7 @@ impl PluginManifest {
         // among them: a panel is drawn between turns, so no standing inside one
         // could be required of it.
         if let Some(panel) = &self.panel {
-            panel.validate()?;
+            panel.validate(&self.name)?;
         }
 
         if grant.hooks.contains(&HookEvent::Stop) && !participation.includes(Participation::Arbiter)

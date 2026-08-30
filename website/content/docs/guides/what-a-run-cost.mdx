@@ -4,11 +4,11 @@ description: Follow one expensive run from the dollar figure down to the exact b
 ---
 
 A run cost more than you expected. Most tools can tell you *that*. stella can
-tell you **which model call**, **what it was sent**, and **what changed between
-that call and the one before it** — from local records, with no network access
-and no API key.
+tell you **which model call**, **what it was sent**, and **what changed
+between that call and the one before it**, all from local records, with no
+network access and no API key.
 
-This guide walks that chain top to bottom. Each step narrows the question.
+Each step below narrows the question further.
 
 ## The chain
 
@@ -22,7 +22,8 @@ stella inspect 42 --step 3 --diff --only system   # 5. what changed since last t
 
 <CostChainDiagram />
 
-Everything below reads `<workspace>/.stella/private/store.db` and never writes.
+Everything below reads `<workspace>/.stella/private/store.db` and never
+writes to it.
 
 ## 1. Which model, and how much — `stella stats`
 
@@ -30,37 +31,40 @@ Everything below reads `<workspace>/.stella/private/store.db` and never writes.
 stella stats
 ```
 
-Aggregates the local store per provider and model: total tokens, total cost,
-resolve rate, and a `TOTAL` row. It is the "where is the money going" view.
+This adds up the local records by provider and model: total tokens, total
+cost, resolve rate, and a `TOTAL` row. It's the "where is the money going"
+view.
 
-The three columns people miss are the cache-economics ones, and they are usually
-where a surprising bill is explained:
+The three columns people miss are the ones about caching, and they usually
+explain a surprising bill:
 
 <CardGrid size="md">
   <OptionCard name="HIT%">
-    Cache-read tokens over total input tokens. Prompt caching is 4–10× cheaper than
-    fresh input, so this number is most of your bill's variance.
+    Cache-read tokens divided by total input tokens. Prompt caching is
+    4–10x cheaper than fresh input, so this number explains most of your
+    bill's variation.
   </OptionCard>
   <OptionCard name="SAVED ($)">
-    Estimated dollars saved by caching, at today's catalog rates. **Signed** — a
-    negative value means the provider's cache-write premium outran the reads it
-    bought, which is a real incident and not a rounding artifact.
+    Estimated dollars saved by caching, at today's listed rates. **Can be
+    negative** — a negative value means the provider charged more to write
+    to the cache than it saved you by reading from it, which is a real
+    problem, not a rounding error.
   </OptionCard>
   <OptionCard name="TTL REWRITES">
-    Calls whose cached prefix went cold because the gap since the session's previous
-    call exceeded the provider's cache TTL, and got rewritten instead of read back.
-    A session parked between turns pays the write premium again for nothing.
+    Calls whose cached prefix went cold because too much time passed since
+    the session's last call, exceeding the provider's cache lifetime, so it
+    got rewritten instead of reused. A session left idle between turns pays
+    the write cost again for nothing.
   </OptionCard>
 </CardGrid>
 
-Two diagnoses worth knowing by heart:
-
-- **`HIT%` near 0 with `CACHE WR` also 0**, on an opt-in provider (Anthropic,
-  Bedrock, Claude-via-OpenRouter) — the cache marker probably never reached the
-  wire. Check the adapter config before concluding the model isn't cacheable.
-- **`CACHE WR` nonzero but `HIT%` low** — the prefix is being *rewritten*
-  between turns instead of reused. Something upstream of the cache breakpoint is
-  changing per turn. Step 5 finds out what.
+- **`HIT%` near 0 with `CACHE WR` also 0**, on a provider that needs
+  caching turned on (Anthropic, Bedrock, Claude through OpenRouter) —
+  the cache marker probably never reached the request. Check the adapter
+  setup before concluding the model can't be cached.
+- **`CACHE WR` above 0 but `HIT%` low** — the prefix is being *rewritten*
+  between turns instead of reused. Something before the cache breakpoint is
+  changing on every turn. Step 5 tells you what.
 
 ```bash
 # Everything with a suspiciously cold cache, as JSON.
@@ -69,9 +73,11 @@ stella stats --format json |
 ```
 
 <Callout type="info">
-`stella stats` is **this workspace**. For the same numbers across every project on
-this machine, [`stella usage report`](/docs/commands/usage#stella-usage-report)
-reads the local hub at `~/.stella/usage.db`. Local-only — nothing is uploaded.
+`stella stats` covers **this workspace only**. For the same numbers across
+every project on this machine,
+[`stella usage report`](/docs/commands/usage#stella-usage-report) reads the
+local hub at `~/.stella/usage.db`. This stays local — nothing gets
+uploaded.
 </Callout>
 
 ## 2. Which run — the Observatory
@@ -80,17 +86,18 @@ reads the local hub at `~/.stella/usage.db`. Local-only — nothing is uploaded.
 stella observe --open
 ```
 
-A local web dashboard over the same stores, served on `127.0.0.1` only, embedded
-in the binary — no install and no build step. Its executions tab gives you
-per-run drill-down, which is how you get from "this month cost $40" to "this
-*run* cost $4".
+A local web dashboard over the same records, served only on `127.0.0.1`,
+built into the program itself — no install and no build step needed. Its
+executions tab lets you drill into a single run, which is how you go from
+"this month cost $40" to "this *run* cost $4."
 
-Take the **execution id** from the run you care about; the rest of this guide
-uses it.
+Take the **execution id** from the run you care about. The rest of this
+guide uses it.
 
 <Callout type="info">
-The Observatory opens the stores strictly read-only and never exports anything.
-See [the dashboard tour](/docs/telemetry/dashboard) for what each tab shows.
+The Observatory only reads the local records, never writes or exports
+anything. See [the dashboard tour](/docs/telemetry/dashboard) for what each
+tab shows.
 </Callout>
 
 ## 3. Which call inside the run — `stella inspect`
@@ -100,68 +107,73 @@ stella inspect          # executions that have receipts
 stella inspect 42       # that execution's model calls, with roles and seq numbers
 ```
 
-Every model call records a **receipt**: the ordered list of context blocks it
-sent, plus the bytes of the blocks the event journal cannot otherwise resolve.
-`stella inspect 42` lists them, so you rarely have to guess.
+Every model call gets a **receipt**: the ordered list of context it was
+sent, plus the actual bytes for any part the event log can't otherwise
+resolve. `stella inspect 42` lists them, so you rarely have to guess.
 
-A single step can hold several calls, and the numbering is fixed:
+A single step can hold several calls, and they're numbered a fixed way:
 
 <CardGrid size="md">
   <OptionCard name="--call-seq 0" defaultValue="default">
     The engine's own worker call. Always `0`.
   </OptionCard>
   <OptionCard name="--call-seq 1">
-    The overflow summarizer that may run during that step's compaction.
+    The overflow summarizer that may run while that step's conversation
+    gets shortened.
   </OptionCard>
   <OptionCard name="--call-seq 2+">
-    A wrapper plugin's management roles — `triage`, `research`, `plan`, and `witness_author`,
-    plus the `plan_repair` / `witness_repair` retries. There is no `verdict` call and no
-    `distress_guidance` call: [verification is deterministic](/docs/plugins).
+    A wrapper plugin's management roles — `triage`, `research`, `plan`, and
+    `witness_author`, plus the `plan_repair` / `witness_repair` retries.
+    There is no `verdict` call and no `distress_guidance` call:
+    [verification is deterministic](/docs/plugins).
   </OptionCard>
 </CardGrid>
 
-Those auxiliary calls assemble prompts that exist nowhere else, so their receipt
-is the only record of what they sent. If a run's cost is concentrated in
-something other than seq `0`, that is itself the finding.
+Those extra calls build prompts that exist nowhere else, so their receipt
+is the only record of what they sent. If a run's cost is mostly in
+something other than seq `0`, that's the finding right there.
 
 ## 4. What the call was sent
 
 ```bash
 stella inspect 42 --step 3            # role-delimited transcript
-stella inspect 42 --step 3 --full     # …with nothing elided
+stella inspect 42 --step 3 --full     # …with nothing hidden
 ```
 
-This reconstructs the exact `Vec<CompletionMessage>` the model received — system
-prompt included — and re-checks it against the digests taken at emission. The
-banner reports the verdict, and the two failure modes are kept separate because
-they mean very different things:
+This rebuilds the exact `Vec<CompletionMessage>` the model received, system
+prompt included, and checks it against digests recorded at the time. The banner
+reports the result, and there are two different failure types that mean
+very different things:
 
 <CardGrid size="md">
   <OptionCard name="! N block(s) could not be resolved">
-    A documented coverage gap — budget-abort synthetic tool results, discarded
-    speculation, attachments. The rest of the transcript is still faithful.
+    A known, expected gap in coverage — budget-abort placeholder results,
+    discarded speculation, attachments. The rest of the transcript is still
+    reliable.
   </OptionCard>
   <OptionCard name="!! N block(s) did NOT re-hash">
-    Nothing routine accounts for these bytes. Treat the reconstruction as untrustworthy.
+    Nothing routine explains these bytes. Treat the rebuilt transcript as
+    unreliable.
   </OptionCard>
   <OptionCard name="! N block(s) did NOT re-hash … as a matter of course">
-    An older journal, where compaction rewrote a tool result in place without
-    recording the replacement. Ordinary, not a signal.
+    An older log format, where a shortening pass rewrote a tool result in
+    place without recording the replacement. Normal, not a warning sign.
   </OptionCard>
 </CardGrid>
 
-The last two are the same failure on different journals, and the era each execution
-was written in is recorded rather than guessed — see
+The last two are the same underlying issue on different log formats, and
+which format a given execution used is recorded, not guessed — see
 [`stella inspect`](/docs/commands/inspect#reading-the-verification-banner).
 
 ## 5. What changed since the previous call — `--diff`
 
-This is the step that actually explains a cache regression, and it is the one
-capability here with no real equivalent elsewhere.
+This is the step that actually explains a cache problem, and there's really
+nothing else like it.
 
-A transcript shows the **sum**. It never shows the **delta**. A system prompt is
-hundreds of stable lines, and finding the paragraph that moved by reading two of
-them side by side is not something a person does reliably.
+A transcript shows you the **total**. It never shows you the **change**. A
+system prompt is hundreds of stable lines long, and finding the one
+paragraph that moved by reading two versions side by side isn't something a
+person can do reliably.
 
 ```bash
 stella inspect 42 --step 0 --diff --only system
@@ -177,32 +189,34 @@ stella inspect 42 --step 0 --diff --only system
  - Make minimal, surgical edits.
 ```
 
-That single added line is a plausible cause of a cold cache: anything that
-changes above the cache breakpoint invalidates the prefix for the whole turn.
+That one added line is a likely cause of a cold cache: anything that
+changes above the cache breakpoint invalidates the cached prefix for the
+whole turn.
 
-Three baselines, all **same-role** (diffing a worker prompt against a verifier
-prompt produces noise, not a delta):
+Three baselines, all comparing the **same role** (comparing a worker prompt
+against a verifier prompt just produces noise, not a real difference):
 
 <CardGrid size="md">
   <OptionCard name="prev" defaultValue="default">
-    Whatever ran immediately before in the same role — the previous step, or the last
-    call of the previous turn when this is a turn's first call. Searches the whole
-    session, because a system prompt is byte-stable *within* an execution by design,
-    so drift can only appear across turns.
+    Whatever ran immediately before, in the same role — the previous step,
+    or the last call of the previous turn if this is a turn's first call.
+    It searches the whole session, because a system prompt stays
+    byte-for-byte the same *within* one execution by design, so any drift
+    can only show up across turns.
   </OptionCard>
   <OptionCard name="first">
     The first call of this role in the session.
   </OptionCard>
   <OptionCard name="prompt">
-    Your prompt exactly as you submitted it, before any context was added.
+    Your prompt exactly as you typed it, before anything else was added.
   </OptionCard>
 </CardGrid>
 
 ### Why `prompt` is a baseline at all
 
-The words you type are all you *know* exist when you submit them. The system
-prefix, recalled memories, rules, and skills are added afterwards, and no other
-view shows that mutation.
+The words you type are the only thing you *know* exists when you submit
+them. The system prefix, recalled memories, rules, and skills all get added
+afterward, and no other view shows you that change.
 
 ```bash
 stella inspect 42 --step 0 --diff
@@ -215,18 +229,19 @@ stella inspect 42 --step 0 --diff
 ```
 
 Three words in, 8,730 lines out. That ratio is the answer to "why did a
-one-sentence prompt cost that much".
+one-sentence prompt cost that much."
 
 <Callout type="info">
-"no change" is a **result**, not a failure. `--only system` reporting the prompt
-byte-identical to the previous turn is a direct confirmation that the
-prompt-cache stability rule is holding — which is exactly what you want to
-see when `HIT%` is healthy.
+"No change" is a **good result**, not a failure. If `--only system` shows
+the prompt is exactly the same as the previous turn, that directly confirms
+the prompt-cache stability rule is holding, which is exactly what you want
+to see when `HIT%` is healthy.
 </Callout>
 
 ## Making it a check instead of an investigation
 
-Everything above has a JSON form, so the forensics can run unattended:
+Everything above has a JSON version, so this forensic work can run
+unattended:
 
 ```bash
 # Did the system prompt drift between turns? `base` reports which baseline
@@ -239,49 +254,52 @@ stella inspect 42 --step 3 --format json |
   jq '{verified, unresolved, digest_mismatches, digest_mismatch_severity}'
 ```
 
-## The other cost question: was it worth it?
+## Cost vs. value
 
-Dollars are half the story. `stella scoreboard` answers the other half without
-letting a model grade its own homework — model calls, characters a human had to
-type, follow-ups, and a verdict read from a pull request somebody actually
-merged or closed. An open PR is deliberately **not** a verdict.
+Dollars are only half the story. `stella scoreboard` answers the other half
+without letting a model grade its own work — model calls, characters a
+person had to type, follow-ups, and a result read from a pull request
+someone actually merged or closed. An open pull request is deliberately
+**not** counted as a result either way.
 
 ```bash
 stella scoreboard
 ```
 
-The number worth steering on is **$/resolved**, not sticker price: a cheap model
-that needs three attempts is not cheap. See
-[Examples & recipes](/docs/examples) for the profiles that trade those off.
+The number worth tracking is **cost per task solved**, not the sticker
+price — a cheap model that needs three attempts isn't actually cheap. See
+[Examples & recipes](/docs/examples) for setups that balance this
+trade-off.
 
 ## Keeping the store from growing forever
 
-`store.db` grows monotonically — every run appends executions, events, tool
-calls, context blocks, and receipts.
+`store.db` only ever grows — every run adds executions, events, tool calls,
+context, and receipts.
 
 ```bash
 stella stats prune --older-than 90d --dry-run   # look first; deletion cascades
 stella stats prune --older-than 90d --vacuum    # then keep a quarter of history
 ```
 
-Prune is **replication-safe by default**: an execution whose telemetry has not
-yet reached the usage hub is never dropped, so pruning before a sync cannot
-silently destroy cost data you are still billing against. `--force` overrides
-that and is irreversible.
+Pruning is **safe for syncing by default**: an execution whose data hasn't
+reached the usage hub yet is never deleted, so pruning before a sync can't
+accidentally destroy cost data you're still being billed against.
+`--force` overrides that protection and cannot be undone.
 
 ## Next
 
 <CardGrid size="sm">
   <SpecCard title="stella inspect" href="/docs/commands/inspect">
-    Every flag, the verification banner, and what receipts cannot show.
+    Every flag, the verification banner, and what receipts can't show you.
   </SpecCard>
   <SpecCard title="stella stats" href="/docs/commands/stats">
-    The cache columns and the prune surface in full.
+    The cache columns and the prune options in full.
   </SpecCard>
   <SpecCard title="Telemetry & budget" href="/docs/telemetry">
-    What the store holds, how to query it yourself, and the two egress paths.
+    What the store holds, how to query it yourself, and the two ways data
+    can leave it.
   </SpecCard>
   <SpecCard title="Work within a spend limit" href="/docs/guides/spend-limit">
-    Spending less next time, rather than accounting for it afterwards.
+    Spending less next time, instead of accounting for it after the fact.
   </SpecCard>
 </CardGrid>

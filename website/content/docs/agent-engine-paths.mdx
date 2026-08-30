@@ -1,69 +1,65 @@
 ---
 title: Agent Engine Paths
-description: Every entry point into stella's agent engine — one-shot runs, REPL, Command Deck, goal rounds, CI monitoring, sub-agents, and fleets — when to use each.
+description: Every way to reach stella's agent engine — one-shot runs, the REPL, the Command Deck, goal rounds, CI monitoring, sub-agents, and fleets — and when to use each.
 ---
 
-stella has **one agent engine and many doors into it**. Whether you type into
-the Command Deck, script `stella run` in CI, or fan a fleet out across
-worktrees, the same core loop does the work: the step-driver in
-`stella-core`, driving the same tool stack, metered by the same budget,
-recorded into the same session store. The paths differ in how a turn is
-*framed*, *verified*, *supervised*, and *persisted* — and picking the right
-door is most of the craft.
+stella has one agent engine and many ways to reach it. Whether you type into the
+Command Deck, script `stella run` in CI, or fan a fleet out across worktrees, the same
+core loop does the work: the step driver in `stella-core`, using the same tools,
+metered by the same budget, recorded into the same session store. What differs between
+these paths is how a turn gets framed, checked, supervised, and saved. Picking the
+right one is most of the skill.
 
-This page is the map. For the user-level tour of the modes, see
-[Agent Modes](/docs/agent-modes); for what can wrap a turn and gather evidence
-around it, see [Plugins](/docs/plugins).
+This page is the map. For a user-level tour of the modes, see
+[Agent Modes](/docs/agent-modes). For what can wrap a turn and gather evidence around
+it, see [Plugins](/docs/plugins).
 
 <EnginePathsDiagram />
 
-There is only **one loop**, and the picture above is the whole of it. Every
-door drives the step loop; some of them (`stella run`, `stella goal`,
-`stella fleet`, `stella arena`) can additionally bind an installed
-[wrapper plugin](/docs/plugins) with `--pipeline <variant>`, which contributes
-context before the turn and gathers evidence after it — the other doors reach
-the engine directly and take no wrapper. Underneath every door sits one step
-loop — `run_step`, twelve fixed phases around a single model call — so a fleet
-worker and a `--plain` prompt run the identical code, differing only in what is
-wrapped around it.
+There is only one loop, and the picture above shows all of it. Every door drives the
+step loop. Some of them (`stella run`, `stella goal`, `stella fleet`, `stella arena`)
+can also bind an installed [wrapper plugin](/docs/plugins) with `--pipeline <variant>`,
+which adds context before the turn and gathers evidence after it. The other doors reach
+the engine directly and use no wrapper. Underneath every door sits the same step loop,
+`run_step`, which is twelve fixed phases around a single model call. That means a fleet
+worker and a `--plain` prompt run identical code, differing only in what wraps around
+it.
 
-The two direct doors are not the same depth. `stella --plain` calls
-`Engine::run_turn`; `stella-serve` does not — it drives `run_step` itself, one
-step at a time, which is what lets a durable host checkpoint and resume between
-steps.
+The two direct doors don't go equally deep, though. `stella --plain` calls
+`Engine::run_turn`. `stella-serve` doesn't; it drives `run_step` itself, one step at a
+time. That's what lets a durable host checkpoint and resume between steps.
 
-The map below names eight paths to the diagram's six, because two of them are
-not new routes: `stella monitor` **is** goal mode with a fixed objective, and
-deck sub-agents are raw turns the lead spawns. Both ride a door already drawn.
+The map below names eight paths, even though the diagram only shows six, because two
+of them aren't really new routes. `stella monitor` is goal mode with a fixed objective,
+and deck sub-agents are plain turns that the lead spawns. Both ride a door that's
+already there.
 
 ## What every path shares
 
-Before the differences, the rules — these hold no matter which door you
-came through:
+These rules hold no matter which door you came through:
 
-- **One step loop.** The engine takes one model call per step, executes the
-  proposed tool calls (read-only calls fan out in parallel), feeds results
-  back, and repeats until the model stops, a budget trips, or a backstop
-  fires. No hidden swarm, no coordinator process.
-- **One tool stack.** Every path assembles the same layered
-  [tool executor](/docs/agent-tools): the native registry, wrapped by
+- **One step loop.** The engine makes one model call per step, runs the tool calls the
+  model proposed (read-only calls run in parallel), feeds the results back, and repeats
+  until the model stops, a budget is hit, or a limit fires. There's no hidden swarm and
+  no separate coordinator process.
+- **One tool stack.** Every path builds the same layered
+  [tool executor](/docs/agent-tools): the built-in tools, wrapped by
   [MCP-server tools](/docs/agent-tools/mcp), wrapped by
-  [custom script tools](/docs/agent-tools/custom-tools). What varies
-  per path is only what gets layered *on top* (deck taps, read-only views —
-  see [below](#how-the-tool-stack-varies)).
+  [custom script tools](/docs/agent-tools/custom-tools). What differs per path is only
+  what gets layered on top of that, like deck taps or read-only views (see
+  [below](#how-the-tool-stack-varies)).
 - **Memory rides along.** Relevant memories and
-  [skills](/docs/agent-tools/skills) are recalled per prompt and injected as
-  a volatile block after the byte-stable system prefix, so prompt caching
-  survives across turns.
-- **Spend limits are enforced everywhere.** `--spend-limit` caps USD spend on every
-  path; without it, spend is still metered for the cost summary.
-- **Everything is recorded.** Each turn opens an execution record (files
-  touched, tool use, memory citations, cost, outcome) in the workspace
-  store, feeding [telemetry](/docs/telemetry) and `stella stats`. Sessions are
-  durable and resumable (`stella resume`).
+  [skills](/docs/agent-tools/skills) get recalled for each prompt and added as a block
+  right after the fixed system prefix, so prompt caching keeps working across turns.
+- **Spend limits work everywhere.** `--spend-limit` caps how much you spend, in
+  dollars, on every path. Without it, spend still gets tracked for the cost summary.
+- **Everything is recorded.** Each turn opens an execution record in the workspace
+  store: files touched, tools used, memory citations, cost, and outcome. This feeds
+  [telemetry](/docs/telemetry) and `stella stats`. Sessions are saved and can be
+  resumed with `stella resume`.
 - **Per-seat model routing applies.** The
-  [agent engine config](/docs/configuration/agent-engine-config) pins models
-  per seat, and every path that uses those seats honors the pins.
+  [agent engine config](/docs/configuration/agent-engine-config) pins specific models
+  to specific seats, and every path that uses those seats respects those pins.
 
 ## The map
 
@@ -77,8 +73,8 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    No stages, no verifier — the model works until it decides it is done. You are
-    the verification. The default for `stella run`.
+    No stages, no verifier. The model works until it decides it's done, and you're the
+    one who checks the result. This is the default for `stella run`.
   </SpecCard>
   <SpecCard
     title="One-shot, wrapped"
@@ -89,9 +85,9 @@ came through:
       { label: "Headless", value: "Yes — json / stream-json", mono: false },
     ]}
   >
-    The plugin contributes context before the turn and reports its own evidence
-    after it; stella evaluates that evidence against the plugin's declared rule.
-    `--test-command` passes through to a wrapper that can honor it.
+    The plugin adds context before the turn and reports its own evidence after it.
+    stella checks that evidence against the plugin's rule. `--test-command` gets
+    passed through to any wrapper that uses it.
   </SpecCard>
   <SpecCard
     title="Plain REPL"
@@ -102,8 +98,8 @@ came through:
       { label: "Headless", value: "Interactive only", mono: false },
     ]}
   >
-    Also what you get on a non-TTY stdin/stdout, or with `STELLA_PLAIN=1`. You
-    verify, live, between prompts.
+    This is also what you get with a non-interactive stdin or stdout, or with
+    `STELLA_PLAIN=1`. You check the work yourself, live, between prompts.
   </SpecCard>
   <SpecCard
     title="Command Deck lead"
@@ -114,8 +110,7 @@ came through:
       { label: "Headless", value: "Interactive only", mono: false },
     ]}
   >
-    One step-loop turn per prompt, watching the FILES and DIFF tabs fill in as
-    it works.
+    One step-loop turn per prompt. Watch the FILES and DIFF tabs fill in as it works.
   </SpecCard>
   <SpecCard
     title="Deck sub-agents"
@@ -126,8 +121,8 @@ came through:
       { label: "Headless", value: "Follows the deck", mono: false },
     ]}
   >
-    The lead reviews each result. You never invoke this path directly — you ask
-    for work that warrants it.
+    The lead reviews each result. You never call this path directly; you ask for work
+    that's big enough to need it.
   </SpecCard>
   <SpecCard
     title="Goal mode"
@@ -138,9 +133,9 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    An independent verifier assesses the goal from evidence, over a **read-only**
-    view of the tool stack. `--pipeline <variant>` binds a wrapper plugin to each
-    round's working turn; the goal verifier is unchanged either way.
+    An independent verifier checks the goal against evidence, using a read-only view
+    of the tool stack. `--pipeline <variant>` binds a wrapper plugin to each round's
+    working turn; the goal verifier works the same either way.
   </SpecCard>
   <SpecCard
     title="CI monitor"
@@ -151,8 +146,8 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    The verifier reads the CI state itself; only a fully green *latest* run for
-    the target ends the loop. `target` defaults to `main`.
+    The verifier reads the CI state directly. Only a fully green latest run for the
+    target ends the loop. `target` defaults to `main`.
   </SpecCard>
   <SpecCard
     title="Fleet workers"
@@ -163,8 +158,8 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    Verified per task — the step loop by default, or under a wrapper plugin when
-    `--pipeline <variant>` is passed. Every attempt is recorded in
+    Checked per task, using the plain step loop by default, or a wrapper plugin when
+    you pass `--pipeline <variant>`. Every attempt gets recorded in
     `.stella/private/fleet.db`.
   </SpecCard>
 </CardGrid>
@@ -200,178 +195,172 @@ stella resume
 
 ## One-shot: `stella run`
 
-The scripting workhorse: one prompt in, the finished work and an exit code
-back.
+This is the scripting workhorse: one prompt goes in, and finished work plus an exit
+code come back.
 
-**Raw (default).** Plain `stella run "…"` drives one plain step-loop turn —
-no wrapper, no verifier, the model works until it decides it's done. Cheapest
-and fastest; the right door for questions, small mechanical edits, and
-anything you'll eyeball anyway.
+**Plain (default).** Running `stella run "…"` on its own drives one plain step-loop
+turn: no wrapper, no verifier, and the model works until it decides it's done. This is
+the cheapest and fastest option, and the right choice for questions, small mechanical
+edits, and anything you'll check yourself anyway.
 
 **Wrapped (`--pipeline <variant>`).** The turn runs under an installed
-[wrapper plugin](/docs/plugins), named by the `[wrapper] id` its manifest
-declares. The plugin contributes context before the turn and reports its own
-evidence after it; stella evaluates that evidence against the plugin's declared
-rule, which decides whether another turn runs. Pass
-`--test-command "cargo test -p …"` alongside it to hand the wrapper a command
-to check against. Headless formats (`--output-format json` for one final
-object, `stream-json` for a line per agent event) make it automation-grade —
-see [Scripting](/docs/scripting).
+[wrapper plugin](/docs/plugins), named by the `[wrapper] id` in its manifest. The
+plugin adds context before the turn and reports its own evidence after it. stella
+checks that evidence against the plugin's rule, which decides whether another turn
+runs. Pass `--test-command "cargo test -p …"` alongside it to give the wrapper a
+command to check against. Headless output formats (`--output-format json` for one
+final object, `stream-json` for a line per agent event) make it suitable for
+automation. See [Scripting](/docs/scripting).
 
-The **session task board** is the one tool this door withholds: a one-shot
-turn has nothing to resume, so a card costs a model round trip and buys
-legibility no one is watching for. Everything else is unchanged, sub-agent
-delegation included — `delegate` spends money to do work, a different
-trade from `task_create`, and is available here as everywhere.
+The session task board is the one tool this door leaves out. A one-shot turn has
+nothing to resume, so a task card would cost a model round trip without anyone around
+to read it. Everything else works as normal, including sub-agent delegation:
+`delegate` spends money to get work done, which is a different trade-off from
+`task_create`, and it's available here just like everywhere else.
 
-**Use it when** the task is well-defined and you don't need to watch. Stay
-on the raw default when speed beats ceremony; bind a `--pipeline <variant>`
-wrapper whenever the result must carry evidence.
+**Use it when** the task is well defined and you don't need to watch it run. Stay on
+the plain default when speed matters more than proof; add a `--pipeline <variant>`
+wrapper whenever the result needs to carry evidence.
 
-## Interactive: the Command Deck and the plain REPL
+## Interactive: Command Deck and REPL
 
-Running `stella` on a real terminal opens the **Command Deck** — the tabbed
-TUI over the engine. Each prompt becomes a lead-agent turn. The deck
-is more than a chat surface: prompts queue while a turn runs, `!` lines run
-shell commands inline in the transcript, `>` steers the turn in flight, Esc
-soft-stops (both below), and tabs expose the session's
-files, diff, code graph, skills, MCP servers, the AGENTS tab's installed
-agents, and the SETTINGS tab's
-[config panel](/docs/configuration/agent-engine-config) with per-seat model
-pickers. Running lanes are not a tab: `ctrl-a` (or `↓` from an empty prompt)
-opens the SUB-AGENTS overlay over whatever tab you are on.
+Running `stella` on a real terminal opens the Command Deck, the tabbed interface over
+the engine. Each prompt becomes a lead-agent turn. The deck is more than a chat window:
+prompts queue while a turn runs, lines starting with `!` run shell commands inline in
+the transcript, `>` steers the turn while it's running, and `Esc` soft-stops it (both
+explained below). Tabs show the session's files, diff, code graph, skills, MCP servers,
+the AGENTS tab's installed agents, and the SETTINGS tab's
+[config panel](/docs/configuration/agent-engine-config) with per-seat model pickers.
+Running agent lanes aren't a tab: `ctrl-a` (or `↓` from an empty prompt) opens the
+SUB-AGENTS overlay over whatever tab you're on.
 
 Only deck turns have:
 
-- **Taps.** The lead's tool stack is wrapped in a file-change tap (live
-  FILES/DIFF tabs) and a task tap (the task board and sub-agent spawning).
-- **Cooperative claims.** The lead claims files on first write, so parallel
-  workers in the same tree never fight over a file.
-- **Mid-turn steering & soft-cancel.** You don't have to wait for a turn to
-  finish to correct it. Prompts typed while it runs queue; `Esc` delivers the
-  whole queue plus the composer into the running turn at its next step
-  boundary as real user messages — course-corrections the model reads before
-  its next action, with nothing thrown away. `>your note` skips the queue and
-  lands at the next boundary on its own. `Esc` with nothing to deliver is a
-  *soft stop*: it halts at the next boundary and keeps everything already
-  completed. `Esc Esc` cancels immediately and holds the queue. Steering
-  beats restarting: you keep the cache-warm context and only redirect it.
+- **Taps.** The lead's tool stack is wrapped with a file-change tap, which powers the
+  live FILES and DIFF tabs, and a task tap, which powers the task board and sub-agent
+  spawning.
+- **Cooperative claims.** The lead claims a file the first time it writes to it, so
+  parallel workers in the same tree never fight over the same file.
+- **Mid-turn steering and soft-cancel.** You don't have to wait for a turn to finish to
+  correct it. Prompts typed while it's running get queued. Pressing `Esc` delivers the
+  whole queue, plus whatever's in the composer, into the running turn at its next step
+  boundary, as real user messages. The model reads these course-corrections before its
+  next action, and nothing gets thrown away. Typing `>your note` skips the queue and
+  delivers on its own at the next boundary. Pressing `Esc` with nothing queued is a
+  soft stop: it halts at the next boundary and keeps everything already done. Pressing
+  `Esc` twice cancels right away and holds the queue. Steering beats restarting, since
+  you keep the warm cached context and just redirect it.
 
-`stella --plain` (or any non-TTY stdin/stdout, or `STELLA_PLAIN=1`) falls
-back to the **plain REPL**: the same per-prompt raw turns and the same
-session memory, in a line-based interface with slash commands. It's the
-low-dependency door — SSH sessions, minimal terminals, teaching demos.
+`stella --plain` (or any non-interactive stdin/stdout, or `STELLA_PLAIN=1`) falls back
+to the plain REPL: the same per-prompt turns and the same session memory, in a
+line-based interface with slash commands. It's the low-dependency option, good for SSH
+sessions, minimal terminals, and demos.
 
 **Use the deck when** you're exploring, iterating, or supervising real work
-interactively. **Use the plain REPL when** you want interactivity without a
-TUI.
+interactively. **Use the plain REPL when** you want interactivity without a full
+terminal interface.
 
 ## Delegated: deck sub-agents
 
-Inside a deck session, the lead agent can delegate: the `task_assign` tool
-queues a task, and a supervisor spawns a **sub-agent** with its own
-conversation and the same tool stack — running concurrently while the lead
-keeps working, its spend metered into the session's **shared** budget guard
-(child spend always reaches the parent's ledger; fleet children, by
-contrast, each run under their own slice of the cap). Results return to the
-lead for review; every sub-agent turn is recorded (`deck-sub`) and visible in
-the SUB-AGENTS overlay (`ctrl-a`, `↓` from an empty prompt, or `/subagents`),
-which is also where you stop, pause, restart, nudge or open one. You don't
-invoke this path directly — you ask for work that warrants it, and the lead
-fans out.
+Inside a deck session, the lead agent can delegate. The `task_assign` tool queues a
+task, and a supervisor spawns a sub-agent with its own conversation and the same tool
+stack. It runs at the same time as the lead keeps working, and its spend gets tracked
+against the session's shared budget guard. That's different from fleets, where each
+child runs under its own slice of the spending cap; here, a sub-agent's spend always
+reaches the parent's ledger. Results return to the lead for review. Every sub-agent
+turn gets recorded (as `deck-sub`) and shows up in the SUB-AGENTS overlay (`ctrl-a`,
+`↓` from an empty prompt, or `/subagents`), which is also where you stop, pause,
+restart, nudge, or open one. You don't call this path directly; you ask for work big
+enough to need it, and the lead fans it out.
 
-**Use it when** (implicitly) a deck task decomposes into independent chunks —
-noisy searches, parallel investigations — that shouldn't bloat the lead's
-context.
+**Use it when** a task naturally breaks into independent chunks, like noisy searches
+or parallel investigations, that shouldn't bloat the lead's context.
 
 ## Outcome-driven: `stella goal`
 
-Goal mode inverts the contract: you state **what must be true when done**,
-not what to do. The engine works in rounds; after each round an
-**independent verifier** — routed to a different model family than the worker
-whenever possible, and holding a **read-only view** of the same tool stack —
-assesses the goal *from evidence* (running tests, reading CI, inspecting
-files), never from the worker's claims. Rounds continue until the verifier
-confirms the goal, or a backstop (round cap, `--spend-limit`, worker abort) ends
-the run as *not met*.
+Goal mode flips the usual setup: you say what must be true when it's done, not what to
+do to get there. The engine works in rounds. After each round, an independent
+verifier, routed to a different model family than the worker whenever possible and
+holding a read-only view of the same tool stack, checks the goal against evidence
+(running tests, reading CI, inspecting files) rather than trusting the worker's
+claims. Rounds keep going until the verifier confirms the goal is met, or a limit (a
+round cap, `--spend-limit`, or a worker aborting) ends the run as not met.
 
-Each working round is a raw step-loop turn by default; `--pipeline <variant>`
-binds an installed wrapper plugin once and dispatches each round's worker turn
-through it, leaving the goal verifier untouched. An arbiter-grade wrapper is
-refused on this door — the goal loop is already its own completion arbiter.
+Each working round is a plain step-loop turn by default. `--pipeline <variant>` binds
+an installed wrapper plugin once and routes each round's worker turn through it,
+without touching the goal verifier. A wrapper meant to be its own arbiter of
+completion is rejected here, since the goal loop already handles that job itself.
 
-**Use it when** you can state the outcome crisply but not the steps —
-"the suite passes and clippy is clean", "the flaky test is fixed, proven by
-50 consecutive runs". See [Goal mode in depth](/docs/agent-modes#outcome-driven-goal-mode).
+**Use it when** you can state the outcome clearly but not the steps to get there, like
+"the suite passes and clippy is clean" or "the flaky test is fixed, proven by 50
+consecutive runs." See [Goal mode in depth](/docs/agent-modes#outcome-driven-goal-mode).
 
 ### `stella monitor`: goal mode, specialized
 
-Monitoring **is** a goal: the objective is pinned to "the latest CI run for
-*target* is fully green", assessed from the CI state itself. The engine
-fixes failures, pushes, waits out the next run, and only a green board ends
-the loop. Same machinery, fixed objective.
+Monitoring is a goal: the objective is fixed to "the latest CI run for target is fully
+green," checked against the CI state itself. The engine fixes failures, pushes, waits
+for the next run, and only a fully green result ends the loop. It's the same
+machinery, just with a fixed objective.
 
-**Use it when** the branch or PR must end up green and you don't want to
+**Use it when** the branch or pull request needs to end up green and you don't want to
 babysit the CI cycle.
 
 ## Parallel: `stella fleet`
 
-When the work is *many tasks* rather than one, [fleets](/docs/agent-fleets)
-fan a dependency-ordered task DAG out to parallel workers — in one shared
-tree coordinated by cooperative file claims, or in dedicated worktrees for
-tasks marked `isolation = "isolated"`. Each worker drives the same engine
-per task (the step loop by default, or under a wrapper plugin when
-`--pipeline <variant>` is passed), and every attempt, commit, and dollar lands
-in `.stella/private/fleet.db` for review.
+When the work is many tasks rather than one, [fleets](/docs/agent-fleets) spread a
+dependency-ordered set of tasks out to parallel workers, in one shared tree
+coordinated by cooperative file claims, or in dedicated worktrees for tasks marked
+`isolation = "isolated"`. Each worker drives the same engine per task, using the plain
+step loop by default, or a wrapper plugin when you pass `--pipeline <variant>`. Every
+attempt, commit, and dollar spent lands in `.stella/private/fleet.db` for review.
 
-**Use it when** you have a backlog, not a task: migrations across many
-modules, a list of independent fixes, wide refactors.
+**Use it when** you have a backlog, not a single task: migrations across many
+modules, a list of independent fixes, or a wide-reaching refactor.
 
 ## How the tool stack varies
 
-The [tool catalog](/docs/agent-tools) is shared, but each path decorates it
-differently:
+The [tool catalog](/docs/agent-tools) is the same everywhere, but each path adds
+different things on top of it:
 
 <CardGrid size="md">
   <OptionCard name="One-shot / REPL / goal worker">
-    Nothing extra — the shared stack as-is.
+    Nothing extra. Just the shared stack, as is.
   </OptionCard>
   <OptionCard name="Command Deck lead">
-    A file-change tap and a task tap on top: live FILES/DIFF tabs, the task
-    board, sub-agent spawning — plus claim-on-first-write.
+    A file-change tap and a task tap on top of the shared stack: live FILES and DIFF
+    tabs, the task board, sub-agent spawning, and claiming a file on first write.
   </OptionCard>
   <OptionCard name="Goal verifier">
-    A **read-only** view. Only tools marked `read_only: true` are visible or
-    executable, so a verifier structurally cannot edit its way to a verdict.
+    A read-only view. Only tools marked `read_only: true` are visible or usable, so a
+    verifier can't edit its way to a verdict.
   </OptionCard>
   <OptionCard name="Fleet workers">
-    Claim coordination in the shared tree; a private worktree when the task is
+    Claim coordination in the shared tree, or a private worktree when the task is
     marked `isolation = "isolated"`.
   </OptionCard>
 </CardGrid>
 
-The same `read_only: true` bit fences a sub-agent launched without write
-access: it is offered only the read-only schemas, and the restriction is
-enforced when a call executes rather than by asking the prompt nicely
-(`stella_core::ports::ReadOnlyTools`). A read-only lookup is never a side
-effect.
+That same `read_only: true` flag also limits a sub-agent launched without write
+access: it only gets offered the read-only tools, and the restriction is enforced when
+a call actually runs, not just by asking the model nicely
+(`stella_core::ports::ReadOnlyTools`). A read-only lookup never has side effects.
 
 ## Choosing a path
 
 - **Watching and steering** → the Command Deck (`stella`).
 - **Interactive, but minimal** → the plain REPL (`stella --plain`).
-- **One defined task, unattended** → `stella run` (the raw default is
-  fastest; add `--pipeline <variant> --test-command` to run it under a
-  wrapper plugin that gathers evidence).
+- **One defined task, unattended** → `stella run`. The plain default is fastest; add
+  `--pipeline <variant> --test-command` to run it under a wrapper plugin that gathers
+  evidence.
 - **A defined outcome, unknown steps** → `stella goal`.
 - **CI must be green** → `stella monitor`.
 - **A backlog of tasks** → `stella fleet`.
 - **Continuing yesterday's session** → `stella resume`.
 
-## For contributors: the code map
+## For contributors
 
-Every path is a thin `stella-cli` entry point over `stella_core::Engine`.
-If you're changing engine behavior, these are the seams:
+Every path is a thin `stella-cli` entry point over `stella_core::Engine`. If you're
+changing engine behavior, these are the places to look:
 
 <CardGrid size="md">
   <SpecCard
@@ -432,13 +421,13 @@ If you're changing engine behavior, these are the seams:
   />
 </CardGrid>
 
-The execution-kind strings in [the map](#the-map) are what these paths stamp
-on their execution records — the same strings in
-`stella stats` and the exported [dashboard](/docs/telemetry/dashboard). A
-telemetry row always traces back to the door the work came through.
+The execution-kind strings in [the map](#the-map) are what these paths stamp on their
+execution records. You'll see the same strings in `stella stats` and the exported
+[dashboard](/docs/telemetry/dashboard). A telemetry row always traces back to the door
+the work came through.
 
-The store is ordinary SQLite, so you can ask that question directly — which
-doors your spend actually went through:
+The store is ordinary SQLite, so you can ask that question directly: which doors did
+your spend actually go through?
 
 ```bash
 sqlite3 .stella/private/store.db \
@@ -450,14 +439,14 @@ sqlite3 .stella/private/store.db \
 
 ## Where to go next
 
-- [Agent Modes](/docs/agent-modes) — the user-level guide to the same
-  territory, with deck keybindings and examples.
-- [Plugins](/docs/plugins) — the wrapper socket a `--pipeline <variant>` turn
-  runs through, and what a plugin contributes around it.
-- [Agent Fleets](/docs/agent-fleets) — plan files, waves, claims in the
+- [Agent Modes](/docs/agent-modes) — a user-level guide to the same territory, with
+  deck keybindings and examples.
+- [Plugins](/docs/plugins) — the wrapper system a `--pipeline <variant>` turn runs
+  through, and what a plugin adds around it.
+- [Agent Fleets](/docs/agent-fleets) — plan files, waves, file claims in the
   shared tree, and opt-in isolated worktrees.
 - [Agent engine config](/docs/configuration/agent-engine-config) — per-seat
-  model pins the paths share.
+  model pins that all these paths share.
 - [Built-in Tools](/docs/agent-tools) — the shared catalog, and how MCP and
   custom tools layer onto it.
 - [Scripting](/docs/scripting) — headless output formats, exit codes, and

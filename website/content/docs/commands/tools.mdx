@@ -1,58 +1,81 @@
 ---
 title: stella tools
-description: List every tool available to the agent this session — built-in tools, custom tools from .stella/tools/ manifests, and a --validate check for both.
+description: List every tool the agent can use this session, including built-in tools and custom tools from .stella/tools/, plus a --validate check for both.
 ---
 
-List every tool available to the agent for the current session — built-in tools, developer custom tools, and manifest diagnostics.
+Lists every tool the agent can use in the current session: built-in tools, custom tools you've added, and a check for any problems with them.
 
 ## Synopsis
 
 ```bash
-stella tools [--validate [DIR]] [--adopt NAME] [--enable NAME]
-             [--disable NAME] [--foundry] [global flags]
+stella tools [--validate [DIR]] [--draft GAP_ID] [--adopt NAME] [--enable NAME]
+             [--disable NAME] [--rollback NAME [--to N]] [--foundry] [--status]
+             [global flags]
 ```
 
 ## What it does
 
-`stella tools` prints the set of tools the agent can call this session:
+`stella tools` prints the tools the agent can call this session.
 
-- **Built-in tools** — the always-available and conditionally-registered tools. See the full [Built-in Tools](/docs/agent-tools) catalog for names and read-only/mutating flags.
-- **Developer custom tools** — loaded from `<name>.toml` manifests.
+- **Built-in tools** — always-available tools, plus a few that only show up in certain conditions. See the full [Built-in Tools](/docs/agent-tools) catalog for names and whether each one is read-only or can make changes.
+- **Custom tools you've added** — loaded from `<name>.toml` manifest files.
 
-Custom tools come from a `<name>.toml` manifest dropped in `<workspace>/.stella/tools/` (workspace-scoped) or `~/.stella/tools/` (user-global). On a name collision, the workspace copy wins.
+Custom tools come from a `<name>.toml` manifest placed in `<workspace>/.stella/tools/` (just for this project) or `~/.stella/tools/` (for all your projects). If a project tool and a global tool share a name, the project one wins.
 
 <Callout type="info">
-`stella tools` does **not** enumerate MCP tools — it prints a note that servers configured in `.stella/mcp.toml` merge more tools at session start. Use [`stella mcp list`](/docs/commands/mcp) to see configured MCP servers.
+`stella tools` does **not** list MCP tools. It just notes that any servers set up in `.stella/mcp.toml` add more tools when a session starts. Use [`stella mcp list`](/docs/commands/mcp) to see your configured MCP servers.
 </Callout>
 
 ## Flags
 
 <CardGrid size="md">
   <OptionCard name="--validate [DIR]">
-    Strict pre-flight check of custom-tool manifests instead of listing. Parses every
-    `<name>.toml` in `.stella/tools/` and `~/.stella/tools/` — or in the given `DIR` —
-    reports errors, warnings, and info per manifest, and exits non-zero if any manifest
-    has errors.
+    Checks your custom-tool manifests instead of listing tools. Reads every `<name>.toml`
+    file in `.stella/tools/` and `~/.stella/tools/`, or in the folder you give it, and
+    reports errors, warnings, and other notes for each one. Exits with an error code if any
+    manifest has a real error.
   </OptionCard>
   <OptionCard name="--adopt NAME">
-    Move a staged tool into `.stella/tools/` and run its **capability witness**: the same
-    call must fail on the existing tool surface and succeed with the new tool, producing a
-    real value. Records the proof. The tool stays **disabled**.
+    Moves a staged tool into `.stella/tools/` and runs its **capability witness**: a test
+    that must fail using the tools you already had, and succeed once the new tool is used,
+    producing a real result. The test result is saved. The tool stays **turned off** until
+    you enable it.
   </OptionCard>
   <OptionCard name="--enable NAME">
-    Approve an adopted tool, so the model is offered it. Refused if the manifest or script
-    changed since the witness ran.
+    Turns on an adopted tool so the model can use it. Refuses to enable it if the manifest
+    or script changed since the test ran.
   </OptionCard>
   <OptionCard name="--disable NAME">
-    Stop offering an adopted tool, keeping its proof on file.
+    Turns off an adopted tool. Its saved test result is kept.
   </OptionCard>
   <OptionCard name="--foundry">
-    Report every self-authored tool: its witness, whether it is enabled, and how often it
-    has been reused since adoption — including the ones never used.
+    Lists every tool you've built yourself: whether its test passed, whether it's turned
+    on, and how many times it has been used since you adopted it, including ones never used
+    at all.
+  </OptionCard>
+  <OptionCard name="--draft GAP_ID">
+    Author a staged manifest+script pair from one ledgered tool gap
+    (`.stella/private/tool_gaps.jsonl`) and stop — the manual escape hatch that runs the
+    autonomy pipeline's author+validate steps without adopting anything. The pair lands
+    under `.stella/tools/proposed/`, invisible to discovery.
+  </OptionCard>
+  <OptionCard name="--rollback NAME">
+    Restore a prior recorded version of an adopted foundry tool — exact bytes from the
+    append-only version history — re-digest it, and re-enable it, which is also how a
+    tripped circuit breaker is reset. Defaults to the version before the current one;
+    `--to N` targets an explicit one.
+  </OptionCard>
+  <OptionCard name="--to N">
+    The version `--rollback` restores.
+  </OptionCard>
+  <OptionCard name="--status">
+    Per-tool foundry health: enablement (with the circuit breaker's recorded reason when
+    it spoke), version history, and the recent launch record — plus how many gaps sit in
+    the ledger waiting for a draft.
   </OptionCard>
 </CardGrid>
 
-`stella tools` otherwise takes the [global flags](/docs/commands); model selection rarely matters for this diagnostic command.
+`stella tools` also accepts the [global flags](/docs/commands). Which model you're using rarely matters for this command, since it's just a diagnostic.
 
 ## Examples
 
@@ -62,85 +85,82 @@ List the tools available this session:
 stella tools
 ```
 
-Validate custom-tool manifests in CI (non-zero exit on any error):
+Check your custom-tool manifests in CI, and fail if any have errors:
 
 ```bash
 stella tools --validate
 ```
 
-Validate one directory of manifests before installing them:
+Check one folder of manifests before you install them:
 
 ```bash
 stella tools --validate ./contrib/stella-tools
 ```
 
-Take a staged tool all the way to a usable one:
+Take a staged tool all the way to something you can use:
 
 ```bash
-# Stage the pair by hand under .stella/tools/proposed/, where discovery
-# cannot see it: jq.toml (with a [foundry] table) + jq.sh.
+# Place the manifest and script by hand under .stella/tools/proposed/, where
+# stella won't see them yet: jq.toml (with a [foundry] table) + jq.sh.
 stella tools --validate .stella/tools/proposed
-stella tools --adopt jq          # run its witness; records the proof, stays disabled
-stella tools --enable jq         # the one human approval — prints what it grants and asks
-stella tools --foundry           # what was adopted, and what it has been worth
+stella tools --adopt jq          # run the test; saves the result, tool stays off
+stella tools --enable jq         # the one human approval step; shows what it grants, then asks
+stella tools --foundry           # what was adopted, and how useful it has been
 ```
 
 <Callout type="warn">
-  **`--enable` asks, and refuses when nobody can answer.** It prints the script
-  the model would run, the witness on file, and what that witness does *not*
-  establish, then waits for a `y`. With no terminal attached it refuses rather
-  than proceeding — otherwise an agent holding the `bash` tool could stage,
-  adopt and enable its own tool inside one turn, and "the approval a machine
-  never grants itself" would be enforced only by the habit that a CLI
-  invocation comes from a person. Pass `--yes` for a provisioning script, where
-  granting it is something somebody wrote down.
+  **`--enable` always asks, and refuses if nobody can answer.** It shows the script the
+  model would run, the saved test result, and what that test does *not* prove, then waits
+  for you to type `y`. If there's no terminal attached, it refuses instead of going ahead.
+  Without this check, an agent with the `bash` tool could stage, adopt, and enable its own
+  tool in a single turn, and the rule that "a machine never approves its own tool" would
+  only hold because someone happened to be typing at a terminal. Pass `--yes` when you're
+  running this from a provisioning script where someone has already signed off on it in
+  writing.
 
-  `--disable` asks nobody: withdrawing the authority must never be blocked by
-  the absence of a terminal.
+  `--disable` never asks. Turning a tool off must never be blocked just because there's no
+  terminal available.
 </Callout>
 
 ## Self-authored tools
 
-A self-authored tool is a manifest + script pair staged under
-`.stella/tools/proposed/`, where tool discovery cannot see it, and promoted from
-there by the `--adopt` → `--enable` sequence above. Write the script so every
-parameter is a quoted `"$STELLA_INPUT_*"` reference, so parameter values stay
-data rather than shell syntax.
+A self-authored tool is a manifest and script you write yourself and place under
+`.stella/tools/proposed/`, where stella's normal tool discovery cannot see it. From there,
+you move it through the `--adopt` then `--enable` steps above. Write the script so every
+parameter is a quoted `"$STELLA_INPUT_*"` reference. That keeps each value treated as plain
+data, not as shell code.
 
 <Callout type="warn">
-  **Staging is manual.** The gap detector that mines candidate shapes from recent
-  `bash` receipts ships in `stella-core`, and its only shipped consumer is the
-  offline `make replay-learning` report — no live session mines proposals. A pass
-  that rendered one candidate into a manifest + script pair also shipped, was never
-  called by anything, and was retired in
-  [#3629](https://github.com/macanderson/stella/issues/3629). So you write the pair
-  yourself; `--adopt` onwards is fully wired and is what the rest of this section
-  describes.
+  **You write the staged tool yourself.** There is no automatic step that scans your past
+  commands and writes a manifest for you. You create the `.toml` manifest and script by
+  hand, and everything from `--adopt` onward works exactly as described in this section.
 </Callout>
 
-What the detector reports is a shape that is genuinely *reused*: it must recur across
-at least two distinct argument sets, each of them retyped about three times over. A
-command whose arguments are different every single time — `sed -n '<expr>' <file>`
-across a thousand files — is the shell, not a tool. Proposals rank most-reused-first,
-not most-run-first.
+A useful custom tool covers a command shape you actually reuse: the same basic call with
+different arguments, used at least a couple of times with each set of arguments. A command
+where the arguments are different every single time, like running `sed` with a one-off
+expression across a thousand different files, isn't really a reusable tool. It's just you
+using the shell.
 
-A staged tool carries a `[foundry]` table, and a manifest carrying one registers only
-while **all three** of these hold:
+A staged tool includes a `[foundry]` table, but a manifest with one only actually registers
+once **all three** of these are true:
 
-1. it was **adopted** — its capability witness flipped;
-2. a human **enabled** it;
-3. the manifest and script still hold the exact bytes the witness ran against.
+1. it was **adopted** — its test passed;
+2. a person **enabled** it;
+3. the manifest and script still have the exact same bytes the test ran against.
 
-So moving a staged manifest into `.stella/tools/` by hand grants nothing, and editing an
-approved tool's script revokes its approval rather than inheriting it. Every withheld tool
-is reported by name and reason in `stella tools`, so a missing tool is never silent.
+So copying a staged manifest into `.stella/tools/` by hand does not grant anything on its
+own, and editing an approved tool's script cancels its approval rather than carrying it
+over. Every tool that gets held back is listed by name and reason in `stella tools`, so a
+missing tool is never a mystery.
 
 <Callout type="info">
-The witness is a fail→pass flip, not a smoke test. The call must fail on the tool surface
-you have today, succeed with the new tool, and assert on a value the tool really produced.
-A tool that answers in both worlds is a synonym for something you already had; one that
-prints nothing, or only echoes its own argument, proves nothing and is refused.
+The test is a fail-then-pass check, not a smoke test. The same call must fail using the
+tools you already had, succeed with the new tool, and check a real result the tool
+produced. A tool that works either way is just a different name for something you already
+had. A tool that prints nothing, or only repeats its own input back, proves nothing and is
+rejected.
 </Callout>
 
-Hand-written manifests are untouched by any of this — dropping your own `<name>.toml` in
-`.stella/tools/` works exactly as it always has.
+None of this affects manifests you write by hand. Dropping your own `<name>.toml` straight
+into `.stella/tools/` still works exactly like it always has.

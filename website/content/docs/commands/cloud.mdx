@@ -1,11 +1,11 @@
 ---
 title: stella cloud
-description: Read and set the org and workspace identity that scopes replicated telemetry, and drain that telemetry to an org intake you configure.
+description: Read and set the org and workspace identity that scopes replicated telemetry, and send that telemetry to an org intake you configure.
 ---
 
-Every row [`stella usage`](/docs/commands/usage) replicates into the hub carries an identity: which organization it reports into, which workspace it came from, and which repository that workspace maps to. `stella cloud` is where you read that identity, set it, and — if you configure an endpoint — upload under it.
+Every row [`stella usage`](/docs/commands/usage) copies to the hub carries an identity: which organization it reports to, which workspace it came from, and which repository that workspace maps to. `stella cloud` is where you read that identity, set it, and, if you configure an endpoint, upload data under it.
 
-The OAuth login is still a **stub**: `register` persists ids locally and mints a durable workspace id, and the login that will attach a token lands later on the same file. Registration alone uploads nothing and does not change what telemetry is collected, only which ids it is stamped with.
+Login is still a work in progress: `register` saves ids locally and creates a durable workspace id, and the login step that will attach a token will write to the same file later. Registration alone doesn't upload anything and doesn't change what telemetry is collected, only which ids get stamped on it.
 
 ## Synopsis
 
@@ -21,38 +21,38 @@ A subcommand is required. None of them needs a provider or an API key.
 
 ## What it does
 
-Four ids describe an installation, and they answer different questions:
+Four ids describe an installation, and each answers a different question:
 
 <CardGrid size="md">
   <OptionCard name="org_id">
-    The organization this installation reports into. `NULL` until you register.
+    The organization this installation reports to. `NULL` until you register.
     `STELLA_ORG_ID` wins if set; otherwise it comes from the `org_id` in
     `~/.stella/cloud.json`, written by `stella cloud register`.
   </OptionCard>
   <OptionCard name="workspace_id">
-    A durable UUID at `<root>/.stella/workspace.json`, written **only** by registration
-    and never minted implicitly — an unregistered workspace reports `NULL`. It lives
-    outside `.stella/private/` on purpose, so committing it gives every clone and every
+    A durable id at `<root>/.stella/workspace.json`, written **only** by registration
+    and never created automatically. An unregistered workspace reports `NULL`. It lives
+    outside `.stella/private/`, so committing it gives every clone and every
     machine one shared workspace identity.
   </OptionCard>
   <OptionCard name="repo_id">
-    A workspace is only *usually* a repository. `repo_id` hashes the normalized `origin`
-    remote URL — the SSH and HTTPS forms of the same repo agree — and falls back to the
-    path hash when there is no git remote. Rows carry it separately so a multi-repo
+    A workspace is only *usually* a repository. `repo_id` is built from the normalized `origin`
+    remote URL (the SSH and HTTPS forms of the same repo count as the same one), and
+    falls back to the folder path when there is no git remote. Rows carry it separately so a multi-repo
     workspace still reports per repository.
   </OptionCard>
   <OptionCard name="project_id">
-    A hash of the canonical workspace path. Always present, registration or not, and it
+    A hash of the workspace's own path. Always present, registration or not, and it
     is the key replication runs on. This is what makes `stella usage` work on a machine
     that has never heard of a cloud org.
   </OptionCard>
 </CardGrid>
 
-Resolution is infallible by design: telemetry scoping must never fail a turn, so unregistered ids resolve to `NULL` and a missing git remote degrades `repo_id` rather than erroring.
+Resolving these ids never fails: telemetry scoping must never break a turn, so unregistered ids resolve to `NULL`, and a missing git remote falls back to the path-based id instead of erroring.
 
 ### `stella cloud status`
 
-Print this installation's identity for the current workspace, and — once an org is set — any rows the cloud intake permanently rejected.
+Print this installation's identity for the current workspace, and, once an org is set, any rows the cloud intake permanently rejected.
 
 ```bash
 stella cloud status
@@ -80,7 +80,7 @@ project:   4b81c0e2f39a77de
 
 #### Quarantined rows
 
-When an org is registered, `status` also reports rows the cloud intake rejected *permanently*. This is the only place they surface, and that is the point: the drain dead-letters such a row and steps its cursor over it so newer rows keep flowing — after which everything downstream looks healthy while a silent casualty sits in the hub.
+Once an org is registered, `status` also reports rows the cloud intake rejected *permanently*. This is the only place they show up. The drain sets these rows aside and moves past them so newer rows keep flowing, which means everything downstream can look healthy while a rejected row sits in the hub unnoticed.
 
 ```text
 quarantined:   3 row(s) the cloud intake permanently rejected
@@ -89,22 +89,22 @@ quarantined:   3 row(s) the cloud intake permanently rejected
               retained in the hub for inspection; the cursor advanced past them
 ```
 
-At most three reason groups are listed before the tail folds into a `+N more reason(s)` line. The rows themselves are retained, not deleted. The check is best-effort — `status` answers about identity first, so an unopenable hub degrades to a one-line note instead of failing the command.
+At most three reason groups are listed before the rest fold into a `+N more reason(s)` line. The rows themselves stay in place; nothing is deleted. Since `status` answers about identity first, this check does its best: if the hub can't be opened, it prints a one-line note instead of failing the command.
 
 ### `stella cloud register`
 
-Persist an org id and register this workspace.
+Save an org id and register this workspace.
 
 <CardGrid size="md">
   <OptionCard name="--org <ORG_ID>" required>
-    The cloud organization id telemetry rolls up under. Written to `~/.stella/cloud.json`
-    — the same file the future OAuth login will keep its token in, so registration and
-    auth stay one file. Must not be empty.
+    The cloud organization id telemetry reports under. Saved to `~/.stella/cloud.json`,
+    the same file that will hold your login token later, so registration and
+    login stay in one file. Cannot be empty.
   </OptionCard>
   <OptionCard name="--workspace-id <ID>">
-    Adopt a cloud-assigned workspace id instead of minting a UUID. Ignored if this
-    workspace is already registered — registration is idempotent and an existing id always
-    wins, because one workspace must never fork into two identities.
+    Use a workspace id issued elsewhere instead of creating a new one. Ignored if this
+    workspace is already registered. Registration only runs once, and an existing id always
+    wins, because one workspace must never end up with two identities.
   </OptionCard>
 </CardGrid>
 
@@ -119,12 +119,12 @@ commit .stella/workspace.json so every clone reports as this workspace
 ```
 
 <Callout type="info">
-Commit `.stella/workspace.json`. It sits outside `.stella/private/` for exactly that
-reason. Without it, a clone has no workspace id at all until someone registers there —
+Commit `.stella/workspace.json`. It lives outside `.stella/private/` for exactly that
+reason. Without it, a clone has no workspace id until someone registers there,
 and if they do, the same project ends up reporting under two identities.
 </Callout>
 
-The written file is small and readable:
+The file it writes is small and easy to read:
 
 ```json title=".stella/workspace.json"
 {"workspace_id": "6f1d8a20-4c3e-4a71-9a55-2d0be1c7f5aa"}
@@ -132,16 +132,16 @@ The written file is small and readable:
 
 ### `stella cloud sync`
 
-Drain staged hub telemetry to the org intake configured in `~/.stella/cloud.json`'s
-`drain` block. This is the one command in this group that performs network I/O.
+Send staged hub telemetry to the org intake set in `~/.stella/cloud.json`'s
+`drain` block. This is the one command in this group that uses the network.
 
 ```bash
 stella cloud sync
 ```
 
-It is a no-op unless **both** an `org_id` (from `register`) and a `drain` block are
-present — no block, no network. The block also carries the intake credential, which is
-why `cloud.json` is written owner-only:
+It does nothing unless **both** an `org_id` (from `register`) and a `drain` block are
+present. No block, no network traffic. The block also carries the intake credential, which is
+why `cloud.json` is saved so only you can read it:
 
 ```json title="~/.stella/cloud.json"
 {
@@ -157,43 +157,43 @@ why `cloud.json` is written owner-only:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `url` | required | The HTTPS org intake batches are POSTed to |
-| `format` | `stella` | Wire format: `stella` (native schema-versioned batch) or `otel` (OTLP). An unknown value fails closed |
+| `url` | required | The HTTPS org intake batches are sent to |
+| `format` | `stella` | Wire format: `stella` (the native schema-versioned batch) or `otel` (OTLP). An unknown value fails and stops |
 | `token` | none | Bearer credential for the intake. `oauth_token` wins when both exist |
-| `batch_size` | `200` | Rows per POST |
+| `batch_size` | `200` | Rows per request |
 
-Rows the intake rejects *permanently* are dead-lettered and the cursor steps over them so
-newer rows keep flowing; they surface under [`status`](#quarantined-rows). A transient
-failure is reported as retryable — re-run the command.
+Rows the intake rejects *permanently* are set aside, and the cursor moves past them so
+newer rows keep flowing. They show up under [`status`](#quarantined-rows). A temporary
+failure is reported as something you can retry, so just re-run the command.
 
 <Callout type="warn">
-  This is a **second, separate egress path** from the
+  This is a **second, separate export path** from the
   [Oxagen Enterprise managed export](/docs/telemetry#oxagen-enterprise-managed-export).
-  It has its own wire contract, its own endpoint, and its own opt-in — a `drain` block in
-  a file you write yourself, pointed at an intake you operate. Enterprise enrollment does
-  not enable it and it does not enable enterprise enrollment.
+  It has its own wire format, its own endpoint, and its own opt-in: a `drain` block in
+  a file you write yourself, pointed at an intake you run. Enterprise enrollment does
+  not turn this on, and this does not turn on enterprise enrollment.
 </Callout>
 
 ### `stella cloud logout`
 
-Destroy the stored credentials and remove the `drain` block, halting upload. Registration
-and local hub telemetry are retained.
+Delete the stored credentials and remove the `drain` block, which stops uploads. Registration
+and local hub telemetry stay in place.
 
 ### `stella cloud deregister`
 
-`logout` plus clearing the org id, returning the installation to unregistered. Hub rows
-keep the org they were captured under; un-synced rows for the old org stop draining and
-stay local. Destroy them explicitly with `stella usage prune --force` if that is intended.
+Does what `logout` does, plus clears the org id, returning the installation to unregistered. Hub rows
+keep the org they were captured under; unsent rows for the old org stop sending and
+stay local. Delete them with `stella usage prune --force` if that's what you want.
 
 ## What registration alone does not do
 
-- **It does not upload anything by itself.** `register` writes two local files. Upload
-  needs a `drain` block *and* an explicit `stella cloud sync`. Telemetry replicates into
+- **It does not upload anything by itself.** `register` writes two local files. Uploading
+  needs a `drain` block *and* running `stella cloud sync`. Telemetry is copied into
   `~/.stella/usage.db` whether you register or not.
-- **It does not change what is collected.** Only the ids stamped onto each row change — from `NULL` org and workspace to yours.
-- **It does not re-stamp history.** Rows written before registration keep their `NULL` org, which is why `stella usage report --org <id>` excludes them.
+- **It does not change what is collected.** Only the ids stamped onto each row change, from `NULL` org and workspace to yours.
+- **It does not relabel history.** Rows written before registration keep their `NULL` org, which is why `stella usage report --org <id>` leaves them out.
 
-It does change one thing worth knowing about: once rows carry an org, [`stella usage prune`](/docs/commands/usage#stella-usage-prune) will not drop the ones a cloud drain has not acknowledged unless you pass `--force`.
+It does change one thing worth knowing about: once rows carry an org, [`stella usage prune`](/docs/commands/usage#stella-usage-prune) will not drop rows a cloud drain hasn't acknowledged yet, unless you pass `--force`.
 
 ## Examples
 
@@ -203,14 +203,14 @@ Check what identity this workspace reports under before wiring up CI:
 stella cloud status
 ```
 
-Register a machine to an org and adopt a workspace id issued elsewhere:
+Register a machine to an org and use a workspace id issued elsewhere:
 
 ```bash
 stella cloud register --org acme --workspace-id 6f1d8a20-4c3e-4a71-9a55-2d0be1c7f5aa
 ```
 
-Scope an org to one shell session without touching `cloud.json` — the environment variable
-outranks the file:
+Scope an org to one shell session without touching `cloud.json`. The environment variable
+wins over the file:
 
 ```bash
 STELLA_ORG_ID=acme-staging stella cloud status

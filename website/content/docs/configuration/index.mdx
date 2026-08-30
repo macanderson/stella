@@ -1,30 +1,30 @@
 ---
 title: Configuration
-description: How stella is configured — settings.json, credentials, workspace files, and the scope hierarchy.
+description: "How stella is configured: settings.json, credentials, workspace files, and the scope hierarchy."
 ---
 
-stella reads configuration from a few well-defined places. Most users need only an API
-key; teams and power users reach for `settings.json`.
+stella reads its configuration from a few places. Most people only need an API key.
+Teams and power users also reach for `settings.json`.
 
 ## What lives where
 
 <CardGrid size="md">
   <OptionCard name="~/.stella/settings.json">
-    User-scope [settings](/docs/configuration/settings): provider overrides, hooks, tools,
-    the `context` block.
+    Your personal [settings](/docs/configuration/settings): provider overrides, hooks, tools,
+    and the `context` block.
   </OptionCard>
   <OptionCard name="<workspace>/.stella/settings.json">
-    Project-scope settings — highest precedence, and a
+    Settings for this project. These win over every other scope, and this file is also a
     [trust boundary](/docs/configuration/settings#the-project-trust-boundary).
   </OptionCard>
   <OptionCard name="<repo>/stella.toml">
-    The same configuration as [settings.json](/docs/configuration/settings), in a
-    comment-preserving TOML format — see [stella.toml](/docs/configuration/stella-toml).
+    The same settings as [settings.json](/docs/configuration/settings), written in TOML so
+    your comments survive edits. See [stella.toml](/docs/configuration/stella-toml).
     Lives at the repository root, not under `.stella/`.
   </OptionCard>
   <OptionCard name="org-managed settings.json">
-    Organization defaults ([see below](#the-settings-hierarchy)). The only scope that may
-    carry `authority` or `enterprise_telemetry`.
+    Organization-wide defaults ([see below](#the-settings-hierarchy)). The only scope that can
+    set `authority` or `enterprise_telemetry`.
   </OptionCard>
   <OptionCard name="~/.stella/credentials.toml">
     Stored [API keys](/docs/configuration/credentials), written with owner-only permissions.
@@ -36,7 +36,7 @@ key; teams and power users reach for `settings.json`.
     [Custom script tools](/docs/agent-tools/custom-tools).
   </OptionCard>
   <OptionCard name="<workspace>/.stella/domains.toml">
-    Domain taxonomy, inferred by `stella init`.
+    The domain list `stella init` builds for your project.
   </OptionCard>
   <OptionCard name="<workspace>/.stella/memories/*.md">
     Saved [workspace memories](/docs/context-engine).
@@ -45,47 +45,45 @@ key; teams and power users reach for `settings.json`.
     Promoted rules and guard rules. Also read from `.claude/rules/` and `~/.stella/rules/`.
   </OptionCard>
   <OptionCard name="<workspace>/.stella/private/store.db">
-    Local [telemetry &amp; store](/docs/telemetry) — embedded SQLite.
+    Local [telemetry &amp; store](/docs/telemetry), stored in SQLite on your machine.
   </OptionCard>
 </CardGrid>
 
 ## The settings hierarchy
 
-`settings.json` is read across three scopes and merged **field by field**, with the more
-specific scope winning:
+stella reads `settings.json` from three scopes and merges them **field by field**. The more
+specific scope wins:
 
-1. **project** — `<workspace>/.stella/settings.json` (highest preference)
-2. **org-managed** — a system-level managed file (middle)
-3. **user** — `~/.stella/settings.json` (lowest preference)
+1. **project** — `<workspace>/.stella/settings.json` (checked first)
+2. **org-managed** — a file your organization manages (checked second)
+3. **user** — `~/.stella/settings.json` (checked last)
 
-A project entry overrides an org-managed one, which overrides a user one — per field, so a
-project can change just a base URL while inheriting an API key from a higher scope. This is
-the same layering the rest of stella's settings use.
+A project setting overrides an org-managed one. An org-managed setting overrides a user one.
+This happens field by field, so a project can set just a base URL and still inherit an API
+key from a higher scope. The rest of stella's settings follow this same layering.
 
 <SettingsCascadeDiagram />
 
-See **[settings.json](/docs/configuration/settings)** for the full schema — all ten
-top-level sections — the org-managed path, and worked examples. The same configuration is
-also available as **[stella.toml](/docs/configuration/stella-toml)**, a comment-preserving
-format with a `stella migrate config` command to convert an existing `settings.json`.
+See [settings.json](/docs/configuration/settings) for the full schema: all ten top-level
+sections, the org-managed path, and worked examples. The same settings are also available as
+[stella.toml](/docs/configuration/stella-toml), a format that keeps your comments. Run
+`stella migrate config` to convert an existing `settings.json` to TOML.
 
 ## Configuration vs. credentials
 
-Two separate concerns:
+- [settings.json](/docs/configuration/settings) configures *behavior*: which base URL a
+  provider uses, its display name, default model, and lifecycle hooks. It can also hold an
+  API key.
+- [credentials.toml](/docs/configuration/credentials) stores *only* API keys, written with
+  owner-only permissions.
 
-- **[settings.json](/docs/configuration/settings)** configures *behavior* — which base URL
-  a provider uses, its display name, default model, and lifecycle hooks. It may also carry
-  an API key.
-- **[credentials.toml](/docs/configuration/credentials)** stores *only* API keys, written
-  with owner-only permissions.
-
-Both feed the [credential chain](/docs/getting-started/providers#the-credential-chain).
+Both feed the [credential chain](/docs/getting-started/providers#credential-chain).
 
 ## Everything you can configure
 
-stella is configured through three kinds of surface — **files**, **environment variables**,
-and **command-line flags** — with flags winning over env vars winning over files. What
-follows is the complete map; each card links to its detail page.
+You can configure stella three ways: files, environment variables, and command-line flags.
+Flags win over environment variables. Environment variables win over files. Each card below
+links to its own detail page.
 
 ### Providers, models, and keys
 
@@ -102,7 +100,7 @@ follows is the complete map; each card links to its detail page.
   </SpecCard>
   <SpecCard
     title="A provider's API key"
-    href="/docs/getting-started/providers#the-credential-chain"
+    href="/docs/getting-started/providers#credential-chain"
     meta={[
       { label: "Surface", value: "--api-key · provider env var · api_key · credentials.toml" },
       { label: "Example", value: "export ANTHROPIC_API_KEY=…" },
@@ -129,7 +127,7 @@ follows is the complete map; each card links to its detail page.
   </SpecCard>
 </CardGrid>
 
-### Output, budget, and the run itself
+### Output and run options
 
 <CardGrid size="md">
   <SpecCard
@@ -150,7 +148,7 @@ follows is the complete map; each card links to its detail page.
       { label: "Example", value: 'stella --spend-limit 2.00 goal "…"' },
     ]}
   >
-    Enforced, not advisory: work aborts cleanly once spend passes the cap.
+    Enforced, not advisory: work stops cleanly once spend passes the cap.
   </SpecCard>
   <SpecCard
     title="Force the plain REPL (no TUI)"
@@ -160,7 +158,7 @@ follows is the complete map; each card links to its detail page.
       { label: "Example", value: "stella --plain chat" },
     ]}
   >
-    For pipes, dumb terminals, and recordings.
+    For pipes, plain terminals, and recordings.
   </SpecCard>
   <SpecCard
     title="Freeze TUI animation"
@@ -203,28 +201,29 @@ follows is the complete map; each card links to its detail page.
     href="/docs/configuration/settings#the-tools-section"
     meta={[{ label: "Surface", value: 'settings.json tools.mcp: "off"' }]}
   >
-    Groups such as `task`, `scratch`, `mcp`, or `custom` — or `"*"` for everything.
+    Groups such as `task`, `scratch`, `mcp`, or `custom`. Or use `"*"` for everything.
   </SpecCard>
   <SpecCard
     title="Per-tool permission gates"
     href="/docs/agent-tools/permissions"
     meta={[{ label: "Surface", value: "hooks PreToolUse matchers + tools switches" }]}
   >
-    A programmable veto in front of any tool call.
+    A script that can block any tool call before it runs.
   </SpecCard>
   <SpecCard
     title="The adaptive-context lifecycle"
     href="/docs/configuration/settings#the-context-block"
     meta={[{ label: "Surface", value: "settings.json context" }]}
   >
-    Learning, governance, promotion, efficacy, and retention knobs. Disabled by default.
+    Settings for learning, governance, promotion, efficacy, and retention. Off by default.
   </SpecCard>
   <SpecCard
     title="Third-party context sources"
     href="/docs/configuration/settings#external-context-providers"
     meta={[{ label: "Surface", value: "settings.json context_providers" }]}
   >
-    CGP providers over stdio or HTTP, admitted only after conformance and consent.
+    CGP providers reached over stdio or HTTP. Each one must pass a conformance check and get
+    your consent first.
   </SpecCard>
   <SpecCard
     title="MCP servers to connect"
@@ -242,7 +241,7 @@ follows is the complete map; each card links to its detail page.
   </SpecCard>
 </CardGrid>
 
-### Fleet defaults, trust, and diagnostics
+### Fleet, trust, diagnostics
 
 <CardGrid size="md">
   <SpecCard
@@ -276,21 +275,21 @@ follows is the complete map; each card links to its detail page.
 </CardGrid>
 
 <Callout type="warn">
-  `STELLA_DEBUG` and `STELLA_MEDIA_LIVE` were previously spelled `OXAGEN_DEBUG` and
-  `OXAGEN_MEDIA_LIVE`. The old names still work as deprecated aliases for one release;
-  the `STELLA_`-prefixed spelling wins when both are set.
+  `OXAGEN_DEBUG` and `OXAGEN_MEDIA_LIVE` also work as names for `STELLA_DEBUG` and
+  `STELLA_MEDIA_LIVE`. If you set both the old and new name, the `STELLA_` name wins.
 </Callout>
 
 <Callout type="info">
-  stella **auto-detects** the provider from whichever API keys are present in your
-  environment — the minimum viable configuration is a single `*_API_KEY` env var and nothing
-  else. Everything above is for when you want to override that default behavior.
+  stella detects your provider automatically from whichever API key is present in your
+  environment. The smallest setup you need is one `*_API_KEY` environment variable.
+  Everything above is for when you want to change that default.
 </Callout>
 
 ### Common tasks
 
-**Point a Z.ai coding-plan subscription at its endpoint** (user scope — a subscription is
-personal, and project scope would need [`STELLA_TRUST_PROJECT=1`](/docs/configuration/settings#the-project-trust-boundary)):
+**Point a Z.ai coding-plan subscription at its endpoint.** Set this in user scope, since a
+subscription is personal. Project scope needs
+[`STELLA_TRUST_PROJECT=1`](/docs/configuration/settings#the-project-trust-boundary):
 
 ```json title="~/.stella/settings.json"
 { "providers": { "zai": { "base_url": "https://api.z.ai/api/coding/paas/v4" } } }
@@ -305,27 +304,27 @@ STELLA_MODEL=anthropic/claude-fable-5 STELLA_SPEND_LIMIT=5 \
   stella run --output-format json "port the utils module to the new API"
 ```
 
-**Ship org-wide defaults every project inherits** (a gateway URL + team key), leaving
-projects free to override per field:
+**Ship org-wide defaults every project inherits**, such as a gateway URL and team key.
+Projects can still override any field:
 
 ```bash
 export STELLA_MANAGED_SETTINGS=/etc/stella/settings.json
 ```
 
-**Run against a local OpenAI-compatible server** (Ollama, vLLM, LM Studio):
+**Run against a local OpenAI-compatible server**, such as Ollama, vLLM, or LM Studio:
 
 ```bash
 stella --model local/llama3.1 --base-url http://localhost:11434/v1 run "…"
 ```
 
-**Gate a tool call through a guard script** (`settings.json`):
+**Gate a tool call through a guard script**, in `settings.json`:
 
 ```json title="~/.stella/settings.json"
 { "hooks": { "PreToolUse": [ { "matcher": "mcp__github__push_files",
   "hooks": [ { "command": "./scripts/guard.sh", "timeoutMs": 5000 } ] } ] } }
 ```
 
-## Inspecting the resolved configuration
+## Check your configuration
 
 ```bash
 stella config    # the fully resolved provider, model, key preview, and base URL

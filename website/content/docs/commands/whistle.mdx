@@ -1,9 +1,9 @@
 ---
 title: stella whistle
-description: Broadcast steering guidance to every live non-interactive session on this machine, or a chosen few.
+description: Send steering instructions to every live non-interactive session on this machine, or to a few you pick.
 ---
 
-A message reaches a running [`run`](/docs/commands/run) or [`goal`](/docs/commands/goal) session — foreground or daemon-supervised alike — without switching to its window: "stop running the full workspace build, let CI handle the gate" lands in every one of them at once.
+A message reaches a running [`run`](/docs/commands/run) or [`goal`](/docs/commands/goal) session, whether it's running in the foreground or supervised by a daemon, without you switching to its window. For example, "stop running the full workspace build, let CI handle the gate" lands in every matching session at once.
 
 ## Synopsis
 
@@ -11,17 +11,18 @@ A message reaches a running [`run`](/docs/commands/run) or [`goal`](/docs/comman
 stella whistle "<message>"
 stella whistle "<message>" --session <id>
 stella whistle "<message>" --session <id> --session <id>
+stella whistle "<message>" --deep
 ```
 
 ## How delivery works
 
-Each targeted session binds a small Unix domain socket beside its existing session sidecar when it starts, and already carries `stella-core`'s `TurnSteering` seam — the same one [`stella chat`](/docs/commands/chat)'s `>` steer and `stella-serve`'s `POST /v1/turns/{id}/steer` drive, one in-process, one over HTTP. `stella whistle` is a second process reaching that seam over the socket: it connects, sends the message, and waits for an acknowledgment.
+Each session you can reach opens a small Unix domain socket next to its normal session files when it starts. It listens on the same steering channel that [`stella chat`](/docs/commands/chat)'s `>` command and `stella-serve`'s `POST /v1/turns/{id}/steer` also use, one from inside the process and one over HTTP. `stella whistle` is a separate process that connects to that same channel over the socket, sends your message, and waits for confirmation it arrived.
 
-Delivery lands at the target's next safe step boundary — strictly between model calls, never mid-tool. The turn is never paused; it absorbs the guidance and keeps going, wrapped as `[whistle — steering from another session] <message>` so the model reads it as a priority directive rather than an ordinary trailing remark.
+Your message lands at the target's next safe point, always between model calls, never in the middle of using a tool. The current turn is never paused; it takes in your message and keeps going. The model sees it wrapped as `[whistle — steering from another session] <message>`, so it reads it as an instruction to prioritize rather than just another passing comment.
 
 ## Targeting
 
-Omit `--session` and the broadcast reaches every session [`stella resume --list`](/docs/commands/resume) shows as live. Pass `--session <id>` (repeatable) to narrow it to specific sessions instead — an id that is not currently live, or never existed, is reported unreachable rather than silently dropped.
+Leave off `--session` and your message reaches every session that [`stella resume --list`](/docs/commands/resume) shows as currently live. Pass `--session <id>` (you can repeat this flag) to send it to specific sessions only. If an id isn't currently live, or never existed, stella reports it as unreachable instead of just skipping it silently.
 
 ```text
 $ stella whistle "stop running the full workspace build, let CI handle the gate"
@@ -29,18 +30,40 @@ delivered    ses-1785956826121-25167  stella: migrate the config loader to serde
 unreachable  ses-1785956700004        stella: fix the flaky test (no listener — the session isn't currently reachable)
 ```
 
-`stella whistle` exits non-zero when any targeted session could not be reached, after printing every session's outcome.
+`stella whistle` exits with a non-zero code if any target session could not be reached, after it prints the outcome for every session. Every target is contacted at the same time, so a session whose socket is stale slows down only its own line.
+
+## Reaching a session's workers
+
+A whistle normally lands on a session's lead — the agent you talk to. An interactive session can also be driving worker lanes (a task worker, a sidecar prompt), and those never hear a plain whistle. Add `--deep` and the same message lands at each live worker lane's next safe point as well:
+
+```bash
+stella whistle "stop touching the release branch" --deep
+```
+
+A session with no workers treats `--deep` exactly like a plain whistle.
+
+## Broadcasting from inside a session
+
+You do not need a second terminal. In [`stella chat`](/docs/commands/chat), type the message with a broadcast address in front of it:
+
+```text
+>>> >@all stop touching the release branch
+>>> >@ses-1785956826121-25167 run the tests first
+>>> >@all --deep stop touching the release branch
+```
+
+`>@all` reaches every other live session on this machine, `>@<id>` one of them, and `--deep` right after the address reaches their worker lanes too. The outcome for every session appears as a note in your transcript, in the same rows the command prints. The message goes out at once — it never waits behind your own agent's turn — and your own session is never a target of its own broadcast.
 
 ## What is reachable today
 
-Foreground [`stella run`](/docs/commands/run), any wrapper-plugin-driven turn, and both of [`stella chat`](/docs/commands/chat)'s interactive modes — the default one and `--plain`'s — are all reachable. So are daemon-supervised runs of the same, since supervision launches the identical code path.
+Foreground [`stella run`](/docs/commands/run), any turn driven by a wrapper plugin, and both of [`stella chat`](/docs/commands/chat)'s interactive modes (the default one and `--plain`) can all receive a whistle. So can daemon-supervised runs of the same, since supervision uses the exact same code path.
 
-Interactive mode mints a steering tap per turn and has none between turns, so its socket is bound to a session-scoped relay instead. A whistle at a session sitting idle is delivered, held, and put in front of the model the moment the next turn opens; one during a running turn lands at that turn's next step boundary like any other.
+Interactive mode opens a fresh steering channel for each turn, so between turns it listens through a session-level channel instead. If you whistle an idle session, the message waits and gets shown to the model as soon as the next turn starts. If you whistle a session mid-turn, it arrives at that turn's next safe point, just like any other message.
 
 Not reachable yet:
 
-- **`stella-serve`-hosted turns** are a separate binary. It has a steer route of its own, but a served session registers in no registry `stella whistle` can enumerate, and neither its address nor its token reaches a file on disk — so this is a discovery problem before it is a transport one.
+- **Sessions hosted by `stella-serve`** run in a separate program. It has its own steering route, but a session it hosts is not listed in any registry `stella whistle` can check, and neither its address nor its access token is saved to a file on disk. So right now, the problem is finding these sessions, not sending to them.
 
 ## Platform support
 
-Unix only — `tokio::net::UnixListener` has no Windows counterpart, and stella ships no Windows binary yet. On a non-Unix build every session reports unreachable rather than the command silently doing nothing.
+This command only works on Unix systems, because the underlying tool (`tokio::net::UnixListener`) has no Windows version, and stella does not ship a Windows binary yet. On any non-Unix build, every session is reported as unreachable instead of the command doing nothing silently.

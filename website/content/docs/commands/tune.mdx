@@ -1,11 +1,11 @@
 ---
 title: stella tune
-description: Eval-driven self-tuning of stella's own policy — A/B one knob over two loop-bench runs, promote the winner only when it confidently wins, or roll it back.
+description: Test one setting against another over two loop-bench runs, then apply the winner only if it clearly wins, or roll it back.
 ---
 
-`stella tune` is how stella's own policy gets tuned by evidence instead of taste. It A/B tests one knob over two [loop-bench](https://github.com/macanderson/stella/tree/main/bench/loop-bench) runs, scores each arm from the per-trial rewards, and promotes the candidate **only** when it confidently beats the baseline — with a reversible rollback record either way.
+`stella tune` tunes stella's own settings using evidence instead of a gut feeling. It runs an A/B test on one setting over two [loop-bench](https://github.com/macanderson/stella/tree/main/bench/loop-bench) runs, scores each side using the reward from every trial, and applies the winning setting **only** when it clearly beats the current one. Either way, it saves a record so you can undo the change.
 
-The first knob is the worker's reasoning effort. Offline: reads two result files and the local ledger, writes settings only on `--promote`. No provider, no API key.
+The first setting you can tune this way is the worker's reasoning effort. This command works offline: it reads two result files and your local record of past tests, and only writes new settings when you pass `--promote`. It needs no model provider and no API key.
 
 ## Synopsis
 
@@ -19,56 +19,58 @@ stella tune status
 
 ## What it does
 
-Most "tuning" of an agent is somebody changing a default because a run felt better. That is unfalsifiable. The flow here is boring: run a fixed held-out task list twice, once per arm, and let the numbers decide.
+Most "tuning" of an agent is someone changing a default because one run felt better. That is not something you can prove one way or the other. This command works differently: run the same set of tasks twice, once per setting, and let the numbers decide.
 
 ```bash
-# 1. Run the held-out task list at each effort, capturing --json
+# 1. Run the same task list at each effort level, saving --json output
 loop-bench --json > base.json      # worker effort: medium
 loop-bench --json > cand.json      # worker effort: high
 
-# 2. Score the arms — reports only, changes nothing
+# 2. Score the two runs — this only reports, it changes nothing
 stella tune effort --baseline base.json --candidate cand.json
 
-# 3. Apply the winner, with a rollback record
+# 3. Apply the winner, with a record you can undo later
 stella tune effort --baseline base.json --candidate cand.json --promote
 ```
 
 ### `stella tune effort`
 
-A/B the worker reasoning-effort knob over two loop-bench `--json` result files and select the winner.
+Compares the worker reasoning-effort setting across two loop-bench `--json` result files and picks the winner.
 
 <CardGrid size="md">
   <OptionCard name="--baseline <file>" required>
-    loop-bench `--json` output for the baseline arm.
+    loop-bench `--json` output for the current setting.
   </OptionCard>
   <OptionCard name="--candidate <file>" required>
-    loop-bench `--json` output for the candidate arm.
+    loop-bench `--json` output for the setting you're testing.
   </OptionCard>
   <OptionCard name="--baseline-effort <effort>" defaultValue="medium">
-    The worker effort the baseline arm ran at.
+    The worker effort level used for the baseline run.
   </OptionCard>
   <OptionCard name="--candidate-effort <effort>" defaultValue="high">
-    The worker effort the candidate arm ran at.
+    The worker effort level used for the candidate run.
   </OptionCard>
   <OptionCard name="--promote" defaultValue="off">
-    Apply the winner to settings. Omitted, the command reports and records the A/B receipt but
-    changes nothing.
+    Applies the winner to your settings. Leave this off and the command just reports the
+    result and saves a record of the comparison, without changing anything.
   </OptionCard>
   <OptionCard name="--scope <project|user>" defaultValue="project">
-    Which settings scope to write on `--promote`.
+    Which settings scope to write to when you use `--promote`.
   </OptionCard>
   <OptionCard name="--min-samples <n>" defaultValue="5">
-    Minimum trials required in **every** arm before any promotion is allowed.
+    The minimum number of trials required in **each** run before stella will let you
+    promote a winner.
   </OptionCard>
 </CardGrid>
 
 <Callout type="info">
-`--min-samples` is a floor on promotion, not on reporting. A two-trial A/B still prints its comparison — it just cannot move your settings on the strength of it.
+`--min-samples` only limits promotion, not reporting. A test with just two trials on each
+side still prints its comparison. It just won't be allowed to change your settings.
 </Callout>
 
 ### `stella tune rollback`
 
-Revert the last effort promotion, restoring the prior worker effort. Every promotion writes the record that makes this possible, so a tuning decision is never one-way.
+Undoes the last effort change, restoring the worker effort setting you had before. Every promotion saves the record needed to undo it, so a tuning decision is never permanent.
 
 ```bash
 stella tune rollback
@@ -76,32 +78,32 @@ stella tune rollback
 
 ### `stella tune status`
 
-Show the self-tuning ledger — the experiments that have run, and the promotion currently in effect.
+Shows your tuning history: every test that has run, and which setting is active right now.
 
 ```bash
 stella tune status
 ```
 
-## Why promotion is conservative
+## Why promotion is cautious
 
-A/B testing an agent is noisy: the same task list at the same settings does not return the same reward twice. Promoting on a bare mean would ratchet the configuration around on noise, and every such move is invisible to you afterward. So promotion requires the candidate to *confidently* win, `--min-samples` sets a hard floor under both arms, and the write is recorded with a rollback — the three things that make an automatic policy change safe to leave switched on.
+A/B testing an agent is noisy. The same tasks with the same settings will not return the exact same reward score twice. If stella promoted a setting based on a simple average, your settings would drift around based on noise, and you would never see it happen. So a promotion only happens when the candidate **clearly** wins, `--min-samples` sets a hard minimum number of trials on both sides, and every change is saved with a way to undo it. Those three rules are what make it safe to leave this feature turned on.
 
 <Callout type="warn">
-`--promote` writes to your `settings.json` at the chosen scope, and it reports the prior value so you can see what it displaced. Run without it first and read the comparison; the receipt is recorded either way, so nothing is lost by looking.
+`--promote` writes to your `settings.json` at the scope you chose, and it shows you the old value it replaced. Run the command without `--promote` first and read the comparison. Either way, the record is saved, so looking first costs you nothing.
 </Callout>
 
-One promotion side effect is worth knowing: if `effort_auto` was on, promoting **turns it off**, because an automatic effort selector would otherwise override the pinned value the A/B just chose. `stella tune rollback` restores both the prior effort *and* `effort_auto`, so the pair is reverted together rather than leaving you pinned with the selector still disabled.
+One side effect is worth knowing about: if `effort_auto` was turned on, promoting a result **turns it off**. Otherwise the automatic effort selector would just override the value the A/B test just chose. `stella tune rollback` restores both the old effort level *and* the old `effort_auto` setting together, so you never end up stuck with the old value but the selector still disabled.
 
 ## Related
 
 <CardGrid size="sm">
   <SpecCard title="settings.json" href="/docs/configuration/settings">
-    Every key `--promote` can write, and how project and user scope resolve.
+    Every key `--promote` can write, and how project and user scope are resolved.
   </SpecCard>
   <SpecCard title="Agent engine config" href="/docs/configuration/agent-engine-config">
-    The reasoning-effort knob and the rest of the engine surface.
+    The reasoning-effort setting and the rest of the engine's options.
   </SpecCard>
   <SpecCard title="Determinism over intelligence" href="/docs/principles/determinism">
-    Why a deterministic oracle is preferred to a model's opinion wherever one exists.
+    Why stella prefers a clear, repeatable check over a model's own opinion, wherever one is available.
   </SpecCard>
 </CardGrid>

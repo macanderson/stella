@@ -635,6 +635,9 @@ pub struct DeckUi {
     pub pending_dispatch: Option<PendingDispatch>,
     /// What a plain mid-turn prompt does (`ui.mid_turn_prompt`); see [`dispatch`].
     pub mid_turn_prompt: MidTurnPrompt,
+    /// The Shift-Tab-cycled composer intent; `None` follows the session.
+    /// See [`composer_mode::effective`].
+    pub composer_mode: Option<composer_mode::ComposerMode>,
     pub splash: SplashState,
     /// Startup system notifications, shown as a transient dialog rather than
     /// as transcript rows (see [`crate::notice`]).
@@ -915,6 +918,7 @@ impl Default for DeckUi {
             voice: crate::voice::VoiceUi::default(),
             pending_dispatch: None,
             mid_turn_prompt: MidTurnPrompt::default(),
+            composer_mode: None,
             splash: SplashState::new(),
             notice: NoticeState::new(),
             index_readiness: IndexReadiness::unknown(),
@@ -1653,54 +1657,7 @@ fn push_single_line(buf: &mut String, text: &str) {
 }
 
 pub mod cards;
-/// Map one key to a [`DeckAction`]. Pure over `(key, model)`, mutating `ui`.
-///
-/// ## Esc precedence
-///
-/// Esc already carries several meanings; the FIRST matching context wins,
-/// top to bottom (each rule is claimed at the corresponding point in this
-/// function's flow). These are the *deck-global* contexts only — every modal
-/// surface claims Esc ahead of rules 3 onward, at the gate that hands it the
-/// keyboard: the INSTALLED AGENTS sub-modes, the ISSUES sub-modes, the Graph
-/// file picker, the ENGINE panel, the SESSIONS / INBOX / CONTEXT / INSPECT
-/// overlays, the floating cards (`/plan` · `/models` · `/budget` — Esc closes
-/// the topmost card before anything else it currently does; see
-/// [`cards::handle_card_key`]), and the SKILLS
-/// preview/prompt overlays. (The SKILLS *panes* are the exception: they
-/// claim typing but not Esc, so it reaches the rules below.)
-///
-/// 1. splash up — any key, Esc included, dismisses it
-/// 2. help overlay open — Esc/`q`/`?` close it; other keys scroll it
-/// 3. queue editor open — Esc closes the editor
-/// 4. slash popup active — Esc dismisses the popup (clears the composer)
-/// 5. the parked approval / question cards — Esc answers them (deny /
-///    cancel), claimed first of all by `parked`
-/// 6. Files tab with the diff open — Esc closes the diff
-/// 7. Session tab with a message highlighted — Esc clears the highlight
-/// 8. Session tab with the ctrl+o expand-ALL overlay on — Esc collapses it
-///    (each Esc peels one layer: highlight first, then the overlay, so
-///    every way into an expanded view has a graceful way back out)
-/// 8a. an opened sub-agent lane, empty composer — Esc returns to the agent
-///     that dispatched it ([`focus::back_to_dispatcher`]). Leaving a lane is
-///     the most common thing Esc means there, and it used to be rule 10:
-///     one press at a worker was an immediate hard cancel. With a draft in
-///     the composer Esc still steers the lane (rule 10's steer form).
-/// 9. armed by a turn-stopping Esc within [`ESC_DOUBLE_WINDOW`], no other
-///    key in between — Esc escalates to [`WorkspaceInput::StopAndHold`]
-///    (cancel, requeue the interrupted prompt at the front, hold dispatch
-///    for the user's next submission)
-/// 10. focused agent [`AgentStatus::Running`] — Esc stops the in-flight turn
-///     ([`AgentControl::Stop`]; the driver truncates the partial turn and
-///     auto-dispatches the next queued prompt)
-/// 11. otherwise Esc is ignored
-///
-/// Rules 6–8a are the peel half; `⌫` from an empty composer runs exactly
-/// those and never reaches 9–10 ([`focus::back`]).
-///
-/// The composer's content never gates rules 9–10: the cursor always lives in
-/// the global composer, so a stop must leave a typed draft untouched. A
-/// pending ask-user gate never reaches them either — it folds the agent to
-/// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
+pub mod composer_mode;
 mod create;
 pub mod dispatch;
 /// The focus tree — `←`/`→` siblings, `⏎` open, `⌫` back.
@@ -1733,6 +1690,54 @@ pub(crate) use overlays::{
 };
 use queue_editor::handle_queue_key;
 
+/// Map one key to a [`DeckAction`]. Pure over `(key, model)`, mutating `ui`.
+///
+/// ## Esc precedence
+///
+/// Esc already carries several meanings; the FIRST matching context wins,
+/// top to bottom (each rule is claimed at the corresponding point in this
+/// function's flow). These are the *deck-global* contexts only — every modal
+/// surface claims Esc ahead of rules 3 onward, at the gate that hands it the
+/// keyboard: the INSTALLED AGENTS sub-modes, the ISSUES sub-modes, the Graph
+/// file picker, the ENGINE panel, the SESSIONS / INBOX / CONTEXT / INSPECT
+/// overlays, the floating cards (`/plan` · `/models` · `/budget` — Esc closes
+/// the topmost card before anything else it currently does; see
+/// [`cards::handle_card_key`]), and the SKILLS
+/// preview/prompt overlays. (The SKILLS *panes* are the exception: they
+/// claim typing but not Esc, so it reaches the rules below.)
+///
+/// 1. splash up — any key, Esc included, dismisses it
+/// 2. help overlay open — Esc/`q`/`?` close it; other keys scroll it
+/// 3. queue editor open — Esc closes the editor
+/// 4. slash popup active — Esc dismisses the popup (clears the composer)
+/// 5. the parked approval / question cards — Esc answers them (deny /
+///    cancel), claimed first of all by `parked`
+/// 6. Files tab with the diff open — Esc closes the diff
+/// 7. Session tab with a message highlighted — Esc clears the highlight
+/// 8. Session tab with the ctrl+o expand-ALL overlay on — Esc collapses it
+///    (each Esc peels one layer: highlight first, then the overlay, so
+///    every way into an expanded view has a graceful way back out)
+///    - 8a. an opened sub-agent lane, empty composer — Esc returns to the
+///      agent that dispatched it ([`focus::back_to_dispatcher`]). Leaving a
+///      lane is the most common thing Esc means there, and it used to be
+///      rule 10: one press at a worker was an immediate hard cancel. With a
+///      draft in the composer Esc still steers the lane (rule 10's steer form).
+/// 9. armed by a turn-stopping Esc within [`ESC_DOUBLE_WINDOW`], no other
+///    key in between — Esc escalates to [`WorkspaceInput::StopAndHold`]
+///    (cancel, requeue the interrupted prompt at the front, hold dispatch
+///    for the user's next submission)
+/// 10. focused agent [`AgentStatus::Running`] — Esc stops the in-flight turn
+///     ([`AgentControl::Stop`]; the driver truncates the partial turn and
+///     auto-dispatches the next queued prompt)
+/// 11. otherwise Esc is ignored
+///
+/// Rules 6–8a are the peel half; `⌫` from an empty composer runs exactly
+/// those and never reaches 9–10 ([`focus::back`]).
+///
+/// The composer's content never gates rules 9–10: the cursor always lives in
+/// the global composer, so a stop must leave a typed draft untouched. A
+/// pending ask-user gate never reaches them either — it folds the agent to
+/// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     // Accessible mode announces where a key MOVED the session — a tab change,
     // an overlay, a lane focus. Wrapped here rather than called from each of
@@ -2050,7 +2055,13 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     if let Some(action) = local::model_arg_key(key, model, ui) {
         return action;
     }
-    let slash = slash_matches(model, ui);
+    // Shift-Tab with a draft cycles the composer's intent; empty keeps tabs.
+    if let Some(action) = composer_mode::backtab(key, ui, model, composer_empty) {
+        return action;
+    }
+    // The slash commands matching the composer — empty when the popup is idle.
+    let state = crate::deck_render::palette_state(model, ui);
+    let slash = slash_popup_matches(&ui.composer, &ui.slash_commands, &state);
     if slash.is_empty() {
         match key.code {
             KeyCode::Tab => {
@@ -2245,13 +2256,6 @@ fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckA
         // The card is up and now holds the text; the keystroke is spent.
         None => DeckAction::Handled,
     }
-}
-
-/// The names of the slash commands matching the composer, or empty when the
-/// popup is inactive.
-fn slash_matches(model: &WorkspaceModel, ui: &DeckUi) -> Vec<String> {
-    let state = crate::deck_render::palette_state(model, ui);
-    slash_popup_matches(&ui.composer, &ui.slash_commands, &state)
 }
 
 /// Slash-popup navigation: ↑/↓ choose, Tab completes into the buffer, Enter

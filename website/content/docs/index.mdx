@@ -3,10 +3,11 @@ title: Introduction
 description: stella is a fast, bring-your-own-key, model-agnostic terminal coding agent. Point it at any provider, give it a goal, and let a verifier decide when done.
 ---
 
-stella is a model-agnostic coding agent that runs in your terminal. It is
-bring-your-own-key: Community/default use has no account and no sign-up, runs on provider
-credentials you already have, records locally, and sends telemetry nowhere unless you
-[configure it to](/docs/telemetry).
+stella is a coding agent that runs in your terminal and works with any model
+provider. It's bring-your-own-key: there's no account or sign-up for
+Community use, it runs on credentials you already have, it records
+everything locally, and it sends telemetry nowhere unless you
+[turn that on yourself](/docs/telemetry).
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here
@@ -17,17 +18,18 @@ stella run "add a --json flag to the export command and update the tests"
 
 | | |
 | --- | --- |
-| **BYOK, no lock-in** | Auto-detects the provider from whichever keys you have set. Anthropic, OpenAI, Gemini, Vertex, Bedrock, xAI, DeepSeek, Z.ai, OpenRouter, or any OpenAI-compatible local server. |
-| **Verified outcomes** | [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) does not stop on a hunch — a separate verifier model verifies the definition of done from evidence before the loop ends. |
-| **Tools behind a permission model** | A lean built-in core — the shell, file CRUD, code search, sub-agents, the task board, scratch state, the environment probe — plus MCP servers and developer-defined script tools, each gated per tool with optional [lifecycle hooks](/docs/agent-tools/hooks). |
-| **Config that scales to a team** | Override any provider's base URL, key, or model in [`settings.json`](/docs/configuration/settings), merged across a user → org-managed → project hierarchy. |
+| **BYOK, no lock-in** | Finds your provider automatically from whatever keys you have set: Anthropic, OpenAI, Gemini, Vertex, Bedrock, xAI, DeepSeek, Z.ai, OpenRouter, or any OpenAI-compatible local server. |
+| **Verified outcomes** | [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) doesn't stop on a guess. A separate verifier model checks the evidence against the definition of done before the loop ends. |
+| **Tools behind a permission model** | A small built-in toolset — the shell, file editing, code search, sub-agents, the task board, scratch state, and an environment check — plus MCP servers and your own script tools, each one gated with optional [lifecycle hooks](/docs/agent-tools/hooks). |
+| **Config that scales to a team** | Set a different base URL, key, or model per provider in [`settings.json`](/docs/configuration/settings), merged across a user, org, and project hierarchy. |
 | **Local-first telemetry** | Usage, cost, and per-step metering land in `.stella/private/store.db` on your disk. |
 
 ## Bring your own provider
 
-stella speaks each provider's native wire dialect rather than funnelling everything
-through one OpenAI-shaped adapter, so provider features — Anthropic's thinking blocks,
-Gemini's thinking levels, Bedrock's Converse shape — are native rather than emulated.
+stella speaks each provider's own protocol instead of forcing every call
+through one OpenAI-shaped adapter. That means provider features like
+Anthropic's thinking blocks, Gemini's thinking levels, and Bedrock's
+Converse format work natively, not as an imitation.
 
 <ProviderGrid />
 
@@ -35,56 +37,60 @@ Gemini's thinking levels, Bedrock's Converse shape — are native rather than em
 
 <HeroFlowDiagram />
 
-stella sends your prompt to the model you selected, lets the model call tools to read and
-change your workspace, feeds the results back, and repeats until the task is done. Inside
-the box: the tool registry, MCP servers from `.stella/mcp.toml`, and the memory and
-code-graph context engine. In [goal mode](/docs/agent-modes#outcome-driven-goal-mode) a
-second model judges the result from evidence, so the loop ends on a verified outcome
-rather than the worker's own say-so.
+stella sends your prompt to the model you picked. The model calls tools to
+read and change your workspace, stella feeds the results back, and this
+repeats until the task is done. Behind the scenes: the tool registry, MCP
+servers from `.stella/mcp.toml`, and the memory and code-graph context
+engine. In [goal mode](/docs/agent-modes#outcome-driven-goal-mode), a second
+model checks the evidence, so the loop ends on a verified result instead of
+the worker's own claim that it's done.
 
-## Start with the thing you came here to do
+## Common tasks
 
-Each of these is one real task carried to a finished, verified result. They link
-down into the reference rather than replacing it, so you read a whole flag
-surface only when you need it.
+Each of these walks through one real task to a finished, verified result.
+They link down to the full reference instead of repeating it, so you only
+read the complete flag list when you actually need it.
 
 <CardGrid size="md">
   <SpecCard title="Fix a failing CI run" href="/docs/guides/fix-failing-ci">
-    Watch a red branch, fix root causes, push, re-check — and stop only on a green run
-    somebody else can see.
+    Watch a red branch, fix the root cause, push, and check again. Stop only
+    when the run is green for everyone, not just you.
   </SpecCard>
   <SpecCard title="Change an unfamiliar codebase" href="/docs/guides/unfamiliar-codebase">
-    Find the blast radius with the code graph before committing to an approach, then
-    ship the change verified.
+    Use the code graph to see what a change would affect before you commit
+    to an approach. Then ship it verified.
   </SpecCard>
   <SpecCard title="Find out what a run cost" href="/docs/guides/what-a-run-cost">
-    From the dollar figure down to the exact bytes one model call was sent — all of it
-    local.
+    From the total dollar cost down to the exact bytes sent in one model
+    call, all stored on your own machine.
   </SpecCard>
   <SpecCard title="Work within a spend limit" href="/docs/guides/spend-limit">
-    A hard ceiling, where the abort lands, and what compaction does when the transcript
-    outgrows the window.
+    Set a hard spending ceiling, see where a run stops if it hits that
+    ceiling, and understand what happens when the transcript outgrows the
+    model's context window.
   </SpecCard>
 </CardGrid>
 
-Never run it before? **[Get started](/docs/getting-started)** is thirty seconds —
-install, one key, `stella init`, first verified change. Something not working?
+New to stella? **[Get started](/docs/getting-started)** takes about thirty
+seconds: install, set one key, run `stella init`, and make your first
+verified change. Something not working?
 **[Troubleshooting](/docs/guides/troubleshooting)** is organized by symptom.
 
 ## Where to go
 
 | Section | Read it for |
 | --- | --- |
-| **[Start](/docs/getting-started)** | Install, configure a provider key, initialize a repo, make a first verified change. |
-| **[Do](/docs/guides)** | Task-shaped walkthroughs: red CI, an unfamiliar repo, cost forensics, budgets, [fleets](/docs/agent-fleets), [headless scripting](/docs/scripting), and [the engine in your app](/docs/agent-engine-in-your-app). |
-| **Understand** | How [plugins](/docs/plugins) prove work, the [engine's one loop](/docs/agent-engine-paths), how the [context engine](/docs/context-engine) makes recall cheap, the [modes](/docs/agent-modes) you drive it with, and [where telemetry goes](/docs/telemetry). |
+| **[Start](/docs/getting-started)** | Installing stella, setting up a provider key, starting a project, and making your first verified change. |
+| **[Do](/docs/guides)** | Step-by-step guides for real tasks: fixing red CI, working in an unfamiliar repo, tracking costs, setting budgets, [fleets](/docs/agent-fleets), [headless scripting](/docs/scripting), and [embedding the engine in your app](/docs/agent-engine-in-your-app). |
+| **Understand** | How [plugins](/docs/plugins) prove work is done, how the [engine's loop](/docs/agent-engine-paths) works, how the [context engine](/docs/context-engine) keeps recall cheap, the [modes](/docs/agent-modes) you can run stella in, and [where telemetry goes](/docs/telemetry). |
 | **Configure** | [`settings.json`](/docs/configuration), [providers](/docs/api-providers), [tools and permissions](/docs/agent-tools), and ready-made [recipes](/docs/examples). |
 | **Reference** | Every [command and flag](/docs/commands), the [event bus](/docs/extensions), and [release notes](/docs/release-notes). |
 | **Project** | The [showcase](/docs/showcase), and [supporting stella](/docs/donate). |
 
 <Callout type="info">
-  stella never proxies model traffic through a hosted service — your keys call your
-  provider directly. Community/default telemetry stays local; only an explicitly enrolled
-  Oxagen Enterprise seat can send the documented minimal operational envelope to its exact
-  allowlisted HTTPS sink. See [Telemetry](/docs/telemetry).
+  stella never routes model traffic through a hosted service of its own.
+  Your keys call your provider directly. Community telemetry stays on your
+  machine. Only an Oxagen Enterprise seat you've explicitly enrolled can
+  send a small, content-free operational summary to one approved address.
+  See [Telemetry](/docs/telemetry).
 </Callout>

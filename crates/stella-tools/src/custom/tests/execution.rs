@@ -279,6 +279,7 @@ async fn missing_script_names_the_path_tried() {
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        foundry_runtime: Default::default(),
         contributed_by: None,
     };
     let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
@@ -363,4 +364,171 @@ async fn non_object_input_does_not_panic() {
         ToolOutput::Ok { content, .. } => assert!(content.contains("\"a\""), "{content}"),
         ToolOutput::Error { message, .. } => panic!("expected ok: {message}"),
     }
+}
+
+// ── The autonomous-foundry launch controls ─────────────────────────────────
+
+/// A foundry-governed tool for the launch-control tests: real provenance, a
+/// real adoption row in the workspace's store, telemetry and breaker live.
+/// `approved: None` on purpose — these tests exercise the launch controls,
+/// not the tamper recheck, which has its own witnesses in `foundry_gate`.
+fn governed_tool(root: &Path, file: &str, body: &str) -> CustomTool {
+    let mut tool = script_tool(root, file, body);
+    tool.name = "governed_t".into();
+    tool.foundry = Some(crate::foundry_gate::FoundryProvenance {
+        authored_by: crate::foundry_gate::AUTHORED_BY.into(),
+        signature: "x <path>".into(),
+        occurrences: 3,
+        witness_input: serde_json::json!({ "p1": "a" }),
+        gap_id: "gap-1".into(),
+        approved: None,
+    });
+    tool
+}
+
+fn adopt_enabled(root: &Path, name: &str) -> stella_store::Store {
+    let store = stella_store::Store::open(root).expect("store");
+    store
+        .adopt_foundry_tool(&stella_store::AdoptedTool {
+            name: name.into(),
+            signature: "x <path>".into(),
+            manifest_digest: "m".into(),
+            script_digest: "s".into(),
+            witness: "proven".into(),
+            witness_input: "{}".into(),
+            witness_expect: "y".into(),
+            enabled: false,
+            adopted_at: String::new(),
+            disabled_reason: String::new(),
+        })
+        .expect("adopt");
+    store.set_foundry_tool_enabled(name, true).expect("enable");
+    store
+}
+
+/// Witness (breaker): the configured consecutive-failure threshold
+/// trips the breaker, the trip is recorded in the ledger with its reason, and
+/// the NEXT launch is refused before any process spawns — all through the
+/// live `run_custom` path.
+#[tokio::test]
+async fn the_breaker_trips_after_configured_failures_and_blocks_the_next_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut tool = governed_tool(dir.path(), "fail.sh", "#!/bin/sh\necho no >&2\nexit 3\n");
+    tool.foundry_runtime.breaker = Some(BreakerPolicy {
+        consecutive_failures: 2,
+        window: 10,
+        failure_rate: 0.5,
+    });
+    let store = adopt_enabled(dir.path(), "governed_t");
+
+    // First failure: recorded, breaker not yet tripped.
+    let first = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+    let ToolOutput::Error { message, .. } = &first else {
+        panic!("the script exits 3");
+    };
+    assert!(
+        !message.contains("circuit breaker"),
+        "one failure is below the threshold: {message}"
+    );
+
+    // Second consecutive failure: the breaker trips and says so.
+    let second = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+    let ToolOutput::Error { message, .. } = &second else {
+        panic!("the script exits 3");
+    };
+    assert!(
+        message.contains("circuit breaker"),
+        "the trip must be user-visible: {message}"
+    );
+    let row = store
+        .adopted_foundry_tool("governed_t")
+        .expect("read")
+        .expect("row");
+    assert!(!row.enabled, "the trip disables the tool");
+    assert!(
+        row.disabled_reason.contains("2 consecutive failures"),
+        "the reason is recorded: {}",
+        row.disabled_reason
+    );
+
+    // Third launch: refused at the seam, script never runs.
+    let third = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+    let ToolOutput::Error { message, .. } = &third else {
+        panic!("a disabled tool must not run");
+    };
+    assert!(
+        message.contains("did not run") && message.contains("circuit breaker"),
+        "the refusal names the recorded reason: {message}"
+    );
+
+    // And the telemetry ledger holds exactly the two real launches.
+    let outcomes = store
+        .recent_foundry_outcomes("governed_t", 10)
+        .expect("outcomes");
+    assert_eq!(outcomes, vec![false, false]);
+}
+
+/// Telemetry: every governed launch writes one row carrying the
+/// gap-id lineage and the outcome — success included.
+#[tokio::test]
+async fn a_governed_launch_writes_one_telemetry_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = governed_tool(dir.path(), "ok.sh", "#!/bin/sh\necho fine\n");
+    let store = adopt_enabled(dir.path(), "governed_t");
+
+    let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+    assert!(matches!(out, ToolOutput::Ok { .. }));
+    let outcomes = store
+        .recent_foundry_outcomes("governed_t", 10)
+        .expect("outcomes");
+    assert_eq!(outcomes, vec![true]);
+}
+
+/// A hand-written tool is untouched by all of it: no store is opened, no
+/// telemetry lands, no breaker applies — the controls govern exactly what
+/// Stella wrote for itself.
+#[tokio::test]
+async fn a_hand_written_tool_records_no_foundry_telemetry() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = script_tool(dir.path(), "fail.sh", "#!/bin/sh\nexit 1\n");
+    for _ in 0..4 {
+        let _ = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+    }
+    let store = stella_store::Store::open(dir.path()).expect("store");
+    assert!(
+        store
+            .recent_foundry_outcomes("t", 10)
+            .expect("outcomes")
+            .is_empty(),
+        "a hand-written tool must not accrue foundry telemetry"
+    );
+}
+
+/// Network denial: where the platform mechanism is live, a governed
+/// tool that attempts a TCP connect is denied at the OS level, while the
+/// same script on the operator's allowlist gets through the wrapper choice
+/// unwrapped. Skipped (trivially green) where no mechanism exists — the
+/// autonomy pipeline separately refuses to auto-adopt there, which is the
+/// degraded control this test cannot fake.
+#[tokio::test]
+async fn a_governed_tool_cannot_reach_the_network_where_the_mechanism_is_live() {
+    if !crate::netdeny::available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    // Tries a fast TCP connect; prints REACHED only if the connect succeeds.
+    let body =
+        "#!/bin/bash\nif exec 3<>/dev/tcp/1.1.1.1/53; then echo REACHED; else echo DENIED; fi\n";
+    let tool = governed_tool(dir.path(), "net.sh", body);
+    let _store = adopt_enabled(dir.path(), "governed_t");
+
+    let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+    let rendered = match &out {
+        ToolOutput::Ok { content, .. } => content.clone(),
+        ToolOutput::Error { message, .. } => message.clone(),
+    };
+    assert!(
+        !rendered.contains("REACHED"),
+        "a foundry tool off the allowlist must not reach the network: {rendered}"
+    );
 }

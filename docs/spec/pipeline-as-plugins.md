@@ -315,7 +315,7 @@ and `after_turn` spawns processes, and AGENTS.md #2 bans I/O in the engine
 They shipped together:
 
 - **A3a — the in-process contract.** The `TurnWrapper` trait
-  (`crates/stella-runtime/src/wrapper/mod.rs`), plus `[loop] points` — the
+  (`crates/stella-runtime/src/wrapper.rs`), plus `[loop] points` — the
   manifest vocabulary for the four points `[wrapper]` was missing when this
   item was written — and `LoopGrant::permits_point` as its filter (folded into
   A4 below).
