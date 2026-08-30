@@ -448,6 +448,10 @@ fn describe_diagnostic(diag: &stella_core::extensions::ExtensionDiagnostic) -> S
         stella_core::extensions::ExtensionProblem::MissingName => "no usable name",
         stella_core::extensions::ExtensionProblem::EmptyBody => "empty body",
         stella_core::extensions::ExtensionProblem::Malformed => "not valid TOML",
+        stella_core::extensions::ExtensionProblem::NestedToolbelt => {
+            "`tools:` is a nested mapping, which would have granted every tool — \
+             write it as a list, like `tools: read, search`"
+        }
     };
     format!("{}: {why}", diag.path)
 }

@@ -123,8 +123,12 @@ pub(super) fn check(
     }
     let _ = events.send(AgentEvent::Text {
         text: format!(
+            // Not "confirm or stop": the nudge below offers keeping it and
+            // owning it as a leftover, and says a live service cannot be
+            // stopped. An operator told otherwise waits for a shutdown the
+            // model was never offered.
             "\n⚠ {} long-running {} still up at the end of this turn — asking the model to \
-             confirm or stop {}.",
+             account for {}.",
             services.len(),
             if services.len() == 1 {
                 "process is"
@@ -166,6 +170,33 @@ mod tests {
             name: name.map(str::to_string),
             display: "python3 -m http.server 8080".into(),
         }
+    }
+
+    /// The operator's line offers only what the model is offered.
+    ///
+    /// The nudge says plainly that a live service cannot be stopped, and the
+    /// port's own contract says asking must change nothing — least of all stop
+    /// anything. The narration said "confirm or stop", so an operator reading
+    /// the event stream waited for a shutdown the model was never offered and
+    /// the engine cannot perform.
+    #[test]
+    fn the_narration_offers_only_what_the_nudge_offers() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut messages = vec![CompletionMessage::user("serve the docs on 8080")];
+        assert!(check(
+            &mut messages,
+            &[service("proc-1", Some("docs"))],
+            "Done — the server is running.",
+            &EventSender::new(tx),
+        ));
+        let AgentEvent::Text { text } = rx.try_recv().expect("the check narrates what it did")
+        else {
+            panic!("the narration is a Text event");
+        };
+        assert!(
+            !text.contains("stop"),
+            "the operator must not be told a service can be stopped: {text}"
+        );
     }
 
     /// **The #2764 witness.** A turn that leaves a service up is asked about

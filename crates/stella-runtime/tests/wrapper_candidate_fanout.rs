@@ -440,6 +440,32 @@ async fn a_width_over_the_ceiling_is_clamped_and_the_clamp_is_reported_back() {
     assert_eq!(plane.spends()[0].width, 3);
 }
 
+/// A host that caps the width at zero gets one candidate, not a panic.
+///
+/// `with_max_width` is public and has no floor, and the width was resolved with
+/// `clamp(1, max_width())` — `clamp` asserts `min <= max`, so a ceiling of zero
+/// made the assertion fail rather than the clamp apply. The floor is what a
+/// zero of either kind means: the surrounding comment already argued that a
+/// plugin asking for no candidates gets the clamp rather than an error, and a
+/// host offering room for none is the same question from the other side.
+#[tokio::test]
+async fn a_zero_host_width_ceiling_floors_the_fanout_instead_of_panicking() {
+    use stella_runtime::wrapper::CandidateFanoutPlane;
+
+    let manifest = manifest();
+    let plane = CandidateFanouts::declare(&manifest, Substrate::default()).with_max_width(0);
+    let result = plane
+        .fanout(stella_plugin::CandidateFanoutArgs {
+            role: "attempt".to_string(),
+            instruction: "try it".to_string(),
+            width: 3,
+        })
+        .await
+        .expect("a zero ceiling clamps rather than refusing");
+    assert_eq!(result.candidates.len(), 1);
+    assert_eq!(plane.spends()[0].width, 1);
+}
+
 /// The allowance bounds the whole run, not the point. A ceiling that refreshed
 /// per point would be no ceiling at all across N rounds — the shape a hold
 /// allowance that resets would have.

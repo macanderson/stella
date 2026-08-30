@@ -345,19 +345,30 @@ impl PanelGrant {
     /// register, [`ManifestError::DuplicatePanelDenial`] for a repeated limit,
     /// [`ManifestError::PanelDenialMissing`] for one the block never names, and
     /// whatever `[panel.process]` refuses.
-    pub fn validate(&self) -> Result<(), ManifestError> {
+    /// `plugin_id` is required because the slash name this grant registers is
+    /// [`PanelGrant::command_or`]'s answer, not the `command` field: an
+    /// undeclared name resolves to the plugin's own. Checking only a declared
+    /// one left the derived name unchecked, so a plugin named `vera:admin`
+    /// registered the namespace-shaped slash command
+    /// [`ManifestError::PanelCommandCarriesNamespace`] exists to refuse, and a
+    /// name with spaces or capitals registered a command nobody can type.
+    pub fn validate(&self, plugin_id: &str) -> Result<(), ManifestError> {
         if self.surfaces.is_empty() {
             return Err(ManifestError::PanelNoSurface);
         }
         if let Some(surface) = self.duplicate_surface() {
             return Err(ManifestError::PanelDuplicateSurface { surface });
         }
-        if let Some(command) = &self.command {
-            if !self.draws(PanelSurface::Command) {
-                return Err(ManifestError::PanelCommandWithoutSurface {
-                    command: command.clone(),
-                });
-            }
+        // Declaring a name for a popup that does not exist is a mistake only an
+        // author can make, so it stays keyed on the declared field.
+        if let Some(command) = &self.command
+            && !self.draws(PanelSurface::Command)
+        {
+            return Err(ManifestError::PanelCommandWithoutSurface {
+                command: command.clone(),
+            });
+        }
+        if let Some(command) = self.command_or(plugin_id) {
             validate_panel_command(command)?;
         }
         let mut seen = HashSet::with_capacity(self.denies.len());
@@ -1239,16 +1250,58 @@ mod tests {
     #[test]
     fn a_panel_that_draws_nowhere_is_refused() {
         assert!(matches!(
-            grant(Vec::new()).validate(),
+            grant(Vec::new()).validate("gates"),
             Err(ManifestError::PanelNoSurface)
         ));
         assert!(matches!(
-            grant(vec![PanelSurface::Settings, PanelSurface::Settings]).validate(),
+            grant(vec![PanelSurface::Settings, PanelSurface::Settings]).validate("gates"),
             Err(ManifestError::PanelDuplicateSurface {
                 surface: PanelSurface::Settings
             })
         ));
-        assert!(grant(vec![PanelSurface::Settings]).validate().is_ok());
+        assert!(
+            grant(vec![PanelSurface::Settings])
+                .validate("gates")
+                .is_ok()
+        );
+    }
+
+    /// The name a panel registers is the one `command_or` resolves, so the
+    /// derived name is held to the same shape rules as a declared one.
+    ///
+    /// A plugin that declares no `command` registers its own name. Left
+    /// unchecked, `name = "vera:admin"` bought the namespace-shaped slash
+    /// command the explicit path refuses by its own dedicated error, and the
+    /// consent document then told the reader the panel answers to
+    /// `/vera:admin` and to `/vera:admin:vera:admin`. The plugin name itself
+    /// is only checked for control characters, so spaces and capitals got
+    /// through too and registered a command nobody can type.
+    #[test]
+    fn a_derived_slash_name_is_held_to_the_same_shape_as_a_declared_one() {
+        let derived = |name: &str| grant(vec![PanelSurface::Command]).validate(name);
+
+        assert!(
+            matches!(
+                derived("vera:admin"),
+                Err(ManifestError::PanelCommandCarriesNamespace { .. })
+            ),
+            "a plugin cannot buy the alias namespace by spelling it in its name"
+        );
+        assert!(matches!(
+            derived("Vera Admin"),
+            Err(ManifestError::PanelCommandNotASlug { .. })
+        ));
+        assert!(
+            derived("vera").is_ok(),
+            "an ordinary slug name still passes"
+        );
+        assert!(
+            grant(vec![PanelSurface::Settings])
+                .validate("vera:admin")
+                .is_ok(),
+            "a panel with no popup registers no name, so its plugin's name is \
+             not a slash command and is not judged as one"
+        );
     }
 
     #[test]

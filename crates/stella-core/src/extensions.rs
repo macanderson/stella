@@ -193,6 +193,17 @@ pub enum ExtensionProblem {
     /// either parses or does not, and guessing at a broken one would load a
     /// command whose author cannot tell it is broken.
     Malformed,
+    /// `tools:` was written as a nested mapping, which the flat frontmatter
+    /// parser cannot read.
+    ///
+    /// The tolerance every other field enjoys is wrong for this one, because
+    /// the unreadable value does not degrade to a smaller grant — it degrades
+    /// to `None`, which means *every* tool. An author writing
+    /// `tools:\n  read: true\n  write: false` asked for a restriction and
+    /// would have been handed the whole registry, with no diagnostic. So the
+    /// definition is refused instead, the way `rules.rs` refuses a record
+    /// carrying nested keys.
+    NestedToolbelt,
 }
 
 /// A malformed definition file, skipped during loading (never fatal).
@@ -433,7 +444,17 @@ pub fn parse_toolbelt(value: Option<&str>) -> Option<Vec<String>> {
 /// Parse one agent file.
 pub fn agent_from_file(path: &str, raw: &str) -> Result<AgentDef, ExtensionDiagnostic> {
     let (fm, name, description, body) = definition_from_file(path, raw, "AGENT.md")?;
-    let tools = parse_toolbelt(fm.data.get("tools").map(String::as_str));
+    let declared = fm.data.get("tools").map(String::as_str);
+    // A nested mapping leaves its parent key holding an empty value and its
+    // children in `nested_keys`, which is indistinguishable here from a bare
+    // `tools:` — and a bare one means every tool. Refuse rather than widen.
+    if declared.is_some_and(str::is_empty) && !fm.nested_keys.is_empty() {
+        return Err(ExtensionDiagnostic {
+            path: path.to_string(),
+            problem: ExtensionProblem::NestedToolbelt,
+        });
+    }
+    let tools = parse_toolbelt(declared);
     let model = trimmed(fm.data.get("model").map(String::as_str));
     Ok(AgentDef {
         name,
@@ -973,6 +994,36 @@ mod tests {
         let blank =
             agent_from_file("/x/helper.md", "---\nname: helper\nmodel:   \n---\nBody.").unwrap();
         assert_eq!(blank.model, None, "a blank value pins nothing");
+    }
+
+    /// A `tools:` mapping the flat parser cannot read must not resolve to
+    /// every tool.
+    ///
+    /// The frontmatter parser is tolerant on purpose, and for `description:`
+    /// or `model:` an unreadable value costs a fallback. For `tools:` it costs
+    /// the whole registry, because the parser leaves the key holding an empty
+    /// value, the children go to `nested_keys`, and an empty `tools:` is the
+    /// documented spelling of "all tools". The author asked for two tools and
+    /// was handed every one, silently.
+    #[test]
+    fn a_tools_mapping_is_refused_rather_than_read_as_every_tool() {
+        let raw =
+            "---\nname: reviewer\ndescription: d\ntools:\n  read: true\n  write: false\n---\nBody.";
+        let err = agent_from_file("/x/reviewer.md", raw).unwrap_err();
+        assert_eq!(err.problem, ExtensionProblem::NestedToolbelt);
+
+        let listed =
+            agent_from_file("/x/ok.md", "---\nname: ok\ntools: read, search\n---\nBody.").unwrap();
+        assert_eq!(
+            listed.tools,
+            Some(vec!["read".to_string(), "search".to_string()]),
+            "an ordinary list still parses"
+        );
+        let bare = agent_from_file("/x/bare.md", "---\nname: bare\ntools:\n---\nBody.").unwrap();
+        assert_eq!(
+            bare.tools, None,
+            "a bare key with nothing under it is still all tools"
+        );
     }
 
     #[test]

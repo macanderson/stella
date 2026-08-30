@@ -458,6 +458,8 @@ pub fn parse_generated_agent(text: &str) -> Result<GeneratedAgent, String> {
                 stella_core::extensions::ExtensionProblem::MissingName => "no usable name",
                 stella_core::extensions::ExtensionProblem::EmptyBody => "empty body",
                 stella_core::extensions::ExtensionProblem::Malformed => "not valid TOML",
+                stella_core::extensions::ExtensionProblem::NestedToolbelt =>
+                    "a nested `tools:` mapping, which would have granted every tool",
             }
         )
     })?;

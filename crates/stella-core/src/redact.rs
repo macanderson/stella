@@ -353,7 +353,47 @@ fn assigned_value(chars: &[char], i: usize) -> Option<(usize, usize, usize)> {
             .find(|&k| chars[k].is_whitespace() || matches!(chars[k], ',' | ';' | ')' | '}'))
             .unwrap_or(chars.len()),
     };
+    // `Authorization: Bearer <token>` carries the credential in its *second*
+    // word. Stopping at the first space hid the scheme and published the token,
+    // and still reported `redacted: true` — the one outcome this module says it
+    // must never produce, because a caller then believes the line is clean.
+    let (value_start, value_end) = match quote {
+        Some(_) => (value_start, value_end),
+        None => past_auth_scheme(chars, value_start, value_end),
+    };
     (value_end > value_start).then_some((separator, value_start, value_end))
+}
+
+/// The credential's span when an unquoted value begins with an auth scheme.
+///
+/// Returns the input span unchanged when the first word is not a scheme, or
+/// when nothing follows it — `Authorization: Bearer` on its own has only the
+/// scheme to hide.
+fn past_auth_scheme(chars: &[char], value_start: usize, value_end: usize) -> (usize, usize) {
+    const SCHEMES: [&str; 4] = ["bearer", "basic", "token", "digest"];
+    let word: String = chars[value_start..value_end]
+        .iter()
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    if !SCHEMES.contains(&word.as_str()) {
+        return (value_start, value_end);
+    }
+    let mut j = value_end;
+    while matches!(chars.get(j), Some(' ') | Some('\t')) {
+        j += 1;
+    }
+    let credential = j;
+    while chars
+        .get(j)
+        .is_some_and(|c| !c.is_whitespace() && !matches!(c, ',' | ';' | ')' | '}'))
+    {
+        j += 1;
+    }
+    if j > credential {
+        (credential, j)
+    } else {
+        (value_start, value_end)
+    }
 }
 
 #[cfg(test)]

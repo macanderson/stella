@@ -229,11 +229,19 @@ fn paint_error_card(buf: &mut Buffer, card: Rect, label: &str, message: &str) {
 // The test-only injection seam.
 //
 // The boundary needs a witness that panics inside a *real* `render_deck` band,
-// and no crafted `WorkspaceModel`/`DeckUi` produces one: every view indexes
-// through `get`/`saturating_*`, and `tests/render_robustness.rs` already sweeps
-// all nine tabs and every overlay across 121 geometries without a panic. So the
-// panic is injected at the one place a view's panic would surface — inside the
-// guarded closure, before the draw — and compiled out of every non-test build.
+// and a crafted `WorkspaceModel`/`DeckUi` is not a dependable way to get one:
+// the geometry sweep in `tests/render_robustness.rs` walks all nine tabs and
+// every overlay without a panic, because a view's panicking branch is usually
+// reached by view *state* the sweep does not set rather than by size alone. So
+// the panic is injected at the one place a view's panic would surface — inside
+// the guarded closure, before the draw — and compiled out of every non-test
+// build.
+//
+// Not "no view can panic": `views::skills` did, on a `clamp` whose floor
+// outranked its ceiling on any tab under eight rows, and only while the search
+// pane was live. A test that asks whether the draw *returned* cannot see such a
+// panic, because this boundary catches it — so the witness for one asserts the
+// band's own cells, not the absence of an unwind.
 //
 // It is one seam, not one per caller: `SessionFold::refresh` calls
 // [`fail_if_armed`] from inside its fold loop too, which is how the "commit the

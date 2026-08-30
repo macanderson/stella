@@ -625,8 +625,15 @@ pub fn plan_cycle(
     // `Deserialize` with no range guard), and `AimdLimits` promises bounds
     // "the controller may never cross, whatever the evidence says" — so the
     // plan clamps here rather than trusting every load site to have done it.
-    let mut batch = ceilings.batch_ceiling.clamp(1, limits.batch_max);
-    let mut parallel = ceilings.parallel_ceiling.clamp(1, limits.parallel_max);
+    // `min` then `max`, not `clamp`: `u32::clamp` asserts `min <= max` and
+    // panics otherwise, and the ceiling here is the literal 1 while the limit
+    // is caller-supplied. `SELF_DRIVING_BATCH_MAX=0` in the environment reaches
+    // this as `clamp(1, 0)` and takes down the process before any branch below
+    // runs. Ordering the other way keeps the floor winning over a limit of 0,
+    // which is what a cycle of nothing would otherwise mean, and matches how
+    // `calibrate` above stays panic-free on the same untrusted numbers.
+    let mut batch = ceilings.batch_ceiling.min(limits.batch_max).max(1);
+    let mut parallel = ceilings.parallel_ceiling.min(limits.parallel_max).max(1);
 
     let reason: String;
     if supply.disk_free_gb < floors.disk_gb {

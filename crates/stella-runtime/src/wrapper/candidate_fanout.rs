@@ -693,7 +693,12 @@ impl<W: CandidateWorkspaces> CandidateFanoutPlane for CandidateFanouts<W> {
         // `max(1)` rather than a refusal for a zero width: a plugin asking for
         // no candidates has asked for nothing, and the honest answer to an ask
         // is the clamp, not an error (`RecallArgs::limit`'s discipline).
-        let width = args.width.clamp(1, self.max_width());
+        //
+        // `min` then `max`, not `clamp`: the floor is a literal and the ceiling
+        // is the host's, and `with_max_width(0)` would make `clamp` assert
+        // `min <= max` and panic. The floor is what a zero of either kind
+        // means, so it wins over a zero ceiling too.
+        let width = args.width.min(self.max_width()).max(1);
         let share = self.budget_usd.map(|budget| budget / f64::from(width));
 
         // Creation is sequential and the turns are not. Two isolation

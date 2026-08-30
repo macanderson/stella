@@ -357,6 +357,31 @@ fn assert_plan(supply: Supply, demand: Demand, want: (&str, bool, u32, &str, &st
     assert_eq!(got, want, "reason: {}", plan.reason);
 }
 
+/// The limits come from the environment, so a plan must survive a nonsense
+/// one rather than taking the process down.
+///
+/// `SELF_DRIVING_BATCH_MAX=0` — an operator trying to switch batching off —
+/// reached `u32::clamp(1, 0)`, which asserts `min <= max` and panics before
+/// any of the supply branches run. A limit of zero still means at least one
+/// unit of work, the same floor every other path applies.
+#[test]
+fn a_zero_limit_floors_the_plan_instead_of_panicking() {
+    let zeroed = AimdLimits {
+        batch_max: 0,
+        batch_min: 0,
+        parallel_max: 0,
+    };
+    let plan = plan_cycle(
+        base_supply(),
+        Demand::default(),
+        &ceilings(),
+        Floors::default(),
+        &zeroed,
+    );
+    assert_eq!(plan.batch, 1, "a cycle of nothing is not a plan");
+    assert_eq!(plan.parallel, 1);
+}
+
 #[test]
 fn the_supply_rungs_decide_the_tier() {
     let d = Demand::default();
