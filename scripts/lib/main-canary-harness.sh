@@ -1,27 +1,17 @@
 # shellcheck shell=bash
 #
-# Sourced helper: the fixtures and assertion vocabulary both main-canary test
-# suites drive scripts/main-canary.sh with.
+# Sourced helper: the fixtures and assertion vocabulary
+# scripts/test-main-canary.sh drives scripts/main-canary.sh with.
 #
-# The suites are split by what a case NEEDS, not by what it tests:
+# One suite, not two. Every row of the canary reads `--manifest-dir` when it
+# is given one, so a fixture's verdict — GREEN included — is a fact about the
+# canary rather than about whatever this repository happens to be doing, and
+# a second suite holding only the GREEN cases would have nothing to justify
+# it.
 #
-#   scripts/test-main-canary.sh       every case whose verdict is a fact about
-#                                     the canary. A fixture tree under
-#                                     `--manifest-dir` decides it, so it holds
-#                                     whatever `main` is red on, and CI runs it
-#                                     (.github/workflows/guard-self-tests.yml).
-#   scripts/test-main-canary-live.sh  the cases that expect the canary to report
-#                                     GREEN. It can only do that when the live
-#                                     tree is green — the `file-size` and
-#                                     `prose` rows read the repository itself
-#                                     and take no `--manifest-dir` — so those
-#                                     cases report what `main` is doing rather
-#                                     than what the canary can do, which is
-#                                     main-canary.yml's job after the merge.
-#
-# Everything both suites need lives here, so the split costs no second copy of
-# the fixture builder or the assertion vocabulary. Source it before any `cd`,
-# so `$0` still resolves:
+# Everything the suite needs lives here, so a fixture builder or an assertion
+# helper has exactly one copy. Source it before any `cd`, so `$0` still
+# resolves:
 #
 #   # shellcheck source=scripts/lib/main-canary-harness.sh
 #   . "$(dirname "$0")/lib/main-canary-harness.sh"
@@ -50,9 +40,17 @@ canary_scratch() {
 }
 
 # A minimal, network-free workspace at $1 whose lock matches its manifests.
+#
+# `git init` and the two empty baselines are what let `file-size` and `prose`
+# judge THIS fixture instead of the real repository: both rows require being
+# inside a git repository, `check-file-size.sh` refuses to run at all against
+# a manifest directory with no baseline file, and `check-prose.py` refuses the
+# same way when its module-header density baseline is missing — a real
+# checkout always carries both, so a fixture needs its own, empty ones, to
+# read as a clean tree rather than as a misconfigured one.
 make_workspace() {
   local dir="$1"
-  mkdir -p "$dir/crates/demo/src"
+  mkdir -p "$dir/crates/demo/src" "$dir/scripts"
   cat >"$dir/Cargo.toml" <<'TOML'
 [workspace]
 members = ["crates/demo"]
@@ -69,7 +67,10 @@ version.workspace = true
 edition.workspace = true
 TOML
   echo 'pub fn demo() {}' >"$dir/crates/demo/src/lib.rs"
-  (cd "$dir" && cargo generate-lockfile --offline >/dev/null 2>&1)
+  echo "# Empty — the fixture starts under every ratchet." >"$dir/scripts/file-size-baseline.txt"
+  echo "# Empty — the fixture's one crate starts under the density ceiling." \
+    >"$dir/scripts/prose-density-baseline.txt"
+  (cd "$dir" && git init -q && cargo generate-lockfile --offline >/dev/null 2>&1)
 }
 
 expect() {
