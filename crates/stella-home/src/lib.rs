@@ -95,7 +95,7 @@ pub fn home_dir() -> Option<PathBuf> {
 /// [`home_dir`] over anchors the caller supplies.
 ///
 /// An empty `HOME` falls through to `USERPROFILE` rather than resolving to the
-/// working directory — see [`anchor`].
+/// working directory: a variable exported with no value names no directory.
 #[must_use]
 pub fn resolve_home_dir(home: Option<OsString>, userprofile: Option<OsString>) -> Option<PathBuf> {
     anchor(home).or(anchor(userprofile)).map(PathBuf::from)
@@ -111,7 +111,7 @@ pub fn stella_home() -> Option<PathBuf> {
 /// [`stella_home`] over anchors the caller supplies.
 ///
 /// An empty `STELLA_HOME` resolves to `~/.stella`, not to the working
-/// directory — see [`anchor`].
+/// directory: a variable exported with no value names no directory.
 #[must_use]
 pub fn resolve_stella_home(
     stella_home: Option<OsString>,
@@ -138,9 +138,10 @@ pub fn data_dir() -> PathBuf {
 
 /// [`data_dir`] over anchors the caller supplies.
 ///
-/// An empty `STELLA_DATA_DIR` falls through to the stella home — see
-/// [`anchor`]. The current-directory fallback is reached only when no home is
-/// discoverable at all, never because a variable was exported blank.
+/// An empty `STELLA_DATA_DIR` falls through to the stella home: a variable
+/// exported with no value names no directory. The current-directory fallback is
+/// reached only when no home is discoverable at all, never because a variable
+/// was exported blank.
 #[must_use]
 pub fn resolve_data_dir(data_dir: Option<OsString>, stella_home: Option<PathBuf>) -> PathBuf {
     match anchor(data_dir) {
