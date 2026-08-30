@@ -823,7 +823,7 @@ pub(crate) const FOUNDRY_TOOLS_DDL: &str = "CREATE TABLE IF NOT EXISTS foundry_t
      );";
 
 /// `foundry_tool_versions` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the append-only
-/// version history behind `stella tools --rollback` (#5453): one row per
+/// version history behind `stella tools --rollback`: one row per
 /// adoption or rollback of a foundry tool, carrying the exact manifest and
 /// script BYTES alongside their digests so a prior version can be restored
 /// without the original files surviving anywhere else.
@@ -851,7 +851,7 @@ pub(crate) const FOUNDRY_TOOL_VERSIONS_DDL: &str =
      );";
 
 /// `foundry_invocations` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — per-invocation
-/// telemetry for foundry-built tools (#5453): one row per launch, written by
+/// telemetry for foundry-built tools: one row per launch, written by
 /// the custom-tool execution path after the process exits (or times out).
 /// This is what the circuit breaker folds over and what `stella tools
 /// --status` reports; `script_digest` ties each invocation to the exact

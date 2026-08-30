@@ -97,7 +97,7 @@ fn adoption_alone_does_not_enable() {
 
 /// A mechanism's recorded verdict outranks the generic "not enabled yet"
 /// sentence: a breaker-disabled tool is withheld with the reason on it, and
-/// the remedy it names is a new version, not `--enable` (#5453).
+/// the remedy it names is a new version, not `--enable`.
 #[test]
 fn a_breaker_disabled_tool_is_withheld_with_its_reason() {
     let ws = tempfile::tempdir().unwrap();

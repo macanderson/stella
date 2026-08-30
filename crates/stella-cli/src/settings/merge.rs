@@ -346,7 +346,7 @@ impl Settings {
         if let Some(reward) = &scope.reward {
             self.reward = Some(reward.clone());
         }
-        // Tool-foundry thresholds and autonomy (#2471, #5453): whole-block
+        // Tool-foundry thresholds and autonomy: whole-block
         // last-wins, on `reward`'s argument — the detection floor, the
         // breaker, and the autonomy mode are one policy, and a scope holding
         // half of another's is a policy nobody wrote. Explicit for the same

@@ -180,7 +180,7 @@ pub struct CustomTool {
     /// contract so the registry-side output check (#3285) can hold a script
     /// tool to its own promise.
     pub output_schema: Option<Value>,
-    /// Host-set runtime policy for a *foundry-authored* tool (#5453): whether
+    /// Host-set runtime policy for a *foundry-authored* tool: whether
     /// it may reach the network, and the circuit-breaker thresholds its
     /// launches are held to. Always [`FoundryRuntimePolicy::default`] straight
     /// out of [`parse_manifest`] — the manifest cannot grant itself network
@@ -296,7 +296,7 @@ impl CustomTool {
 }
 
 /// Runtime policy the HOST stamps onto a foundry-authored tool after
-/// discovery (#5453). Never parsed from the manifest: a self-authored tool
+/// discovery. Never parsed from the manifest: a self-authored tool
 /// granting itself network access would be the permission-from-the-subject
 /// shape the adoption ledger exists to forbid.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -310,7 +310,7 @@ pub struct FoundryRuntimePolicy {
     pub breaker: Option<BreakerPolicy>,
 }
 
-/// The circuit breaker's thresholds (#5453): the config-driven auto-disable
+/// The circuit breaker's thresholds: the config-driven auto-disable
 /// that stands in for a human noticing a self-authored tool has gone bad.
 /// One declaration — the settings layer resolves into this type rather than
 /// restating it, so the knob and the enforcement cannot drift.
@@ -860,8 +860,8 @@ fn is_etxtbsy(e: &std::io::Error) -> bool {
 /// Never returns `Err` — every failure mode is a named [`ToolOutput::Error`],
 /// because tool failures are model-visible data, not engine faults.
 ///
-/// A **foundry-authored** tool passes three extra controls at this seam
-/// (#5453), because the spawn is the one place every launch goes through:
+/// A **foundry-authored** tool passes three extra controls at this seam,
+/// because the spawn is the one place every launch goes through:
 ///
 /// 1. the ledger's live `enabled` bit is re-read, so a tool the circuit
 ///    breaker disabled after this session discovered it stops launching,

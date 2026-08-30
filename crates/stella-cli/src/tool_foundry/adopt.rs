@@ -130,7 +130,7 @@ pub(crate) fn adopt_in(root: &Path, store: &Store, name: &str) -> Result<Adopted
 }
 
 /// [`adopt_in`] for a caller already on a tokio runtime — the autonomy
-/// pipeline (#5453), which runs on the session's own end-of-turn path where
+/// pipeline, which runs on the session's own end-of-turn path where
 /// `Runtime::block_on` would panic. Same steps, same gates; `reason` labels
 /// the version-history row so an autonomous adoption is distinguishable from
 /// a human one forever.
@@ -237,7 +237,7 @@ fn prepare_adoption(root: &Path, store: &Store, name: &str) -> Result<PreparedAd
 }
 
 /// Judge the verdict and record the adoption — plus one append-only row in
-/// the version history (#5453), so `stella tools --rollback` always has the
+/// the version history, so `stella tools --rollback` always has the
 /// exact adopted bytes to restore, whatever later happens to the files.
 fn finish_adoption(
     _root: &Path,

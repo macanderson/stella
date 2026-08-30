@@ -1,4 +1,4 @@
-//! The autonomous foundry (#5453): detect → author → validate → adopt →
+//! The autonomous foundry: detect → author → validate → adopt →
 //! enable, with the standing controls that replace the stage→adopt→enable
 //! human ceremony.
 //!
@@ -173,7 +173,7 @@ mod tests {
         std::fs::write(root.join("b.json"), "beta-payload\n").expect("b.json");
     }
 
-    /// The #5453 end-to-end witness, through the LIVE end-of-turn path: a
+    /// The autonomy end-to-end witness, through the LIVE end-of-turn path: a
     /// synthetic repeated-command session is detected, authored, validated,
     /// witness-proven under network denial, auto-adopted, auto-enabled, and
     /// then executed through the gated discovery surface — with the tool's

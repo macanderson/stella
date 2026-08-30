@@ -318,7 +318,7 @@ evolution_surfaces! {
     /// Executable capability Stella adds to its own working surface.
     Tool => "tool",
         EvolutionPosture::Shipped {
-            mechanism: "the autonomous foundry (#5453): the end-of-turn hook mines recent \
+            mechanism: "the autonomous foundry: the end-of-turn hook mines recent \
                         shell history into the gap ledger, and under `foundry.autonomy = \
                         \"auto\"` a gap is authored, lint-checked, witness-proven, adopted, \
                         and enabled without a human — behind standing controls instead of a \

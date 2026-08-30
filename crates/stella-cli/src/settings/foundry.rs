@@ -1,16 +1,17 @@
 //! `[foundry]` — the tool foundry's gap-detection thresholds and its
-//! autonomy controls (#2471, #5453).
+//! autonomy controls.
 //!
 //! A top-level sibling of `tools`, never a child of it: `ToolsSettings` is a
 //! flat map of tool name to toggle, and a nested object under `tools` is a
 //! tested loud parse error (`a_non_toggle_tools_value_is_a_loud_parse_error`).
 //!
 //! Every field is optional and absent means the shipped default — the strict
-//! post-#2378 floor for detection, `auto` for autonomy, and the 3-consecutive
+//! shipped floor for detection, `auto` for autonomy, and the 3-consecutive
 //! / 50%-of-10 circuit breaker. [`FoundrySettings::resolve`] is the one
 //! validation seam: a bad value is a named diagnostic at the read site, never
-//! a silently-clamped number, because a threshold that quietly became a
-//! different threshold is exactly the settings failure mode #2616 catalogued.
+//! a silently-clamped number — a threshold that quietly became a
+//! different threshold is the settings failure mode the unrecognized-key
+//! walker exists to prevent.
 
 use serde::{Deserialize, Serialize};
 use stella_core::tool_foundry::GapDetectionConfig;

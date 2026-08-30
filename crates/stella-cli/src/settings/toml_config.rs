@@ -340,7 +340,7 @@ pub struct TomlConfig {
     #[serde(default)]
     pub reward: Option<RewardSettings>,
     /// `[foundry]` — the tool foundry's gap-detection thresholds and autonomy
-    /// controls (#2471, #5453). Same shape in JSON and TOML, so no lowering
+    /// controls. Same shape in JSON and TOML, so no lowering
     /// beyond the move.
     #[serde(default)]
     pub foundry: Option<FoundrySettings>,

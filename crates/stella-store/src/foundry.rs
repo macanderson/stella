@@ -64,12 +64,12 @@ pub struct AdoptedTool {
     /// Whether it is enabled. Always `false` at adoption. Under `auto`
     /// autonomy the enabling decision is the autonomy pipeline's, standing in
     /// for the human behind the network-denial, breaker, and rollback
-    /// controls (#5453); under the manual protocol it stays a human's alone.
+    /// controls; under the manual protocol it stays a human's alone.
     pub enabled: bool,
     /// When it was adopted.
     pub adopted_at: String,
     /// Why the tool is disabled, when a *mechanism* disabled it — the circuit
-    /// breaker's recorded verdict (#5453). Empty for a fresh adoption, a
+    /// breaker's recorded verdict. Empty for a fresh adoption, a
     /// human `--disable`, and every pre-v41 row: `enabled` says whether the
     /// tool is offered, this says which mechanism turned it off and why.
     pub disabled_reason: String,
@@ -402,7 +402,7 @@ impl Store {
         Ok(changed > 0)
     }
 
-    /// Re-pin an adoption to restored bytes — the rollback write (#5453).
+    /// Re-pin an adoption to restored bytes — the rollback write.
     ///
     /// Restoring a prior version re-digests the files on disk, and the
     /// adoption record has to pin those digests or the gate would withhold
@@ -428,7 +428,7 @@ impl Store {
     }
 
     /// The most recent shell commands this workspace ran, oldest first —
-    /// the gap detector's feeder (#5433). Reads the `tool_calls` projection
+    /// the gap detector's feeder. Reads the `tool_calls` projection
     /// for finished `bash` calls and extracts each recorded input's
     /// `command`; rows whose input carries none (or was never recorded) are
     /// skipped rather than guessed at.

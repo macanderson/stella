@@ -254,7 +254,7 @@ fn an_untouched_workspace_reports_no_adoptions() {
 }
 
 /// Version history is append-only and counts up per tool; the bytes round-trip
-/// exactly, which is the whole rollback contract (#5453).
+/// exactly, which is the whole rollback contract.
 #[test]
 fn version_rows_append_and_their_bytes_round_trip() {
     let store = Store::in_memory().expect("store");

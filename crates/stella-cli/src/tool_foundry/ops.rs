@@ -1,4 +1,4 @@
-//! The operator verbs around the autonomous foundry (#5453): `--draft` (the
+//! The operator verbs around the autonomous foundry: `--draft` (the
 //! manual escape hatch — author + validate, adopt nothing), `--rollback`
 //! (restore a prior recorded version and re-digest it), and `--status`
 //! (per-tool health: breaker state, versions, recent launches).
@@ -268,7 +268,7 @@ mod tests {
         .expect("write current");
     }
 
-    /// The #5453 rollback witness: restore v1 over a v2 workspace, and the
+    /// The rollback witness: restore v1 over a v2 workspace, and the
     /// restored tool's bytes, ledger digests, and enablement all agree —
     /// including a gate pass, so the restored tool actually registers. The
     /// history grows by one append-only row; nothing is deleted.
@@ -333,8 +333,8 @@ mod tests {
         );
     }
 
-    /// Rollback refuses honestly: no history, a single version, an unknown
-    /// target — each is a named error, never a guess.
+    /// Rollback refuses what it cannot restore: no history, a single
+    /// version, an unknown target — each is a named error, never a guess.
     #[test]
     fn rollback_refuses_what_it_cannot_restore() {
         let dir = tempfile::tempdir().expect("tmp");

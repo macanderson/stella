@@ -1,4 +1,4 @@
-//! Spawn-time network denial for foundry-built tools (#5453).
+//! Spawn-time network denial for foundry-built tools.
 //!
 //! A tool the foundry authored for itself runs with the network **denied by
 //! default** — that is the standing control that replaces the human in the
@@ -17,7 +17,7 @@
 //!   interface-less loopback-down world; any connect fails with
 //!   `ENETUNREACH`.
 //!
-//! # Honesty over coverage
+//! # A control is claimed only where it holds
 //!
 //! [`available`] actually runs the wrapper once (against `true`) and caches
 //! the answer. A platform where neither mechanism works — containers that

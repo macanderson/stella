@@ -7,20 +7,19 @@
 //! which *proposes* a tool spec and installs nothing. Witness proofs and
 //! adoption gating landed outside this crate (`stella-tools`'
 //! `foundry_witness`/`foundry_gate`, driven by `stella tools --adopt` /
-//! `--enable`). The authoring slice between them was retired unused in
-//! #3629 and rebuilt behind the autonomous foundry's controls (#5453,
-//! `stella-cli`'s `tool_foundry::author`).
+//! `--enable`). The authoring slice between them was retired unused and
+//! rebuilt behind the autonomous foundry's controls (`stella-cli`'s
+//! `tool_foundry::author`).
 //!
 //! It is a sibling of [`crate::loop_detect`] and follows the same discipline:
 //! plain synchronous functions over owned data, no I/O, no provider SDK, no
 //! `regex` — easy to property-test against fakes. The caller hands a window
 //! of recorded shell commands in as [`ShellInvocation`]s and surfaces any
 //! [`ProposedTool`] it detects; this module never reads the store and never
-//! writes a manifest. Two shipped feeders exist (#5433, Option A): the live
-//! end-of-turn hook (`stella-cli`'s `tool_foundry::gaps`, reading recent
-//! `bash` history back out of the store's `tool_calls` projection and
-//! appending novel proposals to `.stella/private/tool_gaps.jsonl`), and the
-//! offline trace-replay harness (`stella-cli`'s `memory::replay`).
+//! writes a manifest. Two shipped feeders exist (ADR 0023): the live
+//! end-of-turn hook (`stella-cli`'s `tool_foundry::gaps`, over the store's
+//! recent `bash` history) and the offline trace-replay harness
+//! (`stella-cli`'s `memory::replay`).
 //!
 //! **How it differs from loop detection.** [`crate::loop_detect`] flags a
 //! *stuck* turn — the same call, byte-identical, producing byte-identical
@@ -191,7 +190,7 @@ impl ProposedTool {
 /// Thresholds for [`detect_tool_gaps`].
 ///
 /// The numbers below are the shipped defaults; a workspace moves them
-/// through the `[foundry]` settings block (#2471, `stella-cli`'s
+/// through the `[foundry]` settings block (`stella-cli`'s
 /// `settings::foundry`), which the live end-of-turn hook resolves and hands
 /// in. The trace-replay harness (`stella-cli`'s `memory::replay`) keeps the
 /// defaults, so replay reports stay comparable across workspaces.
@@ -517,9 +516,9 @@ fn tokenize(command: &str) -> Vec<RawToken> {
         }
         // A digit run glued to a redirect is a file descriptor, not a value:
         // `2>&1`, `2>err.log`. Folding it into the operator token keeps the
-        // whole redirect in the skeleton, where #5385 requires it to survive —
-        // read as `2 >& <num>` it proposed a tool that runs a different
-        // command than the one observed.
+        // whole redirect in the skeleton, where the emitted
+        // script needs it verbatim — read as `2 >& <num>` it proposed a tool
+        // that runs a different command than the one observed.
         if !text.is_empty()
             && text.chars().all(|tc| tc.is_ascii_digit())
             && chars.peek().is_some_and(|&nc| nc == '<' || nc == '>')
@@ -787,7 +786,7 @@ fn has_file_extension(word: &str) -> bool {
 /// them exactly — instead of pairing any `<` with the next `>` — is what lets
 /// a shell redirect survive: `sort < <path>` renders `sort < {p1}`, where the
 /// old pairing loop consumed the redirect and produced `sort {p1}`, a
-/// template for a semantically different command (#5385).
+/// template for a semantically different command.
 fn render_template(signature: &str) -> String {
     let placeholders = [
         ParamKind::Str.placeholder(),
@@ -1246,7 +1245,7 @@ mod tests {
         assert_eq!(render_template("ls"), "ls");
     }
 
-    /// The #5385 witness: a bare redirect operator is not a placeholder hole,
+    /// The redirect witness: a bare redirect operator is not a placeholder hole,
     /// and rendering must leave it byte-exact. The old pairing loop matched
     /// any `<` to the next `>`, so `sort < <path>` rendered `sort {p1}` — a
     /// template for `sort FILE-as-argument` where the observed pattern was
@@ -1308,7 +1307,7 @@ mod tests {
         assert_eq!(proposals[0].command_template, "make build 2> {p1}");
     }
 
-    /// A heredoc marker over-produced placeholders before #5385: `<<` paired
+    /// A heredoc marker used the pairing loop to over-produce placeholders: `<<` paired
     /// with a later `>` swallowed everything between them. Now the operators
     /// and the `EOF` bareword survive verbatim.
     #[test]

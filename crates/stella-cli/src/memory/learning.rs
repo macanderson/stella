@@ -381,7 +381,7 @@ impl SessionMemory {
             reflection_events.extend(self.auto_create_skills(log_path, quiet));
         }
 
-        // 3. Tool-gap detection and the autonomous foundry (#5433, #5453),
+        // 3. Tool-gap detection and the autonomous foundry,
         // riding the same post-turn seam as skill mining: recent shell
         // history is mined for reusable command shapes, novel gaps land in
         // `.stella/private/tool_gaps.jsonl`, and — under `foundry.autonomy =

@@ -366,7 +366,7 @@ async fn non_object_input_does_not_panic() {
     }
 }
 
-// ── The autonomous-foundry launch controls (#5453) ─────────────────────────
+// ── The autonomous-foundry launch controls ─────────────────────────────────
 
 /// A foundry-governed tool for the launch-control tests: real provenance, a
 /// real adoption row in the workspace's store, telemetry and breaker live.
@@ -406,7 +406,7 @@ fn adopt_enabled(root: &Path, name: &str) -> stella_store::Store {
     store
 }
 
-/// Witness (#5453, breaker): the configured consecutive-failure threshold
+/// Witness (breaker): the configured consecutive-failure threshold
 /// trips the breaker, the trip is recorded in the ledger with its reason, and
 /// the NEXT launch is refused before any process spawns — all through the
 /// live `run_custom` path.
@@ -468,7 +468,7 @@ async fn the_breaker_trips_after_configured_failures_and_blocks_the_next_launch(
     assert_eq!(outcomes, vec![false, false]);
 }
 
-/// Telemetry (#5453): every governed launch writes one row carrying the
+/// Telemetry: every governed launch writes one row carrying the
 /// gap-id lineage and the outcome — success included.
 #[tokio::test]
 async fn a_governed_launch_writes_one_telemetry_row() {
@@ -504,7 +504,7 @@ async fn a_hand_written_tool_records_no_foundry_telemetry() {
     );
 }
 
-/// Network denial (#5453): where the platform mechanism is live, a governed
+/// Network denial: where the platform mechanism is live, a governed
 /// tool that attempts a TCP connect is denied at the OS level, while the
 /// same script on the operator's allowlist gets through the wrapper choice
 /// unwrapped. Skipped (trivially green) where no mechanism exists — the

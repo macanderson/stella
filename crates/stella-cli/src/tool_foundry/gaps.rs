@@ -1,12 +1,12 @@
-//! The tool-gap ledger — the live half of `detect_tool_gaps` (#5433,
-//! resolved as Option A: reconnect).
+//! The tool-gap ledger — the live half of `detect_tool_gaps`, the
+//! reconnect ADR 0023 records.
 //!
 //! The detector itself stays a pure function in `stella-core`; this module is
 //! its production caller. At the end of a turn, the recent `bash` history is
 //! read back out of the store's `tool_calls` projection, mined, and every
 //! proposal at or above the configured thresholds is appended — once — to
 //! `.stella/private/tool_gaps.jsonl`. The ledger is what `stella tools
-//! --draft <gap-id>` and the autonomy pipeline (#5453) author from, and the
+//! --draft <gap-id>` and the autonomy pipeline author from, and the
 //! `gap_id` rides every downstream artifact (the manifest's `[foundry]`
 //! table, the invocation telemetry) as detection lineage.
 //!
@@ -32,7 +32,7 @@ pub(crate) const GAP_LEDGER_FILE: &str = "tool_gaps.jsonl";
 const SHELL_HISTORY_WINDOW: usize = 500;
 
 /// One ledgered gap — a [`ProposedTool`] plus its stable identity and when it
-/// was first detected. Its own serde type because `stella-core` deliberately
+/// was first detected. Its own serde type because `stella-core`
 /// derives no serde (the detector is pure over owned data); the ledger is
 /// this crate's artifact, so the wire shape lives here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -128,7 +128,7 @@ pub(crate) fn find_gap(root: &Path, id: &str) -> Option<GapRecord> {
     load_ledger(root).into_iter().find(|gap| gap.gap_id == id)
 }
 
-/// The live detection pass (#5433): mine the store's recent shell history,
+/// The live detection pass: mine the store's recent shell history,
 /// append every **novel** proposal to the ledger, and say so in one line.
 ///
 /// Returns the newly-ledgered gaps (for the autonomy pipeline) and the
@@ -242,7 +242,7 @@ mod tests {
         ]
     }
 
-    /// The #5433 witness, through the live hook path: a synthetic
+    /// The gap-ledger witness, through the live hook path: a synthetic
     /// repeated-command session yields exactly one ledger row, the scan is
     /// fed from the store's own `tool_calls` projection (not a hand-built
     /// history), and a second pass over the same history appends nothing.
@@ -294,8 +294,8 @@ mod tests {
     }
 
     /// The configured thresholds are honored — the same history that the
-    /// shipped floor rejects is ledgered when the workspace lowers the floor
-    /// (#2471's whole point).
+    /// shipped floor rejects is ledgered when the workspace lowers the
+    /// floor — the whole point of exposing the thresholds.
     #[test]
     fn lowered_thresholds_ledger_what_the_default_rejects() {
         let dir = tempfile::tempdir().expect("tmp");

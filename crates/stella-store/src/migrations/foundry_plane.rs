@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! v40 → v41: the autonomous-foundry plane (#5453).
+//! v40 → v41: the autonomous-foundry plane.
 //!
 //! Not in [`super::additive_tables`], because this step adds tables **and**
 //! touches an existing one, which that module's own rule sends elsewhere.

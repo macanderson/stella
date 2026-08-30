@@ -1066,7 +1066,7 @@ fn skill_usage_records_per_execution_version_rows() {
     //       §7.4 specifies: `[:NEXT]` for the planned path, `[:THEN]` for the
     //       actual one, and one plan node per revision so an inserted task
     //       authors r{n+1} beside its predecessor. v41 the autonomous-foundry
-    //       plane (#5453) — `foundry_tool_versions` (rollback history, bytes
+    //       plane — `foundry_tool_versions` (rollback history, bytes
     //       included), `foundry_invocations` (per-launch telemetry the
     //       circuit breaker folds over), and `foundry_tools.disabled_reason`
     //       (the breaker's recorded verdict; `''` means no breaker spoke).

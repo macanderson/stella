@@ -1,8 +1,8 @@
 //! Authoring — render a ledgered gap into a staged manifest+script pair
-//! under `.stella/tools/proposed/` (#5453).
+//! under `.stella/tools/proposed/`.
 //!
-//! This is the slice #3629 retired, rebuilt behind the autonomous foundry's
-//! controls: the pair it writes is **inert** (discovery's non-recursive scan
+//! This is the retired authoring slice rebuilt behind the autonomous
+//! foundry's controls: the pair it writes is **inert** (discovery's non-recursive scan
 //! cannot see the staging directory), and everything that could make it
 //! runnable still goes through the adoption witness, the foundry gate's
 //! per-call re-digest, and the spawn-time network denial. `stella tools
@@ -13,7 +13,7 @@
 //! The command line in the emitted script is the gap's `command_template`
 //! with each `{pN}` hole replaced by a quoted `"${STELLA_INPUT_PN}"` — and
 //! nothing else touched. Shell operators (`>`, `>>`, `2>&1`, `|`, `<`)
-//! survive verbatim, which is #5385's requirement carried into the emitter:
+//! survive verbatim:
 //! a proposed tool that runs a semantically different command than the
 //! pattern it claims to generalize is wrong output, not a blemish.
 
@@ -160,7 +160,7 @@ fn choose_name(root: &Path, candidate: &str, gap_id: &str) -> String {
 /// The emitted script: shebang, provenance comment, `set -eu`, then the
 /// observed command shape with each `{pN}` replaced by `"${STELLA_INPUT_PN}"`
 /// — and every other byte of the template, shell operators included,
-/// untouched (#5385).
+/// untouched.
 fn render_script(name: &str, gap: &GapRecord) -> String {
     let mut command = gap.command_template.clone();
     for parameter in &gap.parameters {
@@ -303,7 +303,7 @@ mod tests {
         assert!(script.contains("jq \"${STELLA_INPUT_P1}\" \"${STELLA_INPUT_P2}\""));
     }
 
-    /// The #5385 regression, at the emitter: a redirect-heavy template
+    /// The redirect regression, at the emitter: a redirect-heavy template
     /// survives rendering byte-exact — `>`, `>>`, `2>&1`, and `|` all appear
     /// verbatim in the emitted command line.
     #[test]

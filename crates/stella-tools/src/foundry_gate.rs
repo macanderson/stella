@@ -10,8 +10,8 @@
 //! only record that it was ever meant to.
 //!
 //! The pair under [`PROPOSED_DIR`] is written either by hand or by the
-//! autonomous foundry's authoring pass (#5453 — the rebuild of the pass
-//! #3629 retired unused, this time with a live caller and its own standing
+//! autonomous foundry's authoring pass (the rebuild of the retired
+//! authoring slice, this time with a live caller and its own standing
 //! controls: spawn-time network denial, invocation telemetry, a circuit
 //! breaker, and versioned rollback). Who writes the bytes changes nothing
 //! about what this gate does with them — the `[foundry]` table below is
@@ -133,7 +133,7 @@ pub struct FoundryProvenance {
     #[serde(default)]
     pub witness_input: serde_json::Value,
     /// The `.stella/private/tool_gaps.jsonl` row this tool was authored from
-    /// (#5453) — the detection lineage every invocation-telemetry row
+    /// — the detection lineage every invocation-telemetry row
     /// carries. Empty for a manifest authored before the gap ledger existed,
     /// or staged by hand.
     #[serde(default)]
@@ -205,7 +205,7 @@ pub enum WithholdReason {
     /// Adopted, witness green, but no human has enabled it yet.
     AwaitingEnablement,
     /// A mechanism disabled it and recorded why — the circuit breaker's
-    /// verdict (#5453). Distinct from [`Self::AwaitingEnablement`] because
+    /// verdict. Distinct from [`Self::AwaitingEnablement`] because
     /// the remedies differ: an un-enabled tool wants a decision, a tripped
     /// one wants a new version.
     Disabled {

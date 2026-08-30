@@ -275,8 +275,8 @@ pub struct Settings {
     /// opinion about its own verifier, not borrowing permission.
     #[serde(default)]
     pub reward: Option<RewardSettings>,
-    /// Tool-foundry gap-detection thresholds and autonomy controls (#2471,
-    /// #5453). Whole-block last-wins across scopes, on `reward`'s argument:
+    /// Tool-foundry gap-detection thresholds and autonomy controls.
+    /// Whole-block last-wins across scopes, on `reward`'s argument:
     /// the thresholds, the breaker, and the autonomy mode are one policy.
     /// A repo lowering a detection threshold changes what gets *proposed*;
     /// what executes is still gated by the foundry ledger, the per-call
@@ -1047,8 +1047,8 @@ impl Settings {
         self.reward.clone().unwrap_or_default().resolve()
     }
 
-    /// The resolved tool-foundry policy (#2471, #5453). An absent `foundry`
-    /// block is exactly the defaults: the strict post-#2378 detection floor,
+    /// The resolved tool-foundry policy. An absent `foundry`
+    /// block is exactly the defaults: the strict shipped detection floor,
     /// `auto` autonomy, and the 3-consecutive / 50%-of-10 breaker.
     ///
     /// # Errors

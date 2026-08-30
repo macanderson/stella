@@ -334,7 +334,7 @@ pub(crate) const MIGRATIONS: [Migration; 41] = [
     // table changes shape, and nothing is backfilled because nothing recorded
     // either lane before now. See the module's own doc.
     migrate_v39_to_v40,
-    // v40 → v41: the autonomous-foundry plane (#5453) — the additive
+    // v40 → v41: the autonomous-foundry plane — the additive
     // `foundry_tool_versions` (rollback history) and `foundry_invocations`
     // (per-launch telemetry) tables, plus `foundry_tools.disabled_reason`,
     // the circuit breaker's recorded answer to "why is this tool off". See
@@ -396,7 +396,7 @@ pub(crate) const MIGRATIONS: [Migration; 41] = [
     //   v38 → v39: CLAIMED above by `events.task_id` (#5039).
     //   v39 → v40: CLAIMED above by the plan graph's `plan_revisions` and
     //              `plan_edges` tables (#5037).
-    //   v40 → v41: CLAIMED above by the autonomous-foundry plane (#5453).
+    //   v40 → v41: CLAIMED above by the autonomous-foundry plane.
     // Nothing is reserved now: take v41 → v42 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.

@@ -8,14 +8,14 @@ status: implemented
 
 - Status: accepted
 - Date: 2026-08-29
-- Decides: #5433 (reconnect vs. retire), #5453 (the authoring step's shape)
+- Decides: `#5433` (reconnect vs. retire), `#5453` (the authoring step's shape)
 
 ## Context
 
 `stella_core::tool_foundry::detect_tool_gaps` had no production caller: its
 only consumer compiled out of the shipped binary, while the live
 `stella tools --adopt/--enable/--foundry` verbs governed a staging directory
-nothing fed. #3629 had retired the authoring connector unused. #5433 put the
+nothing fed. `#3629` had retired the authoring connector unused. `#5433` put the
 question directly: reconnect the detector to the tools verbs, or delete the
 1295-line module.
 
@@ -61,13 +61,13 @@ it cannot be skipped:
    `stella tools --draft <gap-id>` is the manual escape hatch: the same
    author+validate steps, no adoption.
 
-The detector's thresholds are settings (`[foundry]`, #2471), so a workspace
+The detector's thresholds are settings (`[foundry]`, `#2471`), so a workspace
 tunes what gets *proposed*; what *executes* is still gated by the ledger,
 the re-digest, and the network denial.
 
 ## Consequences
 
-- The detector has a live caller, so the self-improvement loop #830
+- The detector has a live caller, so the self-improvement loop `#830`
   sketched actually closes: repeated shell shapes become adopted,
   version-tracked, telemetered tools without a model call.
 - The evolution ledger's Tool row changes from "staging is a hand step" to
@@ -75,7 +75,7 @@ the re-digest, and the network denial.
   autonomy test (gap → adopted → executed with a real network attempt
   denied), the breaker trip test, and the rollback round-trip, alongside
   the original unreachable-until-proven gate witness.
-- `#5453`'s original human-gated `--draft`-only framing is superseded by
+- `#5453``'s original human-gated `--draft`-only framing is superseded by
   direct instruction from the repository owner; the draft verb survives as
   the escape hatch and as the degraded mode's output.
 - A workspace that wants the old posture writes `autonomy = "draft-only"`

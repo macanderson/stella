@@ -7,12 +7,12 @@
 //! (`--draft` authors from the gap ledger, `--rollback` restores a recorded
 //! version, `--status` shows per-tool health).
 //!
-//! The live loop (#5433 + #5453) runs on the end-of-turn seam beside skill
+//! The live loop runs on the end-of-turn seam beside skill
 //! mining: [`end_of_turn`] mines the store's recent shell history for gaps
 //! ([`gaps`]), ledgers the novel ones, and — under `foundry.autonomy =
 //! "auto"` — carries them through author → validate → witness-adopt → enable
 //! ([`autonomy`]), with network denial, telemetry, the circuit breaker, and
-//! versioned rollback standing where the human ceremony used to.
+//! versioned rollback standing in place of the retired human ceremony.
 
 pub(crate) mod adopt;
 pub(crate) mod author;
@@ -22,7 +22,7 @@ pub(crate) mod ops;
 
 use std::path::Path;
 
-/// The end-of-turn hook (#5433): detect gaps from the store's recent shell
+/// The end-of-turn hook: detect gaps from the store's recent shell
 /// history, ledger the novel ones, and run whatever autonomy the workspace's
 /// `[foundry]` settings allow. Returns user-visible notices; never fails the
 /// turn it rides on.

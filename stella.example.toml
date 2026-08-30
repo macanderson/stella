@@ -536,8 +536,8 @@ per_revision = 0.1            # subtracted per verification round beyond the fir
 # FOUNDRY — gap-detection thresholds and autonomy for self-authored tools
 #
 # The detector proposes a reusable tool when the same shell shape keeps getting
-# reconstructed with variation (#2471). The autonomy controls decide how far a
-# detected gap may travel without a human (#5453): "auto" authors, validates,
+# reconstructed with variation. The autonomy controls decide how far a
+# detected gap may travel without a human: "auto" authors, validates,
 # adopts, and enables the tool with network DENIED at spawn; "draft-only" stops
 # after writing the staged pair under .stella/tools/proposed/; "off" only
 # ledgers the gap. Whatever the mode, execution stays behind the foundry
