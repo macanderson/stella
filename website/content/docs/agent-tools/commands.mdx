@@ -96,7 +96,7 @@ Only commands support namespaces. Skills and agents don't, and each still needs 
 Type `/review auth module` and stella fills in the template, then runs the result as your prompt.
 
 - Every `$ARGUMENTS` in the body is replaced with whatever you typed after the command name. That's `auth module` in this example.
-- If the body has no `$ARGUMENTS` placeholder, your arguments are still used. Stella adds them as a paragraph at the end. This means prompt files written for other tools work here with no changes.
+- If the body has no `$ARGUMENTS` placeholder, your arguments are still used. stella adds them as a paragraph at the end. This means prompt files written for other tools work here with no changes.
 
 ## Where commands live
 
@@ -121,7 +121,7 @@ Type `/review auth module` and stella fills in the template, then runs the resul
   </SpecCard>
 </CardGrid>
 
-Stella loads user-scope commands first, then project-scope commands. If both define the same name, the project version wins. Built-in commands can never be overridden. When a custom name collides across kinds, commands win over skills, and skills win over agents.
+stella loads user-scope commands first, then project-scope commands. If both define the same name, the project version wins. Built-in commands can never be overridden. When a custom name collides across kinds, commands win over skills, and skills win over agents.
 
 ### Trusted repos
 

@@ -195,7 +195,7 @@ Shortening happens in four steps, from **least to most lossy**:
 The system message and your latest message are never touched.
 
 <Callout type="info">
-Keeping the **earliest** copy during deduplication is deliberate.
+Deduplication keeps the **earliest** copy.
 Identical content doesn't depend on where it sits, so shortening the later
 copy instead would put the change in the *newest* part of the conversation
 and break the provider's cached prefix. Doing it the other way would save a

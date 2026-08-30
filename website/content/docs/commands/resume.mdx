@@ -1,6 +1,6 @@
 ---
 title: stella resume
-description: Reopen a past Command Deck session right where you left off, with its transcript, conversation, and pending prompts.
+description: Reopen a past interactive session right where you left off, with its transcript, conversation, and pending prompts.
 ---
 
 Reopen a past [Command Deck](/docs/commands/chat) session right where it stood: the transcript, the conversation with the model, and any prompts still waiting to run. Sessions survive quitting, pressing Ctrl-C, closing the terminal, or even a power loss. stella saves a record of everything that happens as it happens, and resuming replays that record.
@@ -13,7 +13,7 @@ stella resume [id] [--list] [global flags]
 
 ## What it does
 
-Every Command Deck session saves itself in a list stored on your machine. Each session gets its own JSON file under `~/.stella/sessions/` on every platform, unless you set `STELLA_DATA_DIR` to a different location. The session's saved state is stored next to that file. `stella resume` picks a session from this list and reopens it in the deck:
+Every interactive session saves itself in a list stored on your machine. Each session gets its own JSON file under `~/.stella/sessions/` on every platform, unless you set `STELLA_DATA_DIR` to a different location. The session's saved state is stored next to that file. `stella resume` picks a session from this list and reopens it in the deck:
 
 - **`stella resume`** with no id reopens the most recently active session **that can be resumed in your current workspace**. If there isn't one, it tells you and points you to `--list`.
 - **`stella resume <id>`** reopens one specific session by its id. Ids are created when a session starts, in the form `ses-<ms>-<pid>`, and `--list` shows them.

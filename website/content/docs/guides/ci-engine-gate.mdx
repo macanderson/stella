@@ -173,8 +173,6 @@ reads:
 }
 ```
 
-Two things to know before you write the comparison script.
-
 **Read the `model` field, not the flag you passed.** stella reports the
 model that actually ran the worker turns. A
 [worker-model route](/docs/configuration/agent-engine-config) can swap out
@@ -305,8 +303,6 @@ person decide what that means.
 
 ## The workflow
 
-Two things about how this file is built matter more than what's in it.
-
 ```yaml
 name: engine-gate
 on: pull_request          # never pull_request_target — that hands forks your secrets
@@ -393,7 +389,7 @@ cost.
 
 ## What this cannot tell you
 
-Here are the honest limits. A comparison harness that oversells itself is
+A comparison harness that oversells itself is
 worse than no harness at all.
 
 <CardGrid size="md">

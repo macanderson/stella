@@ -119,7 +119,7 @@ Runs once before the turn begins. Anything the hook prints to **stdout is append
 
 Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool doesn't run, and the model gets the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target one tool, such as `task_assign`, or a family of tools, such as `mcp__github__*`.
 
-A `PreToolUse` hook can also **decide** instead of just blocking: print one JSON decision document on stdout, using the same `allow` / `deny` / `require_approval` / `modify` vocabulary the in-process [extension bus](/docs/extensions) uses. Stella folds this in exactly as it folds a policy chain. See [Decisions on stdout](#decisions-on-stdout).
+A `PreToolUse` hook can also **decide** instead of just blocking: print one JSON decision document on stdout, using the same `allow` / `deny` / `require_approval` / `modify` vocabulary the in-process [extension bus](/docs/extensions) uses. stella folds this in exactly as it folds a policy chain. See [Decisions on stdout](#decisions-on-stdout).
 
 ### `PostToolUse`
 

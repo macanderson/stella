@@ -136,7 +136,7 @@ stella tools --validate            # scans .stella/tools/ and ~/.stella/tools/
 stella tools --validate ./mytools  # or an explicit directory
 ```
 
-Stella is lenient at discovery time. A broken manifest just becomes a diagnostic, and the session keeps running. So this validator is your chance to catch problems before a run has already spent your budget. It parses each `<name>.toml` file and sorts problems into severities:
+stella is lenient at discovery time. A broken manifest just becomes a diagnostic, and the session keeps running. So this validator is your chance to catch problems before a run has already spent your budget. It parses each `<name>.toml` file and sorts problems into severities:
 
 <CardGrid size="md">
   <OptionCard name="Error">

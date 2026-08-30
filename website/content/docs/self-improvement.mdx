@@ -189,7 +189,7 @@ and weight-space adapters are not implemented yet.
 
 These aren't footnotes on individual parts — they're the conditions that
 any of this has to meet before it can ship. They repeat across every part
-described above because they're the actual design, not an afterthought.
+described above because they're the actual design.
 
 <CardGrid size="md">
   <SpecCard title="Human sign-off on anything that sticks">
@@ -211,14 +211,14 @@ described above because they're the actual design, not an afterthought.
   </SpecCard>
   <SpecCard title="Data origin and redaction">
     Training data and distilled results keep a record of where they came
-    from, and are cleaned before they're stored. Stella never trains on
+    from, and are cleaned before they're stored. stella never trains on
     secrets or personal information. The evaluation and the data's origin
     are both published.
   </SpecCard>
   <SpecCard title="Advisory before autonomous">
     An intervention warns before it acts, and every time one fires, it
     logs what it predicted against what actually happened, so its
-    predictions stay accurate over time. **Stella never silently changes a
+    predictions stay accurate over time. **stella never silently changes a
     plan on a safety-relevant path.**
   </SpecCard>
   <SpecCard title="Sandboxed practice">
@@ -239,7 +239,7 @@ one.
 
 ## The deck view
 
-The Command Deck is where this becomes something you can watch, not just
+Interactive mode is where this becomes something you can watch, not just
 read about.
 
 A backlog of issues arrives over [MCP](/docs/agent-tools/mcp) and gets

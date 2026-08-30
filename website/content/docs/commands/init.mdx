@@ -15,7 +15,7 @@ stella init [global flags]
 
 `stella init` does three things.
 
-1. **Infers the domain taxonomy** and writes it to `<workspace>/.stella/domains.toml`. This taxonomy is the shared vocabulary used to tag memories, reflections, and every code-graph node and edge. It's also saved into the context store at `<workspace>/.stella/private/context.db`.
+1. **Infers the domain taxonomy** and writes it to `<workspace>/.stella/domains.toml`. This taxonomy is the shared vocabulary for tagging memories, reflections, and every code-graph node and edge. It's also saved into the context store at `<workspace>/.stella/private/context.db`.
 2. **Builds the code-graph index** at `<workspace>/.stella/private/codegraph.db`, the database [`stella search`](/docs/commands/search) queries.
 3. **Syncs extensions** — adopts commands, skills, and agents from other agent tools' `.claude/` and `.agents/` directories (workspace and user scope) as links under `.stella/`.
 
@@ -50,7 +50,7 @@ The domain taxonomy is the one part that only `stella init` refreshes, and it on
     auto-detection, or on the offline fallback when nothing else is available.
   </OptionCard>
   <OptionCard name="--prune-vectors" defaultValue="off">
-    Delete stored vectors that no longer belong to the embedding model in use. Vectors are
+    Delete stored vectors that don't belong to the embedding model in use. Vectors are
     tied to a fingerprint of the embedding model, so two models never share the same vector
     space. This means switching models hides the old vectors rather than removing them, and
     switching back reuses them at no extra cost. Clearing them on every run would charge a

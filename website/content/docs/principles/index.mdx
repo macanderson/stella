@@ -109,7 +109,7 @@ stella stats
    limits are all plain functions over data it already owns. That makes
    them testable, with no network and no filesystem needed.
 3. **The witness-test contract.** An agent has to *prove* its change
-   actually fixed the problem: fail on the old code, pass on the new code,
+   actually fixed the problem: fail before the change, pass after it,
    with tampering ruled out. "The test suite is green" is not proof on its
    own. An installed verification plugin (Vera is the reference one) runs
    this check and reports the result.

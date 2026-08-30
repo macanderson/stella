@@ -65,7 +65,7 @@ The `tools:` field reads several formats, so most spellings you'd try will work.
   </SpecCard>
 </CardGrid>
 
-Stella loads user-scope agents first, then project-scope agents. If both define the same name, the project version wins.
+stella loads user-scope agents first, then project-scope agents. If both define the same name, the project version wins.
 
 ## Invoking an agent
 
@@ -112,9 +112,9 @@ The same sync imports `commands/` and `skills/` into their matching directories.
 
 ### Import rules
 
-- **`.claude` wins over `.agents`.** Stella scans sources in that order, so the first occurrence of a name is the one it imports.
+- **`.claude` wins over `.agents`.** stella scans sources in that order, so the first occurrence of a name is the one it imports.
 - **Never overwrite, never re-import.** A name already present in the destination, whether you wrote it by hand or a previous init linked it, is skipped. The sync is safe to run again, and your own definitions always win.
-- **Never follow a symlink.** Other tools link between these directories too, for example `.claude/agents/x → ../../.agents/agents/x`. Stella links each definition from its real home exactly once. A folder with no `AGENT.md` inside it is skipped too, and reported, so nothing disappears silently.
+- **Never follow a symlink.** Other tools link between these directories too, for example `.claude/agents/x → ../../.agents/agents/x`. stella links each definition from its real home exactly once. A folder with no `AGENT.md` inside it is skipped too, and reported, so nothing disappears silently.
 
 After init, the `/agents` tab lists the imported definitions alongside your own, and init itself prints a per-scope summary of what it linked and skipped.
 

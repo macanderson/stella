@@ -15,7 +15,7 @@ stella scoreboard
 
 ## What it does
 
-Most tools that measure agent quality just ask the model how it did. Stella's store keeps a self-rating field (`execution_reflection.self_rating`), but the scoreboard never reads it. Letting a model grade its own work isn't a fair test. Every number here either comes from something that actually happened, or from a judgment a person made.
+Most tools that measure agent quality just ask the model how it did. stella's store keeps a self-rating field (`execution_reflection.self_rating`), but the scoreboard never reads it. Letting a model grade its own work isn't a fair test. Every number here either comes from something that actually happened, or from a judgment a person made.
 
 <CardGrid size="md">
   <SpecCard title="Model calls">
@@ -63,7 +63,7 @@ The math behind these numbers is tested once, in one place. The CLI just reads t
 </Callout>
 
 <Callout type="warn">
-Stella never reports `interrupted` as a verdict. The store can't tell the difference between you canceling a task and a provider error, so the scoreboard leaves it out rather than guessing wrong.
+stella never reports `interrupted` as a verdict. The store can't tell the difference between you canceling a task and a provider error, so the scoreboard leaves it out rather than guessing wrong.
 </Callout>
 
 ## Related

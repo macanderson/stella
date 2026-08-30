@@ -176,7 +176,7 @@ Every string in every record, and in the manifest, passes through the same secre
 
 `redacted` on each record reports whether anything was actually replaced, so "this was scrubbed" is a fact you can see rather than something you have to assume.
 
-The manifest's `redaction.behavior_digest` fingerprints the redactor by its **decisions** on a fixed test set of text, so it changes whenever a threshold, a matcher, or a rule list changes. One limit worth stating plainly: a rule added for a vendor that test set doesn't cover leaves the digest unchanged.
+The manifest's `redaction.behavior_digest` fingerprints the redactor by its **decisions** on a fixed test set of text, so it changes whenever a threshold, a matcher, or a rule list changes. One limit: a rule added for a vendor that test set doesn't cover leaves the digest unchanged.
 
 ## The manifest
 

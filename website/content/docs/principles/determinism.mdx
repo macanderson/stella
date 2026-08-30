@@ -5,8 +5,8 @@ description: Why stella runs one deterministic thread instead of a swarm of agen
 
 Most agent tools use a swarm: a navigator agent, a coder agent, a reviewer
 agent, a tester agent, and a coordinator managing all of them. stella does
-the opposite. It runs **one deterministic, single-threaded loop**, and
-that's a deliberate choice, not a limitation. The research behind it is in
+the opposite. It runs **one deterministic, single-threaded loop**.
+The research behind it is in
 [this note](https://github.com/macanderson/stella/blob/main/docs/papers/deterministic-engine.md).
 
 ## What the research found
@@ -102,8 +102,8 @@ statement about **where to spend them**:
 - Goal mode works differently, with its own verifier. After every round,
   without exception, a separate model checks the transcript against the
   goal. This isn't a fallback for unclear evidence. It runs every round no
-  matter what, and if the check itself fails to run, it reports that
-  honestly instead of making up a verdict.
+  matter what, and if the check itself fails to run, it says so
+  instead of making up a verdict.
 - Routing, budgets, trimming context, retries, and pulling in memory are
   all handled by plain, boring, checkable code. The model's attention goes
   to the two things only a model can do: **writing the change**, and
@@ -114,7 +114,7 @@ rate limit, never make things up, and give you the *same answer twice*.
 That's exactly what you want from the part of an agent that decides whether
 to trust it.
 
-The Command Deck shows this split instead of just describing it. Open a
+Interactive mode shows this split instead of just describing it. Open a
 task and you see its contract: what "done" means, which checks are
 computed and which need a model, and what the work actually cost. Below
 that, the plan it was given sits next to what actually happened. If they

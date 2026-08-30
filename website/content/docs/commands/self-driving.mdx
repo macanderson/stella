@@ -41,7 +41,7 @@ stella self-driving phase <name>
 
 This command handles the deterministic part of the loop: everything a computer can decide with fixed rules instead of guesses. Because these decisions never need a model, the model driving the loop can never get them subtly wrong. Deciding which problems to fix, and what a finding means, is still left to the agent. The `/self-driving` slash commands call these same functions, and the `scripts/self-driving.sh` script uses this command for the same tasks.
 
-Stella stores this state at `~/.stella/self-driving/<slug>/`. The slug comes from your repository's remote URL, so every worktree of the same repository shares one ledger, one seen-list, and one calibration. The [Observatory](/docs/commands/observe) reads these same files, but never changes them. Everything works offline and needs no API key — the exceptions are `queue`, `plan`, and `watch`, which read your issue queue through `gh` (and still work, just with less information, when `gh` isn't available).
+stella stores this state at `~/.stella/self-driving/<slug>/`. The slug comes from your repository's remote URL, so every worktree of the same repository shares one ledger, one seen-list, and one calibration. The [Observatory](/docs/commands/observe) reads these same files, but never changes them. Everything works offline and needs no API key — the exceptions are `queue`, `plan`, and `watch`, which read your issue queue through `gh` (and still work, just with less information, when `gh` isn't available).
 
 ## The verbs
 
@@ -56,7 +56,7 @@ Prints every command a driver outside the binary is allowed to call on this buil
 
 Self-driving controls stella from the outside, the same way `scripts/self-driving.sh` does. A driver script reads this list once, when it starts. If the list doesn't match what the script expects, the script can refuse to run instead of failing partway through a cycle with an `unrecognized subcommand` error.
 
-Stella checks this list against the real program in both directions. If a command is added to the CLI but missing from this list, that's an error. If this list names a command that no longer exists, that's also an error. This keeps the list matching the program exactly, instead of slowly falling out of date.
+stella checks this list against the real program in both directions. If a command is added to the CLI but missing from this list, that's an error. If this list names a command that doesn't exist, that's also an error. This keeps the list matching the program exactly, instead of slowly falling out of date.
 
 ### plan
 
@@ -78,7 +78,7 @@ Once every lens has been checked, the loop drops into `watch` mode. It never exi
 
 ### seen
 
-Stella tells findings apart by their content, not by issue number. `--digest` cleans up the text (lowercase, collapsed whitespace, line numbers removed) and hashes it, so the same problem is recognized as one finding even after unrelated edits move it twelve lines down. `--new` shows which digests haven't been seen before. `--add` saves new digests to the seen list. A cycle counts as **dry** when it finds zero new problems — fixing problems doesn't make a cycle dry, finding nothing does.
+stella tells findings apart by their content, not by issue number. `--digest` cleans up the text (lowercase, collapsed whitespace, line numbers removed) and hashes it, so the same problem is recognized as one finding even after unrelated edits move it twelve lines down. `--new` shows which digests haven't been seen before. `--add` saves new digests to the seen list. A cycle counts as **dry** when it finds zero new problems — fixing problems doesn't make a cycle dry, finding nothing does.
 
 ### calibrate
 
@@ -102,9 +102,9 @@ A run covers many cycles: one `/loop` session, or one daemon's whole lifetime. I
 
 Two checks happen before anything reaches the tracker. First, if a finding's digest is already in the seen list, it won't be filed again — this uses the same text-cleanup rule the aperture ladder's dry streak relies on, so the same problem reported at a different line number still counts as one finding. Second, the draft must match your workspace's issue format.
 
-This second check exists to stop a feedback loop. Stella's ranker treats any issue carrying a `bug` or `triage` label as a defect. GitHub's own triage workflow adds a `triage` label to any issue with no type label, and issues opened through the API start with no labels at all. Without this check, an unlabeled filing would come back next cycle as an untriaged defect the loop then has to triage itself — the loop would be manufacturing its own backlog, and its progress numbers would quietly include work it created for itself.
+This second check exists to stop a feedback loop. stella's ranker treats any issue carrying a `bug` or `triage` label as a defect. GitHub's own triage workflow adds a `triage` label to any issue with no type label, and issues opened through the API start with no labels at all. Without this check, an unlabeled filing would come back next cycle as an untriaged defect the loop then has to triage itself — the loop would be manufacturing its own backlog, and its progress numbers would quietly include work it created for itself.
 
-Stella learns your issue format instead of guessing it: it reads `.stella/issues/convention.json` if your workspace has saved one, or otherwise figures it out from the automation that enforces it. If nothing can be found, the loop *proposes* a format and files nothing under it until a human accepts — it can suggest any format, but it can't approve its own suggestion. If a filing is refused, stella lists every problem with it at once and says where the format came from, so you know both what went wrong and what rule it broke.
+stella learns your issue format instead of guessing it: it reads `.stella/issues/convention.json` if your workspace has saved one, or otherwise figures it out from the automation that enforces it. If nothing can be found, the loop *proposes* a format and files nothing under it until a human accepts — it can suggest any format, but it can't approve its own suggestion. If a filing is refused, stella lists every problem with it at once and says where the format came from, so you know both what went wrong and what rule it broke.
 
 ### work
 
@@ -112,7 +112,7 @@ Stella learns your issue format instead of guessing it: it reads `.stella/issues
 
 It starts a real `stella run`, rather than running a turn internally. Self-driving controls stella from the outside, so each unit of work gets exactly what a normal `stella run` gets on your machine — the same plugins, nothing extra. This matters: with no verification plugin installed, a completed work unit only means the turn finished, not that the change was proven correct. What actually makes an automatic merge safe is the CI check in `deliver`, not this step.
 
-Two things here are deliberate, and tested. Issue text is never a command: anyone who can file an issue could write anything in it, so its text always reaches the prompt as a quote, with no authority to instruct the agent. The quote marker is generated from the issue's own content rather than fixed in advance, so text inside the issue can't fake the end of the quote and pretend to speak as you.
+Issue text is never a command: anyone who can file an issue could write anything in it, so its text always reaches the prompt as a quote, with no authority to instruct the agent. The quote marker is generated from the issue's own content rather than fixed in advance, so text inside the issue can't fake the end of the quote and pretend to speak as you.
 
 **The outcome is measured from the actual files, never from what the turn says.** If a turn exits cleanly and claims success but changes nothing, stella reports `no_change` and releases the worktree. This matters exactly when a turn's own summary and the real result disagree — a loop that trusted the summary instead would open empty pull requests.
 
@@ -144,7 +144,7 @@ Asking a loop to stop when it's already stopping is not an error. The output tel
 
 `stella self-driving stats` shows what a session has done so far: issues claimed, attempted, changed, failed, escalated, and deferred; issues created, refused, and marked as duplicates; issues closed, broken down by how they were closed; pull requests opened, merged, and escalated; fixes, rebases, and time spent waiting on a broken base branch; reflections, memories, and proposals written; and turns run, including turns stopped by their limit.
 
-Stella writes these stats after **every step**, not just at the end. Since the loop never stops on its own, a report written only on exit would never get written at all — the point is a record you can read while the loop is still running. Each write is atomic, so a dashboard reading the file mid-write always sees the last complete version, never a half-written one.
+stella writes these stats after **every step**, not just at the end. Since the loop never stops on its own, a report written only on exit would never get written at all — the point is a record you can read while the loop is still running. Each write is atomic, so a dashboard reading the file mid-write always sees the last complete version, never a half-written one.
 
 #### Ratios
 
@@ -154,7 +154,7 @@ A raw count only tells you how busy the loop was, which always looks good. The r
 - `attempt yield` — the share of attempts that actually changed something.
 - `merge rate` — the share of opened pull requests that got merged.
 
-If a ratio has no denominator, stella prints `--` instead of `0.00`. A ratio of zero over zero isn't a small number, it's undefined, and showing `0.00` would suggest something false. Stella also checks that the three closure kinds add up to the total, and reports it if they don't — a dashboard showing a total that doesn't match its own breakdown is worse than showing neither, because people tend to trust whichever number they see first.
+If a ratio has no denominator, stella prints `--` instead of `0.00`. A ratio of zero over zero isn't a small number, it's undefined, and showing `0.00` would suggest something false. stella also checks that the three closure kinds add up to the total, and reports it if they don't — a dashboard showing a total that doesn't match its own breakdown is worse than showing neither, because people tend to trust whichever number they see first.
 
 ### triage
 
@@ -176,7 +176,7 @@ The same rule applies in both directions. `conform` decides whether a new issue 
 
 `--duplicate-of KEY` closes an issue as a duplicate and names the issue it duplicates. Without this, anyone reading the closure would go looking for an original they can't find.
 
-`--partial DONE --remaining KEY…` is the most important one. "Mostly done" is how most real work actually ends up, and it's tempting to round that up to "done." Stella refuses this outright unless the remaining work already exists as its own tracked issues. The closing comment links to them, so the backlog only shrinks by the amount of work actually finished.
+`--partial DONE --remaining KEY…` is the most important one. "Mostly done" is how most real work actually ends up, and it's tempting to round that up to "done." stella refuses this outright unless the remaining work already exists as its own tracked issues. The closing comment links to them, so the backlog only shrinks by the amount of work actually finished.
 
 All of these checks happen *before* anything reaches the tracker, so a closure that's missing its citation can never half-happen.
 
@@ -186,7 +186,7 @@ The `[issues]` section in `stella.toml` says which issue tracker is active, and 
 
 This is split on purpose. `stella.toml` is where you look for anything you can configure about stella, so *which tracker to use* belongs there. A specific vendor's exact wording doesn't belong there, and if a workspace uses two trackers, there needs to be somewhere to put the second one's settings.
 
-Stella only recognizes three resolutions: `completed`, `not_planned`, and `duplicate` — these are GitHub's own close reasons. If your tracker offers twenty resolutions, it maps to these three and the rest pass through as-is. You don't need to configure anything to use stella with GitHub: with no config, no `[issues]` section, and no manifest file, everything works with sensible defaults.
+stella only recognizes three resolutions: `completed`, `not_planned`, and `duplicate` — these are GitHub's own close reasons. If your tracker offers twenty resolutions, it maps to these three and the rest pass through as-is. You don't need to configure anything to use stella with GitHub: with no config, no `[issues]` section, and no manifest file, everything works with sensible defaults.
 
 ### deliver
 

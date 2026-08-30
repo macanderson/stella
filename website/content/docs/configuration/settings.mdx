@@ -567,8 +567,8 @@ of those get promoted, and measuring whether the context it picked actually help
   vocabulary and defaults, not as a description of a running mechanism.
 </Callout>
 
-Two things are kept separate: **learning mode** (how much of the loop
-runs) and **governance mode** (who signs off on a promotion). Every mode value is
+**Learning mode** (how much of the loop runs) and **governance mode** (who
+signs off on a promotion) are separate settings. Every mode value is
 strict — an unrecognized value such as `"advisary"` is a hard parse error, never a
 silent fallback. Omitted fields fall back to the defaults below, so `"context": {}` and
 an absent block do the same thing.

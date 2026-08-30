@@ -3,7 +3,7 @@ title: Scripting & automation
 description: Run stella headlessly in CI with JSON and streaming-JSON output, environment-variable configuration, and enforced budgets.
 ---
 
-Stella can run unattended. The `--output-format` flag switches from the
+stella can run unattended. The `--output-format` flag switches from the
 human-friendly terminal display to output a script can read, and every
 important flag also has an environment variable for use in CI.
 
@@ -156,8 +156,6 @@ and a new event type never bumps `schema_version`. Everything else the
 envelope owns, including the nested `verdict`, `reflection`, and
 `files_touched` payloads, is covered by this contract.
 
-Two things this means for you:
-
 - **Check only the keys you use, not the whole set.** Don't assert on every key you'd expect, and don't reject an object just because it has keys you've never seen.
 - **Treat an unexpected `schema_version` as your signal to stop.** A number higher than the one your script was written for means the shape may have changed. Fail loudly there, instead of silently misreading a renamed key.
 
@@ -238,7 +236,7 @@ configure a CI job without editing the command line:
   </OptionCard>
   <OptionCard name="STELLA_LOG" defaultValue="warn">
     Same as `--log-level`. A diagnostic filter per module, for example
-    `warn,stella_model=trace`. Stella checks the most specific setting
+    `warn,stella_model=trace`. stella checks the most specific setting
     first: `--log-level`, then `-v`/`-vv`/`-vvv`, then this variable, then
     `warn` as the fallback — so typing `-vv` is never silently overridden by
     an exported value.
@@ -269,7 +267,7 @@ export STELLA_SPEND_LIMIT=5
 stella run "update the changelog for the pending release"
 ```
 
-Stella also loads project dotenv files into the environment before any of
+stella also loads project dotenv files into the environment before any of
 this is resolved: `.env.<mode>.local`, then `.env.local`, then `.env`, most
 specific first, and only within the enclosing git repository. A value
 already exported in your shell always wins over a file value.
@@ -327,7 +325,7 @@ stella --spend-limit 10 fleet --plan cleanup.toml --max-concurrency 4
     model call that wouldn't complete).
   </OptionCard>
   <OptionCard name="3">
-    A deliberate stop. Stella chose to end the run: a stuck loop that
+    A deliberate stop. stella chose to end the run: a stuck loop that
     passed its warning threshold, an enforced budget or deadline, the step
     limit, or a scope review the operator ended. The work didn't finish,
     but nothing crashed. A wrapper can retry with a different approach, and

@@ -31,7 +31,7 @@ stella stats prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] [-
 
 ## Reading the cache columns
 
-Every row also shows three columns about your cache savings. Stella works these out fresh each time you run the command from the raw token counts — it doesn't store them:
+Every row also shows three columns about your cache savings. stella works these out fresh each time you run the command from the raw token counts — it doesn't store them:
 
 <CardGrid size="md">
   <OptionCard name="HIT%">
@@ -113,7 +113,7 @@ stella stats prune --max-rows 5000
     `720h`, `3mo`. A plain number with no letter means days.
   </OptionCard>
   <OptionCard name="--max-rows <N>">
-    Sets the most executions to keep. Stella deletes the oldest ones first, until the
+    Sets the most executions to keep. stella deletes the oldest ones first, until the
     store is at or under this limit.
   </OptionCard>
   <OptionCard name="--dry-run">

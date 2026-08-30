@@ -18,13 +18,13 @@ stella migrate config --dry-run      # report what it would write, change nothin
 
 Your original `settings.json` stays exactly where it is. Check the new TOML file, make sure it says what you meant, then delete the JSON yourself when you're ready.
 
-Until you delete the JSON, stella reads the **TOML** file and prints a line naming both files, so you always know a migration is in progress. Stella never merges the two files together. For each scope, exactly one file is in charge, and stella always tells you which one.
+Until you delete the JSON, stella reads the **TOML** file and prints a line naming both files, so you always know a migration is in progress. stella never merges the two files together. For each scope, exactly one file is in charge, and stella always tells you which one.
 
 ## Accurate values
 
 Every value comes from settings stella actually read, not retyped from the JSON by hand. Nothing in the new file can disagree with what stella loaded.
 
-Stella also reads back and checks the new file *before* saving it. Without this check, a bad migration could write a file stella can't read, and you wouldn't find out until your next launch, by which point your working config would already be replaced by the broken one.
+stella also reads back and checks the new file *before* saving it. Without this check, a bad migration could write a file stella can't read, and you wouldn't find out until your next launch, by which point your working config would already be replaced by the broken one.
 
 ## Broken configs
 
@@ -38,7 +38,7 @@ Most key names stay the same. Four keys change, each for a reason:
 | --- | --- | --- |
 | `enable_recap` | `[run].recap` | A bare key at the top of the file attaches to whatever table came right before it. Moving one line could silently change which table it belongs to. Giving every value its own table avoids that. |
 | `agent_engine_config` | `[agents]` | Shorter, and describes what it actually is instead of an internal detail. |
-| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One level of nesting removed. This works because `default` is the only agent role stella uses today. If your `settings.json` still names `worker`, `verifier`, `triage`, `research`, or `plan`, those aren't carried over. Stella ignores them and tells you so, instead of migrating them. |
+| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One level of nesting removed. This works because `default` is the only agent role stella uses today. If your `settings.json` still names `worker`, `verifier`, `triage`, `research`, or `plan`, those aren't carried over. stella ignores them and tells you so, instead of migrating them. |
 | `agent_engine_config.allowed_models` | `[models].allowed` | It's a setting about models, not about any single agent. |
 
 `[mcp].registry_url` carries over as-is. **`[mcp.servers]` doesn't work yet.** MCP servers still load from `.stella/mcp.toml`. If you move them into `stella.toml` anyway, stella tells you at startup instead of silently failing to start them.

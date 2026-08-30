@@ -17,7 +17,7 @@ stella models list [--provider <id>] [--all]
 
 `stella models` lists every built-in provider, showing its display name, whether you have a key for it, its default model, and its base URL. Below that, it shows a status line for the local model catalog. Any custom providers you added in `settings.json` show up too, under a separate **Config-defined providers** heading, along with the API style they use. This is the fastest way to check which providers are ready before you pick one with `--model`.
 
-Stella checks **key status** using the same steps `stella run` uses to find a key, run in a mode that never stops to ask you a question, since this is just a listing command. It checks every source: an environment variable (or its alias), a project `.env` file, a value written in `settings.json`, and `~/.stella/credentials.toml`. Each configured row names the source that actually supplied the key. That means `stella models`, [`stella config`](/docs/commands/config), and [`stella auth list`](/docs/commands/auth) will always agree with each other, and with what happens on a real run.
+stella checks **key status** using the same steps `stella run` uses to find a key, run in a mode that never stops to ask you a question, since this is just a listing command. It checks every source: an environment variable (or its alias), a project `.env` file, a value written in `settings.json`, and `~/.stella/credentials.toml`. Each configured row names the source that actually supplied the key. That means `stella models`, [`stella config`](/docs/commands/config), and [`stella auth list`](/docs/commands/auth) will always agree with each other, and with what happens on a real run.
 
 You can see the same list inside an interactive session with the [`/models`](/docs/commands/chat) slash command.
 
@@ -40,7 +40,7 @@ There are two sources for the catalog, and they follow different rules. Both use
 
 <CardGrid size="md">
   <OptionCard name="Native provider listings">
-    Each configured provider's own `/models` endpoint. Stella syncs it automatically whenever it's
+    Each configured provider's own `/models` endpoint. stella syncs it automatically whenever it's
     stale, **including the very first time** — this is how new model releases show up. It only
     calls a provider you've already given stella a key for, the same server your next request
     would go to anyway. If you haven't given a provider a key, stella doesn't fetch anything from
@@ -90,7 +90,7 @@ If you don't pass `--provider`, the list only shows providers you currently have
 </CardGrid>
 
 <Callout type="info">
-Stella looks for provider credentials in this order: the `--api-key` flag, then the provider's
+stella looks for provider credentials in this order: the `--api-key` flag, then the provider's
 environment variable (or its aliases), then `settings.json`, then `~/.stella/credentials.toml`,
 and finally an interactive prompt if you're at a terminal.
 </Callout>
@@ -134,7 +134,7 @@ Stella — Available Providers & Models
 
 Each row follows this pattern: `{key status} {id}/{default model}  {display name}  [{base url}] ({source})`. The source at the end only appears on a configured row, and it names where the key came from: `env:VAR_NAME`, the project dotenv file it loaded from (like `.env.local`), `credentials.toml`, or `settings.json`. That's why the second row above shows `✓ configured` even with no environment variable set: a key stored only in `~/.stella/credentials.toml` still counts, and the listing tells you so.
 
-The `vertex` and `bedrock` base URLs shown here are just for display. Stella builds the real endpoint for each request from your project and location (`VERTEX_PROJECT_ID`, `VERTEX_LOCATION`) or from `AWS_REGION`. Providers you defined in `settings.json` show up under their own heading, with their API style listed before the source. That section only shows up if `settings.json` actually defines a custom provider. Until you run `stella models refresh` for the first time, the last line of the catalog reads `seed only`.
+The `vertex` and `bedrock` base URLs shown here are just for display. stella builds the real endpoint for each request from your project and location (`VERTEX_PROJECT_ID`, `VERTEX_LOCATION`) or from `AWS_REGION`. Providers you defined in `settings.json` show up under their own heading, with their API style listed before the source. That section only shows up if `settings.json` actually defines a custom provider. Until you run `stella models refresh` for the first time, the last line of the catalog reads `seed only`.
 
 `local` isn't a provider row. It only shows up as a footer hint reminding you to point at your own local endpoint, for example: `stella --model local/<model> --base-url http://localhost:11434/v1`.
 

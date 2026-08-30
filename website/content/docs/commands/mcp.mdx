@@ -3,7 +3,7 @@ title: stella mcp
 description: Manage MCP servers. Search for them, install one, list what's configured, and see usage stats.
 ---
 
-MCP stands for Model Context Protocol. MCP servers give stella extra tools it can use during a session. Stella connects to your configured servers when a session starts.
+MCP stands for Model Context Protocol. MCP servers give stella extra tools it can use during a session. stella connects to your configured servers when a session starts.
 
 `stella mcp` is the command-line way to manage these servers. The [Command Deck](/docs/commands/chat) has an **MCP tab** (`/mcp`) that does the same job interactively. Use the MCP tab to turn a server on or off for a single session, or to enter a credential it needs.
 
@@ -23,13 +23,13 @@ stella mcp <list|search|install|remove|grant|login|logout|usage> [args]
 
 ### `stella mcp list`
 
-List the MCP servers set up in `.stella/mcp.toml`. Each entry shows its name and description, saved when you installed it, with its local alias underneath. If a server is waiting for your approval, this list flags it. If a server was added by hand, or installed before stella started saving descriptions, the list shows its endpoint instead: the URL or the command used to start it.
+List the MCP servers set up in `.stella/mcp.toml`. Each entry shows its name and description, saved when you installed it, with its local alias underneath. If a server is waiting for your approval, this list flags it. If a server was added by hand, or has no saved description, the list shows its endpoint instead: the URL or the command that starts it.
 
 ```bash
 stella mcp list
 ```
 
-The alias matters because it's also used to build tool names. Installing `com.stripe/mcp` writes `[servers.mcp]`. That alias, `mcp`, becomes part of the tool name, like `mcp__mcp__create_refund`. A list that only showed the alias wouldn't tell you which server is which, so stella shows the full name and description too.
+The alias matters because it appears in tool names. Installing `com.stripe/mcp` writes `[servers.mcp]`. That alias, `mcp`, becomes part of the tool name, like `mcp__mcp__create_refund`. A list that only showed the alias wouldn't tell you which server is which, so stella shows the full name and description too.
 
 ### `stella mcp search <query>...`
 
@@ -48,7 +48,7 @@ The source tier comes from the server's namespace:
 - `vendor` — published under a domain the publisher proved they control, for example `com.stripe/mcp`.
 - `community` — published from a code-hosting account, for example `io.github.acme/…`, or the registry's anonymous namespace.
 
-Install count shows how many people installed the server, or "installs unknown" if the registry doesn't publish that number. Stella never shows a fake `0`.
+Install count shows how many people installed the server, or "installs unknown" if the registry doesn't publish that number. stella never shows a fake `0`.
 
 "Signed" means the registry has confirmed who published the entry, and that entry is marked active. It does **not** mean stella checked a signature on the actual files — no MCP registry publishes one to check yet. Anything the registry can't attribute to a publisher, or has withdrawn, shows as "blocked." `stella mcp install` refuses to install a blocked server.
 

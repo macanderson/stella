@@ -49,9 +49,9 @@ stella run "implement the retry policy described in @docs/rfc-042.pdf"
 | Text-like file (via `@`) | Its contents, inlined as text |
 | Any other binary | A text note describing what was attached |
 
-Stella has no size limit of its own. Attachments live on disk and are only
+stella has no size limit of its own. Attachments live on disk and are only
 converted to base64 when a request is built, so only your provider's own
-limits apply. Stella does cap you at 32 attachments per prompt, to stop a
+limits apply. stella does cap you at 32 attachments per prompt, to stop a
 runaway request.
 
 ## What each provider can see

@@ -154,7 +154,7 @@ note.
 stella doesn't encrypt it, redact it, classify it, or expire it. Doing any
 of that requires knowing whose data it is, what jurisdiction it's under,
 and who's allowed to read it, and stella knows none of that. Its only job
-here is to be honest about what's in the artifact, so you can make an
+here is to say exactly what's in the artifact, so you can make an
 informed decision. That's not a gap. It's the boundary working as
 intended.
 
@@ -196,7 +196,7 @@ plane existing, that change would be the mistake, not this design.
 
 - **This is not sync.** There's no `stella login`, no stella-hosted store,
   and no built-in upload path. This isn't a "later" feature. It's a
-  deliberate no.
+  hard no.
 - **Old artifacts don't stay readable forever.** A stored artifact stays
   replayable for a stated support window, not forever. When a build
   genuinely can't read an old one, it tells you and names what can, instead

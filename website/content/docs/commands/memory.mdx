@@ -64,7 +64,7 @@ last negative mark. One negative citation resets that count back to zero.
 
 ### `stella memory validate`
 
-Check old memories against your current code. Stella scans each memory for file paths it mentions, for example `crates/stella-cli/src/agent.rs`, and checks whether those files still exist. If a memory's file is gone, that's a strong sign the memory is about code that no longer exists, and it could mislead you.
+Check old memories against your current code. stella scans each memory for file paths it mentions, for example `crates/stella-cli/src/agent.rs`, and checks whether those files still exist. If a memory's file is gone, that's a strong sign the memory is about deleted code, and it could mislead you.
 
 ```bash
 stella memory validate
@@ -76,14 +76,14 @@ It also checks the **anchor edges** written by the reflection loop. When a lesso
 stella memory validate --end-stale
 ```
 
-`--end-stale` marks anchors that point to deleted files as no longer valid. This is the only thing this flag changes, and it's more limited than it sounds:
+`--end-stale` marks anchors that point to deleted files as invalid. This is the only thing this flag changes, and it's more limited than it sounds:
 
 - The memory is **not retracted**. It wasn't wrong; the file just went away. `as_of` queries still return it, and `stella memory list` still shows it.
 - Only the edge's current validity ends. Live recall stops using that edge, but a question like "what was true last March" still gets answered correctly.
 - Running it twice is safe. The second run reports no change instead of moving the date the file disappeared.
 
 <Callout type="info">
-Stella only writes an anchor for a file that exists when the lesson is learned. If a filename
+stella only writes an anchor for a file that exists when the lesson is learned. If a filename
 matches more than one file, like `mod.rs`, stella skips it instead of guessing. A wrong edge would
 teach the graph something false. A missing edge just costs a little accuracy later.
 </Callout>
@@ -94,7 +94,7 @@ These are two different tools for two different situations. Picking the wrong on
 
 <CardGrid size="md">
   <SpecCard title="retire: it's not helping anymore">
-    The memory isn't wrong. It just stopped helping. Stella stops selecting it **automatically**,
+    The memory isn't wrong. It just stopped helping. stella stops selecting it **automatically**,
     but you can still pull it up directly by ID. Undo this with `reaffirm`.
   </SpecCard>
   <SpecCard title="forget: it was wrong">
@@ -115,7 +115,7 @@ These rules apply everywhere in this section. They don't change with future upda
     "why did this come back?"
   </SpecCard>
   <SpecCard title="Nothing is ever deleted">
-    A retired record is skipped by automatic recall, but you can always look it up by ID. Stella
+    A retired record is skipped by automatic recall, but you can always look it up by ID. stella
     works out selection health from permanent use and feedback records, and can rebuild it exactly
     every time. Nothing here is a counter that can drift out of sync.
   </SpecCard>
@@ -130,7 +130,7 @@ These rules apply everywhere in this section. They don't change with future upda
 The third rule is the easiest one to accidentally break with a well-meaning change. If a
 self-report could retire the memory it's about, that creates a loop: the model misreads a memory,
 reports it as unhelpful, the memory gets retired, and the evidence that the model misread it
-disappears. Stella closes that loop on purpose.
+disappears. stella closes that loop on purpose.
 
 Only one place in the code decides this: the check that says whether a given feedback method is
 allowed to retire a record. Retirement requires a person's judgment or another reliable source. If
@@ -162,7 +162,7 @@ Some records can't be retired at all:
     A record that has already been published.
   </OptionCard>
   <OptionCard name="already retired">
-    You can't retire something twice. Stella refuses rather than logging it again.
+    You can't retire something twice. stella refuses rather than logging it again.
   </OptionCard>
 </CardGrid>
 
@@ -219,7 +219,7 @@ stella memory forgotten
 <Callout type="info">
 `forget` is reversible, and `validate` mostly just reports, it doesn't change anything on its own
 (aside from `--end-stale`). Neither one destroys data. Together, they're how you clean up a memory
-store that's drifted: use `validate` to find memories pointing at code that no longer exists, and
+store that's drifted: use `validate` to find memories pointing at deleted code, and
 `forget` for memories that turned out to be wrong, not just outdated.
 </Callout>
 
@@ -237,7 +237,7 @@ stella memory compact
 stella memory compact --stale-fingerprints --vacuum
 ```
 
-Two kinds of rows qualify: embedding vectors that no memory, node, or episode points to anymore (every `stella memory edit` leaves one of these behind), and tags pointing at rows that no longer exist.
+Two kinds of rows qualify: embedding vectors that no memory, node, or episode points to anymore (every `stella memory edit` leaves one of these behind), and tags pointing at missing rows.
 
 <Callout type="info">
 Compacting **never touches** memories, episodes, facts, or forget tombstones. Queries about a
@@ -255,7 +255,7 @@ to run on a schedule.
     you'll need to re-embed everything.
   </OptionCard>
   <OptionCard name="--vacuum">
-    Run `VACUUM` afterward to give freed space back to the filesystem. Stella also does this
+    Run `VACUUM` afterward to give freed space back to the filesystem. stella also does this
     automatically after a large compaction.
   </OptionCard>
 </CardGrid>

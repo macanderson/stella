@@ -42,7 +42,7 @@ If you are not enrolled, it says so. If you are enrolled, it prints one line cov
     sink. See [rollover is not delivery](#rollover-is-not-delivery) below.
   </OptionCard>
   <OptionCard name="quarantine">
-    Rows that could not be read. Stella keeps some diagnostic details about them.
+    Rows that could not be read. stella keeps some diagnostic details about them.
   </OptionCard>
   <OptionCard name="ledger_skipped">
     Rows skipped from the export ledger, split by reason: `missing_rollup`, `malformed_nonce`,
@@ -92,7 +92,7 @@ It prints how many rows were sent, plus the pending and dropped counts afterward
 Delivery is **at least once**, and each row only goes to the sink it belongs to. A row is only marked as sent after a successful HTTPS response, and redirects are never followed. If sending fails for any reason (bad credentials, network trouble, server error), the row goes back in the queue and stella waits before trying again. The wait grows each time, from one second up to five minutes, with some randomness added (up to 25%) so retries do not pile up all at once.
 
 <Callout type="info">
-Stella already starts a quiet, best-effort flush on its own right after your enrollment is verified when it starts up. That attempt never slows down the agent, and stella does not wait for it to finish before shutting down. Run `flush` yourself when you need a delivery attempt that finishes before you move on, for example before taking a machine down for maintenance, or to check that a change to your org's intake worked.
+stella already starts a quiet, best-effort flush on its own right after your enrollment is verified when it starts up. That attempt never slows down the agent, and stella does not wait for it to finish before shutting down. Run `flush` yourself when you need a delivery attempt that finishes before you move on, for example before taking a machine down for maintenance, or to check that a change to your org's intake worked.
 </Callout>
 
 ### `stella telemetry rollover-discard`

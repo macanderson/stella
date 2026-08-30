@@ -42,7 +42,7 @@ With no paths given, ingest walks the workspace for markdown files and sorts eve
     of date.
   </SpecCard>
   <SpecCard title="Historical">
-    Records what used to be true: changelogs, and anything marked as replaced by something
+    Records past facts: changelogs, and anything marked as replaced by something
     newer. Held back from the default scan.
   </SpecCard>
   <SpecCard title="Skip">
@@ -155,8 +155,8 @@ Records are never edited in place, so "the file changed" doesn't mean an overwri
     history.
   </SpecCard>
   <SpecCard title="Dropped — retired now">
-    The file no longer makes the claim at all. The record is immediately marked as archived,
-    since you asked for the refresh and the source no longer supports it. Archived records
+    The file has dropped the claim entirely. The record is immediately marked as archived,
+    since you asked for the refresh and the source dropped it. Archived records
     stop being used right away. Bringing one back is a `git checkout` away, since
     `.stella/rules/` is tracked by git and your git history is the record of what changed and
     when.
