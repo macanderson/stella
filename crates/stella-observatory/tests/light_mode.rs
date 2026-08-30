@@ -189,7 +189,7 @@ fn both_wordmark_cuts_are_served_and_referenced() {
     // older kits conflated, so the value here is `ink` (text on a light ground)
     // and NOT `bg` (the dark canvas). They were one hex before, which is
     // exactly why asserting the wrong one would still have looked plausible.
-    assert!(light_body.contains("#141416"));
+    assert!(light_body.contains("#141413"));
 
     let page = String::from_utf8(respond(ws.path(), "/").body).unwrap();
     for needle in [
