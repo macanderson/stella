@@ -18,6 +18,7 @@
 //! second-guessed: an explicit `>`, a slash command, a `!` shell line, and
 //! the first prompt after a double-Esc hold all carry their own intent.
 
+use super::composer_mode::{self, ComposerMode};
 use super::*;
 
 /// A submission parked at the routing card, with the text it will send once
@@ -151,12 +152,42 @@ pub fn route(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> Option<Wo
         }
         return Some(WorkspaceInput::EnqueueNext { text });
     }
+    // The composer's cycled intent outranks the policy — and never
+    // second-guesses a submission that states its own routing, which the
+    // markers already answer. A steer at an idle agent simply becomes the
+    // next turn driver-side (`steer_at_rest`), and an interrupt with no
+    // running turn degrades the same way, so neither needs a running gate.
+    if let Some(agent) = focused.map(|a| a.meta.id.clone())
+        && !carries_its_own_intent(&text)
+    {
+        match composer_mode::effective(ui, model) {
+            ComposerMode::Steer => {
+                ui.composer_mode = None;
+                return Some(WorkspaceInput::Steer {
+                    agent,
+                    texts: vec![text],
+                });
+            }
+            ComposerMode::Interrupt => {
+                ui.composer_mode = None;
+                return Some(WorkspaceInput::Interrupt {
+                    agent,
+                    texts: vec![text],
+                });
+            }
+            ComposerMode::Dispatch => {}
+        }
+    }
     let running = focused.is_some_and(|a| a.status == crate::AgentStatus::Running);
     if !running || carries_its_own_intent(&text) {
         return Some(WorkspaceInput::Enqueue { text });
     }
     match ui.mid_turn_prompt {
         MidTurnPrompt::Queue => return Some(WorkspaceInput::EnqueueNext { text }),
+        // Reachable only through an explicit gold override (the policy's own
+        // derived mode returned above): the user asked for plain dispatch,
+        // which mid-turn is the queue.
+        MidTurnPrompt::Steer => return Some(WorkspaceInput::EnqueueNext { text }),
         MidTurnPrompt::AlwaysSpawn => return Some(WorkspaceInput::Enqueue { text }),
         MidTurnPrompt::Ask => {}
     }
@@ -276,6 +307,11 @@ pub enum MidTurnPrompt {
     Ask,
     /// Never ask; a mid-turn prompt always forks to a sidecar lane.
     AlwaysSpawn,
+    /// A mid-turn prompt steers the running turn at its next step boundary —
+    /// the chevron turns teal while the turn runs, and the natural next thing
+    /// typed is a correction rather than a queued prompt. See
+    /// [`composer_mode::effective`].
+    Steer,
 }
 
 impl MidTurnPrompt {
@@ -286,6 +322,7 @@ impl MidTurnPrompt {
             "queue" => Some(Self::Queue),
             "ask" => Some(Self::Ask),
             "spawn" => Some(Self::AlwaysSpawn),
+            "steer" => Some(Self::Steer),
             _ => None,
         }
     }
@@ -341,14 +378,69 @@ mod tests {
 
     /// The settings slugs, and that an unknown one keeps the default.
     #[test]
-    fn the_policy_parses_its_three_slugs_and_nothing_else() {
+    fn the_policy_parses_its_four_slugs_and_nothing_else() {
         assert_eq!(MidTurnPrompt::parse("queue"), Some(MidTurnPrompt::Queue));
         assert_eq!(MidTurnPrompt::parse(" ask "), Some(MidTurnPrompt::Ask));
         assert_eq!(
             MidTurnPrompt::parse("spawn"),
             Some(MidTurnPrompt::AlwaysSpawn)
         );
+        assert_eq!(MidTurnPrompt::parse("steer"), Some(MidTurnPrompt::Steer));
         assert_eq!(MidTurnPrompt::parse("sidecar"), None);
+    }
+
+    /// **The witness for the `steer` policy.** With no override, a plain
+    /// prompt typed at a running agent under `ui.mid_turn_prompt = "steer"`
+    /// goes straight into the running turn — a `Steer`, never a queued
+    /// prompt — while a slash command still routes as itself.
+    #[test]
+    fn under_the_steer_policy_a_mid_turn_prompt_steers_the_running_turn() {
+        let model = model_with_lead(crate::AgentStatus::Running);
+        let mut ui = DeckUi {
+            mid_turn_prompt: MidTurnPrompt::Steer,
+            ..Default::default()
+        };
+        assert_eq!(
+            route(&mut ui, &model, "focus on the parser".into()),
+            Some(WorkspaceInput::Steer {
+                agent: "lead".into(),
+                texts: vec!["focus on the parser".into()],
+            })
+        );
+        assert!(
+            matches!(
+                route(&mut ui, &model, "/help".into()),
+                Some(WorkspaceInput::Enqueue { .. })
+            ),
+            "a stated route is never second-guessed by the policy"
+        );
+    }
+
+    /// **The witness for the red mode.** A cycled Interrupt override sends
+    /// the interrupt input and spends itself — the next submission is back
+    /// on the derived mode.
+    #[test]
+    fn an_interrupt_override_sends_the_interrupt_and_spends_itself() {
+        let model = model_with_lead(crate::AgentStatus::Running);
+        let mut ui = DeckUi {
+            composer_mode: Some(super::ComposerMode::Interrupt),
+            ..Default::default()
+        };
+        assert_eq!(
+            route(&mut ui, &model, "stop — wrong branch".into()),
+            Some(WorkspaceInput::Interrupt {
+                agent: "lead".into(),
+                texts: vec!["stop — wrong branch".into()],
+            })
+        );
+        assert_eq!(ui.composer_mode, None, "the override lasts one submission");
+        assert_eq!(
+            route(&mut ui, &model, "and the tests".into()),
+            Some(WorkspaceInput::EnqueueNext {
+                text: "and the tests".into()
+            }),
+            "back on the derived mode — the default policy queues"
+        );
     }
 
     /// Under `ask`, a prompt typed at a running agent parks on the card

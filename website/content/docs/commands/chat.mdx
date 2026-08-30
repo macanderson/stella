@@ -91,8 +91,15 @@ Two prefixes skip the queue:
 
 `ui.mid_turn_prompt` in [settings](/docs/configuration/settings#the-ui-section) changes what
 a plain prompt does while an agent is running: `queue` (the default above), `ask` (a card offers
-`s` steer / `n` next turn / `p` sidecar sub-session per prompt), or `spawn` (every plain
-prompt forks a sidecar sub-session, dispatched alongside the running turn).
+`s` steer / `n` next turn / `p` sidecar sub-session per prompt), `spawn` (every plain
+prompt forks a sidecar sub-session, dispatched alongside the running turn), or `steer`
+(the prompt lands inside the running turn at its next step boundary, and the chevron
+turns teal to say so).
+
+Whatever the policy, `Shift-Tab` with a draft in the composer cycles the submission's
+intent by hand — gold dispatches, teal steers the running turn, red interrupts: a soft
+stop that keeps every completed step, with your words front-queued to run next. With an
+empty composer `Shift-Tab` keeps its usual job of cycling tabs.
 
 <Callout type="info">
 A bare `⏎` **always** submits, even while an agent is busy — that is what makes queueing

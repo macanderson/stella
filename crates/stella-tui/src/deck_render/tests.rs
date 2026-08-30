@@ -195,13 +195,31 @@ fn the_caret_recolours_while_the_microphone_is_live() {
     assert_eq!(caret_style(true).fg, Some(crate::theme::DANGER));
 }
 
+/// The golden frames strip styling, so the chevron's mode colors are held
+/// here: gold stays the identity default, and each intent is told apart from
+/// the other two (`prompt_prefix_style`).
+#[test]
+fn the_chevron_wears_one_color_per_composer_mode() {
+    let styles = [
+        prompt_prefix_style(ComposerMode::Dispatch),
+        prompt_prefix_style(ComposerMode::Steer),
+        prompt_prefix_style(ComposerMode::Interrupt),
+    ];
+    assert_eq!(styles[0].fg, Some(crate::theme::ACCENT));
+    assert_eq!(styles[1].fg, Some(crate::theme::TEAL));
+    assert_eq!(styles[2].fg, Some(crate::theme::DANGER));
+    assert_ne!(styles[0], styles[1]);
+    assert_ne!(styles[1], styles[2]);
+    assert_ne!(styles[0], styles[2]);
+}
+
 #[test]
 fn empty_composer_is_a_single_accent_prompt_line_with_the_caret() {
     let ui = DeckUi::default(); // blank composer
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4);
     let mut buf = Buffer::empty(area);
-    render_composer(&layout, area, &mut buf, false);
+    render_composer(&layout, area, &mut buf, false, ComposerMode::Dispatch);
     let text = buffer_text(&buf);
     let rows: Vec<&str> = text.lines().collect();
     assert!(
@@ -238,7 +256,7 @@ fn a_multiline_paste_prefixes_every_row_and_scrolls_instead_of_chipping() {
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4); // capped at DECK_COMPOSER_MAX_ROWS
     let mut buf = Buffer::empty(area);
-    render_composer(&layout, area, &mut buf, false);
+    render_composer(&layout, area, &mut buf, false, ComposerMode::Dispatch);
     let text = buffer_text(&buf);
     assert!(!text.contains("[pasted"), "not chipped:\n{text}");
     for (i, row) in text.lines().enumerate() {
@@ -263,7 +281,7 @@ fn the_prompt_prefix_is_a_steady_uniform_accent() {
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4);
     let mut buf = Buffer::empty(area);
-    render_composer(&layout, area, &mut buf, false);
+    render_composer(&layout, area, &mut buf, false, ComposerMode::Dispatch);
     assert!(
         buffer_text(&buf)
             .lines()

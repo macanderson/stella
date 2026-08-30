@@ -635,6 +635,9 @@ pub struct DeckUi {
     pub pending_dispatch: Option<PendingDispatch>,
     /// What a plain mid-turn prompt does (`ui.mid_turn_prompt`); see [`dispatch`].
     pub mid_turn_prompt: MidTurnPrompt,
+    /// The Shift-Tab-cycled composer intent; `None` follows the session.
+    /// See [`composer_mode::effective`].
+    pub composer_mode: Option<composer_mode::ComposerMode>,
     pub splash: SplashState,
     /// Startup system notifications, shown as a transient dialog rather than
     /// as transcript rows (see [`crate::notice`]).
@@ -915,6 +918,7 @@ impl Default for DeckUi {
             voice: crate::voice::VoiceUi::default(),
             pending_dispatch: None,
             mid_turn_prompt: MidTurnPrompt::default(),
+            composer_mode: None,
             splash: SplashState::new(),
             notice: NoticeState::new(),
             index_readiness: IndexReadiness::unknown(),
@@ -1701,6 +1705,7 @@ pub mod cards;
 /// the global composer, so a stop must leave a typed draft untouched. A
 /// pending ask-user gate never reaches them either — it folds the agent to
 /// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
+pub mod composer_mode;
 mod create;
 pub mod dispatch;
 /// The focus tree — `←`/`→` siblings, `⏎` open, `⌫` back.
@@ -2050,7 +2055,13 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     if let Some(action) = local::model_arg_key(key, model, ui) {
         return action;
     }
-    let slash = slash_matches(model, ui);
+    // Shift-Tab with a draft cycles the composer's intent; empty keeps tabs.
+    if let Some(action) = composer_mode::backtab(key, ui, model, composer_empty) {
+        return action;
+    }
+    // The slash commands matching the composer — empty when the popup is idle.
+    let state = crate::deck_render::palette_state(model, ui);
+    let slash = slash_popup_matches(&ui.composer, &ui.slash_commands, &state);
     if slash.is_empty() {
         match key.code {
             KeyCode::Tab => {
@@ -2245,13 +2256,6 @@ fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckA
         // The card is up and now holds the text; the keystroke is spent.
         None => DeckAction::Handled,
     }
-}
-
-/// The names of the slash commands matching the composer, or empty when the
-/// popup is inactive.
-fn slash_matches(model: &WorkspaceModel, ui: &DeckUi) -> Vec<String> {
-    let state = crate::deck_render::palette_state(model, ui);
-    slash_popup_matches(&ui.composer, &ui.slash_commands, &state)
 }
 
 /// Slash-popup navigation: ↑/↓ choose, Tab completes into the buffer, Enter
