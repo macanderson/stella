@@ -86,6 +86,26 @@ pub fn scroll(
     true
 }
 
+/// Move a selection `n` items without a key — the wheel's entry into this
+/// vocabulary ([`crate::mouse`]), with [`select`]'s clamping.
+pub fn select_wheel(up: bool, n: usize, sel: &mut usize, count: usize) {
+    let last = count.saturating_sub(1);
+    *sel = if up {
+        sel.saturating_sub(n)
+    } else {
+        (*sel + n).min(last)
+    };
+}
+
+/// Scroll a body `n` lines without a key — [`select_wheel`]'s body twin.
+pub fn scroll_wheel(up: bool, n: usize, state: &mut ScrollState, total: usize, height: usize) {
+    if up {
+        state.scroll_up(n, total, height);
+    } else {
+        state.scroll_down(n, total, height);
+    }
+}
+
 /// Lines one `⇞`/`⇟` moves an unclamped offset.
 const OFFSET_PAGE: usize = 10;
 
@@ -197,5 +217,27 @@ mod tests {
         assert!(state.follow);
         assert!(scroll(key(KeyCode::Home), &mut state, 20, 5, true));
         assert_eq!(state.window(20, 5).start, 0);
+    }
+
+    /// The wheel entries clamp exactly as the arrows do: a selection stops
+    /// at the ends, an empty list stays at zero, a body leaves follow-mode
+    /// on the way up and re-arms it at the tail.
+    #[test]
+    fn the_wheel_entries_share_the_arrow_clamping() {
+        let mut sel = 1;
+        select_wheel(true, 3, &mut sel, 10);
+        assert_eq!(sel, 0, "clamped at the top");
+        select_wheel(false, 30, &mut sel, 10);
+        assert_eq!(sel, 9, "clamped at the last item");
+        let mut empty = 0;
+        select_wheel(false, 3, &mut empty, 0);
+        assert_eq!(empty, 0, "an empty list stays put");
+
+        let mut state = ScrollState::default();
+        scroll_wheel(true, 3, &mut state, 20, 5);
+        assert!(!state.follow);
+        assert_eq!(state.window(20, 5).start, 12, "three up from the tail");
+        scroll_wheel(false, 3, &mut state, 20, 5);
+        assert!(state.follow, "back at the tail re-arms follow");
     }
 }
