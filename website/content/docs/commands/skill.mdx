@@ -45,6 +45,16 @@ session's full surface, exactly as skills have always behaved. Unusable
 directive values (an unknown `context:` or `effort:`) degrade to the default
 with a printed diagnostic; they never refuse the run.
 
+**Scopes are decided when a turn opens, and only then.** A turn mounts the
+grants of every skill it opened with, and holds them until it ends. Recall
+runs again mid-turn as the work drifts, and a directive-carrying skill that
+surfaces at one of those boundaries is injected as context alone: it does not
+narrow the turn already running, and its `effort` does not apply to it. The
+next turn that opens with the skill selected mounts it normally. A grant that
+appeared mid-loop would change the tool surface underneath calls already in
+flight, which is the one thing a narrowing must never do — and an explicit
+`/slug` obeys the same boundary.
+
 ## Arguments
 
 Everything after the slug replaces `$ARGUMENTS` in the skill body. A body

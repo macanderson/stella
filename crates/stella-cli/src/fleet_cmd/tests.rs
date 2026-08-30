@@ -661,14 +661,21 @@ async fn a_fleet_worker_receives_skills_records_and_todays_date() {
          this test can say anything about who receives it"
     );
 
-    let (block, _event) = worker_recall_block(
+    // The injection is the seam now, so the block is read back off the
+    // messages it landed in rather than returned beside them.
+    let mut messages: Vec<stella_protocol::CompletionMessage> = Vec::new();
+    let _recall = worker_recall_block(
         &root,
         &cfg,
         &active_rules,
         "run the database migration for the billing service",
+        &mut messages,
     )
     .await;
-    let block = block.expect("a worker in a steered workspace gets a volatile block");
+    let block = messages
+        .pop()
+        .map(|m| m.content)
+        .expect("a worker in a steered workspace gets a volatile block");
 
     assert!(
         block.starts_with(crate::memory::RECALL_MARKER),

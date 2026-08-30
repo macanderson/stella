@@ -35,8 +35,8 @@ use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
 use crate::interactive::human_is_present;
 use crate::memory::{
-    ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, inject_recall_block,
-    reflect_routed, should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, reflect_routed, should_reflect_on,
+    turn_warrants_reflection,
 };
 use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -482,8 +482,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             }
             println!();
             // Phase 2 (#713): carried to `run_goal_turn`, which owns the
-            // event channel this turn's telemetry rides.
-            let mut recall_events: Vec<AgentEvent> = Vec::new();
+            // event channel this turn's telemetry rides and the tool stack
+            // its skill scopes narrow.
+            let mut recall = crate::memory::OpeningRecall::default();
             if let Some(m) = &mut memory {
                 // Same schedule as the plain prompts above (#1221): one
                 // interleaved sequence per workspace, not one per command.
@@ -491,8 +492,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 let touched =
                     stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
                 let recalled = m.recall_block_reported(goal, &touched).await;
-                recall_events = recalled.telemetry_events();
-                inject_recall_block(&mut messages, recalled.text);
+                recall = crate::memory::inject_opening_recall(&mut messages, recalled);
             }
             // Everything the goal loop appends past here is this turn's work,
             // gating reflection on it (see `turn_warrants_reflection`).
@@ -514,7 +514,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 &store,
                 goal,
                 Some(presence.id()),
-                recall_events,
+                recall,
                 memory.as_mut(),
                 Some(&mut goal_rounds),
             )

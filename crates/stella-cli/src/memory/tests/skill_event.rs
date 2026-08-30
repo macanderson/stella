@@ -340,3 +340,49 @@ fn an_invoked_skill_effort_outranks_an_auto_selected_one() {
         Some(stella_protocol::ReasoningEffort::Max)
     );
 }
+
+/// Every driver that recalls must hand its block to the turn through
+/// [`inject_opening_recall`], never through `inject_recall_block` directly.
+///
+/// The defect this guards is not a wrong scope — it is a door that mounts no
+/// scope at all, which no test of the scope machinery can see. Both goal doors
+/// took `recalled.telemetry_events()` and injected the text themselves, so a
+/// directive-carrying skill auto-selected for `/goal` or `stella goal` reached
+/// the prompt with its `allowed-tools` grant and its `effort` governing
+/// nothing. `inject_opening_recall` is the seam that carries both, and a
+/// driver that steps around it drops them at the call site.
+///
+/// A source-text check for the reason
+/// `every_recalling_driver_arms_the_control_first` is one: observing this
+/// through the doors themselves means standing up providers, an MCP set, a
+/// tool registry and a store to watch one span open. It is exact about the
+/// names — both functions are `pub`/`pub(crate)` items, so a rename that
+/// breaks this test breaks the compile too.
+#[test]
+fn every_recalling_driver_routes_its_block_through_the_opening_seam() {
+    const DRIVERS: [(&str, &str); 4] = [
+        ("agent.rs", include_str!("../../agent.rs")),
+        ("agent/goal.rs", include_str!("../../agent/goal.rs")),
+        ("command_deck.rs", include_str!("../../command_deck.rs")),
+        ("fleet_cmd.rs", include_str!("../../fleet_cmd.rs")),
+    ];
+
+    for (name, source) in DRIVERS {
+        assert!(
+            source.contains("recall_block_reported("),
+            "{name} is listed as a recalling driver but recalls nothing"
+        );
+        assert!(
+            source.contains("inject_opening_recall("),
+            "{name} recalls without routing the block through \
+             inject_opening_recall, so this turn's skill scopes and re-query \
+             seed are dropped at the call site"
+        );
+        assert!(
+            !source.contains("inject_recall_block("),
+            "{name} injects a recall block directly: that path carries the \
+             text and nothing else, so a directive-carrying skill's \
+             allowed-tools grant and effort reach the prompt and govern nothing"
+        );
+    }
+}

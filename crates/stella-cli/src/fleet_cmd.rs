@@ -69,7 +69,7 @@ use stella_fleet::{
     MonitorError, Plan, SystemGhCli, SystemGitCli, Task, TaskId, TimeoutReason, WatchConfig,
     WorkerControls, WorkerOutcome, WorktreeManager,
 };
-use stella_protocol::{AgentEvent, PrStatus};
+use stella_protocol::{AgentEvent, CompletionMessage, PrStatus};
 use stella_tools::ToolRegistry;
 use stella_tools::hook_runner::HostHookRunner;
 use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
@@ -671,34 +671,38 @@ fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::E
 /// fleet task" among the one-turn-per-process surfaces a per-session counter
 /// could never schedule.
 ///
-/// Returns the block and its recall telemetry separately: recall must run
-/// before the engine is handed its messages, and the attempt's event channel
-/// does not exist yet at that point, so the caller owns the send.
+/// Injects the block here and returns what the attempt still owes it: the
+/// recall telemetry, which the caller sends once its event channel exists,
+/// and the turn scopes this attempt's directive-carrying skills ask for,
+/// which the caller mounts over the tool stack it assembles below. Both ride
+/// [`crate::memory::inject_opening_recall`] rather than the bare block
+/// injection, so an autonomous worker cannot be the one door where a
+/// selected skill's `allowed-tools` grant and `effort` are dropped.
 async fn worker_recall_block(
     root: &Path,
     cfg: &Config,
     active_rules: &rules::ResolvedRules,
     prompt: &str,
-) -> (Option<String>, Vec<AgentEvent>) {
+    messages: &mut Vec<CompletionMessage>,
+) -> crate::memory::OpeningRecall {
     // `warn: false`, the Command Deck's choice for the Command Deck's reason:
     // with `--watch` a live grid owns the terminal, and a per-worker store
     // warning would be N-fold noise painted over it.
     let Some(mut memory) =
         crate::memory::SessionMemory::open_for_session(root, false, &cfg.authority, active_rules)
     else {
-        return (None, Vec::new());
+        return crate::memory::OpeningRecall::default();
     };
     memory.arm_recall_control();
     // A fleet attempt recalls before its engine has messages, so there is no
     // conversation to derive touched paths from — the empty anchor set is the
     // honest argument here, and the same scoping the prompt alone always gave.
     let recalled = memory.recall_block_reported(prompt, &[]).await;
-    let events = recalled.telemetry_events();
     // `memory` is dropped here, and deliberately not carried to the reflection
     // below: this handle is rooted at the attempt's own tree, and a lesson
     // written through it would land in a database that is deleted with the
     // worktree. [`mine_attempt_lesson`] opens its own, at the invocation root.
-    (recalled.text, events)
+    crate::memory::inject_opening_recall(messages, recalled)
 }
 
 /// The task boundary a fleet attempt stamps onto every lesson it mines.
@@ -992,9 +996,16 @@ async fn run_task(
     // What it leaves to announce — the recall receipt and a row per injected
     // skill — is carried to the channel opened below, which this attempt's
     // telemetry rides; the same split `agent::goal` documents.
-    let (recall_text, recall_events) =
-        worker_recall_block(root, &cfg, &active_rules, &task.prompt).await;
-    crate::memory::inject_recall_block(&mut messages, recall_text);
+    let recall = worker_recall_block(root, &cfg, &active_rules, &task.prompt, &mut messages).await;
+    // This attempt's directive-carrying skills, mounted for the whole turn
+    // beside the stack they narrow — the same seam every other door takes.
+    // The guards drop with this function, so the narrowing lifts
+    // structurally, and with no scope the plane is inert and the scoped view
+    // below is a pure pass-through.
+    let skill_plane = stella_tools::skill_plane::SkillInvocationPlane::new();
+    let _skill_spans = recall.mount_skill_spans(&skill_plane);
+    let skill_effort = recall.skill_effort();
+    let recall_events = recall.events;
     // Everything the engine appends past here is this attempt's own work; the
     // reflection gate reads only that slice, so a turn that called no tool
     // spends no model call on being mined (`turn_warrants_reflection`).
@@ -1092,13 +1103,18 @@ async fn run_task(
             .attach_turn_controls(stella_core::ports::TurnControls::none().with_gate(gate.clone()));
         let raced: Raced<Result<TurnOutcome, String>> = {
             let hook_runner = HostHookRunner;
-            let mut engine = Engine::with_sleeper(
-                &*provider,
-                &permitted,
-                attempt_durability.engine_config(&cfg),
-                &TokioSleeper,
-            )
-            .with_gate(gate.as_ref());
+            // Above the operator's policy layer, the position
+            // `skill_grant`'s module docs specify: a grant selects within
+            // the surface a worker already has and can never widen it.
+            let scoped =
+                stella_tools::skill_plane::SkillScopedTools::new(&permitted, skill_plane.clone());
+            let mut config = attempt_durability.engine_config(&cfg);
+            if let Some(effort) = skill_effort {
+                // The skill's `effort:` override, for this attempt.
+                config.effort = Some(effort);
+            }
+            let mut engine = Engine::with_sleeper(&*provider, &scoped, config, &TokioSleeper)
+                .with_gate(gate.as_ref());
             if let Some(hooks) = &cfg.hooks {
                 engine = engine.with_hooks(hooks, &hook_runner);
             }
