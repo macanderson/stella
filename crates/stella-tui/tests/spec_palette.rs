@@ -219,6 +219,12 @@ fn ansi_name(color: Color) -> &'static str {
         Color::Cyan => "cyan",
         Color::Gray => "white",
         Color::White => "bright white",
+        Color::LightRed => "bright red",
+        Color::LightGreen => "bright green",
+        Color::LightYellow => "bright yellow",
+        Color::LightBlue => "bright blue",
+        Color::LightMagenta => "bright magenta",
+        Color::LightCyan => "bright cyan",
         other => panic!("ansi16 returned {other:?}, which is not one of the sixteen"),
     }
 }
