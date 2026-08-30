@@ -1657,6 +1657,39 @@ fn push_single_line(buf: &mut String, text: &str) {
 }
 
 pub mod cards;
+pub mod composer_mode;
+mod create;
+pub mod dispatch;
+/// The focus tree — `←`/`→` siblings, `⏎` open, `⌫` back.
+pub mod focus;
+mod gates;
+/// The GRAPH tab's keys: the neighborhood walk, the file picker, the `q` box.
+pub(crate) mod graph;
+/// `↑`/`↓`/`j`/`k`/`⇞`/`⇟`/`Home`/`End` — one vocabulary for every list and body.
+pub mod list_nav;
+mod local;
+mod memory;
+mod overlays;
+mod parked;
+/// The session-override pickers' key routing (`/model`, `/agent`).
+pub(crate) mod pickers;
+pub mod sessions;
+/// Esc-with-something-to-say — see [`steer`].
+mod steer;
+pub use gates::HunkMarks;
+mod nav;
+mod queue_editor;
+mod row_keys;
+pub use dispatch::{DispatchRoute, MidTurnPrompt, PendingDispatch};
+pub use nav::TranscriptSearch;
+pub(crate) use nav::is_folded;
+use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
+use overlays::handle_help_key;
+pub(crate) use overlays::{
+    open_context_overlay, open_inbox_overlay, open_inspect_overlay, open_sessions_overlay,
+};
+use queue_editor::handle_queue_key;
+
 /// Map one key to a [`DeckAction`]. Pure over `(key, model)`, mutating `ui`.
 ///
 /// ## Esc precedence
@@ -1705,39 +1738,6 @@ pub mod cards;
 /// the global composer, so a stop must leave a typed draft untouched. A
 /// pending ask-user gate never reaches them either — it folds the agent to
 /// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
-pub mod composer_mode;
-mod create;
-pub mod dispatch;
-/// The focus tree — `←`/`→` siblings, `⏎` open, `⌫` back.
-pub mod focus;
-mod gates;
-/// The GRAPH tab's keys: the neighborhood walk, the file picker, the `q` box.
-pub(crate) mod graph;
-/// `↑`/`↓`/`j`/`k`/`⇞`/`⇟`/`Home`/`End` — one vocabulary for every list and body.
-pub mod list_nav;
-mod local;
-mod memory;
-mod overlays;
-mod parked;
-/// The session-override pickers' key routing (`/model`, `/agent`).
-pub(crate) mod pickers;
-pub mod sessions;
-/// Esc-with-something-to-say — see [`steer`].
-mod steer;
-pub use gates::HunkMarks;
-mod nav;
-mod queue_editor;
-mod row_keys;
-pub use dispatch::{DispatchRoute, MidTurnPrompt, PendingDispatch};
-pub use nav::TranscriptSearch;
-pub(crate) use nav::is_folded;
-use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
-use overlays::handle_help_key;
-pub(crate) use overlays::{
-    open_context_overlay, open_inbox_overlay, open_inspect_overlay, open_sessions_overlay,
-};
-use queue_editor::handle_queue_key;
-
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     // Accessible mode announces where a key MOVED the session — a tab change,
     // an overlay, a lane focus. Wrapped here rather than called from each of
