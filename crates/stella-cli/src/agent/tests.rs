@@ -1142,6 +1142,8 @@ mod usage_completeness;
 
 mod engine_wiring;
 
+mod hook_wiring;
+
 mod durability_isolation;
 
 mod code_graph;
