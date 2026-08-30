@@ -50,7 +50,8 @@ pub fn blocker_refs(body: &str) -> Vec<u64> {
     let mut refs = Vec::new();
     for line in body.lines() {
         let stripped = line
-            .trim_start_matches(|c: char| c == '-' || c == '*' || c == '>' || c.is_whitespace());
+            .trim_start_matches(|c: char| c == '-' || c == '>' || c.is_whitespace())
+            .trim_start_matches('*');
         let lower = stripped.to_ascii_lowercase();
         if !lower.starts_with("blocked by") {
             continue;
