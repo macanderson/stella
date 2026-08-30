@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 #
-# Tests for check-module-layout.py: a new pair fails, a listed pair passes,
-# and --update removes entries but refuses to add one.
+# Tests for check-module-layout.py. A new pair fails. A listed pair
+# passes. The update flag removes entries and refuses to add one.
 #
 #   ./scripts/test-module-layout.sh
 #
-# Fixtures are their own git roots because the guard enumerates with
-# `git ls-files`, and because `--update` writes -- pointing it at this
-# repository would rewrite scripts/module-layout-baseline.txt as a side
-# effect of running the tests.
+# Each case gets its own git root. The guard reads `git ls-files`, and
+# the update flag writes. Run against this repo, a test would rewrite
+# the real baseline.
 #
-# bash 3.2 compatible.
+# Works on bash 3.2.
 
 set -uo pipefail
 
@@ -121,8 +120,8 @@ else
 fi
 
 # ── M6: a stale entry does not fail the plain check ──────────────────────────
-# Two branches each split one pair and merge; neither branch swept the other's
-# entry. The plain check tolerates that, so the merge composes green.
+# Two branches can each split one pair and merge. Neither swept the
+# other's entry. The plain check allows that, so the merge stays green.
 r="$(new_root m6)"
 code "$r" crates/a/src/store/mod.rs
 baseline "$r" crates/a/src/store.rs
