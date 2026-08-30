@@ -34,6 +34,13 @@ mod applicability;
 #[cfg(test)]
 mod guarantees;
 
+/// The skill lifecycle twin (#5455): mine→write→load→select end to end, the
+/// measured promotion gate in both modes, and the #5086 demotion arc. A child
+/// module for [`guarantees`]'s reason — it drives
+/// [`SessionMemory::auto_create_skills`] without widening its visibility.
+#[cfg(test)]
+mod skill_lifecycle;
+
 /// What [`SessionMemory::partition_known`] stores, diverts to the mining log,
 /// and drops. A child module for the same reason as [`guarantees`]: the split
 /// is private, and it is the split itself that needs pinning, not the turn
