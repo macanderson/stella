@@ -23,6 +23,15 @@ use super::state::LoopState;
 /// The open set and the items come from the same read, so an issue and its
 /// blocker are judged against one moment — two reads could see a blocker
 /// close between them and disagree with themselves.
+///
+/// `stella_autonomy::ready`'s readiness rule trusts the open set it is
+/// handed to be complete: a blocker not present there reads as closed. A
+/// read that lands exactly on `QUEUE_READ_LIMIT` cannot make that promise —
+/// the tracker may hold more open issues than the page carried, and one of
+/// them could be the very blocker a dependent issue names. Silently folding
+/// a truncated page into `open` would let that dependent read as ready when
+/// its blocker is simply off-page, so a hit on the ceiling fails loud
+/// instead of guessing.
 fn ready_issues(
     provider: &dyn IssueProvider,
     ladder: &PriorityLadder,
@@ -34,6 +43,15 @@ fn ready_issues(
     let issues = runtime
         .block_on(provider.list_open(super::backlog::QUEUE_READ_LIMIT))
         .map_err(|error| error.to_string())?;
+    if issues.len() >= super::backlog::QUEUE_READ_LIMIT {
+        return Err(format!(
+            "the open backlog has at least {} issues, at the {} the tracker read is bounded to \
+             — readiness cannot be judged safely against a possibly-truncated open set, because \
+             a blocker just off the page would misread as closed",
+            issues.len(),
+            super::backlog::QUEUE_READ_LIMIT,
+        ));
+    }
 
     let open: BTreeSet<u64> = issues
         .iter()
@@ -110,9 +128,14 @@ pub(super) fn dry_run(
 /// the dashboard fold delivered work with no second reader. The aperture is
 /// `backlog` — a delivered cycle is not a lens going dry, and scoping the
 /// dry-streak arithmetic by aperture keeps the two from mixing.
+///
+/// The ledger row is appended before the durable counter advances: if the
+/// append fails, the counter is untouched and the next attempt still claims
+/// this same cycle number. Advancing the counter first would let a failed
+/// append leave it ahead of the ledger, so the next successful delivery
+/// would skip a cycle number the ledger never recorded.
 pub(super) fn record_delivery_cycle(st: &LoopState, issue: &str, pr: &str) -> Result<(), String> {
     let cycle = st.cycle_counter() + 1;
-    st.set_cycle_counter(cycle)?;
 
     let mut extra = serde_json::Map::new();
     extra.insert("issue".to_string(), issue.into());
@@ -137,7 +160,8 @@ pub(super) fn record_delivery_cycle(st: &LoopState, issue: &str, pr: &str) -> Re
         dry: false,
         extra,
     };
-    st.append_cycle(&rec)
+    st.append_cycle(&rec)?;
+    st.set_cycle_counter(cycle)
 }
 
 #[cfg(test)]
@@ -285,6 +309,42 @@ mod tests {
             "the row must say which issue it delivered"
         );
         assert_eq!(st.cycle_counter(), 1, "the counter moved with the row");
+    }
+
+    /// The counter/ledger ordering witness: a failed append must not leave
+    /// the durable counter ahead of the ledger it counts.
+    #[test]
+    fn a_failed_ledger_append_leaves_the_cycle_counter_untouched() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let st = state(dir.path());
+        // A directory at the ledger path makes the append fail without
+        // touching the counter file.
+        std::fs::create_dir(st.ledger_path()).expect("seed a directory at the ledger path");
+
+        let result = record_delivery_cycle(&st, "6", "4321");
+        assert!(result.is_err(), "the append must fail");
+        assert_eq!(
+            st.cycle_counter(),
+            0,
+            "the counter must not advance past a cycle the ledger never recorded"
+        );
+    }
+
+    /// The truncation witness: a read that lands on the read ceiling must
+    /// not be trusted as the complete open set — a blocker could be sitting
+    /// just off the page and misread as closed.
+    #[test]
+    fn a_read_at_the_ceiling_refuses_to_judge_readiness() {
+        let issues: Vec<Issue> = (0..super::super::backlog::QUEUE_READ_LIMIT)
+            .map(|n| issue(&n.to_string(), &["feature"], ""))
+            .collect();
+        let provider = FixtureProvider::with(issues);
+
+        let result = ready_keys(&provider, &PriorityLadder::default());
+        assert!(
+            result.is_err(),
+            "a page-bounded read must refuse rather than guess at readiness"
+        );
     }
 
     /// The dry-run witness: it reads the tracker and writes nothing — no
