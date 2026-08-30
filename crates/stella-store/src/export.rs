@@ -350,8 +350,8 @@ impl Store {
     /// Each entry is `(table_name, json_array_string)`.
     ///
     /// This is the analytics export, not a database dump: it covers
-    /// `executions`, every table [`CHILD_TABLES`] declares, and every table
-    /// [`RECEIPT_TABLES`] declares. The rest of the store stays out: `events`
+    /// `executions`, every table `CHILD_TABLES` declares, and every table
+    /// `RECEIPT_TABLES` declares. The rest of the store stays out: `events`
     /// carries full payloads and reconstruction preimages the archive must
     /// not ship, and the state tables (`rules`, `file_locks`,
     /// `memory_citations`, `forgotten`, `tasks`, `pull_requests`) are live
