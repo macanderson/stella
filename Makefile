@@ -469,8 +469,15 @@ prose-report: ## Name every remaining content-free construction, with its remedy
 	@python3 ./scripts/check-prose.py --report
 
 .PHONY: prose-update
-prose-update: ## Retighten both prose ratchets — the counts and the header-length means
+prose-update: ## Lower the count ratchet; leave every unit's header-length ceiling where it stands
 	@python3 ./scripts/check-prose.py --update
+
+# The other direction, and a PR of its own: reclaiming the slack a shortened
+# header earns is safe exactly when nothing is blocked on it, the same
+# reasoning file-size-retighten is built on.
+.PHONY: prose-retighten
+prose-retighten: ## Lower every unit's header-length ceiling to its current mean (a deliberate, separate pass)
+	@python3 ./scripts/check-prose.py --update --retighten
 
 .PHONY: line-citations
 line-citations: ## Assert prose cites code by name, never by line number (down-only ratchet, #4392)

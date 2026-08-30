@@ -58,11 +58,33 @@ blocks, and a unit may lower that mean and never raise it. A file can be
 entirely within the count ratchet and still be three times longer than it
 needs to be.
 
+The baseline is a shared cell in the sense AGENTS.md describes for
+`Cargo.lock`: two branches each landing one ordinary header are green alone
+and compose into a red `main`. Two doors close that, mirroring
+`check-file-size.sh`'s own split:
+
+- The plain check judges a unit against `max(its baseline, its mean in the
+  base tree)`. Inherited drift is reported as drift and does not fail a
+  branch that did not cause it, so landing one ordinary header cannot
+  redden `main` on its own. `--absolute` opts out of the base comparison for
+  the one caller that must not get this mercy: a post-merge canary is
+  exactly asking whether drift already reached `main`, and the base-relative
+  reading would forgive the thing it exists to catch.
+- `--update` alone leaves every unit's ceiling where it stands; only
+  `--update --retighten` lowers a ceiling to its current mean, as a
+  deliberate, separately-landed pass. Retightening on every `--update` run
+  is what put every unit at exactly its ceiling with zero headroom in the
+  first place.
+
 Usage:
 
     ./scripts/check-prose.py [--update] [--adopt=NAME] [--report] [ROOT]
 
-    --update      rewrite both baselines downward only (`make prose-update`)
+    --update      lower the count baseline; leave every unit's header-length
+                  ceiling where it stands (`make prose-update`)
+    --retighten   with --update, also lower every unit's header-length
+                  ceiling to its current mean -- a deliberate, separate pass
+                  (`make prose-retighten`)
     --adopt=NAME  record the pre-existing debt of a pattern added to PATTERNS
                   after the baseline was written, and nothing else. Once per
                   pattern: a pattern already in the baseline is refused
@@ -75,10 +97,14 @@ Usage:
                   density ratchet arrived
     --report      print every offending line, grouped by file, then each
                   unit's mean header length; changes nothing
+    --absolute    judge every unit's density against its baseline alone,
+                  ignoring the base tree. For the post-merge canary, which
+                  must catch drift a base-relative check would forgive.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -254,8 +280,8 @@ DENSITY_HEADER = """\
 # Each line is `<unit> <mean>` -- the mean length, in lines, of every leading
 # `//!` block in that crate's Rust files, recorded in hundredths so the
 # comparison is integer arithmetic. A unit may lower its mean; it may never
-# raise it, and a unit absent from this list is held to 12.00. Regenerate with
-# `make prose-update`, which refuses to raise a number.
+# raise it, and a unit absent from this list is held to 12.00. Lower one with
+# `make prose-retighten`; `make prose-update` never touches this file.
 #
 # Mean header length rather than comment share, because share is a bad proxy on
 # its own: a well-documented pure-function crate should be comment-heavy, and
@@ -421,6 +447,73 @@ def density(root: Path, paths: list[str]) -> dict[str, int]:
         total[unit] = total.get(unit, 0) + length
         files[unit] = files.get(unit, 0) + 1
     return {unit: round(total[unit] * 100 / files[unit]) for unit in total}
+
+
+def _git(root: Path, args: list[str]) -> str:
+    """`git <args>` from `root`, or "" on any failure. Fails closed: a
+    broken or absent git must never grant base-relative leniency."""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def resolve_base_commit(root: Path, absolute: bool) -> str:
+    """The commit a unit's density is judged against, or "" for none.
+
+    Mirrors `check-file-size.sh`'s `resolve_base_commit`: an explicit
+    override (`PROSE_BASE_REF`, for hermetic tests with no `origin/main`),
+    a merge commit (a `refs/pull/N/merge` checkout, where `HEAD^1` is the
+    base branch tip), a local feature branch's merge-base with
+    `origin/main`, or the immediate parent on a linear push. Empty under
+    `--absolute` or on any git failure -- both collapse `max(ceiling,
+    base)` to the ceiling, the strict whole-tree check.
+    """
+    if absolute:
+        return ""
+    override = os.environ.get("PROSE_BASE_REF")
+    if override:
+        return _git(root, ["rev-parse", "--verify", "--quiet", f"{override}^{{commit}}"])
+    if _git(root, ["rev-parse", "--verify", "--quiet", "HEAD^2"]):
+        return _git(root, ["rev-parse", "--verify", "--quiet", "HEAD^1^{commit}"])
+    mb = _git(root, ["merge-base", "HEAD", "origin/main"])
+    head = _git(root, ["rev-parse", "HEAD"])
+    if mb and mb != head:
+        return mb
+    return _git(root, ["rev-parse", "--verify", "--quiet", "HEAD^1^{commit}"])
+
+
+def base_tracked_paths(root: Path, commit: str, unit: str) -> list[str]:
+    """Every `.rs` path under `unit/` that `git ls-tree` names at `commit`."""
+    if not commit:
+        return []
+    out = _git(root, ["ls-tree", "-r", "--name-only", commit, "--", unit])
+    return [p for p in out.splitlines() if p]
+
+
+def density_at_commit(root: Path, commit: str, unit: str, paths: list[str]) -> int:
+    """[`density`] for one unit, reading each file's content from `commit`
+    via `git show` rather than the working tree. 0 when the unit had no
+    headers there (including when it did not exist at all)."""
+    total = 0
+    files = 0
+    for path in paths:
+        if not path.endswith(".rs"):
+            continue
+        text = _git(root, ["show", f"{commit}:{path}"])
+        length = header_length(text)
+        if not length:
+            continue
+        total += length
+        files += 1
+    return round(total * 100 / files) if files else 0
 
 
 def read_density_baseline(path: Path) -> dict[str, int]:
@@ -688,22 +781,46 @@ def main() -> int:
             if pair not in per_pair:
                 merged.pop(pair, None)
         write_baseline(baseline_path, merged)
-        tightened = {
-            unit: min(mean, density_baseline.get(unit, NEW_UNIT_MEAN))
-            for unit, mean in per_unit.items()
-        }
-        write_density_baseline(density_path, tightened)
-        print(
-            f"check-prose: {BASELINE} retightened to {sum(merged.values())}, "
-            f"{DENSITY_BASELINE} to {len(tightened)} unit(s)."
-        )
+        # Retightening every unit to its current mean on every `--update` run
+        # is what left each crate sitting at exactly its ceiling with zero
+        # headroom: the reclaim is unconditional and global, so clearing one
+        # crate's drift silently removes every other crate's slack too. Split
+        # the same way `check-file-size.sh --update`/`--retighten` are:
+        # `--update` alone leaves `DENSITY_BASELINE` untouched (nothing here
+        # can have grown past it, or the refusal above would have already
+        # fired), and `--retighten` is the deliberate, separately-landed pass
+        # that reclaims slack across every unit at once.
+        if "--retighten" in flagset:
+            tightened = {
+                unit: min(mean, density_baseline.get(unit, NEW_UNIT_MEAN))
+                for unit, mean in per_unit.items()
+            }
+            write_density_baseline(density_path, tightened)
+            density_msg = f"{DENSITY_BASELINE} retightened to {len(tightened)} unit(s)."
+        else:
+            density_msg = f"{DENSITY_BASELINE} left alone -- pass --retighten to reclaim slack."
+        print(f"check-prose: {BASELINE} retightened to {sum(merged.values())}, {density_msg}")
         return 0
 
-    over = [
-        (unit, density_baseline.get(unit, NEW_UNIT_MEAN), mean)
-        for unit, mean in sorted(per_unit.items())
-        if mean > density_baseline.get(unit, NEW_UNIT_MEAN)
-    ]
+    # Judged against max(the recorded ceiling, this unit's mean in the base
+    # tree) -- the same rule check-file-size.sh uses, and for the same
+    # reason: a unit already over its ceiling before this change landed is
+    # inherited drift, and failing the branch that merely did not fix it is
+    # what turned this ratchet into a main-red generator. `--absolute` (the
+    # post-merge canary) skips the base entirely, because that is exactly
+    # the drift a canary exists to catch.
+    absolute = "--absolute" in flagset
+    base_commit = resolve_base_commit(root, absolute)
+    over = []
+    for unit, mean in sorted(per_unit.items()):
+        ceiling = density_baseline.get(unit, NEW_UNIT_MEAN)
+        if mean <= ceiling:
+            continue
+        if base_commit:
+            base_paths = base_tracked_paths(root, base_commit, unit)
+            ceiling = max(ceiling, density_at_commit(root, base_commit, unit, base_paths))
+        if mean > ceiling:
+            over.append((unit, ceiling, mean))
 
     failures = []
     for pair in sorted(set(per_pair) | set(baseline)):

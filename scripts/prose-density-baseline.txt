@@ -3,8 +3,8 @@
 # Each line is `<unit> <mean>` -- the mean length, in lines, of every leading
 # `//!` block in that crate's Rust files, recorded in hundredths so the
 # comparison is integer arithmetic. A unit may lower its mean; it may never
-# raise it, and a unit absent from this list is held to 12.00. Regenerate with
-# `make prose-update`, which refuses to raise a number.
+# raise it, and a unit absent from this list is held to 12.00. Lower one with
+# `make prose-retighten`; `make prose-update` never touches this file.
 #
 # Mean header length rather than comment share, because share is a bad proxy on
 # its own: a well-documented pure-function crate should be comment-heavy, and

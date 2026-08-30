@@ -203,14 +203,14 @@ checks=(
   "compile|cargo check --workspace --all-targets --locked${manifest_dir:+ --offline --manifest-path $manifest_dir/Cargo.toml}"
   # A third shared cell: `scripts/prose-baseline.txt`. It earns its row the
   # same way the two above do, and the mechanism is the one that makes a
-  # post-merge check the only possible catcher — `check-prose` judges the
-  # whole tree with no base-relative branch, so the moment drift lands on
+  # post-merge check the only possible catcher — the count ratchet judges
+  # the whole tree with no base-relative branch, so the moment drift lands on
   # `main` it fails every open PR at once, for a reason none of their authors
   # caused and none of them can see coming.
   #
   # That is worse than the file-size case rather than milder. `check-file-size`
-  # at least reports inherited drift as drift and passes the branch; the prose
-  # gate has no such arm, so the first PR to run after the drift lands simply
+  # at least reports inherited drift as drift and passes the branch; the count
+  # ratchet has no such arm, so the first PR to run after the drift lands simply
   # goes red and its author starts debugging their own diff.
   #
   # It has happened: at a7a46d3b6 this canary ran, reported `FAIL file-size`
@@ -220,8 +220,15 @@ checks=(
   # unrelated repair PR's `gate steps` job, where it read as that PR's fault
   # and cost a full CI cycle to attribute (#4828).
   #
-  # No `--absolute` equivalent is needed or available: the guard is already
-  # whole-tree, which is the property that makes it belong here.
+  # `--absolute` IS needed here now, for the density ratchet's own half of
+  # this file: `scripts/prose-density-baseline.txt` was whole-tree the same
+  # way, and the same shared-cell shape described above cost `main` its own
+  # red window — two ordinary module headers landing near one another were
+  # each green alone. The plain check now judges a unit's density against
+  # `max(its baseline, its mean in the base tree)`, the same mercy
+  # `check-file-size` already had, so this canary needs the strict reading
+  # back: `--absolute` skips the base tree, exactly like the row above.
+  # The count ratchet is unaffected and stays whole-tree by construction.
   #
   # The trailing positional argument is `check-prose.py`'s own `ROOT` — it
   # already resolves the baseline and walks the tree relative to whatever
@@ -230,7 +237,7 @@ checks=(
   # the real repository, so the canary's own fixture-based self-tests could
   # never construct a hermetic prose failure — a fixture already red on
   # something else stayed red, but for the wrong row's reason.
-  "prose|python3 ./scripts/check-prose.py${manifest_dir:+ $manifest_dir}"
+  "prose|python3 ./scripts/check-prose.py --absolute${manifest_dir:+ $manifest_dir}"
 )
 
 # The remediation for ONE failing check. Per-check on purpose: this block used
