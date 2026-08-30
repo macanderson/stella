@@ -132,6 +132,21 @@ want "V4 skipping a non-numeric tag does not hide a real gap behind it" \
   "0.9.291 0.9.292 1 172800" \
   "{\"formula_version\":\"0.9.291\",\"releases\":[$(rel v0.9.292 $((2 * day))),$(rel nightly $((1 * day)))]}"
 
+# ── A version the rule cannot read ───────────────────────────────────────────
+# The worst direction available to this script: not a wrong answer but a clean
+# OK for a formula it never compared. A jq definition that emits nothing on one
+# input drops the whole document through the binding that consumes it, so an
+# unreadable formula version silenced the entire check rather than the one
+# comparison. It lands where `(none)` lands, because a check that cannot
+# establish the tap is current must not report that it is.
+want "E1 a formula version the rule cannot parse is reported, not passed over" \
+  "0.9.292-rc 0.9.292 1 172800" \
+  "{\"formula_version\":\"0.9.292-rc\",\"releases\":[$(rel v0.9.292 $((2 * day)))]}"
+
+want "E2 an unreadable formula version with nothing settled is still not a finding" \
+  "" \
+  "{\"formula_version\":\"garbage\",\"releases\":[$(rel v0.9.292 $((20 * 60)))]}"
+
 # ── Drafts ───────────────────────────────────────────────────────────────────
 # A draft is not something `brew install` can serve, and `gh` gives it a publish
 # date of `0001-01-01T00:00:00Z`. Measuring the tap against one would report

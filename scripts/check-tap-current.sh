@@ -72,7 +72,14 @@ done
 #   <formula-version>\t<expected-version>\t<releases-behind>\t<age-of-expected-secs>
 #
 # `formula_version` is null when the tap carries no formula at all, which is
-# reported as `(none)` and counts as behind every settled release.
+# reported as `(none)` and counts as behind every settled release. A version
+# string the rule cannot parse lands in the same place, for the same reason the
+# I/O half below errors on an unreachable tap: a check that cannot establish the
+# tap is current must not report that it is. `parts` therefore returns null on
+# anything it cannot read rather than emitting nothing — a jq definition that
+# emits nothing on one input silently drops the whole document through the
+# binding that consumes it, and the script then prints a clean OK for a formula
+# it never compared.
 #
 # A release with a null `published_unix` is a draft. `gh` reports one with a
 # publish date of `0001-01-01T00:00:00Z`, which is not a date at all, and a
@@ -90,7 +97,9 @@ done
 # not a plain dotted-numeric version is skipped rather than guessed at.
 select_stale() {
   jq -r --argjson now "$now" --argjson grace "$grace_secs" '
-    def parts: ltrimstr("v") | select(test("^[0-9]+(\\.[0-9]+)*$")) | split(".") | map(tonumber);
+    def parts:
+      ltrimstr("v")
+      | if test("^[0-9]+(\\.[0-9]+)*$") then split(".") | map(tonumber) else null end;
 
     ( .formula_version // null ) as $formula
     | ( if $formula == null then null else ($formula | parts) end ) as $formula_parts
@@ -183,8 +192,9 @@ IFS="$(printf '\t')" read -r formula expected behind age <<EOF
 $report
 EOF
 
-echo "::error::the Homebrew tap is ${behind} release(s) behind. \`brew install ${tap_repo%%/*}/tap/stella\` is serving ${formula} while the newest published release is ${expected} — the tap stopped being updated and every other surface still reports success."
+echo "::error::the Homebrew tap is ${behind} release(s) behind. ${tap_repo}/${formula_path} serves ${formula} while the newest published release is ${expected} — the tap stopped being updated and every other surface still reports success."
 echo ""
+echo "  tap              ${tap_repo}/${formula_path}"
 echo "  tap formula      ${formula}"
 echo "  newest release   ${expected}  (published $((age / 3600))h ago)"
 echo "  releases behind  ${behind}"
