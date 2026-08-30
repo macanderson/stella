@@ -271,23 +271,28 @@ fn every_token_has_a_fallback() {
     }
 }
 
-/// The five mappings SPEC 3.5 names outright.
+/// The mappings SPEC 3.5 names outright.
 #[test]
 fn the_named_fallbacks_are_what_the_spec_says() {
     assert_eq!(
         fallback::ansi16(token::GOLD),
-        Color::Yellow,
-        "gold to yellow"
+        Color::LightYellow,
+        "gold to bright yellow"
     );
     assert_eq!(
         fallback::ansi16(token::GOLD_BRIGHT),
-        Color::Yellow,
-        "gold to yellow"
+        Color::LightYellow,
+        "gold to bright yellow"
     );
     assert_eq!(
         fallback::ansi16(token::SILVER),
         Color::Gray,
         "silver to white"
+    );
+    assert_eq!(
+        fallback::ansi16(token::SILVER_TYPE),
+        Color::White,
+        "silver_type to bright white"
     );
     assert_eq!(
         fallback::ansi16(token::MUTED),

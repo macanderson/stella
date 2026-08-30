@@ -36,17 +36,21 @@ pub fn detect_truecolor() -> bool {
 
 /// The 16-color stand-in for a palette token (SPEC 3.5).
 ///
-/// SPEC 3.5 fixes five of these by name — gold to yellow, silver to white,
-/// muted and dim to bright black, red and green to their ANSI counterparts —
-/// and the rest follow from the ramp they belong to:
+/// SPEC 3.5 fixes four of these by name — gold to bright yellow, silver to
+/// white, silver_type to bright white, muted and dim to bright black — and
+/// the rest follow from the ramp they belong to:
 ///
 /// - The grounds ([`token::BG`], [`token::PANEL`]) go to black, and the seams
 ///   ([`token::HL`], [`token::BORDER`], [`token::RULE`]) to bright black: a
 ///   seam that collapses into the ground stops being a seam.
-/// - [`token::TEXT`] takes bright white and the silvers take white, one tier
-///   apart, so "the world coming in" still reads quieter than prose. SPEC 3.5
-///   says silver goes to white and this honours it exactly — it is the *text*
-///   token that lifts, not silver that drops.
+/// - Gold takes bright yellow rather than plain: a 16-color terminal has no
+///   second yellow to lift a live accent to, so the brand's one identity
+///   colour needs the brighter of the two stops it can reach, or a reader on
+///   that terminal cannot tell the mark from an ordinary warning.
+/// - [`token::TEXT`] and [`token::SILVER_TYPE`] both take bright white, one
+///   tier above plain [`token::SILVER`], so an emphasised secondary still
+///   reads as emphasised rather than collapsing into the same stand-in as
+///   the text beside it — the whole reason `SILVER_TYPE` is a separate token.
 /// - The diff tints go to black rather than to a green and a red background.
 ///   At 16 colours a tint is not available; only a wash is, and a wash on
 ///   every changed row would spend the palette's whole red budget on a healthy
@@ -60,9 +64,9 @@ pub fn ansi16(color: Color) -> Color {
     match color {
         token::BG | token::PANEL | token::DIFF_ADD_BG | token::DIFF_DEL_BG => Color::Black,
         token::HL | token::BORDER | token::RULE => Color::DarkGray,
-        token::GOLD | token::GOLD_BRIGHT => Color::Yellow,
-        token::SILVER | token::SILVER_TYPE => Color::Gray,
-        token::TEXT => Color::White,
+        token::GOLD | token::GOLD_BRIGHT => Color::LightYellow,
+        token::SILVER => Color::Gray,
+        token::TEXT | token::SILVER_TYPE => Color::White,
         token::MUTED | token::DIM => Color::DarkGray,
         token::GREEN => Color::Green,
         token::RED => Color::Red,
