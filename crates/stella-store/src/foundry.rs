@@ -378,9 +378,10 @@ impl Store {
             "SELECT ok FROM foundry_invocations WHERE name = ?1 \
              ORDER BY rowid DESC LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![name, limit as i64], |r| {
-            Ok(r.get::<_, i64>(0)? != 0)
-        })?;
+        let rows = stmt.query_map(
+            params![name, limit as i64],
+            |r| Ok(r.get::<_, i64>(0)? != 0),
+        )?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);

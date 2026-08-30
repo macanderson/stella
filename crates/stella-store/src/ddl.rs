@@ -837,7 +837,8 @@ pub(crate) const FOUNDRY_TOOLS_DDL: &str = "CREATE TABLE IF NOT EXISTS foundry_t
 /// by construction (a manifest and a shell script, not a binary) and the
 /// rollback contract is exactly "the bytes that were adopted", which a path
 /// reference cannot promise after the file changes.
-pub(crate) const FOUNDRY_TOOL_VERSIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS foundry_tool_versions (
+pub(crate) const FOUNDRY_TOOL_VERSIONS_DDL: &str =
+    "CREATE TABLE IF NOT EXISTS foundry_tool_versions (
        name TEXT NOT NULL,
        version INTEGER NOT NULL,
        manifest_digest TEXT NOT NULL,

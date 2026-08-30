@@ -915,14 +915,12 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     // platform that cannot runs the tool unwrapped — the autonomy pipeline
     // already refused to auto-adopt there, so anything launching here was
     // adopted by a human who read the declaration.
-    let argv: Vec<String> = if governed
-        && !tool.foundry_runtime.network_allowed
-        && crate::netdeny::available()
-    {
-        crate::netdeny::wrap(&tool.command).unwrap_or_else(|| tool.command.clone())
-    } else {
-        tool.command.clone()
-    };
+    let argv: Vec<String> =
+        if governed && !tool.foundry_runtime.network_allowed && crate::netdeny::available() {
+            crate::netdeny::wrap(&tool.command).unwrap_or_else(|| tool.command.clone())
+        } else {
+            tool.command.clone()
+        };
 
     let started = std::time::Instant::now();
     let outcome = run_custom_process(tool, input, workspace_root, &argv).await;

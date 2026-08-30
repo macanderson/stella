@@ -9,12 +9,14 @@
 //! lands in `.stella/tools/` it registers, and "a human moved a file" is the
 //! only record that it was ever meant to.
 //!
-//! Staging is a **hand** step: a machine-authoring pass shipped and was
-//! retired in #3629 because nothing ever called it, so the pair under
-//! [`PROPOSED_DIR`] is written by whoever wants the tool. That changes who
-//! writes the bytes and nothing about what this gate does with them — the
-//! `[foundry]` table below is still what marks a manifest as governed, and
-//! `stella tools --adopt` still refuses a manifest without one.
+//! The pair under [`PROPOSED_DIR`] is written either by hand or by the
+//! autonomous foundry's authoring pass (#5453 — the rebuild of the pass
+//! #3629 retired unused, this time with a live caller and its own standing
+//! controls: spawn-time network denial, invocation telemetry, a circuit
+//! breaker, and versioned rollback). Who writes the bytes changes nothing
+//! about what this gate does with them — the `[foundry]` table below is
+//! still what marks a manifest as governed, and adoption still refuses a
+//! manifest without one.
 //!
 //! This module replaces that with a **standing gate**. A foundry-authored
 //! manifest sitting in `.stella/tools/` registers only when the workspace's

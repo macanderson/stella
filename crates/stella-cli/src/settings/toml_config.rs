@@ -46,8 +46,8 @@ use super::authority::ManagedAuthoritySettings;
 use super::context::ContextSettings;
 use super::context_providers::ContextProviderSettings;
 use super::{
-    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, McpSettings, PlanReviewSettings,
-    FoundrySettings, ProviderSettings, RewardSettings, Settings, Toggle, ToolsSettings,
+    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, FoundrySettings, McpSettings,
+    PlanReviewSettings, ProviderSettings, RewardSettings, Settings, Toggle, ToolsSettings,
     UiSettings,
 };
 

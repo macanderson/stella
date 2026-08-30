@@ -901,7 +901,11 @@ pub(crate) async fn discover_custom_tools(
     .unwrap_or_else(|_| custom_tool_report_for_scopes(&cfg.workspace_root, include_workspace));
     // The tool-foundry gate (#830) — applied at this chokepoint because it
     // needs the adoption ledger and discovery has no store handle.
-    let report = crate::tool_foundry::adopt::gate_discovery(report, &cfg.workspace_root);
+    let mut report = crate::tool_foundry::adopt::gate_discovery(report, &cfg.workspace_root);
+    // The operator's `[foundry]` runtime policy (#5453): network allowlist
+    // membership and breaker thresholds, stamped host-side so a manifest can
+    // never grant them to itself.
+    crate::tool_foundry::apply_foundry_runtime(&mut report.tools, &cfg.workspace_root);
     if print_diagnostics {
         for diagnostic in &report.diagnostics {
             eprintln!(

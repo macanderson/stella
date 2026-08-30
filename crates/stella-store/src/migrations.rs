@@ -42,10 +42,10 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use crate::ddl::{
     AGENT_USES_DDL, CONTEXT_BLOCKS_DDL, EXECUTION_REFLECTION_DDL, EXECUTIONS_DDL, FORGOTTEN_DDL,
     FOUNDRY_INVOCATIONS_DDL, FOUNDRY_TOOL_VERSIONS_DDL, FOUNDRY_TOOLS_DDL, MCP_USAGE_DDL,
-    MEMORY_CITATIONS_DDL, PLAN_EDGES_DDL, PLAN_REVISIONS_DDL,
-    PULL_REQUESTS_DDL, REFLECTIONS_DDL, RULES_TABLE, SESSION_TURN_DIFFS_DDL, SKILL_USAGE_DDL,
-    STEP_MANIFEST_DDL, STEP_RECEIPT_DDL, TABLES, TASKS_DDL, TELEMETRY_INDEX, TOOL_CALLS_INDEXES,
-    UNCHANGED_TABLES, events_ddl, files_touched_ddl, telemetry_ddl, tool_calls_ddl,
+    MEMORY_CITATIONS_DDL, PLAN_EDGES_DDL, PLAN_REVISIONS_DDL, PULL_REQUESTS_DDL, REFLECTIONS_DDL,
+    RULES_TABLE, SESSION_TURN_DIFFS_DDL, SKILL_USAGE_DDL, STEP_MANIFEST_DDL, STEP_RECEIPT_DDL,
+    TABLES, TASKS_DDL, TELEMETRY_INDEX, TOOL_CALLS_INDEXES, UNCHANGED_TABLES, events_ddl,
+    files_touched_ddl, telemetry_ddl, tool_calls_ddl,
 };
 use crate::{Result, StoreError};
 
@@ -88,8 +88,8 @@ use execution_plane::{
     migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10, migrate_v21_to_v22, migrate_v22_to_v23,
 };
 use execution_role::migrate_v26_to_v27;
-use foundry_plane::migrate_v40_to_v41;
 pub(crate) use execution_role::{ROLE_KINDS, SYSTEM_NON_DOOR};
+use foundry_plane::migrate_v40_to_v41;
 use legacy_rebuild::{migrate_v0_to_v1, migrate_v1_to_v2};
 use live_tool_calls::migrate_v17_to_v18;
 use pipeline_variant::migrate_v25_to_v26;

@@ -5,20 +5,22 @@
 //! This is the first slice of self-improvement issue #830 ("stella authors,
 //! tests, and installs its own tools at runtime"): the **gap detector only**,
 //! which *proposes* a tool spec and installs nothing. Witness proofs and
-//! adoption gating are the later slices, and they landed outside this crate
-//! (`stella-tools`' `foundry_witness`/`foundry_gate`, driven by
-//! `stella tools --adopt` / `--enable`). The slice between them — turning a
-//! proposal into a staged manifest+script pair — was written, never called,
-//! and retired in #3629; staging is a hand step, and this detector's shipped
-//! consumer remains the offline replay report.
+//! adoption gating landed outside this crate (`stella-tools`'
+//! `foundry_witness`/`foundry_gate`, driven by `stella tools --adopt` /
+//! `--enable`). The authoring slice between them was retired unused in
+//! #3629 and rebuilt behind the autonomous foundry's controls (#5453,
+//! `stella-cli`'s `tool_foundry::author`).
 //!
 //! It is a sibling of [`crate::loop_detect`] and follows the same discipline:
 //! plain synchronous functions over owned data, no I/O, no provider SDK, no
 //! `regex` — easy to property-test against fakes. The caller hands a window
-//! of recorded shell commands in as [`ShellInvocation`]s — today the
-//! trace-replay harness (`stella-cli`'s `memory::replay`) is the shipped
-//! feeder — and surfaces any [`ProposedTool`] it detects. This module never
-//! reads the store and never writes a manifest.
+//! of recorded shell commands in as [`ShellInvocation`]s and surfaces any
+//! [`ProposedTool`] it detects; this module never reads the store and never
+//! writes a manifest. Two shipped feeders exist (#5433, Option A): the live
+//! end-of-turn hook (`stella-cli`'s `tool_foundry::gaps`, reading recent
+//! `bash` history back out of the store's `tool_calls` projection and
+//! appending novel proposals to `.stella/private/tool_gaps.jsonl`), and the
+//! offline trace-replay harness (`stella-cli`'s `memory::replay`).
 //!
 //! **How it differs from loop detection.** [`crate::loop_detect`] flags a
 //! *stuck* turn — the same call, byte-identical, producing byte-identical
@@ -188,19 +190,16 @@ impl ProposedTool {
 
 /// Thresholds for [`detect_tool_gaps`].
 ///
-/// **One shipped value, and today no way to change it.** Every production call
-/// site constructs `GapDetectionConfig::default()` — today that is the
-/// trace-replay harness (`stella-cli`'s `memory::replay`). No settings key
-/// reads any field, so what this struct
-/// holds is the shipped policy rather than a preference, and the numbers below
-/// are the ones every workspace gets. Exposing the two knobs a workspace would
-/// actually want to move is #2471.
+/// The numbers below are the shipped defaults; a workspace moves them
+/// through the `[foundry]` settings block (#2471, `stella-cli`'s
+/// `settings::foundry`), which the live end-of-turn hook resolves and hands
+/// in. The trace-replay harness (`stella-cli`'s `memory::replay`) keeps the
+/// defaults, so replay reports stay comparable across workspaces.
 ///
 /// It is a parameter rather than a constant because this crate does no I/O
 /// (AGENTS.md #2): thresholds are data the caller owns, which is what lets the
-/// property tests sweep them across ranges no shipped configuration would take.
-/// That is the seam a settings surface would attach to — it is not evidence
-/// that one exists.
+/// property tests sweep them across ranges no shipped configuration would
+/// take.
 ///
 /// Not `Eq`: [`GapDetectionConfig::min_reuse_ratio`] is a ratio, and a ratio
 /// whose useful range is 1.0–5.0 has nothing to say in integers.
@@ -1258,14 +1257,8 @@ mod tests {
         assert_eq!(render_template("cmd <path> > out"), "cmd {p1} > out");
         assert_eq!(render_template("cmd <path> >> log"), "cmd {p1} >> log");
         assert_eq!(render_template("cmd <path> 2>&1"), "cmd {p1} 2>&1");
-        assert_eq!(
-            render_template("cat << EOF > <path>"),
-            "cat << EOF > {p1}"
-        );
-        assert_eq!(
-            render_template("a <str> | b > <path>"),
-            "a {p1} | b > {p2}"
-        );
+        assert_eq!(render_template("cat << EOF > <path>"), "cat << EOF > {p1}");
+        assert_eq!(render_template("a <str> | b > <path>"), "a {p1} | b > {p2}");
     }
 
     /// End to end through `detect_tool_gaps`: an input-redirect shape keeps
@@ -1273,11 +1266,7 @@ mod tests {
     /// parameter for the varying file.
     #[test]
     fn an_input_redirect_shape_is_proposed_with_its_operator() {
-        let history = vec![
-            ok("sort < a.txt"),
-            ok("sort < b.txt"),
-            ok("sort < c.txt"),
-        ];
+        let history = vec![ok("sort < a.txt"), ok("sort < b.txt"), ok("sort < c.txt")];
         let proposals = detect_tool_gaps(&history, shapes_only());
         assert_eq!(proposals.len(), 1);
         let p = &proposals[0];

@@ -402,9 +402,7 @@ fn adopt_enabled(root: &Path, name: &str) -> stella_store::Store {
             disabled_reason: String::new(),
         })
         .expect("adopt");
-    store
-        .set_foundry_tool_enabled(name, true)
-        .expect("enable");
+    store.set_foundry_tool_enabled(name, true).expect("enable");
     store
 }
 
@@ -519,7 +517,8 @@ async fn a_governed_tool_cannot_reach_the_network_where_the_mechanism_is_live() 
     }
     let dir = tempfile::tempdir().unwrap();
     // Tries a fast TCP connect; prints REACHED only if the connect succeeds.
-    let body = "#!/bin/bash\nif exec 3<>/dev/tcp/1.1.1.1/53; then echo REACHED; else echo DENIED; fi\n";
+    let body =
+        "#!/bin/bash\nif exec 3<>/dev/tcp/1.1.1.1/53; then echo REACHED; else echo DENIED; fi\n";
     let tool = governed_tool(dir.path(), "net.sh", body);
     let _store = adopt_enabled(dir.path(), "governed_t");
 

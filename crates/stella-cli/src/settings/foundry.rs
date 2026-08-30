@@ -206,10 +206,8 @@ impl FoundrySettings {
 
         let mut breaker = defaults.breaker;
         if let Some(n) = self.breaker_consecutive_failures {
-            breaker.consecutive_failures = validate_breaker_count(
-                "foundry.breaker_consecutive_failures",
-                n,
-            )?;
+            breaker.consecutive_failures =
+                validate_breaker_count("foundry.breaker_consecutive_failures", n)?;
         }
         if let Some(n) = self.breaker_window {
             breaker.window = validate_breaker_count("foundry.breaker_window", n)?;
@@ -361,16 +359,16 @@ mod tests {
             breaker_consecutive_failures: Some(5),
             ..Default::default()
         };
-        assert_eq!(
-            settings.resolve().unwrap().breaker.consecutive_failures,
-            5
-        );
+        assert_eq!(settings.resolve().unwrap().breaker.consecutive_failures, 5);
         let zero = FoundrySettings {
             breaker_consecutive_failures: Some(0),
             ..Default::default()
         };
         let err = zero.resolve().unwrap_err();
-        assert!(err.contains("foundry.breaker_consecutive_failures"), "{err}");
+        assert!(
+            err.contains("foundry.breaker_consecutive_failures"),
+            "{err}"
+        );
     }
 
     #[test]

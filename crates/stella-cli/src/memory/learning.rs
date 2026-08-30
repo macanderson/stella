@@ -381,6 +381,22 @@ impl SessionMemory {
             reflection_events.extend(self.auto_create_skills(log_path, quiet));
         }
 
+        // 3. Tool-gap detection and the autonomous foundry (#5433, #5453),
+        // riding the same post-turn seam as skill mining: recent shell
+        // history is mined for reusable command shapes, novel gaps land in
+        // `.stella/private/tool_gaps.jsonl`, and — under `foundry.autonomy =
+        // "auto"` — a detected gap is authored, witness-proven under network
+        // denial, adopted, and enabled, with every control the settings
+        // block names. Best-effort like everything else on this path: a
+        // foundry failure is a notice, never a failed turn.
+        for notice in
+            crate::tool_foundry::end_of_turn(&self.workspace_root, turn_store.as_ref()).await
+        {
+            if !quiet {
+                println!("  {} {notice}", "✦".white());
+            }
+        }
+
         // A restatement-only turn stays quiet, exactly as it did when the
         // whole turn was dropped: "we already knew that" repeated every turn
         // is noise. The messages describe only the novel half, which is the
