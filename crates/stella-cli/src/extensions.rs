@@ -650,6 +650,7 @@ impl Expansion {
 
 /// What an explicitly invoked skill puts in the prompt — the three facts a
 /// `SkillInjected` event carries beyond its trigger.
+#[derive(Debug)]
 pub struct InvokedSkill {
     /// The skill's slug.
     pub name: String,

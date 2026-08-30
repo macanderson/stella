@@ -1,0 +1,61 @@
+---
+title: stella skill
+description: Run a skill by its slug as a scoped one-shot — the skill's own invoke directives decide the context, tool grant, model, and effort it runs under.
+---
+
+Run a skill as a scoped one-shot (`stella skill run <slug>`). The skill's own
+frontmatter declares how it runs — this is the skill-function invocation
+surface: there is deliberately **no** `invoke_skill` tool (the 12-tool cap
+retired it), so a skill function runs only when a human asks — this verb, or
+an in-session `/slug` expansion.
+
+For what skills are and how they are mined, selected, and versioned, see
+[Memory](/docs/context-engine). This page is the command reference.
+
+## Synopsis
+
+```bash
+stella skill run <slug> [args...]
+stella skill run generate-quarter-seed -- --quarter 2025-Q3
+```
+
+## What it does
+
+Skills load from `.stella/skills/` and `~/.stella/skills/` — the same
+directories recall selects from and the SKILLS tab manages. `stella skill run`
+resolves the slug, substitutes the trailing arguments for `$ARGUMENTS` in the
+skill body, and launches one scoped run through the ordinary one-shot door.
+
+How the run is scoped comes from the skill's own frontmatter, never from a
+flag — a tool parameter may scope an operation, never select one:
+
+| Directive | Effect |
+|---|---|
+| `context: fork` | Run in a fresh context. At this door every run is already fresh, so the mode is reported rather than branched on; in a session, a fork-mode skill runs scoped in place. |
+| `allowed-tools: bash, read_file` | A tool grant, enforced at execution time as the **intersection** with operator policy — it can only narrow the surface, never re-enable a tool an operator or org scope denied. A call outside the grant is refused, naming the skill. |
+| `model: <provider/slug>` | The model the skill asks to run under, resolved exactly as `--model` is. An explicit `--model` flag still wins. |
+| `effort: low\|medium\|high\|xhigh\|max` | Reasoning-effort override for the run. |
+
+A skill with none of these runs unscoped — plain injected context on the
+session's full surface, exactly as skills have always behaved. Unusable
+directive values (an unknown `context:` or `effort:`) degrade to the default
+with a printed diagnostic; they never refuse the run.
+
+## Arguments
+
+Everything after the slug replaces `$ARGUMENTS` in the skill body. A body
+with no placeholder gets the arguments appended under an `ARGUMENTS:`
+trailer, so what you passed is never silently dropped. Use `--` before
+arguments that begin with a dash.
+
+## Flags
+
+| Flag | Effect |
+|---|---|
+| `--output-format <text\|json\|stream-json>` | The one-shot door's own output promise, same as [`stella run`](/docs/commands/run). |
+
+## Exit codes
+
+Same as [`stella run`](/docs/commands/run): `0` on a completed run, non-zero
+on an aborted one or on a refused plan — an unknown slug fails before any
+provider call, naming the skills that are loaded.

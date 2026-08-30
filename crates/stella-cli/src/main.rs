@@ -113,6 +113,7 @@ mod settings;
 mod settings_check;
 mod signals;
 mod skill_manager;
+mod skill_run_cmd;
 // Reads this crate's own source so a security chokepoint's "these are all
 // the sites" claim can be asserted rather than reviewed (#3521, #4426).
 #[cfg(test)]
@@ -279,7 +280,7 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
 // the per-command modules keep addressing their own subcommand enum as
 // `crate::AuthCmd`, `crate::McpCmd`, … regardless of which file defines it.
 pub(crate) use cli::{
-    AuthCmd, Cli, Command, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
+    AuthCmd, Cli, Command, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, SkillCmd, TelemetryCmd,
 };
 
 /// How this invocation meets the supervisor (#1552, #1607).
@@ -1096,6 +1097,37 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 ),
             )?;
         }
+        Command::Skill { cmd } => match cmd {
+            SkillCmd::Run {
+                slug,
+                args,
+                output_format,
+            } => {
+                // Planned before any provider work: a typo'd slug or an
+                // unreadable skill fails free of charge, naming what exists.
+                let plan = skill_run_cmd::plan(&cfg.workspace_root, &cfg.authority, &slug, &args)
+                    .map_err(failure::CliFailure::from)?;
+                // A `model:` directive re-resolves the config through the
+                // same door `--model` takes — and only when no explicit flag
+                // pinned the model, so the most specific statement wins.
+                let cfg = match plan.model.as_deref() {
+                    Some(model) if !cfg.model_pinned_by_flag => {
+                        let mut fresh = config::Config::load(
+                            Some(model),
+                            cli.globals.api_key.as_deref(),
+                            cli.globals.base_url.as_deref(),
+                        )?;
+                        skill_run_cmd::carry_stamped_flags(&mut fresh, &cfg);
+                        fresh
+                    }
+                    _ => cfg,
+                };
+                signals::block_on_interruptible(
+                    rt()?,
+                    skill_run_cmd::run(&cfg, plan, cli.globals.spend_limit, output_format),
+                )?;
+            }
+        },
         Command::Arena {
             task_dir,
             journal,

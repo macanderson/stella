@@ -12,6 +12,40 @@
 use clap::Subcommand;
 
 #[derive(Subcommand)]
+pub(crate) enum SkillCmd {
+    /// Run a skill by its slug, scoped by its own invoke directives
+    ///
+    /// Launches a one-shot run whose prompt is the skill's body with the
+    /// trailing arguments substituted for $ARGUMENTS. The skill's own
+    /// frontmatter declares how it runs (#5456): `context:` inline or fork,
+    /// `allowed-tools:` a tool grant enforced as the intersection with
+    /// operator policy (it can only narrow, never re-enable), `model:` a
+    /// model override (an explicit --model flag still wins), and `effort:` a
+    /// reasoning-effort override. There is deliberately no invoke_skill tool
+    /// (#3244): a skill function runs only when a human asks — this verb, or
+    /// an in-session /slug expansion.
+    Run {
+        /// The skill's slug (its frontmatter `name:`), as listed by the
+        /// SKILLS tab and the ⚡ slash menu.
+        slug: String,
+
+        /// Arguments substituted for $ARGUMENTS in the skill body. Use `--`
+        /// before arguments that start with a dash:
+        /// `stella skill run generate-quarter-seed -- --quarter 2025-Q3`.
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+
+        /// Output shape: text, json, or stream-json
+        ///
+        /// Declared here rather than globally for the reason `run` declares
+        /// its own (#1493): this is a promise about what reaches stdout, and
+        /// only the commands that keep it may make it.
+        #[arg(long, env = "STELLA_OUTPUT_FORMAT", value_enum, default_value = "text")]
+        output_format: crate::OutputFormat,
+    },
+}
+
+#[derive(Subcommand)]
 pub(crate) enum DaemonCmd {
     /// List supervised runs on this machine
     List,

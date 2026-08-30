@@ -373,6 +373,20 @@ pub(crate) enum Command {
         foundry: bool,
     },
 
+    /// Run a skill as a scoped one-shot (`stella skill run <slug>`)
+    ///
+    /// The skill-function invocation surface (#5456): a skill's own
+    /// frontmatter declares how it runs — context (inline/fork), an
+    /// allowed-tools grant that can only narrow the operator surface, and
+    /// model/effort overrides — and `stella skill run <slug> [args…]`
+    /// launches it that way. Skills load from .stella/skills/ and
+    /// ~/.stella/skills/, the same directories recall selects from.
+    Skill {
+        /// Verbs (`run`)
+        #[command(subcommand)]
+        cmd: SkillCmd,
+    },
+
     /// Fan tasks out to a fleet of worker agents in one tree
     ///
     /// Fan tasks out to a fleet of worker agents in ONE shared tree —
