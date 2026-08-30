@@ -129,7 +129,7 @@ crossterm = "0.29"
 # (CoreAudio, WASAPI) and needs no system packages — on Linux the recorder is
 # an `arecord` subprocess instead, so ALSA headers never become a build
 # dependency of an `install.sh` source build.
-cpal = "0.16"
+cpal = "0.18"
 notify = "8"
 ratatui = "0.30"
 unicode-width = "0.2"
