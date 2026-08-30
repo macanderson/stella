@@ -125,6 +125,8 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         // (see the comment below), so a wrapper's verdict has nothing to
         // decide here and `--require-verdict` is not offered on this door.
         false,
+        // The adapter runs the task prompt, never a skill invocation.
+        None,
     )
     .await;
 

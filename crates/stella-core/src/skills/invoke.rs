@@ -347,6 +347,98 @@ mod tests {
         assert!(skill.body.contains(ARGUMENTS_PLACEHOLDER));
     }
 
+    /// **The skill-invocation directive parse table.** Every directive key, both
+    /// spellings of the grant key, every separator the grant list accepts,
+    /// and the absent case — one row per shape a skill author can write, so
+    /// the vocabulary `stella skill run` and the in-session expansion parse
+    /// is pinned as a table rather than scattered across examples.
+    #[test]
+    fn the_directive_parse_table_covers_every_key_and_separator() {
+        let table: &[(&str, InvokeDirectives)] = &[
+            // context: both recognized values, and its absence.
+            (
+                "context: fork",
+                InvokeDirectives {
+                    mode: SkillInvocationMode::Fork,
+                    ..InvokeDirectives::default()
+                },
+            ),
+            ("context: inline", InvokeDirectives::default()),
+            ("", InvokeDirectives::default()),
+            // allowed-tools: comma, space, and tab separation, plus the
+            // underscore spelling of the key — all one grant vocabulary.
+            (
+                "allowed-tools: bash, read_file",
+                InvokeDirectives {
+                    allowed_tools: Some(vec!["bash".into(), "read_file".into()]),
+                    ..InvokeDirectives::default()
+                },
+            ),
+            (
+                "allowed-tools: bash read_file\twrite_file",
+                InvokeDirectives {
+                    allowed_tools: Some(vec![
+                        "bash".into(),
+                        "read_file".into(),
+                        "write_file".into(),
+                    ]),
+                    ..InvokeDirectives::default()
+                },
+            ),
+            (
+                "allowed_tools: scratch",
+                InvokeDirectives {
+                    allowed_tools: Some(vec!["scratch".into()]),
+                    ..InvokeDirectives::default()
+                },
+            ),
+            // model: carried raw; resolving it is the host's business.
+            (
+                "model: anthropic/claude-fable-5",
+                InvokeDirectives {
+                    model: Some("anthropic/claude-fable-5".into()),
+                    ..InvokeDirectives::default()
+                },
+            ),
+            // effort: one wire spelling here; the case ladder is pinned by
+            // `effort_values_parse_case_insensitively`.
+            (
+                "effort: max",
+                InvokeDirectives {
+                    effort: Some(ReasoningEffort::Max),
+                    ..InvokeDirectives::default()
+                },
+            ),
+            // Unknown values of known keys degrade with a diagnostic.
+            (
+                "context: detached",
+                InvokeDirectives {
+                    diagnostics: vec![DirectiveDiagnostic::UnknownContext {
+                        value: "detached".into(),
+                    }],
+                    ..InvokeDirectives::default()
+                },
+            ),
+            (
+                "effort: turbo",
+                InvokeDirectives {
+                    diagnostics: vec![DirectiveDiagnostic::UnknownEffort {
+                        value: "turbo".into(),
+                    }],
+                    ..InvokeDirectives::default()
+                },
+            ),
+        ];
+        for (line, expected) in table {
+            let raw = format!("---\nname: x\ndescription: d\n{line}\n---\nbody\n");
+            assert_eq!(
+                &parse_invoke_directives(&raw),
+                expected,
+                "directive line `{line}`"
+            );
+        }
+    }
+
     /// Unknown *values* of known keys degrade to the default with a typed
     /// diagnostic — never a panic, never a refused skill.
     #[test]

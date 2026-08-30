@@ -21,7 +21,7 @@ use crate::{
     storage_cmd, tune_cmd, usage_cmd,
 };
 pub(crate) use subcommands::{
-    AuthCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd, parse_env_flag,
+    AuthCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, SkillCmd, TelemetryCmd, parse_env_flag,
     parse_max_output_tokens, parse_spend_limit, parse_turn_timeout,
 };
 

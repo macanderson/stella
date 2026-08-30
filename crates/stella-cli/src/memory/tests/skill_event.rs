@@ -122,6 +122,7 @@ fn an_invoked_skill_reaches_the_channel_as_a_command() {
         name: "reviewer".to_string(),
         summary: "database review".to_string(),
         tokens: 40,
+        scope: None,
     }));
 
     match recall.events.as_slice() {
