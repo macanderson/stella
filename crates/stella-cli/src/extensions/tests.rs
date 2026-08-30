@@ -660,3 +660,74 @@ fn a_hidden_user_tier_hides_commands_and_agents_as_it_already_hid_skills() {
         "premise: skills already honoured the policy"
     );
 }
+
+/// **The #5456 expansion witness.** A skill whose file carries invoke
+/// directives expands as the engine-recognized invocation message — marker
+/// line, $ARGUMENTS substituted — and hands back the turn scope its
+/// directives ask for; a directive-less skill keeps the plain wrapper and
+/// scopes nothing. Never a callable tool either way (#3244).
+#[test]
+fn a_directive_carrying_skill_expands_as_an_invocation_with_its_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("seed/SKILL.md");
+    write(
+        &path,
+        "---\n\
+         name: generate-quarter-seed\n\
+         description: seed a quarter\n\
+         context: fork\n\
+         allowed-tools: bash, read_file\n\
+         effort: high\n\
+         ---\n\
+         Seed the quarter named by $ARGUMENTS.\n",
+    );
+    let mut custom = custom_fixture();
+    custom.skills.push(Skill {
+        name: "generate-quarter-seed".to_string(),
+        description: "seed a quarter".to_string(),
+        domains: vec![],
+        body: "Seed the quarter named by $ARGUMENTS.".to_string(),
+        source_path: path.display().to_string(),
+        origin: stella_core::skills::SkillOrigin::Workspace,
+        contributed_by: None,
+    });
+
+    let expansion = custom
+        .expansion("/generate-quarter-seed 2025-Q3", &[])
+        .unwrap();
+    assert!(
+        expansion
+            .prompt
+            .starts_with(stella_core::skills::invoke::SKILL_INVOCATION_PREFIX),
+        "a directive-carrying skill expands as the invocation marker: {}",
+        expansion.prompt
+    );
+    assert!(
+        expansion.prompt.contains("Seed the quarter named by 2025-Q3."),
+        "$ARGUMENTS is substituted: {}",
+        expansion.prompt
+    );
+    let scope = expansion
+        .skill
+        .expect("the skill is reported")
+        .scope
+        .expect("its directives ask for a scope");
+    assert_eq!(scope.slug, "generate-quarter-seed");
+    assert_eq!(
+        scope.allowed_tools.as_deref(),
+        Some(&["bash".to_string(), "read_file".to_string()][..])
+    );
+    assert_eq!(scope.effort, Some(stella_protocol::ReasoningEffort::High));
+    assert_eq!(
+        scope.mode,
+        stella_core::skills::invoke::SkillInvocationMode::Fork
+    );
+
+    // The directive-less fixture skill keeps the shape it has always had —
+    // the plain wrapper, no scope — and so does one whose file cannot be
+    // re-read (the fixture's opaque source path), which can only ever
+    // degrade to plain context, never invent a grant.
+    let plain = custom.expansion("/sql-style tidy", &[]).unwrap();
+    assert!(plain.prompt.contains("# Skill: sql-style"));
+    assert!(plain.skill.unwrap().scope.is_none());
+}

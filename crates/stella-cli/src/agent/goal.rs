@@ -120,6 +120,12 @@ pub(crate) async fn run_raw_one_shot(
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     test_command: Option<&str>,
     require_verdict: bool,
+    // `stella skill run` (#5456): the invoked skill this one-shot runs, with
+    // the turn scope its directives asked for — the grant narrowing and
+    // effort override `run_turn` applies while the invocation is live.
+    // `None` for a plain `stella run`, which is every caller there was
+    // before the verb existed.
+    invoked_skill: Option<crate::extensions::InvokedSkill>,
 ) -> Result<(), crate::failure::CliFailure> {
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
@@ -269,6 +275,10 @@ pub(crate) async fn run_raw_one_shot(
         let recalled = m.recall_block_reported(prompt, &touched).await;
         recall = crate::memory::inject_opening_recall(&mut messages, recalled);
     }
+    // After recall, exactly where the interactive loop notes its `/slug`
+    // expansions: the skill's injection event and its turn scope ride the
+    // same seam whichever door invoked it (#5456).
+    recall.note_invoked_skill(invoked_skill);
 
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: findable in the deck's SESSIONS overlay and

@@ -508,4 +508,69 @@ mod tests {
             "an allowed call must still run through the same stack"
         );
     }
+
+    /// **The #5456 witness, through the shipped composition.** The skill
+    /// invocation plane composed over the assembled session chain — the
+    /// position every turn driver mounts it at — is exactly the
+    /// `operator ∧ grant` intersection: a live grant DENIES a disallowed
+    /// tool at execution time, a tool the operator switched off stays off
+    /// even when the grant names it, the granted-and-permitted call still
+    /// runs, and `active_skill_slugs` answers the live slug through the
+    /// stack — the port every shipped executor answered empty before this
+    /// plane existed.
+    #[tokio::test]
+    async fn a_skill_grant_over_the_session_stack_denies_disallowed_and_never_widens() {
+        use stella_tools::skill_plane::{SkillInvocationPlane, SkillScopedTools};
+
+        let dir = tempfile::tempdir().unwrap();
+        let registry = stella_tools::registry::ToolRegistry::new(dir.path().to_path_buf());
+        // The operator switched `save_state` off; the grant below names it
+        // anyway, which must change nothing.
+        let policy = ToolPolicy::from_switches(vec![("save_state".to_string(), false)]);
+        let stack = session_stack_with_gate(
+            &registry,
+            Vec::new(),
+            dir.path().to_path_buf(),
+            policy,
+            session_gate(dir.path()),
+            Principal::User,
+        );
+        let plane = SkillInvocationPlane::new();
+        let view = SkillScopedTools::new(&stack, plane.clone());
+
+        let _span = plane.begin(
+            "generate-quarter-seed",
+            Some(&["task_list".to_string(), "save_state".to_string()]),
+        );
+        assert_eq!(
+            view.active_skill_slugs(),
+            vec!["generate-quarter-seed".to_string()],
+            "the live invocation answers through the shipped chain"
+        );
+        // Granted and operator-permitted: runs.
+        assert!(
+            matches!(
+                view.execute("task_list", &json!({})).await,
+                ToolOutput::Ok { .. }
+            ),
+            "anti-vacuity: the granted call must run"
+        );
+        // Outside the grant: denied by the plane, naming the skill.
+        match view.execute("get_state", &json!({"key": "k"})).await {
+            ToolOutput::Error { message, .. } => assert!(
+                message.contains("generate-quarter-seed"),
+                "the denial names the invoking skill: {message}"
+            ),
+            other => panic!("a call outside the grant must be denied, got {other:?}"),
+        }
+        // Named by the grant but operator-denied below: stays denied — the
+        // grant selects within the operator surface, never re-enables.
+        assert!(
+            matches!(
+                view.execute("save_state", &json!({"key": "k", "value": "v"})).await,
+                ToolOutput::Error { .. }
+            ),
+            "a grant must never re-enable an operator-denied tool"
+        );
+    }
 }

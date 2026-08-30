@@ -39,12 +39,13 @@
 //! `the_fold_is_exactly_the_per_name_intersection` property pins that the two
 //! forms agree. The properties below pin this one.
 //!
-//! Enforcement sites: a session layer that mounts skill invocation holds the
-//! grant for an inline skill's span, and a forked skill's grant is resolved
-//! to concrete names ([`resolve_grant`]) and enforced structurally by
-//! `stella_core::ports::GrantedTools` inside the child turn. No shipped
-//! surface mounts skill invocation today; the one production constructor of
-//! a grant is the deck's assumed-agent scope (`stella-cli`'s
+//! Enforcement sites: [`crate::skill_plane`] is the mounted session layer
+//! (#5456) — it holds the grant for an inline skill's span and takes the
+//! per-name intersection structurally above the operator's policy layer —
+//! and a forked skill's grant is resolved to concrete names
+//! ([`resolve_grant`]) and enforced by `stella_core::ports::GrantedTools`
+//! inside the child turn. The other production constructor of a grant is the
+//! deck's assumed-agent scope (`stella-cli`'s
 //! `command_deck::session_override`), which folds an agent definition's
 //! `tools:` list into the session policy via [`ToolPolicy::narrow_with`] —
 //! the fold #2800 made agree with the per-name intersection.

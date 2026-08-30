@@ -657,6 +657,66 @@ pub struct InvokedSkill {
     pub summary: String,
     /// What the expansion cost, estimated over the prompt it produced.
     pub tokens: u32,
+    /// The turn scope its invoke directives ask for (#5456), when the skill
+    /// carries any — `None` for the common directive-less skill, which stays
+    /// what it always was: injected context, unscoped.
+    pub scope: Option<SkillTurnScope>,
+}
+
+/// What a directive-carrying skill invocation scopes its turn with (#5456):
+/// the narrowing the turn drivers apply while the invocation is live. The
+/// grant rides as the raw `allowed-tools` names — resolution against the
+/// operator surface is `stella_tools::skill_plane`'s job (the per-name
+/// `operator ∧ grant` intersection of `skill_grant`), never this module's.
+///
+/// The `model:` directive is deliberately absent: a live session cannot swap
+/// providers mid-conversation, so the model override is honored only where a
+/// fresh scoped run is being launched (`stella skill run`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillTurnScope {
+    /// The invoked skill's slug, reported by `active_skill_slugs` while live.
+    pub slug: String,
+    /// `allowed-tools:` — the grant, un-resolved. `None` inherits the session
+    /// surface unchanged.
+    pub allowed_tools: Option<Vec<String>>,
+    /// `effort:` — reasoning-effort override for the invocation's turn.
+    pub effort: Option<stella_protocol::ReasoningEffort>,
+    /// `context:` — how the skill asked to run. In-session, fork-mode runs
+    /// scoped in place today; the fresh-context surface is the CLI verb.
+    pub mode: stella_core::skills::invoke::SkillInvocationMode,
+}
+
+/// Parse a skill's invoke directives from its own file (#5456).
+///
+/// The raw bytes are re-read because [`Skill`] deliberately carries only the
+/// parsed name/description/body; a file that cannot be re-read (a contributed
+/// skill whose package moved, an opaque source label) degrades to the default
+/// directives — the same no-directive tolerance the parser itself guarantees,
+/// so a vanished file can only ever *widen* back to plain context, never
+/// invent a grant.
+pub fn invoke_directives_for(skill: &Skill) -> stella_core::skills::invoke::InvokeDirectives {
+    std::fs::read_to_string(&skill.source_path)
+        .map(|raw| stella_core::skills::invoke::parse_invoke_directives(&raw))
+        .unwrap_or_default()
+}
+
+/// The turn scope `directives` ask for, or `None` when they carry no invoke
+/// directive at all.
+pub fn skill_turn_scope(
+    slug: &str,
+    directives: &stella_core::skills::invoke::InvokeDirectives,
+) -> Option<SkillTurnScope> {
+    use stella_core::skills::invoke::SkillInvocationMode;
+    let carries_directive = directives.mode == SkillInvocationMode::Fork
+        || directives.allowed_tools.is_some()
+        || directives.model.is_some()
+        || directives.effort.is_some();
+    carries_directive.then(|| SkillTurnScope {
+        slug: slug.to_string(),
+        allowed_tools: directives.allowed_tools.clone(),
+        effort: directives.effort,
+        mode: directives.mode,
+    })
 }
 
 /// What a custom `/name` resolves to.
@@ -812,7 +872,25 @@ impl CustomExtensions {
         Some(match self.lookup(head)? {
             Invocation::Command(cmd) => Expansion::plain(expand_command(&cmd.body, args)),
             Invocation::Skill(skill) => {
-                let prompt = skill_invocation_prompt(skill, args);
+                // A directive-carrying skill (#5456) expands as an
+                // invocation — the engine-recognized marker message, with
+                // $ARGUMENTS substituted — and hands its scope out for the
+                // turn driver to enforce. A directive-less one keeps the
+                // shape it has always had. Never a callable tool either way:
+                // `invoke_skill` stays retired (#3244).
+                let directives = invoke_directives_for(skill);
+                let scope = skill_turn_scope(&skill.name, &directives);
+                let prompt = if scope.is_some() {
+                    stella_core::skills::invoke::render_invocation_message(
+                        &skill.name,
+                        &stella_core::skills::invoke::substitute_arguments(
+                            &skill.body,
+                            args.trim(),
+                        ),
+                    )
+                } else {
+                    skill_invocation_prompt(skill, args)
+                };
                 Expansion {
                     skill: Some(InvokedSkill {
                         name: skill.name.clone(),
@@ -823,6 +901,7 @@ impl CustomExtensions {
                         // rendering.
                         tokens: u32::try_from(stella_protocol::estimate_tokens(&prompt))
                             .unwrap_or(u32::MAX),
+                        scope,
                     }),
                     prompt,
                 }

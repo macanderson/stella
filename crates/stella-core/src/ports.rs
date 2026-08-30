@@ -142,9 +142,12 @@ pub trait ToolExecutor: Send + Sync {
     /// (`driver::restore`). The same "written by one object, read by
     /// another" seam as [`Self::drain_wait_request`], for the same
     /// structural reason: invocation tracking belongs to the tool stack,
-    /// and the engine only ever sees the stack through this trait. No
-    /// shipped executor mounts a skill-invocation plane today, so every
-    /// production implementation answers empty.
+    /// and the engine only ever sees the stack through this trait. The
+    /// shipped mount is `stella-tools`' `skill_plane` (#5456): the CLI's
+    /// turn drivers compose its `SkillScopedTools` view over their session
+    /// stacks, and a live invocation's slug answers here through every
+    /// forwarding decorator between the view and the engine. A leaf with no
+    /// plane still answers empty, which stays the correct default.
     ///
     /// # Decorators MUST forward this
     ///
