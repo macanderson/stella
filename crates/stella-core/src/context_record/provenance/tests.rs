@@ -83,7 +83,9 @@ fn a_proposal_carries_the_grade_of_the_observations_behind_it() {
             "the build failed again",
         ),
     ];
-    let pool = EvidencePool::from_observations(&observations).expect("a non-empty pool");
+    let pool = EvidencePool::from_observations(&observations)
+        .expect("constructor-built observations hash clean")
+        .expect("a non-empty pool");
 
     assert_eq!(pool.grade(), ProvenanceGrade::EnvironmentObservation);
 
@@ -119,7 +121,9 @@ fn three_agreeing_reflections_across_three_tasks_still_cannot_publish_a_tool() {
             "prefer rg again",
         ),
     ];
-    let pool = EvidencePool::from_observations(&observations).expect("a non-empty pool");
+    let pool = EvidencePool::from_observations(&observations)
+        .expect("constructor-built observations hash clean")
+        .expect("a non-empty pool");
     let proposal = proposal(Some(pool));
 
     assert!(
@@ -151,7 +155,9 @@ fn a_single_critique_weakens_a_pool_of_measurements() {
         observation(ObservationSource::ToolOutcome, "task-b", "exit 1"),
         observation(ObservationSource::ReflectionLesson, "task-c", "felt slow"),
     ];
-    let pool = EvidencePool::from_observations(&observations).expect("a non-empty pool");
+    let pool = EvidencePool::from_observations(&observations)
+        .expect("constructor-built observations hash clean")
+        .expect("a non-empty pool");
 
     assert_eq!(pool.grade(), ProvenanceGrade::ModelCritique);
 }
@@ -160,7 +166,7 @@ fn a_single_critique_weakens_a_pool_of_measurements() {
 /// being smoothed into the weakest one.
 #[test]
 fn a_proposal_with_no_observations_stores_no_grade() {
-    assert_eq!(EvidencePool::from_observations(&[]), None);
+    assert_eq!(EvidencePool::from_observations(&[]), Ok(None));
 
     let proposal = proposal(None);
     assert_eq!(proposal.provenance, None);
@@ -215,9 +221,24 @@ fn a_graded_proposal_serializes_its_grade_under_the_protocol_tag() {
         "task-a",
         "exit 0",
     )];
-    let pool = EvidencePool::from_observations(&observations).expect("a non-empty pool");
+    let pool = EvidencePool::from_observations(&observations)
+        .expect("constructor-built observations hash clean")
+        .expect("a non-empty pool");
     let proposal = proposal(Some(pool));
 
     let json = serde_json::to_value(&proposal).expect("a proposal serializes");
     assert_eq!(json["provenance"], "environment_observation");
+}
+
+/// The pool re-derives every observation's `record_hash` before folding, so a
+/// literal-constructed record — the fields are public — cannot mint an
+/// environment-observation grade the hashing constructor never sealed.
+#[test]
+fn a_forged_observation_cannot_mint_a_grade() {
+    let mut forged = observation(ObservationSource::ToolOutcome, "task-a", "exit 0");
+    forged.text = "exit 0, with edits the hash never saw".to_string();
+    let err = EvidencePool::from_observations(std::slice::from_ref(&forged))
+        .expect_err("a hash that does not cover this content must refuse to fold");
+    assert_eq!(err.record_id, forged.record_id);
+    assert_eq!(err.stored, forged.record_hash);
 }

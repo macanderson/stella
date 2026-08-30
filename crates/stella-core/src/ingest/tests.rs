@@ -58,6 +58,27 @@ fn a_document_that_supersedes_others_is_not_itself_superseded() {
     assert!(supersession_marker(retired).is_some());
 }
 
+/// A bare `contains` would demote a document for *denying* the phrase —
+/// "this document is not deprecated" reading as deprecated.
+#[test]
+fn a_negated_phrase_does_not_demote() {
+    assert_eq!(
+        supersession_marker("# Current Spec\n\nThis document is not deprecated.\n"),
+        None
+    );
+    assert_eq!(
+        supersession_marker("# Current Spec\n\nThis page was never obsolete.\n"),
+        None
+    );
+    // The negation reaches only its own clause: a denial earlier in the line
+    // does not shield a real marker after a clause boundary.
+    assert_eq!(
+        supersession_marker("# Old Spec\n\nNot maintained here: deprecated, see docs/new.md.\n")
+            .as_deref(),
+        Some("deprecated")
+    );
+}
+
 #[test]
 fn supersession_is_not_read_from_the_body() {
     // A migration guide discusses deprecation at length without being deprecated.

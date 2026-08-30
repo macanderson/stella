@@ -287,7 +287,7 @@ pub fn load(user_files: &[RuleFile], project_files: &[RuleFile], facts: &Facts<'
 
     // Pass 3: sweep and arm.
     let mut entries: Vec<Entry> = Vec::new();
-    for (record, markdown) in records.into_iter().zip(markdown) {
+    for (mut record, markdown) in records.into_iter().zip(markdown) {
         let mut disposition = super::disposition(&SweepInput {
             record: &record.record,
             verdict: facts.verdicts.get(&record.record.lineage_id).copied(),
@@ -306,13 +306,16 @@ pub fn load(user_files: &[RuleFile], project_files: &[RuleFile], facts: &Facts<'
         if let Some(reason) = blocking_reason(&record) {
             disposition = Disposition::Block { reason };
         }
-        let guard = resolve_guard(
-            &record,
-            markdown.as_ref(),
-            facts,
-            &conflicts,
-            &mut diagnostics,
-        );
+        let guard = resolve_guard(&record, markdown.as_ref(), facts, &conflicts);
+        // A refusal is a fact about the record, so it lands in the record's own
+        // findings — where `stella context explain` and `validate` already look —
+        // rather than in the registry-level diagnostics, which describe files.
+        // Warning severity: the record still steers, it just does not block.
+        if let Some(refusal) = guard.refusal.clone() {
+            record
+                .findings
+                .push(RecordFinding::BlockingRefused(refusal));
+        }
         entries.push(Entry {
             record,
             disposition,
@@ -470,7 +473,6 @@ fn resolve_guard(
     markdown: Option<&Rule>,
     facts: &Facts<'_>,
     conflicts: &[Conflict],
-    diagnostics: &mut Vec<Diagnostic>,
 ) -> GuardDecision {
     if let Some(rule) = markdown {
         // Grandfathered: a shipped markdown guard keeps working exactly as it did.
@@ -495,14 +497,7 @@ fn resolve_guard(
         };
     }
     let approved = facts.approves(record.trust, &record.record.lineage_id);
-    let decision = super::guard_for(&record.record, record.trust, approved);
-    if let Some(refusal) = decision.refusal.as_ref() {
-        diagnostics.push(Diagnostic {
-            source: record.source.clone(),
-            detail: format!("^{} {refusal}", record.handle),
-        });
-    }
-    decision
+    super::guard_for(&record.record, record.trust, approved)
 }
 
 /// The `Rule` an entry contributes to the tool boundary.
