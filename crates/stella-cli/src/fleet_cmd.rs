@@ -1316,6 +1316,7 @@ fn finalize_fleet_execution(
         cost_usd,
         persistence_complete && !force_incomplete,
     )
+    .fully_recorded()
 }
 
 /// Run `git -C root <args>` and return trimmed stdout, or the stderr as the
