@@ -579,13 +579,158 @@ impl SessionMemory {
         // obligation (spec §8), and the only honest way to hold that
         // obligation is to keep the thing it must stay compatible WITH
         // runnable, so both paths are exercised by the same guarantee suite.
-        if self.lifecycle_enabled {
+        // The retirement sweep runs first, on BOTH paths (#5086): the
+        // appraisal ledger is #1067 machinery that predates the typed
+        // migration — `latest_verdicts` gates candidate promotion on the
+        // lexical path too — so the sweep that writes what that gate reads
+        // belongs to neither path alone. Running before the mining pass means
+        // this turn's candidates are judged against this turn's verdicts, not
+        // last session's. With no trials recorded yet it is a no-op, which is
+        // what keeps the §8 guarantees byte-identical.
+        self.appraise_and_retire_skills(quiet);
+        let events = if self.lifecycle_enabled {
             self.auto_create_skills_typed(log_path, quiet)
         } else {
             // The pre-migration path mines skills only: it has no proposal, no
             // ledger and so no promotion to announce.
             self.auto_create_skills_lexical(log_path, quiet);
             Vec::new()
+        };
+        // Held candidates whose verdict has turned to a measured lift are
+        // promoted even when this turn's mining pass did not re-raise them —
+        // the queue's whole promise ("queued is not discarded") made good.
+        self.promote_measured_queued(quiet);
+        events
+    }
+
+    /// The retirement half of the promote/retire gate, live (#5086).
+    ///
+    /// Appraises every skill the trial ledger holds evidence for, records
+    /// each **measured** verdict — `Insufficient` is skipped, because
+    /// [`super::appraisals::latest_verdicts`] folds any recorded verdict to
+    /// measured-and-found-wanting and "nobody looked" must stay
+    /// distinguishable — and demotes an auto-created skill once its run of
+    /// consecutive demotable verdicts reaches the configured length
+    /// (`context.promotion.skill.demote_after_consecutive_negatives`,
+    /// default 3).
+    ///
+    /// Demotion is an append-only `promotion_event` row against the
+    /// `skill:<name>` lineage; the file stays on disk and the loader's
+    /// exclusion is a fold over the ledger, so restore is a later row, not an
+    /// edit. Hand-authored skills are never demoted whatever the numbers say
+    /// — `decide_demotion`'s origin check is absolute, and a skill the
+    /// ledger names but the loader no longer sees falls back to the same
+    /// protected side.
+    fn appraise_and_retire_skills(&self, quiet: bool) {
+        let loaded = self.load_skills();
+        let origins: std::collections::HashMap<String, skills::SkillOrigin> = loaded
+            .iter()
+            .map(|s| (s.name.clone(), s.origin))
+            .collect();
+        let already_demoted = super::appraisals::demoted_skills(&self.store);
+        let threshold = super::tuning::skill_promotion(&self.workspace_root)
+            .demote_after_consecutive_negatives as usize;
+
+        for (appraisal, decision) in super::appraisals::sweep(
+            &self.workspace_root,
+            &origins,
+            &stella_core::skills::appraisal::AppraisalConfig::default(),
+        ) {
+            if already_demoted.contains(&appraisal.skill) {
+                // Its trials are still in the ledger, but a demoted skill is
+                // out of selection: re-appraising it would only re-record the
+                // verdict that demoted it, forever.
+                continue;
+            }
+            use stella_core::skills::appraisal::SkillVerdict;
+            if matches!(appraisal.verdict, SkillVerdict::Insufficient { .. }) {
+                continue;
+            }
+            super::appraisals::record_appraisal(&self.workspace_root, &appraisal);
+            if !decision.is_demotion() {
+                continue;
+            }
+            let negatives = super::appraisals::consecutive_negative_appraisals(
+                &self.workspace_root,
+                &appraisal.skill,
+            );
+            if negatives < threshold {
+                continue;
+            }
+            let reason = format!(
+                "{negatives} consecutive negative appraisals (threshold {threshold}); latest: {}",
+                match &appraisal.verdict {
+                    SkillVerdict::Harms { lift } =>
+                        format!("removing it improved outcomes (lift {lift:.3})"),
+                    SkillVerdict::Inert { trials } =>
+                        format!("no measurable contribution across {trials} trials"),
+                    // `decision.is_demotion()` above only passes Harms/Inert.
+                    other => format!("{other:?}"),
+                }
+            );
+            match super::appraisals::record_demotion(
+                &self.store,
+                &appraisal.skill,
+                &reason,
+                &self.clock.now_rfc3339(),
+            ) {
+                Ok(record_id) if !quiet => {
+                    println!(
+                        "  {} skill demoted from selection: {} — {reason} (audit event \
+                         {record_id}; its file is untouched)",
+                        "◇".dimmed(),
+                        appraisal.skill.bright_magenta(),
+                    );
+                }
+                Ok(_) => {}
+                // A demotion that cannot be recorded does not happen: the
+                // ledger row IS the demotion, and excluding a skill with no
+                // row to explain it would be retirement by accident.
+                Err(e) if !quiet => {
+                    println!(
+                        "  {} skill {} earned demotion but the ledger write failed: {e}",
+                        "!".yellow(),
+                        appraisal.skill
+                    );
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    /// Promote any held candidate whose ledger verdict has turned to a
+    /// measured lift (#5454) — the production reader of
+    /// [`super::appraisals::queued_candidates`].
+    ///
+    /// Queue lines written before the body rode along (`body: None`) cannot
+    /// be rendered from the queue alone; they wait for the miner's re-raise,
+    /// which flows through the same gate with the same verdict.
+    fn promote_measured_queued(&mut self, quiet: bool) {
+        let verdicts = super::appraisals::latest_verdicts(&self.workspace_root);
+        let promotable: Vec<skills::SkillCandidate> = super::appraisals::queued_candidates(
+            &self.workspace_root,
+        )
+        .into_iter()
+        .filter(|q| verdicts.get(&q.name) == Some(&EvalEvidence::MeasuredLift))
+        .filter_map(|q| {
+            let body = q.body?;
+            Some(skills::SkillCandidate {
+                name: q.name,
+                description: q.description,
+                domains: q.domains,
+                occurrences: q.occurrences,
+                salient: false,
+                evidence: Vec::new(),
+                score: 0.0,
+                body,
+            })
+        })
+        .collect();
+        if !promotable.is_empty() {
+            // The same write path as a freshly mined candidate: cap,
+            // no-clobber and the eval gate all still apply, and the verdict
+            // that got the candidate here is the one the gate re-reads.
+            self.write_candidates(promotable, quiet);
         }
     }
 
@@ -702,7 +847,15 @@ impl SessionMemory {
         // the directory read ever fails.
         let mut occupied_paths = skill_paths_on_disk(&skills_dir);
         occupied_paths.extend(existing.iter().map(|s| s.source_path.clone()));
-        let config = AutoCreateConfig::default();
+        // The measured gate is configuration (#5454):
+        // `context.promotion.skill.require_measured_lift` ships `true`, and
+        // setting it `false` is the bootstrap mode — raw mining eligibility,
+        // the pre-#1067 rule — for a workspace with no appraisal history yet.
+        let config = AutoCreateConfig {
+            require_measured_lift: super::tuning::skill_promotion(&self.workspace_root)
+                .require_measured_lift,
+            ..AutoCreateConfig::default()
+        };
         // #1067's eval gate. A candidate is promoted on measured lift, never on
         // observation frequency alone, and the verdict comes from the appraisal
         // ledger rather than from this turn — one turn cannot measure a skill

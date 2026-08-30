@@ -61,6 +61,24 @@ pub(super) fn inferred_directive_promotion(
         .unwrap_or_default()
 }
 
+/// #5086/#5454: the skill promote/retire gate's knobs — whether promotion
+/// requires a measured lift, and how many consecutive negative appraisals
+/// demote.
+///
+/// Degrades to the documented defaults on an unreadable settings file, and
+/// for the gate that is also the conservative direction: the default holds a
+/// candidate rather than minting it, and demotes only after the documented
+/// three-strike run.
+pub(super) fn skill_promotion(
+    workspace_root: &std::path::Path,
+) -> crate::settings::SkillPromotionSettings {
+    crate::settings::Settings::load(workspace_root)
+        .ok()
+        .and_then(|s| s.context)
+        .map(|c| c.promotion.skill)
+        .unwrap_or_default()
+}
+
 /// Phase 4 (#715): the efficacy thresholds that decide when a record's
 /// selection health counts as failing.
 ///

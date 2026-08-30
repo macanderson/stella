@@ -556,12 +556,10 @@ from your sessions, inducing directive proposals from them, governing which of t
 promoted, and measuring whether the context selected actually helped.
 
 <Callout type="info">
-  The block is currently **inert**. Every field parses, round-trips, and merges, but no
-  code reads it yet — `context.lifecycle.enabled` defaults to `false`, which is what
-  preserves today's behavior. The schema ships ahead of the loop so a later release can
-  turn it on without a settings migration, and so the vocabulary below is pinned by
-  round-trip tests rather than invented later. Read the values here as the committed
-  vocabulary and defaults, not as a description of a running mechanism.
+  The lifecycle ships **on** — `context.lifecycle.enabled` defaults to `true`, and
+  setting it `false` is the opt-out that restores the pre-adaptive-context behavior:
+  the lexical learning loop, no frame identity, no lifecycle ledger. The vocabulary
+  below is pinned by round-trip tests.
 </Callout>
 
 Two dimensions are kept separate: **learning mode** (how much of the loop
@@ -576,7 +574,7 @@ Unlike `providers`, the block merges **whole**: a higher-precedence scope that d
 ### Lifecycle and modes
 
 <CardGrid size="md">
-  <OptionCard name="context.lifecycle.enabled" defaultValue="false">
+  <OptionCard name="context.lifecycle.enabled" defaultValue="true">
     The master switch for the whole lifecycle. While it is off, every other field in the
     `context` block is ignored.
   </OptionCard>
@@ -618,6 +616,20 @@ confirmation a blocking directive requires. Confidence values are on a `0`–`10
   >
     A blocking directive always requires an explicit human confirmation. Not a field to
     turn off lightly.
+  </OptionCard>
+  <OptionCard name="context.promotion.skill.require_measured_lift" defaultValue="true">
+    Whether a mined skill candidate must carry a measured lift — an appraisal that found
+    injecting it improved outcomes — before it is written as a `SKILL.md`. Set `false` for
+    bootstrap: a fresh workspace with no appraisal history mints on raw mining eligibility
+    until its first skills accrue trials.
+  </OptionCard>
+  <OptionCard
+    name="context.promotion.skill.demote_after_consecutive_negatives"
+    defaultValue="3"
+  >
+    How many consecutive demotable appraisals (harmful or inert) an auto-created skill
+    must accrue before it is demoted out of selection. Its file is never deleted; the
+    demotion is an append-only ledger event.
   </OptionCard>
 </CardGrid>
 
@@ -670,7 +682,7 @@ copy-paste starting point you edit down to the two or three keys you actually wa
 ```json title="~/.stella/settings.json"
 {
   "context": {
-    "lifecycle": { "enabled": false },
+    "lifecycle": { "enabled": true },
     "learning": { "mode": "off" },
     "governance": { "mode": "solo" },
     "promotion": {
@@ -680,7 +692,11 @@ copy-paste starting point you edit down to the two or three keys you actually wa
         "auto_activate_at_confidence": 85,
         "initial_enforcement": "advisory"
       },
-      "blocking_directive": { "requires_explicit_confirmation": true }
+      "blocking_directive": { "requires_explicit_confirmation": true },
+      "skill": {
+        "require_measured_lift": true,
+        "demote_after_consecutive_negatives": 3
+      }
     },
     "efficacy": {
       "min_attributable_uses": 5,

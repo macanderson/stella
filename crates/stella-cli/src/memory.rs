@@ -371,6 +371,18 @@ pub struct SessionMemory {
     /// re-deriving it here would re-walk the rule directories and re-run the
     /// truth sweep on every turn.
     record_registry: Option<stella_core::records::Registry>,
+    /// The turn's selection→offer join, noted at turn start by
+    /// [`Self::note_turn_skills`] and consumed at turn end by the trial
+    /// recorder inside [`Self::record_episode`] (#5086).
+    ///
+    /// Both halves ride together because a trial is a *measurement*, not a
+    /// usage count: the offered-but-unselected skills are the control arm,
+    /// and neither half can be reconstructed after the turn — selection is a
+    /// function of the prompt and the A/B control's coin, both gone by the
+    /// time the outcome is known. A `Mutex` rather than a plain field because
+    /// the consumer runs behind `&self` on the async episode path; it is
+    /// touched twice a turn and never contended.
+    turn_skill_join: std::sync::Mutex<Option<TurnSkillJoin>>,
     /// The session's time source (#2320) — the only one the learning loop is
     /// allowed to read.
     ///
@@ -599,6 +611,7 @@ impl SessionMemory {
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
                     task_id,
                     execution_id: None,
+                    turn_skill_join: std::sync::Mutex::new(None),
                     clock,
                 })
             }
@@ -676,10 +689,33 @@ impl SessionMemory {
     /// Load the workspace's skills fresh (cheap — a handful of file reads;
     /// fresh so a just-installed or just-auto-created skill is live on the
     /// very next turn).
+    ///
+    /// Demoted skills are excluded here (#5086), which is what makes a
+    /// demotion mean something: every selection path reads this load, so a
+    /// skill the appraisal sweep retired stops being offered everywhere at
+    /// once, while its file — and the append-only ledger row saying why —
+    /// both survive.
     pub fn load_skills(&self) -> Vec<Skill> {
-        load_workspace_skills_with_authority(&self.workspace_root, self.include_workspace_skills)
-            .skills
+        let mut skills = load_workspace_skills_with_authority(
+            &self.workspace_root,
+            self.include_workspace_skills,
+        )
+        .skills;
+        let demoted = appraisals::demoted_skills(&self.store);
+        if !demoted.is_empty() {
+            skills.retain(|s| !demoted.contains(&s.name));
+        }
+        skills
     }
+}
+
+/// One turn's selection→offer join — every skill the loader offered, and the
+/// subset selection injected. See the field docs on
+/// [`SessionMemory::turn_skill_join`].
+#[derive(Debug, Clone)]
+struct TurnSkillJoin {
+    offered: Vec<String>,
+    selected: Vec<String>,
 }
 
 impl SessionMemory {
@@ -716,6 +752,65 @@ impl SessionMemory {
         .collect()
     }
 
+    /// [`Self::selected_skills`], and additionally note this turn's
+    /// selection→offer join for the trial recorder (#5086). The turn-start
+    /// seam (`agent::stamp_and_record_skill_usage`) calls this instead of the
+    /// plain query, so a turn that records usage also arms its own trial.
+    ///
+    /// The offered set is noted even on a turn whose selection is suppressed
+    /// (the A/B control, or steering off): those turns run with no skill
+    /// injected, which is exactly what the without-skill arm is made of.
+    pub(crate) fn note_turn_skills(&self, prompt: &str) -> Vec<(String, String)> {
+        let selected = self.selected_skills(prompt);
+        let offered = self.load_skills().into_iter().map(|s| s.name).collect();
+        if let Ok(mut join) = self.turn_skill_join.lock() {
+            *join = Some(TurnSkillJoin {
+                offered,
+                selected: selected.iter().map(|(name, _)| name.clone()).collect(),
+            });
+        }
+        selected
+    }
+
+    /// Append this turn's skill trials — one per offered skill, `selected`
+    /// set from the join [`Self::note_turn_skills`] armed — to the trial
+    /// ledger `appraisals::sweep` appraises (#5086).
+    ///
+    /// Takes the join rather than reading it, so one episode records one
+    /// turn's trials exactly once; a path that never armed a join (a
+    /// sub-session, a sweep with no turn) records nothing. Best-effort like
+    /// every ledger write here.
+    fn record_skill_trials(&self, succeeded: bool) {
+        let Ok(mut guard) = self.turn_skill_join.lock() else {
+            return;
+        };
+        let Some(join) = guard.take() else {
+            return;
+        };
+        drop(guard);
+        if join.offered.is_empty() {
+            return;
+        }
+        appraisals::record_turn(
+            &self.workspace_root,
+            &join.offered,
+            &join.selected,
+            &stella_core::skills::appraisal::SkillTrial {
+                task: appraisals::LIVE_WINDOW_TASK.to_string(),
+                // Overwritten per skill by `record_turn`; the value here is
+                // never read.
+                selected: false,
+                outcome: stella_core::self_tuning::TaskOutcome {
+                    succeeded,
+                    cost_usd: 0.0,
+                    tokens: 0,
+                    retries: 0,
+                },
+                turns: 1,
+            },
+        );
+    }
+
     /// Record the turn that just finished as an episodic memory: a summary,
     /// the files it touched, and how it ended. Episodes become retrievable
     /// `Episode` nodes, so future recall can surface "we did something like
@@ -739,6 +834,12 @@ impl SessionMemory {
         started_unix_secs: i64,
         tag: Option<&str>,
     ) {
+        // The turn-end half of the skill promote/retire join (#5086): every
+        // episode-writing surface — chat, `run`, `goal`, the deck — funnels
+        // through here with the settled outcome, which makes this the one
+        // seam that can turn the turn-start selection note into a trial.
+        self.record_skill_trials(outcome == EpisodeOutcome::Success);
+
         let mut summary: String = prompt.chars().take(240).collect();
         if prompt.chars().count() > 240 {
             summary.push('…');

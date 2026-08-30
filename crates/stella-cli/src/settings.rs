@@ -81,7 +81,9 @@ pub(crate) use unknown::{
 // all have readers now (`memory::tuning` — retrieval budgets, the lifecycle
 // switch, promotion thresholds). The remaining nested types (`LearningMode`,
 // `GovernanceMode`, …) live in `settings::context` until wired.
-pub use context::{ContextSettings, InferredDirectivePromotion, RetrievalSettings};
+pub use context::{
+    ContextSettings, InferredDirectivePromotion, RetrievalSettings, SkillPromotionSettings,
+};
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 pub use engine::*;
 pub use merge::ToolScopePolicies;

@@ -127,6 +127,34 @@ pub enum InitialEnforcement {
 pub struct PromotionSettings {
     pub inferred_directive: InferredDirectivePromotion,
     pub blocking_directive: BlockingDirectivePromotion,
+    pub skill: SkillPromotionSettings,
+}
+
+/// The skill promote/retire gate's knobs (#5086, #5454).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SkillPromotionSettings {
+    /// Whether a mined candidate must carry a measured lift before it is
+    /// written as a `SKILL.md` (#1067). Defaults `true` — the turn-trial
+    /// ledger and the retirement sweep produce the evidence the gate reads,
+    /// so frequency alone no longer mints a skill. Set `false` for bootstrap:
+    /// a fresh workspace with no appraisal history may choose to mint on raw
+    /// mining eligibility until its first skills accrue trials.
+    pub require_measured_lift: bool,
+    /// How many **consecutive** demotable appraisals (`Harms` or `Inert`) an
+    /// auto-created skill must accrue before the sweep demotes it. Hysteresis
+    /// against one unlucky window: a single confident negative is recorded
+    /// and visible, but only a run of them retires the skill.
+    pub demote_after_consecutive_negatives: u32,
+}
+
+impl Default for SkillPromotionSettings {
+    fn default() -> Self {
+        Self {
+            require_measured_lift: true,
+            demote_after_consecutive_negatives: 3,
+        }
+    }
 }
 
 /// Thresholds gating when a set of observations may become an inferred
@@ -405,6 +433,10 @@ mod tests {
                 .blocking_directive
                 .requires_explicit_confirmation
         );
+        // The skill gate ships measured (#5454), with a three-strike demotion
+        // hysteresis (#5086).
+        assert!(ctx.promotion.skill.require_measured_lift);
+        assert_eq!(ctx.promotion.skill.demote_after_consecutive_negatives, 3);
         assert_eq!(ctx.efficacy.min_attributable_uses, 5);
         assert_eq!(ctx.efficacy.not_helpful_ratio_threshold, 0.8);
         assert_eq!(ctx.efficacy.min_attribution_confidence, 80);
@@ -454,7 +486,11 @@ mod tests {
                     "auto_activate_at_confidence":42,
                     "initial_enforcement":"blocking"
                 },
-                "blocking_directive":{"requires_explicit_confirmation":false}
+                "blocking_directive":{"requires_explicit_confirmation":false},
+                "skill":{
+                    "require_measured_lift":false,
+                    "demote_after_consecutive_negatives":5
+                }
             },
             "efficacy":{
                 "min_attributable_uses":9,
@@ -504,6 +540,8 @@ mod tests {
                 .blocking_directive
                 .requires_explicit_confirmation
         );
+        assert!(!ctx.promotion.skill.require_measured_lift);
+        assert_eq!(ctx.promotion.skill.demote_after_consecutive_negatives, 5);
 
         assert_eq!(ctx.efficacy.min_attributable_uses, 9);
         assert_eq!(ctx.efficacy.not_helpful_ratio_threshold, 0.25);

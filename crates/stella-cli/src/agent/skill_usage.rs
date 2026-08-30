@@ -52,7 +52,10 @@ pub(crate) fn stamp_and_record_skill_usage(
         return;
     };
     memory.set_execution_id(*id);
-    let selected = memory.selected_skills(prompt);
+    // `note_turn_skills` rather than the plain `selected_skills` query: the
+    // same call that reports usage also arms the turn's selection→offer join,
+    // which the episode seam turns into skill trials at turn end (#5086).
+    let selected = memory.note_turn_skills(prompt);
     if selected.is_empty() && invoked.is_empty() {
         return;
     }

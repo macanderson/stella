@@ -18,6 +18,10 @@
       },
       "blocking_directive": {
         "requires_explicit_confirmation": true
+      },
+      "skill": {
+        "require_measured_lift": true,
+        "demote_after_consecutive_negatives": 3
       }
     },
     "efficacy": {
