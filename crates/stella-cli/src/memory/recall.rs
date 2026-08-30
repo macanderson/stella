@@ -200,7 +200,12 @@ impl SessionMemory {
     /// string because rendering happens per turn: `applies_to` selection needs
     /// each turn's prompt to decide which scoped records apply.
     pub(super) fn set_record_registry(&mut self, registry: stella_core::records::Registry) {
-        self.record_registry = (!registry.entries.is_empty()).then_some(registry);
+        *self.record_registry.get_mut().expect("records lock") =
+            (!registry.entries.is_empty()).then_some(registry);
+        // Prime the freshness digest, so the first boundary check after open
+        // reads "unchanged" instead of reloading what was just handed in.
+        *self.records_fingerprint.get_mut().expect("records digest") =
+            super::records_refresh::rules_digest(&self.workspace_root);
     }
 
     /// This turn's volatile record channel, rendered: the registry's volatile
@@ -214,8 +219,11 @@ impl SessionMemory {
     fn turn_record_rendered(
         &self,
         prompt: &str,
-    ) -> Option<(&stella_core::records::Registry, RenderedChannel)> {
-        let registry = self.record_registry.as_ref()?;
+    ) -> Option<(stella_core::records::Registry, RenderedChannel)> {
+        // Cloned out of the lock rather than borrowed through it: the caller
+        // threads the registry across the rest of its selection pass, and a
+        // guard held that long would block a concurrent freshness swap.
+        let registry = self.record_registry.read().expect("records lock").clone()?;
         let paths = turn_path_tokens(prompt);
         let facts = stella_core::records::TurnFacts {
             text: prompt,
@@ -247,7 +255,7 @@ impl SessionMemory {
         mut report: impl FnMut(String),
     ) -> Option<String> {
         let (registry, rendered) = self.turn_record_rendered(prompt)?;
-        for drop in stella_core::steering::adapt::record_drops(registry, &rendered) {
+        for drop in stella_core::steering::adapt::record_drops(&registry, &rendered) {
             // A record channel drop is never also selected — the channel's
             // own budget cut it before the plane saw it.
             if let Some(message) = drop_message(&drop, false) {
@@ -311,6 +319,9 @@ impl SessionMemory {
         if self.ab_suppressed || !self.steering_enabled {
             return RecalledBlock::default();
         }
+        // A record edited since the last look joins this very block — see
+        // `records_refresh` for what a swap can and cannot apply.
+        self.refresh_records_if_changed();
         let RecalledFrames {
             recall,
             dropped: frame_drops,
@@ -367,6 +378,11 @@ impl SessionMemory {
         }
         if let Some(section) = record.and_then(|(_, rendered)| record_section_text(rendered)) {
             sections.push(section);
+        }
+        // What a mid-session registry swap could not fully apply, said once,
+        // first — see `records_refresh`.
+        if let Some(note) = self.take_records_note() {
+            sections.insert(0, note);
         }
 
         // The second operand of the knowledge-cutoff staleness clause
@@ -430,6 +446,9 @@ impl SessionMemory {
         if self.ab_suppressed || !self.steering_enabled {
             return RecalledBlock::default();
         }
+        // A no-op when the re-query boundary already refreshed (one digest
+        // read); real work only for a direct caller — see `records_refresh`.
+        self.refresh_records_if_changed();
         let prompt = signal.prompt;
 
         let anchors = self.anchors_for(prompt, signal.touched_paths);
@@ -454,23 +473,22 @@ impl SessionMemory {
                 paths.push(path.clone());
             }
         }
-        let record = self.record_registry.as_ref().map(|registry| {
+        let registry = self.record_registry.read().expect("records lock").clone();
+        let record = registry.map(|registry| {
             let facts = stella_core::records::TurnFacts {
                 text: prompt,
                 paths: &paths,
             };
-            (
-                registry,
-                // The per-record half of the #4498 dedup: the channel renders
-                // as one budgeted block, so leaving out what the turn has seen
-                // means re-rendering without those records, not filtering a
-                // list — the exclusion door is the registry's.
-                registry.render_volatile_for_turn_excluding(
-                    &facts,
-                    Some(RECORD_CHANNEL_BUDGET),
-                    produced.records(),
-                ),
-            )
+            // The per-record half of the #4498 dedup: the channel renders
+            // as one budgeted block, so leaving out what the turn has seen
+            // means re-rendering without those records, not filtering a
+            // list — the exclusion door is the registry's.
+            let rendered = registry.render_volatile_for_turn_excluding(
+                &facts,
+                Some(RECORD_CHANNEL_BUDGET),
+                produced.records(),
+            );
+            (registry, rendered)
         });
 
         let set = query_gathered_plane(
@@ -513,6 +531,11 @@ impl SessionMemory {
         }
         if let Some(section) = record.and_then(|(_, rendered)| record_section_text(rendered)) {
             sections.push(section);
+        }
+        // What a mid-session registry swap could not fully apply, said once,
+        // first — see `records_refresh`.
+        if let Some(note) = self.take_records_note() {
+            sections.insert(0, note);
         }
         RecalledBlock {
             text: (!sections.is_empty())
@@ -1045,7 +1068,7 @@ pub(super) fn query_gathered_plane(
     frames: &[RecalledFrame],
     frame_drops: &[stella_core::steering::DroppedCandidate],
     selected: &skills::SkillSelection,
-    record: Option<&(&stella_core::records::Registry, RenderedChannel)>,
+    record: Option<&(stella_core::records::Registry, RenderedChannel)>,
 ) -> stella_core::steering::SteeringSet {
     use stella_core::steering::{SteeringPlane, adapt};
 
