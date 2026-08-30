@@ -30,6 +30,9 @@ mod file_kinds;
 // What the stylesheet promises a 390px screen.
 mod narrow;
 
+// The stylesheet's corners: overridable, not squared outright.
+mod geometry;
+
 // Fold state, zoom presets, the cursor, and the fold controls both renderers
 // draw over them.
 mod folds;
