@@ -302,18 +302,23 @@ evolution_surfaces! {
     /// Reusable procedures Stella writes for itself.
     Skill => "skill",
         EvolutionPosture::Shipped {
-            mechanism: "mined candidates clear the distinct-task floor and are written as \
-                        SKILL.md. The measured-lift gate exists and is off by default \
-                        (`AutoCreateConfig::require_measured_lift` is `false`), so the shipped \
-                        default promotes on mining eligibility — which is why this row's \
-                        impact is an advisory record and not a steering one",
-            witness: "a_skill_that_helps_is_promoted_with_its_lift_recorded",
+            mechanism: "both halves of the measured gate (#5086, #5454). Promotion: mined \
+                        candidates clear the distinct-task floor and the measured-lift gate \
+                        (`require_measured_lift`, on by default; bootstrap mode behind \
+                        config) before being written as SKILL.md. Retirement: every turn's \
+                        selection→outcome join lands in the trial ledger, the post-turn \
+                        sweep appraises it, and three consecutive negative verdicts demote \
+                        the skill out of selection. Skills are injected know-how, never \
+                        enforced, which is why this row's impact stays an advisory record",
+            witness: "a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected",
         },
         EvolutionTiming::BetweenTurns,
         ImpactClass::AdvisoryRecord,
-        "none wired. The demotion half — `record_turn`, `sweep`, `record_appraisal`, \
-         `queued_candidates` — carries `#[allow(dead_code)]` for want of a production caller, \
-         so a promoted skill that later regresses is demoted by nothing. Tracked in #5086";
+        "a demotion is a `Retired` promotion_event appended against the `skill:<name>` \
+         lineage in the trigger-guarded append-only `context_records` ledger — the file is \
+         never touched, and the loader's exclusion is a last-write-wins fold, so appending \
+         a later event against the same lineage reinstates the skill with both acts on the \
+         record";
 
     /// Executable capability Stella adds to its own working surface.
     Tool => "tool",
@@ -395,12 +400,13 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 6] {
+fn evolution_sources() -> [&'static str; 7] {
     [
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),
         include_str!("../../stella-cli/src/memory/validation/tests.rs"),
         include_str!("../../stella-core/src/skills/appraisal/tests.rs"),
+        include_str!("../../stella-cli/src/memory/learning/skill_lifecycle.rs"),
         include_str!("../../stella-cli/src/tool_foundry/adopt/tests.rs"),
         include_str!("../../stella-cli/src/memory/self_tuning.rs"),
     ]
