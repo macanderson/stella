@@ -92,10 +92,11 @@ pub fn export_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf
         .usage_stats_for_session(session_id)
         .map_err(|e| format!("cannot read usage stats: {e}"))?;
 
-    // The transcript. The nine dumped tables say what the session cost and
-    // which tools it called; none of them holds what it actually did, because
-    // the ordered event stream is not one of them. `session_events` is already
-    // scoped to this session by the same predicate the dumps use.
+    // The transcript. The dumped tables say what the session cost, which
+    // tools it called, and what was sent to the model; none of them holds
+    // what it actually did, because the ordered event stream is not one of
+    // them. `session_events` is already scoped to this session by the same
+    // predicate the dumps use.
     //
     // A journal that will not read must not sink the export: the tables and
     // the dashboard are still worth having, and an empty transcript reports
