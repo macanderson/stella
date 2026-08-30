@@ -386,18 +386,36 @@ else
   no "D4 --update left the ceiling alone" "the ceiling moved"
 fi
 
+# Retightening every unit's ceiling on every --update run is what left each
+# one sitting at exactly its ceiling with zero headroom, so bare --update
+# leaves a shortened header's ceiling alone; only --update --retighten
+# reclaims that slack, as its own deliberate pass.
 r="$(new_root d5)"
 baseline "$r"
 density_baseline "$r" crates/alpha 20.00
 rs_with_header "$r" alpha 6 lib
 if python3 "$SCRIPT" --update "$r" >/dev/null 2>&1; then
-  if grep -qx "crates/alpha 6.00" "$r/scripts/prose-density-baseline.txt"; then
-    ok "D5 --update retightens a shortened header"
+  if grep -qx "crates/alpha 20.00" "$r/scripts/prose-density-baseline.txt"; then
+    ok "D5 bare --update leaves a shortened header's ceiling alone"
   else
-    no "D5 --update retightens a shortened header" "the ceiling did not fall"
+    no "D5 bare --update leaves a shortened header's ceiling alone" "the ceiling moved"
   fi
 else
-  no "D5 --update retightens a shortened header" "--update exited non-zero"
+  no "D5 bare --update leaves a shortened header's ceiling alone" "--update exited non-zero"
+fi
+
+r="$(new_root d5b)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 6 lib
+if python3 "$SCRIPT" --update --retighten "$r" >/dev/null 2>&1; then
+  if grep -qx "crates/alpha 6.00" "$r/scripts/prose-density-baseline.txt"; then
+    ok "D5b --update --retighten reclaims a shortened header's slack"
+  else
+    no "D5b --update --retighten reclaims a shortened header's slack" "the ceiling did not fall"
+  fi
+else
+  no "D5b --update --retighten reclaims a shortened header's slack" "--update --retighten exited non-zero"
 fi
 
 # A crate with no entry is held to the new-unit ceiling, so a new crate cannot
@@ -561,6 +579,60 @@ Two things follow from that, and the second is the hard one.
 EOF
 baseline "$r"
 expect_update_refused "R5 an unaskable git still refuses a first-time offender" "$r"
+
+# ── B: a unit's density is judged against the base tree too ─────────────────
+#
+# `--update` retightens every unit to its current value on every run, so a
+# crate sits at exactly its ceiling with zero headroom the moment anyone runs
+# it. B1 is the witness for the fix: a unit already over its recorded
+# ceiling in the tree this branch started from must not fail a branch that
+# never touched it. B2 is the mercy's boundary -- growing the header further
+# still fails. B3 is `--absolute`, which the post-merge canary needs: it
+# must see the same drift B1 forgives, or it stops being able to catch drift
+# that already reached `main`.
+#
+# $1 = root. Point refs/remotes/origin/main at the current HEAD, so
+# merge-base has something to compare against without a real remote.
+mark_as_main() {
+  (cd "$1" && git update-ref refs/remotes/origin/main HEAD) >/dev/null 2>&1
+}
+
+r="$(new_root b1)"
+density_baseline "$r" crates/alpha 10.00
+rs_with_header "$r" alpha 25 lib
+commit_all "$r"
+mark_as_main "$r"
+doc "$r" docs/unrelated.md <<'EOF'
+The store keys every child table off `executions.id`.
+EOF
+baseline "$r"
+commit_all "$r"
+expect_pass "B1 inherited drift on the base tree does not fail an untouched unit" "$r"
+
+r="$(new_root b2)"
+density_baseline "$r" crates/alpha 10.00
+rs_with_header "$r" alpha 25 lib
+commit_all "$r"
+mark_as_main "$r"
+rs_with_header "$r" alpha 30 lib
+commit_all "$r"
+expect_fail "B2 growing a header past even the base tree's mean still fails" "$r"
+
+r="$(new_root b3)"
+density_baseline "$r" crates/alpha 10.00
+rs_with_header "$r" alpha 25 lib
+commit_all "$r"
+mark_as_main "$r"
+doc "$r" docs/unrelated.md <<'EOF'
+The store keys every child table off `executions.id`.
+EOF
+baseline "$r"
+commit_all "$r"
+if python3 "$SCRIPT" --absolute "$r" >/dev/null 2>&1; then
+  no "B3 --absolute still sees inherited drift" "the guard passed"
+else
+  ok "B3 --absolute still sees inherited drift"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
