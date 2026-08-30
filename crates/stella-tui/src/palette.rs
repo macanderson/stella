@@ -29,7 +29,7 @@
 //!   `INK_MUTED`, `INK_DIM`, `INK_EMPHASIS`, and the three ink golds
 //!   (`BRAND_INK`, `BRAND_INK_DEEP`, `GOLD_INK`). The JSON declares four
 //!   `web-light` stops and they disagree with these: its `paper` is pure
-//!   white where the deck paints `#F4F4F6`, and its `ink` is `#141416`
+//!   white where the deck paints `#F4F4F6`, and its `ink` is `#141413`
 //!   where this file means the dark ground. Reconciling them is a design
 //!   decision about what the paper theme *is*, not a remap.
 //! - **`WARNING` and the three status inks.** `#E78D54` fails the gold hue
