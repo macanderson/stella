@@ -179,6 +179,39 @@ const CHILD_TABLES: [(&str, &str, &str); 8] = [
     ),
 ];
 
+/// The receipts-plane tables, keyed off `execution_id` the same way
+/// [`CHILD_TABLES`] is — what Stella *sent*, alongside the telemetry tables'
+/// record of what came back. Without these an export could not answer a
+/// cache-behaviour question: the block sequence a call actually saw lives
+/// only in `step_manifest`, which no export bundle carried before this.
+///
+/// `context_blocks.content` is dropped from its `SELECT` — it is the one
+/// column here that can hold a tool-output preimage rather than a digest
+/// (spec §5.3's gap kinds), and [`crate::ContextBlockRow::content`] is
+/// documented as never leaving the local store. `content_digest` and
+/// `token_cost` are what a cache analysis over this export actually needs.
+const RECEIPT_TABLES: [(&str, &str, &str); 3] = [
+    (
+        "step_manifest",
+        "SELECT execution_id, turn_instance, step, call_seq, ordinal, block_id, cache_zone, \
+         resident_since_step, message_index, call_id FROM step_manifest",
+        "ORDER BY execution_id ASC, turn_instance ASC, step ASC, call_seq ASC, ordinal ASC",
+    ),
+    (
+        "context_blocks",
+        "SELECT execution_id, block_id, kind, origin_turn, origin_step, call_id, memory_id, \
+         token_cost, content_digest, citation_label, first_seen_ts FROM context_blocks",
+        "ORDER BY execution_id ASC, block_id ASC",
+    ),
+    (
+        "step_receipt",
+        "SELECT execution_id, turn_instance, step, call_seq, provider, upstream_provider, model, \
+         call_role, effective_budget_tokens, calibration_factor, estimated_input_tokens, \
+         compiled_frame_id, frame_hash, stall_seconds_requested FROM step_receipt",
+        "ORDER BY execution_id ASC, turn_instance ASC, step ASC, call_seq ASC",
+    ),
+];
+
 impl Store {
     /// Aggregate usage/cost analytics per (provider, model) across the **whole
     /// workspace** — the data behind `stella stats` and every
@@ -316,16 +349,13 @@ impl Store {
     /// Dump the telemetry tables for the **whole workspace** as JSON arrays.
     /// Each entry is `(table_name, json_array_string)`.
     ///
-    /// This is the analytics export, not a database dump: it covers exactly
-    /// the nine telemetry tables the export archive bundles — `executions`,
-    /// `telemetry`, `tool_calls`, `files_touched`, `mcp_usage`, `agent_uses`,
-    /// `skill_usage`, `execution_reflection`, and `reflections`. The rest of
-    /// the store stays out: `events` and the receipts plane
-    /// (`context_blocks` / `step_manifest` / `step_receipt`) carry full
-    /// payloads and reconstruction preimages the archive must not ship, and
-    /// the state tables (`rules`, `file_locks`, `memory_citations`,
-    /// `forgotten`, `tasks`, `pull_requests`) are live workspace state, not
-    /// session telemetry.
+    /// This is the analytics export, not a database dump: it covers
+    /// `executions`, every table `CHILD_TABLES` declares, and every table
+    /// `RECEIPT_TABLES` declares. The rest of the store stays out: `events`
+    /// carries full payloads and reconstruction preimages the archive must
+    /// not ship, and the state tables (`rules`, `file_locks`,
+    /// `memory_citations`, `forgotten`, `tasks`, `pull_requests`) are live
+    /// workspace state, not session telemetry.
     ///
     /// The JSON is constructed in Rust (not by SQLite's json1 extension,
     /// which may be absent from a bundled build), so the shape is stable
@@ -355,7 +385,8 @@ impl Store {
     fn export_json_scoped(&self, scope: ExportScope<'_>) -> Result<Vec<(&'static str, String)>> {
         let conn = self.lock();
         let bindings = scope.bindings();
-        let mut out: Vec<(&'static str, String)> = Vec::with_capacity(CHILD_TABLES.len() + 1);
+        let mut out: Vec<(&'static str, String)> =
+            Vec::with_capacity(CHILD_TABLES.len() + RECEIPT_TABLES.len() + 1);
 
         // Executions — the spine everything else keys off.
         {
@@ -399,6 +430,11 @@ impl Store {
         }
 
         for (name, select_from, order_by) in CHILD_TABLES {
+            let sql = format!("{select_from} {} {order_by}", scope.child_where());
+            out.push((name, self.query_to_json(&conn, &sql, bindings.as_slice())?));
+        }
+
+        for (name, select_from, order_by) in RECEIPT_TABLES {
             let sql = format!("{select_from} {} {order_by}", scope.child_where());
             out.push((name, self.query_to_json(&conn, &sql, bindings.as_slice())?));
         }
@@ -532,7 +568,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FileTouchRow, TelemetryRow};
+    use crate::{ContextBlockRow, FileTouchRow, ManifestBlockRow, StepManifestRow, TelemetryRow};
 
     /// Seed two sessions plus one unattributed execution, and return
     /// `(store, session_a_id)`. Every table the export covers gets a row on
@@ -606,7 +642,11 @@ mod tests {
         let (store, session) = two_session_store();
 
         let dumps = store.export_session_json(session).expect("scoped dump");
-        assert_eq!(dumps.len(), CHILD_TABLES.len() + 1, "every table present");
+        assert_eq!(
+            dumps.len(),
+            CHILD_TABLES.len() + RECEIPT_TABLES.len() + 1,
+            "every table present"
+        );
 
         for (table, json) in &dumps {
             assert!(
@@ -853,5 +893,96 @@ mod tests {
         assert_eq!(scope.executions_where("e."), "");
         assert_eq!(scope.child_where(), "");
         assert!(scope.bindings().is_empty());
+    }
+
+    /// The export can answer a cache question: the receipts plane rides
+    /// along with the telemetry tables, scoped the same way, and
+    /// `context_blocks` never carries its local-only preimage.
+    #[test]
+    fn the_export_carries_what_stella_sent_not_only_what_came_back() {
+        let store = Store::in_memory().expect("store");
+        let id = store
+            .begin_execution("chat", "prompt", "anthropic", "claude-fable-5")
+            .expect("begin");
+
+        store
+            .record_context_block(
+                id,
+                &ContextBlockRow {
+                    block_id: "blk_abc".into(),
+                    kind: "tool_result".into(),
+                    origin_turn: 0,
+                    origin_step: 0,
+                    call_id: Some("call_1".into()),
+                    memory_id: None,
+                    token_cost: Some(42),
+                    content_digest: "sha256:deadbeef".into(),
+                    citation_label: None,
+                    content: Some("a secret tool output nobody should export".into()),
+                },
+            )
+            .expect("register block");
+        store
+            .record_step_manifest(
+                id,
+                &StepManifestRow {
+                    turn_instance: 0,
+                    step: 0,
+                    call_seq: 0,
+                    provider: "anthropic".into(),
+                    upstream_provider: None,
+                    model: "claude-fable-5".into(),
+                    call_role: "worker".into(),
+                    effective_budget_tokens: 1000,
+                    calibration_factor: 1.0,
+                    estimated_input_tokens: 100,
+                    compiled_frame_id: None,
+                    frame_hash: None,
+                    stall_seconds_requested: None,
+                    blocks: vec![ManifestBlockRow {
+                        block_id: "blk_abc".into(),
+                        cache_zone: "stable".into(),
+                        token_cost: Some(42),
+                        resident_since_step: 0,
+                        message_index: 0,
+                        call_id: Some("call_1".into()),
+                    }],
+                },
+            )
+            .expect("manifest");
+
+        let dumps = store.export_all_json().expect("dump");
+        assert_eq!(
+            dumps.len(),
+            CHILD_TABLES.len() + RECEIPT_TABLES.len() + 1,
+            "the receipts plane rides with the telemetry tables"
+        );
+
+        let dump = |table: &str| {
+            dumps
+                .iter()
+                .find(|(name, _)| *name == table)
+                .map(|(_, json)| json.as_str())
+                .unwrap_or_else(|| panic!("`{table}` missing from the export"))
+        };
+
+        assert!(
+            dump("step_manifest").contains("blk_abc"),
+            "the manifest's block sequence is what a cache analysis reads"
+        );
+        assert!(
+            dump("step_receipt").contains("effective_budget_tokens")
+                && dump("step_receipt").contains("1000"),
+            "the receipt header is what settles which budget a call ran against"
+        );
+        let context_dump = dump("context_blocks");
+        assert!(
+            context_dump.contains("sha256:deadbeef"),
+            "the digest is what a cache analysis joins on"
+        );
+        assert!(
+            !context_dump.contains("secret tool output"),
+            "context_blocks.content never leaves the local store: {context_dump}"
+        );
     }
 }

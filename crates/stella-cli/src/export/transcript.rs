@@ -1,10 +1,10 @@
 //! The session transcript — the replayable half of the `/export` archive.
 //!
-//! [`super::export_session`] bundles nine telemetry *tables*: what the session
-//! cost, which tools it called, which files it touched. None of that is the
-//! session. The session is the ordered stream of what the model said, what it
-//! ran, and what came back — and that lives in `events`, which the tables do
-//! not summarize and the dumps do not contain.
+//! [`super::export_session`] bundles telemetry *tables*: what the session
+//! cost, which tools it called, which files it touched, what was sent to the
+//! model. None of that is the session. The session is the ordered stream of
+//! what the model said, what it ran, and what came back — and that lives in
+//! `events`, which the tables do not summarize and the dumps do not contain.
 //!
 //! This module folds [`Store::session_events`](stella_store::Store::session_events)
 //! into that stream and renders it as the archive's readable half.
