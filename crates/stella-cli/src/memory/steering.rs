@@ -232,7 +232,7 @@ impl<'m> SessionRequery<'m> {
             state: std::sync::Mutex::new(RequeryState {
                 produced,
                 produced_steering: opening,
-                answered_fingerprint: fingerprint(&[], &[]),
+                answered_fingerprint: fingerprint(&[], &[], memory.records_generation()),
             }),
             events: None,
         }
@@ -267,13 +267,15 @@ pub(crate) fn requery_for_turn<'m>(
 }
 
 /// Order-free digest of the drift markers. `BTreeSet` so two signals that
-/// saw the same facts in a different order agree.
-fn fingerprint(paths: &[String], errors: &[&str]) -> u64 {
+/// saw the same facts in a different order agree. `records_generation` folds
+/// the registry's mid-session swap counter, so a record edited while the
+/// turn runs forces exactly one re-query even when no path or error drifted.
+fn fingerprint(paths: &[String], errors: &[&str], records_generation: u64) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::hash::DefaultHasher::new();
     let paths: std::collections::BTreeSet<&str> = paths.iter().map(String::as_str).collect();
     let errors: std::collections::BTreeSet<&str> = errors.iter().copied().collect();
-    (paths, errors).hash(&mut hasher);
+    (paths, errors, records_generation).hash(&mut hasher);
     hasher.finish()
 }
 
@@ -283,7 +285,15 @@ impl stella_core::ports::SteeringRequery for SessionRequery<'_> {
         if signal.since_last_query < MIN_STEPS_BETWEEN {
             return None;
         }
-        let current = fingerprint(signal.touched_paths, signal.errors_seen);
+        // The boundary is where a rules edit gets noticed: a swap bumps the
+        // generation below, which moves the fingerprint and forces this one
+        // re-query — see `records_refresh`.
+        self.memory.refresh_records_if_changed();
+        let current = fingerprint(
+            signal.touched_paths,
+            signal.errors_seen,
+            self.memory.records_generation(),
+        );
         if self
             .state
             .lock()
@@ -320,6 +330,20 @@ impl stella_core::ports::SteeringRequery for SessionRequery<'_> {
         // here is a block byte-identical to one already in history.
         state.produced_steering.absorb(&recalled.produced);
         state.produced.insert(block.clone()).then_some(block)
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    /// A registry swap alone moves the fingerprint, with no path or error
+    /// drifting — which is what turns a mid-session rules edit into exactly
+    /// one forced re-query.
+    #[test]
+    fn a_registry_swap_moves_the_fingerprint_alone() {
+        assert_ne!(
+            super::fingerprint(&[], &[], 0),
+            super::fingerprint(&[], &[], 1)
+        );
     }
 }
 
