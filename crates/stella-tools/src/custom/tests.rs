@@ -408,6 +408,56 @@ impl ToolExecutor for FakeInner {
     }
 }
 
+/// An inner executor that answers every forwardable method with something
+/// other than its default, so a decorator that drops one is visible.
+struct LoadedInner;
+
+#[async_trait]
+impl ToolExecutor for LoadedInner {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        FakeInner.schemas()
+    }
+    async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
+        FakeInner.execute(name, input).await
+    }
+    fn active_skill_slugs(&self) -> Vec<String> {
+        vec!["release-checklist".to_string()]
+    }
+    fn live_services(&self) -> Vec<stella_core::LiveService> {
+        vec![stella_core::LiveService {
+            handle: "proc-3".to_string(),
+            name: None,
+            display: "npm run dev".to_string(),
+        }]
+    }
+}
+
+/// Every method the port tells a decorator to forward, checked together.
+///
+/// Each has a trait default that reads as "this executor mounts none of that"
+/// — right for a leaf, wrong for a wrapper — so a dropped forward compiles
+/// clean and answers the default. `active_skill_slugs` was the one this set
+/// dropped: a live skill's procedure text stopped surviving overflow
+/// summarization for any workspace that also had a custom tool installed.
+#[tokio::test]
+async fn the_set_forwards_what_a_decorator_must() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = script_tool(dir.path(), "s.sh", "#!/bin/sh\necho hi\n");
+    let inner = LoadedInner;
+    let set = CustomToolSet::new(&inner, vec![tool], dir.path().to_path_buf());
+
+    assert_eq!(
+        set.active_skill_slugs(),
+        vec!["release-checklist".to_string()],
+        "a live skill invocation must survive the custom set"
+    );
+    assert_eq!(
+        set.live_services().len(),
+        1,
+        "so must a still-running service"
+    );
+}
+
 #[tokio::test]
 async fn set_advertises_inner_plus_custom_schemas() {
     let dir = tempfile::tempdir().unwrap();

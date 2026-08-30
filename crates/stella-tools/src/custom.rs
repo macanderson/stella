@@ -1146,6 +1146,16 @@ impl ToolExecutor for CustomToolSet<'_> {
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.get().parallel_safe_names()
     }
+
+    /// Forwarded: a decorator that let the empty default stand would silently
+    /// stop a live skill's procedure text surviving overflow summarization for
+    /// every surface composed through it (see the port's contract). This set
+    /// sits between the policy layer and the registry whenever a workspace has
+    /// any custom tool at all, so it is on the shipped path, and it was the one
+    /// forward in this impl that was missing.
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.inner.get().active_skill_slugs()
+    }
 }
 
 #[cfg(test)]
