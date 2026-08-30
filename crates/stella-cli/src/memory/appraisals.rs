@@ -11,9 +11,9 @@
 //!   promotes it. Queued is not discarded: the mining log keeps every
 //!   observation, so a candidate that is never appraised simply waits.
 //! - **Retirement** needs a window of turns, joined from *selection* to
-//!   *outcome*. That join is recorded explicitly, one trial per known skill per
-//!   turn — never inferred from the work a turn produced, which would credit a
-//!   skill for any turn that happened to touch its subject.
+//!   *outcome*. Both directions read one population — the turns this skill's
+//!   trigger matched — and the join is recorded explicitly, never inferred
+//!   from the work a turn produced.
 //!
 //! Both files are append-only JSONL under `.stella/private/` (0700, files
 //! 0600), for the same reason `trace.rs` is: they carry prompts' worth of
@@ -26,8 +26,8 @@
 //!
 //! - [`record_turn`] is called at turn end from the episode seam
 //!   (`SessionMemory::record_episode`), with the join the turn-start seam
-//!   noted — every skill the loader offered, and the subset selection
-//!   actually injected.
+//!   noted — every skill whose trigger matched the prompt, and the subset
+//!   selection actually injected.
 //! - [`sweep`] runs on the post-turn reflection path
 //!   (`SessionMemory::auto_create_skills`), appraises the accumulated trials,
 //!   and [`record_appraisal`] writes each **measured** verdict — never an
@@ -68,11 +68,20 @@ pub const QUEUE_FILE: &str = "skill_candidates.jsonl";
 /// The selection→outcome join, one line per skill per turn.
 pub const TRIALS_FILE: &str = "skill_trials.jsonl";
 
-/// The shared pairing key live trials are recorded under. One key for the
-/// whole window because every turn is unique: per-turn pairing would leave
-/// nothing paired at all, and under one key the comparison degrades to the
-/// unpaired two-sample test it actually is (see
-/// `stella_core::skills::appraisal`'s module docs).
+/// The shared pairing key live trials are recorded under.
+///
+/// One key for the whole window, and it is not the same decision as *which
+/// turns enter the window*. Live turns are unique by construction — nobody
+/// sends the same prompt twice — so a per-turn key would put one trial in each
+/// stratum, and [`stella_core::comparison`] counts a task only when every arm
+/// ran it. Every stratum would then be unpaired and the window would produce no
+/// evidence at all. Under one key nothing is dropped and the comparison
+/// degrades to the unpaired two-sample test it actually is.
+///
+/// What makes the comparison about *this skill* is therefore the population,
+/// not the key: [`record_turn`] admits only the turns whose prompt matched the
+/// skill's trigger, so both arms under this key are trigger-matched turns and
+/// the delta between them is the skill's own.
 pub const LIVE_WINDOW_TASK: &str = "live-window";
 
 /// The `proposal_lineage_id` prefix a skill's demotion events are filed
@@ -180,19 +189,22 @@ pub fn queued_candidates(workspace_root: &Path) -> Vec<QueuedCandidate> {
     out
 }
 
-/// Append this turn's selection→outcome join: one trial per known skill,
-/// `selected` set from the selection the turn actually ran with.
+/// Append this turn's trigger→outcome join: one trial per skill whose trigger
+/// matched this turn, `selected` set from the selection the turn actually ran
+/// with.
 ///
-/// `known` must be every skill the loader offered, not only the selected ones
-/// — the unselected turns *are* the control arm, and a ledger of selections
-/// alone can only ever measure a skill against itself.
+/// `trigger_matched` is the population, and it has to be exactly that — every
+/// skill the prompt matched, not only the ones injected and not every skill on
+/// disk. Narrower and there is no control arm, so a skill can only be measured
+/// against itself. Wider and the baseline fills with turns the skill's trigger
+/// never matched, which measures those turns rather than the skill.
 pub fn record_turn(
     workspace_root: &Path,
-    known: &[String],
+    trigger_matched: &[String],
     selected: &[String],
     trial: &SkillTrial,
 ) {
-    for name in known {
+    for name in trigger_matched {
         append(
             workspace_root,
             TRIALS_FILE,

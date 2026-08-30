@@ -81,6 +81,19 @@ fn session(root: &Path) -> SessionMemory {
     SessionMemory::open_with_workspace_skills(root, false, true).expect("session memory")
 }
 
+/// The `selected` flag of every trial the ledger holds for `skill`, in the
+/// order they were appended. Read as raw JSON rather than through
+/// `appraisals`' private row type, so the test reads the file the sweep reads.
+fn trials(root: &Path, skill: &str) -> Vec<bool> {
+    std::fs::read_to_string(root.join(".stella/private").join(appraisals::TRIALS_FILE))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|row| row["skill"].as_str() == Some(skill))
+        .map(|row| row["selected"].as_bool().unwrap_or(false))
+        .collect()
+}
+
 /// Every `.md` under the workspace skills dir, sorted.
 fn skill_files(root: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(root.join(".stella/skills"))
@@ -191,6 +204,101 @@ fn the_measured_gate_holds_a_candidate_until_a_recorded_lift_promotes_it() {
     );
 }
 
+/// **The trials a turn leaves behind are scoped to the skills it matched.**
+///
+/// A turn about something the skill does not cover is not evidence about that
+/// skill in either direction, so it must leave no trial. Admit it and the
+/// without-skill arm fills with turns the skill could not have affected: the
+/// baseline stops being the skill's baseline and becomes the session's overall
+/// success rate, which moves with whatever the user happens to be working on.
+/// A skill would then be promoted or retired by the difficulty of the
+/// surrounding work.
+///
+/// An unrelated turn records no trial, and a matching turn records one. Either
+/// assertion alone would pass against a recorder that never wrote anything.
+#[tokio::test]
+async fn only_a_turn_the_trigger_matched_becomes_a_trial() {
+    let dir = workspace_with_log();
+    set_gate(dir.path(), false);
+
+    let mut miner = session(dir.path());
+    miner.auto_create_skills(&log_path(dir.path()), true);
+    let written = skill_files(dir.path());
+    assert_eq!(written.len(), 1, "the lesson promoted into a skill");
+    let name = written[0].trim_end_matches(".md").to_string();
+
+    let memory = session(dir.path());
+
+    memory.note_turn_skills(UNRELATED_PROMPT);
+    memory
+        .record_episode(UNRELATED_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+    assert_eq!(
+        trials(dir.path(), &name),
+        Vec::<bool>::new(),
+        "a turn the trigger did not match is not evidence about the skill"
+    );
+
+    memory.note_turn_skills(MATCHING_PROMPT);
+    memory
+        .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+    assert_eq!(
+        trials(dir.path(), &name),
+        vec![true],
+        "a matching turn records one trial in the with-skill arm"
+    );
+}
+
+/// **The without-skill arm is a matched turn that was not injected.**
+///
+/// With the population scoped to trigger-matched turns, the control arm can no
+/// longer be an unrelated prompt — it is the A/B recall control withholding
+/// injection on a turn the trigger *did* match, which is the only comparison
+/// that isolates the skill. This pins the seam that supplies it: the same
+/// prompt, one turn each side of the control's coin, two trials that differ
+/// only in `selected`.
+#[tokio::test]
+async fn the_recall_control_supplies_the_without_skill_arm() {
+    let dir = workspace_with_log();
+    set_gate(dir.path(), false);
+
+    let mut miner = session(dir.path());
+    miner.auto_create_skills(&log_path(dir.path()), true);
+    let name = skill_files(dir.path())[0]
+        .trim_end_matches(".md")
+        .to_string();
+
+    let mut memory = session(dir.path());
+    // Rate 2: turn 1 injects, turn 2 is the control turn.
+    assert!(
+        !memory.arm_recall_control_at(2),
+        "turn 1 of a rate-2 schedule injects"
+    );
+    memory.note_turn_skills(MATCHING_PROMPT);
+    memory
+        .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+
+    assert!(
+        memory.arm_recall_control_at(2),
+        "turn 2 is the control turn"
+    );
+    assert!(
+        memory.note_turn_skills(MATCHING_PROMPT).is_empty(),
+        "a control turn injects nothing"
+    );
+    memory
+        .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+
+    assert_eq!(
+        trials(dir.path(), &name),
+        vec![true, false],
+        "the control turn is recorded as a trial, in the without-skill arm"
+    );
+}
+
 /// **The retirement half: promote → three negative appraisals →
 /// demoted → not selected.** The skill is minted through the real miner,
 /// selected and injected through the real turn seams, measured through the
@@ -209,12 +317,17 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
     assert_eq!(written.len(), 1, "the lesson promoted into a skill");
     let name = written[0].trim_end_matches(".md").to_string();
 
-    // Live turns through the production seams: eight matching turns where
-    // the skill was injected and the turn failed, eight unrelated turns
-    // where it was not and the turn succeeded. The unselected turns are the
-    // control arm — record_turn's whole reason to take the offered set.
-    let memory = session(dir.path());
+    // Live turns through the production seams. Every turn is a *matching*
+    // task, which is what makes the window evidence about this skill; the A/B
+    // recall control decides which side of the comparison each one lands on.
+    // Injected turns fail, control turns succeed — a skill that has stopped
+    // helping the very tasks it was mined for.
+    let mut memory = session(dir.path());
     for _ in 0..8 {
+        assert!(
+            !memory.arm_recall_control_at(2),
+            "the odd turn injects: the with-skill arm"
+        );
         let selected = memory.note_turn_skills(MATCHING_PROMPT);
         assert!(
             selected.iter().any(|(n, _)| *n == name),
@@ -225,13 +338,22 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
             .await;
 
         assert!(
-            memory.note_turn_skills(UNRELATED_PROMPT).is_empty(),
-            "the without-skill arm must not select it"
+            memory.arm_recall_control_at(2),
+            "the even turn is the control: the without-skill arm"
+        );
+        assert!(
+            memory.note_turn_skills(MATCHING_PROMPT).is_empty(),
+            "a control turn withholds the skill, which is what makes it the baseline"
         );
         memory
-            .record_episode(UNRELATED_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+            .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
             .await;
     }
+    assert_eq!(
+        trials(dir.path(), &name).len(),
+        16,
+        "every matching turn is evidence, whichever arm it landed in"
+    );
 
     // Three reflection passes: each sweep re-appraises the window and records
     // the negative verdict; the third consecutive one demotes (the shipped

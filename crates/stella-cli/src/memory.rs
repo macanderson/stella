@@ -375,11 +375,11 @@ pub struct SessionMemory {
     /// [`Self::note_turn_skills`] and consumed at turn end by the trial
     /// recorder inside [`Self::record_episode`].
     ///
-    /// The offered set rides with the selected one because a trial is a
-    /// *measurement*, not a usage count: the offered-but-unselected skills
+    /// The trigger-matched set rides with the injected one because a trial is
+    /// a *measurement*, not a usage count: the matched-but-uninjected skills
     /// are the control arm, and neither set can be reconstructed after the
-    /// turn — selection is a function of the prompt and the A/B control's
-    /// coin, both gone by the time the outcome is known. A `Mutex` rather
+    /// turn — both are functions of the prompt and the A/B control's coin,
+    /// gone by the time the outcome is known. A `Mutex` rather
     /// than a plain field because the consumer runs behind `&self` on the
     /// async episode path; it is touched twice a turn and never contended.
     turn_skill_join: std::sync::Mutex<Option<TurnSkillJoin>>,
@@ -709,72 +709,130 @@ impl SessionMemory {
     }
 }
 
-/// One turn's selection→offer join — every skill the loader offered, and the
-/// subset selection injected. See the field docs on
+/// One turn's trigger→injection join. See the field docs on
 /// [`SessionMemory::turn_skill_join`].
 #[derive(Debug, Clone)]
 struct TurnSkillJoin {
-    offered: Vec<String>,
+    /// Skills whose trigger matched this turn's prompt — the population both
+    /// appraisal arms are drawn from.
+    trigger_matched: Vec<String>,
+    /// The subset selection actually injected. Empty on a suppressed turn.
     selected: Vec<String>,
 }
 
 impl SessionMemory {
     /// The skills recall would inject for `prompt`, as `(name, reason)` pairs
-    /// for skill-version usage telemetry — `reason` is the matched
-    /// domains/terms that selected it. Same enabled-filtered load + selection
-    /// as [`Self::recall_block_reported`], so this reports exactly what was applied.
+    /// — `reason` is the matched domains/terms that selected it.
+    ///
+    /// Test-gated: [`Self::note_turn_skills`] returns the same pairs and also
+    /// arms the turn's trial join, so it is the door every production caller
+    /// takes. A production caller of this one would be a caller reporting an
+    /// injection without recording the measurement of it, which is the split
+    /// that left the appraisal ledger empty. Drop the gate if a surface ever
+    /// needs to *preview* a selection rather than take a turn with it.
+    #[cfg(test)]
     pub fn selected_skills(&self, prompt: &str) -> Vec<(String, String)> {
-        // The A/B recall control gates every injection channel
-        // ([`Self::recall_block_reported`] and its drifted sibling), so it
-        // gates the report too: a control turn injects no skills, and
-        // recording usage for skills that never reached the prompt would
-        // corrupt the appraisal signal `skill_usage` feeds.
-        if self.ab_suppressed || !self.steering_enabled {
+        if self.injection_suppressed() {
             return Vec::new();
         }
-        skills::select_skills(
+        Self::describe_selection(self.skill_selection(prompt).selected)
+    }
+
+    /// Whether this turn withholds every injected channel — the A/B recall
+    /// control's coin, or steering switched off for the workspace.
+    ///
+    /// One copy, because a turn that injects skills but reports none (or the
+    /// reverse) corrupts both appraisal arms at once.
+    fn injection_suppressed(&self) -> bool {
+        self.ab_suppressed || !self.steering_enabled
+    }
+
+    /// One scoring pass over the loaded skills, keeping the top-k tail.
+    ///
+    /// The A/B control is **not** applied here. Whether this turn's prompt
+    /// matched a skill's trigger is a fact about the prompt; whether the match
+    /// was then injected is the experiment. Collapsing the two would erase the
+    /// control arm, since a suppressed turn would look like a turn the skill
+    /// never matched.
+    fn skill_selection(&self, prompt: &str) -> skills::SkillSelection {
+        skills::select_skills_reporting(
             &self.load_skills(),
             prompt,
             &self.active_domains(prompt),
             &SelectionConfig::default(),
         )
-        .into_iter()
-        .map(|s| {
-            let mut why: Vec<String> = Vec::new();
-            if !s.matched_domains.is_empty() {
-                why.push(format!("domains: {}", s.matched_domains.join(", ")));
-            }
-            if !s.matched_terms.is_empty() {
-                why.push(format!("terms: {}", s.matched_terms.join(", ")));
-            }
-            (s.skill.name, why.join("; "))
-        })
-        .collect()
+    }
+
+    /// Render selected skills as `(name, why)` — the matched domains and terms
+    /// that put each one in the prompt.
+    fn describe_selection(selected: Vec<skills::SelectedSkill>) -> Vec<(String, String)> {
+        selected
+            .into_iter()
+            .map(|s| {
+                let mut why: Vec<String> = Vec::new();
+                if !s.matched_domains.is_empty() {
+                    why.push(format!("domains: {}", s.matched_domains.join(", ")));
+                }
+                if !s.matched_terms.is_empty() {
+                    why.push(format!("terms: {}", s.matched_terms.join(", ")));
+                }
+                (s.skill.name, why.join("; "))
+            })
+            .collect()
     }
 
     /// [`Self::selected_skills`], and additionally note this turn's
-    /// selection→offer join for the trial recorder. The turn-start
-    /// seam (`agent::stamp_and_record_skill_usage`) calls this instead of the
-    /// plain query, so a turn that records usage also arms its own trial.
+    /// trigger→injection join for the trial recorder. The turn-start seam
+    /// (`agent::stamp_and_record_skill_usage`) calls this instead of the plain
+    /// query, so a turn that records usage also arms its own trial.
     ///
-    /// The offered set is noted even on a turn whose selection is suppressed
-    /// (the A/B control, or steering off): those turns run with no skill
-    /// injected, which is exactly what the without-skill arm is made of.
+    /// **The join is scoped to the skills this prompt's trigger matched**, not
+    /// to every skill on disk. A trial is a with/without comparison, and both
+    /// arms have to be drawn from the same population or the baseline is not
+    /// one: a skill about SQL migrations that is offered on a turn about CSS
+    /// was never going to help that turn, and counting it as a without-skill
+    /// success measures the CSS turn, not the skill. Scoring every loaded skill
+    /// against every turn is how a skill's baseline fills with turns it could
+    /// not have affected, and an appraisal over that population answers a
+    /// question nobody asked.
+    ///
+    /// Matched-but-not-injected turns are what the without-skill arm is made
+    /// of, and there are three ways to be one: the A/B control's coin, steering
+    /// switched off, and losing the last top-k seat to a higher-scoring
+    /// sibling. All three are recorded, which is why this reads the selection
+    /// pass rather than [`Self::selected_skills`] — that one returns nothing at
+    /// all on a suppressed turn, by design.
     pub(crate) fn note_turn_skills(&self, prompt: &str) -> Vec<(String, String)> {
-        let selected = self.selected_skills(prompt);
-        let offered = self.load_skills().into_iter().map(|s| s.name).collect();
+        let selection = self.skill_selection(prompt);
+        // The trigger-matched population: the survivors plus the ones the
+        // top-k cut threw away. Both cleared the same score floor, which is
+        // what "the trigger matched" means here.
+        let trigger_matched: Vec<String> = selection
+            .selected
+            .iter()
+            .chain(selection.over_top_k.iter())
+            .map(|s| s.skill.name.clone())
+            .collect();
+        let injected = if self.injection_suppressed() {
+            Vec::new()
+        } else {
+            Self::describe_selection(selection.selected)
+        };
         if let Ok(mut join) = self.turn_skill_join.lock() {
             *join = Some(TurnSkillJoin {
-                offered,
-                selected: selected.iter().map(|(name, _)| name.clone()).collect(),
+                trigger_matched,
+                selected: injected.iter().map(|(name, _)| name.clone()).collect(),
             });
         }
-        selected
+        injected
     }
 
-    /// Append this turn's skill trials — one per offered skill, `selected`
-    /// set from the join [`Self::note_turn_skills`] armed — to the trial
-    /// ledger `appraisals::sweep` appraises.
+    /// Append this turn's skill trials — one per skill whose trigger matched
+    /// this turn, `selected` set from the join [`Self::note_turn_skills`]
+    /// armed — to the trial ledger `appraisals::sweep` appraises.
+    ///
+    /// A turn that matched no trigger records nothing, which is the whole
+    /// point: it is not evidence about any skill.
     ///
     /// Takes the join rather than reading it, so one episode records one
     /// turn's trials exactly once; a path that never armed a join (a
@@ -788,12 +846,12 @@ impl SessionMemory {
             return;
         };
         drop(guard);
-        if join.offered.is_empty() {
+        if join.trigger_matched.is_empty() {
             return;
         }
         appraisals::record_turn(
             &self.workspace_root,
-            &join.offered,
+            &join.trigger_matched,
             &join.selected,
             &stella_core::skills::appraisal::SkillTrial {
                 task: appraisals::LIVE_WINDOW_TASK.to_string(),

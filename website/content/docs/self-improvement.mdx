@@ -21,7 +21,7 @@ Every component here answers the same question in a different place: *what would
 
 So the pattern repeats. A candidate change is generated cheaply, evaluated against a **held-out** set it did not train on, and promoted on a measured lift.
 
-That last clause is the design target, and it is not what ships today. The measured-lift gate exists and is **off by default** — `AutoCreateConfig::require_measured_lift` is `false` — so the shipped default promotes a skill on mining eligibility: frequency and recurrence, which is exactly what the target rules out. Turning the switch on is what closes the gap, and the section on skills below says which components still promote that way.
+For skills that clause ships. `context.promotion.skill.require_measured_lift` defaults **on**, so a mined candidate is held in a queue until a with-skill/without-skill comparison over the turns its trigger matched clears the bar. Frequency and recurrence decide what gets *proposed*; a measured lift is what promotes it. A workspace with no measurement history yet can set the switch to `false` to bootstrap. The components listed below say which of the others still promote on frequency alone.
 
 ## The seven components
 
@@ -108,12 +108,12 @@ The required edge is **dataset → eval**. #836's stated first slice is "just th
     reasoning effort) over two loop-bench runs, promote the winner only when it confidently
     wins, and keep a reversible rollback record. Offline, no API key.
   </SpecCard>
-  <SpecCard title="Partly there — mining without the gate">
+  <SpecCard title="Partly there — the rules miner still has no gate">
     A rules miner ships and writes mined rules to `.stella/rules/`, and reflections are mined
-    into skills. Both still promote on **frequency and recurrence**, not on measured lift. The
-    appraisal that would judge lift exists (`stella-core`'s `skills::appraisal`, which scores a
-    skill as helping, harming, or guard-blocked); what has not landed is the evaluation *run*
-    that feeds it. Closing that loop is precisely what #833 is.
+    into skills. The skill half now runs the full loop: live turns are recorded as trials
+    against the skills whose trigger matched them, a sweep appraises the window, and a measured
+    lift is what promotes a queued candidate — a run of negatives retires one. Mined **rules**
+    still promote on frequency and recurrence, with no evaluation run feeding them.
   </SpecCard>
   <SpecCard title="Shipped — the nightly loop-bench gate">
     #873. `.github/workflows/nightly-bench.yml` runs `loop-bench` on a cron schedule against a
