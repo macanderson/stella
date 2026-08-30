@@ -118,6 +118,21 @@ async fn main() -> std::io::Result<()> {
                         });
                     }
                 }
+                // The composer's red mode. The demo has no running turn to
+                // soft-stop, so the interrupt degrades the way the envelope
+                // documents — the texts run next — echoed onto the lane the
+                // same way a steer is.
+                WorkspaceInput::Interrupt { agent, texts } => {
+                    for text in texts {
+                        let _ = react_tx.send(Inbound::Event {
+                            agent: agent.clone(),
+                            event: stella_protocol::AgentEvent::Steered {
+                                text,
+                                cause: stella_protocol::SteerCause::User,
+                            },
+                        });
+                    }
+                }
                 WorkspaceInput::Control { agent, control } => {
                     // Delete answers with the row's removal, like the driver.
                     if control == AgentControl::Delete {
