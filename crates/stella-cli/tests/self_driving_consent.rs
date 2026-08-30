@@ -185,9 +185,19 @@ fn the_declared_grant_and_the_loop_name_the_same_powers() {
         ),
         (
             "brew installs from a tap, never the homebrew-core name",
-            "macanderson/stella/stella",
+            "macanderson/tap/stella",
             "scripts/self-driving.sh",
-            r#"readonly BREW_FORMULA="macanderson/stella/stella""#,
+            r#"readonly BREW_FORMULA="macanderson/tap/stella""#,
+        ),
+        // `macanderson/stella` is a second name for the same repo, so a machine
+        // can carry two taps for it that fetch independently and answer
+        // `brew info` with different versions. Retiring one is a power over the
+        // user's Homebrew installation and is declared as such.
+        (
+            "untapping the duplicate name for the same tap repo",
+            "brew untap macanderson/stella",
+            "scripts/self-driving.sh",
+            r#"brew untap "$BREW_TAP_LEGACY""#,
         ),
         (
             "starting and stopping a paid EC2 rig",
