@@ -374,7 +374,7 @@ mod capture {
                     let config = device
                         .default_input_config()
                         .map_err(|e| format!("voice: no input config: {e}"))?;
-                    let sample_rate = config.sample_rate().0;
+                    let sample_rate = config.sample_rate();
                     let channels = config.channels();
                     let cap = sample_rate as usize * channels as usize * max_secs as usize;
                     let buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::<i16>::new()));
@@ -383,16 +383,16 @@ mod capture {
                     // restarted) ends the useful audio; the capture then
                     // finishes short and the transcription step reports
                     // "heard nothing", which is the user-visible truth.
-                    let on_err = |_e: cpal::StreamError| {};
+                    let on_err = |_e: cpal::Error| {};
                     let stream = match config.sample_format() {
                         cpal::SampleFormat::I16 => device.build_input_stream(
-                            &config.into(),
+                            config.into(),
                             move |data: &[i16], _| push_capped(&sink, data.iter().copied(), cap),
                             on_err,
                             None,
                         ),
                         cpal::SampleFormat::F32 => device.build_input_stream(
-                            &config.into(),
+                            config.into(),
                             move |data: &[f32], _| {
                                 push_capped(
                                     &sink,
