@@ -87,6 +87,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     are declared, and ci.yml's filter is built
                          #     from that declaration)
                          #   + god-files
+                         #   + module-layout (no code file beside a
+                         #     same-named folder; the list only shrinks)
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is

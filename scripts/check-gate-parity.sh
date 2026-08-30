@@ -155,6 +155,7 @@ step_command() {
   adr-numbering) echo 'check-adr-numbering' ;;
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
+  module-layout) echo 'check-module-layout' ;;
   core-reachability) echo 'check-core-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;
   tool-error-class) echo 'check-tool-error-class' ;;
