@@ -1,45 +1,47 @@
 ---
 title: Release notes
-description: Where stella's release notes live — the per-line changelog at /releases, and the per-tag notes on GitHub.
+description: Where stella's release notes live — the changelog at /releases, and the per-build notes on GitHub.
 ---
 
-Release notes live in two places, and which one you want depends on the
-question you are asking.
+Release notes live in two places. Which one you want depends on what
+you're trying to find out.
 
-## What changed in the line I am upgrading across
+## Upgrade notes
 
-**[stella.oxagen.sh/releases](/releases)** — one section per **minor line**,
-searchable, filterable by kind. This is the curated record: what a line
-delivered, written for someone deciding whether to upgrade.
+**[stella.oxagen.sh/releases](/releases)** has one section per minor
+version, searchable and filterable by kind. This is the record to read when
+you're deciding whether to upgrade: what a version added, fixed, or
+changed.
 
-It is generated from [`CHANGELOG.md`](https://github.com/macanderson/stella/blob/main/CHANGELOG.md)
-at build time, so the page and the repository cannot drift.
+It's generated straight from [`CHANGELOG.md`](https://github.com/macanderson/stella/blob/main/CHANGELOG.md)
+when the site builds, so the page always matches the file in the project.
 
-## What changed in this exact build
+## Build notes
 
 **[The releases page on GitHub](https://github.com/macanderson/stella/releases)**
-— notes for every tag, generated from that tag's own diff.
+has notes for every tagged build, generated from that build's own changes.
 
-Every merge to `main` cuts a patch release (the 0.6 line was 127 of them in
-eight days), so this is the surface to reach for when you are bisecting a
-regression or want the commit-level log for one version.
+Every merge to `main` cuts a new patch release, so this is the page to use
+when you're tracking down a regression or want the exact commit-level
+history for one version.
 
-<Callout title="Why this page is not the changelog">
-It used to be — a hand-maintained copy of the same notes, which is exactly why
-it stopped being one. It sat on "Current release: 0.6.44" while the tree was on
-0.6.131. A second copy of a record that changes every day is a copy that is
-wrong every day; `/releases` renders the repository's own file instead.
+<Callout title="Why GitHub's page and /releases differ">
+`/releases` is the curated, human-readable record, built straight from
+[`CHANGELOG.md`](https://github.com/macanderson/stella/blob/main/CHANGELOG.md)
+so it can never fall out of sync with the project. GitHub's per-build page
+is the finer-grained one, with a note for every single tagged build.
 </Callout>
 
-## How a section gets written
+## Writing an entry
 
-Contributors and coding agents do not write changelog entries — CI does, so the
-file keeps one voice instead of whatever each PR happened to say about itself.
-When a minor or major release is cut,
+Changelog entries are written by an automated process, not by individual
+contributors, so every entry reads in one consistent voice. When a minor or
+major version is cut,
 [`scripts/changelog-ai.sh`](https://github.com/macanderson/stella/blob/main/scripts/changelog-ai.sh)
-drafts the section from the whole series diff and
+drafts the section from the full set of changes, and
 [`scripts/changelog-roll.sh`](https://github.com/macanderson/stella/blob/main/scripts/changelog-roll.sh)
-rolls it into place under the new version heading.
+adds it under the new version heading.
 
-If your change needs context the diff alone will not convey, put it in the pull
-request description: the drafter reads commit bodies, not just code.
+If your change needs context that the code alone won't convey, put it in
+the pull request description. The drafter reads that too, not just the
+code.

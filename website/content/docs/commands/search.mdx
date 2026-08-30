@@ -1,9 +1,9 @@
 ---
 title: stella search
-description: Find code by meaning or by name — the CLI door to the same `search` tool the agent calls.
+description: Find code by meaning or by name, the same way the agent's search tool works, from your own shell.
 ---
 
-Find the files that answer a question you can only describe in words — the same `search` tool the agent reaches for on every turn, run from your shell. Ranks semantically when an embedder is configured, and falls back to graph symbol-name matching and then a file scan when it is not.
+Find the files that answer a question, even one you can only describe in words. This is the same `search` tool the agent uses during a conversation, but you run it yourself from your shell. It ranks results by meaning when you have an embedder set up. If not, it falls back to matching symbol names, and then to a plain file scan.
 
 ## Synopsis
 
@@ -13,28 +13,27 @@ stella search "<query>" [--format text|json]
 
 ## What it does
 
-`stella search` runs the exact dispatch ladder the agent's `search` tool runs inside a turn:
+`stella search` runs the exact same steps the agent's `search` tool runs during a turn:
 
 <CardGrid size="md">
   <OptionCard name="semantic">
-    Ranked by MEANING against your query, over the code-graph vector index —
+    Ranks results by MEANING against your query, using the code-graph's vector index —
     only when an embedder is configured (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or
-    `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`).
+    `STELLA_EMBED_URL` plus `STELLA_EMBED_MODEL`).
   </OptionCard>
   <OptionCard name="names">
-    Falls back to matching your query's words against symbol and path names in
-    the code-graph index — no embedder required.
+    Falls back to matching your query's words against symbol and path names in the
+    code-graph index — no embedder needed.
   </OptionCard>
   <OptionCard name="scan">
-    Falls back further to a plain file scan when no index is available at
-    all — the normal case for a workspace with no tree-sitter grammar for its
-    language.
+    Falls back further to a plain file scan when no index exists at all — the normal
+    case for a workspace whose language has no tree-sitter grammar.
   </OptionCard>
 </CardGrid>
 
-The answer always states which strategies ran (`via: …`), so a result you get from the CLI is never ambiguous about how sharp it is.
+The answer always states which of these ran (look for `via: …`), so you always know how sharp a result is.
 
-`query` takes whatever form you have it in — a sentence, a behaviour description, or a bare symbol/file name — exactly as the agent's tool accepts it.
+`query` can be a full sentence, a description of behavior, or a plain symbol or file name. It works exactly like the agent's own search tool.
 
 ## Examples
 
@@ -52,7 +51,7 @@ stella search "what calls resolve_provider"
 
 ## `--format json`
 
-For scripted testing — feeding real queries through the exact ranking the agent uses and reading the answer back as data:
+Use this for scripted tests: feed real queries through the same ranking the agent uses, and read the answer back as data:
 
 ```bash
 stella search "the retry/backoff policy for failed HTTP requests" --format json
@@ -75,8 +74,14 @@ stella search "the retry/backoff policy for failed HTTP requests" --format json
 }
 ```
 
-The parts a test script asserts on ride as data, not prose: `hits` is the ranking in rank order (each with the `why` phrase the agent reads), `strategies` lists which rungs of the ladder actually ran — more than one entry means an earlier rung came back empty — and `note` carries the degradation reason verbatim when the semantic rung was skipped or failed. `content` is still the exact rendered text the agent would receive, and `error` is `null` on success.
+### Fields to rely on
 
-The command exits non-zero on failure even under `--format json`, so a script can check the exit code without parsing the body — the JSON envelope on stdout stays valid either way, with `ok: false` and `error` set.
+- `hits` — the ranked results, in order. Each one includes the `why` text the agent reads.
+- `strategies` — which methods actually ran. More than one entry means an earlier method came back empty.
+- `note` — the reason the semantic method was skipped or failed, when that happened.
+- `content` — the exact text the agent would receive.
+- `error` — `null` on success.
 
-Two environment dials tune the rendering, the same ones the agent's registration reads: `STELLA_SEARCH_DEPTH` (how much is said about the top hit) and `STELLA_SEARCH_BUDGET` (the answer's character allowance). They shape `content` only — the `hits` ranking is unaffected.
+The command exits with a non-zero code on failure, even with `--format json`, so a script can check the exit code without parsing the output. The JSON on stdout is always valid, with `ok: false` and `error` set when something goes wrong.
+
+Two environment variables control how much detail you get — the same ones the agent's own search tool reads: `STELLA_SEARCH_DEPTH` (how much detail is shown for the top result) and `STELLA_SEARCH_BUDGET` (a character limit for the answer). These only affect `content` — they don't change which results show up in `hits`.

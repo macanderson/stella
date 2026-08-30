@@ -1,11 +1,11 @@
 ---
 title: stella memory
-description: The full lifecycle of a memory — inspect it through the citation feedback loop, rewrite it, promote a proven one to a project rule, or retire it reversibly.
+description: View, edit, promote, or retire your project's memories, all from one command.
 ---
 
-Inspect the project's memories through the citation feedback loop — most-cited first, with usefulness and truthfulness — promote a proven memory to a project rule, retire the ones that stopped earning their place, and tombstone the ones that turned out wrong. It reads local state only and needs no API key.
+`stella memory` lets you see your project's memories, sorted by how often they're cited, along with how useful and how true each one has turned out to be. You can promote a proven memory to a project rule, retire one that stopped being useful, or mark one as wrong so it never comes back. This command only reads local files. It doesn't need an API key.
 
-For the concepts behind memories, reflections, and the code graph, see [Memory](/docs/context-engine). This page is the command reference.
+See [Memory](/docs/context-engine) for how memories, reflections, and the code graph fit together.
 
 ## Synopsis
 
@@ -18,171 +18,164 @@ stella memory <compact|index> [flags]
 
 ## What it does
 
-Memories are hand-authored Markdown files, and recall serves each one to the model as a frame carrying its stable id. Citation receipts recorded against those ids in the local store aggregate into a usefulness/truthfulness score per memory. `stella memory` is the inspection, editing, and lifecycle surface over that loop.
+Memories are Markdown files you write by hand. Each one has a stable ID. When stella recalls a memory and hands it to the model, it also records whether that memory turned out to be useful and true. Those records add up into a usefulness score and a truthfulness score for each memory. `stella memory` is how you view, edit, and manage that whole process.
 
 ## Subcommands
 
 ### `stella memory list`
 
-List memories ranked by citation count, with average usefulness, truthfulness rate, and rule-promotion eligibility.
+List memories ranked by how often they're cited, along with their average usefulness, how often they turned out true, and whether they qualify to become a rule.
 
 ```bash
 stella memory list
 stella memory list --format json
 ```
 
-`--format` accepts `text` (default, aligned table) or `json` — JSON rides the versioned query envelope (`schema_version`, then `rows`).
+`--format` can be `text`, the default, shown as an aligned table, or `json`. The JSON output has a `schema_version` field followed by the `rows`.
 
 ### `stella memory edit <id> <text>`
 
-Rewrite a memory in place, as a **new revision of the same memory**.
+Rewrite a memory in place. This creates a **new version of the same memory** — it doesn't create a separate one.
 
 ```bash
 stella memory edit nod_9f2c1a "the store API takes a workspace root, not a db path"
 ```
 
-The old text becomes history rather than a competitor: one live record, the same id, and recall stops serving the words you replaced. Before memories had a lineage, changing one meant writing a second memory and leaving the first live — both citable, with nothing to say which was current.
+The old text is kept as history, not as a second, separate memory. There's one live record with one ID, and stella stops recalling the words you replaced.
 
 <Callout type="info">
-Each edit strands the previous revision's embedding vector, which nothing points at any more.
-That is exactly the class of row [`stella memory compact`](#stella-memory-compact) reclaims, so a
-workspace where memories are edited often is the one that benefits most from an occasional
-compaction.
+Each edit leaves behind the old version's embedding vector, since nothing points to it anymore.
+[`stella memory compact`](#stella-memory-compact) cleans up rows like this, so if you edit memories
+often, running compact once in a while helps the most.
 </Callout>
 
 ### `stella memory promote <id>`
 
-Promote an eligible memory to a project rule at `.stella/rules/<slug>.md`. Pass the memory's stable id (`nod_…`) as shown by `stella memory list`.
+Promote a qualifying memory to a project rule, saved at `.stella/rules/<slug>.md`. Pass the memory's ID, shown as `nod_…` by `stella memory list`.
 
 ```bash
 stella memory promote nod_9f2c1a
 ```
 
 <Callout type="info">
-Eligibility is strict: a memory must have been cited successfully **more than 10** consecutive times since its last negative remark. A single negative citation resets the count until it is re-earned.
+A memory only qualifies after being cited successfully **more than 10** times in a row since its
+last negative mark. One negative citation resets that count back to zero.
 </Callout>
 
 ### `stella memory validate`
 
-Re-validate old memories against the current codebase. It scans each memory for file-path anchors (e.g. `crates/stella-cli/src/agent.rs`), checks whether those paths still exist, and flags stale ones — a memory whose referenced path no longer exists is a strong signal it is about refactored-away code and may mislead.
+Check old memories against your current code. stella scans each memory for file paths it mentions, for example `crates/stella-cli/src/agent.rs`, and checks whether those files still exist. If a memory's file is gone, that's a strong sign the memory is about deleted code, and it could mislead you.
 
 ```bash
 stella memory validate
 ```
 
-It also walks the **anchor edges** the reflection loop writes — the same question
-asked of the graph rather than of the text. When a lesson names a file, that file
-becomes an `observed_in` edge, so *"what do we know about `registry.py`"* is a
-traversal instead of an embedding guess.
+It also checks the **anchor edges** written by the reflection loop. When a lesson mentions a file, stella records that as an `observed_in` edge in the code graph. That means a question like "what do we know about `registry.py`" can be answered by following real edges in the graph, instead of guessing from similar text.
 
 ```bash
 stella memory validate --end-stale
 ```
 
-`--end-stale` records that anchors pointing at deleted files stopped holding.
-This is the one write the command can make, and it is narrower than it looks:
+`--end-stale` marks anchors that point to deleted files as invalid. This is the only thing this flag changes, and it's more limited than it sounds:
 
-- The memory is **not retracted**. It was not wrong — the file simply went away.
-  `as_of` queries still return it, and `stella memory list` still shows it.
-- Only *world validity* ends, so live recall stops traversing that edge while
-  "what was true last March" keeps answering.
-- Running it twice is safe: the second pass reports no change rather than moving
-  the date the file disappeared.
+- The memory is **not retracted**. It wasn't wrong; the file just went away. `as_of` queries still return it, and `stella memory list` still shows it.
+- Only the edge's current validity ends. Live recall stops using that edge, but a question like "what was true last March" still gets answered correctly.
+- Running it twice is safe. The second run reports no change instead of moving the date the file disappeared.
 
 <Callout type="info">
-An anchor is only written for a file that exists at the time the lesson is
-learned, and a bare filename matching several files (`mod.rs`) is skipped rather
-than guessed. A confidently wrong edge teaches the graph something false; a
-missing one only costs a little recall precision.
+stella only writes an anchor for a file that exists when the lesson is learned. If a filename
+matches more than one file, like `mod.rs`, stella skips it instead of guessing. A wrong edge would
+teach the graph something false. A missing edge just costs a little accuracy later.
 </Callout>
 
 ## Retiring and forgetting
 
-Two different mechanisms, for two different situations, and choosing the wrong one is the most common mistake on this surface:
+These are two different tools for two different situations. Picking the wrong one is the most common mistake here.
 
 <CardGrid size="md">
-  <SpecCard title="retire — it stopped earning its place">
-    The memory is not wrong; it simply stopped helping. It is excluded from **automatic**
-    selection but stays explicitly retrievable by id. Reverse with `reaffirm`.
+  <SpecCard title="retire: it's not helping anymore">
+    The memory isn't wrong. It just stopped helping. stella stops selecting it **automatically**,
+    but you can still pull it up directly by ID. Undo this with `reaffirm`.
   </SpecCard>
-  <SpecCard title="forget — it was wrong">
-    The memory should never come back. This writes a **tombstone** that also stops the
-    reflection loop re-learning a paraphrase of it. Reverse with `restore`.
+  <SpecCard title="forget: it was wrong">
+    The memory should never come back. This writes a **tombstone**, which also stops the
+    reflection loop from learning a reworded version of the same thing later. Undo this with
+    `restore`.
   </SpecCard>
 </CardGrid>
 
 ### Three rules
 
-These hold across everything in this section. They are binding design constraints, not descriptions of current behavior that might drift:
+These rules apply everywhere in this section. They don't change with future updates:
 
 <CardGrid size="md">
   <SpecCard title="Retirement is reversible">
-    Every retirement can be undone by `stella memory reaffirm <id>`. The retirement itself
-    stays on the ledger, **outranked by the later decision rather than erased** — so "why did
-    this come back?" remains answerable.
+    You can undo any retirement with `stella memory reaffirm <id>`. The retirement record stays
+    in the log. The later decision **outranks it instead of erasing it**, so you can always answer
+    "why did this come back?"
   </SpecCard>
   <SpecCard title="Nothing is ever deleted">
-    A retired record is excluded from automatic recall and stays explicitly retrievable by id.
-    Selection health is derived from immutable use and feedback records and rebuilds exactly;
-    nothing here is a stored counter that can drift.
+    A retired record is skipped by automatic recall, but you can always look it up by ID. stella
+    works out selection health from permanent use and feedback records, and can rebuild it exactly
+    every time. Nothing here is a counter that can drift out of sync.
   </SpecCard>
   <SpecCard title="The agent cannot talk itself into forgetting">
-    Citation feedback is recorded with the evaluation method `agent_self_report`, and that
-    method is **not pruning-eligible**. It may inform selection health; it may never drive a
-    retirement.
+    When the agent itself reports on a citation, that feedback is tagged `agent_self_report`.
+    This tag is **never allowed to trigger a retirement** on its own. It can factor into selection
+    health, but it can't retire anything by itself.
   </SpecCard>
 </CardGrid>
 
 <Callout type="warn">
-The third rule is the one most likely to be violated by a well-meaning change. A self-report
-that can retire its own subject is self-reinforcing: a model that *misreads* a memory reports it
-unhelpful, which retires it, which destroys the evidence that the reading was wrong. The loop is
-closed on purpose.
+The third rule is the easiest one to accidentally break with a well-meaning change. If a
+self-report could retire the memory it's about, that creates a loop: the model misreads a memory,
+reports it as unhelpful, the memory gets retired, and the evidence that the model misread it
+disappears. stella closes that loop on purpose.
 
-It is enforced in one place — `ContextEvaluationMethod::is_pruning_eligible` reads the method to
-decide whether a verdict may retire a record. Retirement requires a human or a deterministic
-source. If you are wiring a new evidence source, that predicate is the seam to change, and
-widening it to admit self-reports is the change to refuse.
+Only one place in the code decides this: the check that says whether a given feedback method is
+allowed to retire a record. Retirement requires a person's judgment or another reliable source. If
+you're adding a new kind of feedback, that's the one check to update, and self-reports should never
+be let through it.
 </Callout>
 
 ### `stella memory retire <id> --reason <why>`
 
-Stop selecting a memory automatically — reversibly.
+Stop stella from selecting a memory automatically. You can undo this later.
 
 ```bash
 stella memory retire nod_9f2c1a --reason "the API it describes was replaced in 0.6"
 ```
 
-`--reason` is **required**, and an empty one is rejected: a retirement with no legible cause is not auditable. Because citations cannot retire anything on their own, an explicit human judgement is currently the strongest available evidence tier — the loop shows its work, and a person decides.
+`--reason` is **required**. An empty reason is rejected, because a retirement needs a clear cause you can look back on later. Citations alone can't retire a memory, so a person's judgment is the strongest evidence stella currently has. The loop shows its work, and you make the call.
 
-Some records refuse retirement outright:
+Some records can't be retired at all:
 
 <CardGrid size="sm">
   <OptionCard name="blocking">
-    A directive whose enforcement is `Blocking`.
+    A rule marked `Blocking`.
   </OptionCard>
   <OptionCard name="user-confirmed">
-    A record a **user** confirmed. Checked on the action, not the actor — a system
-    auto-activation is not a confirmation and stays retirable.
+    A record a **person** confirmed. This checks the action, not who did it: a system
+    auto-activation doesn't count as confirmation, so it can still be retired.
   </OptionCard>
   <OptionCard name="published">
-    A record that has been published.
+    A record that has already been published.
   </OptionCard>
   <OptionCard name="already retired">
-    Retiring twice is refused rather than written as a second event.
+    You can't retire something twice. stella refuses rather than logging it again.
   </OptionCard>
 </CardGrid>
 
 ### `stella memory reaffirm <id>`
 
-Put a retired record back into automatic selection.
+Put a retired memory back into automatic selection.
 
 ```bash
 stella memory reaffirm nod_9f2c1a
 stella memory reaffirm nod_9f2c1a --reason "still the only note on the legacy path"
 ```
 
-`--reason` is optional and defaults to a plain "reaffirmed by the user". Reaffirming something that was never retired is **refused** rather than recorded — a no-op event sitting in the log would claim a reversal that never happened.
+`--reason` is optional. If you skip it, stella records "reaffirmed by the user". If a memory was never retired, `reaffirm` **refuses** rather than logging anything, so the log never claims a reversal that didn't happen.
 
 ### `stella memory retired`
 
@@ -192,30 +185,24 @@ List what this workspace stopped selecting, and why.
 stella memory retired
 ```
 
-Each row carries the recorded `reason`, the **evidence** behind the decision (how many assessed uses were not helpful, out of how many, across how many distinct tasks), and the exact `reaffirm` command that restores it. Output is sorted, so two runs print the same thing — the same determinism the underlying fold guarantees.
+Each row shows the `reason` you gave, the **evidence** behind the decision (how many uses were rated unhelpful, out of how many total, across how many different tasks), and the exact `reaffirm` command to restore it. The output is always sorted the same way, so running this twice gives you the same result.
 
 ### `stella memory forget <id>`
 
-Stop a memory steering the agent — and stop the reflection loop re-learning it.
+Stop a memory from steering the agent, and stop the reflection loop from learning it again.
 
 ```bash
 stella memory forget nod_9f2c1a
 stella memory forget nod_9f2c1a --reason "superseded by the new store API"
 ```
 
-This writes a **tombstone**, not a delete, and the distinction is the whole point.
-The reflection loop mines the session log for lessons and re-records paraphrases of
-what it has already learned, so deleting the row alone does not hold — the memory
-grows back under a new id within a few sessions. The tombstone also suppresses
-restatements at the two points new lessons enter: when a lesson is recorded, and when
-the log is mined into skills.
+This writes a **tombstone**. It does not delete the memory, and that difference matters. The reflection loop reads your session log for lessons and can record a reworded version of something it already learned. If stella just deleted the row, the same memory would grow back under a new ID within a few sessions. The tombstone blocks that at both points where a new lesson could enter: when a lesson is first recorded, and when session logs are mined into skills.
 
-`--reason` is optional and shown later by `stella memory forgotten`. Write one — the
-future reader deciding whether to `restore` is usually you, months on.
+`--reason` is optional, and `stella memory forgotten` shows it later. Write one anyway. Months from now, you'll probably be the one deciding whether to `restore` it.
 
 ### `stella memory restore <id>`
 
-Lift a tombstone: the memory can be recalled again, and becomes re-learnable.
+Remove a tombstone. The memory can be recalled again, and stella can learn it again too.
 
 ```bash
 stella memory restore nod_9f2c1a
@@ -223,26 +210,26 @@ stella memory restore nod_9f2c1a
 
 ### `stella memory forgotten`
 
-List this workspace's tombstones — what was forgotten, when, and why.
+List this workspace's tombstones: what was forgotten, when, and why.
 
 ```bash
 stella memory forgotten
 ```
 
 <Callout type="info">
-`forget` is reversible and `validate` is advisory: neither destroys anything. Between
-them they are the maintenance pass for a memory store that has drifted — `validate` to
-find memories pointing at code that no longer exists, `forget` to retire the ones that
-turned out to be wrong rather than merely stale.
+`forget` is reversible, and `validate` mostly just reports, it doesn't change anything on its own
+(aside from `--end-stale`). Neither one destroys data. Together, they're how you clean up a memory
+store that's drifted: use `validate` to find memories pointing at deleted code, and
+`forget` for memories that turned out to be wrong, not just outdated.
 </Callout>
 
 ## Maintaining the store
 
-These two act on `.stella/private/context.db` — the derived index behind recall — rather than on the memories themselves. Neither is required for correctness; both are performance work.
+These two commands work on `.stella/private/context.db`, the index recall uses behind the scenes. They don't touch the memories themselves. Neither one is required for stella to work correctly; they're both about performance.
 
 ### `stella memory compact`
 
-Reclaim space by dropping **derived index rows whose owner is already gone**.
+Free up space by removing **derived index rows whose original memory is already gone**.
 
 ```bash
 stella memory compact --dry-run
@@ -250,12 +237,12 @@ stella memory compact
 stella memory compact --stale-fingerprints --vacuum
 ```
 
-Two classes qualify: embedding vectors that no memory, node, or episode points at (every `stella memory edit` strands one), and domain tags pointing at rows that no longer exist.
+Two kinds of rows qualify: embedding vectors that no memory, node, or episode points to anymore (every `stella memory edit` leaves one of these behind), and tags pointing at missing rows.
 
 <Callout type="info">
-Memories, episodes, facts, and forget tombstones are **never touched**. Point-in-time queries
-answer identically before and after a compaction — which is what makes this safe to run on a
-schedule.
+Compacting **never touches** memories, episodes, facts, or forget tombstones. Queries about a
+specific point in time give the same answer before and after a compaction, which is why it's safe
+to run on a schedule.
 </Callout>
 
 <CardGrid size="sm">
@@ -263,19 +250,19 @@ schedule.
     Report what would be reclaimed without deleting anything.
   </OptionCard>
   <OptionCard name="--stale-fingerprints">
-    Also drop vectors written under an embedder other than the active one. Recall already
-    ignores them, so this frees space today at the cost of a full re-embed if you ever switch
-    back.
+    Also remove vectors written by an embedding model you're not using anymore. Recall already
+    ignores these, so removing them frees space now. If you switch back to that embedder later,
+    you'll need to re-embed everything.
   </OptionCard>
   <OptionCard name="--vacuum">
-    `VACUUM` afterwards to hand freed pages back to the filesystem. Also automatic for a large
-    compaction.
+    Run `VACUUM` afterward to give freed space back to the filesystem. stella also does this
+    automatically after a large compaction.
   </OptionCard>
 </CardGrid>
 
 ### `stella memory index`
 
-Build the approximate-similarity (IVF) index that recall can use instead of scoring every stored vector on every turn.
+Build an approximate-similarity index, called IVF, that recall can use instead of checking every stored memory on every turn.
 
 ```bash
 stella memory index --dry-run
@@ -284,10 +271,10 @@ stella memory index --drop
 ```
 
 <Callout type="warn">
-This is **opt-in twice over**: this command builds the index, and `context.retrieval.ann_enabled`
-in `settings.json` is what lets a recall actually use it. An approximate index considers only a
-subset of the corpus, so it can miss a frame the exact scan would have found — which is why
-neither half is on by default.
+You need to turn this on in **two places**: this command builds the index, and the setting
+`context.retrieval.ann_enabled` in `settings.json` is what lets recall actually use it. An
+approximate index only checks part of your memories, so it can miss something an exact search
+would have found. That's why neither part is on by default.
 </Callout>
 
 <CardGrid size="sm">
@@ -295,13 +282,12 @@ neither half is on by default.
     Report what would be built without writing anything.
   </OptionCard>
   <OptionCard name="--drop">
-    Remove the index. Recall reverts to the exact full scan — which is what it does by default
-    anyway.
+    Remove the index. Recall goes back to checking every memory exactly, which is what it does
+    by default anyway.
   </OptionCard>
 </CardGrid>
 
 <Callout type="info">
-Neither command creates a database as a side effect of being asked a question. A workspace that
-has never indexed anything reports that it has nothing to do, rather than materializing an empty
-`context.db` to say so.
+Neither command creates a database file just because you ran it. If a workspace has never been
+indexed, stella reports that there's nothing to do, instead of creating an empty `context.db` file.
 </Callout>

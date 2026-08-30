@@ -1,89 +1,97 @@
 ---
 title: Providers & models
-description: The full provider matrix, how to select a model, the credential chain, and pointing stella at a local OpenAI-compatible server.
+description: The full list of providers, how to pick a model, how stella finds your API key, and how to point it at a local OpenAI-compatible server.
 ---
 
-stella is model-agnostic. It speaks each provider's native wire dialect and auto-detects
-which provider to use from the API keys you have set.
+stella works with any model provider. It speaks each provider's own
+protocol, and figures out which one to use from the API keys you have set.
 
-This page is the quick reference. For per-provider deep dives — setup walkthroughs,
-provider-specific configuration, and slugs — see **[API Providers](/docs/api-providers)**,
-and for choosing between models (pricing, release dates, what each is best at) see the
-**[model guide](/docs/api-providers/models)**.
+For setup walkthroughs, provider-specific configuration, and model names,
+see **[API Providers](/docs/api-providers)**. For help choosing between
+models, including pricing, release dates, and what each one is best at, see
+the **[model guide](/docs/api-providers/models)**.
 
 ## Supported providers
 
-Each card carries what you need to start: the provider id you put before the `/` in
-`--model`, the env var stella reads, the model you get if you name none, and the wire
-dialect it speaks. Click through for setup and provider-specific configuration.
+Each card shows what you need: the provider id you put before the `/` in
+`--model`, the environment variable stella reads, the model you get by
+default, and the protocol it speaks. Click through for setup and
+provider-specific configuration.
 
 <ProviderGrid />
 
-List them at any time — with live key status and the effective base URL each one resolves
-to:
+List every provider at any time, along with live key status and the base
+URL each one resolves to:
 
 ```bash
 stella models
 ```
 
-That listing is the authority on your machine — it is the only view that knows which keys
-you actually have. The cards above are rendered from one typed record shared with the
-[API Providers](/docs/api-providers) index, so the two pages cannot disagree with each
-other.
+That listing is the source of truth on your machine. It's the only view
+that knows which keys you actually have. The cards above come from the same
+data as the [API Providers](/docs/api-providers) index, so the two pages
+always agree.
 
-## Selecting a model
+## Pick a model
 
-Pin the worker model for a single invocation with `--model provider/model_id`, or set the
-`STELLA_MODEL` environment variable for the whole shell:
+Set the model for one run with `--model provider/model_id`. Or set the
+`STELLA_MODEL` environment variable to use it for the whole shell session:
 
 ```bash
 stella --model zai/glm-5.2 run "fix the failing test"
 export STELLA_MODEL=anthropic/claude-fable-5
 ```
 
-With no `--model`, stella **auto-detects**: it selects the first provider that has a
-resolvable credential, in preference order — `zai`, `anthropic`, `openai`, `xai`,
-`deepseek`, `gemini`, `openrouter`, then `vertex` and `bedrock` **last**.
+With no `--model` set, stella picks a provider automatically. It uses the
+first one with a working credential, in this order: `zai`, `anthropic`,
+`openai`, `xai`, `deepseek`, `gemini`, `openrouter`, then `vertex` and
+`bedrock` **last**.
 
 <Callout type="info">
-  Vertex and Bedrock sit last in auto-detection on purpose: they key off generic cloud
-  credentials (`VERTEX_ACCESS_TOKEN`, `AWS_ACCESS_KEY_ID`) that are often present for
-  unrelated reasons. Auto-detection never prefers them over an explicitly-configured
-  provider — pin them with `--model vertex/…` or `--model bedrock/…` when you want them.
+  Vertex and Bedrock come last on purpose. They rely on general cloud
+  credentials (`VERTEX_ACCESS_TOKEN`, `AWS_ACCESS_KEY_ID`) that are often set
+  for unrelated reasons. Auto-detection never picks them over a provider you
+  configured on purpose. Use `--model vertex/…` or `--model bedrock/…` when
+  you want them.
 </Callout>
 
-## The credential chain
+## Credential chain
 
-For the selected provider, stella resolves the API key in this order — **first hit wins**:
+For the provider you're using, stella looks for an API key in this order.
+**The first one it finds wins**:
 
 1. `--api-key` flag (needs an explicit `--model provider/...`)
-2. The provider's env var (and aliases, e.g. `GOOGLE_API_KEY` for Gemini)
+2. The provider's environment variable, and its aliases — for example,
+   `GOOGLE_API_KEY` for Gemini
 3. [`settings.json`](/docs/configuration/settings) `providers.<id>.api_key`
 4. `~/.stella/credentials.toml`
-5. Interactive prompt (on a TTY) — the entered key is saved to `credentials.toml`, so you
-   are only prompted once
+5. An interactive prompt, if you're in a terminal. The key you enter is
+   saved to `credentials.toml`, so you're only asked once.
 
 <Callout type="info">
-  Before the env-var step (2) runs, stella first loads project **dotenv files** into the
-  environment: `.env.<mode>.local` → `.env.local` → `.env`, most-specific first, and
-  **nearest-scope-wins** — confined to the enclosing git repository (never the home
-  directory or above). It never loads `.env.example` or a committed `.env.<mode>`, an
-  exported shell value always overrides a file value, and `STELLA_NO_ENV_FILE=1` disables
-  the whole mechanism.
+  Before step 2 (the environment variable) runs, stella first loads project
+  **dotenv files** into the environment, most specific first: `.env.<mode>.local`
+  → `.env.local` → `.env`. The nearest scope wins, and this search never goes
+  past the enclosing git repository — never the home directory or above. It
+  never loads `.env.example` or a committed `.env.<mode>` file. A value you
+  export in your shell always wins over a file value, and
+  `STELLA_NO_ENV_FILE=1` turns this off entirely.
 </Callout>
 
-See [Credentials](/docs/configuration/credentials) for the file format and precedence
-details.
+See [Credentials](/docs/configuration/credentials) for the file format and
+precedence details.
 
 <Callout type="warn">
-  Prefer an env var, `settings.json`, or `credentials.toml` over `--api-key` for anything
-  long-lived — a flag value is visible in shell history and in `ps` output.
+  For anything long-lived, use an environment variable, `settings.json`, or
+  `credentials.toml` instead of `--api-key`. A flag value shows up in your
+  shell history and in `ps` output.
 </Callout>
 
-## Cloud providers with extra configuration
+## Cloud provider setup
 
-**Vertex AI** also needs a project — set `VERTEX_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`),
-and optionally `VERTEX_LOCATION` (defaults to `global`). The access token is typically
+**Vertex AI** also needs a project. Set `VERTEX_PROJECT_ID` (or
+`GOOGLE_CLOUD_PROJECT`), and optionally `VERTEX_LOCATION` (defaults to
+`global`). Get the access token with
 `export VERTEX_ACCESS_TOKEN=$(gcloud auth print-access-token)`.
 
 ```bash
@@ -93,9 +101,9 @@ export VERTEX_PROJECT_ID="my-gcp-project"
 stella --model vertex/gemini-3-pro run "audit the IAM bindings module"
 ```
 
-**Amazon Bedrock** needs `AWS_SECRET_ACCESS_KEY` alongside `AWS_ACCESS_KEY_ID`, plus an
-optional `AWS_SESSION_TOKEN` and `AWS_REGION` / `AWS_DEFAULT_REGION` (defaults to
-`us-east-1`).
+**Amazon Bedrock** needs `AWS_SECRET_ACCESS_KEY` along with
+`AWS_ACCESS_KEY_ID`. It also accepts an optional `AWS_SESSION_TOKEN` and
+`AWS_REGION` (or `AWS_DEFAULT_REGION`), which defaults to `us-east-1`.
 
 ```bash
 export AWS_ACCESS_KEY_ID="AKIA..."
@@ -106,38 +114,42 @@ stella --model bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0 run "harden 
 ```
 
 <Callout type="info">
-  Only `AWS_ACCESS_KEY_ID` — Bedrock's primary credential — rides the credential chain
-  above. The secondary variables (`AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
-  `AWS_REGION`) are read from the environment and **nowhere else**: no
-  `credentials.toml` entry, no `settings.json` field, no prompt. See
-  [Amazon Bedrock](/docs/api-providers#amazon-bedrock) for the full split.
+  Only `AWS_ACCESS_KEY_ID`, Bedrock's main credential, follows the credential
+  chain above. The other variables (`AWS_SECRET_ACCESS_KEY`,
+  `AWS_SESSION_TOKEN`, `AWS_REGION`) are read only from the environment.
+  There's no `credentials.toml` entry, no `settings.json` field, and no
+  prompt for them. See [Amazon Bedrock](/docs/api-providers#amazon-bedrock)
+  for the full details.
 </Callout>
 
-## Local / any OpenAI-compatible server
+## Local servers
 
-The `local` pseudo-provider points at any OpenAI-compatible endpoint — Ollama, vLLM, LM
-Studio, or a llama.cpp server. It is never auto-detected and needs no API key:
+The `local` provider points at any OpenAI-compatible endpoint: Ollama,
+vLLM, LM Studio, or a llama.cpp server. It's never chosen automatically, and
+it needs no API key:
 
 ```bash
 stella --model local/llama3.3 --base-url http://localhost:11434/v1 chat
 ```
 
-The id `local` is reserved and **cannot** be redefined in `settings.json` — `--base-url`
-(or its env form `STELLA_BASE_URL`) is always required with `--model local/<model>`. To
-avoid retyping the endpoint, either export `STELLA_BASE_URL`, or define your own custom
-provider under a non-reserved id in [`settings.json`](/docs/configuration/settings) — e.g.
-`providers.myollama` with a `base_url` (its `dialect` defaults to `openai-compatible`) — and
-select it with `--model myollama/<model>`.
+The id `local` is reserved. You **cannot** redefine it in `settings.json`,
+and `--base-url` (or the environment variable `STELLA_BASE_URL`) is always
+required with `--model local/<model>`. To avoid typing the endpoint every
+time, either export `STELLA_BASE_URL`, or define your own provider under a
+different id in [`settings.json`](/docs/configuration/settings) — for
+example `providers.myollama` with a `base_url` set (its `dialect` defaults
+to `openai-compatible`) — and use it with `--model myollama/<model>`.
 
-## Overriding a provider's defaults
+## Override provider defaults
 
-Override any built-in provider's base URL, key, display name, or default model in
-[`settings.json`](/docs/configuration/settings) — e.g. to
-route Z.ai through its coding-plan endpoint without a provider-specific env
-var. For personal routing like a subscription endpoint, put the override in **user
-scope** (`~/.stella/settings.json`): project-scope `base_url`/`api_key` overrides
-are held back by the
-[trust boundary](/docs/configuration/settings#the-project-trust-boundary) until you set
-`STELLA_TRUST_PROJECT=1`. Ready-to-paste setups, organized by use case, live in
-[Examples &amp; recipes](/docs/examples) — including the
+You can override any built-in provider's base URL, key, display name, or
+default model in [`settings.json`](/docs/configuration/settings). For
+example, you could route Z.ai through its coding-plan endpoint without a
+provider-specific environment variable. For personal routing, like a
+subscription endpoint, put the override in **user scope**
+(`~/.stella/settings.json`) instead. Project-scope `base_url` and `api_key`
+overrides are held back by the
+[trust boundary](/docs/configuration/settings#the-project-trust-boundary)
+until you set `STELLA_TRUST_PROJECT=1`. Ready-to-paste setups, organized by
+use case, live in [Examples &amp; recipes](/docs/examples), including the
 [Z.ai coding-plan recipe](/docs/api-providers#zai).

@@ -104,6 +104,38 @@ COST_NORM_NO_RUN_DATE = "no_run_date"
 COST_NORM_UNMIGRATED = "unmigrated"
 
 
+# The event members large enough to blow the old whole-document cap:
+# `file_change`'s diff, `tool_result`'s output, and a handful of other
+# event types' free-text `text`. Every other member is already small
+# (paths, ids, timestamps).
+PAYLOAD_TRUNCATABLE_FIELDS = ("diff", "output", "text")
+PAYLOAD_FIELD_CHAR_CAP = 20_000
+
+
+def bounded_payload_json(event: dict) -> str:
+    """Serialize an event for `events.payload_json`, always valid JSON.
+
+    `json.dumps(event)[:20000]` sliced the *document*, not a field, so an
+    oversized event was stored as a truncated prefix that `json.loads`
+    rejects outright. This caps the members that are actually large —
+    `diff`, `output`, `text` — before serializing, so the stored cell always
+    parses, and marks which members it shortened under `_truncated` so a
+    reader can tell a genuinely short diff from a cut one.
+    """
+    truncated = []
+    capped = event
+    for field in PAYLOAD_TRUNCATABLE_FIELDS:
+        value = event.get(field)
+        if isinstance(value, str) and len(value) > PAYLOAD_FIELD_CHAR_CAP:
+            if capped is event:
+                capped = dict(event)
+            capped[field] = value[:PAYLOAD_FIELD_CHAR_CAP]
+            truncated.append(field)
+    if truncated:
+        capped["_truncated"] = truncated
+    return json.dumps(capped)
+
+
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -286,7 +318,7 @@ def ingest_trial(conn, run_id, arm, agent, tdir, model=None):
                 conn.execute(
                     "INSERT OR REPLACE INTO events (event_id,trial_id,seq,type,payload_json)"
                     " VALUES (?,?,?,?,?)",
-                    (f"{trial_id}:{seq}", trial_id, seq, t, json.dumps(e)[:20000]),
+                    (f"{trial_id}:{seq}", trial_id, seq, t, bounded_payload_json(e)),
                 )
                 n_ev += 1
                 if t in ("tool_start", "tool_call"):

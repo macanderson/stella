@@ -1,18 +1,18 @@
 ---
-title: How to use stella as the Agent Engine in your GenAI app
-description: Run stella's agent loop inside your own product — the engine orchestrates, your app owns every model call, tool call, and credential. Includes an 80-line working host.
+title: Agent Engine in Your App
+description: Run stella's agent loop inside your own product. The engine handles orchestration; your app owns every model call, tool call, and credential. Includes a complete working example.
 ---
 
-Writing an agent loop that survives contact with production is a grind. You
-need multi-step tool dispatch, history compaction before the context window
-fills, per-turn spend limits, retry classification that knows a rate limit from
-a bad request, and loop detection for the model that calls the same tool nine
-times. None of that is your product. All of it is on your critical path.
+Writing an agent loop that holds up in production is hard work. You need multi-step
+tool dispatch, history compaction before the context window fills up, spend limits per
+turn, retry logic that can tell a rate limit apart from a bad request, and loop
+detection for when the model calls the same tool nine times in a row. None of that is
+your actual product, but all of it sits between you and shipping it.
 
-stella already does it, and you can run it inside your own app without giving
+stella already does all of this, and you can run it inside your own app without giving
 up control of your models, your tools, or your data.
 
-## What you get, and what you keep
+## What each side owns
 
 | stella handles | You keep |
 |---|---|
@@ -22,36 +22,36 @@ up control of your models, your tools, or your data.
 | Loop detection and step caps | All persistence. The engine stores nothing |
 | Spend guards per turn and per session | Your prompts, your tool schemas, your data |
 
-## The one idea: the engine asks, your app executes
+## Engine asks, app answers
 
-This is the part worth understanding before you write any code, because it
-inverts the usual shape.
+Understand this before you write any code, because it flips the usual shape of an
+agent loop.
 
-stella's engine does not call your tools. It **asks you to call them**, then
-waits. Same for the model: it does not hold an API key and it does not make an
-HTTP request. It emits a request and parks until your app answers.
+stella's engine does not call your tools. It asks you to call them, then waits. It's
+the same for the model: the engine doesn't hold an API key and doesn't make an HTTP
+request itself. It sends a request and waits until your app answers.
 
 <EngineSequenceDiagram />
 
-Two consequences matter for a real product:
+This matters for two reasons:
 
-**The engine cannot leak what it never has.** `stella-serve` depends on two
-crates, `stella-protocol` and `stella-core`. It has no HTTP client, no TLS
-stack, and no provider adapters. It cannot reach the network or read a
-provider credential, so a bug in it cannot exfiltrate your keys. That is a
-property of the dependency graph, not a promise.
+**The engine can't leak what it doesn't have.** `stella-serve` depends on only two
+crates, `stella-protocol` and `stella-core`. It has no HTTP client, no TLS stack, and
+no provider adapters. It can't reach the network or read a provider credential, so a
+bug in it can't leak your keys. That's guaranteed by what the code depends on, not
+just a promise.
 
-**Your tests need no API key.** Because your app is the model, you can drive a
-complete multi-step turn from a unit test with a scripted reply. Full agent loop
-coverage, no network, no spend, in milliseconds.
+**Your tests don't need an API key.** Since your app plays the role of the model, you
+can drive a full multi-step turn from a unit test using a scripted reply. That gives
+you full agent-loop test coverage, with no network calls, no spend, in milliseconds.
 
 <Callout type="info">
-  This page covers running the engine as a service next to your app. If you want
-  the command-line doors into the same engine (`stella run`, the Command Deck,
-  `stella goal`, fleets), see [Agent Engine Paths](/docs/agent-engine-paths).
+  Running the engine as a service next to your app is one way in. For the
+  command-line doors into the same engine (`stella run`, the Command Deck, `stella
+  goal`, fleets), see [Agent Engine Paths](/docs/agent-engine-paths).
 </Callout>
 
-## Pick your integration shape first
+## Pick an integration shape
 
 The choice changes your licensing obligations, so make it before you build.
 
@@ -62,20 +62,21 @@ The choice changes your licensing obligations, so make it before you build.
 | **Isolation** | Separate process, separate memory | Shares your process |
 | **Licensing** | Depends on whether you modify it. [Read below](#licensing-agpl-or-commercial) |  A combined work. AGPL, or buy a commercial license |
 
-The sidecar is the recommended shape for a GenAI app, on engineering grounds:
-process isolation, a host you can write in TypeScript or Python, and an engine
-that never shares memory with your application code.
+The sidecar is the shape we recommend for a GenAI app, for engineering reasons:
+process isolation, a host you can write in TypeScript or Python, and an engine that
+never shares memory with your application code.
 
-It is not automatically the cheaper licensing answer. Linking the crates into a
-closed-source product clearly needs a commercial license. The sidecar depends on
-what you do with it, and [the section below](#where-the-sidecar-lands) is
-specific about which facts decide it. Do not read "sidecar" as "free."
+It's not automatically the cheaper option for licensing, though. Linking the crates
+into a closed-source product clearly needs a commercial license. Whether the sidecar
+does depends on what you do with it, and
+[the section below](#where-the-sidecar-lands) spells out exactly which facts decide
+that. Don't read "sidecar" as "free."
 
 ## Step 1: Build a serve-capable binary
 
-There is no `stella serve` subcommand, and no release tarball contains the
-server. `stella-serve` is a separate crate with its own binary, and the release
-build packages the CLI only. Build it:
+There's no `stella serve` subcommand, and no release download contains the server.
+`stella-serve` is a separate crate with its own binary, and the release build only
+packages the CLI. Build it yourself:
 
 ```bash
 git clone https://github.com/macanderson/stella
@@ -83,8 +84,8 @@ cd stella
 cargo build --release -p stella-serve --bin stella-serve
 ```
 
-It is a fast build. The server pulls in only `stella-protocol` and
-`stella-core`, not the CLI, the TUI, or the tool crates.
+This is a fast build. The server pulls in only `stella-protocol` and `stella-core`,
+not the CLI, the terminal interface, or the tool crates.
 
 Confirm what you built:
 
@@ -93,9 +94,9 @@ Confirm what you built:
 # stella-serve <version>   — the program name, one space, a bare semver
 ```
 
-Record that version in your repo next to the client code. The wire format is
-additive, but a pin plus a round-trip test is how you find out about a change
-on your schedule instead of in production.
+Record that version in your repo next to your client code. The wire format only adds
+fields over time, but pinning a version plus a round-trip test is how you find out
+about a change on your own schedule instead of in production.
 
 ## Step 2: Start the server
 
@@ -114,24 +115,24 @@ export STELLA_SERVE_TOOLS=remote
 |---|---|
 | `STELLA_SERVE_BIND` | Address to bind. Defaults to `127.0.0.1:8080`. Use `0.0.0.0:8080` in a container, and `127.0.0.1:0` in tests to get a free port |
 | `STELLA_SERVE_TOKEN` | Bearer token every request must present. Required |
-| `STELLA_SERVE_TOKEN_FILE` | Path to a file holding the token. Wins over `STELLA_SERVE_TOKEN`, because a mounted secret beats a variable that leaks into `/proc` and every child process |
+| `STELLA_SERVE_TOKEN_FILE` | Path to a file holding the token. Takes priority over `STELLA_SERVE_TOKEN`, because a mounted secret file is safer than a variable, which can leak into `/proc` and any child process |
 | `STELLA_SERVE_TOOLS` | Must be `remote`, the default. The server never exposes a local tool surface |
 
 <Callout type="warn">
   The bearer token is the only authentication this service has. Generate at
-  least 32 characters. A shorter token starts the server with a warning, not a
-  refusal, so that an upgrade does not become an outage, but do not ship one.
+  least 32 characters for it. A shorter token still starts the server, with a warning
+  instead of a refusal, so an upgrade doesn't turn into an outage. Don't ship a short
+  one, though.
 </Callout>
 
-In tests, bind port `0` and read the port back from the `listening on` line on
-stdout. Picking a random port and hoping it is free is the usual source of flaky
+In tests, bind port `0` and read the actual port back from the `listening on` line on
+stdout. Picking a random port and hoping it's free is a common cause of flaky
 integration tests.
 
-## Step 3: Learn the six routes this walkthrough uses
+## Step 3: The six routes this walkthrough uses
 
-That is the whole surface *this walkthrough* touches — not the whole surface
-`stella-serve` ships. See [the full route reference](#the-full-route-surface)
-below for the rest.
+This is the whole surface this walkthrough touches, not everything `stella-serve`
+offers. See [the full route reference](#the-full-route-surface) below for the rest.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -142,12 +143,12 @@ below for the rest.
 | `POST` | `/v1/turns/{id}/tool-result` | Answer a tool request |
 | `POST` | `/v1/turns/{id}/cancel` | End a turn. The only teardown, there is no `DELETE` |
 
-A **turn** is the top-level resource in this walkthrough: your app owns
-conversation history and sends it with each turn. The server also offers an
-optional server-owned alternative — `POST /v1/sessions`, covered in [the full
-route surface](#the-full-route-surface) below — where the engine threads the
-transcript for you instead. This guide sticks to the turn-only path because it
-has no state for your app to reason about beyond the turn itself.
+A turn is the top-level resource in this walkthrough. Your app owns the conversation
+history and sends it with each turn. The server also offers an alternative where it
+owns the conversation instead: `POST /v1/sessions`, covered in
+[the full route surface](#the-full-route-surface) below, where the engine keeps the
+transcript for you. This guide sticks to the turn-only path, because it leaves your
+app with no state to track beyond the turn itself.
 
 Six frame types arrive on the event stream, tagged by a `type` field:
 
@@ -161,28 +162,29 @@ Six frame types arrive on the event stream, tagged by a `type` field:
 | `turn_complete` | Terminal. Exactly one per turn, always last | No |
 
 <Callout type="warn">
-  Three things a correct host must not assume. `event` frames are not ordered
-  against request frames, so a `tool_request` can arrive before the `tool_start`
-  event that logically precedes it. Several `tool_request`s can be outstanding
-  at once, because the engine runs read-only tool calls concurrently, so answer
-  by `request_id` and do not serialize them. And the auth check runs before
-  routing, so an unauthenticated request to a wrong path returns 401, not 404. A
-  401 is not proof that your token is wrong.
+  A correct host should not assume any of this:
+
+  - `event` frames aren't ordered against request frames, so a `tool_request` can
+    arrive before the `tool_start` event that would logically come first.
+  - Several `tool_request`s can be open at once, because the engine runs read-only
+    tool calls at the same time. Answer them by `request_id` instead of assuming
+    they arrive one at a time.
+  - The auth check runs before routing, so an unauthenticated request to the wrong
+    path returns 401, not 404. A 401 doesn't necessarily mean your token is wrong.
 </Callout>
 
 ### The full route surface
 
-The six routes above run this walkthrough end to end, but `stella-serve` ships
-far more than that. The source of truth is the module doc at the top of
+The six routes above cover this walkthrough completely, but `stella-serve` ships many
+more. For the full list, see the module documentation at the top of
 [`crates/stella-serve/src/server.rs`](https://github.com/macanderson/stella/blob/main/crates/stella-serve/src/server.rs)
-and the route enum in `crates/stella-serve/src/observe/event.rs`, cross-checked
-against the handlers each variant actually dispatches to:
+and the route list in `crates/stella-serve/src/observe/event.rs`:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/readyz` | Readiness — is it safe to send new work |
+| `GET` | `/readyz` | Readiness: whether it's safe to send new work |
 | `GET` | `/v1/metrics` | Counters, authenticated, pull-only |
-| `GET` | `/v1/calibration` | Token-drift report — estimated vs. billed tokens, per `(provider_id, model)` |
+| `GET` | `/v1/calibration` | A token-drift report: estimated vs. billed tokens, per `(provider_id, model)` |
 | `POST` | `/v1/turns/{id}/steer` | Inject a mid-turn user message |
 | `POST` | `/v1/turns/{id}/pause` | Hold the turn at its next step boundary; optional `{"reason"}` |
 | `POST` | `/v1/turns/{id}/resume` | Release a held turn |
@@ -190,12 +192,12 @@ against the handlers each variant actually dispatches to:
 | `POST` | `/v1/turns/{id}/provider-delta` | Streamed fragments for an in-flight `provider_request`, ahead of its `provider-result` |
 | `GET`, `DELETE` | `/v1/turns/{id}/checkpoint` | Read back or reclaim a resume point |
 | `POST` | `/v1/sessions` | Open a server-owned conversation. Returns `{"session_id": …}` |
-| `GET`, `DELETE` | `/v1/sessions/{id}` | History and cost to date, live turn; end the session |
-| `POST` | `/v1/sessions/{id}/turns` | Run the next turn on a session — turn semantics minus `messages` |
+| `GET`, `DELETE` | `/v1/sessions/{id}` | History and cost so far, and the live turn; or end the session |
+| `POST` | `/v1/sessions/{id}/turns` | Run the next turn on a session. Works like a turn, minus `messages` |
 | `GET`, `DELETE` | `/v1/sessions/{id}/checkpoint` | Read back or reclaim a session's resume point |
 
-Any other method on a known path is a `405` carrying `Allow`; any other path is
-a `404`.
+Any other method on a known path returns a `405` with an `Allow` header. Any other
+path returns a `404`.
 
 ## Step 4: Write the host
 
@@ -349,17 +351,17 @@ outcome: {
 }
 ```
 
-You can read the loop in that output. The first `step_usage` is your first model
-call, then `tool_start` and `tool_result` are the dispatch, then a second
-`budget_tick` and `step_usage` are the second model call, and `text` is the
-answer. The `block_registered` and `step_manifest` events are the context
-engine accounting for what went into each prompt.
+You can read the loop right in that output. The first `step_usage` is your first
+model call. `tool_start` and `tool_result` are the tool running. The second
+`budget_tick` and `step_usage` are the second model call, and `text` is the final
+answer. The `block_registered` and `step_manifest` events are the context engine
+keeping track of what went into each prompt.
 
-Two model calls, one tool call, one settled cost. `cost_usd` is the sum of what
-**your** app reported on each model call, which is why your billing system stays
-the authority and the engine stays a reporter.
+Two model calls, one tool call, one final cost. `cost_usd` is the sum of what your
+app reported on each model call. That's why your billing system stays the authority,
+and the engine is just reporting numbers to it.
 
-### What the engine did that you did not have to
+### What the engine handled
 
 Look at the conversation the engine handed you on the second model call:
 
@@ -375,28 +377,28 @@ Look at the conversation the engine handed you on the second model call:
 ]
 ```
 
-It recorded the assistant's tool call, matched your result to it by `call_id`,
-and threaded both back into the history in the shape your provider expects. That
-is the loop. Everything past this point is the same four frames, more times.
+It recorded the assistant's tool call, matched your result to it using `call_id`, and
+wove both back into the history in the shape your provider expects. That's the whole
+loop. Everything after this point is just the same four frame types, repeated.
 
 ## Step 5: Wire in your real model and tools
 
-Three swaps take the example to production.
+These changes take the example to production.
 
 **Your model.** Replace `runModel` with your gateway call. Map your provider's
-response onto `CompletionResult`. `usage`, `model`, and `cost_usd` are required,
-and `finish_reason` is `stop`, `length`, `tool_calls`, or `content_filter`.
-Anthropic's `tool_use` spelling is rejected with a 400 that names the valid
-values.
+response onto `CompletionResult`. `usage`, `model`, and `cost_usd` are required
+fields, and `finish_reason` must be `stop`, `length`, `tool_calls`, or
+`content_filter`. Anthropic's `tool_use` spelling gets rejected with a 400 error that
+names the valid values.
 
-**Your tools.** Replace `runTool` with a dispatch into the functions your app
-already exposes, behind the authorization you already enforce. Return
-`{ ok: { content } }` or `{ error: { message } }`. Send failures as the `error`
-arm rather than throwing: the model reads that text and can correct itself,
-which is usually what you want.
+**Your tools.** Replace `runTool` with a dispatch into the functions your app already
+exposes, behind the authorization you already enforce. Return
+`{ ok: { content } }` or `{ error: { message } }`. Send failures through the `error`
+field instead of throwing an exception: the model reads that text and can often
+correct itself, which is usually what you want.
 
-**Your errors.** When a model call fails, say why, because the engine's retry
-behavior depends on the class you report:
+**Your errors.** When a model call fails, say why. The engine's retry behavior
+depends on the error type you report:
 
 ```js
 await post("provider-result", {
@@ -406,68 +408,77 @@ await post("provider-result", {
 });
 ```
 
-`transport` and `rate_limited` are retried with backoff. `auth`,
-`unknown_model`, `malformed`, `cancelled`, and `terminal` fail the turn at once.
-Reporting a rate limit as `terminal` silently disables the backoff you wanted.
+`transport` and `rate_limited` get retried with backoff. `auth`,
+`unknown_model`, `malformed`, `cancelled`, and `terminal` fail the turn right away. If
+you report a rate limit as `terminal`, you silently lose the backoff you wanted.
 
 ## Production checklist
 
-- **One process per trust boundary.** Several provider and sandbox settings are
-  process-global, so multi-tenant in one process is not safe. Run an engine per
-  tenant, inside the isolation you already use for untrusted code.
-- **Keep the port private.** Bind loopback, or a private network behind the
-  token. There is no `Host` header guard and no CORS handling, so never expose it
-  to a browser directly.
-- **Set a reverse-request deadline.** `reverse_request_timeout_ms` bounds how
-  long the engine waits for your app. It defaults to five minutes and is clamped
-  to one hour. An expired model request fails the turn. An expired tool request
-  becomes a tool error the model can react to.
-- **Cancel turns you abandon.** Each live turn holds an OS thread. `POST
-  /v1/turns/{id}/cancel` releases it. The turn unwinds rather than being killed,
-  so a client streaming events still gets a terminal frame with an `aborted`
-  outcome and its settled cost.
-- **Handle 429.** At most 32 turns can be live at once. Over that you get a 429
-  with `Retry-After: 5`.
-- **The event stream is single-subscriber.** A second `GET` on the same turn's
-  events returns 409. Fan out to your own users from your app, not by opening
-  the stream twice.
+- **One process per trust boundary.** Several provider and sandbox settings apply to
+  the whole process, so running multiple tenants in one process isn't safe. Run one
+  engine per tenant, inside whatever isolation you already use for untrusted code.
+- **Keep the port private.** Bind it to loopback, or to a private network behind the
+  token. There's no `Host` header check and no CORS handling, so never expose it
+  directly to a browser.
+- **Set a reverse-request deadline.** `reverse_request_timeout_ms` limits how long the
+  engine waits for your app to respond. It defaults to five minutes and can't be set
+  above one hour. If a model request times out, the turn fails. If a tool request
+  times out, it becomes a tool error the model can react to.
+- **Cancel turns you abandon.** Each live turn holds onto an OS thread. `POST
+  /v1/turns/{id}/cancel` releases it. The turn shuts down cleanly rather than getting
+  killed outright, so a client still streaming events gets a final frame with an
+  `aborted` outcome and its final cost.
+- **Handle 429s.** At most 32 turns can run at once. Go over that limit and you get a
+  429 response with `Retry-After: 5`.
+- **The event stream allows only one subscriber.** A second `GET` on the same turn's
+  events returns 409. If you need to fan updates out to multiple users, do it from
+  your own app, not by opening the stream a second time.
 - **Record `step_usage` events.** They carry per-step tokens, cost, model, and
-  duration, which is what you want for cross-checking your own metering.
+  duration, which is exactly what you need to cross-check your own metering.
 
-## What is not built yet
+## Not built yet
 
-Re-verified against 0.9.86, so design around them rather than discovering them:
+These are current as of version 0.9.86, so plan around them instead of hitting them
+by surprise:
 
-- **A resume point can expire.** Frames *are* sequenced and replayable — see
-  below — but retention is a bounded ring (4096 frames per live turn). Ask to
-  resume from a `seq` older than the window and you are told the point is gone
-  rather than handed a stream with a silent hole in it. Persist frames on
-  receipt if you need durability beyond that window.
-- **No `/approve` bypass.** The route exists, but a turn that raises
-  `scope_review` blocks until something answers it. A caller running unattended
-  sets `auto_approve` on the turn; otherwise your app must answer, and a client
-  that never does leaves the turn parked until its deadline.
-- **`retry_policy` and `loop_detection` are operator policy**, not caller
-  policy. They bound what one request can cost the process, so no per-turn
-  override widens them. Unknown keys in the `engine` object are refused rather
-  than ignored — a typoed knob that parsed would be a knob silently not honored.
+- **A resume point can expire.** Frames are sequenced and can be replayed (see below),
+  but only the most recent 4,096 frames per live turn are kept. If you ask to resume
+  from a `seq` older than that window, you're told the point is gone, instead of
+  getting a stream with a silent gap in it. Save frames yourself as you receive them
+  if you need durability beyond that window.
+- **No way to skip `/approve`.** The route exists, but a turn that raises
+  `scope_review` blocks until something answers it. If you're running unattended, set
+  `auto_approve` on the turn. Otherwise, your app has to answer, and if it never does,
+  the turn stays stuck until its deadline passes.
+- **`retry_policy` and `loop_detection` are set by whoever runs the server**, not by
+  whoever calls it. They limit what one request can cost the process, so no per-turn
+  setting can widen them. Unknown keys in the `engine` object get rejected instead of
+  silently ignored, so a typo in a setting name fails loudly instead of quietly doing
+  nothing.
 
-Several entries that stood here through the 0.6 line have since shipped, and are
-worth naming because a client written against the old list is leaving them on the
-floor:
+### Other capabilities
 
-| Was listed absent | Now |
-| --- | --- |
-| Stream resumption | `?after=<seq>`, or an `EventSource`'s automatic `Last-Event-ID` — every frame carries a monotonic `seq` and each SSE frame an `id:` |
-| Server-side conversation state | `POST /v1/sessions`, then `POST /v1/sessions/{id}/turns` — the server threads one transcript, so the byte-stable prefix earns its cache discount and compaction becomes reachable |
-| The approval route | `POST /v1/turns/{id}/approve`, answering a `scope_review` by `request_id` |
-| Token-level streaming | `POST /v1/turns/{id}/provider-delta` — batched `text` / `reasoning` fragments for an in-flight completion, advisory exactly like `text_delta` |
-| SIGTERM drain, `/readyz`, `/metrics` | All three: `SIGTERM`/`SIGINT` start a graceful drain bounded by `STELLA_SERVE_SHUTDOWN_GRACE_SECS`, and both endpoints route |
-| Per-turn engine knobs | An optional `engine` object on turn create sets output cap, temperature, effort and the rest, each clamped to an operator ceiling |
+- **Stream resumption.** Use `?after=<seq>`, or rely on an `EventSource`'s automatic
+  `Last-Event-ID`. Every frame carries an increasing `seq`, and each SSE frame carries
+  an `id:`.
+- **Server-side conversation state.** `POST /v1/sessions`, then
+  `POST /v1/sessions/{id}/turns`. The server keeps one transcript for you, so the
+  unchanging prefix earns its cache discount and compaction becomes possible.
+- **The approval route.** `POST /v1/turns/{id}/approve` answers a `scope_review` by
+  `request_id`.
+- **Token-level streaming.** `POST /v1/turns/{id}/provider-delta` sends batched
+  `text` and `reasoning` fragments for a completion in progress. Treat it as
+  advisory, the same as `text_delta`.
+- **Graceful shutdown, `/readyz`, `/metrics`.** `SIGTERM` and `SIGINT` start a
+  graceful shutdown, bounded by `STELLA_SERVE_SHUTDOWN_GRACE_SECS`, and both
+  endpoints are live.
+- **Per-turn engine settings.** An optional `engine` object on turn creation sets
+  the output cap, temperature, effort, and more, each capped by a limit the server
+  operator sets.
 
 ## Licensing: AGPL or commercial
 
-stella is **dual-licensed**. You choose the track.
+stella is dual-licensed. You choose which track applies to you.
 
 | | Open source track | Commercial track |
 |---|---|---|
@@ -477,87 +488,88 @@ stella is **dual-licensed**. You choose the track.
 | **Best for** | Open source projects, research, internal use | Closed-source products, SaaS, proprietary forks |
 | **How to get it** | Just use it | [licensing@oxagen.sh](mailto:licensing@oxagen.sh) |
 
-### You do not need a commercial license to
+### No license needed
 
-- Use stella as a developer tool, at work, on proprietary code. **Using stella
-  to write closed-source software does not make that software AGPL.** The
-  license covers stella and works derived from it, not the output of running it.
-- Run **unmodified** stella internally, including on your own servers.
+- Use stella as a developer tool at work, on proprietary code. **Using stella to
+  write closed-source software does not make that software AGPL.** The license
+  covers stella and things built from it, not the output of running it.
+- Run stella unmodified, including on your own servers.
 - Evaluate, benchmark, audit, or study it.
-- Build on the [Context Graph
-  Protocol](https://github.com/macanderson/context-graph-protocol), which is a
-  separate project under `MIT OR Apache-2.0` and stays that way. Depending on
-  CGP does not put your project under the AGPL.
+- Build on the
+  [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol), a
+  separate project licensed under `MIT OR Apache-2.0` that stays that way. Depending
+  on CGP does not put your project under the AGPL.
 
-### You do need one to
+### License required
 
-- Ship stella, or anything derived from it, inside a product whose source you do
-  not publish.
-- Offer a **modified** stella to third parties over a network without publishing
-  your modifications. This is AGPL section 13, and hosting is not a loophole.
-- Keep a proprietary fork private, or sublicense stella to your own customers
-  under other terms.
+- Ship stella, or anything built from it, inside a product whose source code you
+  don't publish.
+- Offer a modified version of stella to other people over a network without
+  publishing your changes. This is covered by AGPL section 13, and hosting isn't a
+  loophole.
+- Keep a proprietary fork private, or license stella to your own customers under
+  different terms.
 
 ### Where the sidecar lands
 
-Worth being straight about, since it is the shape this page recommends.
+Here's the direct answer, since this is the shape most GenAI apps end up choosing.
 
-Linking `stella-core` into a closed-source binary is the clear case: that is a
+Linking `stella-core` into a closed-source binary is the clear case: that's a
 combined work, and it needs a commercial license. A developer running the CLI on
-their own machine is the other clear case, and needs nothing.
+their own machine is the other clear case, and needs nothing at all.
 
-The sidecar sits between them, and the answer turns on facts about your
-deployment: whether you modified the engine, and whether your users interact
-with that modified engine over a network. If you run the binary unmodified and
-your app talks to it over HTTP, you are in very different territory than if you
-patched it and shipped the patched version as part of a hosted product.
+The sidecar sits between those two cases. The answer depends on facts about your
+deployment: whether you modified the engine, and whether your users interact with
+that modified engine over a network. If you run the binary unmodified and your app
+talks to it over HTTP, you're in very different territory than if you patched it and
+shipped the patched version as part of a hosted product.
 
-We are not going to guess at your architecture in a docs page. Email
-[licensing@oxagen.sh](mailto:licensing@oxagen.sh) with a short description and you will get a straight
-answer about whether you need a license at all, including "you do not."
+A docs page can't guess at your specific architecture. Email
+[licensing@oxagen.sh](mailto:licensing@oxagen.sh) with a short description, and
+you'll get a straight answer about whether you need a license at all, including "you
+do not."
 
 <Callout type="warn">
-  This section is a plain-language summary for orientation. It is not legal
-  advice and it does not modify the
-  [LICENSE](https://github.com/macanderson/stella/blob/main/LICENSE). Where the
-  two disagree, the LICENSE controls. If real money or real risk is involved,
-  talk to your own counsel, and to us.
+  This section is a plain-language summary meant to orient you. It is not legal
+  advice, and it doesn't change the
+  [LICENSE](https://github.com/macanderson/stella/blob/main/LICENSE). If the two
+  disagree, the LICENSE is what counts. If real money or real risk is on the line,
+  talk to your own lawyer, and to us.
 </Callout>
 
 ### How to buy a commercial license
 
-1. **Email [licensing@oxagen.sh](mailto:licensing@oxagen.sh).** One message starts it. There is no portal
-   and no sales sequence.
-2. **Tell us what you are building and roughly how you will deploy it.** What
-   the product does, whether stella is linked in or run as a sidecar, whether
-   you modify it, and rough scale (self-hosted or SaaS, number of environments,
-   order of magnitude of users). Pricing depends on scope and deployment size,
-   so this is what determines the number.
-3. **Say what terms you need.** A commercial license removes the reciprocal
-   obligations above. Warranty, indemnity, and support terms, which the AGPL
-   explicitly disclaims, are available and are worth naming up front if your
-   procurement process requires them.
-4. **Get an answer, including whether you need one.** If your use is already
-   fine under the AGPL we will tell you that instead of selling you something.
+1. **Email [licensing@oxagen.sh](mailto:licensing@oxagen.sh).** One message is all
+   it takes to start. There's no portal and no sales process to go through.
+2. **Tell us what you're building and roughly how you'll deploy it.** What the
+   product does, whether stella is linked in or run as a sidecar, whether you modify
+   it, and roughly how big it is (self-hosted or SaaS, number of environments, rough
+   number of users). Pricing depends on scope and deployment size, so this is what
+   determines the price.
+3. **Say what terms you need.** A commercial license removes the obligations
+   described above. Warranty, indemnity, and support terms, which the AGPL
+   specifically rules out, are available, and it's worth mentioning them up front if
+   your procurement process requires them.
+4. **Get an answer, including whether you need one at all.** If your use is already
+   fine under the AGPL, we'll tell you that instead of trying to sell you something.
 
-Full terms, the reasoning behind the dual license, and the note on prior
-releases (everything up to v0.5.14 remains perpetually available under
-`MIT OR Apache-2.0`) are in
-[LICENSING.md](https://github.com/macanderson/stella/blob/main/LICENSING.md).
+Full terms and the reasoning behind the dual license are in
+[LICENSING.md](https://github.com/macanderson/stella/blob/main/LICENSING.md), including
+the note that every release up to v0.5.14 stays available under
+`MIT OR Apache-2.0` for good.
 
 ## Where to go next
 
-- [Drop stella in as your agent engine](/docs/guides/embed-the-engine): the
-  guide-shaped version of this page — which shape to pick, how to port an
-  existing feature onto the engine in an afternoon, and the integration test
-  that exercises the whole loop with no API key.
-- [Gate on engine quality in CI](/docs/guides/ci-engine-gate): once the engine
+- [Drop stella in as your agent engine](/docs/guides/embed-the-engine) — a
+  guide-shaped version of this page: which shape to pick, how to port an existing
+  feature onto the engine in an afternoon, and an integration test that exercises the
+  whole loop with no API key.
+- [Gate on engine quality in CI](/docs/guides/ci-engine-gate) — once the engine
   is a dependency, run it side by side with Claude Code on every pull request
-  and block the merge on loop correctness.
-- [Agent Engine Paths](/docs/agent-engine-paths): the command-line doors into
+  and block merges on loop correctness.
+- [Agent Engine Paths](/docs/agent-engine-paths) — the command-line doors into
   the same engine.
-- [Event Stream Compatibility](/docs/event-stream-compatibility): the full
+- [Event Stream Compatibility](/docs/event-stream-compatibility) — the full
   `AgentEvent` vocabulary you receive in `event` frames.
-- [Plugins](/docs/plugins): what a wrapper contributes around a
-  step.
-- [Telemetry](/docs/telemetry): what the engine reports, and how to record it.
+- [Plugins](/docs/plugins) — what a wrapper adds around a step.
+- [Telemetry](/docs/telemetry) — what the engine reports, and how to record it.

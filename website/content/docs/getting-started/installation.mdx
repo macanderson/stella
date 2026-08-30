@@ -3,46 +3,48 @@ title: Installation
 description: Install the stella CLI via the install script, Homebrew, cargo, or from source.
 ---
 
-stella ships as a single self-contained binary named `stella`. There is no runtime to
-install alongside it. Installing is the first of four steps:
+stella is one self-contained program called `stella`. There's no separate
+runtime to install. This is the first of four steps:
 
 <QuickstartDiagram />
 
 ## Prerequisites
 
 - **macOS or Linux**, `x86_64` or `arm64`.
-- For the prebuilt / Homebrew paths: nothing but `curl`.
-- For `cargo install` / building from source: **Rust 1.90+** (via [rustup](https://rustup.rs)) and `git`.
-- **An API key** for any one supported provider — *or* a local OpenAI-compatible model
-  server (Ollama, vLLM, LM Studio, llama.cpp) and no key at all. See
-  [Providers &amp; models](/docs/getting-started/providers).
+- For the prebuilt binary or Homebrew: just `curl`.
+- For `cargo install` or building from source: **Rust 1.90 or later** (via [rustup](https://rustup.rs)) and `git`.
+- **An API key** for any one supported provider. Or, skip the key and use a
+  local OpenAI-compatible model server instead (Ollama, vLLM, LM Studio,
+  llama.cpp). See [Providers &amp; models](/docs/getting-started/providers).
 - Optional: `gh` on your `PATH`, for the GitHub-backed workflows.
 
 ## Install
 
 ### Prebuilt binary (`curl | sh`)
 
-Installs the latest tagged release for your platform, verifies its SHA-256, and falls
-back to `cargo install` on platforms without a prebuilt binary (unsupported targets, and
-musl-libc Linux even on supported architectures):
+This installs the newest release for your platform, checks its SHA-256, and
+falls back to `cargo install` when there's no prebuilt binary for your
+platform. That covers unsupported targets, and musl-based Linux even on a
+supported architecture:
 
 ```bash
 curl -fsSL https://stella.oxagen.sh/install.sh | sh
 stella --version
 ```
 
-The binary lands in `~/.local/bin` by default — if `stella` isn't found afterwards, the
-script says so and prints the `export` line to add. Two env vars tune it:
+By default, the binary lands in `~/.local/bin`. If `stella` isn't found
+afterward, the script tells you and prints the `export` line to add. Two
+environment variables control this:
 
 <CardGrid size="md">
   <OptionCard name="STELLA_INSTALL_DIR" defaultValue="$HOME/.local/bin">
-    Where the binary lands. On the `cargo install` fallback path, a value
-    ending in `/bin` is honored as the cargo root's `bin` directory, so the
-    same variable works either way.
+    Where the binary goes. On the `cargo install` fallback, a value ending
+    in `/bin` is treated as the cargo root's `bin` directory, so the same
+    variable works for both paths.
   </OptionCard>
   <OptionCard name="STELLA_VERSION" defaultValue="the latest release">
-    Pin a specific release tag. With or without the leading `v` — both forms
-    normalize to the same tag.
+    Pin a specific release tag. Works with or without a leading `v`; both
+    point to the same tag.
   </OptionCard>
 </CardGrid>
 
@@ -51,15 +53,15 @@ STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.9.0 \
   sh -c "$(curl -fsSL https://stella.oxagen.sh/install.sh)"
 ```
 
-`v0.9.0` there is only a shape — every merge to `main` cuts a patch release, so
-pick the tag you want from the
+`v0.9.0` here is just an example. Every merge to `main` cuts a new patch
+release, so pick the tag you actually want from the
 [releases page](https://github.com/macanderson/stella/releases). This page
-cannot keep up with a line that moves daily.
+can't keep up with a version that changes daily.
 
 ### Homebrew
 
-Installs the prebuilt binary from the tap — no Rust toolchain needed. The release workflow
-keeps the formula in sync on every tag:
+This installs the prebuilt binary from the tap. No Rust toolchain needed.
+The formula stays up to date automatically with every release tag:
 
 ```bash
 brew install macanderson/tap/stella
@@ -69,7 +71,7 @@ brew tap macanderson/tap && brew install stella
 
 ### From cargo
 
-Requires Rust 1.90+ and git:
+Requires Rust 1.90 or later, and git:
 
 ```bash
 cargo install --locked --git https://github.com/macanderson/stella stella-cli
@@ -86,16 +88,16 @@ cargo build --release
 ```
 
 <Callout type="info">
-  The `curl | sh` and Homebrew paths fetch binaries published by the release workflow,
-  which runs on every `v*` tag. They cover macOS and glibc Linux on `x86_64`/`arm64`;
-  anything else (musl Linux included) falls back to `cargo install`, which needs the
-  Rust toolchain.
+  The `curl | sh` script and Homebrew both fetch binaries built by the release
+  workflow, which runs on every `v*` tag. They cover macOS and glibc Linux on
+  `x86_64` and `arm64`. Anything else, including musl Linux, falls back to
+  `cargo install`, which needs the Rust toolchain.
 </Callout>
 
 ## Verify
 
-Three commands that work before you have configured anything at all — they
-resolve no provider and need no API key:
+These three commands work before you've set up anything. They don't need a
+provider or an API key:
 
 ```bash
 stella version                  # the build you just installed
@@ -103,18 +105,19 @@ stella models list --all        # every provider, its slugs, pricing, and key st
 stella doctor                   # the integrity of this workspace's local state
 ```
 
-`stella models` on its own scopes to providers whose credential resolves —
-which makes it the fastest way to answer "did my key land?". `--all` lifts that
-scope so you can read the whole catalog before configuring anything.
+On its own, `stella models` only shows providers with a working credential,
+so it's the fastest way to check "did my key work?" Add `--all` to see the
+whole catalog before you've set anything up.
 
-Once a key is in place, `stella config` reports what actually resolved — and it
-is the one verification command that does require a credential:
+Once a key is in place, `stella config` shows exactly what it resolved to.
+This is the one verification command that does need a credential:
 
 ```bash
 stella config
 ```
 
-Then run something. With one key exported, this is the whole install-to-first-change arc:
+Then try it. With one key exported, here's the whole path from install to
+your first change:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -124,5 +127,5 @@ stella --spend-limit 1 run "explain what this repo builds and how it is laid out
 ```
 
 Next: the [Quickstart](/docs/getting-started), or
-[repo initialization](/docs/getting-started/initialization) for what `stella init`
-leaves behind.
+[repo initialization](/docs/getting-started/initialization) to see what
+`stella init` creates.

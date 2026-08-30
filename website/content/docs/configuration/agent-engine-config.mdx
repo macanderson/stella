@@ -1,6 +1,6 @@
 ---
 title: Agent engine config
-description: Configure the session agent's model, gateway, prompt, reasoning effort, and sampling parameters via agent_engine_config — and assign models to the roles installed plugins declare.
+description: Configure the session agent's model, gateway, prompt, reasoning effort, and sampling parameters with agent_engine_config, and assign models to the roles installed plugins declare.
 ---
 
 The `agent_engine_config` object in [`settings.json`](/docs/configuration/settings)
@@ -8,29 +8,29 @@ configures the engine:
 
 <CardGrid size="md">
   <OptionCard name="default">
-    The one role the core loop has — `stella chat`, the Command Deck, a plain
-    `stella run`. `default_model` is its model, and the one model setting
-    stella ships.
+    The one role the core loop has: `stella chat`, the Command Deck, and a plain
+    `stella run`. `default_model` sets its model. This is the only model setting
+    stella ships with.
   </OptionCard>
   <OptionCard name="seats">
-    A model for a participant an **installed plugin** declared. Keyed
-    `<plugin-id>/<role>`, unset by default, so a plugin's process is
-    single-model until you say otherwise. See [Seats](#seats).
+    A model for a participant an **installed plugin** declares. Keyed as
+    `<plugin-id>/<role>`. Unset by default, so a plugin runs on one model until
+    you say otherwise. See [Seats](#seats).
   </OptionCard>
 </CardGrid>
 
-Every field is optional, and it merges across the same user → org-managed →
-project scope chain as the rest of `settings.json`, per field — a project can
-pin the model while your user scope keeps everything else.
+Every field is optional. It merges across the same user, org-managed, and
+project scope chain as the rest of `settings.json`, field by field. A project
+can pin the model while your user scope keeps everything else.
 
 <Callout type="info">
-An unrecognized key **loads normally and prints a line naming what to write
-instead** — nothing breaks, and nothing is silently ignored either. Set
+An unrecognized key loads normally and prints a line naming what to write
+instead — nothing breaks, and nothing is silently ignored either. Set
 `default_model` for the session's own model, and a [seat](#seats) for anything
 a plugin runs.
 </Callout>
 
-## The full schema
+## Full schema
 
 ```jsonc title="~/.stella/settings.json"
 {
@@ -89,10 +89,10 @@ a plugin runs.
 
 ## Seats
 
-A plugin describes a *process*, and that process may have several
-participants — a planner, a reviewer, a second opinion. It never asks for a
-model: it declares the roles it needs, and you decide which of them is worth a
-model of its own.
+A plugin describes a process. That process can have several participants: a
+planner, a reviewer, a second opinion. The plugin never asks for a model. It
+declares the roles it needs, and you decide which ones are worth a model of
+their own.
 
 ```json title=".stella/settings.json"
 {
@@ -112,71 +112,71 @@ Or in `stella.toml`, where it is a section of its own:
 "vera/verifier" = "anthropic/claude-fable-5"
 ```
 
-Three rules follow, each deliberate:
-
-- **A seat with no entry runs on the session's model.** Installing a plugin
-  with five participants costs exactly what a single-model session costs
-  until you write a line here. stella never picks a "sensible" second model
-  for you, because that is an opinion about a role it does not understand.
-- **The key is always `<plugin-id>/<role>`.** The plugin declares only the
-  bare role name; stella applies the prefix. So one plugin cannot capture the
-  assignment you made about another, and a `reviewer` you configured for one
-  plugin is not silently inherited by the next one that happens to declare a
-  role of that name.
-- **`allowed_models` is the ceiling here too.** A seat naming a model outside
-  a non-empty list is refused with a notice and falls back to the session's
-  model.
+- **A seat with no entry runs on the session's model.** If a plugin has five
+  participants, installing it costs the same as a single-model session, until
+  you add a line here. stella never picks a second model for you on its own —
+  that would be a guess about a role it doesn't understand.
+- The key is always `<plugin-id>/<role>`. The plugin declares only the plain
+  role name, and stella adds the prefix. This means one plugin can't take over
+  a setting you made for another. A `reviewer` role you configured for one
+  plugin is never inherited by a different plugin that also declares a
+  `reviewer` role.
+- `allowed_models` sets the ceiling here too. If a seat names a model outside
+  a non-empty list, stella refuses it, shows a notice, and falls back to the
+  session's model.
 
 Quote the key in TOML. `vera.verifier` is dotted-key syntax and would parse as
 a table `vera` containing `verifier`.
 
 ## Model precedence
 
-**The session's model** — first hit wins:
+**The session's model.** First hit wins:
 
-1. The `--model` CLI flag (or `STELLA_MODEL`) — suppresses the settings below
-   for this invocation
+1. The `--model` CLI flag (or `STELLA_MODEL`). This suppresses the settings
+   below for this invocation.
 2. `agents.default.model`, sent verbatim to `agents.default.provider` when
    that is set
 3. `default_model`
 4. Auto-detection / the provider's own default
 
-**A plugin's seat** — first hit wins:
+**A plugin's seat.** First hit wins:
 
 1. `seat_models["<plugin-id>/<role>"]`
-2. No entry — the seat runs on the session's model resolved above
+2. No entry: the seat runs on the session's model resolved above.
 
 <Callout type="info">
-  When `--model` suppresses a configured model, the run says so on stderr —
-  `engine config: model ... skipped — --model pinned ... for this invocation` —
-  so a dropped setting is never silent. Settings own the model whenever the
-  flag is absent.
+  When `--model` suppresses a configured model, the run prints a note on
+  stderr — `engine config: model ... skipped — --model pinned ... for this
+  invocation` — so a dropped setting is never silent. Settings control the
+  model whenever the flag is absent.
 </Callout>
 
-Every override here is **soft**. A configured model whose provider has no
-resolvable credential — or whose adapter fails to build — is skipped with a
-notice on stderr, and falls back exactly as it would with no config at all.
-The notice names what was skipped and what runs instead:
+Every override here is soft. If a configured model's provider has no
+credential, or its adapter fails to build, stella skips it with a notice on
+stderr. It then falls back to the session's model, exactly as it would with no
+config at all. The notice names what was skipped and what runs instead:
 
 ```text
   ! seat `vera/verifier`: no credential resolved for provider `openrouter` —
     this seat runs on the session's model.
 ```
 
-`stella config` prints the resolved provider, session-default model, credential
-source, base URL, and dialect — the inputs those chains start from — and
-`stella models list --all` shows which slugs each provider will accept:
+`stella config` prints the resolved provider, session-default model,
+credential source, base URL, and dialect. These are the inputs those chains
+start from. `stella models list --all` shows which slugs each provider will
+accept:
 
 ```bash
 stella config
 stella models list --all
 ```
 
-## One gateway per role (BYOK per role)
+## One gateway per role
 
-The agent's `provider` field routes its model slug through **that** provider
-verbatim — no prefix splitting. Seat assignments take a full `provider/slug`
-string. Together, that is how you mix billing relationships in one run:
+The agent's `provider` field sends its model slug straight to that provider,
+with no prefix splitting. Seat assignments take a full `provider/slug` string.
+Together, this lets you mix billing relationships — your own key for each
+provider — in one run:
 
 ```jsonc title="~/.stella/settings.json"
 {
@@ -197,14 +197,14 @@ export OPENROUTER_API_KEY=sk-or-...
 stella run --pipeline vera "add a per-provider breaker cooldown"
 ```
 
-Without a `provider` field, model strings use `--model` semantics:
+Without a `provider` field, model strings follow `--model` rules:
 `provider/slug` splits on the first `/` when the prefix names a known
-provider (so `openrouter/openai/gpt-5.5` routes `openai/gpt-5.5` through
-OpenRouter), and a bare slug resolves through the model catalog.
+provider. So `openrouter/openai/gpt-5.5` routes `openai/gpt-5.5` through
+OpenRouter. A bare slug resolves through the model catalog instead.
 
 ## Auto modes
 
-Set any of the three autos to `"on"` and stop thinking about it:
+Set any of these to `"on"` and stop thinking about it:
 
 <CardGrid size="md">
   <OptionCard name="auto_mode" defaultValue="off">
@@ -218,40 +218,37 @@ Set any of the three autos to `"on"` and stop thinking about it:
     Thinking mode chosen for you, overriding `agents.default.reasoning`.
   </OptionCard>
   <OptionCard name="minimal_prompt" defaultValue="off">
-    Run every session on the minimal base system prompt — a bare tool
-    advertisement in place of the built-in persona, so the prose the model is
-    steered by comes from what you configure: `agents.default.prompt` (which
-    appends after the minimal base instead of replacing it), workspace
-    memories, rules, and SessionStart hook context. `--minimal` (or
-    `STELLA_MINIMAL=1`) forces it on for one invocation; the flag can never
-    turn a configured mode off. In `stella.toml` this is `[agents]
-    minimal_prompt`, and the interactive session's SETTINGS → AGENTS pane
-    carries it as a GLOBAL toggle.
+    Run every session on the minimal base system prompt. This is a bare tool
+    list in place of the built-in persona, so the model is steered by what you
+    configure instead: `agents.default.prompt` (which adds to the minimal
+    base rather than replacing it), workspace memories, rules, and
+    SessionStart hook context. `--minimal` (or `STELLA_MINIMAL=1`) forces it
+    on for one run. The flag can never turn off a mode you configured. In
+    `stella.toml` this is `[agents] minimal_prompt`, and the interactive
+    session's SETTINGS → AGENTS pane shows it as a GLOBAL toggle.
   </OptionCard>
   <OptionCard name="headless_scope_bypass" defaultValue="off">
-    **Inert — setting this changes nothing.** Nothing reads the value, at any
-    setting.
+    **Setting this does nothing.** No code reads this value, at any setting.
 
-    The key still parses and merges rather than being rejected as unknown, and
-    that is deliberate: it is part of a registered benchmark posture whose
-    digest is published, so removing it would invalidate numbers that have
-    already been reported. Nothing here is waiting on you — if you set it,
-    delete it.
+    The key still loads and merges instead of being rejected as unknown. This
+    is on purpose: it's part of a published benchmark setup, and removing the
+    key would break scores that were already reported. If you have this set,
+    delete it — nothing is waiting on you to use it.
   </OptionCard>
   <OptionCard name="model_timeout_secs" defaultValue="816">
-    Seconds of provider **silence** that end a single generation — it bounds
-    the gap between stream fragments, not elapsed time, so a step that keeps
-    streaming is never cut by it. `0` removes the backstop entirely.
+    Seconds of silence from the provider that end a single generation. This
+    limits the gap between stream fragments, not the total time, so a step
+    that keeps streaming is never cut off. `0` removes this limit entirely.
 
-    Set it with `params.max_tokens`, not instead of it. The two are one
-    budget: a step allowed 128,000 output tokens against a timeout sized for
-    64,000 stops on the timeout, which looks like a model that could not
-    finish rather than a ceiling nobody scaled.
+    Set it alongside `params.max_tokens`, not instead of it. The two work as
+    one budget. If you allow 128,000 output tokens but size the timeout for
+    64,000, a step can hit the timeout first. That looks like a model that
+    couldn't finish, when really the timeout just wasn't scaled to match.
   </OptionCard>
 </CardGrid>
 
-When an auto is `"on"` it overrides the corresponding per-agent setting —
-that is its contract.
+When an auto is `"on"`, it overrides the matching per-agent setting. That's
+the rule.
 
 The smallest useful config is one line:
 
@@ -277,29 +274,29 @@ running on one:
 
 ## Output token ceilings
 
-**By default every model is asked for its own maximum.** stella reads that
-ceiling from the model catalog, which learns it from the provider's own
-`/models` endpoint, so you never have to configure anything to get a
-full-length answer. A cap set below the model's ceiling decides where work
-stops instead of the model doing so — and a step cut off mid-reasoning emits
-no tool call and does no work at all.
+**By default, every model is asked for its own maximum output.** stella reads
+that ceiling from the model catalog, which learns it from the provider's own
+`/models` endpoint. You never have to configure anything to get a full-length
+answer. A cap set below the model's ceiling decides where work stops instead
+of the model deciding, and a step cut off in the middle of reasoning sends no
+tool call and does no work at all.
 
-So the only thing worth configuring here is spending **less** than the model
-allows: bounding cost on a long unattended run, cutting latency, or matching a
-comparator that stops lower. You can bound cost, cut latency, or match a shorter comparator.
+So the only thing worth configuring here is asking for less than the model
+allows. You might want to bound cost on a long unattended run, cut latency, or
+match a comparator that stops lower.
 
-### `--max-output-tokens` — this run
+### `--max-output-tokens`
 
 ```bash
 stella run "audit the auth module" --max-output-tokens 32000
 ```
 
-Global flag, applies to every call, also readable as
-`STELLA_MAX_OUTPUT_TOKENS`. Use it when you want one invocation to behave
-differently, or when a configured value is the thing you are debugging — it
-outranks both settings surfaces below for exactly that reason.
+This applies for one run only. It's a global flag that applies to every call
+in that run, also settable as `STELLA_MAX_OUTPUT_TOKENS`. Use it when you want
+one run to behave differently, or when you're debugging a configured value —
+it outranks both settings below for exactly that reason.
 
-### `[models.output_caps]` — this workspace
+### `[models.output_caps]`
 
 ```toml
 [models.output_caps]
@@ -307,38 +304,39 @@ outranks both settings surfaces below for exactly that reason.
 "deepseek-chat" = 32000               # this model on any route
 ```
 
-Keys are `provider/slug` or a bare slug; the provider-qualified form wins when
-both match, so you can cap a model only on the gateway you pay per-token for.
-Entries merge per model across settings scopes, so a project pinning one model
-never drops your pins on others.
+This applies for the current workspace. Keys are `provider/slug` or a bare
+slug. The provider-qualified form wins when both match, so you can cap a
+model only on the gateway you pay per token for. Entries merge per model
+across settings scopes, so a project pinning one model never drops your pins
+on others.
 
-This is an **override, never a definition**. A model absent from the table
-simply gets its own maximum, so a model that ships tomorrow needs no entry —
-and deleting an entry restores a correct default rather than leaving a stale
-number behind.
+This only overrides the default; it never defines a new one. A model that's
+missing from the table just gets its own maximum, so a model that ships
+tomorrow needs no entry. Deleting an entry restores the correct default
+instead of leaving a stale number behind.
 
-### Precedence, and two rules
+### Precedence
 
 Highest wins:
 
 1. `--max-output-tokens` (this invocation)
 2. `[models.output_caps]` (per model)
 3. `agents.default.params.max_tokens` under `agent_engine_config`
-4. the model's own ceiling, from the catalog — **the default**
+4. the model's own ceiling, from the catalog (**the default**)
 
 <Callout type="warn">
 **A value above the model's real ceiling is clamped, not sent.** Asking a
-provider for more than the model can write is not a longer answer — it is a
-rejection on every request, which bills the round trip and then needs another
-call to retry. Clamping gives you what an over-large number was asking for
-anyway.
+provider for more output than the model can write doesn't get you a longer
+answer. It gets a rejection on every request, which still bills the round
+trip and then needs a retry. Clamping gives you what an oversized number was
+asking for anyway.
 
-**`0` is refused, not read as "unlimited".** Absence already means "the
-model's own maximum", so zero has no second meaning left to carry. (This
-differs from `model_timeout_secs`, where `0` *does* mean "no ceiling".)
+**`0` is refused, not read as "unlimited."** Leaving the field empty already
+means "the model's own maximum," so `0` has no second meaning left to carry.
+This is different from `model_timeout_secs`, where `0` does mean "no limit."
 </Callout>
 
-### Where the ceiling comes from
+### Where ceilings come from
 
 | provider | field read from its `/models` |
 | --- | --- |
@@ -347,34 +345,35 @@ differs from `model_timeout_secs`, where `0` *does* mean "no ceiling".)
 | Gemini | `outputTokenLimit` |
 | OpenAI-compatible | `max_output_tokens` or `max_completion_tokens` |
 
-A bare `max_tokens` on an OpenAI-compatible listing is deliberately **not**
-read: it means the output cap on some gateways and the whole context window on
-others, and reading it the wrong way round would seed a ceiling several times
-the model's real one.
+stella deliberately does not read a bare `max_tokens` field on an
+OpenAI-compatible listing. On some gateways it means the output cap; on
+others it means the whole context window. Reading it the wrong way would set
+a ceiling many times larger than the model's real one.
 
-Bedrock and Vertex publish no listing stella can read, so those rows carry a
-seeded value instead. `stella models refresh` (and the startup sync) replaces
-seeded numbers with the provider's own wherever one is published.
+Bedrock and Vertex don't publish a listing stella can read, so those rows
+carry a seeded value instead. `stella models refresh` (and the startup sync)
+replaces seeded numbers with the provider's own numbers wherever one is
+published.
 
 <Callout type="info">
-**One model is a documented estimate: `grok-4`.** No catalog source publishes a
-cap for that exact slug. Its generation siblings — `grok-4.3` and the
-`grok-4.20-*` variants — all report 30,000, so that is what ships. The later
-`grok-4.5` reports 500,000, but taking a different generation's number would
-risk a rejection on every request rather than merely leaving headroom unused.
-It is corrected automatically the first time xAI's listing publishes a real
-figure.
+**One model's number is an estimate: `grok-4`.** No catalog source publishes
+a cap for that exact slug. Its close relatives — `grok-4.3` and the
+`grok-4.20-*` variants — all report 30,000, so that's what ships. The newer
+`grok-4.5` reports 500,000, but using a different generation's number could
+cause a rejection on every request, instead of just leaving some headroom
+unused. This gets corrected automatically the first time xAI's listing
+publishes a real number.
 </Callout>
 
 ## Generation parameters
 
-Every entry under `params` follows **include-when-set** semantics: an absent
-field leaves the provider's own default untouched (the request body is
-byte-identical to having no config at all — which keeps prompt caching
-intact), and a set field goes on the wire.
+Every entry under `params` follows one rule: if you don't set a field, it's
+left out and the provider's own default applies. This keeps the request body
+identical to having no config at all, which keeps prompt caching intact. If
+you do set a field, it's sent on the wire.
 
-Each provider adapter forwards only the parameters its wire supports, and
-maps reasoning to the provider's native mechanism:
+Each provider adapter forwards only the parameters its wire format supports,
+and maps reasoning to that provider's own mechanism:
 
 <CardGrid size="md">
   <SpecCard
@@ -388,111 +387,114 @@ maps reasoning to the provider's native mechanism:
     title="OpenRouter"
     meta={[{ label: "Reasoning", value: "reasoning object (effort / enabled)" }]}
   >
-    The normalized reasoning object. Some upstreams OpenRouter fronts make
-    reasoning mandatory and answer `reasoning: {enabled: false}` with a hard
-    400 — stella resends once without the object rather than losing the call,
-    since "off" is an economy preference, not a correctness requirement.
+    The normalized reasoning object. Some upstream models behind OpenRouter
+    make reasoning mandatory and reject `reasoning: {enabled: false}` with a
+    hard 400 error. When that happens, stella resends the request once
+    without the object, instead of losing the call — turning reasoning "off"
+    is a cost preference, not a requirement for correct output.
   </SpecCard>
   <SpecCard
     title="xAI (Grok)"
     meta={[{ label: "Reasoning", value: "top-level reasoning_effort" }]}
   >
-    Sent only for Grok models that accept the parameter — the retired `grok-4`
-    400s on it, so it is gated by model, not just by provider. The `grok-4.3`
-    default accepts it.
+    Sent only for Grok models that accept this parameter. `grok-4` answers it
+    with a 400 error, so this is limited by model, not just by provider. The
+    `grok-4.3` default accepts it.
   </SpecCard>
   <SpecCard
     title="Anthropic"
     meta={[{ label: "Reasoning", value: "extended thinking, two dialects" }]}
   >
-    Current models (Claude 4.6+ and the 5-family) take
-    `thinking: {"type": "adaptive"}` plus `output_config.effort`, and **reject**
-    `budget_tokens` and the sampling parameters. Legacy models (≤ 4.5) keep
-    `{"type": "enabled", "budget_tokens": N}` with an effort-tiered budget, and
-    do accept sampling — though `temperature` is omitted whenever thinking is
-    on, because the Messages API rejects any value but 1 alongside it.
+    Models from Claude 4.6 onward, including the 5 family, take
+    `thinking: {"type": "adaptive"}` plus `output_config.effort`, and reject
+    `budget_tokens` and the sampling parameters. Models 4.5 and earlier use
+    `{"type": "enabled", "budget_tokens": N}` with a budget based on effort
+    tier, and do accept sampling — though `temperature` is left out whenever
+    thinking is on, because the Messages API rejects any value but 1 alongside
+    it.
   </SpecCard>
   <SpecCard
     title="OpenAI"
     meta={[{ label: "Reasoning", value: "reasoning.effort" }]}
   >
     Plus `text.verbosity` and `service_tier` from `params`. `temperature` and
-    `top_p` are omitted for reasoning models — an API rule, not a stella
-    choice.
+    `top_p` are left out for reasoning models — an API rule, not a choice
+    stella makes.
   </SpecCard>
   <SpecCard
     title="Gemini / Vertex"
     meta={[{ label: "Reasoning", value: "thinkingConfig.thinkingLevel" }]}
   >
-    Gemini 3 cannot fully disable thinking, so `"off"` maps to the lowest level
-    the model documents — the closest the model will let it get to "suppress thinking".
-    `verbosity`, `service_tier`, and `repetition_penalty` are dropped.
+    Gemini 3 can't fully turn off thinking, so `"off"` maps to the lowest
+    level the model documents — as close to "no thinking" as the model
+    allows. `verbosity`, `service_tier`, and `repetition_penalty` are dropped.
   </SpecCard>
   <SpecCard
     title="DeepSeek, local, and settings-defined providers"
     meta={[{ label: "Reasoning", value: "not sent" }]}
   >
-    There is no portable Chat Completions reasoning field, and an unknown key
-    risks a hard 400 on a server you never opted into experimenting with — so
-    these identities send neither shape. Sampling parameters still go through.
+    There's no reasoning field that works across every Chat Completions
+    server, and an unknown key risks a hard 400 error on a server you didn't
+    choose to experiment with — so these providers send neither shape.
+    Sampling parameters still go through.
   </SpecCard>
 </CardGrid>
 
-Parameters a provider cannot express are silently dropped — an unsupported
-knob never fails a request.
+If a provider can't accept a parameter, stella drops it silently. An
+unsupported setting never fails a request.
 
 ## Custom prompts
 
-`agents.default.prompt` **replaces the built-in base instructions** for the
-session agent. Workspace memories and rules still append to it — they are
+`agents.default.prompt` replaces the built-in base instructions for the
+session agent. Workspace memories and rules still get added on top — they're
 workspace context, not part of the base persona.
 
 A plugin's participants are the plugin's own: it ships their instructions, and
 `agent_engine_config` decides only which model each one runs on.
 
-## The config panel in the Command Deck
+## Config panel
 
-Everything above is editable interactively. The editor is the full-width body
-of the **SETTINGS** tab — the home of all config (the former `/engine` popup,
-then the AGENT ENGINE tab's right column, now a tab of its own; open it with
-`/settings` or by tabbing to it):
+Everything above is editable in the Command Deck. The editor is the
+full-width body of the **SETTINGS** tab, the home for all config. Open it with
+`/settings` or by tabbing to it:
 
-- **`e`** on the SETTINGS tab focuses the panel — a GLOBAL tab (auto modes,
-  `allowed_models`) and the agent's own, in the order `GLOBAL default`.
-  Navigate with ↑/↓, press ⏎ to edit a row (enum rows cycle; numeric and text
-  rows take inline input), `x` clears a field back to "provider default", Esc
-  hands the keyboard back to the tab.
-- **⏎ on the model row** opens a type-to-filter model picker, listing your
-  `allowed_models` (or the full catalog when the list is empty). The SETTINGS
-  tab is the one place models are configured — there are no per-agent slash
-  commands.
-- **`s`** saves to your user settings (`~/.stella/settings.json`);
-  **`S`** saves to the project (`<workspace>/.stella/settings.json`). Saves
-  preserve every other key in the file, and apply to runs started from then
-  on.
+- Press **`e`** on the SETTINGS tab to focus the panel. It has a GLOBAL tab
+  (auto modes, `allowed_models`) and the agent's own tab, in the order
+  `GLOBAL default`. Navigate with ↑/↓. Press ⏎ to edit a row: enum rows cycle,
+  and numeric or text rows take inline input. Press `x` to clear a field back
+  to "provider default." Press Esc to hand the keyboard back to the tab.
+- Press ⏎ on the model row to open a type-to-filter model picker. It lists
+  your `allowed_models`, or the full catalog when that list is empty. The
+  SETTINGS tab is the one place you configure models — there are no
+  per-agent slash commands.
+- Press `s` to save to your user settings (`~/.stella/settings.json`). Press
+  `S` to save to the project (`<workspace>/.stella/settings.json`). Saves
+  keep every other key in the file untouched, and apply to runs started from
+  then on.
 
 ## Degradation is always soft
 
-Configuration can never turn a runnable session into an error. A configured
-model whose provider has no resolvable credential — or whose adapter fails to
-build — is skipped with a visible notice, and rides the session's model
-exactly as it would with no config at all.
+Configuration can never turn a runnable session into an error. If a
+configured model's provider has no credential, or its adapter fails to build,
+stella skips it with a visible notice. It then falls back to the session's
+model, exactly as it would with no config at all.
 
-The router that resolves each seat carries the same posture at run time:
+The router that resolves each seat follows the same rule while a run is in
+progress:
 
-- **Per-provider circuit breakers.** Three consecutive transport failures open
-  a provider's breaker; routing skips it and reports the fallback visibly —
-  never a silent mid-session switch. After a cooldown, one trial call decides
-  whether the breaker closes. See
-  [Troubleshooting](/docs/guides/troubleshooting) for what an open breaker
-  looks like.
+- **Per-provider circuit breakers.** Three transport failures in a row open a
+  provider's breaker. Routing then skips that provider and reports the
+  fallback visibly — it never switches silently in the middle of a session.
+  After a cooldown, one trial call decides whether the breaker closes again.
+  See [Troubleshooting](/docs/guides/troubleshooting) for what an open
+  breaker looks like.
 - **Soft degradation everywhere.** A configured seat model whose provider has
   no credential falls back to the session's model with a notice.
 
 <Callout type="info">
-  `agent_engine_config` carries no credential routing of its own — an
-  agent's `provider` references provider ids whose `base_url` and
-  `api_key_env` remain protected by the project-scope
+  `agent_engine_config` carries no credential routing of its own. An agent's
+  `provider` field references provider ids, and their `base_url` and
+  `api_key_env` stay protected by the project-scope
   [trust boundary](/docs/configuration/settings). A cloned repo can suggest
-  models, but it cannot redirect your keys.
+  models, but it can't redirect your keys.
 </Callout>

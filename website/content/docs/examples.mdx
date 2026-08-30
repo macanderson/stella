@@ -1,6 +1,6 @@
 ---
 title: Examples & recipes
-description: Complete, copy-pasteable settings files — pick the row that matches your keys and budget, paste the config, verify with stella config.
+description: Copy a settings file that matches your keys and budget, paste it in, and verify with stella config.
 ---
 
 Pick the profile that matches the keys you hold, paste its file whole, and verify with
@@ -8,8 +8,8 @@ Pick the profile that matches the keys you hold, paste its file whole, and verif
 fragment.
 
 <Callout type="info">
-This page answers *how do I set stella up*. For *how do I get this done* — a red CI
-run, an unfamiliar repository, a budget you have to hold — see the
+This page answers *how do I set stella up*. For *how do I get this done* (fixing a red
+CI run, working in an unfamiliar repo, holding to a budget), see the
 **[Guides](/docs/guides)**.
 </Callout>
 
@@ -25,23 +25,22 @@ run, an unfamiliar repository, a budget you have to hold — see the
 | [Local / air-gapped](#local-and-air-gapped) | 0 | your server | your server | your server | $0 |
 | [Enterprise cloud](#enterprise-cloud-vertex-and-bedrock) | cloud creds | Vertex or Bedrock | same | same | contract rates |
 
-Estimates are for a medium task — a focused multi-file change with one revision — at
-catalog list prices with prompt caching working normally. They are illustrative, derived
-from list price and a typical token mix, **not** measured run data: your real numbers are
-in [`stella stats`](/docs/commands/stats) and the
+These estimates are for a medium task: a focused, multi-file change with one revision,
+priced at catalog list prices with prompt caching working normally. They're rough
+guides based on list price and a typical mix of tokens, not measured data from real
+runs. For your actual numbers, check [`stella stats`](/docs/commands/stats) and the
 [Observatory](/docs/telemetry/dashboard).
 
-The two rows using `claude-fable-5` are the expensive ones because Fable lists at
-$10/$50 per Mtok. If those ranges are more than the task needs, `claude-opus-5` (half
-Fable's price) and `claude-sonnet-5` (roughly a third) are drop-in swaps on the same 1M
-window — see [the catalog](/docs/api-providers/models#the-catalog).
+The two rows using `claude-fable-5` cost more because Fable lists at $10/$50 per Mtok.
+If a task doesn't need that much, `claude-opus-5` (half Fable's price) and
+`claude-sonnet-5` (about a third) are drop-in swaps on the same 1M window. See
+[the catalog](/docs/api-providers/models#the-catalog).
 
 ## Where the money goes
 
-A plain `stella run` spends almost everything in the worker's own step loop. A
-run wrapped by a [verification plugin](/docs/plugins) adds that plugin's own
-roles around it — the shape below is typical, though what a wrapper actually
-runs is its manifest's business:
+A plain `stella run` spends almost everything in the worker's own step loop. Wrapping a
+run with a [verification plugin](/docs/plugins) adds extra roles around it. The table
+below shows a typical shape, though the exact roles depend on the plugin's own setup.
 
 | Role | Model calls | Rough size | Cost share |
 | --- | --- | --- | --- |
@@ -53,23 +52,23 @@ runs is its manifest's business:
 | Verifier | 0–1 per verification | ~3–10k in, ~0.5–1k out | cents |
 | Revise | 0–2 extra worker rounds | like the worker, smaller | proportional |
 
-Three consequences:
+## What this means
 
 1. **The worker's output price dominates.** Moving the worker from $15/Mtok output to
    $2.20 (Fable 5 → GLM-5.2) changes the bill roughly 5–7×. Moving the verifier barely
    changes it at all.
-2. **A flagship verifier is cheap insurance.** One verifier call is a few thousand input tokens
-   and under a thousand out — 1–2¢ on `gpt-5.5`, 2–3¢ on `claude-fable-5`. Make it a
-   *different family* than the worker. Arm the plugin's oracle with
-   `--test-command` and many runs skip it.
-3. **Prompt caching does the heavy lifting.** stella keeps the system prefix byte-stable
-   so most worker-step input bills at the cached rate, 4–10× cheaper. See the
-   [context engine](/docs/context-engine).
+2. **A flagship verifier is cheap insurance.** One verifier call uses a few thousand
+   input tokens and under a thousand output tokens: 1–2¢ on `gpt-5.5`, 2–3¢ on
+   `claude-fable-5`. Use a *different model family* than the worker. Set up the plugin's
+   oracle with `--test-command`, and many runs skip the verifier call entirely.
+3. **Prompt caching does most of the work.** stella keeps the system prefix identical
+   between calls, so most of the worker's input tokens bill at the cached rate, which is
+   4–10× cheaper. See the [context engine](/docs/context-engine).
 
-Multipliers: [goal mode](/docs/agent-modes#outcome-driven-goal-mode) repeats rounds until
-the verifier signs off, up to 8. [Fleets](/docs/agent-fleets) run one worker per task, and
-`--spend-limit` is enforced fleet-wide across the concurrency width. Cap either with
-`--spend-limit <usd>`, a hard limit enforced between steps.
+Two settings multiply this cost. [Goal mode](/docs/agent-modes#outcome-driven-goal-mode)
+repeats rounds until the verifier signs off, up to 8 times. [Fleets](/docs/agent-fleets)
+run one worker per task, and `--spend-limit` applies across the whole fleet at once. Use
+`--spend-limit <usd>` to set a hard limit that's checked between every step.
 
 ## Single key
 
@@ -82,11 +81,11 @@ stella config                            # confirm provider, model, redacted key
 stella run "fix the flaky retry test"
 ```
 
-That is already a working setup — auto-detection does the rest, every seat rides
-the same model, and the deterministic half of the
-[verification ladder](/docs/plugins) still gates the result.
+This is already a working setup. Auto-detection handles the rest, every role uses the
+same model, and the deterministic half of the [verification ladder](/docs/plugins) still
+checks the result.
 
-Two habits make one-key runs materially better:
+Two habits make single-key runs noticeably better:
 
 ```bash
 # Arm an installed plugin's flip oracle — deterministic evidence, verifier often skipped
@@ -97,7 +96,8 @@ stella run --pipeline my-verifier --test-command "cargo test -p api" \
 stella --spend-limit 2.00 goal "the linter passes and the snapshot tests are green"
 ```
 
-One key is one model, so the whole config is the model and how hard it thinks:
+With one key, you have one model, so the whole config is just picking the model and how
+hard it should think:
 
 ```json title="~/.stella/settings.json"
 {
@@ -116,9 +116,9 @@ One key is one model, so the whole config is the model and how hard it thinks:
 }
 ```
 
-`reasoning_auto: "on"` chooses thinking for you, so `reasoning` is left out on purpose —
-the auto would override it. `effort_auto` stays off, which is what lets the `effort` value
-above apply.
+`reasoning_auto: "on"` picks thinking mode for you, so `reasoning` is left out on
+purpose (the auto setting would override it anyway). `effort_auto` is off, which is what
+allows the `effort` value above to take effect.
 
 To use another provider, swap the model string and `allowed_models`:
 
@@ -129,24 +129,25 @@ To use another provider, swap the model string and `allowed_models`:
 | Z.ai | `zai/glm-5.2` | 200k | 0.60 / 2.20 | **no — dropped on the wire** |
 | DeepSeek | `deepseek/deepseek-chat` | 128k | 0.27 / 1.10 | **no — dropped on the wire** |
 
-Where effort is dropped, shape the run with `prompt` and `params.max_tokens` instead.
-Only OpenAI puts `service_tier` on the wire, so
-`"params": { "service_tier": "priority" }` is worth setting there and inert everywhere
-else.
+Where effort isn't supported, shape the run with `prompt` and `params.max_tokens`
+instead. Only OpenAI actually uses `service_tier`, so
+`"params": { "service_tier": "priority" }` only does something there. Everywhere else,
+it's ignored.
 
 <Callout type="warn">
-  One model reviewing its own work shares its own blind spots — it is real review, not
-  independent review. Compensate deterministically: bind a verification plugin and arm
-  its oracle with `--test-command` wherever a test can express "done" — the flag is
-  refused on the raw loop, which has no oracle. A genuinely independent second opinion comes from an installed
-  verification plugin with a [seat](/docs/configuration/agent-engine-config#seats) of its
-  own, on a model from another family.
+  A model reviewing its own work shares its own blind spots. That's real review, but it
+  isn't independent review. Add a deterministic check instead: connect a verification
+  plugin and set its oracle with `--test-command` wherever a test can define "done" (the
+  raw loop has no oracle, so this flag isn't available there). A real independent second
+  opinion comes from an installed verification plugin with its own
+  [seat](/docs/configuration/agent-engine-config#seats), running a model from a different
+  family.
 </Callout>
 
 ## Dirt cheap
 
-Point the session at the cheapest capable model, turn thinking off, cap output, and put a
-hard `--spend-limit` under it. Good for lint sweeps, docstrings, and mechanical
+Point the session at the cheapest capable model, turn thinking off, cap the output, and
+set a hard `--spend-limit`. Good for lint cleanup, docstrings, and mechanical
 migrations.
 
 ```json title="~/.stella/settings.json"
@@ -177,14 +178,14 @@ stella --spend-limit 0.25 run "add docstrings to every public function in src/ap
 stella stats --format text
 ```
 
-DeepSeek drops `effort` on the wire, so the `effort` line above records intent only —
-`reasoning: "off"` and `params.max_tokens` are what actually do the work.
+DeepSeek ignores `effort`, so that line above only records intent. `reasoning: "off"`
+and `params.max_tokens` are what actually control behavior.
 
 <Callout type="warn">
-  Cheap models revise more and resolve less on hard tasks, and a run that fails three
-  times isn't cheap. Watch **$/resolved** in the
-  [Observatory](/docs/telemetry/dashboard); when a chore class keeps failing here, move
-  that class to [balanced](#balanced).
+  Cheap models revise more and succeed less on hard tasks, and a run that fails three
+  times isn't actually cheap. Watch **$/resolved** in the
+  [Observatory](/docs/telemetry/dashboard). When one type of task keeps failing here,
+  move it to [balanced](#balanced).
 </Callout>
 
 ## Balanced
@@ -218,13 +219,13 @@ stella run --pipeline my-verifier \
   --test-command "pnpm test orders"
 ```
 
-The autos choose effort and thinking for you and *override* any `effort`/`reasoning` you
-set, which is why this profile carries no `agents` block at all. Roughly 5–7× cheaper than
-[maximum quality](#maximum-quality).
+The auto settings choose effort and thinking for you, and *override* any `effort` or
+`reasoning` value you set — that's why this profile has no `agents` block at all. It
+costs roughly 5–7× less than [maximum quality](#maximum-quality).
 
-Swap to `gemini/gemini-3-pro` when tasks need the 1M window; at $1.25/$10.00 it is exactly
-`gpt-5.5`'s list price. For one hard task, `--model` outranks the settings for that
-invocation and leaves the autos in place:
+Switch to `gemini/gemini-3-pro` when a task needs the 1M window. At $1.25/$10.00, it's
+priced exactly like `gpt-5.5`. For one hard task, `--model` overrides the settings just
+for that run and leaves the auto settings in place:
 
 ```bash
 stella --model anthropic/claude-fable-5 run "the hard one"
@@ -232,9 +233,9 @@ stella --model anthropic/claude-fable-5 run "the hard one"
 
 ## Maximum quality
 
-The strongest model, effort and thinking high, and — where you have a verification
-plugin installed — a second opinion from a *different family* on a seat of its own. For
-gnarly multi-file changes and unfamiliar codebases.
+The strongest model, with effort and thinking set high, plus a second opinion from a
+*different model family* if you have a verification plugin installed with its own seat.
+Good for tricky multi-file changes and unfamiliar codebases.
 
 ```json title="~/.stella/settings.json"
 {
@@ -275,18 +276,19 @@ stella --spend-limit 8.00 run --pipeline vera \
   --test-command "cargo test -p auth"
 ```
 
-The seat is GPT-5.5 rather than another Claude because cross-family judging is the point —
-a reviewer that shares the author's blind spots passes the same mistakes twice.
-`service_tier: "priority"` is only worth setting here: OpenAI's is the one dialect that
-puts it on the wire. Autos are off so the values above stand.
+The seat uses GPT-5.5 instead of another Claude model because judging across model
+families is the whole point. A reviewer that shares the author's blind spots will miss
+the same mistakes twice. `service_tier: "priority"` only matters here, since OpenAI is
+the only provider that actually uses it. The auto settings are off, so the values above
+take effect exactly as written.
 
-The seat line is the only thing that buys a second model. Drop it and the plugin's
-verifier runs on the session's model — the same process, one bill.
+The seat line is what buys you a second model. Remove it, and the plugin's verifier runs
+on the session's own model instead, in the same process on one bill.
 
 <Callout type="info">
-  If Fable 5 resolves in one attempt what cheaper models need three for, this profile can
-  be the *cheap* one per outcome. Check **$/resolved** after a week before concluding
-  otherwise.
+  If Fable 5 solves in one try what a cheaper model needs three attempts for, this
+  profile can end up being the *cheapest* one per finished task. Check **$/resolved**
+  after a week before deciding either way.
 </Callout>
 
 ## One gateway key (OpenRouter)
@@ -313,10 +315,11 @@ export OPENROUTER_API_KEY="sk-or-..."
 stella run --pipeline vera "add cursor pagination to /orders" --test-command "pnpm test orders"
 ```
 
-Family is read from the routed slug's vendor prefix, so `openrouter/openai/gpt-5.5` counts
-as OpenAI and the seat is genuinely cross-family even though both calls bill to one key.
-The [OpenRouter section](/docs/api-providers#openrouter) covers the first-slash split and
-the `openrouter/openrouter/auto` doubling.
+Model family is read from the prefix after `openrouter/`, so
+`openrouter/openai/gpt-5.5` counts as OpenAI. This makes the seat genuinely
+cross-family, even though both calls bill to the same key. The
+[OpenRouter section](/docs/api-providers#openrouter) explains how the prefix works and
+the `openrouter/openrouter/auto` option.
 
 ## Local and air-gapped
 
@@ -330,8 +333,8 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 chat
 stella --model local/qwen2.5-coder --base-url http://localhost:8000/v1 run "…"
 ```
 
-For a daily setup, define the endpoint once as a config-defined provider in **user
-scope** and it behaves like a built-in:
+For everyday use, define the endpoint once as a custom provider in **user scope**, and
+it works like a built-in provider:
 
 ```json title="~/.stella/settings.json"
 {
@@ -351,14 +354,14 @@ scope** and it behaves like a built-in:
 }
 ```
 
-`effort` is dropped on local endpoints, so shape the run with `prompt` and
-`params.max_tokens` instead. The seat line splits a verification plugin's reviewer onto a
-second local model; drop it and it shares the session's. The
-[local-server section](/docs/api-providers#local-servers) has the dialect and credential
-rules.
+Local endpoints ignore `effort`, so shape the run with `prompt` and
+`params.max_tokens` instead. The seat line puts a verification plugin's reviewer on a
+second local model. Remove it, and the reviewer shares the session's model instead. The
+[local-server section](/docs/api-providers#local-servers) covers the exact format and
+credential rules.
 
-For a strict air gap, turn off the one remaining automatic outbound call — the
-model-catalog refresh from `models.dev`, at most once per 24h:
+For a strict air gap, turn off the one remaining automatic network call: the
+model-catalog refresh from `models.dev`, which happens at most once every 24 hours.
 
 ```bash
 export STELLA_CATALOG_AUTO_REFRESH=0
@@ -367,30 +370,29 @@ stella config    # every resolved value, computed from local files alone
 stella doctor    # checks the local session store's integrity; reads local state only
 ```
 
-Community/default telemetry stays in `.stella/private/store.db`; the
-[Observatory](/docs/telemetry/dashboard) binds `127.0.0.1`; memories and the code graph
-are files in your workspace; and `stella init` works offline with a heuristic fallback.
-To keep it that way, leave both telemetry-egress paths unconfigured — stella has
-[exactly two](/docs/telemetry): leave
-[Oxagen Enterprise telemetry](/docs/telemetry#oxagen-enterprise-managed-export)
-unenrolled, and write no `drain` block into `~/.stella/cloud.json` (without one,
-`stella cloud sync` performs no network I/O). Then configure only loopback model
-endpoints.
+Community telemetry stays in `.stella/private/store.db`. The
+[Observatory](/docs/telemetry/dashboard) only listens on `127.0.0.1`. Memories and the
+code graph are files in your workspace. `stella init` works offline with a fallback. To
+keep it fully offline, leave both telemetry paths turned off: don't enroll in
+[Oxagen Enterprise telemetry](/docs/telemetry#oxagen-enterprise-managed-export), and
+don't add a `drain` block to `~/.stella/cloud.json` (without one, `stella cloud sync`
+makes no network calls at all). Then point every model endpoint at a local address.
 
 <Callout type="info">
-  Local models have no catalog prices, so `stella stats` dollar columns read zero and
-  `--spend-limit` has nothing to meter against. Bound runs with a verification plugin's
-  `--test-command` oracle and goal-mode round caps instead.
+  Local models have no listed prices, so `stella stats` shows zero in the dollar
+  columns, and `--spend-limit` has nothing to measure against. Use a verification
+  plugin's `--test-command` oracle and goal-mode round limits to bound runs instead.
 </Callout>
 
 ## Enterprise cloud (Vertex and Bedrock)
 
-When models must flow through your existing cloud agreement. Both providers sit **last**
-in auto-detection, so pin them explicitly. Setup and credential rules are in
-[API providers](/docs/api-providers#google-vertex-ai); this is the org-wide half.
+Use this when models need to run through your existing cloud agreement. Both providers
+come **last** in auto-detection, so you need to set them explicitly. Setup and
+credential rules live in [API providers](/docs/api-providers#google-vertex-ai) — this
+page covers the org-wide setup.
 
-The **org-managed scope** is the enterprise deployment surface: a `settings.json` outside
-any repo, shipped by MDM, that every stella on the machine inherits.
+The **org-managed scope** is where enterprise settings live: a `settings.json` outside
+any repo, delivered by MDM, that every stella install on the machine picks up.
 
 ```json title="/Library/Application Support/stella/settings.json (macOS) · /etc/stella/settings.json (Linux)"
 {
@@ -430,9 +432,10 @@ any repo, shipped by MDM, that every stella on the machine inherits.
 
 ## Team-shared settings
 
-A team setup divides work across the three
-[settings scopes](/docs/configuration/settings#the-scope-hierarchy): the repo carries what
-is true for everyone, each user carries keys and taste, the org carries policy.
+A team setup splits configuration across three
+[settings scopes](/docs/configuration/settings#the-scope-hierarchy). The repo holds
+what's true for everyone. Each user holds their own keys and preferences. The org holds
+policy.
 
 Commit `domains.toml`, `memories/`, `rules/`, `skills/`, `commands/`, `tools/`,
 `mcp.toml`, and `settings.json` (as long as it holds no inline `api_key`). Ignore the
@@ -463,22 +466,25 @@ local state:
 }
 ```
 
-`api_key_env` points every teammate at one variable name while each supplies their own
-value, so rotation is a vault change rather than a settings edit.
+`api_key_env` points every teammate at one variable name, while each person supplies
+their own value. That way, rotating a key is a change in your vault, not a settings
+edit.
 
 <Callout type="warn">
-  A fresh clone's `hooks`, `providers.*.base_url`/`api_key`/`api_key_env`,
-  `mcp.registry_url`, `context_providers`, per-agent `prompt`s, and the whole of
-  `.stella/mcp.toml` are held back until the user opts in — otherwise any repo you clone
-  could run commands on your machine or route your keys through its server.
+  When you clone a repo for the first time, stella holds back some settings until you
+  opt in: `hooks`, `providers.*.base_url`, `api_key`, `api_key_env`, `mcp.registry_url`,
+  `context_providers`, per-agent `prompt`s, and everything in `.stella/mcp.toml`.
+  Without this, any repo you clone could run commands on your machine or send your keys
+  through its own server.
 
   ```bash
   export STELLA_TRUST_PROJECT=1   # scope it per-repo with direnv or a shell guard
   ```
 
-  A stderr notice names anything skipped. `STELLA_PROJECT_HOOKS=1` is the narrower legacy
-  form: it trusts hooks, MCP, and context providers but leaves credential routing gated.
-  See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+  stella prints a notice on stderr naming anything it skipped.
+  `STELLA_PROJECT_HOOKS=1` is a narrower option: it trusts hooks, MCP, and context
+  providers, but still blocks credential routes. See
+  [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
 </Callout>
 
 Merge semantics you will rely on:
@@ -490,9 +496,9 @@ Merge semantics you will rely on:
 | `tools`, `mcp` | Last scope wins per key. Untrusted, a repo may narrow the tool surface, never widen it |
 | `allowed_models` | Replaces wholesale — whichever scope sets it owns the entire list |
 
-Scope precedence for everything that merges is **user → org-managed → project**, later
-winning. The exception runs the other way: an org-managed `tools` denial is a ceiling
-applied last.
+For settings that merge, the order is **user → org-managed → project**, with later
+scopes winning. The one exception runs backward: an org-managed `tools` denial always
+applies last, as a ceiling nothing can raise.
 
 ## Verify any of these
 
@@ -502,5 +508,5 @@ stella config    # the resolved provider, model, and a redacted key preview
 stella stats     # after a run: cost and resolve rate per provider and model
 ```
 
-Let the observed **$/resolved** number, not the sticker price, pick your lineup — see the
+Let the actual **$/resolved** number pick your lineup, not the sticker price. See the
 [model guide](/docs/api-providers/models).

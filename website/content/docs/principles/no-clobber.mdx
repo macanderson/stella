@@ -1,22 +1,23 @@
 ---
-title: No agent silently overwrites another's work
-description: stella refuses a write that would land on top of a change it never saw — without a lock, a daemon, or any knowledge that the other party exists. How the guarantee works, what it does not claim, and which way it fails after a crash.
+title: No silent overwrites
+description: stella refuses to write over a change it never saw, with no lock, no background service, and no need to know who else is working on the file. How this works, what it doesn't promise, and what happens after a crash.
 ---
 
-Point two agents at one repository and the failure is not a corrupted file.
-It is a *quiet* one. Agent A reads `handler.rs`, spends four minutes forming a
-plan against what it read, and writes the result. In between, agent B — or a
-person in an editor — changed the same file. A's write succeeds. Nothing
-errors. B's work is gone, and the only record that it existed is a diff
-nobody is going to read.
+Point two agents at one project, and the failure you get is not a corrupted
+file. It's a *quiet* one. Agent A reads `handler.rs`, spends a few minutes
+planning a change based on what it read, then writes the result. In
+between, agent B, or a person in an editor, changes the same file. A's
+write goes through. Nothing errors. B's work is gone, and the only trace it
+ever existed is a diff nobody will read.
 
 stella refuses that write.
 
 ## The guarantee
 
-**A mutation is refused when the file changed since this session last looked
-at it.** Not deferred, not merged, not warned about afterwards — refused
-before anything is written, with a message naming the file and the fix:
+**stella refuses a write when the file changed since this session last read
+it.** It doesn't defer the write, merge it, or warn you after the fact.
+It's blocked before anything is written, with a message that names the
+file and tells you what to do:
 
 ```
 refusing to write: src/handler.rs changed since you last read it. Another
@@ -28,81 +29,78 @@ Re-read the file and redo the change against what is there now. Your edit
 is not lost — nothing was written.
 ```
 
-That is returned as a tool error, not a turn abort, and the distinction is
-deliberate. The condition is recoverable and the model can act on it: re-read
-the file, redo the edit. One cheap step, where aborting would throw away a
-whole turn.
+This comes back as a tool error, not as a failed turn, and that difference
+matters. The model can act on it: re-read the file, then redo the edit.
+That's one cheap extra step, instead of losing the whole turn.
 
 ## Why not a lock
 
 A lock is the obvious answer and it is strictly weaker.
 
-Locks serialize *writers*. They do nothing about *staleness*. Agent B waits,
-takes the lock, and then overwrites the file A just changed — using a plan
-that A's content no longer justifies. B did everything right and still
-destroyed the work. Serializing the writes never addressed the problem,
-because the problem was never simultaneity; it was acting on a belief that
-had expired.
+A lock only serializes *writers*. It does nothing about *stale
+information*. Agent B waits, gets the lock, and then overwrites the file A
+just changed, using a plan based on content that's no longer there. B did
+everything right and still destroyed the work. Serializing the writes never
+fixes this, because the real problem was never two writes happening at
+once. It was acting on a belief that had already gone stale.
 
-Waiting is also the wrong cost model for an agent. Being told "that moved,
-read it again" is a cheap retry. Blocking burns a turn.
+Waiting is also the wrong tradeoff for an agent. Being told "that changed,
+read it again" is a cheap retry. Blocking and waiting burns a whole turn.
 
-## How it works: no shared state at all
+## How it works
 
-Each session keeps one map: **the path it touched, and the digest of what it
-saw there.** Before any update or delete, the bytes on disk are re-hashed and
-compared with what this session remembers.
+Each session keeps one simple record: **which paths it touched, and a
+fingerprint of what it saw there.** Before any update or delete, stella
+re-checks the bytes on disk and compares them against what this session
+remembers.
 
-There is no registry, no daemon, no lease, and no channel between agents.
-That is not a simplification — it is the point. *Agent B's write is what makes
-agent A's memory stale*, so A detects it locally, with no knowledge that B
-exists. Two processes, two containers, a CI job, and a human typing in Vim are
-all the same case, and none of them has to be running stella.
+There's no registry, no background service, no lease, and no channel
+between agents. That's not a shortcut. It's the whole point. *Agent B's
+write is what makes agent A's memory stale*, so A detects that on its own,
+with no idea that B even exists. Two separate processes, two containers, a
+CI job, and a person typing in Vim are all the same case to stella, and
+none of them even needs to be running stella.
 
-Reads count. A read is how an agent acquires the belief a later write acts on,
-so it is recorded exactly as a write is. A delete drops the entry — after a
-delete there is nothing left to clobber, and the next agent to create the file
-is starting fresh rather than overwriting.
+Reads count too. A read is how an agent forms the belief that a later
+write acts on, so it's recorded the same way a write is. A delete removes
+the record entirely. Once a file is deleted, there's nothing left to
+overwrite, so the next agent to create it is starting fresh, not
+overwriting anything.
 
 ## What it does not claim
 
-The guard's claim is precise: *you are about to overwrite a change you never
-saw*. It can only make that claim about a file it watched this session look
-at. So:
+The guard makes one precise claim: *you're about to overwrite a change you
+never saw*. It can only make that claim about a file this session actually
+looked at. That means:
 
-- **A path this session never touched is not flagged.** Blind writes to
-  never-read files are a separate policy question, left alone here. The result
-  is a guard with no false positives — every refusal names a real conflict.
-- **Creates are not checked by the guard.** The filesystem itself already
-  answers "does this exist".
-- **An unreadable file is not a conflict.** The tool's own error path reports
-  that far better than a staleness message would.
+- **A path this session never touched isn't flagged.** Writing blindly to
+  a file the session never read is a separate question, and this guard
+  doesn't try to answer it. The upshot: this guard has no false positives.
+  Every refusal points at a real conflict.
+- **Creating a new file isn't checked by this guard.** The filesystem
+  itself already answers "does this exist".
+- **A file stella can't read isn't treated as a conflict.** The tool's own
+  error message explains that far better than a staleness warning would.
 
-A guard that cried wolf would be turned off, and then it would protect
-nothing.
+A guard that cried wolf would just get turned off, and then it would
+protect nothing at all.
 
-## What a crash costs, and which way the guard fails
+## After a crash
 
-The map lives in memory, so a session that dies takes it along — and the guard
+This record lives in memory, so a session that crashes loses it. The guard
 is built to fail **closed** when that happens. A
-[resumed](/docs/commands/resume) session starts with an empty map while its
-restored transcript still says the agent read the file, so the model keeps
-acting on content it believes it knows. The guard does not take the
-transcript's word for it: with no recorded read, every overwrite of an
-existing file is refused until the resumed session has read the file whole
-again. The cost of a crash is re-reading, never a silent clobber.
-
-A durable copy of the map — written at step boundaries and restored on resume,
-so a resumed session could keep the coverage it had earned — was reserved in
-the work journal but never wired up, and the unwired half was removed rather
-than left claiming otherwise (#3780). Carrying coverage across a resume is a
-design still open.
+[resumed](/docs/commands/resume) session starts with an empty record, even
+though its restored transcript still says the agent read the file. So the
+model may believe it already knows the content. The guard doesn't take the
+transcript's word for it. With no recorded read, it refuses every
+overwrite of an existing file until the resumed session reads the whole
+file again. The cost of a crash is re-reading a file, never a silent
+overwrite.
 
 ## Where this sits
 
-The guard is enforced in the tool registry, above every file-touching tool at
-once — built-ins, MCP-server tools, and custom tools alike. It is not
-something a tool opts into, and not something the model can decide to skip.
-That is the same reasoning as
+This guard is enforced in one place, above every tool that touches files at
+once: built-in tools, MCP server tools, and custom tools alike. No tool
+opts into it, and no model can decide to skip it. That's the same idea as
 [determinism over intelligence](/docs/principles/determinism): where a
 mechanism can decide something, the mechanism decides it.

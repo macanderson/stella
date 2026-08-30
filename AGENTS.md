@@ -1177,13 +1177,26 @@ this before assuming two of them mean the same thing:
 - **Name things for what they are, not what they were.** If you rename a
   concept, chase it through comments and docs in the same PR — stale comments
   are treated as bugs in review.
-- **A code file may not sit beside a folder with the same name.**
-  `src/anthropic.rs` next to `src/anthropic/` is not allowed. Split the
-  file into modules inside the folder, and re-export them from
-  `anthropic/mod.rs` so every existing import keeps working. This is also
-  how a file near the size limit gets its room: more hierarchy under
-  `src/`, smaller files, same public names. Existing pairs are tracked for
-  cleanup; do not add new ones.
+- **A module with submodules is `foo.rs` beside `foo/`, never `foo/mod.rs`.**
+  `src/anthropic.rs` next to `src/anthropic/` is the layout Rust 2018
+  introduced and the one this workspace uses: the parent declares its
+  children and the children live in the folder named for it. It is what
+  nearly every module here already does, and it is the form the Rust book
+  presents as current.
+
+  `mod.rs` is the pre-2018 spelling and is not used for library code. Its
+  cost is what the book names: a tree where a dozen open editor tabs are all
+  called `mod.rs` and only the directory tells them apart.
+
+  **The one exception is an integration test's shared helper**, which must be
+  `tests/common/mod.rs`. Cargo compiles every top-level file in `tests/` as
+  its own test binary, so `tests/common.rs` would be built as a test crate of
+  its own; putting it one level down as `mod.rs` is how cargo itself says to
+  avoid that. The `tests/common/mod.rs` files in this tree are correct and
+  stay.
+
+  This is also how a file near the size limit gets its room: more hierarchy
+  under `src/`, smaller files, same public names.
 - **Doc comments on public items**, and on any function whose *why* isn't
   obvious from its body. No comments that narrate the next line.
 - **No new dependencies casually.** Every new crate in `Cargo.toml` gets a

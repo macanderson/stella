@@ -1,10 +1,10 @@
 ---
-title: The Observatory dashboard
-description: stella observe opens a local, loopback-only dashboard over your workspace telemetry — runs, spend, models, tools, files, and the fleet ledger.
+title: Observatory dashboard
+description: stella observe opens a local, loopback-only dashboard over your workspace's telemetry — runs, spend, models, tools, files, and the fleet log.
 ---
 
-`stella observe` opens the **Observatory** — a local web dashboard over the
-telemetry your own runs recorded:
+`stella observe` opens the **Observatory**, a local web dashboard over the
+telemetry your own runs have recorded:
 
 ```bash
 stella observe            # serves http://127.0.0.1:7787/
@@ -14,198 +14,208 @@ stella observe --port 0   # pick any free port
 
 ## Local by construction
 
-The Observatory is built to the same no-phone-home standard as the rest of
-stella — not as a policy, as a construction:
+The Observatory follows the same no-phone-home rule as the rest of stella.
+This isn't a policy choice, it's built into how it works:
 
-- **Loopback only.** It binds `127.0.0.1` and nothing else. There is no
-  remote mode, no auth because there is no exposure.
-- **Read-only.** Every database open is SQLite read-only — the dashboard can
-  never mutate your telemetry or block a live session (the store runs WAL, so
-  readers never block writers).
-- **Zero external references.** The page is a single embedded HTML file with
-  its assets inlined — no CDN, no web fonts, no analytics. A test in the
-  repository enforces that the served HTML contains no external URL at all.
-- **Graceful on empty.** A missing table or a workspace with no runs renders
-  as empty panels, never an error.
+- **Loopback only.** It only binds to `127.0.0.1`. There's no remote mode,
+  and no login needed, because nothing is exposed.
+- **Read-only.** Every database it opens is SQLite in read-only mode. The
+  dashboard can never change your telemetry or block a live session,
+  because the store runs in WAL mode, so readers never block writers.
+- **No external references.** The page is a single HTML file with
+  everything built in: no CDN, no web fonts, no analytics. A test checks
+  that the page it serves contains no external URL at all.
+- **Handles empty data.** A missing table, or a workspace with no runs yet,
+  shows empty panels, not an error.
 
 ## What you can see
 
-The nav has eleven tabs, plus a **window** selector — `24h` / `7d` / `30d` /
-`all` (the default). The Overview KPIs, the tokens-per-run timeline, the
-Executions table, and every Activity chart honor the window; the leaderboard
-panels labeled *all-time* ignore it. A twelfth, **transcript**, appears only
-while you have a turn open — it is a child route of Sessions, not a section
-you visit.
+The navigation has eleven tabs, plus a **window** selector: `24h`, `7d`,
+`30d`, or `all` (the default). The Overview KPIs, the tokens-per-run
+timeline, the Executions table, and every Activity chart follow the
+selected window. The leaderboard panels labeled *all-time* ignore it. A
+twelfth tab, **transcript**, only appears while you have a turn open. It's
+a sub-page of Sessions, not something you navigate to directly.
 
 <CardGrid size="md">
   <OptionCard name="overview">
-    KPI tiles (runs, resolve rate, total spend, tokens in/out, cache hits, model time), a
-    tokens-per-run timeline, the **Models** breakdown (**$/resolved task** per
-    provider/model), the tool leaderboard (calls, errors, p50/max latency, bytes returned),
-    the most-touched files, the **fleet ledger** (per fleet run: tasks, attempts,
-    successes, commits) with MCP traffic, and a memory/reflections/skills digest — plus the
-    **Executions** table: every run's kind, prompt, model, outcome, steps, tool calls,
-    files touched, tokens, and cost. Clicking a row opens that run's **transcript** page
-    (below).
+    KPI tiles for runs, resolve rate, total spend, tokens in and out, cache
+    hits, and model time. A tokens-per-run timeline. The **Models**
+    breakdown, showing **cost per resolved task** for each provider and
+    model. A tool leaderboard with calls, errors, typical and worst
+    latency, and bytes returned. Your most-touched files. The **fleet
+    log**, showing tasks, attempts, successes, and commits per fleet run,
+    plus MCP traffic. A summary of memory, reflections, and skills. And the
+    **Executions** table: every run's kind, prompt, model, outcome, steps,
+    tool calls, files touched, tokens, and cost. Click a row to open that
+    run's **transcript** page.
   </OptionCard>
   <OptionCard name="sessions">
-    Every session this workspace has run, merged from the cross-process registry and the
-    store (a session the registry has pruned but the store still remembers is marked *store
-    only*), with its live/crashed status, turns, spend, and cache rate. Selecting one lists
-    its turns oldest-first, alongside the skills and subagents it used, its MCP traffic, the
-    self-improvement residue it left, and its task board and pull requests. Each turn opens
-    its transcript; the `± diff` control expands what that turn changed on disk without
+    Every session this workspace has run, combining the cross-process
+    registry with the store. A session the registry has cleared but the
+    store still remembers is marked *store only*. Each one shows its live
+    or crashed status, turns, spend, and cache rate. Select a session to
+    see its turns, oldest first, along with the skills and subagents it
+    used, its MCP traffic, what it left behind for self-improvement, and
+    its task board and pull requests. Each turn opens its transcript, and
+    the `± diff` control shows what that turn changed on disk without
     leaving the list.
   </OptionCard>
   <OptionCard name="transcript">
-    One turn, inspected, at `#transcript/<execution>` — a page with an address, so it
-    reloads and links like one. **Prompt & what changed** lists every model call the run
-    recorded and, for the one you pick, either the unified diff against the previous call
-    of that role (the newest call's diff is open on arrival) or **context sent** — the whole
-    message array that call was given, system prompt included, rebuilt from its context
-    receipt and checked against the digests recorded when it was emitted. That is what
-    `stella inspect` prints, with the same two readings of a failed check: routine on a
-    journal written before compaction recorded its rewrites, a real integrity signal on one
-    written since. Below it: the **transcript** replayed from the run's event journal —
-    answer text, reasoning, and each tool call's arguments and output, with long bodies
-    clipped until you ask for them in full — then per-step tokens and latency, every tool
-    call, the files touched, and the post-turn self-reflection. ← / → step through the
-    owning session's turns without going back to the list.
+    One turn, shown in detail, at `#transcript/<execution>`. It has its own
+    address, so you can reload it or link to it directly. **Prompt & what
+    changed** lists every model call the run recorded. For the one you
+    pick, you see either the diff against the previous call of that role
+    (the newest call's diff is open when the page loads), or **context
+    sent**: the full set of messages that call received, system prompt
+    included, rebuilt from its context receipt and checked against the
+    digests recorded when it was sent. This is the same thing
+    `stella inspect` prints, with the same two readings of a failed check:
+    routine, if the journal was written before compaction recorded its
+    rewrites, or a real integrity problem if it was written after. Below
+    that is the **transcript** replayed from the run's event log: answer
+    text, reasoning, and each tool call's arguments and output (long ones
+    stay collapsed until you expand them), then per-step tokens and
+    latency, every tool call, the files touched, and the self-review
+    written after the turn. Use ← and → to step through the session's
+    other turns without going back to the list.
   </OptionCard>
   <OptionCard name="activity">
-    Per-day time series over the window: cost, tokens (input vs output), runs (resolved vs
-    other outcomes), and tool calls (calls vs errors).
+    Day-by-day charts over the selected window: cost, tokens (input vs.
+    output), runs (resolved vs. other outcomes), and tool calls (calls vs.
+    errors).
   </OptionCard>
   <OptionCard name="code graph">
-    The tree-sitter code-graph index of the workspace — a searchable force-directed canvas
-    of files (with per-file symbol counts) and their resolved import edges, plus a
-    selection detail panel.
+    The code graph for this workspace: a searchable, movable map of files,
+    each with its symbol count, connected by their import relationships.
+    Click a file for a detail panel.
   </OptionCard>
   <OptionCard name="skills">
     Installed and learned skills, with per-skill usage.
   </OptionCard>
   <OptionCard name="mcp">
-    Configured servers (`.stella/mcp.toml`) and observed per-server / per-tool traffic.
+    Configured servers (from `.stella/mcp.toml`) and the traffic seen per
+    server and per tool.
   </OptionCard>
   <OptionCard name="memory & rules">
-    The memory plane: memories on disk (`.stella/memories`), citation receipts (were they
-    useful and truthful?), and promoted rules.
+    Memories on disk (`.stella/memories`), citation records showing
+    whether they were useful and accurate, and promoted rules.
   </OptionCard>
   <OptionCard name="self-improve">
-    The self-improvement loop, receipted from `.stella`: self-rating per reflection, owned
-    shortcomings, distilled lessons, and auto-extracted learned skills.
+    The self-improvement loop, tracked from `.stella`: a self-rating for
+    each reflection, shortcomings the agent owns up to, lessons it pulled
+    out, and skills it learned automatically.
   </OptionCard>
   <OptionCard name="org / hub">
-    Spend across **every project on this machine**, not just this workspace — read from the
-    cross-project hub at `~/.stella/usage.db`. See below.
+    Spend across **every project on this machine**, not just this one.
+    Reads from the cross-project hub at `~/.stella/usage.db`. See below.
   </OptionCard>
   <OptionCard name="config">
-    The merged engine config (user → org → project), where every store and database lives,
-    and the per-scope config files.
+    The combined engine config (user → org → project), where every store
+    and database lives, and the config file for each scope.
   </OptionCard>
 </CardGrid>
 
-Everything except **org / hub** is served from
-`<workspace>/.stella/private/store.db` (and `.stella/private/fleet.db` for the
-fleet view) — the same SQLite files you can query directly with any SQLite
-client.
+Every tab except **org / hub** reads from
+`<workspace>/.stella/private/store.db` (and `.stella/private/fleet.db` for
+the fleet view). These are the same SQLite files you can query yourself
+with any SQLite client.
 
-## The `org / hub` tab: spend beyond this workspace
+## Org / hub tab
 
-Every other tab answers "what did *this* repo cost". The **org / hub** tab
-answers "what did all of them cost", reading the cross-project telemetry hub at
-`~/.stella/usage.db` — which finished turns replicate into, and which
-`stella usage sync --all` repairs if a best-effort replication was missed.
+Every other tab answers "what did *this* project cost?" The **org / hub**
+tab answers "what did all of them cost?" It reads the cross-project
+telemetry hub at `~/.stella/usage.db`, which finished turns copy their data
+into automatically. If that copy is ever missed, `stella usage sync --all`
+repairs it.
 
-It opens on a KPI row (calls, cost, input/output tokens, cache-read rate,
-projects, orgs) over everything the hub has ever seen, and a breadcrumb reading
-**all orgs**. From there it is a drill-down: click a row in the breakdown panel
-to descend **org → workspace → repo → project**, with the breadcrumb popping you
-back to any level. Clicking a *project* row leaves the hub entirely and reopens
-the Overview tab scoped to that project.
+It opens on a KPI row (calls, cost, input and output tokens, cache-read
+rate, projects, orgs) covering everything the hub has ever seen, with a
+breadcrumb reading **all orgs**. From there, you can drill down: click a
+row in the breakdown panel to go from **org → workspace → repo → project**,
+and the breadcrumb lets you jump back to any level. Clicking a *project*
+row leaves the hub entirely and reopens the Overview tab for that project.
 
 Three panels re-scope as you drill:
 
 <CardGrid size="sm">
   <OptionCard name="Breakdown">
-    One level in from the current scope, with calls, cost, cache rate, tokens in/out, and
-    a contributing-projects count per row.
+    One level in from where you are, with calls, cost, cache rate, tokens
+    in and out, and how many projects contributed to each row.
   </OptionCard>
   <OptionCard name="Models">
-    Per provider/model spend across every project in scope — the same aggregation
-    `stella usage report` prints, plus a cache-read rate.
+    Spend per provider and model across every project in scope. Same
+    numbers `stella usage report` prints, plus a cache-read rate.
   </OptionCard>
   <OptionCard name="Spend per day / By repo">
     Daily spend bars, and a per-repository table for the current scope.
   </OptionCard>
 </CardGrid>
 
-Rows whose org, workspace, or repo id is unset render as `(local)` — that is
-what you see before `stella cloud register` mints the durable ids. An empty hub
-says so and points you at `stella usage sync --all`, rather than rendering a
-blank panel. The tab is never cached: its payload depends on the live
-drill scope, so each entry and each drill re-queries.
+Rows with no org, workspace, or repo id show as `(local)`. That's what
+you'll see before `stella cloud register` creates the permanent ids. An
+empty hub tells you so, and points you at `stella usage sync --all`,
+instead of just showing a blank panel. Nothing here is cached: every
+drill-down re-queries the data live.
 
 <Callout type="info">
-  The hub is local like everything else — `~/.stella/usage.db` is a file on your machine,
-  and nothing about the org/hub view involves a network call.
+  The hub is local, like everything else. `~/.stella/usage.db` is a file on
+  your machine, and the org/hub view never makes a network call.
 </Callout>
 
-## `$/resolved` — the metric that matters
+## Cost per resolved task
 
-The models view computes **dollars per resolved task** per provider/model —
-the unit price of your agent work. A cheap model that rarely resolves
-can cost more per outcome than an expensive one that resolves reliably; this
-is the number that tells you which. [`stella stats`](/docs/commands/stats)
-prints the same aggregation in the terminal (`table`, `json`, or `csv`).
+The models view calculates **dollars per resolved task** for each provider
+and model. Think of it as the unit price of your agent's work. A cheap
+model that rarely finishes the job can cost more per outcome than an
+expensive one that reliably gets it done. This number tells you which is
+which. [`stella stats`](/docs/commands/stats) prints the same numbers in
+the terminal, as a table, JSON, or CSV.
 
-## Portable reports: `/export`
+## Exporting a report
 
 Inside the [Command Deck](/docs/agent-modes), the `/export` slash command
 packages the session's telemetry into
-`.stella/exports/session-<timestamp>.zip`. `<timestamp>` is the archive's
-**watermark**: the timestamp of the last log entry included — the data's own
-clock, not the moment you typed `/export`. Every entry nests under a matching
-`<timestamp>/` folder inside the archive:
+`.stella/exports/session-<timestamp>.zip`. The `<timestamp>` is the
+archive's **watermark**: the time of the last log entry included, not the
+moment you typed `/export`. Everything in the archive nests under a
+matching `<timestamp>/` folder:
 
-- `<timestamp>/raw/<table>.json` — a pretty-printed dump of each telemetry
-  table (executions, telemetry, tool calls, files touched, MCP usage, skill
-  usage, reflections, …), holding **this session's rows only**
-- `<timestamp>/dashboard.html` — a **self-contained** HTML dashboard (no
-  external CSS or JS) with KPI insights, cost &amp; efficiency by model, token
-  economy, tool usage, files touched, and execution outcomes — openable
-  offline, emailable, or committable to a PR as the receipt for what an agent
-  run did and cost. Its totals cover the exported session, and it names that
-  session and what was excluded at the top of the page
-- `<timestamp>/manifest.json` — the watermark (as `exported_at`), the
-  exported `session` id, per-table row counts, and an `excluded` census of
-  what the scope left behind
+- `<timestamp>/raw/<table>.json`: a readable dump of each telemetry table
+  (executions, telemetry, tool calls, files touched, MCP usage, skill
+  usage, reflections, and more), holding **this session's rows only**
+- `<timestamp>/dashboard.html`: a **self-contained** HTML dashboard (no
+  external CSS or JavaScript) with KPI insights, cost and efficiency by
+  model, token usage, tool usage, files touched, and run outcomes. Open it
+  offline, email it, or attach it to a PR as a receipt for what an agent
+  run did and cost. Its totals cover only the exported session, and it
+  names that session and what was left out at the top of the page
+- `<timestamp>/manifest.json`: the watermark (as `exported_at`), the
+  exported `session` id, row counts per table, and an `excluded` count of
+  what was left out
 
-### The archive covers one session
+### One session at a time
 
-`/export` packages the session you are in — never the whole workspace store.
-That is a safety property, not a convenience: the archive is built to be
-shared, so credentials in the telemetry are masked and the file is written
-`0600`, and both of those defences assume the blast radius is one session.
-  Until [#2558](https://github.com/macanderson/stella/issues/2558) it was every
-  run the workspace had ever recorded. Attaching an export to a public PR to
-  show one run disclosed every unrelated run in that project — its prompts, its
-  tool arguments, its touched files' contents.
+`/export` only packages the session you're in, never the whole workspace
+store. This is a safety feature, not just a convenience. The archive is
+built to be shared, so credentials in the telemetry are masked and the
+file is written with permissions of `0600`. Both of those protections
+assume the risk is limited to one session.
 
-Because rows are excluded rather than absent, the archive says so. The
-manifest's `excluded` object counts the executions belonging to other sessions,
-the executions carrying no session stamp at all (recorded before the
-`session_id` column existed), and reflections linked to no execution. Without
-those counts a reader cannot tell "this session did nothing else" from "the
-exporter dropped the rest".
+Since rows are excluded rather than just missing, the archive says so. The
+manifest's `excluded` object counts executions that belong to other
+sessions, executions with no session id at all (from before that column
+existed), and reflections not linked to any execution. Without these
+counts, you couldn't tell "this session did nothing else" apart from "the
+export just dropped the rest."
 
-Workspace-wide analytics have their own home:
-[`stella stats`](/docs/commands/stats) and the
-[Observatory](/docs/telemetry/dashboard) both read across every session, and
-neither produces a file that leaves the machine.
+For analytics across your whole workspace, use
+[`stella stats`](/docs/commands/stats) or the
+[Observatory](/docs/telemetry/dashboard). Both read across every session,
+and neither one produces a file that leaves your machine.
 
 <Callout type="info">
-  The Observatory is for *living* workspaces — point it at your repo and
-  watch spend and resolve rates as you work. `/export` is for *sharing* — a
-  frozen, portable snapshot anyone can open without stella installed.
+  The Observatory is for *living* workspaces: point it at your project and
+  watch spend and resolve rates as you work. `/export` is for *sharing*: a
+  frozen, portable snapshot anyone can open without installing stella.
 </Callout>
