@@ -41,6 +41,51 @@ fn tiny_terminals_never_panic() {
     }
 }
 
+/// The SKILLS tab sizes its registry band only while the search pane is live,
+/// so the geometry sweep above walked every size with that branch switched off.
+///
+/// Inside it, `(hits + 4).clamp(4, area.height / 2)` asserted `min <= max` and
+/// panicked on any tab shorter than eight rows — an ordinary window. The floor
+/// of 4 bought nothing, since `hits + 4` is already 4 or more.
+///
+/// The assertion is on the painted cells, not on `catch_unwind`: `guarded_band`
+/// catches a band's panic and paints an error card in its place, so a test that
+/// only asked whether the draw returned would pass against the panicking code.
+#[test]
+fn a_short_skills_tab_with_a_live_search_draws_instead_of_failing_into_the_error_card() {
+    let model = folded_model();
+    for h in [1u16, 2, 3, 4, 5, 6, 7, 8, 12, 24] {
+        for hits in [0usize, 1, 7] {
+            let mut ui = DeckUi::default();
+            ui.splash.skip();
+            ui.tab = DeckTab::Skills;
+            ui.skills.focus = stella_tui::deck_ui::SkillsFocus::Search;
+            ui.skills.searching = hits == 0;
+            ui.skills.hits = (0..hits)
+                .map(|n| stella_tui::envelope::SkillSearchHit {
+                    id: format!("skill-{n}"),
+                    installs: "12".to_string(),
+                    installs_rank: 12,
+                    url: "https://example.invalid".to_string(),
+                })
+                .collect();
+            let mut terminal = Terminal::new(TestBackend::new(60, h)).unwrap();
+            terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+            let buf = terminal.backend().buffer();
+            let area = *buf.area();
+            let text: String = (0..area.height)
+                .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+                .map(|(x, y)| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect();
+            assert!(
+                !text.contains("panicked"),
+                "the skills band failed into the panic card on a {h}-row tab \
+                 with {hits} hits"
+            );
+        }
+    }
+}
+
 #[test]
 fn tiny_terminals_with_overlays_never_panic() {
     use stella_tui::deck_ui::cards::Card;
