@@ -282,7 +282,10 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
     let mut resurrect = session(dir.path());
     resurrect.auto_create_skills(&log_path(dir.path()), true);
     assert!(
-        !session(dir.path()).load_skills().iter().any(|s| s.name == name),
+        !session(dir.path())
+            .load_skills()
+            .iter()
+            .any(|s| s.name == name),
         "a re-mine of the same lesson must not undo the demotion"
     );
 }

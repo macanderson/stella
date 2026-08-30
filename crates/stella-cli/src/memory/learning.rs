@@ -630,10 +630,8 @@ impl SessionMemory {
     /// protected side.
     fn appraise_and_retire_skills(&self, quiet: bool) {
         let loaded = self.load_skills();
-        let origins: std::collections::HashMap<String, skills::SkillOrigin> = loaded
-            .iter()
-            .map(|s| (s.name.clone(), s.origin))
-            .collect();
+        let origins: std::collections::HashMap<String, skills::SkillOrigin> =
+            loaded.iter().map(|s| (s.name.clone(), s.origin)).collect();
         let already_demoted = super::appraisals::demoted_skills(&self.store);
         let threshold = super::tuning::skill_promotion(&self.workspace_root)
             .demote_after_consecutive_negatives as usize;
@@ -714,25 +712,24 @@ impl SessionMemory {
     /// which flows through the same gate with the same verdict.
     fn promote_measured_queued(&mut self, quiet: bool) {
         let verdicts = super::appraisals::latest_verdicts(&self.workspace_root);
-        let promotable: Vec<skills::SkillCandidate> = super::appraisals::queued_candidates(
-            &self.workspace_root,
-        )
-        .into_iter()
-        .filter(|q| verdicts.get(&q.name) == Some(&EvalEvidence::MeasuredLift))
-        .filter_map(|q| {
-            let body = q.body?;
-            Some(skills::SkillCandidate {
-                name: q.name,
-                description: q.description,
-                domains: q.domains,
-                occurrences: q.occurrences,
-                salient: false,
-                evidence: Vec::new(),
-                score: 0.0,
-                body,
-            })
-        })
-        .collect();
+        let promotable: Vec<skills::SkillCandidate> =
+            super::appraisals::queued_candidates(&self.workspace_root)
+                .into_iter()
+                .filter(|q| verdicts.get(&q.name) == Some(&EvalEvidence::MeasuredLift))
+                .filter_map(|q| {
+                    let body = q.body?;
+                    Some(skills::SkillCandidate {
+                        name: q.name,
+                        description: q.description,
+                        domains: q.domains,
+                        occurrences: q.occurrences,
+                        salient: false,
+                        evidence: Vec::new(),
+                        score: 0.0,
+                        body,
+                    })
+                })
+                .collect();
         if !promotable.is_empty() {
             // The same write path as a freshly mined candidate: cap,
             // no-clobber and the eval gate all still apply, and the verdict

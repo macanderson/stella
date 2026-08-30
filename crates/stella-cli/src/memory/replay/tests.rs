@@ -206,7 +206,9 @@ async fn replay(corpus: &Trace) -> (ReplaySummary, tempfile::TempDir) {
         r#"{"context":{"promotion":{"skill":{"require_measured_lift":false}}}}"#,
     )
     .expect("bootstrap settings");
-    let summary = Replayer::run(corpus, &root).await.expect("the trace replays");
+    let summary = Replayer::run(corpus, &root)
+        .await
+        .expect("the trace replays");
     (summary, dir)
 }
 
