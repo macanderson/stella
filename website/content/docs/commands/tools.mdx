@@ -3,12 +3,12 @@ title: stella tools
 description: List every tool the agent can use this session, including built-in tools and custom tools from .stella/tools/, plus a --validate check for both.
 ---
 
-Lists every tool the agent can use in the current session: built-in tools, custom tools you've added, and a check for any problems with them.
+Lists every tool the agent can use in the current session: built-in tools, custom tools you've added, tools the foundry built on its own, and a check for any problems with them.
 
 ## Synopsis
 
 ```bash
-stella tools [--validate [DIR]] [--draft GAP_ID] [--adopt NAME] [--enable NAME]
+stella tools [--validate [DIR]] [--draft GAP_ID] [--adopt NAME] [--enable NAME [--yes]]
              [--disable NAME] [--rollback NAME [--to N]] [--foundry] [--status]
              [global flags]
 ```
@@ -19,6 +19,7 @@ stella tools [--validate [DIR]] [--draft GAP_ID] [--adopt NAME] [--enable NAME]
 
 - **Built-in tools** — always-available tools, plus a few that only show up in certain conditions. See the full [Built-in Tools](/docs/agent-tools) catalog for names and whether each one is read-only or can make changes.
 - **Custom tools you've added** — loaded from `<name>.toml` manifest files.
+- **Tools the foundry built** — tools stella wrote itself from shell commands you kept repeating, then proved, adopted, and enabled at the end of a turn. See [The autonomous foundry](#the-autonomous-foundry) below.
 
 Custom tools come from a `<name>.toml` manifest placed in `<workspace>/.stella/tools/` (just for this project) or `~/.stella/tools/` (for all your projects). If a project tool and a global tool share a name, the project one wins.
 
@@ -38,19 +39,28 @@ Custom tools come from a `<name>.toml` manifest placed in `<workspace>/.stella/t
   <OptionCard name="--adopt NAME">
     Moves a staged tool into `.stella/tools/` and runs its **capability witness**: a test
     that must fail using the tools you already had, and succeed once the new tool is used,
-    producing a real result. The test result is saved. The tool stays **turned off** until
-    you enable it.
+    producing a real result. The test result is saved. This is the manual verb: run by
+    hand, it leaves the tool **turned off** until `--enable`. Under the default
+    `autonomy = "auto"`, the end-of-turn pipeline runs this same adopt step itself and
+    enables the tool right after, so you never type it.
   </OptionCard>
   <OptionCard name="--enable NAME">
-    Turns on an adopted tool so the model can use it. Refuses to enable it if the manifest
-    or script changed since the test ran.
+    Turns on an adopted tool so the model can use it. The manual path: it shows what the
+    tool would run and asks you to confirm. Refuses to enable it if the manifest or script
+    changed since the test ran. Under the default `auto` mode the pipeline enables tools
+    without this flag; you need it only under `draft-only`, or for a tool you staged and
+    adopted by hand.
+  </OptionCard>
+  <OptionCard name="--yes">
+    Accept an `--enable` without the confirmation question. For provisioning scripts that
+    have no terminal. Only valid together with `--enable`.
   </OptionCard>
   <OptionCard name="--disable NAME">
-    Turns off an adopted tool. Its saved test result is kept.
+    Turns off an adopted tool. Its saved test result is kept. Never asks.
   </OptionCard>
   <OptionCard name="--foundry">
-    Lists every tool you've built yourself: whether its test passed, whether it's turned
-    on, and how many times it has been used since you adopted it, including ones never used
+    Lists every tool the foundry built: whether its test passed, whether it's turned
+    on, and how many times it has been used since it was adopted, including ones never used
     at all.
   </OptionCard>
   <OptionCard name="--draft GAP_ID">
@@ -97,61 +107,145 @@ Check one folder of manifests before you install them:
 stella tools --validate ./contrib/stella-tools
 ```
 
-Take a staged tool all the way to something you can use:
+Watch the foundry work on its own (the default). There is nothing to type to make a tool
+appear: at the end of each turn, stella looks for shell commands you kept repeating,
+writes a manifest and script for each one, proves it with the witness, adopts it, and
+turns it on. It prints a notice naming what it did. These commands let you see and steer
+the result:
 
 ```bash
-# Place the manifest and script by hand under .stella/tools/proposed/, where
-# stella won't see them yet: jq.toml (with a [foundry] table) + jq.sh.
+stella tools --status            # per-tool health, versions, recent launches, gaps waiting
+stella tools --foundry           # every foundry tool, its witness, and how much it's used
+stella tools --disable jq        # turn one tool off; its proof stays on file
+stella tools --rollback jq       # go back one version and re-enable; resets a tripped breaker
+```
+
+Carry a tool through by hand. This is the path under `autonomy = "draft-only"`, or on a
+platform where the network denial cannot be enforced, or for a tool you wrote yourself:
+
+```bash
+stella tools --draft GAP_ID      # author + validate one ledgered gap; lands in proposed/
+# Or place your own jq.toml (with a [foundry] table) + jq.sh under
+# .stella/tools/proposed/, where stella won't see them yet.
 stella tools --validate .stella/tools/proposed
 stella tools --adopt jq          # run the test; saves the result, tool stays off
-stella tools --enable jq         # the one human approval step; shows what it grants, then asks
-stella tools --foundry           # what was adopted, and how useful it has been
+stella tools --enable jq         # shows what it grants, then asks
+stella tools --enable jq --yes   # same, for a provisioning script with no terminal
 ```
 
 <Callout type="warn">
-  **`--enable` always asks, and refuses if nobody can answer.** It shows the script the
-  model would run, the saved test result, and what that test does *not* prove, then waits
-  for you to type `y`. If there's no terminal attached, it refuses instead of going ahead.
-  Without this check, an agent with the `bash` tool could stage, adopt, and enable its own
-  tool in a single turn, and the rule that "a machine never approves its own tool" would
-  only hold because someone happened to be typing at a terminal. Pass `--yes` when you're
-  running this from a provisioning script where someone has already signed off on it in
-  writing.
+  **On the manual path, `--enable` asks, and refuses if nobody can answer.** It shows the
+  script the model would run, the saved test result, and what that test does *not* prove,
+  then waits for you to type `y`. If there's no terminal attached, it refuses instead of
+  going ahead. Pass `--yes` when you're running it from a provisioning script. None of
+  this applies to the default `auto` mode, where the pipeline enables what it proves and
+  the standing controls below do the guarding.
 
   `--disable` never asks. Turning a tool off must never be blocked just because there's no
   terminal available.
 </Callout>
 
-## Self-authored tools
+## The autonomous foundry
 
-A self-authored tool is a manifest and script you write yourself and place under
-`.stella/tools/proposed/`, where stella's normal tool discovery cannot see it. From there,
-you move it through the `--adopt` then `--enable` steps above. Write the script so every
-parameter is a quoted `"$STELLA_INPUT_*"` reference. That keeps each value treated as plain
-data, not as shell code.
+The foundry is the part of stella that builds tools for itself. It runs at the end of every
+turn, next to skill mining, and by default it needs nobody's help. The pipeline is:
 
-<Callout type="warn">
-  **You write the staged tool yourself.** There is no automatic step that scans your past
-  commands and writes a manifest for you. You create the `.toml` manifest and script by
-  hand, and everything from `--adopt` onward works exactly as described in this section.
-</Callout>
+1. **Detect** — look at this session's shell calls for a command shape you keep reusing:
+   the same basic call with different arguments, used more than once with each set. The
+   shape is written to the gap ledger at `.stella/private/tool_gaps.jsonl`.
+2. **Author** — write a `<name>.toml` manifest and `<name>.sh` script for the gap, staged
+   under `.stella/tools/proposed/` where discovery cannot see it.
+3. **Validate** — re-parse the manifest, lint the script, and run the capability witness
+   twice with the network denied. Those two runs are the sandboxed dry run.
+4. **Adopt** — record the manifest and script digests in the foundry ledger, using the same
+   writer the manual `--adopt` verb uses. Every adoption also appends the exact bytes to
+   the version history.
+5. **Enable** — turn the tool on. From the next turn, the model can call it.
+6. **Execute** — every launch goes through the foundry gate, which re-digests the files on
+   each call. A tool whose bytes changed since its witness ran is held back, not launched.
 
-A useful custom tool covers a command shape you actually reuse: the same basic call with
-different arguments, used at least a couple of times with each set of arguments. A command
-where the arguments are different every single time, like running `sed` with a one-off
-expression across a thousand different files, isn't really a reusable tool. It's just you
-using the shell.
+One turn carries at most two new gaps through the pipeline, because the witness runs each
+candidate twice. Any extra gaps stay in the ledger, and the end-of-turn notice tells you how
+many are waiting for `stella tools --draft GAP_ID`. A failed witness leaves the draft
+staged for you to look at; authored work is never thrown away, and nothing unproven
+registers.
 
-A staged tool includes a `[foundry]` table, but a manifest with one only actually registers
-once **all three** of these are true:
+### Autonomy modes
 
-1. it was **adopted** — its test passed;
-2. a person **enabled** it;
-3. the manifest and script still have the exact same bytes the test ran against.
+`foundry.autonomy` in `stella.toml` picks how far the pipeline goes. It is the kill switch.
+
+| Mode | What happens at the end of a turn |
+|---|---|
+| `auto` (default) | Detect → author → validate → adopt → enable, network denied at spawn. |
+| `draft-only` | Detect, author, and validate. The pair lands in `.stella/tools/proposed/` and nothing is adopted; you take it from there with `--adopt` and `--enable`. |
+| `off` | Detect and write the gap to the ledger. Nothing is authored. |
+
+`auto` also drops down to `draft-only` on a platform that has no working network
+isolation, and prints a notice saying so. A control that cannot be enforced is never
+claimed, so on such a machine files are staged and nothing is adopted.
+
+`stella tools --disable NAME` turns off one tool without changing the mode.
+
+### The `[foundry]` keys
+
+All of these live in the `[foundry]` block of `stella.toml`. The block is one policy: the
+last scope to set it wins as a whole. See the
+[`[foundry]` reference](/docs/configuration/stella-toml#foundry) for the full description of
+each key.
+
+| Key | Default | What it does |
+|---|---|---|
+| `min_occurrences` | `3` | Matching calls before a shape is worth proposing. `0` or `1` turn detection off. |
+| `min_distinct_arguments` | `2` | Different argument sets required. One set is an exact repeat, which is loop detection's job. |
+| `min_reuse_ratio` | `3.0` | Uses per argument set required. At or below `1.0` turns this gate off. |
+| `require_success` | `true` | Whether at least one of the repeated calls must have succeeded. |
+| `max_examples` | `3` | Example command lines per proposal and example values per parameter. At least `1`, because the witness input is built from them. |
+| `autonomy` | `"auto"` | `"auto"`, `"draft-only"`, or `"off"`, as above. |
+| `breaker_consecutive_failures` | `3` | Failures in a row that trip a tool's circuit breaker. At least `1`. |
+| `breaker_window` | `10` | Recent launches the failure-rate check looks at. At least `1`. |
+| `breaker_failure_rate` | `0.5` | Share of that window that trips the breaker. Above `0`, at most `1`. |
+| `network_allowlist` | `[]` | Foundry tools allowed to reach the network, by name. Names must match `^[a-z][a-z0-9_]{1,63}$`. |
+
+Lowering a detection threshold changes what gets *proposed*. What *executes* is still
+gated by the ledger, the per-call re-digest, and the network denial.
+
+### The standing controls
+
+Nobody approves a foundry tool. What guards the loop instead is a set of controls that run
+on every tool, every time, in places the pipeline cannot skip:
+
+- **Network denied by default.** Every foundry-built tool starts with its network cut off
+  by the operating system at spawn: `sandbox-exec` on macOS, `unshare -rn` on Linux. The
+  witness's two runs go through the same path. To let one tool reach the network, add its
+  name to `foundry.network_allowlist`, a line in a settings file a reviewer can find.
+- **Versioned rollback.** Every adoption appends the exact manifest and script bytes to an
+  append-only version history in the store. `stella tools --rollback NAME [--to N]`
+  restores a version, re-digests it, and re-enables the tool. History is never rewritten.
+- **A telemetry ledger.** Every launch writes an invocation row: the tool, its script
+  digest, the gap it came from, duration, exit status, whether it timed out, and output
+  bytes. `stella tools --status` shows the recent launch record.
+- **A circuit breaker.** A tool that fails 3 times in a row, or fails more than half of a
+  full 10-launch window, is turned off on its own. The reason is recorded, and both the
+  foundry gate and `stella tools --status` show it. A new version re-enables the tool,
+  whether it comes from a re-author or from `--rollback`. The counts are the `breaker_*`
+  keys above.
+- **The kill switch.** `foundry.autonomy = "draft-only"` or `"off"` stops the pipeline at
+  the step you choose, in either settings scope, and `stella tools --disable NAME` stops
+  one tool.
+
+### When a foundry tool registers
+
+A tool with a `[foundry]` table in its manifest only registers once **all three** of these
+are true:
+
+1. it was **adopted** — its witness passed;
+2. it is **enabled** — by the pipeline under `auto`, or by you with `--enable` under
+   `draft-only` and for tools you staged by hand;
+3. the manifest and script still have the exact same bytes the witness ran against.
+   Editing an adopted tool's script cancels its adoption instead of carrying it over.
 
 So copying a staged manifest into `.stella/tools/` by hand does not grant anything on its
-own, and editing an approved tool's script cancels its approval rather than carrying it
-over. Every tool that gets held back is listed by name and reason in `stella tools`, so a
+own. Every tool that gets held back is listed by name and reason in `stella tools`, so a
 missing tool is never a mystery.
 
 <Callout type="info">
@@ -161,6 +255,19 @@ produced. A tool that works either way is just a different name for something yo
 had. A tool that prints nothing, or only repeats its own input back, proves nothing and is
 rejected.
 </Callout>
+
+### Staging a tool yourself
+
+You can also write a manifest and script by hand and place them under
+`.stella/tools/proposed/`, then carry them through `--adopt` and `--enable` as in the
+examples above. Write the script so every parameter is a quoted `"$STELLA_INPUT_*"`
+reference. That keeps each value treated as plain data, not as shell code.
+
+A useful custom tool covers a command shape you actually reuse: the same basic call with
+different arguments, used at least a couple of times with each set of arguments. A command
+where the arguments are different every single time, like running `sed` with a one-off
+expression across a thousand different files, isn't really a reusable tool. It's just you
+using the shell.
 
 None of this affects manifests you write by hand. Dropping your own `<name>.toml` straight
 into `.stella/tools/` still works exactly like it always has.
