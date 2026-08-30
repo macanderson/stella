@@ -1717,11 +1717,11 @@ use queue_editor::handle_queue_key;
 /// 8. Session tab with the ctrl+o expand-ALL overlay on — Esc collapses it
 ///    (each Esc peels one layer: highlight first, then the overlay, so
 ///    every way into an expanded view has a graceful way back out)
-/// 8a. an opened sub-agent lane, empty composer — Esc returns to the agent
-///     that dispatched it ([`focus::back_to_dispatcher`]). Leaving a lane is
-///     the most common thing Esc means there, and it used to be rule 10:
-///     one press at a worker was an immediate hard cancel. With a draft in
-///     the composer Esc still steers the lane (rule 10's steer form).
+///    - 8a. an opened sub-agent lane, empty composer — Esc returns to the
+///      agent that dispatched it ([`focus::back_to_dispatcher`]). Leaving a
+///      lane is the most common thing Esc means there, and it used to be
+///      rule 10: one press at a worker was an immediate hard cancel. With a
+///      draft in the composer Esc still steers the lane (rule 10's steer form).
 /// 9. armed by a turn-stopping Esc within [`ESC_DOUBLE_WINDOW`], no other
 ///    key in between — Esc escalates to [`WorkspaceInput::StopAndHold`]
 ///    (cancel, requeue the interrupted prompt at the front, hold dispatch
