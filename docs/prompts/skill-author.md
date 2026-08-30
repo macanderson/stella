@@ -63,7 +63,7 @@ invocation runs is declared here, in the authored file, and the invocation
 carries only the slug and its arguments. There is no
 `invoke_skill` tool — no model call can invoke a skill. A skill function
 runs when a person asks, via `stella skill run <slug>` or an in-session
-`/slug` expansion, and when recall auto-selects it for a turn (#5465): the
+`/slug` expansion, and when recall auto-selects it for a turn: the
 selected skill expands exactly like the `/slug` form, its `allowed-tools`
 grant narrowing the turn and its `effort` honored. That is safe without a
 person in the loop because a grant can only narrow the operator's surface,

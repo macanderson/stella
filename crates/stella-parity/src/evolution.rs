@@ -333,8 +333,8 @@ evolution_surfaces! {
                         over the assembled session stack, so a directive can only narrow the \
                         surface, never widen it. A directive-carrying skill expands as an \
                         invocation however it enters the turn — `stella skill run <slug>`, \
-                        an in-session `/slug` expansion, or recall's own auto-selection \
-                        (#5465), each mounted as a span whose grant is intersected with \
+                        an in-session `/slug` expansion, or recall's own auto-selection, \
+                        each mounted as a span whose grant is intersected with \
                         every other live one; `invoke_skill` stays in RETIRED_TOOL_NAMES, \
                         so no model call can invoke a skill",
             witness: "an_auto_selected_directive_skill_narrows_the_turn_and_denies_a_disallowed_tool",
@@ -454,7 +454,7 @@ fn evolution_sources() -> [&'static str; 10] {
         // first named lives beside the stack it holds over.
         include_str!("../../stella-cli/src/agent/tool_stack.rs"),
         // The SkillInvocation row's witness: an auto-selected skill's
-        // directives reach the plane through the recall seam (#5465).
+        // directives reach the plane through the recall seam.
         include_str!("../../stella-cli/src/memory/tests/skill_event.rs"),
     ]
 }

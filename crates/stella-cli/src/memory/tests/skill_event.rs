@@ -167,7 +167,7 @@ fn directive_workspace() -> tempfile::TempDir {
     dir
 }
 
-/// **The witness (#5465).** A skill recall auto-selects expands as an
+/// **The witness.** A skill recall auto-selects expands as an
 /// invocation: its `allowed-tools` grant narrows the turn's tool surface
 /// through the same plane an explicit `/slug` mounts, a call outside the
 /// grant is DENIED naming the skill, a call inside it still runs, its

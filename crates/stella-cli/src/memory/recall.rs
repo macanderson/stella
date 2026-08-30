@@ -43,8 +43,7 @@ pub struct RecalledBlock {
     /// budget actually admitted.
     pub injected_skills: Vec<skills::InjectedSkill>,
     /// The turn scopes the directive-carrying skills among
-    /// [`Self::injected_skills`] ask for, in the same rendered order
-    /// (#5465).
+    /// [`Self::injected_skills`] ask for, in the same rendered order.
     ///
     /// An auto-selected skill that declares invoke directives expands
     /// exactly as an explicit `/slug` invocation does: its `allowed-tools`
@@ -111,7 +110,7 @@ pub(crate) struct OpeningRecall {
     /// The turn scopes the directive-carrying skills of this turn ask for —
     /// the grant narrowing and effort override the turn driver applies while
     /// the invocations are live. Every scope reaches the turn the same way,
-    /// whether a human typed `/slug` or recall selected the skill (#5465):
+    /// whether a human typed `/slug` or recall selected the skill:
     /// each is mounted as its own span on the invocation plane, so the tool
     /// surface is the intersection of every live grant. Empty for the common
     /// turn that carries no directive-carrying skill.
@@ -210,7 +209,7 @@ pub(crate) fn inject_opening_recall(
         events,
         produced: recalled.produced,
         // The block's directive-carrying skills scope the turn exactly as
-        // an explicit invocation would (#5465): selection is the trigger,
+        // an explicit invocation would: selection is the trigger,
         // and the grant's only power is to narrow.
         skill_scopes: recalled.skill_scopes,
     }

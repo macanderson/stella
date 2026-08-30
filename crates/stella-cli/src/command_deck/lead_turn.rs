@@ -66,8 +66,8 @@ pub(super) async fn run_lead_turn(
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    // This turn's directive-carrying skills — invoked or auto-selected
-    // (#5465) — read off the recall seam before its seed and events are
+    // This turn's directive-carrying skills — invoked or
+    // auto-selected — read off the recall seam before its seed and events are
     // handed on below: each span is live for the whole turn,
     // `active_skill_slugs` reports them, and every declared `allowed-tools`
     // grant narrows the surface to operator ∧ grant, intersected across

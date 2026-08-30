@@ -1237,8 +1237,8 @@ pub(crate) async fn run_turn(
     // re-injected, from that block's own handles so the first answer does not
     // repeat its frames (#4498), and given `tx` so its own recall is metered
     // (#3366).
-    // This turn's directive-carrying skills — invoked or auto-selected
-    // (#5465): each span is live for the whole turn — `active_skill_slugs`
+    // This turn's directive-carrying skills — invoked or
+    // auto-selected: each span is live for the whole turn — `active_skill_slugs`
     // reports them, and every declared `allowed-tools` grant narrows every
     // dispatch to operator ∧ grant, intersected across spans. The guards
     // drop with this function, lifting the narrowing structurally. With no
