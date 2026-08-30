@@ -87,15 +87,11 @@ fn the_creation_gate_holds_an_unevaluated_candidate() {
         evidence: vec![],
         score: 99.0,
     };
-    // The gate ships OFF — see `AutoCreateConfig::require_measured_lift` for
-    // why: the evidence source it would gate on does not exist yet, and a
-    // default that no user action can satisfy is a feature-disabling default.
-    // The mechanism is what ships complete, so this fixture arms it explicitly.
-    assert!(!crate::skills::AutoCreateConfig::default().require_measured_lift);
-    let config = crate::skills::AutoCreateConfig {
-        require_measured_lift: true,
-        ..crate::skills::AutoCreateConfig::default()
-    };
+    // The gate ships ON since #5454 — the turn-trial ledger and the sweep now
+    // produce the evidence it reads (#5086), so the measured gate is the
+    // default and raw eligibility is the configured bootstrap opt-out.
+    assert!(crate::skills::AutoCreateConfig::default().require_measured_lift);
+    let config = crate::skills::AutoCreateConfig::default();
 
     for evidence in [EvalEvidence::Unevaluated, EvalEvidence::NoLift] {
         assert_eq!(
@@ -129,9 +125,11 @@ fn the_creation_gate_holds_an_unevaluated_candidate() {
     );
 }
 
-/// With the gate off — the shipped default — the loop behaves exactly as it
-/// did before #1067. This is the compatibility half of the change: the
-/// mechanism is present and the observable behavior has not moved.
+/// With the gate off — the configured bootstrap mode
+/// (`context.promotion.skill.require_measured_lift = false`) — the loop
+/// behaves exactly as it did before #1067. This is the compatibility half of
+/// the change: the mechanism is present and the raw-eligibility path is
+/// reachable by configuration, not deleted (#5454).
 #[test]
 fn the_gate_off_is_the_pre_1067_loop() {
     let candidate = crate::skills::SkillCandidate {
@@ -151,7 +149,10 @@ fn the_gate_off_is_the_pre_1067_loop() {
             &[],
             0,
             EvalEvidence::Unevaluated,
-            &crate::skills::AutoCreateConfig::default(),
+            &crate::skills::AutoCreateConfig {
+                require_measured_lift: false,
+                ..crate::skills::AutoCreateConfig::default()
+            },
         ),
         crate::skills::AutoCreateDecision::Create {
             path: ".stella/skills/unproven.md".into()

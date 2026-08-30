@@ -1109,21 +1109,20 @@ pub struct AutoCreateConfig {
     /// stays a candidate the miner will re-raise, and an appraisal
     /// ([`appraisal::appraise`]) is what turns it into a file.
     ///
-    /// **Off by default, and the default is the honest part.** Promotion today
-    /// is frequency alone — observed enough times, therefore a skill — which
-    /// mints an unhelpful skill exactly as easily as a helpful one. The gate
-    /// is the fix, and it is built and tested. What is not built is the
-    /// evidence source it would gate on: measuring a *candidate* needs a
-    /// with-skill/without-skill run over a task set, and a skill that has
-    /// never been injected has no with-skill arm to observe. Until an
-    /// appraisal run exists to produce that arm, defaulting this on would stop
-    /// the shipped loop from minting anything at all, with no action a user
-    /// could take to satisfy it — a feature-disabling default wearing a
-    /// correctness argument.
-    ///
-    /// So the switch ships off and the mechanism ships complete. Turning it on
-    /// is a one-line change once the appraisal run lands, and every fixture
-    /// that decides what the gate does already exists.
+    /// **On by default since #5454.** It shipped off while the evidence
+    /// source it gates on did not exist — a with-skill/without-skill
+    /// comparison needs a with-skill arm, and nothing recorded one — so
+    /// defaulting it on then would have stopped the loop minting anything,
+    /// with no action a user could take to satisfy it. That evidence source
+    /// now exists: the turn-trial ledger joins each turn's skill selection to
+    /// its outcome, the retirement sweep appraises it, and the recorded
+    /// verdict is what the creation gate reads (#5086). With the appraisal
+    /// loop live, frequency alone — observed enough times, therefore a skill
+    /// — is no longer a defensible promotion rule, so the measured gate is
+    /// the default and raw eligibility is the opt-out
+    /// (`context.promotion.skill.require_measured_lift = false`), kept for
+    /// bootstrap: a fresh workspace with no appraisal history yet may choose
+    /// to mint on frequency until its first skills accrue trials.
     pub require_measured_lift: bool,
 }
 
@@ -1131,7 +1130,7 @@ impl Default for AutoCreateConfig {
     fn default() -> Self {
         Self {
             max_per_session: 2,
-            require_measured_lift: false,
+            require_measured_lift: true,
         }
     }
 }
