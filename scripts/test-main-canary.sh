@@ -1,29 +1,25 @@
 #!/usr/bin/env bash
 #
-# The hermetic tests for scripts/main-canary.sh (#3332, split at #5356).
+# The hermetic tests for scripts/main-canary.sh (#3332, split at #5356,
+# rejoined once every row became fixture-scoped).
 #
 # Every case here is decided by a fixture tree under `--manifest-dir`, and every
 # announcing case runs under `--dry-run`, so nothing needs a network, a
 # GH_TOKEN, or the repository's real issues. A monitor that files issues is
 # precisely the kind of script you cannot test by running it for real.
 #
-# Hermetic in the sense that matters for CI: each case asserts something about
-# what the CANARY does, so it holds whatever `main` is red on. The canary's
-# `file-size` and `prose` rows still read the live tree — they take no
-# `--manifest-dir` — but a fixture that is already red stays red whatever those
-# two report, and a needle asserted about the fixture's own failure is there
-# either way. The cases that expect a GREEN verdict cannot say that, and live in
-# scripts/test-main-canary-live.sh.
+# Hermetic in the sense that matters for CI: every row — `lockfile-sync`,
+# `file-size`, `compile`, `prose` — reads the fixture, not the repository this
+# suite happens to be running in, so a case's verdict is a fact about the
+# canary rather than about `main`. That includes the GREEN cases, which every
+# row being fixture-scoped is what makes possible here.
 #
-# The cases that matter are the announcing branches. A canary that cannot be
-# shown to open an issue when main is red is indistinguishable from one that
-# always says "green" — and a monitor trusted on that basis is worse than no
-# monitor, because it is also an excuse not to look. The recovery half of that
-# argument — closing the issue when main comes back — needs a green verdict, so
-# it is the live suite's.
+# The cases that matter most are still the announcing branches. A canary that
+# cannot be shown to open an issue when main is red is indistinguishable from
+# one that always says "green" — and a monitor trusted on that basis is worse
+# than no monitor, because it is also an excuse not to look.
 #
-# Run: ./scripts/test-main-canary.sh   (or `make main-canary-test`, which runs
-# both suites)
+# Run: ./scripts/test-main-canary.sh   (or `make main-canary-test`)
 set -euo pipefail
 
 # shellcheck source=scripts/lib/main-canary-harness.sh
@@ -188,5 +184,40 @@ else
   echo "FAIL  a truncated reader changed the red verdict"
   fail=$((fail + 1))
 fi
+
+# ── green: moved from the now-deleted test-main-canary-live.sh ────────────
+# `file-size` and `prose` now read `--manifest-dir` like the other two rows,
+# so a fixture's verdict is decided by the fixture alone — these six cases no
+# longer need `main` itself to be green, and belong in the hermetic suite CI
+# actually runs.
+make_workspace "$tmp/clean"
+expect "a composing tree passes" 0 "OK — main composes green" --manifest-dir "$tmp/clean"
+
+# A green run must not file anything. This is the case that keeps the canary
+# worth reading: a monitor that comments on healthy days gets muted.
+refute "a green run announces nothing" "gh issue create" \
+  --announce --dry-run --manifest-dir "$tmp/clean"
+
+# The prose row RUNS, rather than merely being present in the checks array
+# (#4828) — now provably against the fixture, not against whatever `main`
+# happened to be doing when this suite ran.
+expect "the prose row runs and reports" 0 "ok   prose" --manifest-dir "$tmp/clean"
+
+# ── one DoD box per FAILING check, and none for the rest ──────────────────
+# `$tmp/nocompile` already exists from the compile cases above; reused rather
+# than rebuilt.
+refute "and offers no box for a check that passed" \
+  "- [ ] \`prose\` passes on a fresh" \
+  --announce --dry-run --manifest-dir "$tmp/nocompile"
+
+# ── recovery: the branch that keeps this worth reading ────────────────────
+# A canary that only ever opens issues becomes a stale-issue generator and gets
+# muted, at which point it is worse than nothing. Recovery only runs when an
+# issue is already open, hence --fixture-open-issue.
+open_issue=42
+expect "main going green closes the open issue" 0 "gh issue close $open_issue" \
+  --announce --dry-run --fixture-open-issue "$open_issue" --manifest-dir "$tmp/clean"
+expect "and says so on the way out" 0 "main recovered — closed #$open_issue" \
+  --announce --dry-run --fixture-open-issue "$open_issue" --manifest-dir "$tmp/clean"
 
 canary_tally test-main-canary
