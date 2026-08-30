@@ -60,6 +60,7 @@ pub mod hook_bridge;
 pub mod hook_runner;
 pub mod input;
 pub mod loop_comparability;
+pub mod netdeny;
 pub mod own_change;
 pub mod policy;
 pub mod read;

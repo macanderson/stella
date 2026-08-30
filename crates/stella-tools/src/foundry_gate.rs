@@ -9,12 +9,14 @@
 //! lands in `.stella/tools/` it registers, and "a human moved a file" is the
 //! only record that it was ever meant to.
 //!
-//! Staging is a **hand** step: a machine-authoring pass shipped and was
-//! retired in #3629 because nothing ever called it, so the pair under
-//! [`PROPOSED_DIR`] is written by whoever wants the tool. That changes who
-//! writes the bytes and nothing about what this gate does with them — the
-//! `[foundry]` table below is still what marks a manifest as governed, and
-//! `stella tools --adopt` still refuses a manifest without one.
+//! The pair under [`PROPOSED_DIR`] is written either by hand or by the
+//! autonomous foundry's authoring pass (the rebuild of the retired
+//! authoring slice, this time with a live caller and its own standing
+//! controls: spawn-time network denial, invocation telemetry, a circuit
+//! breaker, and versioned rollback). Who writes the bytes changes nothing
+//! about what this gate does with them — the `[foundry]` table below is
+//! still what marks a manifest as governed, and adoption still refuses a
+//! manifest without one.
 //!
 //! This module replaces that with a **standing gate**. A foundry-authored
 //! manifest sitting in `.stella/tools/` registers only when the workspace's
@@ -130,6 +132,12 @@ pub struct FoundryProvenance {
     /// invented arguments.
     #[serde(default)]
     pub witness_input: serde_json::Value,
+    /// The `.stella/private/tool_gaps.jsonl` row this tool was authored from
+    /// — the detection lineage every invocation-telemetry row
+    /// carries. Empty for a manifest authored before the gap ledger existed,
+    /// or staged by hand.
+    #[serde(default)]
+    pub gap_id: String,
     /// The digests [`gate_report`] approved these artifacts at, carried to the
     /// point of use so [`recheck_before_launch`] can hold the script being
     /// executed to them.
@@ -196,6 +204,14 @@ pub enum WithholdReason {
     NotAdopted,
     /// Adopted, witness green, but no human has enabled it yet.
     AwaitingEnablement,
+    /// A mechanism disabled it and recorded why — the circuit breaker's
+    /// verdict. Distinct from [`Self::AwaitingEnablement`] because
+    /// the remedies differ: an un-enabled tool wants a decision, a tripped
+    /// one wants a new version.
+    Disabled {
+        /// The recorded reason, verbatim from the ledger.
+        reason: String,
+    },
     /// The manifest's bytes no longer match what was adopted.
     ManifestTampered,
     /// The script's bytes no longer match what was adopted.
@@ -221,6 +237,10 @@ impl WithholdReason {
                  disabled. Enable it with `stella tools --enable <name>`."
                     .to_string()
             }
+            Self::Disabled { reason } => format!(
+                "disabled: {reason}. A new version re-enables it — re-author, or \
+                 `stella tools --rollback <name>`."
+            ),
             Self::ManifestTampered => {
                 "the manifest's bytes changed after adoption — the approval covered the adopted \
                  bytes, not these. Re-adopt it to prove the new definition."
@@ -289,6 +309,13 @@ pub fn decide(
         return GateDecision::Withhold(WithholdReason::ScriptTampered);
     }
     if !adopted.enabled {
+        // A mechanism's recorded verdict (the circuit breaker) outranks the
+        // generic "not enabled yet" sentence — the remedies differ.
+        if !adopted.disabled_reason.is_empty() {
+            return GateDecision::Withhold(WithholdReason::Disabled {
+                reason: adopted.disabled_reason.clone(),
+            });
+        }
         return GateDecision::Withhold(WithholdReason::AwaitingEnablement);
     }
     GateDecision::Register

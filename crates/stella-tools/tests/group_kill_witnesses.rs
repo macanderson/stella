@@ -193,6 +193,7 @@ async fn a_dropped_custom_tool_kills_the_process_group() {
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        foundry_runtime: Default::default(),
         contributed_by: None,
     };
     let registry: Arc<dyn ToolExecutor> = Arc::new(ToolRegistry::new(root.clone()));

@@ -371,6 +371,43 @@ pub(crate) enum Command {
             conflicts_with_all = ["validate", "adopt", "enable", "disable"]
         )]
         foundry: bool,
+
+        /// Author a staged manifest+script pair from one ledgered tool gap
+        /// (.stella/private/tool_gaps.jsonl) and stop — the manual escape
+        /// hatch that runs the autonomy pipeline's author+validate steps
+        /// without adopting anything
+        #[arg(
+            long,
+            value_name = "GAP_ID",
+            conflicts_with_all = ["validate", "adopt", "enable", "disable", "foundry"]
+        )]
+        draft: Option<String>,
+
+        /// Restore a prior recorded version of an adopted foundry tool —
+        /// exact bytes from the append-only version history — re-digest it,
+        /// and re-enable it (which is also how a tripped circuit breaker is
+        /// reset). Defaults to the version before the current one.
+        #[arg(
+            long,
+            value_name = "NAME",
+            conflicts_with_all = ["validate", "adopt", "enable", "disable", "foundry", "draft"]
+        )]
+        rollback: Option<String>,
+
+        /// The version --rollback restores
+        #[arg(long, value_name = "N", requires = "rollback")]
+        to: Option<i64>,
+
+        /// Per-tool foundry health: enablement (with the circuit breaker's
+        /// recorded reason when it spoke), version history, and the recent
+        /// launch record
+        #[arg(
+            long,
+            conflicts_with_all = [
+                "validate", "adopt", "enable", "disable", "foundry", "draft", "rollback"
+            ]
+        )]
+        status: bool,
     },
 
     /// Run a skill as a scoped one-shot (`stella skill run <slug>`)

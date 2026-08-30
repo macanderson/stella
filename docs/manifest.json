@@ -115,6 +115,11 @@
       "status": "implemented",
       "title": "ADR 0022: Adopt org standing decisions as a Steering Context Record corpus"
     },
+    "adr/0023-autonomous-tool-foundry": {
+      "path": "docs/adr/0023-autonomous-tool-foundry.md",
+      "status": "implemented",
+      "title": "ADR 0023: Reconnect the gap detector and let the foundry run autonomously behind standing controls"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

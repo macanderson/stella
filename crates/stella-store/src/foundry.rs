@@ -61,10 +61,18 @@ pub struct AdoptedTool {
     pub witness_input: String,
     /// The value the witness asserted the tool's output contains.
     pub witness_expect: String,
-    /// Whether a human has enabled it. Always `false` at adoption.
+    /// Whether it is enabled. Always `false` at adoption. Under `auto`
+    /// autonomy the enabling decision is the autonomy pipeline's, standing in
+    /// for the human behind the network-denial, breaker, and rollback
+    /// controls; under the manual protocol it stays a human's alone.
     pub enabled: bool,
     /// When it was adopted.
     pub adopted_at: String,
+    /// Why the tool is disabled, when a *mechanism* disabled it — the circuit
+    /// breaker's recorded verdict. Empty for a fresh adoption, a
+    /// human `--disable`, and every pre-v41 row: `enabled` says whether the
+    /// tool is offered, this says which mechanism turned it off and why.
+    pub disabled_reason: String,
 }
 
 /// One adopted tool with the use it has actually seen since — the #830
@@ -115,7 +123,8 @@ impl Store {
                witness_expect = excluded.witness_expect, \
                enabled = 0, \
                adopted_at = CURRENT_TIMESTAMP, \
-               enabled_at = NULL",
+               enabled_at = NULL, \
+               disabled_reason = ''",
             params![
                 tool.name,
                 tool.signature,
@@ -137,7 +146,8 @@ impl Store {
         let conn = self.lock();
         let changed = conn.execute(
             "UPDATE foundry_tools SET enabled = ?2, \
-               enabled_at = CASE WHEN ?2 = 1 THEN CURRENT_TIMESTAMP ELSE NULL END \
+               enabled_at = CASE WHEN ?2 = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, \
+               disabled_reason = '' \
              WHERE name = ?1",
             params![name, i64::from(enabled)],
         )?;
@@ -157,7 +167,7 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT name, signature, manifest_digest, script_digest, witness, witness_input, \
-                    witness_expect, enabled, adopted_at \
+                    witness_expect, enabled, adopted_at, disabled_reason \
              FROM foundry_tools ORDER BY name ASC",
         )?;
         let rows = stmt.query_map([], row_to_adopted)?;
@@ -174,7 +184,7 @@ impl Store {
         let row = conn
             .query_row(
                 "SELECT name, signature, manifest_digest, script_digest, witness, witness_input, \
-                        witness_expect, enabled, adopted_at \
+                        witness_expect, enabled, adopted_at, disabled_reason \
                  FROM foundry_tools WHERE name = ?1",
                 params![name],
                 row_to_adopted,
@@ -195,7 +205,7 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT f.name, f.signature, f.manifest_digest, f.script_digest, f.witness, \
-                    f.witness_input, f.witness_expect, f.enabled, f.adopted_at, \
+                    f.witness_input, f.witness_expect, f.enabled, f.adopted_at, f.disabled_reason, \
                     (SELECT COUNT(*) FROM tool_calls t \
                       WHERE t.name = f.name AND t.ts >= f.adopted_at AND t.state != 'running'), \
                     (SELECT COUNT(*) FROM tool_calls t \
@@ -207,9 +217,9 @@ impl Store {
         let rows = stmt.query_map([], |r| {
             Ok(FoundryReuse {
                 tool: row_to_adopted(r)?,
-                calls: r.get(9)?,
-                errors: r.get(10)?,
-                last_used: r.get(11)?,
+                calls: r.get(10)?,
+                errors: r.get(11)?,
+                last_used: r.get(12)?,
             })
         })?;
         let mut out = Vec::new();
@@ -220,7 +230,237 @@ impl Store {
     }
 }
 
-/// The nine leading columns every reader above selects, in one place so the
+/// One row of a foundry tool's append-only version history — digests and
+/// metadata only; the bytes are fetched separately by
+/// [`Store::foundry_version_bytes`], because a listing does not need them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundryVersion {
+    /// Tool name.
+    pub name: String,
+    /// 1-based version, counting up per tool.
+    pub version: i64,
+    /// SHA-256 of this version's manifest bytes.
+    pub manifest_digest: String,
+    /// SHA-256 of this version's script bytes.
+    pub script_digest: String,
+    /// Why this version was recorded: `adopt`, `rollback to vN`, …
+    pub reason: String,
+    /// When it was recorded.
+    pub created_at: String,
+}
+
+/// One recorded launch of a foundry-built tool — what the circuit breaker
+/// folds over and what `stella tools --status` reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundryInvocation {
+    /// Tool name.
+    pub name: String,
+    /// SHA-256 of the script that ran — ties the outcome to a version.
+    pub script_digest: String,
+    /// The `tool_gaps.jsonl` gap id the tool was authored from, or empty.
+    pub gap_id: String,
+    /// Wall-clock duration of the launch.
+    pub duration_ms: i64,
+    /// Whether the process exited 0.
+    pub ok: bool,
+    /// Whether the launch was killed at its timeout.
+    pub timed_out: bool,
+    /// Captured stdout size in bytes.
+    pub output_bytes: i64,
+}
+
+impl Store {
+    /// Append one version row — the exact bytes alongside their digests —
+    /// returning the version number it landed as. Append-only: rollback
+    /// appends a copy of the target version rather than editing history.
+    pub fn record_foundry_version(
+        &self,
+        name: &str,
+        manifest: &[u8],
+        script: &[u8],
+        manifest_digest: &str,
+        script_digest: &str,
+        reason: &str,
+    ) -> Result<i64> {
+        let conn = self.lock();
+        let version: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM foundry_tool_versions WHERE name = ?1",
+            params![name],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO foundry_tool_versions \
+               (name, version, manifest_digest, script_digest, manifest_bytes, script_bytes, \
+                reason) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                name,
+                version,
+                manifest_digest,
+                script_digest,
+                manifest,
+                script,
+                reason
+            ],
+        )?;
+        Ok(version)
+    }
+
+    /// One tool's version history, oldest first, without the bytes.
+    pub fn foundry_versions(&self, name: &str) -> Result<Vec<FoundryVersion>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT name, version, manifest_digest, script_digest, reason, created_at \
+             FROM foundry_tool_versions WHERE name = ?1 ORDER BY version ASC",
+        )?;
+        let rows = stmt.query_map(params![name], |r| {
+            Ok(FoundryVersion {
+                name: r.get(0)?,
+                version: r.get(1)?,
+                manifest_digest: r.get(2)?,
+                script_digest: r.get(3)?,
+                reason: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// One version's exact bytes: `(manifest, script)`. `None` when the tool
+    /// has no such version.
+    pub fn foundry_version_bytes(
+        &self,
+        name: &str,
+        version: i64,
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        let conn = self.lock();
+        let row = conn
+            .query_row(
+                "SELECT manifest_bytes, script_bytes FROM foundry_tool_versions \
+                 WHERE name = ?1 AND version = ?2",
+                params![name, version],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Append one launch's telemetry row.
+    pub fn record_foundry_invocation(&self, invocation: &FoundryInvocation) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO foundry_invocations \
+               (name, script_digest, gap_id, duration_ms, ok, timed_out, output_bytes) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                invocation.name,
+                invocation.script_digest,
+                invocation.gap_id,
+                invocation.duration_ms,
+                i64::from(invocation.ok),
+                i64::from(invocation.timed_out),
+                invocation.output_bytes,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The most recent `limit` outcomes for one tool, **newest first** — the
+    /// circuit breaker's input. A fold over the log rather than a maintained
+    /// counter, for the same reason as [`Store::foundry_reuse`].
+    pub fn recent_foundry_outcomes(&self, name: &str, limit: usize) -> Result<Vec<bool>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT ok FROM foundry_invocations WHERE name = ?1 \
+             ORDER BY rowid DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(
+            params![name, limit as i64],
+            |r| Ok(r.get::<_, i64>(0)? != 0),
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Disable a tool with the mechanism's recorded reason — the circuit
+    /// breaker's write. A human `--disable` goes through
+    /// [`Store::set_foundry_tool_enabled`], which records no reason.
+    pub fn disable_foundry_tool_with_reason(&self, name: &str, reason: &str) -> Result<bool> {
+        let conn = self.lock();
+        let changed = conn.execute(
+            "UPDATE foundry_tools SET enabled = 0, enabled_at = NULL, disabled_reason = ?2 \
+             WHERE name = ?1",
+            params![name, reason],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Re-pin an adoption to restored bytes — the rollback write.
+    ///
+    /// Restoring a prior version re-digests the files on disk, and the
+    /// adoption record has to pin those digests or the gate would withhold
+    /// the restored tool as tampered. Re-enables and clears any breaker
+    /// verdict: a rolled-back tool is a *new version* in the breaker's eyes,
+    /// which is exactly how a tripped breaker is reset. Returns `false` when
+    /// no such adoption exists.
+    pub fn repin_foundry_tool(
+        &self,
+        name: &str,
+        manifest_digest: &str,
+        script_digest: &str,
+    ) -> Result<bool> {
+        let conn = self.lock();
+        let changed = conn.execute(
+            "UPDATE foundry_tools SET manifest_digest = ?2, script_digest = ?3, \
+               enabled = 1, enabled_at = CURRENT_TIMESTAMP, disabled_reason = '', \
+               adopted_at = CURRENT_TIMESTAMP \
+             WHERE name = ?1",
+            params![name, manifest_digest, script_digest],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// The most recent shell commands this workspace ran, oldest first —
+    /// the gap detector's feeder. Reads the `tool_calls` projection
+    /// for finished `bash` calls and extracts each recorded input's
+    /// `command`; rows whose input carries none (or was never recorded) are
+    /// skipped rather than guessed at.
+    pub fn recent_shell_invocations(&self, limit: usize) -> Result<Vec<(String, bool)>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT args_json, state FROM tool_calls \
+             WHERE name = 'bash' AND state IN ('ok', 'error') \
+             ORDER BY rowid DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (args_json, state) = row?;
+            let Ok(args) = serde_json::from_str::<serde_json::Value>(&args_json) else {
+                continue;
+            };
+            let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            out.push((command.to_string(), state == "ok"));
+        }
+        // The query walked newest-first to bound the scan; the detector wants
+        // history in the order it happened.
+        out.reverse();
+        Ok(out)
+    }
+}
+
+/// The ten leading columns every reader above selects, in one place so the
 /// column order and the struct cannot drift.
 fn row_to_adopted(r: &rusqlite::Row<'_>) -> rusqlite::Result<AdoptedTool> {
     Ok(AdoptedTool {
@@ -233,6 +473,7 @@ fn row_to_adopted(r: &rusqlite::Row<'_>) -> rusqlite::Result<AdoptedTool> {
         witness_expect: r.get(6)?,
         enabled: r.get::<_, i64>(7)? != 0,
         adopted_at: r.get(8)?,
+        disabled_reason: r.get(9)?,
     })
 }
 

@@ -72,6 +72,20 @@ Thumbs.db
 !/.stella/rules/**
 /.stella/rules/private/
 
+# Custom slash commands travel with the repository -- but opt-in, one command
+# per line. Unlike `rules/`, most of `.stella/commands/` is deliberately local
+# scratch (those files carry their own "not tracked" headers), so a blanket
+# negation would expose ~50 local-only definitions. A command that is meant to
+# steer a teammate's session names itself here.
+#
+# Four lines are required, in this order: re-include the directory, re-exclude
+# its contents, then name the files. Git cannot re-include a file whose parent
+# directory is excluded, so dropping the first line makes the rest inert.
+!/.stella/commands/
+/.stella/commands/*
+!/.stella/commands/triage-sweep.md
+!/.stella/commands/triage-sweep.toml
+
 # Audit output directory written by the ultra-audit skill — never committed.
 # (The legacy .ultraudit/ path is deliberately not ignored here: a report is
 # already tracked under it, and adding the rule would orphan that file.)

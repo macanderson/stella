@@ -1,0 +1,356 @@
+---
+description: Sweep a repo's `triage`-labeled backlog — vet every issue against the code, fix the easy ones in one cleanup PR, and label the rest priority → area → descriptors, with epics grouped and ranked. Repo-agnostic: discovers each repo's label taxonomy at runtime.
+argument-hint: "<owner/repo> [--dry-run] [--no-fix] [--label-only] [--limit N] [--concurrency N] [--no-close]"
+allowed-tools: "Bash(gh:*), Bash(git:*), Bash(rg:*), Bash(fd:*), Bash(jq:*), Bash(mkdir:*), Read, Grep, Glob, Edit, Write, MultiEdit, Agent"
+disable-model-invocation: true
+---
+
+Target repo: **$ARGUMENTS**
+
+> **Not `/backlog-triage`.** The `stella` repo also ships `/backlog-triage`, which
+> is *specific to that repo*: it drives a six-facet contract, writes an Impact
+> score to Projects v2 field IDs, and knows stella's crate→`area:*` routing. Use
+> that one inside `macanderson/stella`. `/triage-sweep` is the **repo-agnostic**
+> sibling — it discovers whatever taxonomy the target repo has, re-derives every
+> issue's claim from the source tree, and fixes the trivially-fixable into one
+> cleanup PR. Where they overlap, `/backlog-triage` is the more specific tool and
+> wins.
+
+
+You are the **triage authority** for this run. Parse `$ARGUMENTS`: the first
+bare token is `<owner/repo>` (default: the current repo via `gh repo view`).
+Flags:
+
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Plan and report only. Zero writes: no labels, no comments, no commits, no PR. |
+| `--no-fix` / `--label-only` | Skip Phase 4 entirely. Vet, dedup, label, epic — but fix nothing. |
+| `--limit N` | Only process the N oldest `triage` issues. |
+| `--concurrency N` | Vetting subagents in flight (default 5). |
+| `--no-close` | Never close anything. Duplicates and already-fixed issues get a comment and stay open. |
+
+---
+
+## The separation-of-duties question — read this first
+
+Several repos in this org carry **SCR-005**
+(`docs/scr/SCR-005-triage-separation-of-duties.md`), which says the triage agent
+*"never implements anything and never closes issues — it only sizes and orders."*
+
+**This command extends that role, at the maintainer's explicit request** for vet +
+fix + label in one pass. Resolve the tension this way; do not resolve it by
+refusing:
+
+- The **fixes go in a separate PR** that a human merges. The agent never merges it.
+- Issues therefore close **through PR merge**, not by agent fiat.
+- The agent **still never sets its own priority on an issue it also fixed** — a
+  fixed issue leaves triage via the PR, not via a P-label.
+- If the repo has a triage-guard workflow, read it
+  (`.github/workflows/triage-guard.yml`) before writing any label. It names the
+  whitelisted identities and the P-label-vs-`triage` rule. If your `gh`
+  identity is not whitelisted, your P-labels will be **stripped and the issue
+  re-queued** — detect this up front (`gh api user -q .login`), and if you are
+  not whitelisted, **stop and report** rather than fighting the workflow issue
+  by issue.
+
+State in the final report which of these applied.
+
+---
+
+## Phase 0 — Bootstrap (parent, no subagents)
+
+Do all of this before touching a single issue.
+
+1. **Resolve and verify access, and pick a scratch dir.**
+   ```sh
+   REPO=<owner/repo>              # `gh repo view --json nameWithOwner -q .nameWithOwner` if omitted
+   gh repo view "$REPO" --json nameWithOwner,defaultBranchRef -q '.nameWithOwner + " @ " + .defaultBranchRef.name'
+   gh api user -q .login          # the identity every write will be attributed to
+   WORK="${CLAUDE_JOB_DIR:-$HOME/.claude}/tmp/triage-sweep" && mkdir -p "$WORK"
+   ```
+   `$CLAUDE_JOB_DIR` is set only in background jobs — always go through `$WORK`
+   so the run works interactively too. Resolve the slug with `gh`, never assume
+   the owner from the directory name (this org has repos whose directory name
+   and GitHub slug differ).
+
+   > **Gotcha — `gh --json` into a file can be colorized and unparseable.** This
+   > shell exports `CLICOLOR_FORCE=1`, which makes `gh` emit ANSI escapes even
+   > when redirected, and `NO_COLOR=1` does **not** override it — `jq` then fails
+   > with `Invalid numeric literal at line 1, column 2`. Prefix every capturing
+   > `gh` call with `env -u CLICOLOR_FORCE`. If you ever see that `jq` error,
+   > this is the cause; do not conclude the API returned nothing.
+2. **Snapshot the label taxonomy — never guess a label name.**
+   ```sh
+   env -u CLICOLOR_FORCE gh label list -R "$REPO" --limit 300 --json name,description > "$WORK/labels.json"
+   ```
+   Classify what exists into five buckets and record the result:
+   - **priority** — `P0`…`P4` (some repos stop at `P3`)
+   - **type** — `bug`, `feature`, `chore`, `epic`, `documentation`, `duplicate`,
+     `invalid`, `wontfix`, `tech-debt`
+   - **area** — `area:*` (and `@package/*` / `@app/*` where the repo uses them)
+   - **pain** — `pain:*` (and `goal:*`)
+   - **state** — `triage`, `blocked`, `HOLD`, `in-progress`, `needs-witness`, `size/*`
+3. **Read the guard.** `.github/workflows/triage-guard.yml`, if present (see above).
+4. **Pull the backlog** with everything needed to judge it:
+   ```sh
+   env -u CLICOLOR_FORCE gh issue list -R "$REPO" --label triage --state open --limit 500 \
+     --json number,title,body,labels,createdAt,updatedAt,author,comments,url \
+     > "$WORK/triage-issues.json"
+   ```
+   Also pull the **already-triaged** open issues (number + title + labels only).
+   You need them to detect duplicates of issues that already left the queue, and
+   to calibrate priorities against how this repo actually ranks things.
+5. **Get the code.** If `$REPO` is not the current working directory, clone it
+   shallow into `$WORK/<repo>` — **vetting requires reading the
+   source.** An issue cannot be vetted from its own text.
+6. **Open a ledger** at `$WORK/triage-ledger.md` and append after
+   every phase. It is what the final report is built from, and what survives if
+   the run is interrupted.
+7. **Create a task list** (TaskCreate), one task per phase, so progress is visible.
+
+---
+
+## Phase 1 — Vet against the code (fan-out)
+
+> An issue's own text is a **claim**, not evidence. Dead-code findings, "X is
+> unused", "Y is broken", and "Z is missing" all decay — the call site may have
+> landed, the bug may be fixed, the file may be gone. **Re-derive every claim
+> from the current tree.**
+
+Split the issues into batches of **6–8** and dispatch one `general-purpose`
+subagent per batch, `--concurrency` at a time. Give every subagent this
+verbatim, plus its batch:
+
+> You are vetting GitHub issues against the current source tree at `<path>`.
+> For each issue, re-derive its central claim from the code — do not trust the
+> issue text. Use `rg` and `fd`, never the slower tools. Cite the **file and the
+> symbol** for everything you assert — `hex-utils.ts`'s `hexPoints` — and never a
+> bare line number, which is wrong after the next edit above it. A triage comment
+> is read weeks later.
+>
+> **HARD RULE — NEVER run a whole-repo or all-package test suite, and never run
+> a full gate or build.** If you must prove something by running a test, run
+> exactly one test file. When in doubt, read the code instead of running anything.
+>
+> Do not edit any file in this phase. Read-only.
+>
+> Return one record per issue: `number`, `verdict`, `type`, `confidence`
+> (high/medium/low), `evidence` (file + symbol list), `areas` (paths touched, for
+> area-label mapping), `fix_difficulty` (trivial/small/medium/large/unknown),
+> `fix_sketch` (if trivial or small: the exact change), `pain` (the concrete
+> cost this imposes today, or `none`), `dup_of` (issue number, if visible in
+> your batch), and `notes`.
+
+**Verdicts** — exactly one per issue:
+
+| Verdict | Means | Next |
+|---|---|---|
+| `CONFIRMED` | The claim reproduces in the current tree. | Fix or label. |
+| `STALE` | It was real, and is already fixed or gone. | Close with the commit, or the file and symbol, that proves it (unless `--no-close`). |
+| `MISFILED` | Real, but not a bug — a feature, chore, docs, or tech-debt request. | Retype and label. |
+| `DUPLICATE` | Same root cause as another issue. | Fold into the canonical one. |
+| `INVALID` | The premise is false — the code never behaved that way. | Comment the counter-evidence; close. |
+| `NEEDS-INFO` | Cannot be settled from the tree alone (needs a repro, a prod log, a decision). | Label, ask, leave open. |
+
+**Never mark `STALE` or `INVALID` on low confidence.** Downgrade to `NEEDS-INFO`
+and say what would settle it. A wrongly-closed real bug costs far more than an
+extra round of triage.
+
+---
+
+## Phase 2 — Dedup, cluster, and rank (parent, single pass)
+
+This phase is **not** parallelizable — it needs the whole backlog in one head.
+
+**Deduplicate.** Group by root cause, not by title similarity. Two issues with
+different titles pointing at the same line are duplicates; two issues with
+near-identical titles in different packages are not. For each group pick the
+**canonical** issue — oldest with the best evidence — and fold the others into
+it, carrying any unique detail over as a comment on the canonical *before*
+closing the duplicate.
+
+**Cluster into epics.** An epic is justified only when a group is genuinely one
+body of work. Test it against all four:
+
+1. **One theme** a reader can name in a short phrase without using "and".
+2. **3–6 members.** Two is a pair of issues, not an epic. Ten is a category — split it.
+3. **Shared fate** — shipping half leaves the value unrealized.
+4. **A real seam** — the members share an area, a subsystem, or a migration.
+
+A pile of unrelated dead-code findings spread across ten packages is **not** an
+epic — that is a *cleanup PR*, which Phase 4 already produces. Do not manufacture
+epics to make the board look organized. Reuse an existing open epic when one
+already covers the theme; only then create a new one.
+
+**Rank.** Assign exactly one priority per issue and per epic:
+
+| | Meaning | Signals |
+|---|---|---|
+| `P0` | Drop everything. | Prod broken, data loss, security hole, default branch red, users blocked with no workaround. |
+| `P1` | This cycle. | Real user-visible defect with a painful workaround; blocks other work; correctness bug on a shipped path. |
+| `P2` | Next cycle. | Genuine defect with contained blast radius, or high-value cleanup with a clear payoff. |
+| `P3` | Backlog. | Dead code, cosmetic, internal-only friction, nice-to-have. |
+| `P4` | Someday. | Speculative, or gated on a decision nobody has made. (Only where the repo has `P4`.) |
+
+Rank on the **cost of not doing it**, never on how easy it is to do. An epic
+takes the **highest** priority among its members — never an average.
+
+---
+
+## Phase 3 — Compose the label set
+
+For each issue, build an **ordered** list:
+
+```
+<priority> → <area>[, <area>…] → <type> → <descriptors…>
+```
+
+1. **Priority — exactly one.** Never zero, never two.
+2. **Area — one to three.** Map the file-and-symbol evidence from Phase 1 onto the
+   repo's real `area:*` names. Multi-area is expected for cross-cutting work;
+   more than three means the issue is too broad — say so in the comment. Where
+   the repo also uses `@package/*` / `@app/*`, add the matching one.
+3. **Type — exactly one**, drawn from the vocabulary the repo actually has:
+   `bug`, `feature`, `chore`, `documentation`, `tech-debt`, `epic`. Taxonomies
+   differ — `tech-debt` exists in some of these repos and not others. Where the
+   closest type label is missing, use the nearest one that exists (`chore` for
+   `tech-debt`) and say so in the rationale comment. Never create a type label.
+4. **Descriptors — zero or more.** `pain:*`, `goal:*`, `blocked`, `good first issue`.
+
+**The pain label.** Add a `pain:*` label only when you can state the cost in one
+concrete sentence in the rationale comment. Canonical vocabulary:
+
+| Label | The cost it names |
+|---|---|
+| `pain:token-efficiency` | Burns context or tokens on every run. |
+| `pain:token-cache` | Busts the prompt cache. |
+| `pain:wall-clock` | Makes runs or builds slower. |
+| `pain:resolve-rate` | Makes the agent fail tasks it should solve. |
+| `pain:test-invalidator` | Makes a green suite untrustworthy. |
+| `pain:false-positive` | Reports problems that are not real. |
+| `pain:false-negative` | Misses problems that are real. |
+
+If the target repo has no `pain:*` labels, create **only** the ones this run
+actually assigns (`gh label create` with the description above), and list every
+created label in the final report. Never invent a pain label outside this
+vocabulary — label sprawl is the failure mode this rule exists to prevent.
+
+**No duplicate labels — compute a delta, never a blind add.** For every issue,
+diff your composed set against the labels already on it. Add only what is
+missing, drop `triage` in the same call, and leave everything else alone. Do not
+re-add a label that is already present, and do not strip a human's existing label
+just because your set did not include it — `triage` is the only label you remove.
+
+```sh
+gh issue edit <n> -R "$REPO" \
+  --add-label "P1,area:api,bug,pain:resolve-rate" \
+  --remove-label "triage"
+```
+
+> **Ordering caveat — state it once in the report.** GitHub renders an issue's
+> labels in its own order; applying them priority-first does not pin the display
+> order. The canonical ordered set therefore also goes in the rationale comment,
+> which *is* order-preserving and is what a reader should trust.
+
+**Rationale comment.** Post exactly one per issue, and keep it short:
+
+```
+**Triage:** `P1` · `area:api` · `bug` · `pain:resolve-rate`
+
+Confirmed against `routes/v1/foo.ts`'s `handleFoo` — <one line on what reproduces>.
+Pain: <one concrete sentence, or omit this line entirely>.
+Epic: #<n> — <epic title>.      ← only if it joined one
+```
+
+---
+
+## Phase 4 — Fix the easy ones → one cleanup PR
+
+Skip entirely on `--no-fix` / `--label-only` / `--dry-run`.
+
+**An issue is "easy" only if every one of these holds:**
+
+- Verdict is `CONFIRMED` at **high** confidence.
+- The fix is **≤ 2 files** and mechanical — a deletion, a rename, a corrected
+  literal, a missing export, a wrong path, a stale doc line.
+- It touches **no** schema, migration, auth, billing, tenancy, IAM, crypto, or
+  public API/contract surface.
+- It changes **no** public behavior a caller could depend on.
+- It is provable by **one narrow test**, or by the compiler/typechecker.
+
+Anything else goes to Phase 3 labeling instead. When in doubt, label it — a
+half-fix buried in a cleanup PR is worse than a ticket that says what remains.
+
+**Procedure:**
+
+1. Cut a branch from a **fresh, synced** default branch and push it immediately:
+   ```sh
+   git fetch origin && git switch main && git rebase origin/main
+   git switch -c chore/backlog-cleanup-<yyyymmdd>
+   git push -u origin chore/backlog-cleanup-<yyyymmdd>
+   ```
+   For a large batch, use a worktree:
+   `git worktree add ../<repo>-triage-sweep -b <branch>`.
+2. Fan out fixes to subagents **grouped by area**, so two agents never edit the
+   same file. Restate this in every prompt, verbatim:
+   > **NEVER run a whole-repo or all-package test suite, and never run a full
+   > gate or build.** Run only the one test file implicated by the file you
+   > changed. Write a regression test for every fix. Commit each fix separately
+   > as `fix(<area>): <what> (#<issue>)`.
+3. Verify with the **narrowest** command that proves the change. Check for an
+   in-flight run first (`pgrep -fl vitest`) and wait rather than stacking on it.
+4. **One PR for the whole batch**, titled
+   `chore(backlog): triage cleanup — N issues`, with one line per issue in the body.
+
+   **`Closes` vs `Refs` — this matters.** Use `Closes #N` **only** when the fix
+   fully satisfies that issue's acceptance criteria and a test proves it.
+   Otherwise use `Refs #N` and comment on the issue stating exactly what remains.
+   A `Closes` on a partial fix silently destroys the remaining work.
+5. Confirm CI with `gh pr checks --watch`. **Do not merge.** Hand the maintainer
+   the URL.
+
+---
+
+## Phase 5 — Epics
+
+For each cluster that survived Phase 2's four tests:
+
+- **Reuse first.** Search open epics before creating one.
+- Create it with the `epic` label plus the **union** of its members' area labels,
+  the **max** of their priorities, and any descriptor shared by a majority of them.
+- Body: one paragraph on why these are one body of work, a checklist of members
+  (`- [ ] #123 — title`), the pain the epic retires, and what "done" means.
+- Link members as sub-issues where the repo supports it; otherwise put the epic
+  number in each member's rationale comment.
+- Epics get triaged too — they are issues. Same ordered label set.
+
+---
+
+## Phase 6 — Report
+
+Write the ledger to `verifications/<session-id>/triage-sweep-<repo>-<date>.md`
+where the repo uses a `verifications/` convention, and summarize in the terminal:
+
+- **Counts by verdict** — confirmed / stale / misfiled / duplicate / invalid / needs-info.
+- **The cleanup PR** — URL, issue count, CI status.
+- **Labeled** — count, plus the priority distribution (`P0:2 P1:9 P2:20 P3:14`).
+- **Epics** — created vs reused; each with number, title, priority, members.
+- **Closed** — every closure with the one-line evidence that justified it.
+- **Labels created** — any `pain:*` or other label this run added to the repo.
+- **Left in `triage`** — every issue you could not settle, and what would settle it.
+- **Guard status** — whether the identity was whitelisted, and whether any
+  P-label was stripped and re-queued.
+
+Then file follow-ups: anything you noticed and did not fix becomes a new issue
+carrying only the `triage` label, per the repo's own residue rule.
+
+---
+
+## Rules
+
+- **Every open issue ends with a priority label or `triage` — never neither, never both.**
+- **Never blind-add a label.** Always diff against what is already on the issue.
+- **Never close on low confidence.** `NEEDS-INFO` is always available.
+- **Never run a whole-repo suite, gate, or build.** Narrowest command only.
+- **Never merge the cleanup PR.** The maintainer merges.
+- **`--dry-run` writes nothing** — not a label, not a comment, not a commit.

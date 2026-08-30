@@ -382,6 +382,7 @@ fn script_tool_with_timeout(root: &Path, file: &str, body: &str, timeout_ms: u64
         claimed_risk: None,
         claimed_idempotent: false,
         output_schema: None,
+        foundry_runtime: Default::default(),
         contributed_by: None,
     }
 }

@@ -19,7 +19,7 @@
 /// ([`crate::enterprise_telemetry`]) — they are absent here, since
 /// the fresh-file probe must answer "has the versioned schema ever been
 /// created?" and those tables are created after it runs.
-pub(crate) const TABLES: [&str; 23] = [
+pub(crate) const TABLES: [&str; 25] = [
     "executions",
     "forgotten",
     "events",
@@ -40,6 +40,8 @@ pub(crate) const TABLES: [&str; 23] = [
     "step_manifest",
     "step_receipt",
     "foundry_tools",
+    "foundry_tool_versions",
+    "foundry_invocations",
     "session_turn_diffs",
     "plan_revisions",
     "plan_edges",
@@ -816,8 +818,60 @@ pub(crate) const FOUNDRY_TOOLS_DDL: &str = "CREATE TABLE IF NOT EXISTS foundry_t
        witness_expect TEXT NOT NULL DEFAULT '',
        enabled INTEGER NOT NULL DEFAULT 0,
        adopted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-       enabled_at TEXT
+       enabled_at TEXT,
+       disabled_reason TEXT NOT NULL DEFAULT ''
      );";
+
+/// `foundry_tool_versions` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the append-only
+/// version history behind `stella tools --rollback`: one row per
+/// adoption or rollback of a foundry tool, carrying the exact manifest and
+/// script BYTES alongside their digests so a prior version can be restored
+/// without the original files surviving anywhere else.
+///
+/// Append-only by design: rolling back appends a new row whose bytes are a
+/// copy of the target version's, so history records what ran when rather
+/// than being rewritten. `version` counts up per tool from 1; the UNIQUE key
+/// makes a concurrent double-append a conflict instead of a silent fork.
+///
+/// Bytes live here rather than in blob files because a foundry pair is small
+/// by construction (a manifest and a shell script, not a binary) and the
+/// rollback contract is exactly "the bytes that were adopted", which a path
+/// reference cannot promise after the file changes.
+pub(crate) const FOUNDRY_TOOL_VERSIONS_DDL: &str =
+    "CREATE TABLE IF NOT EXISTS foundry_tool_versions (
+       name TEXT NOT NULL,
+       version INTEGER NOT NULL,
+       manifest_digest TEXT NOT NULL,
+       script_digest TEXT NOT NULL,
+       manifest_bytes BLOB NOT NULL,
+       script_bytes BLOB NOT NULL,
+       reason TEXT NOT NULL DEFAULT '',
+       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       UNIQUE (name, version)
+     );";
+
+/// `foundry_invocations` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — per-invocation
+/// telemetry for foundry-built tools: one row per launch, written by
+/// the custom-tool execution path after the process exits (or times out).
+/// This is what the circuit breaker folds over and what `stella tools
+/// --status` reports; `script_digest` ties each invocation to the exact
+/// version that ran, and `gap_id` carries the detection lineage from the
+/// `.stella/private/tool_gaps.jsonl` row the tool was authored from.
+///
+/// Append-only: outcomes are history, and the breaker reads the last N rows
+/// by rowid rather than maintaining a counter that could drift from the log.
+pub(crate) const FOUNDRY_INVOCATIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS foundry_invocations (
+       name TEXT NOT NULL,
+       script_digest TEXT NOT NULL DEFAULT '',
+       gap_id TEXT NOT NULL DEFAULT '',
+       started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       duration_ms INTEGER NOT NULL DEFAULT 0,
+       ok INTEGER NOT NULL DEFAULT 0,
+       timed_out INTEGER NOT NULL DEFAULT 0,
+       output_bytes INTEGER NOT NULL DEFAULT 0
+     );
+     CREATE INDEX IF NOT EXISTS foundry_invocations_by_name
+       ON foundry_invocations(name);";
 
 /// One turn's precomputed workspace diff (#1870): the `stella-diff`-shaped
 /// hunks between the work journal's `refs/stella/<session>/turn/<n-1>` and

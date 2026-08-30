@@ -1001,14 +1001,19 @@ async fn the_in_tree_providers_still_declare_no_egress() {
 }
 
 #[test]
-fn pinned_protocol_version_is_the_expected_draft() {
-    // Tripwire: our conformance is verified against this exact wire
-    // version. If a pin bump moves the protocol version, this fails loudly
+fn pinned_protocol_version_is_a_conformance_verified_wire_version() {
+    // Tripwire: our conformance is verified against these exact wire
+    // versions. The released 0.1.x crates speak the draft string; the CGP
+    // 1.0 freeze graduates the same wire format to its frozen name, and
+    // the downstream canary re-runs this suite against CGP HEAD, so both
+    // spellings are conformance-verified. Any move past them fails loudly
     // so conformance is re-audited rather than silently assumed to hold.
-    assert_eq!(
-        contextgraph_types::PROTOCOL_VERSION,
-        "contextgraph/1.0-draft",
-        "CGP protocol version changed — re-verify the conformance suite before bumping the pin"
+    // Delete the draft entry when the workspace pin moves off 0.1.x.
+    let verified = ["contextgraph/1.0-draft", "contextgraph/1.0"];
+    assert!(
+        verified.contains(&contextgraph_types::PROTOCOL_VERSION),
+        "CGP protocol version changed to {} — re-verify the conformance suite before widening the pin",
+        contextgraph_types::PROTOCOL_VERSION
     );
 }
 
