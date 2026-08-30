@@ -517,7 +517,8 @@
       { "hex": "#8B6720", "was": "investor-deck's invented warm gold -- never a kit value (#3653)" },
       { "hex": "#865D08", "was": "investor-deck's invented warm gold -- never a kit value (#3653)" },
       { "hex": "#F4EFE4", "was": "investor-deck's invented warm paper -- never a kit value (#3653)" },
-      { "hex": "#565660", "was": "v5.1 `comment` -- retired unpainted; code comments ship in `muted` (#4946)" }
+      { "hex": "#565660", "was": "v5.1 `comment` -- retired unpainted; code comments ship in `muted` (#4946)" },
+      { "hex": "#141416", "was": "light-ground ink one point off `ink`'s live #141413 -- regeneration never reached the copies that carried it (#5020)" }
     ]
   }
 }

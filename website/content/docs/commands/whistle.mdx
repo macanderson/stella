@@ -11,6 +11,7 @@ A message reaches a running [`run`](/docs/commands/run) or [`goal`](/docs/comman
 stella whistle "<message>"
 stella whistle "<message>" --session <id>
 stella whistle "<message>" --session <id> --session <id>
+stella whistle "<message>" --deep
 ```
 
 ## How delivery works
@@ -29,7 +30,29 @@ delivered    ses-1785956826121-25167  stella: migrate the config loader to serde
 unreachable  ses-1785956700004        stella: fix the flaky test (no listener — the session isn't currently reachable)
 ```
 
-`stella whistle` exits with a non-zero code if any target session could not be reached, after it prints the outcome for every session.
+`stella whistle` exits with a non-zero code if any target session could not be reached, after it prints the outcome for every session. Every target is contacted at the same time, so a session whose socket is stale slows down only its own line.
+
+## Reaching a session's workers
+
+A whistle normally lands on a session's lead — the agent you talk to. An interactive session can also be driving worker lanes (a task worker, a sidecar prompt), and those never hear a plain whistle. Add `--deep` and the same message lands at each live worker lane's next safe point as well:
+
+```bash
+stella whistle "stop touching the release branch" --deep
+```
+
+A session with no workers treats `--deep` exactly like a plain whistle.
+
+## Broadcasting from inside a session
+
+You do not need a second terminal. In [`stella chat`](/docs/commands/chat), type the message with a broadcast address in front of it:
+
+```text
+>>> >@all stop touching the release branch
+>>> >@ses-1785956826121-25167 run the tests first
+>>> >@all --deep stop touching the release branch
+```
+
+`>@all` reaches every other live session on this machine, `>@<id>` one of them, and `--deep` right after the address reaches their worker lanes too. The outcome for every session appears as a note in your transcript, in the same rows the command prints. The message goes out at once — it never waits behind your own agent's turn — and your own session is never a target of its own broadcast.
 
 ## What is reachable today
 

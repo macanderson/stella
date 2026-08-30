@@ -79,7 +79,7 @@ pub(super) fn close_dropped_execution(
     let Some((store, id)) = execution else {
         return;
     };
-    let recorded =
+    let outcome =
         agent::record_execution_end(store, *id, registry, "cancelled", dropped_cost, false);
     // After the close-out, because that is when the row carries the floor over
     // both sources. Before it, the receipts the driver missed are exactly the
@@ -91,7 +91,10 @@ pub(super) fn close_dropped_execution(
             summary.cost_usd,
         ));
     }
-    if recorded {
+    // `audit_complete` is false for every cancel — the provider-side usage
+    // envelope is unknowable, not that anything failed to write. Warn on
+    // `write_ok` alone, or this fires on every single cancel.
+    if outcome.write_ok {
         return;
     }
     let _ = in_tx.send(Inbound::Event {
@@ -220,6 +223,41 @@ mod tests {
             "the guard must report the $4.50 the receipts prove, not the $0.25 \
              prefix it accumulated: {}",
             budget.session_spent_usd()
+        );
+    }
+
+    /// A cancelled execution's usage envelope is unknowable, not unwritten —
+    /// closing one out against a real store where every write succeeds must
+    /// not tell the user their work was lost.
+    #[tokio::test]
+    async fn a_clean_cancel_warns_nobody() {
+        let root = tempfile::tempdir().expect("workspace");
+        let store = Arc::new(Store::open(root.path()).expect("store"));
+        let id = store
+            .begin_execution("chat", "a prompt", "zai", "glm-5.2")
+            .expect("execution");
+
+        let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel::<Inbound>();
+        let registry = ToolRegistry::new(std::env::temp_dir());
+
+        close_dropped_execution(
+            Some(&(Arc::clone(&store), id)),
+            &registry,
+            "cancelled",
+            0.0,
+            &mut budget,
+            &in_tx,
+        );
+        drop(in_tx);
+
+        let mut events = Vec::new();
+        while let Some(inbound) = in_rx.recv().await {
+            events.push(inbound);
+        }
+        assert!(
+            events.is_empty(),
+            "every write succeeded; the deck must not tell the user otherwise: {events:?}"
         );
     }
 

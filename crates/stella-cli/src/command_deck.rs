@@ -960,6 +960,9 @@ pub async fn run_deck_session(
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
     let mut subs = SubSessions::resuming(&cfg.durability, &session_record.id);
+    // Each worker lane's tap is announced to the whistle relay, so a deep
+    // whistle can reach the lanes this session drives — see `whistle`.
+    subs.attach_lane_sink(whistle.clone());
     let mut pending_spawns: VecDeque<subsession::QueuedSpawn> = VecDeque::new();
     // Lanes whose Restart arrived while the worker was still live: stop
     // first, respawn on its Ended.
@@ -1108,6 +1111,22 @@ pub async fn run_deck_session(
                         }
                         dispatch.release();
                         text
+                    }
+                    // The composer's broadcast address — other sessions'
+                    // whistle sockets, reported as one note (`whistle`).
+                    Some(WorkspaceInput::Whistle {
+                        message,
+                        session,
+                        deep,
+                    }) => {
+                        whistle::broadcast_from_deck(
+                            message,
+                            session,
+                            deep,
+                            &session_record.id,
+                            &in_tx,
+                        );
+                        continue 'session;
                     }
                     // The agents page's new-task prompt: a lane, never the
                     // lead's next turn — that is this message's whole meaning.
@@ -1979,6 +1998,11 @@ pub async fn run_deck_session(
                             if !command_side::run(text.trim(), cfg, &in_tx, &session_record.id) {
                                 queue.push_back(text);
                             }
+                        }
+                        // A broadcast never waits on the lead's turn: it is
+                        // about other sessions (`whistle`).
+                        Some(WorkspaceInput::Whistle { message, session, deep }) => {
+                            whistle::broadcast_from_deck(message, session, deep, &session_record.id, &in_tx);
                         }
                         // The agents page's new-task prompt: a lane now,
                         // exactly as at idle — the lead's turn is untouched.

@@ -88,14 +88,10 @@ fn event_and_telemetry_persistence_failure_downgrades_later_successful_closeout(
 
     let root = tempfile::tempdir().expect("root");
     let registry = ToolRegistry::new(root.path().to_path_buf());
-    assert!(!record_execution_end(
-        &store,
-        execution_id,
-        &registry,
-        "completed",
-        0.01,
-        false,
-    ));
+    assert!(
+        !record_execution_end(&store, execution_id, &registry, "completed", 0.01, false)
+            .fully_recorded()
+    );
     assert!(
         !store
             .execution_usage_complete(execution_id)
@@ -122,14 +118,15 @@ fn cancelled_closeout_is_incomplete_even_when_every_write_succeeds() {
     let root = tempfile::tempdir().expect("root");
     let registry = ToolRegistry::new(root.path().to_path_buf());
 
-    assert!(!record_execution_end(
-        &store,
-        execution_id,
-        &registry,
-        "cancelled",
-        0.0,
-        true,
-    ));
+    let outcome = record_execution_end(&store, execution_id, &registry, "cancelled", 0.0, true);
+    assert!(
+        outcome.write_ok,
+        "the name of this test is the claim: nothing failed to write"
+    );
+    assert!(
+        !outcome.audit_complete,
+        "a cancelled execution's usage envelope is unknowable"
+    );
     assert!(!store.execution_usage_complete(execution_id).unwrap());
     // The flag is what keeps a cancelled turn out of the enterprise export
     // (`pending_enterprise_export_page` gates on it). The *rollup* stopped

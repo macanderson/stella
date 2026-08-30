@@ -112,6 +112,16 @@ pub(crate) struct SubSessions {
     winding_down: HashMap<String, u64>,
     /// Every lane's spec, retained past its end — what Restart respawns.
     specs: HashMap<String, SubSessionSpec>,
+    /// Where each spawned lane's tap is announced, when something listens —
+    /// the deck's whistle relay, so a deep whistle reaches the lanes this
+    /// tenancy drives without the relay holding a handle on the driver's
+    /// `SubSessions` itself.
+    lane_sink: Option<Arc<dyn LaneTapSink>>,
+}
+
+/// Something told about every worker lane's steering tap as the lane spawns.
+pub(crate) trait LaneTapSink: Send + Sync {
+    fn register(&self, tap: &Arc<SteeringTap>);
 }
 
 impl SubSessions {
@@ -127,6 +137,7 @@ impl SubSessions {
             cleared: std::collections::HashSet::new(),
             winding_down: HashMap::new(),
             specs: HashMap::new(),
+            lane_sink: None,
         }
     }
 
@@ -186,6 +197,9 @@ impl SubSessions {
         self.next_generation += 1;
         self.active += 1;
         let tap: Arc<SteeringTap> = Arc::default();
+        if let Some(sink) = &self.lane_sink {
+            sink.register(&tap);
+        }
         self.stops.insert(lane.to_string(), (generation, stop));
         self.pauses.insert(lane.to_string(), pause);
         self.taps.insert(lane.to_string(), tap.clone());
@@ -193,6 +207,11 @@ impl SubSessions {
         self.cleared.remove(lane);
         self.specs.insert(lane.to_string(), spec);
         (generation, tap)
+    }
+
+    /// Announce every lane spawned from now on to `sink`.
+    pub(crate) fn attach_lane_sink(&mut self, sink: Arc<dyn LaneTapSink>) {
+        self.lane_sink = Some(sink);
     }
 
     /// Inject `text` at `lane`'s next step boundary. `false` when no worker

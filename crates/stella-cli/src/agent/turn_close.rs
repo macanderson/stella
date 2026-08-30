@@ -72,6 +72,7 @@ pub(crate) fn close_turn(
             outcome.cost_usd,
             outcome.persistence_complete,
         )
+        .fully_recorded()
     {
         warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
     }

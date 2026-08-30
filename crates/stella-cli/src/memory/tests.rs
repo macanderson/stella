@@ -17,6 +17,7 @@ mod quarantine;
 // Which sessions actually receive the volatile record channel — a separate
 // question from what recall renders, and the one that went unasked (epic #897).
 mod record_channel;
+mod records_refresh;
 // Everything between a model's reflection response and a stored lesson: the
 // parser, the self-review, and what `reflect_and_record` writes. The largest
 // seam here, and the one this file kept growing on — #2465 is what took it
