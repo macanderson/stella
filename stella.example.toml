@@ -533,6 +533,34 @@ per_revision = 0.1            # subtracted per verification round beyond the fir
 
 
 # -----------------------------------------------------------------------------
+# FOUNDRY — gap-detection thresholds and autonomy for self-authored tools
+#
+# The detector proposes a reusable tool when the same shell shape keeps getting
+# reconstructed with variation (#2471). The autonomy controls decide how far a
+# detected gap may travel without a human (#5453): "auto" authors, validates,
+# adopts, and enables the tool with network DENIED at spawn; "draft-only" stops
+# after writing the staged pair under .stella/tools/proposed/; "off" only
+# ledgers the gap. Whatever the mode, execution stays behind the foundry
+# ledger's per-call re-digest, and the circuit breaker auto-disables a tool
+# that keeps failing (re-author or `stella tools --rollback` re-enables).
+#
+# Whole-block last-wins across scopes, like [reward]: the thresholds, the
+# breaker, and the autonomy mode are one policy.
+# -----------------------------------------------------------------------------
+[foundry]
+min_occurrences = 3               # invocations before a shape can be proposed
+min_distinct_arguments = 2        # distinct argument sets required
+min_reuse_ratio = 3.0             # uses per argument set; <= 1.0 disables the gate
+require_success = true            # a shape that never worked is not a tool
+max_examples = 3                  # example commands/values kept per proposal
+autonomy = "auto"                 # "auto" | "draft-only" | "off"
+breaker_consecutive_failures = 3  # consecutive failures that disable a tool
+breaker_window = 10               # invocations the failure-rate arm looks at
+breaker_failure_rate = 0.5        # failure share over that window that trips it
+network_allowlist = []            # foundry tools allowed to reach the network
+
+
+# -----------------------------------------------------------------------------
 # PLAN REVIEW — the deck asks before it starts a plan
 #
 # Before the first step of a plan runs, the task board goes to whoever is
