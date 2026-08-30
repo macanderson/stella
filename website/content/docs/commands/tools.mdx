@@ -8,8 +8,9 @@ List every tool available to the agent for the current session — built-in tool
 ## Synopsis
 
 ```bash
-stella tools [--validate [DIR]] [--adopt NAME] [--enable NAME]
-             [--disable NAME] [--foundry] [global flags]
+stella tools [--validate [DIR]] [--draft GAP_ID] [--adopt NAME] [--enable NAME]
+             [--disable NAME] [--rollback NAME [--to N]] [--foundry] [--status]
+             [global flags]
 ```
 
 ## What it does
@@ -49,6 +50,26 @@ Custom tools come from a `<name>.toml` manifest dropped in `<workspace>/.stella/
   <OptionCard name="--foundry">
     Report every self-authored tool: its witness, whether it is enabled, and how often it
     has been reused since adoption — including the ones never used.
+  </OptionCard>
+  <OptionCard name="--draft GAP_ID">
+    Author a staged manifest+script pair from one ledgered tool gap
+    (`.stella/private/tool_gaps.jsonl`) and stop — the manual escape hatch that runs the
+    autonomy pipeline's author+validate steps without adopting anything. The pair lands
+    under `.stella/tools/proposed/`, invisible to discovery.
+  </OptionCard>
+  <OptionCard name="--rollback NAME">
+    Restore a prior recorded version of an adopted foundry tool — exact bytes from the
+    append-only version history — re-digest it, and re-enable it, which is also how a
+    tripped circuit breaker is reset. Defaults to the version before the current one;
+    `--to N` targets an explicit one.
+  </OptionCard>
+  <OptionCard name="--to N">
+    The version `--rollback` restores.
+  </OptionCard>
+  <OptionCard name="--status">
+    Per-tool foundry health: enablement (with the circuit breaker's recorded reason when
+    it spoke), version history, and the recent launch record — plus how many gaps sit in
+    the ledger waiting for a draft.
   </OptionCard>
 </CardGrid>
 
