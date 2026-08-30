@@ -46,7 +46,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     bench-suites wire-paths \
                     tokens hue-separation contrast light-clamp transcript-surfaces prose \
                     line-citations \
-                    deck-fit-all-test deck-paths css-vars reserved-paths rendering-facts
+                    deck-fit-all-test deck-paths css-vars reserved-paths rendering-facts \
+                    module-layout
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -530,6 +531,14 @@ css-vars: ## Assert every var() in a token sheet resolves inside it (#4122)
 .PHONY: reserved-paths
 reserved-paths: ## Assert no tracked path uses a Windows device name, which makes the repo unclonable there (#3550)
 	@./scripts/check-reserved-paths.sh
+
+.PHONY: module-layout
+module-layout: ## Assert no code file sits beside a folder with the same name
+	@python3 ./scripts/check-module-layout.py
+
+.PHONY: module-layout-update
+module-layout-update: ## Retire module-layout baseline entries whose pair was split; never adds one
+	@python3 ./scripts/check-module-layout.py --update
 
 .PHONY: rendering-facts
 rendering-facts: ## Assert no v2 rendering draws a fact design/tui-v2/SPEC.md retired (#5291)

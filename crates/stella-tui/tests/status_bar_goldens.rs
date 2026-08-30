@@ -239,12 +239,12 @@ fn a_healthy_status_bar_has_no_red_cells() {
 
 /// Every colour the deck's surfaces draw comes from the theme crate.
 ///
-/// The sweep is scoped to `src/views`, which is where every surface now
-/// renders — it was scoped to the migrating half while there were two, and the
-/// staleness assertion at the foot is what says the roots still resolve.
+/// The sweep is scoped to `src/views`, which is where every surface
+/// renders, and the staleness assertion at the foot is what says the root
+/// still resolves.
 #[test]
 fn no_hex_literals_in_render_code() {
-    const RENDER_ROOTS: [&str; 2] = ["src/views.rs", "src/views"];
+    const RENDER_ROOTS: [&str; 1] = ["src/views"];
 
     let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut checked = 0usize;
