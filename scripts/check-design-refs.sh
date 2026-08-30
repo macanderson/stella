@@ -37,6 +37,8 @@ ALLOW=(
   # `make prose-update`. Its paths are an index, not a citation -- nothing in
   # it asks a reader to go and read the document.
   "scripts/prose-baseline.txt"
+  # The same shape: per-file reading grades, written by `make prose-update`.
+  "scripts/prose-grade-baseline.txt"
   # The same shape, written by `make line-citations-update`.
   "scripts/line-citations-baseline.txt"
 )
