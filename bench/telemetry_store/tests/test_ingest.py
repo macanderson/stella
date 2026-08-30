@@ -14,6 +14,7 @@ from ingest import (
     COST_NORM_PRICED,
     COST_NORM_UNMIGRATED,
     COST_NORM_UNPRICED_MODEL,
+    bounded_payload_json,
     connect,
     elapsed_seconds,
     ingest_trial,
@@ -154,6 +155,62 @@ def test_ingest_records_why_a_trial_is_unpriced(tmp_path):
     ).fetchone()
     assert cost is None
     assert status == COST_NORM_NO_MODEL
+
+
+def test_an_oversized_event_payload_still_parses():
+    """`json.dumps(e)[:20000]` sliced the *document*, so an oversized event
+    was stored as a truncated prefix `json.loads` rejects outright — a
+    `file_change` with a 30,000-char diff reproduces it directly."""
+    diff = "+" + ("x" * 30_000)
+    raw = bounded_payload_json({"type": "file_change", "path": "a.rs", "diff": diff})
+    payload = json.loads(raw)
+    assert payload["_truncated"] == ["diff"]
+    assert len(payload["diff"]) == 20_000
+
+
+def test_an_oversized_tool_output_still_parses():
+    output = "x" * 30_000
+    raw = bounded_payload_json({"type": "tool_result", "call_id": "c1", "output": output})
+    payload = json.loads(raw)
+    assert payload["_truncated"] == ["output"]
+    assert len(payload["output"]) == 20_000
+
+
+def test_a_normal_sized_event_is_unmarked_and_untouched():
+    """A short diff must not gain a `_truncated` key — a reader has to be
+    able to tell a genuinely short payload from a cut one."""
+    event = {"type": "file_change", "path": "a.rs", "diff": "@@\n+let x = 1;"}
+    payload = json.loads(bounded_payload_json(event))
+    assert "_truncated" not in payload
+    assert payload == event
+
+
+def test_ingest_trial_writes_only_parseable_event_payloads(tmp_path):
+    """Exercised through `ingest_trial` itself rather than the helper alone:
+    every `events.payload_json` cell round-trips through `json.loads`, for a
+    trial whose event stream holds an oversized `file_change` and an
+    oversized `tool_result`."""
+    conn = connect(str(tmp_path / "bench.db"))
+    _seed_run(conn)
+    tdir = _write_trial(tmp_path, _result())
+    agent_dir = os.path.join(tdir, "agent")
+    os.makedirs(agent_dir, exist_ok=True)
+    events = [
+        {"type": "file_change", "path": "a.rs", "kind": "modified", "diff": "+" + "x" * 30_000},
+        {"type": "tool_result", "call_id": "c1", "output": "y" * 30_000, "duration_ms": 5},
+    ]
+    with open(os.path.join(agent_dir, "stella-events.jsonl"), "w") as fh:
+        for event in events:
+            fh.write(json.dumps(event) + "\n")
+
+    ingest_trial(conn, "tag", "stella", "stella", tdir)
+
+    rows = conn.execute("SELECT type, payload_json FROM events ORDER BY seq").fetchall()
+    assert len(rows) == 2
+    for kind, raw in rows:
+        payload = json.loads(raw)  # must not raise
+        field = "diff" if kind == "file_change" else "output"
+        assert payload["_truncated"] == [field]
 
 
 def test_migration_is_idempotent_and_marks_pre_existing_rows(tmp_path):
