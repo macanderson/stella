@@ -66,6 +66,16 @@ pub(super) async fn run_lead_turn(
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    // This turn's directive-carrying skills — invoked or auto-selected
+    // (#5465) — read off the recall seam before its seed and events are
+    // handed on below: each span is live for the whole turn,
+    // `active_skill_slugs` reports them, and every declared `allowed-tools`
+    // grant narrows the surface to operator ∧ grant, intersected across
+    // spans, through the view composed over the tap further down. The
+    // guards drop with this function, lifting the narrowing structurally.
+    let skill_plane = stella_tools::skill_plane::SkillInvocationPlane::new();
+    let _skill_spans = recall.mount_skill_spans(&skill_plane);
+    let skill_effort = recall.skill_effort();
     let requery = crate::memory::requery_for_turn(
         session_memory,
         messages,
@@ -84,17 +94,6 @@ pub(super) async fn run_lead_turn(
     // the path that ends normally — whichever of the two runs, exactly one
     // holds the handle, because the future either completes or is dropped.
     *drain.lock().unwrap_or_else(|p| p.into_inner()) = Some(forwarder);
-    // A directive-carrying skill invocation, read off the recall
-    // seam before its events are drained below: the span is live for the
-    // whole turn, `active_skill_slugs` reports it, and a declared
-    // `allowed-tools` grant narrows the surface to operator ∧ grant through
-    // the view composed over the tap further down. The guard drops with
-    // this function, lifting the narrowing structurally.
-    let skill_scope = recall.skill_scope;
-    let skill_plane = stella_tools::skill_plane::SkillInvocationPlane::new();
-    let _skill_span = skill_scope
-        .as_ref()
-        .map(|scope| skill_plane.begin(&scope.slug, scope.allowed_tools.as_deref()));
     // First events of the turn: what recall put in front of the model, and
     // the skills that rode the same block (SPEC 6.3).
     for event in recall.events {
@@ -145,8 +144,8 @@ pub(super) async fn run_lead_turn(
             stella_tools::skill_plane::SkillScopedTools::new(&tap, skill_plane.clone());
         let hook_runner = HostHookRunner;
         let mut engine_config = agent::engine_config_for(cfg);
-        if let Some(effort) = skill_scope.as_ref().and_then(|scope| scope.effort) {
-            // The invoked skill's `effort:` override, for this turn.
+        if let Some(effort) = skill_effort {
+            // The scoped skill's `effort:` override, for this turn.
             engine_config.effort = Some(effort);
         }
         let mut engine = Engine::with_sleeper(provider, &scoped_tap, engine_config, &TokioSleeper)

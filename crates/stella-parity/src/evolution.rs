@@ -331,10 +331,13 @@ evolution_surfaces! {
                         `parse_invoke_directives` and mounted by `stella-tools`' skill_plane: \
                         the grant is enforced as the per-name operator ∧ grant intersection \
                         over the assembled session stack, so a directive can only narrow the \
-                        surface, never widen it. Invocation is human-only — `stella skill \
-                        run <slug>` or an in-session `/slug` expansion; `invoke_skill` stays \
-                        in RETIRED_TOOL_NAMES, so no model call can invoke a skill",
-            witness: "a_skill_grant_over_the_session_stack_denies_disallowed_and_never_widens",
+                        surface, never widen it. A directive-carrying skill expands as an \
+                        invocation however it enters the turn — `stella skill run <slug>`, \
+                        an in-session `/slug` expansion, or recall's own auto-selection \
+                        (#5465), each mounted as a span whose grant is intersected with \
+                        every other live one; `invoke_skill` stays in RETIRED_TOOL_NAMES, \
+                        so no model call can invoke a skill",
+            witness: "an_auto_selected_directive_skill_narrows_the_turn_and_denies_a_disallowed_tool",
         },
         EvolutionTiming::BetweenTurns,
         ImpactClass::SteeringDirective,
@@ -437,7 +440,7 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 9] {
+fn evolution_sources() -> [&'static str; 10] {
     [
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),
@@ -447,9 +450,12 @@ fn evolution_sources() -> [&'static str; 9] {
         include_str!("../../stella-cli/src/tool_foundry/adopt/tests.rs"),
         include_str!("../../stella-cli/src/tool_foundry/autonomy.rs"),
         include_str!("../../stella-cli/src/memory/self_tuning.rs"),
-        // The SkillInvocation row's witness lives beside the session
-        // stack it proves the grant holds over.
+        // The grant-over-the-session-stack proof the SkillInvocation row
+        // first named lives beside the stack it holds over.
         include_str!("../../stella-cli/src/agent/tool_stack.rs"),
+        // The SkillInvocation row's witness: an auto-selected skill's
+        // directives reach the plane through the recall seam (#5465).
+        include_str!("../../stella-cli/src/memory/tests/skill_event.rs"),
     ]
 }
 

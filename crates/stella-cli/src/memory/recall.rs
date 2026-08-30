@@ -42,6 +42,18 @@ pub struct RecalledBlock {
     /// the only place that knows which ranked skills the section's token
     /// budget actually admitted.
     pub injected_skills: Vec<skills::InjectedSkill>,
+    /// The turn scopes the directive-carrying skills among
+    /// [`Self::injected_skills`] ask for, in the same rendered order
+    /// (#5465).
+    ///
+    /// An auto-selected skill that declares invoke directives expands
+    /// exactly as an explicit `/slug` invocation does: its `allowed-tools`
+    /// grant narrows the turn and its `effort` is honored. Safe without a
+    /// human in the loop because narrowing is the only power a scope has —
+    /// `skill_plane` enforces the grant as `operator ∧ grant`, so a scope can
+    /// restrict the surface the operator configured, never widen it. Empty
+    /// for the common turn whose skills carry no directive.
+    pub skill_scopes: Vec<crate::extensions::SkillTurnScope>,
 }
 
 impl RecalledBlock {
@@ -96,14 +108,45 @@ pub(crate) struct OpeningRecall {
     /// The frames, skills and records the opening block rendered, by steering
     /// handle — the re-query adapter's seed.
     pub(crate) produced: super::steering::ProducedSteering,
-    /// The turn scope an invoked skill's directives asked for — the
-    /// grant narrowing and effort override the turn driver applies while the
-    /// invocation is live. `None` for every turn no directive-carrying skill
-    /// was invoked into.
-    pub(crate) skill_scope: Option<crate::extensions::SkillTurnScope>,
+    /// The turn scopes the directive-carrying skills of this turn ask for —
+    /// the grant narrowing and effort override the turn driver applies while
+    /// the invocations are live. Every scope reaches the turn the same way,
+    /// whether a human typed `/slug` or recall selected the skill (#5465):
+    /// each is mounted as its own span on the invocation plane, so the tool
+    /// surface is the intersection of every live grant. Empty for the common
+    /// turn that carries no directive-carrying skill.
+    ///
+    /// Ordered with the explicitly invoked skill first, then the
+    /// auto-selected ones by rank — the order [`Self::skill_effort`] reads.
+    pub(crate) skill_scopes: Vec<crate::extensions::SkillTurnScope>,
 }
 
 impl OpeningRecall {
+    /// Mount every scope of this turn on `plane`, returning the guards that
+    /// hold the spans open. Drop them together with the turn's tool stack:
+    /// every narrowing lifts structurally when the guards go.
+    ///
+    /// The one place the scopes become spans, so no driver can mount the
+    /// invoked skill's grant and forget the auto-selected ones.
+    #[must_use = "the spans end (and their narrowing lifts) the moment these guards drop"]
+    pub(crate) fn mount_skill_spans(
+        &self,
+        plane: &stella_tools::skill_plane::SkillInvocationPlane,
+    ) -> Vec<stella_tools::skill_plane::SkillSpanGuard> {
+        self.skill_scopes
+            .iter()
+            .map(|scope| plane.begin(&scope.slug, scope.allowed_tools.as_deref()))
+            .collect()
+    }
+
+    /// The reasoning-effort override this turn runs under, when any scope
+    /// declares one: the invoked skill's wins over an auto-selected skill's,
+    /// and among auto-selected skills the higher-ranked one wins — the same
+    /// order the scopes are kept in, read to the first declaration.
+    #[must_use]
+    pub(crate) fn skill_effort(&self) -> Option<stella_protocol::ReasoningEffort> {
+        self.skill_scopes.iter().find_map(|scope| scope.effort)
+    }
     /// Report a skill the user invoked by name, on the same channel the
     /// auto-selected ones ride (#5232).
     ///
@@ -118,8 +161,11 @@ impl OpeningRecall {
             // The scope rides beside the event rather than inside it: the
             // event is the transcript's record that a skill was injected,
             // and the scope is a turn-driver instruction the transcript
-            // never needs.
-            self.skill_scope = skill.scope;
+            // never needs. First, ahead of the auto-selected scopes: a
+            // human asked for this one, so its `effort` outranks theirs.
+            if let Some(scope) = skill.scope {
+                self.skill_scopes.insert(0, scope);
+            }
             self.events
                 .push(stella_protocol::AgentEvent::SkillInjected {
                     name: skill.name,
@@ -163,12 +209,27 @@ pub(crate) fn inject_opening_recall(
     OpeningRecall {
         events,
         produced: recalled.produced,
-        // The auto-selected block scopes nothing: a directive-carrying skill
-        // reaches a scope only through explicit invocation, where a
-        // human chose to run it — never through passive selection, which
-        // must not be able to narrow a turn the user did not ask narrowed.
-        skill_scope: None,
+        // The block's directive-carrying skills scope the turn exactly as
+        // an explicit invocation would (#5465): selection is the trigger,
+        // and the grant's only power is to narrow.
+        skill_scopes: recalled.skill_scopes,
     }
+}
+
+/// The turn scopes of the skills that actually reached the prompt — the
+/// same prefix of `kept` [`skills::injected_skills`] announces, so a skill
+/// the section budget cut can neither be reported nor narrow anything.
+fn auto_skill_scopes(kept: &[skills::SelectedSkill]) -> Vec<crate::extensions::SkillTurnScope> {
+    if kept.is_empty() {
+        return Vec::new();
+    }
+    kept[..skills::section_fit(kept)]
+        .iter()
+        .filter_map(|sel| {
+            let directives = crate::extensions::invoke_directives_for(&sel.skill);
+            crate::extensions::skill_turn_scope(&sel.skill.name, &directives)
+        })
+        .collect()
 }
 
 /// How many characters of volatile records ride the recall block.
@@ -404,6 +465,7 @@ impl SessionMemory {
             recall,
             produced,
             injected_skills: skills::injected_skills(&kept),
+            skill_scopes: auto_skill_scopes(&kept),
         }
     }
 
@@ -543,6 +605,13 @@ impl SessionMemory {
             recall,
             produced: block_produced,
             injected_skills: skills::injected_skills(&kept),
+            // A drifted turn's re-query rescopes nothing: the spans were
+            // mounted when the turn opened, beside the tool stack they
+            // narrow, and a grant that appeared mid-loop would change the
+            // surface under calls already in flight. A directive-carrying
+            // skill that surfaces here is context until the next turn opens
+            // with it selected — the same rule an explicit invocation obeys.
+            skill_scopes: Vec::new(),
         }
     }
 
