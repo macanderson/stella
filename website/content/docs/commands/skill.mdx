@@ -6,8 +6,12 @@ description: Run a skill by its slug as a scoped one-shot — the skill's own in
 Run a skill as a scoped one-shot (`stella skill run <slug>`). The skill's own
 frontmatter declares how it runs — this is the skill-function invocation
 surface: there is **no** `invoke_skill` tool (the 12-tool cap
-retired it), so a skill function runs only when a human asks — this verb, or
-an in-session `/slug` expansion.
+retired it), so no model call can invoke a skill. A skill function runs when
+you ask — this verb, or an in-session `/slug` expansion — and when recall
+auto-selects it for a turn, where it expands the same way: its `allowed-tools`
+grant narrows that turn and its `effort` is honored. A grant can only narrow
+the tool surface you configured, never widen it, which is what makes the
+auto path safe without anyone approving it.
 
 For what skills are and how they are mined, selected, and versioned, see
 [Memory](/docs/context-engine). This page is the command reference.
@@ -40,6 +44,16 @@ A skill with none of these runs unscoped — plain injected context on the
 session's full surface, exactly as skills have always behaved. Unusable
 directive values (an unknown `context:` or `effort:`) degrade to the default
 with a printed diagnostic; they never refuse the run.
+
+**Scopes are decided when a turn opens, and only then.** A turn mounts the
+grants of every skill it opened with, and holds them until it ends. Recall
+runs again mid-turn as the work drifts, and a directive-carrying skill that
+surfaces at one of those boundaries is injected as context alone: it does not
+narrow the turn already running, and its `effort` does not apply to it. The
+next turn that opens with the skill selected mounts it normally. A grant that
+appeared mid-loop would change the tool surface underneath calls already in
+flight, which is the one thing a narrowing must never do — and an explicit
+`/slug` obeys the same boundary.
 
 ## Arguments
 

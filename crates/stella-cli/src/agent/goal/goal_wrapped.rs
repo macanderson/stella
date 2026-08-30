@@ -274,9 +274,10 @@ pub(crate) async fn run_goal_wrapped_turn(
     goal: &str,
     session: Option<&str>,
     budget_limit: Option<f64>,
-    // Phase 2 (#713): what this turn's opening block left to announce, in
-    // send order — the raw arm's twin. See `super::run_goal_turn`.
-    recall_events: Vec<AgentEvent>,
+    // Phase 2 (#713): what this turn's opening block left behind — its events
+    // in send order, and the turn scopes its directive-carrying skills ask
+    // for. The raw arm's twin; see `super::run_goal_turn`.
+    recall: crate::memory::OpeningRecall,
     session_memory: Option<&mut crate::memory::SessionMemory>,
     bound: &BoundWrapper,
     // The grant over the tree every round runs in, and the tamper baseline
@@ -344,7 +345,12 @@ pub(crate) async fn run_goal_wrapped_turn(
     // The session fact before the turn's, exactly as the raw arm opens
     // (#4500).
     super::announce_withheld_steering(&tx, cfg);
-    for event in recall_events {
+    // This arc's directive-carrying skills, mounted for every round the loop
+    // drives — the raw arm's twin, and for its reasons.
+    let skill_plane = stella_tools::skill_plane::SkillInvocationPlane::new();
+    let _skill_spans = recall.mount_skill_spans(&skill_plane);
+    let skill_effort = recall.skill_effort();
+    for event in recall.events {
         let _ = tx.send(event);
     }
 
@@ -356,8 +362,15 @@ pub(crate) async fn run_goal_wrapped_turn(
         Principal::User,
         registry.hook_bus(),
     );
+    // Above the assembled session chain: the grant narrows, never widens.
+    let tools = stella_tools::skill_plane::SkillScopedTools::new(&tools, skill_plane.clone());
     let hook_runner = HostHookRunner;
-    let mut engine = Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
+    let mut config = engine_config_for(cfg);
+    if let Some(effort) = skill_effort {
+        // The skill's `effort:` override, for this arc.
+        config.effort = Some(effort);
+    }
+    let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
         .with_calibration(calibration)
         // The arc's whistle (#4769), opened above and drained at every round's
         // first step boundary — the wrapped arm drives its own rounds through

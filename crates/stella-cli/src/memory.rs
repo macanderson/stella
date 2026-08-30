@@ -96,7 +96,12 @@ pub(crate) mod validation;
 use private_state::resolve_context_db_path;
 #[cfg(test)]
 use projection::{is_suppressed_local_frame, project_recalled_frame};
-pub use recall::inject_recall_block;
+// Every driver reaches the turn through `inject_opening_recall` below, which
+// carries this turn's skill scopes and re-query seed as well as its text —
+// so the bare injection has no caller left outside the tests that pin its own
+// marker rule.
+#[cfg(test)]
+pub(crate) use recall::inject_recall_block;
 pub(crate) use recall::{OpeningRecall, inject_opening_recall};
 /// Test-side imports of the recall renderer's internals — one renderer, so
 /// every consumer of a recalled frame reads exactly the same rendering,

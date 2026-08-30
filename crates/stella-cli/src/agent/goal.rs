@@ -664,8 +664,9 @@ pub async fn run_goal_cmd(
     )];
     let mut memory =
         SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
-    // Phase 2 (#713): carried to the turn runner, which owns the event channel.
-    let mut recall_events: Vec<AgentEvent> = Vec::new();
+    // Phase 2 (#713): carried to the turn runner, which owns the event channel
+    // the events ride and assembles the tool stack the scopes narrow.
+    let mut recall = crate::memory::OpeningRecall::default();
     if let Some(m) = &mut memory {
         // One arm for the whole goal run (#1221): the judged rounds below are
         // stages of one turn — they share this run's episode, so they must
@@ -674,8 +675,7 @@ pub async fn run_goal_cmd(
         m.arm_recall_control();
         let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
         let recalled = m.recall_block_reported(goal, &touched).await;
-        recall_events = recalled.telemetry_events();
-        inject_recall_block(&mut messages, recalled.text);
+        recall = crate::memory::inject_opening_recall(&mut messages, recalled);
     }
 
     let started_unix = crate::memory::unix_now_secs();
@@ -704,7 +704,7 @@ pub async fn run_goal_cmd(
             goal,
             Some(presence.id()),
             budget_limit,
-            recall_events,
+            recall,
             memory.as_mut(),
             bound,
             candidate,
@@ -725,7 +725,7 @@ pub async fn run_goal_cmd(
             &store,
             goal,
             Some(presence.id()),
-            recall_events,
+            recall,
             memory.as_mut(),
             Some(&mut rounds),
         )
@@ -851,12 +851,16 @@ pub(crate) async fn run_goal_turn(
     store: &Option<Arc<Store>>,
     goal: &str,
     session: Option<&str>,
-    // Phase 2 (#713): what this turn's opening block left to announce — its
-    // `ContextRecall`, then a `SkillInjected` per skill it carried (#5031) —
-    // carried from the caller because recall necessarily precedes the channel
-    // it would be emitted on. Already in send order; see
-    // `memory::RecalledBlock::telemetry_events`.
-    recall_events: Vec<AgentEvent>,
+    // Phase 2 (#713): what this turn's opening block left behind — the events
+    // to announce (its `ContextRecall`, then a `SkillInjected` per skill it
+    // carried (#5031), already in send order) and the turn scopes its
+    // directive-carrying skills ask for. Carried from the caller because
+    // recall necessarily precedes both the channel the events ride and the
+    // tool stack the scopes narrow. The whole `OpeningRecall` rather than its
+    // events alone: a goal door that took only the events dropped the scopes,
+    // so an auto-selected skill's `allowed-tools` grant and `effort` reached
+    // the prompt and governed nothing.
+    recall: crate::memory::OpeningRecall,
     // The caller's session memory, so the execution seam can stamp this
     // round's execution id and record its skill-version usage before the turn
     // runs — reflection stores the self-review 1:1 with an execution, and an
@@ -929,7 +933,16 @@ pub(crate) async fn run_goal_turn(
     // neither opener, so an untrusted checkout's refusal was on stderr and on
     // no event stream at all.
     announce_withheld_steering(&tx, cfg);
-    for event in recall_events {
+    // This arc's directive-carrying skills, whether a human typed `/slug` or
+    // recall selected them: each span is live for every round the loop drives
+    // — the whole arc is one turn, and the guards drop with this function, so
+    // the narrowing lifts structurally. With no scope the plane is inert and
+    // the scoped view below is a pure pass-through, so every goal run takes
+    // one path. Read off the recall before its events are handed on.
+    let skill_plane = stella_tools::skill_plane::SkillInvocationPlane::new();
+    let _skill_spans = recall.mount_skill_spans(&skill_plane);
+    let skill_effort = recall.skill_effort();
+    for event in recall.events {
         let _ = tx.send(event);
     }
 
@@ -941,18 +954,26 @@ pub(crate) async fn run_goal_turn(
             Principal::User,
             registry.hook_bus(),
         );
+        // Above the assembled session chain, the position `skill_grant`'s
+        // module docs specify: the grant narrows customs and MCP with
+        // everything else, and can never widen past the operator surface.
+        let tools = stella_tools::skill_plane::SkillScopedTools::new(&tools, skill_plane.clone());
         let hook_runner = HostHookRunner;
-        let mut engine =
-            Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
-                .with_calibration(calibration)
-                // Every round's worker turn drains this, and only those. The
-                // verifier runs as a sub-agent off `Engine::assess`, which
-                // sees a parent's steering through
-                // `stella_core::subagent::ChildSteering` — soft stop
-                // forwarded, `drain_steering` refused — so a whistle cannot
-                // be eaten by the judge, and the person who sent it does not
-                // have to know a judge exists.
-                .with_steering(whistle.steering());
+        let mut config = engine_config_for(cfg);
+        if let Some(effort) = skill_effort {
+            // The skill's `effort:` override, for this arc.
+            config.effort = Some(effort);
+        }
+        let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
+            .with_calibration(calibration)
+            // Every round's worker turn drains this, and only those. The
+            // verifier runs as a sub-agent off `Engine::assess`, which
+            // sees a parent's steering through
+            // `stella_core::subagent::ChildSteering` — soft stop
+            // forwarded, `drain_steering` refused — so a whistle cannot
+            // be eaten by the judge, and the person who sent it does not
+            // have to know a judge exists.
+            .with_steering(whistle.steering());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }

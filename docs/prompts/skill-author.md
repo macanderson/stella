@@ -61,10 +61,14 @@ optional frontmatter keys `parse_invoke_directives`
 Behavior is the **skill's**, never a parameter's (AGENTS.md #9): how an
 invocation runs is declared here, in the authored file, and the invocation
 carries only the slug and its arguments. There is no
-`invoke_skill` tool — a skill function runs only when a human asks,
-via `stella skill run <slug>` or an in-session `/slug` expansion. Unknown
-values of these keys degrade to the default with a diagnostic; they never
-refuse the skill.
+`invoke_skill` tool — no model call can invoke a skill. A skill function
+runs when a person asks, via `stella skill run <slug>` or an in-session
+`/slug` expansion, and when recall auto-selects it for a turn: the
+selected skill expands exactly like the `/slug` form, its `allowed-tools`
+grant narrowing the turn and its `effort` honored. That is safe without a
+person in the loop because a grant can only narrow the operator's surface,
+never widen it. Unknown values of these keys degrade to the default with a
+diagnostic; they never refuse the skill.
 
 ## User message (template)
 

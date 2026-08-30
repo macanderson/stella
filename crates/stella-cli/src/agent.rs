@@ -35,8 +35,8 @@ use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
 use crate::interactive::human_is_present;
 use crate::memory::{
-    ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, inject_recall_block,
-    reflect_routed, should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, reflect_routed, should_reflect_on,
+    turn_warrants_reflection,
 };
 use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -482,8 +482,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             }
             println!();
             // Phase 2 (#713): carried to `run_goal_turn`, which owns the
-            // event channel this turn's telemetry rides.
-            let mut recall_events: Vec<AgentEvent> = Vec::new();
+            // event channel this turn's telemetry rides and the tool stack
+            // its skill scopes narrow.
+            let mut recall = crate::memory::OpeningRecall::default();
             if let Some(m) = &mut memory {
                 // Same schedule as the plain prompts above (#1221): one
                 // interleaved sequence per workspace, not one per command.
@@ -491,8 +492,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 let touched =
                     stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
                 let recalled = m.recall_block_reported(goal, &touched).await;
-                recall_events = recalled.telemetry_events();
-                inject_recall_block(&mut messages, recalled.text);
+                recall = crate::memory::inject_opening_recall(&mut messages, recalled);
             }
             // Everything the goal loop appends past here is this turn's work,
             // gating reflection on it (see `turn_warrants_reflection`).
@@ -514,7 +514,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 &store,
                 goal,
                 Some(presence.id()),
-                recall_events,
+                recall,
                 memory.as_mut(),
                 Some(&mut goal_rounds),
             )
@@ -1237,6 +1237,17 @@ pub(crate) async fn run_turn(
     // re-injected, from that block's own handles so the first answer does not
     // repeat its frames (#4498), and given `tx` so its own recall is metered
     // (#3366).
+    // This turn's directive-carrying skills — invoked or
+    // auto-selected: each span is live for the whole turn — `active_skill_slugs`
+    // reports them, and every declared `allowed-tools` grant narrows every
+    // dispatch to operator ∧ grant, intersected across spans. The guards
+    // drop with this function, lifting the narrowing structurally. With no
+    // scope the plane is inert and the scoped views below are pure
+    // pass-throughs, so every turn takes one path. Read off the recall
+    // before its seed and events are handed on below.
+    let skill_plane = stella_tools::skill_plane::SkillInvocationPlane::new();
+    let _skill_spans = recall.mount_skill_spans(&skill_plane);
+    let skill_effort = recall.skill_effort();
     let requery = crate::memory::requery_for_turn(
         session_memory.as_deref(),
         messages,
@@ -1259,18 +1270,6 @@ pub(crate) async fn run_turn(
     // Mid-turn fallback (#2679): on an exhausted retry ladder the engine
     // re-resolves the worker role through this session router.
     let fallback = engine::SessionFallback::new(router);
-    // A directive-carrying skill invocation: its span is live for the
-    // whole turn — `active_skill_slugs` reports it, and when the skill
-    // declared `allowed-tools` the plane narrows every dispatch to
-    // operator ∧ grant. The guard drops with this function, lifting the
-    // narrowing structurally. With no invocation the plane is inert and the
-    // view below is a pure pass-through, so every turn takes one path.
-    let skill_plane = stella_tools::skill_plane::SkillInvocationPlane::new();
-    let _skill_span = recall
-        .skill_scope
-        .as_ref()
-        .map(|scope| skill_plane.begin(&scope.slug, scope.allowed_tools.as_deref()));
-    let skill_effort = recall.skill_scope.as_ref().and_then(|scope| scope.effort);
     // The scoped tool set must drop its tx clone before awaiting the renderer.
     let outcome = if crate::enterprise_telemetry::process_free_authority_active() {
         // Even when process-free authority strips the MCP/custom/interactive

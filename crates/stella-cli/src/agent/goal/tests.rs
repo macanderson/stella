@@ -182,7 +182,7 @@ fn a_whistle_reaches_the_next_round_of_a_goal_arc() {
                 &None,
                 "make the tests pass",
                 Some(session),
-                Vec::new(),
+                crate::memory::OpeningRecall::default(),
                 None,
                 None,
             )
