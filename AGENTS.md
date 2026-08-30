@@ -91,8 +91,6 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
                          #     reachable from the engine's step path; down-only)
-                         #   + module-siblings (no NEW foo.rs beside a
-                         #     foo/ directory; down-only ratchet)
                          #   + typed-errors
                          #   + tool-error-class (#3167 unclassified-ToolOutput::error ratchet)
                          #   + dead-code-allows
@@ -1179,34 +1177,26 @@ this before assuming two of them mean the same thing:
 - **Name things for what they are, not what they were.** If you rename a
   concept, chase it through comments and docs in the same PR — stale comments
   are treated as bugs in review.
-- **A code file may not sit beside a folder with the same name.**
-  `src/anthropic.rs` next to `src/anthropic/` is not allowed. Split the
-  file into modules inside the folder, and re-export them from
-  `anthropic/mod.rs` so every existing import keeps working. This is also
-  how a file near the size limit gets its room: more hierarchy under
-  `src/`, smaller files, same public names. Existing pairs are tracked for
-  cleanup; do not add new ones.
+- **A module with submodules is `foo.rs` beside `foo/`, never `foo/mod.rs`.**
+  `src/anthropic.rs` next to `src/anthropic/` is the layout Rust 2018
+  introduced and the one this workspace uses: the parent declares its
+  children and the children live in the folder named for it. It is what
+  nearly every module here already does, and it is the form the Rust book
+  presents as current.
 
-  **Enforced by `make module-siblings`**
-  (`scripts/check-module-siblings.py`), a down-only ratchet over
-  `scripts/module-siblings-baseline.txt`. `--update` refuses to add a line,
-  so a red run is cleared by moving the file into the folder as `mod.rs`,
-  never by recording it. `make module-siblings-test` covers both directions.
-  Scoped to `crates/*/src`: cargo requires an integration test's entry point
-  to be `tests/foo.rs`, so a `tests/foo.rs` beside `tests/foo/` is the layout
-  cargo asks for rather than a breach of this rule.
+  `mod.rs` is the pre-2018 spelling and is not used for library code. Its
+  cost is what the book names: a tree where a dozen open editor tabs are all
+  called `mod.rs` and only the directory tells them apart.
 
-  **Read the baseline before planning a sweep.** It records the pairs that
-  exist today, and there are more than two hundred of them against a single
-  production `mod.rs` — so the tree overwhelmingly does the opposite of what
-  this rule says, and has been moving further that way. `foo.rs` beside
-  `foo/` is also the layout Rust 2018 introduced and the one most crates use
-  now; the Rust book presents it as the current form and calls `mod.rs` the
-  older style. Whether this repository keeps its rule and pays for the
-  cleanup, or adopts the mainstream layout and retires both the rule and its
-  guard, is a maintainer's decision that has not been taken. What the guard
-  settles meanwhile is only the half nobody disputes: whichever way that goes,
-  drifting further by accident is not it.
+  **The one exception is an integration test's shared helper**, which must be
+  `tests/common/mod.rs`. Cargo compiles every top-level file in `tests/` as
+  its own test binary, so `tests/common.rs` would be built as a test crate of
+  its own; putting it one level down as `mod.rs` is how cargo itself says to
+  avoid that. The `tests/common/mod.rs` files in this tree are correct and
+  stay.
+
+  This is also how a file near the size limit gets its room: more hierarchy
+  under `src/`, smaller files, same public names.
 - **Doc comments on public items**, and on any function whose *why* isn't
   obvious from its body. No comments that narrate the next line.
 - **No new dependencies casually.** Every new crate in `Cargo.toml` gets a

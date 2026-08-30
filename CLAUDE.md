@@ -17,6 +17,17 @@
     shape (`tokio`, `serde`, `rust-analyzer`, `cargo`, `ripgrep`) and follow
     its structure; name the exemplar in the PR description so the choice is
     reviewable instead of personal taste.
+
+    **A local convention that contradicts mainstream Rust is a bug in the
+    convention.** Fix the rule, not the code that was already right. A rule
+    here banned `foo.rs` beside `foo/` — the layout Rust 2018 introduced and
+    the one this workspace uses everywhere — and prescribed the pre-2018
+    `mod.rs` instead. It survived because nobody measured it against the tree:
+    the banned form outnumbered the prescribed one by more than two hundred to
+    one, and a session spent a PR "repairing" a file that was already correct.
+    Before enforcing a house rule, check what the codebase actually does and
+    what the wider ecosystem does; if all three disagree, say so out loud
+    rather than making the code match the weakest of them.
   - **An expedient is a defect, not a tradeoff.** An `#[allow]` with no
     comment saying why the lint is wrong *here*, an `unwrap` on runtime data,
     a widened `deny.toml` allow-list or a raised `scripts/file-size-baseline.txt`

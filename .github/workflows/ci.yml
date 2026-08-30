@@ -319,13 +319,6 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-core-reachability.py
 
-      # AGENTS.md has forbidden a `foo.rs` beside a `foo/` since long before
-      # anything checked it, and #5422 added one and merged green everywhere.
-      # Down-only: the tree's existing pairs are recorded, new ones are not.
-      - name: no new code file sits beside a folder of the same name
-        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        run: python3 ./scripts/check-module-siblings.py
-
       # Also toolchain-free. AGENTS.md requires that anything noticed and not
       # fixed becomes an issue written as a handoff; nothing checked it, and an
       # unenforced standard reads as one the codebase is meeting. The decidable

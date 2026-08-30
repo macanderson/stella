@@ -227,10 +227,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-core-reachability.sh
 
-      - name: the module-siblings ratchet direction
-        if: ${{ !cancelled() }}
-        run: ./scripts/test-module-siblings.sh
-
       - name: the unverified-main detector, and that it fails open
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-verified.sh
