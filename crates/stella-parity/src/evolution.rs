@@ -432,7 +432,7 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 7] {
+fn evolution_sources() -> [&'static str; 8] {
     [
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),
