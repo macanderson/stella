@@ -106,6 +106,34 @@ fn sensitive_key_assignments_are_redacted_whatever_the_value_looks_like() {
     }
 }
 
+/// An auth header puts the credential in its second word, so stopping the
+/// value at the first space hid the scheme and published the token.
+///
+/// The token is not recognizable on its own evidence either: the entropy rule
+/// needs 32 characters and all three of upper, lower and digit, so a short or
+/// single-case token falls through both rules. Worse than missing it, the
+/// result still reported `redacted: true`, because rewriting `Bearer` did
+/// change the text — a caller reading that flag believes the line is clean.
+#[test]
+fn the_credential_after_an_auth_scheme_is_redacted_not_the_scheme_word() {
+    for (input, secret) in [
+        (
+            "Authorization: Bearer abcdefghij1234567890",
+            "abcdefghij1234567890",
+        ),
+        ("authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+        ("Authorization: Token deadbeefcafe, retry", "deadbeefcafe"),
+    ] {
+        assert_redacted(input, secret);
+    }
+    assert!(
+        redact_secrets("Authorization: Bearer abcdefghij1234567890")
+            .text
+            .contains("Bearer"),
+        "the scheme is not the secret and stays readable"
+    );
+}
+
 /// `*_env` names the environment variable to read a secret FROM, not the
 /// secret — the same exemption the settings scrubber makes.
 #[test]
