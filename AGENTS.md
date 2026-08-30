@@ -91,6 +91,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
                          #     reachable from the engine's step path; down-only)
+                         #   + module-siblings (no NEW foo.rs beside a
+                         #     foo/ directory; down-only ratchet)
                          #   + typed-errors
                          #   + tool-error-class (#3167 unclassified-ToolOutput::error ratchet)
                          #   + dead-code-allows
@@ -1184,6 +1186,27 @@ this before assuming two of them mean the same thing:
   how a file near the size limit gets its room: more hierarchy under
   `src/`, smaller files, same public names. Existing pairs are tracked for
   cleanup; do not add new ones.
+
+  **Enforced by `make module-siblings`**
+  (`scripts/check-module-siblings.py`), a down-only ratchet over
+  `scripts/module-siblings-baseline.txt`. `--update` refuses to add a line,
+  so a red run is cleared by moving the file into the folder as `mod.rs`,
+  never by recording it. `make module-siblings-test` covers both directions.
+  Scoped to `crates/*/src`: cargo requires an integration test's entry point
+  to be `tests/foo.rs`, so a `tests/foo.rs` beside `tests/foo/` is the layout
+  cargo asks for rather than a breach of this rule.
+
+  **Read the baseline before planning a sweep.** It records the pairs that
+  exist today, and there are more than two hundred of them against a single
+  production `mod.rs` — so the tree overwhelmingly does the opposite of what
+  this rule says, and has been moving further that way. `foo.rs` beside
+  `foo/` is also the layout Rust 2018 introduced and the one most crates use
+  now; the Rust book presents it as the current form and calls `mod.rs` the
+  older style. Whether this repository keeps its rule and pays for the
+  cleanup, or adopts the mainstream layout and retires both the rule and its
+  guard, is a maintainer's decision that has not been taken. What the guard
+  settles meanwhile is only the half nobody disputes: whichever way that goes,
+  drifting further by accident is not it.
 - **Doc comments on public items**, and on any function whose *why* isn't
   obvious from its body. No comments that narrate the next line.
 - **No new dependencies casually.** Every new crate in `Cargo.toml` gets a
