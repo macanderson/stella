@@ -20,7 +20,7 @@
 //! context about what a workspace does, and nothing here reaches a store table
 //! an egress path reads (AGENTS.md invariant 3).
 //!
-//! # How the loop closes (#5086)
+//! # How the loop closes
 //!
 //! Every piece here has a production caller:
 //!
@@ -69,9 +69,9 @@ pub const QUEUE_FILE: &str = "skill_candidates.jsonl";
 pub const TRIALS_FILE: &str = "skill_trials.jsonl";
 
 /// The shared pairing key live trials are recorded under. One key for the
-/// whole window, deliberately: every turn is unique, so per-turn pairing
-/// would leave nothing paired at all, and under one key the comparison
-/// degrades to the unpaired two-sample test it actually is (see
+/// whole window because every turn is unique: per-turn pairing would leave
+/// nothing paired at all, and under one key the comparison degrades to the
+/// unpaired two-sample test it actually is (see
 /// `stella_core::skills::appraisal`'s module docs).
 pub const LIVE_WINDOW_TASK: &str = "live-window";
 
@@ -94,8 +94,8 @@ pub struct QueuedCandidate {
     /// What the gate said when this was queued.
     pub evidence: EvalEvidence,
     /// The candidate's rendered body, carried so a later appraisal can
-    /// promote it without re-mining. `None` on lines written before #5454
-    /// added the field; those wait for the miner's next re-raise instead.
+    /// promote it without re-mining. `None` on lines from builds that
+    /// predate the field; those wait for the miner's next re-raise instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
 }

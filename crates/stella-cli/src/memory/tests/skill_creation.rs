@@ -17,7 +17,7 @@ fn mining_log(root: &Path, lessons: &[&str]) -> PathBuf {
     let dir = root.join(".stella").join("private");
     std::fs::create_dir_all(&dir).expect("private dir");
     // Bootstrap mode: these tests pin the no-clobber seam, and the measured
-    // promotion gate that ships on by default (#5454) would hold every
+    // promotion gate that ships on by default would hold every
     // candidate before it ever reached that seam.
     std::fs::write(
         root.join(".stella/settings.json"),

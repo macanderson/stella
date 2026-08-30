@@ -373,15 +373,15 @@ pub struct SessionMemory {
     record_registry: Option<stella_core::records::Registry>,
     /// The turn's selection→offer join, noted at turn start by
     /// [`Self::note_turn_skills`] and consumed at turn end by the trial
-    /// recorder inside [`Self::record_episode`] (#5086).
+    /// recorder inside [`Self::record_episode`].
     ///
-    /// Both halves ride together because a trial is a *measurement*, not a
-    /// usage count: the offered-but-unselected skills are the control arm,
-    /// and neither half can be reconstructed after the turn — selection is a
-    /// function of the prompt and the A/B control's coin, both gone by the
-    /// time the outcome is known. A `Mutex` rather than a plain field because
-    /// the consumer runs behind `&self` on the async episode path; it is
-    /// touched twice a turn and never contended.
+    /// The offered set rides with the selected one because a trial is a
+    /// *measurement*, not a usage count: the offered-but-unselected skills
+    /// are the control arm, and neither set can be reconstructed after the
+    /// turn — selection is a function of the prompt and the A/B control's
+    /// coin, both gone by the time the outcome is known. A `Mutex` rather
+    /// than a plain field because the consumer runs behind `&self` on the
+    /// async episode path; it is touched twice a turn and never contended.
     turn_skill_join: std::sync::Mutex<Option<TurnSkillJoin>>,
     /// The session's time source (#2320) — the only one the learning loop is
     /// allowed to read.
@@ -690,7 +690,7 @@ impl SessionMemory {
     /// fresh so a just-installed or just-auto-created skill is live on the
     /// very next turn).
     ///
-    /// Demoted skills are excluded here (#5086), which is what makes a
+    /// Demoted skills are excluded here, which is what makes a
     /// demotion mean something: every selection path reads this load, so a
     /// skill the appraisal sweep retired stops being offered everywhere at
     /// once, while its file — and the append-only ledger row saying why —
@@ -753,7 +753,7 @@ impl SessionMemory {
     }
 
     /// [`Self::selected_skills`], and additionally note this turn's
-    /// selection→offer join for the trial recorder (#5086). The turn-start
+    /// selection→offer join for the trial recorder. The turn-start
     /// seam (`agent::stamp_and_record_skill_usage`) calls this instead of the
     /// plain query, so a turn that records usage also arms its own trial.
     ///
@@ -774,7 +774,7 @@ impl SessionMemory {
 
     /// Append this turn's skill trials — one per offered skill, `selected`
     /// set from the join [`Self::note_turn_skills`] armed — to the trial
-    /// ledger `appraisals::sweep` appraises (#5086).
+    /// ledger `appraisals::sweep` appraises.
     ///
     /// Takes the join rather than reading it, so one episode records one
     /// turn's trials exactly once; a path that never armed a join (a
@@ -834,7 +834,7 @@ impl SessionMemory {
         started_unix_secs: i64,
         tag: Option<&str>,
     ) {
-        // The turn-end half of the skill promote/retire join (#5086): every
+        // The turn-end half of the skill promote/retire join: every
         // episode-writing surface — chat, `run`, `goal`, the deck — funnels
         // through here with the settled outcome, which makes this the one
         // seam that can turn the turn-start selection note into a trial.

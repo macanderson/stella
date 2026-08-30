@@ -61,9 +61,8 @@ pub(super) fn inferred_directive_promotion(
         .unwrap_or_default()
 }
 
-/// #5086/#5454: the skill promote/retire gate's knobs — whether promotion
-/// requires a measured lift, and how many consecutive negative appraisals
-/// demote.
+/// The skill promote/retire gate's knobs — whether promotion requires a
+/// measured lift, and how many consecutive negative appraisals demote.
 ///
 /// Degrades to the documented defaults on an unreadable settings file, and
 /// for the gate that is also the conservative direction: the default holds a

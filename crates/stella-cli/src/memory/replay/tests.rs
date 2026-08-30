@@ -196,7 +196,7 @@ async fn replay(corpus: &Trace) -> (ReplaySummary, tempfile::TempDir) {
     let root = replay_root(&dir);
     // The replay workspace opts into bootstrap promotion
     // (`require_measured_lift: false`): a replayed corpus has no appraisal
-    // ledger, so under the shipped measured gate (#5454) every mined
+    // ledger, so under the shipped measured gate every mined
     // candidate would be held and the corpus would "build nothing" for a
     // reason these assertions are not about — the same shape as the
     // `include_workspace_skills` trap the module docs warn against.

@@ -87,9 +87,9 @@ fn the_creation_gate_holds_an_unevaluated_candidate() {
         evidence: vec![],
         score: 99.0,
     };
-    // The gate ships ON since #5454 — the turn-trial ledger and the sweep now
-    // produce the evidence it reads (#5086), so the measured gate is the
-    // default and raw eligibility is the configured bootstrap opt-out.
+    // The gate ships ON — the turn-trial ledger and the sweep produce the
+    // evidence it reads, so the measured gate is the default and raw
+    // eligibility is the configured bootstrap opt-out.
     assert!(crate::skills::AutoCreateConfig::default().require_measured_lift);
     let config = crate::skills::AutoCreateConfig::default();
 
@@ -129,7 +129,7 @@ fn the_creation_gate_holds_an_unevaluated_candidate() {
 /// (`context.promotion.skill.require_measured_lift = false`) — the loop
 /// behaves exactly as it did before #1067. This is the compatibility half of
 /// the change: the mechanism is present and the raw-eligibility path is
-/// reachable by configuration, not deleted (#5454).
+/// reachable by configuration, not deleted.
 #[test]
 fn the_gate_off_is_the_pre_1067_loop() {
     let candidate = crate::skills::SkillCandidate {

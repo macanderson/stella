@@ -99,11 +99,11 @@ fn set_lifecycle(root: &Path, enabled: bool) {
     let dir = root.join(".stella");
     std::fs::create_dir_all(&dir).expect("stella dir");
     // `require_measured_lift: false` is the configured bootstrap mode, pinned
-    // here because these guarantees were written against the pre-#1067
-    // frequency loop and assert that MINING behavior — the cap, no-clobber,
-    // tombstones. The measured gate that now ships on by default (#5454) has
-    // its own suite (`skill_lifecycle`); armed here it would hold every
-    // candidate and turn each assertion below into a test of the gate.
+    // here because these guarantees were written against the frequency loop
+    // and assert that MINING behavior — the cap, no-clobber, tombstones. The
+    // measured gate that now ships on by default has its own suite
+    // (`skill_lifecycle`); armed here it would hold every candidate and turn
+    // each assertion below into a test of the gate.
     std::fs::write(
         dir.join("settings.json"),
         format!(

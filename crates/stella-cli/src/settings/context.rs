@@ -130,16 +130,16 @@ pub struct PromotionSettings {
     pub skill: SkillPromotionSettings,
 }
 
-/// The skill promote/retire gate's knobs (#5086, #5454).
+/// The skill promote/retire gate's knobs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SkillPromotionSettings {
     /// Whether a mined candidate must carry a measured lift before it is
-    /// written as a `SKILL.md` (#1067). Defaults `true` — the turn-trial
-    /// ledger and the retirement sweep produce the evidence the gate reads,
-    /// so frequency alone no longer mints a skill. Set `false` for bootstrap:
-    /// a fresh workspace with no appraisal history may choose to mint on raw
-    /// mining eligibility until its first skills accrue trials.
+    /// written as a `SKILL.md`. Defaults `true` — the turn-trial ledger and
+    /// the retirement sweep produce the evidence the gate reads, so
+    /// frequency alone mints nothing. Set `false` for bootstrap: a fresh
+    /// workspace with no appraisal history may choose to mint on raw mining
+    /// eligibility until its first skills accrue trials.
     pub require_measured_lift: bool,
     /// How many **consecutive** demotable appraisals (`Harms` or `Inert`) an
     /// auto-created skill must accrue before the sweep demotes it. Hysteresis
@@ -433,8 +433,8 @@ mod tests {
                 .blocking_directive
                 .requires_explicit_confirmation
         );
-        // The skill gate ships measured (#5454), with a three-strike demotion
-        // hysteresis (#5086).
+        // The skill gate ships measured, with a three-strike demotion
+        // hysteresis.
         assert!(ctx.promotion.skill.require_measured_lift);
         assert_eq!(ctx.promotion.skill.demote_after_consecutive_negatives, 3);
         assert_eq!(ctx.efficacy.min_attributable_uses, 5);

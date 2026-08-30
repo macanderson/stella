@@ -1,18 +1,18 @@
-//! The skill lifecycle twin (#5455) — the end-to-end shape
-//! [`super::guarantees`] pins for rules, pointed at skills.
+//! The skill lifecycle twin — the end-to-end shape [`super::guarantees`]
+//! pins for rules, pointed at skills.
 //!
-//! The rules pipeline has had a mine→write→load→apply twin since #5032; the
-//! skill pipeline's miner, store reload and `select_skills` were only ever
-//! tested in isolation, so nothing end-to-end proved a mined skill is the
-//! same skill a later session selects. These tests close that, and extend the
-//! twin over the halves #5086 and #5454 brought to life: the measured
-//! promotion gate holding and then releasing a candidate, and the retirement
-//! sweep demoting a skill that stops helping.
+//! The rules pipeline has a mine→write→load→apply twin; the skill
+//! pipeline's miner, store reload and `select_skills` were only ever tested
+//! in isolation, so nothing end-to-end proved a mined skill is the same
+//! skill a later session selects. These tests close that, and extend the
+//! twin over the newly wired halves: the measured promotion gate holding
+//! and then releasing a candidate, and the retirement sweep demoting a
+//! skill that stops helping.
 //!
 //! Every fixture drives the production doors — `auto_create_skills`,
 //! `note_turn_skills`, `record_episode` — never the pure functions behind
-//! them, because the pure halves are already pinned in `stella-core` and the
-//! seams between them are exactly what #5086 found unwired.
+//! them, because the pure halves are already pinned in `stella-core` and
+//! the seams between them are exactly the part that spent years unwired.
 
 use std::path::Path;
 
@@ -96,7 +96,7 @@ fn skill_files(root: &Path) -> Vec<String> {
     names
 }
 
-/// **The twin (#5455): mine → write → load → select.** A recurring lesson is
+/// **The twin: mine → write → load → select.** A recurring lesson is
 /// mined into a `SKILL.md`, a *fresh* session reloads the store from disk,
 /// and `select_skills` returns the mined skill for a task about its subject —
 /// with the unrelated-prompt control proving the selection is a match, not a
@@ -128,7 +128,7 @@ fn a_mined_skill_lands_reloads_and_is_selected_for_a_matching_task() {
     );
 }
 
-/// **The measured gate, both modes (#5454).** Under the shipped default a
+/// **The measured gate, both modes.** Under the shipped default a
 /// mined candidate is HELD — queued, not written — and a recorded
 /// `MeasuredLift` appraisal is what turns it into a file, through the queue
 /// alone: the mining log is emptied before the second pass, so the miner
@@ -191,7 +191,7 @@ fn the_measured_gate_holds_a_candidate_until_a_recorded_lift_promotes_it() {
     );
 }
 
-/// **The retirement half (#5086): promote → three negative appraisals →
+/// **The retirement half: promote → three negative appraisals →
 /// demoted → not selected.** The skill is minted through the real miner,
 /// selected and injected through the real turn seams, measured through the
 /// real trial ledger, and demoted by the real sweep — then a fresh session
@@ -255,7 +255,7 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
     let later = session(dir.path());
     assert!(
         later.selected_skills(MATCHING_PROMPT).is_empty(),
-        "a demoted skill must not be selected for the task that used to match it"
+        "a demoted skill must not be selected for the task that matches it"
     );
     assert!(
         !later.load_skills().iter().any(|s| s.name == name),

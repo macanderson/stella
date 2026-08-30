@@ -1109,17 +1109,13 @@ pub struct AutoCreateConfig {
     /// stays a candidate the miner will re-raise, and an appraisal
     /// ([`appraisal::appraise`]) is what turns it into a file.
     ///
-    /// **On by default since #5454.** It shipped off while the evidence
-    /// source it gates on did not exist — a with-skill/without-skill
-    /// comparison needs a with-skill arm, and nothing recorded one — so
-    /// defaulting it on then would have stopped the loop minting anything,
-    /// with no action a user could take to satisfy it. That evidence source
-    /// now exists: the turn-trial ledger joins each turn's skill selection to
-    /// its outcome, the retirement sweep appraises it, and the recorded
-    /// verdict is what the creation gate reads (#5086). With the appraisal
-    /// loop live, frequency alone — observed enough times, therefore a skill
-    /// — is no longer a defensible promotion rule, so the measured gate is
-    /// the default and raw eligibility is the opt-out
+    /// **On by default.** The evidence source the gate reads is live: the
+    /// turn-trial ledger joins each turn's skill selection to its outcome,
+    /// the retirement sweep appraises it, and the recorded verdict is what
+    /// the creation gate checks. With that loop running, frequency alone —
+    /// observed enough times, therefore a skill — mints an unhelpful skill
+    /// exactly as easily as a helpful one, so the measured gate is the
+    /// default and raw eligibility is the opt-out
     /// (`context.promotion.skill.require_measured_lift = false`), kept for
     /// bootstrap: a fresh workspace with no appraisal history yet may choose
     /// to mint on frequency until its first skills accrue trials.

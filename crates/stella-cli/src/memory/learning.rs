@@ -34,8 +34,8 @@ mod applicability;
 #[cfg(test)]
 mod guarantees;
 
-/// The skill lifecycle twin (#5455): mine→write→load→select end to end, the
-/// measured promotion gate in both modes, and the #5086 demotion arc. A child
+/// The skill lifecycle twin: mine→write→load→select end to end, the
+/// measured promotion gate in both modes, and the demotion arc. A child
 /// module for [`guarantees`]'s reason — it drives
 /// [`SessionMemory::auto_create_skills`] without widening its visibility.
 #[cfg(test)]
@@ -586,8 +586,8 @@ impl SessionMemory {
         // obligation (spec §8), and the only honest way to hold that
         // obligation is to keep the thing it must stay compatible WITH
         // runnable, so both paths are exercised by the same guarantee suite.
-        // The retirement sweep runs first, on BOTH paths (#5086): the
-        // appraisal ledger is #1067 machinery that predates the typed
+        // The retirement sweep runs first, on BOTH paths: the
+        // appraisal ledger predates the typed
         // migration — `latest_verdicts` gates candidate promotion on the
         // lexical path too — so the sweep that writes what that gate reads
         // belongs to neither path alone. Running before the mining pass means
@@ -610,7 +610,7 @@ impl SessionMemory {
         events
     }
 
-    /// The retirement half of the promote/retire gate, live (#5086).
+    /// The retirement half of the promote/retire gate, live.
     ///
     /// Appraises every skill the trial ledger holds evidence for, records
     /// each **measured** verdict — `Insufficient` is skipped, because
@@ -626,7 +626,7 @@ impl SessionMemory {
     /// exclusion is a fold over the ledger, so restore is a later row, not an
     /// edit. Hand-authored skills are never demoted whatever the numbers say
     /// — `decide_demotion`'s origin check is absolute, and a skill the
-    /// ledger names but the loader no longer sees falls back to the same
+    /// ledger names without a loaded origin falls back to the same
     /// protected side.
     fn appraise_and_retire_skills(&self, quiet: bool) {
         let loaded = self.load_skills();
@@ -704,7 +704,7 @@ impl SessionMemory {
     }
 
     /// Promote any held candidate whose ledger verdict has turned to a
-    /// measured lift (#5454) — the production reader of
+    /// measured lift — the production reader of
     /// [`super::appraisals::queued_candidates`].
     ///
     /// Queue lines written before the body rode along (`body: None`) cannot
@@ -851,10 +851,10 @@ impl SessionMemory {
         // the directory read ever fails.
         let mut occupied_paths = skill_paths_on_disk(&skills_dir);
         occupied_paths.extend(existing.iter().map(|s| s.source_path.clone()));
-        // The measured gate is configuration (#5454):
+        // The measured gate is configuration:
         // `context.promotion.skill.require_measured_lift` ships `true`, and
-        // setting it `false` is the bootstrap mode — raw mining eligibility,
-        // the pre-#1067 rule — for a workspace with no appraisal history yet.
+        // setting it `false` is the bootstrap mode — raw mining eligibility
+        // alone — for a workspace with no appraisal history yet.
         let config = AutoCreateConfig {
             require_measured_lift: super::tuning::skill_promotion(&self.workspace_root)
                 .require_measured_lift,
