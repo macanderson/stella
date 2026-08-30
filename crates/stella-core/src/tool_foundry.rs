@@ -499,15 +499,7 @@ fn tokenize(command: &str) -> Vec<RawToken> {
             continue;
         }
         if is_operator_char(c) {
-            let mut text = String::new();
-            while let Some(&oc) = chars.peek() {
-                if is_operator_char(oc) {
-                    text.push(oc);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
+            let text = consume_operator_run(&mut chars, String::new());
             tokens.push(RawToken {
                 text,
                 quoted: false,
@@ -524,6 +516,23 @@ fn tokenize(command: &str) -> Vec<RawToken> {
             text.push(wc);
             chars.next();
         }
+        // A digit run glued to a redirect is a file descriptor, not a value:
+        // `2>&1`, `2>err.log`. Folding it into the operator token keeps the
+        // whole redirect in the skeleton, where #5385 requires it to survive —
+        // read as `2 >& <num>` it proposed a tool that runs a different
+        // command than the one observed.
+        if !text.is_empty()
+            && text.chars().all(|tc| tc.is_ascii_digit())
+            && chars.peek().is_some_and(|&nc| nc == '<' || nc == '>')
+        {
+            let text = consume_operator_run(&mut chars, text);
+            tokens.push(RawToken {
+                text,
+                quoted: false,
+                operator: true,
+            });
+            continue;
+        }
         tokens.push(RawToken {
             text,
             quoted: false,
@@ -535,6 +544,35 @@ fn tokenize(command: &str) -> Vec<RawToken> {
 
 fn is_operator_char(c: char) -> bool {
     matches!(c, '|' | '&' | ';' | '>' | '<')
+}
+
+/// Consume a maximal run of operator characters onto `text` (which carries a
+/// leading file-descriptor digit run when the caller found one, as in `2>`).
+/// A digit run glued to a trailing `>&` is the duplication target — the `1`
+/// of `2>&1` — and belongs to the operator, not to the argument stream.
+fn consume_operator_run(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    mut text: String,
+) -> String {
+    while let Some(&oc) = chars.peek() {
+        if is_operator_char(oc) {
+            text.push(oc);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if text.ends_with(">&") {
+        while let Some(&dc) = chars.peek() {
+            if dc.is_ascii_digit() {
+                text.push(dc);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+    }
+    text
 }
 
 /// An operator that ends one command and starts another, so the next bareword
@@ -743,22 +781,32 @@ fn has_file_extension(word: &str) -> bool {
     !ext.is_empty() && ext.len() <= 8 && ext.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/// Render a signature into a numbered command template: each `<...>` hole
+/// Render a signature into a numbered command template: each typed hole
 /// becomes `{pN}` in order, so `jq <str> <path>` → `jq {p1} {p2}`.
+///
+/// Only the three placeholders a [`ParamKind`] renders to are holes. Matching
+/// them exactly — instead of pairing any `<` with the next `>` — is what lets
+/// a shell redirect survive: `sort < <path>` renders `sort < {p1}`, where the
+/// old pairing loop consumed the redirect and produced `sort {p1}`, a
+/// template for a semantically different command (#5385).
 fn render_template(signature: &str) -> String {
+    let placeholders = [
+        ParamKind::Str.placeholder(),
+        ParamKind::Path.placeholder(),
+        ParamKind::Number.placeholder(),
+    ];
     let mut out = String::with_capacity(signature.len());
     let mut n = 0usize;
     let mut rest = signature;
-    while let Some(open) = rest.find('<') {
-        if let Some(close_rel) = rest[open..].find('>') {
-            let close = open + close_rel;
-            out.push_str(&rest[..open]);
-            n += 1;
-            out.push_str(&format!("{{p{n}}}"));
-            rest = &rest[close + 1..];
-            continue;
-        }
-        break;
+    while let Some((open, len)) = placeholders
+        .iter()
+        .filter_map(|p| rest.find(p).map(|at| (at, p.len())))
+        .min()
+    {
+        out.push_str(&rest[..open]);
+        n += 1;
+        out.push_str(&format!("{{p{n}}}"));
+        rest = &rest[open + len..];
     }
     out.push_str(rest);
     out
@@ -1197,6 +1245,97 @@ mod tests {
             "git log --oneline {p1}"
         );
         assert_eq!(render_template("ls"), "ls");
+    }
+
+    /// The #5385 witness: a bare redirect operator is not a placeholder hole,
+    /// and rendering must leave it byte-exact. The old pairing loop matched
+    /// any `<` to the next `>`, so `sort < <path>` rendered `sort {p1}` — a
+    /// template for `sort FILE-as-argument` where the observed pattern was
+    /// `sort < FILE`.
+    #[test]
+    fn redirect_operators_survive_template_rendering() {
+        assert_eq!(render_template("sort < <path>"), "sort < {p1}");
+        assert_eq!(render_template("cmd <path> > out"), "cmd {p1} > out");
+        assert_eq!(render_template("cmd <path> >> log"), "cmd {p1} >> log");
+        assert_eq!(render_template("cmd <path> 2>&1"), "cmd {p1} 2>&1");
+        assert_eq!(
+            render_template("cat << EOF > <path>"),
+            "cat << EOF > {p1}"
+        );
+        assert_eq!(
+            render_template("a <str> | b > <path>"),
+            "a {p1} | b > {p2}"
+        );
+    }
+
+    /// End to end through `detect_tool_gaps`: an input-redirect shape keeps
+    /// its `<` in both the signature and the template, and mints exactly one
+    /// parameter for the varying file.
+    #[test]
+    fn an_input_redirect_shape_is_proposed_with_its_operator() {
+        let history = vec![
+            ok("sort < a.txt"),
+            ok("sort < b.txt"),
+            ok("sort < c.txt"),
+        ];
+        let proposals = detect_tool_gaps(&history, shapes_only());
+        assert_eq!(proposals.len(), 1);
+        let p = &proposals[0];
+        assert_eq!(p.signature, "sort < <path>");
+        assert_eq!(p.command_template, "sort < {p1}");
+        assert_eq!(p.parameters.len(), 1);
+    }
+
+    /// `2>&1` is one operator token — the descriptor digits belong to the
+    /// redirect, not to the argument stream — so a stderr-merging shape stays
+    /// skeleton instead of minting `<num>` holes for the `2` and the `1`.
+    #[test]
+    fn stderr_merge_is_skeleton_not_holes() {
+        let history = vec![
+            ok("./run.sh a.txt 2>&1"),
+            ok("./run.sh b.txt 2>&1"),
+            ok("./run.sh c.txt 2>&1"),
+        ];
+        let proposals = detect_tool_gaps(&history, shapes_only());
+        assert_eq!(proposals.len(), 1);
+        let p = &proposals[0];
+        assert_eq!(p.signature, "./run.sh <path> 2>&1");
+        assert_eq!(p.command_template, "./run.sh {p1} 2>&1");
+        assert_eq!(p.parameters.len(), 1);
+    }
+
+    /// A descriptor-targeted file redirect (`2> err.log`) keeps the `2>` in
+    /// the skeleton and holes only the target path.
+    #[test]
+    fn fd_file_redirects_keep_the_descriptor_in_the_skeleton() {
+        let history = vec![
+            ok("make build 2> a.log"),
+            ok("make build 2> b.log"),
+            ok("make build 2> c.log"),
+        ];
+        let proposals = detect_tool_gaps(&history, shapes_only());
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].signature, "make build 2> <path>");
+        assert_eq!(proposals[0].command_template, "make build 2> {p1}");
+    }
+
+    /// A heredoc marker over-produced placeholders before #5385: `<<` paired
+    /// with a later `>` swallowed everything between them. Now the operators
+    /// and the `EOF` bareword survive verbatim.
+    #[test]
+    fn heredoc_shapes_render_without_placeholder_overcount() {
+        let history = vec![
+            ok("cat << EOF > a.txt"),
+            ok("cat << EOF > b.txt"),
+            ok("cat << EOF > c.txt"),
+        ];
+        let proposals = detect_tool_gaps(&history, shapes_only());
+        assert_eq!(proposals.len(), 1);
+        let p = &proposals[0];
+        assert_eq!(p.signature, "cat << EOF > <path>");
+        assert_eq!(p.command_template, "cat << EOF > {p1}");
+        // Placeholder count matches the parameter list — the over-count shape.
+        assert_eq!(p.command_template.matches("{p").count(), p.parameters.len());
     }
 
     /// A small, deliberately overlapping alphabet so property runs actually
