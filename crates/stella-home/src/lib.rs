@@ -93,9 +93,12 @@ pub fn home_dir() -> Option<PathBuf> {
 }
 
 /// [`home_dir`] over anchors the caller supplies.
+///
+/// An empty `HOME` falls through to `USERPROFILE` rather than resolving to the
+/// working directory — see [`anchor`].
 #[must_use]
 pub fn resolve_home_dir(home: Option<OsString>, userprofile: Option<OsString>) -> Option<PathBuf> {
-    home.or(userprofile).map(PathBuf::from)
+    anchor(home).or(anchor(userprofile)).map(PathBuf::from)
 }
 
 /// The stella home: `$STELLA_HOME`, else `~/.stella`. `None` only when no
@@ -106,12 +109,15 @@ pub fn stella_home() -> Option<PathBuf> {
 }
 
 /// [`stella_home`] over anchors the caller supplies.
+///
+/// An empty `STELLA_HOME` resolves to `~/.stella`, not to the working
+/// directory — see [`anchor`].
 #[must_use]
 pub fn resolve_stella_home(
     stella_home: Option<OsString>,
     home: Option<PathBuf>,
 ) -> Option<PathBuf> {
-    match stella_home {
+    match anchor(stella_home) {
         Some(dir) => Some(PathBuf::from(dir)),
         None => home.map(|home| home.join(DOT_STELLA)),
     }
@@ -131,9 +137,13 @@ pub fn data_dir() -> PathBuf {
 }
 
 /// [`data_dir`] over anchors the caller supplies.
+///
+/// An empty `STELLA_DATA_DIR` falls through to the stella home — see
+/// [`anchor`]. The current-directory fallback is reached only when no home is
+/// discoverable at all, never because a variable was exported blank.
 #[must_use]
 pub fn resolve_data_dir(data_dir: Option<OsString>, stella_home: Option<PathBuf>) -> PathBuf {
-    match data_dir {
+    match anchor(data_dir) {
         Some(dir) => PathBuf::from(dir),
         None => stella_home.unwrap_or_else(|| PathBuf::from(".")),
     }
@@ -172,14 +182,19 @@ pub fn systemd_user_unit_dir() -> Option<PathBuf> {
 }
 
 /// [`systemd_user_unit_dir`] over anchors the caller supplies.
+///
+/// The XDG spec requires an absolute path and says an empty or relative one is
+/// invalid and must be ignored, so both fall back to `~/.config`. A relative
+/// value honoured verbatim would write the unit file beside whatever directory
+/// the operator was standing in, where `systemctl --user` never looks.
 #[must_use]
 pub fn resolve_systemd_user_unit_dir(
     xdg_config_home: Option<OsString>,
     home: Option<PathBuf>,
 ) -> Option<PathBuf> {
-    let config = match xdg_config_home {
-        Some(dir) => PathBuf::from(dir),
-        None => home?.join(".config"),
+    let config = match anchor(xdg_config_home).map(PathBuf::from) {
+        Some(dir) if dir.is_absolute() => dir,
+        _ => home?.join(".config"),
     };
     Some(config.join("systemd").join("user"))
 }
@@ -233,7 +248,7 @@ pub const WORKSPACE_STATE_ROOT_ENV: &str = "STELLA_WORKSPACE_STATE_ROOT";
 /// Where a workspace's `.stella` lives, honouring [`WORKSPACE_STATE_ROOT_ENV`].
 #[must_use]
 pub fn workspace_state_root(workspace_root: &std::path::Path) -> PathBuf {
-    resolve_workspace_state_root(std::env::var_os(WORKSPACE_STATE_ROOT_ENV), workspace_root)
+    resolve_workspace_state_root(read(WORKSPACE_STATE_ROOT_ENV), workspace_root)
 }
 
 /// [`workspace_state_root`] over the value the caller supplies.
@@ -331,14 +346,34 @@ pub fn resolve_legacy_self_driving_roots(
 /// resolver, so a process that set it declined the migration while every
 /// path it opened still resolved to the defaults. Keeping the list exact is
 /// what makes this predicate mean what it says.
+/// An exported-but-empty variable redirects nothing, so it does not count as
+/// set here either. Counting one would decline the migration for a process
+/// whose paths all resolve to the defaults — the same failure an inert name on
+/// the list causes, reached through the value instead.
 #[must_use]
 pub fn any_override_set() -> bool {
-    OVERRIDE_ENV_VARS.iter().any(|var| read(var).is_some())
+    OVERRIDE_ENV_VARS
+        .iter()
+        .any(|var| anchor(read(var)).is_some())
 }
 
 /// The single point in this crate that touches the process environment.
 fn read(var: &str) -> Option<OsString> {
     std::env::var_os(var)
+}
+
+/// An override exported with an empty value, read as unset.
+///
+/// `STELLA_HOME=` is what a shell hands a process for an unset-but-exported
+/// variable, and `std::env::var_os` reports it as `Some("")` rather than
+/// `None`. Honouring it makes every user-tier path relative: `credentials.toml`
+/// is written into whatever repository happens to be open, `usage.db` becomes a
+/// different file per working directory, and `resolve_user_plugins_dir` returns
+/// the relative `plugins` its own contract forbids. Applied in the pure halves
+/// rather than in [`read`] so a host that supplies its own anchors gets the
+/// same answer as the wrappers.
+fn anchor(value: Option<OsString>) -> Option<OsString> {
+    value.filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]
@@ -392,6 +427,71 @@ mod tests {
                 "{rejected:?} is not a durable root and must not be honoured"
             );
         }
+    }
+
+    /// The same rule for the user tier, which had it in neither half.
+    ///
+    /// `STELLA_HOME=` is what a shell hands a process for an unset-but-exported
+    /// variable. Honoured verbatim it wrote `credentials.toml` — provider API
+    /// keys — into whatever repository happened to be open, gave every working
+    /// directory a `usage.db` of its own, and made `resolve_user_plugins_dir`
+    /// return the relative `plugins` path its own contract forbids.
+    #[test]
+    fn an_empty_override_is_read_as_unset_not_as_the_working_directory() {
+        let home = Some(PathBuf::from("/home/dev"));
+        assert_eq!(
+            resolve_stella_home(os(""), home.clone()),
+            Some(PathBuf::from("/home/dev/.stella")),
+            "an exported-but-empty STELLA_HOME is not a home"
+        );
+        assert_eq!(
+            resolve_data_dir(os(""), resolve_stella_home(None, home)),
+            PathBuf::from("/home/dev/.stella"),
+            "nor is an exported-but-empty STELLA_DATA_DIR a data dir"
+        );
+        assert_eq!(
+            resolve_home_dir(os(""), os("C:\\Users\\dev")),
+            Some(PathBuf::from("C:\\Users\\dev")),
+            "an empty HOME falls through to the Windows spelling"
+        );
+        assert_eq!(
+            resolve_home_dir(os(""), None),
+            None,
+            "and to no path at all when there is nothing left to fall through to"
+        );
+        assert_eq!(
+            resolve_user_plugins_dir(resolve_stella_home(os(""), None)),
+            None,
+            "no home means no user tier, never a relative `plugins` directory \
+             that installs third-party code into whatever repository is open"
+        );
+    }
+
+    /// The XDG spec requires an absolute path and says an empty or relative one
+    /// is invalid and must be ignored.
+    ///
+    /// Honoured verbatim, a relative value writes the unit file beside the
+    /// operator's working directory, where `systemctl --user` never looks — and
+    /// the installer prints the path it wrote and exits 0.
+    #[test]
+    fn an_unusable_xdg_config_home_falls_back_to_the_default() {
+        let home = Some(PathBuf::from("/home/dev"));
+        for rejected in ["", ".config", "relative/config"] {
+            assert_eq!(
+                resolve_systemd_user_unit_dir(os(rejected), home.clone()),
+                Some(PathBuf::from("/home/dev/.config/systemd/user")),
+                "{rejected:?} is not a usable XDG_CONFIG_HOME"
+            );
+        }
+    }
+
+    /// The predicate `any_override_set` composes with [`read`] to answer
+    /// whether resolution is redirected.
+    #[test]
+    fn an_exported_empty_value_is_not_an_anchor() {
+        assert_eq!(anchor(os("")), None, "exported blank names no directory");
+        assert_eq!(anchor(os("/srv/stella")), os("/srv/stella"));
+        assert_eq!(anchor(None), None);
     }
 
     #[test]
