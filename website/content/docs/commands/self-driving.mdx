@@ -21,7 +21,7 @@ stella self-driving calibrate (--ok | --resource-fail | --show)
 stella self-driving queue [--limit N] [--format <text|json>]
 stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
 stella self-driving work --issue KEY [--spend-limit USD] [--format <text|json>]
-stella self-driving drive [--max-issues N] [--no-review] [--poll-secs N]
+stella self-driving drive [--max-issues N] [--no-review] [--poll-secs N] [--backlog] [--dry-run]
 stella self-driving stop [--root DIR]
 stella self-driving stats [--format <text|json>]
 stella self-driving triage --issue KEY [--dry-run] [--format <text|json>]
@@ -125,6 +125,10 @@ Worktrees for this command live under `.stella/private/self-driving/`, on `self-
 **When it hits a block, it parks and keeps checking — it does not exit.** Nothing stays "stuck" on purpose: every block is recalculated from scratch each time, so as soon as its cause is gone, it stops being reported. If the command exited on a block instead, nothing could resume it automatically. You never need to tell this loop it can resume — raising a limit, restoring a permission, removing a stop flag, or merging an escalated pull request already says everything that needs to be said.
 
 `--max-issues` limits one run so that it eventually stops. The loop itself never stops on its own, which is why this limit is a flag you set, not a fixed number. When the loop hits this limit, it's reported as *reached the bound*, not as *finished*.
+
+`--backlog` changes where the work comes from. The default generator takes only ranked defects — issues triage classified as work for the loop. With `--backlog`, the loop drains the whole ready backlog instead, feature work included. An issue is ready when it carries the `status:ready` label, or when every `Blocked by: #N` line in its body names an issue that is already closed. The convention is one greppable line per blocker, leading the line — `Blocked by: #12`, and several may share a line: `Blocked by: #12, #13`. Closing a blocker is the whole gesture: the dependent issue becomes ready on the loop's next queue read, with nobody editing anything. Each delivered issue is recorded as a cycle in the ledger, so `state` and `metrics` count delivery the same way they count audit cycles.
+
+`--dry-run` prints the issue the loop would take next — the generator, the queue depth, the pick, and the branch prefix it would cut — and then stops. It reads the tracker and changes nothing: no claim, no branch, no label, no session record.
 
 If the machine asks for a step this build can't do, like sweeping an audit lens or curating a proposal, stella reports it and stops the loop, instead of silently skipping it. A driver that silently skipped steps would always look healthy, even when it wasn't doing anything.
 
