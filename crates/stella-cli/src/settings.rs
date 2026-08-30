@@ -85,7 +85,7 @@ pub(crate) use unknown::{
 pub use context::{ContextSettings, InferredDirectivePromotion, RetrievalSettings};
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 pub use engine::*;
-pub use foundry::{BreakerConfig, FoundryAutonomy, FoundryConfig, FoundrySettings};
+pub use foundry::{FoundryAutonomy, FoundryConfig, FoundrySettings};
 pub use merge::ToolScopePolicies;
 pub(crate) use steering::SteeringCeiling;
 pub(crate) use withheld::WithheldNotice;

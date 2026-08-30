@@ -213,6 +213,7 @@ pub(crate) fn adopt_in(root: &Path, store: &Store, name: &str) -> Result<Adopted
         // Set by the store, which refuses to adopt-and-enable in one step.
         enabled: false,
         adopted_at: String::new(),
+        disabled_reason: String::new(),
     };
     store
         .adopt_foundry_tool(&record)

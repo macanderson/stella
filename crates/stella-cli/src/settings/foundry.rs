@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use stella_core::tool_foundry::GapDetectionConfig;
+use stella_tools::custom::BreakerPolicy;
 
 /// The `foundry` block as a scope's document carries it. Whole-block
 /// last-wins across scopes, like `reward`: the thresholds and the autonomy
@@ -118,27 +119,6 @@ impl Serialize for FoundryAutonomy {
     }
 }
 
-/// The circuit breaker's resolved thresholds.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BreakerConfig {
-    /// Consecutive failures that disable the tool.
-    pub consecutive_failures: u32,
-    /// Recent invocations the failure-rate arm looks at.
-    pub window: u32,
-    /// The failure share over that window that disables the tool.
-    pub failure_rate: f64,
-}
-
-impl Default for BreakerConfig {
-    fn default() -> Self {
-        Self {
-            consecutive_failures: 3,
-            window: 10,
-            failure_rate: 0.5,
-        }
-    }
-}
-
 /// The `foundry` block with every absence filled from the defaults — what
 /// the end-of-turn hook and the autonomy pipeline actually consume.
 #[derive(Debug, Clone, PartialEq)]
@@ -147,8 +127,9 @@ pub struct FoundryConfig {
     pub detection: GapDetectionConfig,
     /// How far the foundry may carry a gap without a human.
     pub autonomy: FoundryAutonomy,
-    /// The auto-disable thresholds.
-    pub breaker: BreakerConfig,
+    /// The auto-disable thresholds — `stella_tools`' own enforcement type,
+    /// not a restatement of it, so the knob and the breaker cannot drift.
+    pub breaker: BreakerPolicy,
     /// Foundry-built tools allowed to reach the network.
     pub network_allowlist: Vec<String>,
 }
@@ -158,7 +139,7 @@ impl Default for FoundryConfig {
         Self {
             detection: GapDetectionConfig::default(),
             autonomy: FoundryAutonomy::default(),
-            breaker: BreakerConfig::default(),
+            breaker: BreakerPolicy::default(),
             network_allowlist: Vec::new(),
         }
     }

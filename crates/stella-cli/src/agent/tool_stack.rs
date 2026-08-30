@@ -419,6 +419,7 @@ mod tests {
             claimed_risk: None,
             claimed_idempotent: false,
             output_schema: None,
+            foundry_runtime: Default::default(),
             contributed_by: None,
         }
     }
