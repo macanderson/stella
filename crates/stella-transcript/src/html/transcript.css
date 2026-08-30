@@ -68,6 +68,13 @@
  * ramp and the semantic triad only; and the `.you`/`.agent` roletag rules put
  * near-black text on these two as fills, so a future replacement has to keep a
  * legible fill pair and not merely a legible glyph.
+ *
+ * Corners read from `--radius-*` custom properties, each defaulting to the value
+ * this page has always rendered, so nothing here changes what a reader sees
+ * today. A host embedding this stylesheet can override any of them; setting
+ * them all to `0` is what a fully square page (one that has adopted the
+ * repo-wide "every corner is a hairline, not a surface" rule) needs to do,
+ * and this file is not making that call on the host's behalf.
  */
 
 :root {
@@ -224,7 +231,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .frame {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-panel, 10px);
   overflow: hidden;
 }
 
@@ -242,7 +249,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   margin-left: auto;
   display: flex;
   border: 1px solid var(--line2);
-  border-radius: 6px;
+  border-radius: var(--radius-control, 6px);
   overflow: hidden;
 }
 .zoom span { padding: 2px 10px; font-size: 10.5px; color: var(--dim); }
@@ -286,7 +293,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   background: var(--sunken-2);
   border: 1px solid var(--line);
   padding: 0 8px;
-  border-radius: 99px;
+  border-radius: var(--radius-pill, 99px);
   white-space: nowrap;
   line-height: 1.7;
   font-variant-numeric: tabular-nums;
@@ -309,7 +316,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   font-weight: 700;
   letter-spacing: 0.14em;
   padding: 1px 7px;
-  border-radius: 4px;
+  border-radius: var(--radius-tag, 4px);
 }
 .you .roletag { color: var(--on-category); background: var(--gold); }
 .agent .roletag { color: var(--on-category); background: var(--violet); }
@@ -363,7 +370,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   color: var(--gold);
   background: none;
   border: 1px solid var(--line2);
-  border-radius: 6px;
+  border-radius: var(--radius-control, 6px);
   padding: 0 7px;
   margin-left: 6px;
   cursor: pointer;
@@ -402,7 +409,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   width: 16px;
   line-height: 16px;
   font-size: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius-dot, 50%);
   background: var(--panel);
   border: 1px solid var(--faint);
   color: var(--faint);
@@ -440,7 +447,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   margin-left: 86px;
   background: var(--sunken);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-inset, 8px);
   overflow: hidden;
 }
 .cmdbar {
@@ -499,7 +506,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   font-size: 12px;
 }
 .file > summary:hover { background: var(--hover); }
-.fstat { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.fstat { width: 8px; height: 8px; border-radius: var(--radius-chip, 2px); flex-shrink: 0; }
 .fstat.mod { background: var(--amber); }
 .fstat.new { background: var(--green); }
 .fstat.gone { background: var(--red); }
@@ -530,8 +537,8 @@ table.diff { border-collapse: collapse; width: 100%; font: 12.5px/1.65 var(--mon
 .diff tr.del td.sign { color: var(--red); }
 .diff tr.add td.code, .diff tr.add td.sign { background: var(--add-line); }
 .diff tr.add td.sign { color: var(--green); }
-.dw { background: var(--del-word); border-radius: 2px; padding: 0 1px; }
-.aw { background: var(--add-word); border-radius: 2px; padding: 0 1px; }
+.dw { background: var(--del-word); border-radius: var(--radius-chip, 2px); padding: 0 1px; }
+.aw { background: var(--add-word); border-radius: var(--radius-chip, 2px); padding: 0 1px; }
 
 /* JSON syntax colouring for a tool result body.
  *
