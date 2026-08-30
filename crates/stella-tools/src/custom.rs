@@ -180,6 +180,13 @@ pub struct CustomTool {
     /// contract so the registry-side output check (#3285) can hold a script
     /// tool to its own promise.
     pub output_schema: Option<Value>,
+    /// Host-set runtime policy for a *foundry-authored* tool: whether
+    /// it may reach the network, and the circuit-breaker thresholds its
+    /// launches are held to. Always [`FoundryRuntimePolicy::default`] straight
+    /// out of [`parse_manifest`] — the manifest cannot grant itself network
+    /// access or a laxer breaker; the host applies the operator's settings
+    /// after discovery. Ignored entirely for hand-written manifests.
+    pub foundry_runtime: FoundryRuntimePolicy,
     /// The plugin whose package shipped this manifest, when one did (#3380).
     ///
     /// `None` for every tool the *user* wrote — `.stella/tools/*.toml` and
@@ -285,6 +292,46 @@ impl CustomTool {
             contract = contract.with_output_schema(output_schema.clone());
         }
         contract
+    }
+}
+
+/// Runtime policy the HOST stamps onto a foundry-authored tool after
+/// discovery. Never parsed from the manifest: a self-authored tool
+/// granting itself network access would be the permission-from-the-subject
+/// shape the adoption ledger exists to forbid.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FoundryRuntimePolicy {
+    /// Whether this tool is on the operator's `foundry.network_allowlist`.
+    /// `false` — the default — spawns the tool through
+    /// [`crate::netdeny::wrap`] wherever the platform can enforce it.
+    pub network_allowed: bool,
+    /// Circuit-breaker thresholds for this tool's launches. `None` means the
+    /// shipped defaults ([`BreakerPolicy::default`]).
+    pub breaker: Option<BreakerPolicy>,
+}
+
+/// The circuit breaker's thresholds: the config-driven auto-disable
+/// that stands in for a human noticing a self-authored tool has gone bad.
+/// One declaration — the settings layer resolves into this type rather than
+/// restating it, so the knob and the enforcement cannot drift.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BreakerPolicy {
+    /// Consecutive failures that disable the tool.
+    pub consecutive_failures: u32,
+    /// Recent invocations the failure-rate arm looks at; it fires only once
+    /// the window is full, so a young tool is judged by the consecutive arm.
+    pub window: u32,
+    /// The failure share over a full window that disables the tool.
+    pub failure_rate: f64,
+}
+
+impl Default for BreakerPolicy {
+    fn default() -> Self {
+        Self {
+            consecutive_failures: 3,
+            window: 10,
+            failure_rate: 0.5,
+        }
     }
 }
 
@@ -530,6 +577,9 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
         claimed_risk: raw.risk,
         claimed_idempotent: raw.idempotent,
         output_schema,
+        // Host-set after discovery, never parsed: a manifest may not grant
+        // itself network access or a laxer breaker.
+        foundry_runtime: FoundryRuntimePolicy::default(),
         // Discovery stamps this from the directory it read; a manifest may
         // not claim to have been shipped by a plugin.
         contributed_by: None,
@@ -809,6 +859,19 @@ fn is_etxtbsy(e: &std::io::Error) -> bool {
 /// Run one custom tool against the model's `input`, from `workspace_root`.
 /// Never returns `Err` — every failure mode is a named [`ToolOutput::Error`],
 /// because tool failures are model-visible data, not engine faults.
+///
+/// A **foundry-authored** tool passes three extra controls at this seam,
+/// because the spawn is the one place every launch goes through:
+///
+/// 1. the ledger's live `enabled` bit is re-read, so a tool the circuit
+///    breaker disabled after this session discovered it stops launching,
+///    with the recorded reason in the refusal;
+/// 2. unless the operator allowlisted it, the argv is wrapped in
+///    [`crate::netdeny`]'s OS-level network denial wherever the platform can
+///    enforce one;
+/// 3. the launch is recorded to the store's invocation telemetry, and the
+///    breaker folds over the recent outcomes — tripping disables the tool
+///    with a reason the gate and `stella tools --status` both surface.
 async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> ToolOutput {
     // A self-authored tool was approved for the bytes it had when the gate
     // ruled on it, once, at discovery. The script is a file in the repository
@@ -818,8 +881,91 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         return ToolOutput::classified_error(stella_protocol::ErrorClass::RefusedByPolicy, message);
     }
 
-    let mut cmd = Command::new(&tool.command[0]);
-    cmd.args(&tool.command[1..]);
+    let governed = tool
+        .foundry
+        .as_ref()
+        .is_some_and(|p| p.is_foundry_authored());
+    // Best-effort: a workspace whose store cannot open still runs the tool
+    // (the gate already ruled at discovery); it just records no telemetry.
+    let store = if governed {
+        stella_store::Store::open(workspace_root).ok()
+    } else {
+        None
+    };
+    // The gate reads the ledger once, at discovery; the breaker writes it
+    // mid-session. Re-reading the enabled bit here is what makes a trip take
+    // effect on the NEXT launch instead of at the next session.
+    if let Some(store) = &store
+        && let Ok(Some(row)) = store.adopted_foundry_tool(&tool.name)
+        && !row.enabled
+    {
+        let why = if row.disabled_reason.is_empty() {
+            "it is disabled — re-enable it with `stella tools --enable`".to_string()
+        } else {
+            row.disabled_reason
+        };
+        return ToolOutput::classified_error(
+            stella_protocol::ErrorClass::RefusedByPolicy,
+            format!("custom tool `{}` did not run: {why}", tool.name),
+        );
+    }
+
+    // Network denied by default for foundry-built tools: wrap the argv in the
+    // OS-level denial wherever the platform can actually enforce one. A
+    // platform that cannot runs the tool unwrapped — the autonomy pipeline
+    // already refused to auto-adopt there, so anything launching here was
+    // adopted by a human who read the declaration.
+    let argv: Vec<String> =
+        if governed && !tool.foundry_runtime.network_allowed && crate::netdeny::available() {
+            crate::netdeny::wrap(&tool.command).unwrap_or_else(|| tool.command.clone())
+        } else {
+            tool.command.clone()
+        };
+
+    let started = std::time::Instant::now();
+    let outcome = run_custom_process(tool, input, workspace_root, &argv).await;
+    let mut output = outcome.output;
+    if let Some(store) = &store
+        && let Some(trip) = record_foundry_launch(
+            store,
+            tool,
+            matches!(output, ToolOutput::Ok { .. }),
+            outcome.timed_out,
+            started.elapsed(),
+            outcome.output_bytes,
+        )
+        && let ToolOutput::Error { message, .. } = &mut output
+    {
+        message.push_str("\n[circuit breaker] ");
+        message.push_str(&trip);
+    }
+    output
+}
+
+/// What one process run produced, alongside the two facts the telemetry row
+/// needs that the [`ToolOutput`] alone cannot carry.
+struct ProcessOutcome {
+    output: ToolOutput,
+    timed_out: bool,
+    output_bytes: usize,
+}
+
+/// The spawn/wait/shape half of [`run_custom`], over an `argv` the caller has
+/// already chosen (the manifest's own, or the network-denial wrapping of it).
+async fn run_custom_process(
+    tool: &CustomTool,
+    input: &Value,
+    workspace_root: &Path,
+    argv: &[String],
+) -> ProcessOutcome {
+    let done = |output: ToolOutput| ProcessOutcome {
+        output,
+        timed_out: false,
+        output_bytes: 0,
+    };
+
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
     cmd.current_dir(workspace_root);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
@@ -862,15 +1008,15 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     let mut child = match spawn_retrying_etxtbsy(&mut cmd).await {
         Ok(c) => c,
         Err(e) => {
-            return ToolOutput::classified_error(
+            return done(ToolOutput::classified_error(
                 stella_protocol::ErrorClass::Environment,
                 format!(
                     "custom tool `{}` failed to spawn `{}` (cwd {}): {e}",
                     tool.name,
-                    tool.command[0],
+                    argv[0],
                     workspace_root.display()
                 ),
-            );
+            ));
         }
     };
 
@@ -908,24 +1054,34 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         // Wait failure leaves the child's state unknown — the still-armed
         // guard kills the group on return rather than leak it.
         Ok(Err(e)) => {
-            return ToolOutput::classified_error(
+            return done(ToolOutput::classified_error(
                 stella_protocol::ErrorClass::Environment,
                 format!("custom tool `{}` failed: {e}", tool.name),
-            );
+            ));
         }
         Err(_) => {
             guard.kill_now();
-            return ToolOutput::classified_error(
-                stella_protocol::ErrorClass::Timeout,
-                format!(
-                    "custom tool `{}` timed out after {}ms",
-                    tool.name, tool.timeout_ms
+            return ProcessOutcome {
+                output: ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Timeout,
+                    format!(
+                        "custom tool `{}` timed out after {}ms",
+                        tool.name, tool.timeout_ms
+                    ),
                 ),
-            );
+                timed_out: true,
+                output_bytes: 0,
+            };
         }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let output_bytes = output.stdout.len();
+    let shaped = |shaped: ToolOutput| ProcessOutcome {
+        output: shaped,
+        timed_out: false,
+        output_bytes,
+    };
     if output.status.success() {
         let content = crate::exec::truncate_middle_capped(&stdout, MAX_OUTPUT_BYTES);
         // A manifest that declares `[output_schema]` promises its stdout is
@@ -941,33 +1097,33 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             // manifest never takes this arm: its empty stdout is a
             // contract breach reported below.
             if output.stdout.is_empty() {
-                return ToolOutput::ok(silent_success_stamp(&tool.name, input));
+                return shaped(ToolOutput::ok(silent_success_stamp(&tool.name, input)));
             }
-            return ToolOutput::ok(content);
+            return shaped(ToolOutput::ok(content));
         };
         let parsed: Value = match serde_json::from_str(stdout.trim()) {
             Ok(parsed) => parsed,
             Err(e) => {
-                return ToolOutput::classified_error(
+                return shaped(ToolOutput::classified_error(
                     stella_protocol::ErrorClass::Internal,
                     format!(
                         "custom tool `{}` violated its output contract: it declares an \
                          output_schema but its stdout is not JSON ({e})",
                         tool.name
                     ),
-                );
+                ));
             }
         };
         if let Some(violation) = crate::registry::validate::check(expected, &parsed) {
-            return ToolOutput::classified_error(
+            return shaped(ToolOutput::classified_error(
                 stella_protocol::ErrorClass::Internal,
                 format!(
                     "custom tool `{}` violated its output contract: {violation}",
                     tool.name
                 ),
-            );
+            ));
         }
-        ToolOutput::ok_with_data(content, parsed)
+        shaped(ToolOutput::ok_with_data(content, parsed))
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let code = output
@@ -976,13 +1132,78 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             .map(|c| c.to_string())
             .unwrap_or_else(|| "signal".to_string());
         let tail = crate::exec::truncate_middle_capped(&stderr, MAX_OUTPUT_BYTES);
-        ToolOutput::classified_error(
+        shaped(ToolOutput::classified_error(
             stella_protocol::ErrorClass::Environment,
             format!(
                 "custom tool `{}` exited with code {code}\n[stderr]\n{tail}",
                 tool.name
             ),
+        ))
+    }
+}
+
+/// Record one governed launch and fold the circuit breaker over the recent
+/// outcomes. Returns the trip notice when this launch disabled the tool.
+///
+/// Best-effort throughout: a failed telemetry write must never fail the tool
+/// call it describes. The breaker reads the store rather than session memory
+/// so failures accumulate across sessions, and it never fires on a success —
+/// a trip is always attributable to the failing launch that sealed it.
+fn record_foundry_launch(
+    store: &stella_store::Store,
+    tool: &CustomTool,
+    ok: bool,
+    timed_out: bool,
+    duration: std::time::Duration,
+    output_bytes: usize,
+) -> Option<String> {
+    let provenance = tool.foundry.as_ref()?;
+    let script_digest = provenance
+        .approved
+        .as_ref()
+        .map(|approved| approved.script.clone())
+        .unwrap_or_default();
+    let _ = store.record_foundry_invocation(&stella_store::FoundryInvocation {
+        name: tool.name.clone(),
+        script_digest,
+        gap_id: provenance.gap_id.clone(),
+        duration_ms: i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+        ok,
+        timed_out,
+        output_bytes: i64::try_from(output_bytes).unwrap_or(i64::MAX),
+    });
+    if ok {
+        return None;
+    }
+
+    let policy = tool.foundry_runtime.breaker.unwrap_or_default();
+    let outcomes = store
+        .recent_foundry_outcomes(&tool.name, policy.window as usize)
+        .ok()?;
+    let consecutive = outcomes.iter().take_while(|&&o| !o).count();
+    let failures = outcomes.iter().filter(|&&o| !o).count();
+    let window_full = outcomes.len() >= policy.window as usize;
+    let reason = if consecutive >= policy.consecutive_failures as usize {
+        format!(
+            "circuit breaker: {consecutive} consecutive failures (threshold {}) — \
+             a new version re-enables it (re-author, or `stella tools --rollback {}`)",
+            policy.consecutive_failures, tool.name
         )
+    } else if window_full && (failures as f64) > policy.failure_rate * outcomes.len() as f64 {
+        format!(
+            "circuit breaker: {failures} of the last {} invocations failed \
+             (threshold {:.0}%) — a new version re-enables it (re-author, or \
+             `stella tools --rollback {}`)",
+            outcomes.len(),
+            policy.failure_rate * 100.0,
+            tool.name
+        )
+    } else {
+        return None;
+    };
+    match store.disable_foundry_tool_with_reason(&tool.name, &reason) {
+        Ok(true) => Some(format!("`{}` disabled: {reason}", tool.name)),
+        _ => None,
     }
 }
 

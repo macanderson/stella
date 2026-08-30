@@ -430,6 +430,60 @@ per_usd = 0.05   # price a dollar of spend at a tenth of the default
 `reward.verifier_weight` does nothing. A file that sets it loads normally and reports
 the key as unrecognized.
 
+### `[foundry]`
+
+The tool foundry's gap-detection thresholds and its autonomy controls.
+Whole-block last-wins, like `[reward]` — the thresholds, the circuit breaker, and the
+autonomy mode are one policy. Lowering a threshold changes what gets *proposed*; what
+executes is still gated by the foundry ledger, the per-call re-digest, and the spawn-time
+network denial every foundry-built tool runs under.
+
+<CardGrid size="sm">
+  <OptionCard name="foundry.min_occurrences" defaultValue="3">
+    Matching invocations before a shell shape is worth proposing. `0` or `1` disable
+    detection.
+  </OptionCard>
+  <OptionCard name="foundry.min_distinct_arguments" defaultValue="2">
+    Distinct argument sets required — one set is an exact repeat, which is loop
+    detection's territory.
+  </OptionCard>
+  <OptionCard name="foundry.min_reuse_ratio" defaultValue="3.0">
+    Uses per distinct argument set required. At or below `1.0` disables the gate;
+    non-finite values are rejected with a diagnostic.
+  </OptionCard>
+  <OptionCard name="foundry.require_success" defaultValue="true">
+    Whether a cluster needs at least one successful invocation.
+  </OptionCard>
+  <OptionCard name="foundry.max_examples" defaultValue="3">
+    Cap on example command lines per proposal and example values per parameter. Must be
+    at least `1` — the authored tool's witness input is built from these.
+  </OptionCard>
+  <OptionCard name="foundry.autonomy" defaultValue="auto">
+    `auto` (detect → author → validate → adopt → enable, network denied), `draft-only`
+    (author and validate, adopt nothing), or `off` (detect and ledger only). Autonomy
+    also degrades to draft-only on a platform with no real network isolation.
+  </OptionCard>
+  <OptionCard name="foundry.breaker_consecutive_failures" defaultValue="3">
+    Consecutive failures that auto-disable a foundry tool. Must be at least `1`.
+  </OptionCard>
+  <OptionCard name="foundry.breaker_window" defaultValue="10">
+    Recent invocations the failure-rate arm looks at. Must be at least `1`.
+  </OptionCard>
+  <OptionCard name="foundry.breaker_failure_rate" defaultValue="0.5">
+    The failure share over that window that trips the breaker. Above `0`, at most `1`.
+  </OptionCard>
+  <OptionCard name="foundry.network_allowlist" defaultValue="[]">
+    Foundry-built tools allowed to reach the network, by name. Empty means every foundry
+    tool spawns with network denied.
+  </OptionCard>
+</CardGrid>
+
+```toml title="stella.toml"
+[foundry]
+min_reuse_ratio = 2.5          # propose earlier than the shipped 3.0x floor
+autonomy = "draft-only"        # author staged pairs, adopt nothing
+```
+
 ### `[plan_review]`
 
 The deck's plan gate: before the first step of a plan runs, the task board goes to

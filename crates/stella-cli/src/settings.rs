@@ -44,6 +44,7 @@ pub(crate) mod context_providers;
 // size ratchet; its items are re-exported below so callers' paths are
 // unchanged.
 mod engine;
+pub(crate) mod foundry;
 mod managed;
 mod merge;
 pub(crate) mod migrate;
@@ -84,6 +85,7 @@ pub(crate) use unknown::{
 pub use context::{ContextSettings, InferredDirectivePromotion, RetrievalSettings};
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 pub use engine::*;
+pub use foundry::{FoundryAutonomy, FoundryConfig, FoundrySettings};
 pub use merge::ToolScopePolicies;
 pub(crate) use steering::SteeringCeiling;
 pub(crate) use withheld::WithheldNotice;
@@ -273,6 +275,14 @@ pub struct Settings {
     /// opinion about its own verifier, not borrowing permission.
     #[serde(default)]
     pub reward: Option<RewardSettings>,
+    /// Tool-foundry gap-detection thresholds and autonomy controls.
+    /// Whole-block last-wins across scopes, on `reward`'s argument:
+    /// the thresholds, the breaker, and the autonomy mode are one policy.
+    /// A repo lowering a detection threshold changes what gets *proposed*;
+    /// what executes is still gated by the foundry ledger, the per-call
+    /// re-digest, and the spawn-time network denial.
+    #[serde(default)]
+    pub foundry: Option<FoundrySettings>,
     /// Whether the deck's plan gate is installed, and how big a plan has to be
     /// before it fires ([`PlanReviewSettings`], #4611). Whole-block last-wins
     /// across scopes, on `reward`'s argument: both fields describe one policy,
@@ -1035,6 +1045,19 @@ impl Settings {
     /// asked for, which is worse than not starting.
     pub fn reward_policy(&self) -> Result<RewardPolicy, String> {
         self.reward.clone().unwrap_or_default().resolve()
+    }
+
+    /// The resolved tool-foundry policy. An absent `foundry`
+    /// block is exactly the defaults: the strict shipped detection floor,
+    /// `auto` autonomy, and the 3-consecutive / 50%-of-10 breaker.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` for the same reason [`Self::reward_policy`] does — a
+    /// threshold the module refuses is a mistake someone has to see, and the
+    /// message names the key and the rule.
+    pub fn foundry_config(&self) -> Result<FoundryConfig, String> {
+        self.foundry.clone().unwrap_or_default().resolve()
     }
 
     /// The resolved plan-gate policy (#4611). An absent `plan_review` block is

@@ -665,13 +665,26 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             yes,
             disable,
             foundry,
+            draft,
+            rollback,
+            to,
+            status,
         }) => {
             // The tool-foundry protocol's decisions are flags, in the order a
-            // tool travels through them: adopt (prove) -> enable (approve).
-            // `clap` makes them mutually exclusive, so this is a first-match
-            // chain rather than a state machine.
+            // tool travels through them: draft (author) -> adopt (prove) ->
+            // enable (approve), with rollback/status alongside. `clap` makes
+            // them mutually exclusive, so this is a first-match chain rather
+            // than a state machine.
             return match validate {
                 _ if *foundry => tool_foundry::adopt::run_tools_foundry_report(),
+                _ if *status => tool_foundry::ops::run_tools_status(),
+                _ if draft.is_some() => {
+                    tool_foundry::ops::run_tools_draft(draft.as_deref().unwrap_or_default())
+                }
+                _ if rollback.is_some() => tool_foundry::ops::run_tools_rollback(
+                    rollback.as_deref().unwrap_or_default(),
+                    *to,
+                ),
                 _ if adopt.is_some() => {
                     tool_foundry::adopt::run_tools_adopt(adopt.as_deref().unwrap_or_default())
                 }

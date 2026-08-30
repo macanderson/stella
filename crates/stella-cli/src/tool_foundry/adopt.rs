@@ -121,8 +121,42 @@ pub(crate) fn run_tools_foundry_report() -> Result<(), String> {
 }
 
 /// Prove and record one staged tool. The testable core of
-/// [`run_tools_adopt`]: no cwd, no printing.
+/// [`run_tools_adopt`]: no cwd, no printing. Builds its own runtime for the
+/// witness — callers already inside one use [`adopt_in_async`].
 pub(crate) fn adopt_in(root: &Path, store: &Store, name: &str) -> Result<AdoptedTool, String> {
+    let prepared = prepare_adoption(root, store, name)?;
+    let verdict = run_witness(root, &prepared.candidate)?;
+    finish_adoption(root, store, prepared, verdict, "adopt")
+}
+
+/// [`adopt_in`] for a caller already on a tokio runtime — the autonomy
+/// pipeline, which runs on the session's own end-of-turn path where
+/// `Runtime::block_on` would panic. Same steps, same gates; `reason` labels
+/// the version-history row so an autonomous adoption is distinguishable from
+/// a human one forever.
+pub(crate) async fn adopt_in_async(
+    root: &Path,
+    store: &Store,
+    name: &str,
+    reason: &str,
+) -> Result<AdoptedTool, String> {
+    let prepared = prepare_adoption(root, store, name)?;
+    let verdict = prove_candidate(root, &prepared.candidate).await;
+    finish_adoption(root, store, prepared, verdict, reason)
+}
+
+/// Everything [`adopt_in`] does before the witness runs: read the staged
+/// pair, check provenance, relocate, write the adopted pair, and re-parse it.
+struct PreparedAdoption {
+    candidate: CustomTool,
+    provenance: stella_tools::foundry_gate::FoundryProvenance,
+    adopted_text: String,
+    script: Vec<u8>,
+    manifest_path: PathBuf,
+    script_path: PathBuf,
+}
+
+fn prepare_adoption(root: &Path, store: &Store, name: &str) -> Result<PreparedAdoption, String> {
     let staged_manifest = root.join(PROPOSED_DIR).join(format!("{name}.toml"));
     let staged_script = root.join(PROPOSED_DIR).join(format!("{name}.sh"));
     let manifest_text = std::fs::read_to_string(&staged_manifest).map_err(|e| {
@@ -192,9 +226,37 @@ pub(crate) fn adopt_in(root: &Path, store: &Store, name: &str) -> Result<Adopted
         }
     };
 
-    let verdict = run_witness(root, &candidate)?;
+    Ok(PreparedAdoption {
+        candidate,
+        provenance,
+        adopted_text,
+        script,
+        manifest_path: adopted_manifest_path,
+        script_path: adopted_script_path,
+    })
+}
+
+/// Judge the verdict and record the adoption — plus one append-only row in
+/// the version history, so `stella tools --rollback` always has the
+/// exact adopted bytes to restore, whatever later happens to the files.
+fn finish_adoption(
+    _root: &Path,
+    store: &Store,
+    prepared: PreparedAdoption,
+    verdict: WitnessVerdict,
+    reason: &str,
+) -> Result<AdoptedTool, String> {
+    let PreparedAdoption {
+        candidate,
+        provenance,
+        adopted_text,
+        script,
+        manifest_path,
+        script_path,
+    } = prepared;
+    let name = candidate.name.as_str();
     let WitnessVerdict::Proven(case) = &verdict else {
-        remove_pair(&adopted_manifest_path, &adopted_script_path);
+        remove_pair(&manifest_path, &script_path);
         return Err(format!(
             "witness failed: {} — nothing was adopted, and the staged pair in {PROPOSED_DIR}/ is \
              untouched",
@@ -213,10 +275,24 @@ pub(crate) fn adopt_in(root: &Path, store: &Store, name: &str) -> Result<Adopted
         // Set by the store, which refuses to adopt-and-enable in one step.
         enabled: false,
         adopted_at: String::new(),
+        disabled_reason: String::new(),
     };
     store
         .adopt_foundry_tool(&record)
         .map_err(|e| format!("cannot record the adoption: {e}"))?;
+    // The version row carries the BYTES, so rollback does not depend on the
+    // files surviving. Best-effort by design would hide a broken rollback
+    // path until the day it is needed — so a failed write is an error.
+    store
+        .record_foundry_version(
+            name,
+            adopted_text.as_bytes(),
+            &script,
+            &record.manifest_digest,
+            &record.script_digest,
+            reason,
+        )
+        .map_err(|e| format!("adopted, but cannot record the version row: {e}"))?;
     Ok(record)
 }
 
@@ -442,7 +518,7 @@ fn relocate_command(manifest_text: &str, name: &str) -> Result<String, String> {
 }
 
 /// Write the adopted pair, script first and executable.
-fn write_pair(
+pub(crate) fn write_pair(
     manifest_path: &Path,
     manifest_text: &str,
     script_path: &Path,
@@ -477,6 +553,16 @@ fn remove_pair(manifest_path: &Path, script_path: &Path) {
 /// consequence is a tool that never gets reached rather than one that
 /// silently replaces something.
 fn run_witness(root: &Path, candidate: &CustomTool) -> Result<WitnessVerdict, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to start runtime: {e}"))?;
+    Ok(runtime.block_on(prove_candidate(root, candidate)))
+}
+
+/// The witness itself, over the real gated tool surface — the async core
+/// both [`run_witness`] and [`adopt_in_async`] share.
+async fn prove_candidate(root: &Path, candidate: &CustomTool) -> WitnessVerdict {
     let user_root = crate::paths::user_extension_root();
     // World A is the surface as it really is, so these go through the gate
     // like any other registration — a withheld tool is not part of it.
@@ -488,18 +574,13 @@ fn run_witness(root: &Path, candidate: &CustomTool) -> Result<WitnessVerdict, St
             .collect();
     let builtins = Builtins;
     let surface = CustomToolSet::new(&builtins, others, root.to_path_buf());
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("failed to start runtime: {e}"))?;
-    Ok(runtime.block_on(prove(&surface, candidate, root)))
+    prove(&surface, candidate, root).await
 }
 
 /// Every built-in tool name, advertised and never executed — the "does this
 /// capability already exist?" half of world A. Advertising is all the witness
 /// reads; a built-in that ran here would be a side effect nobody asked for.
-struct Builtins;
+pub(crate) struct Builtins;
 
 #[async_trait::async_trait]
 impl ToolExecutor for Builtins {

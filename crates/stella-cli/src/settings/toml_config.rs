@@ -46,8 +46,9 @@ use super::authority::ManagedAuthoritySettings;
 use super::context::ContextSettings;
 use super::context_providers::ContextProviderSettings;
 use super::{
-    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, McpSettings, PlanReviewSettings,
-    ProviderSettings, RewardSettings, Settings, Toggle, ToolsSettings, UiSettings,
+    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, FoundrySettings, McpSettings,
+    PlanReviewSettings, ProviderSettings, RewardSettings, Settings, Toggle, ToolsSettings,
+    UiSettings,
 };
 
 /// The schema version this build writes and understands.
@@ -338,6 +339,11 @@ pub struct TomlConfig {
     /// Same shape in JSON and TOML, so no lowering beyond the move.
     #[serde(default)]
     pub reward: Option<RewardSettings>,
+    /// `[foundry]` — the tool foundry's gap-detection thresholds and autonomy
+    /// controls. Same shape in JSON and TOML, so no lowering
+    /// beyond the move.
+    #[serde(default)]
+    pub foundry: Option<FoundrySettings>,
     /// `[plan_review]` — whether the deck's plan gate is installed and how big
     /// a plan has to be before it fires (#4611). Same shape in JSON and TOML,
     /// so no lowering beyond the move.
@@ -621,6 +627,7 @@ impl TomlConfig {
             voice,
             plugins,
             reward,
+            foundry,
             plan_review,
             authority,
             enterprise_telemetry,
@@ -666,6 +673,7 @@ impl TomlConfig {
             ui,
             voice,
             reward,
+            foundry,
             plan_review,
             context,
             context_providers,
