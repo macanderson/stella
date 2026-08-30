@@ -703,7 +703,9 @@ fn a_directive_carrying_skill_expands_as_an_invocation_with_its_scope() {
         expansion.prompt
     );
     assert!(
-        expansion.prompt.contains("Seed the quarter named by 2025-Q3."),
+        expansion
+            .prompt
+            .contains("Seed the quarter named by 2025-Q3."),
         "$ARGUMENTS is substituted: {}",
         expansion.prompt
     );

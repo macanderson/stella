@@ -141,18 +141,18 @@ pub(super) async fn run_lead_turn(
         // The invocation plane rides outermost (#5456): the grant narrows
         // the deck's whole assembled surface and can never widen it. Inert
         // — a pure pass-through — on every turn with no live invocation.
-        let scoped_tap = stella_tools::skill_plane::SkillScopedTools::new(&tap, skill_plane.clone());
+        let scoped_tap =
+            stella_tools::skill_plane::SkillScopedTools::new(&tap, skill_plane.clone());
         let hook_runner = HostHookRunner;
         let mut engine_config = agent::engine_config_for(cfg);
         if let Some(effort) = skill_scope.as_ref().and_then(|scope| scope.effort) {
             // The invoked skill's `effort:` override (#5456), for this turn.
             engine_config.effort = Some(effort);
         }
-        let mut engine =
-            Engine::with_sleeper(provider, &scoped_tap, engine_config, &TokioSleeper)
-                .with_calibration(calibration)
-                .with_steering(steering.as_ref())
-                .with_gate(pause.turn_gate());
+        let mut engine = Engine::with_sleeper(provider, &scoped_tap, engine_config, &TokioSleeper)
+            .with_calibration(calibration)
+            .with_steering(steering.as_ref())
+            .with_gate(pause.turn_gate());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }

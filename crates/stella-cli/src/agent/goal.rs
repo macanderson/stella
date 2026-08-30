@@ -112,6 +112,12 @@ fn bare_loop_config(cfg: &Config) -> Config {
 /// strict parser and rides the candidate grant as a [`stella_plugin::TestPlan`]
 /// (#3553). Dropped before, which is why `pre_turn_signals` published
 /// `test_command: false` unconditionally.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "this is `run_turn`'s door-side twin and follows its expect: the turn-entry \
+              argument bundle is worth introducing across all four entry points at once \
+              (#4916), not piecemeal here"
+)]
 pub(crate) async fn run_raw_one_shot(
     full_cfg: &Config,
     prompt: &str,

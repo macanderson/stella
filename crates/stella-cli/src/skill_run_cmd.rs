@@ -112,12 +112,12 @@ pub(crate) fn diagnostic_lines(diagnostics: &[DirectiveDiagnostic]) -> Vec<Strin
     diagnostics
         .iter()
         .map(|diagnostic| match diagnostic {
-            DirectiveDiagnostic::UnknownContext { value } => format!(
-                "context: `{value}` is neither `inline` nor `fork` — running inline"
-            ),
-            DirectiveDiagnostic::UnknownEffort { value } => format!(
-                "effort: `{value}` names no effort level — override dropped"
-            ),
+            DirectiveDiagnostic::UnknownContext { value } => {
+                format!("context: `{value}` is neither `inline` nor `fork` — running inline")
+            }
+            DirectiveDiagnostic::UnknownEffort { value } => {
+                format!("effort: `{value}` names no effort level — override dropped")
+            }
         })
         .collect()
 }
@@ -167,8 +167,7 @@ pub(crate) async fn run(
         // The raw loop, always: a skill's directives are the whole contract
         // of this door, and a wrapper variant is `stella run --pipeline`'s
         // business.
-        crate::wrapper_plugin::PipelineChoice::resolve(false, None)
-            .map_err(CliFailure::from)?,
+        crate::wrapper_plugin::PipelineChoice::resolve(false, None).map_err(CliFailure::from)?,
         None,
         false,
         Some(plan.invoked),
@@ -245,8 +244,7 @@ mod tests {
         .expect("the skill resolves");
 
         assert!(
-            plan.prompt
-                .starts_with(invoke::SKILL_INVOCATION_PREFIX),
+            plan.prompt.starts_with(invoke::SKILL_INVOCATION_PREFIX),
             "the prompt is the invocation message: {}",
             plan.prompt
         );
@@ -282,7 +280,10 @@ mod tests {
 
         let error = plan(dir.path(), &authority(), "relaese-notes", &[]).unwrap_err();
         assert!(error.contains("relaese-notes"), "{error}");
-        assert!(error.contains("release-notes"), "names what exists: {error}");
+        assert!(
+            error.contains("release-notes"),
+            "names what exists: {error}"
+        );
 
         let empty = tempfile::tempdir().unwrap();
         let error = plan(empty.path(), &authority(), "anything", &[]).unwrap_err();

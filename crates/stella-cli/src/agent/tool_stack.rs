@@ -567,7 +567,8 @@ mod tests {
         // grant selects within the operator surface, never re-enables.
         assert!(
             matches!(
-                view.execute("save_state", &json!({"key": "k", "value": "v"})).await,
+                view.execute("save_state", &json!({"key": "k", "value": "v"}))
+                    .await,
                 ToolOutput::Error { .. }
             ),
             "a grant must never re-enable an operator-denied tool"
