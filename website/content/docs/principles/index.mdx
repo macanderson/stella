@@ -1,91 +1,94 @@
 ---
 title: Engineering Principles
-description: The design rules behind stella — determinism over intelligence, evidence over opinion, a zero-I/O engine, and budgets enforced at safe boundaries.
+description: The design rules behind stella — determinism over intelligence, evidence over opinion, an engine with no I/O of its own, and spend limits enforced at safe points.
 ---
 
-stella's repository ships two research papers alongside the code — a
-[capstone analysis of seven architectural rules](https://github.com/macanderson/stella/blob/main/docs/papers/stella-defensible-position.md)
-and a focused study of
+stella ships two research papers alongside its code: a
+[study of seven architectural rules](https://github.com/macanderson/stella/blob/main/docs/papers/stella-defensible-position.md)
+and a closer look at
 [the deterministic engine](https://github.com/macanderson/stella/blob/main/docs/papers/deterministic-engine.md).
-This page is the distilled version: the principles, and why they were chosen.
-Every claim is grounded in the shipping implementation.
+Here are the principles behind stella, and why they were chosen. Every claim
+below matches what actually ships.
 
 <Callout type="info">
-**"Witnessed, not asserted" is a property of the path, not of the binary.**
-The witness-test / flip-oracle machinery below (rule 3 below, and the "Is the
-work done?" and "What proves the change?" mechanisms) is what an installed
-**verification plugin** implements on its own side of the
-[wrapper socket](/docs/plugins) — Oxagen's Vera is the reference one. A plugin
-reports its own evidence and stella evaluates it against the rule the plugin
-declared at install; stella does not re-run the check itself. A plain
-`stella run` with no `--pipeline <variant>` has nothing verifying it, and
-says so rather than implying otherwise.
+**"Witnessed, not asserted" describes the path you choose, not the program
+itself.** The witness-test and flip-check machinery described below, and
+the "Is the work done?" and "What proves the change?" mechanisms, are
+things an installed **verification plugin** implements on its own side of
+the [wrapper socket](/docs/plugins). Oxagen's Vera is the reference plugin.
+A plugin reports its own evidence, and stella checks that evidence against
+the rule the plugin set up at install time. stella never re-runs the check
+itself. A plain `stella run` with no `--pipeline <variant>` has nothing
+verifying it, and it tells you that instead of implying otherwise.
 </Callout>
 
-## The master rule: given a choice, prefer determinism over intelligence
+## The master rule
 
-Wherever stella can decide something with a deterministic mechanism *or* a
-model's judgment, it chooses the mechanism — and reserves the model for the
-places only intelligence can fill. [The full argument](/docs/principles/determinism)
-has the research grounding; the shape of it:
+When stella can decide something with a plain mechanism or a model's
+judgment, it uses the mechanism, and saves the model for the places only
+intelligence can handle. [The full argument](/docs/principles/determinism)
+has the research behind it. Here's the shape of it:
 
-- A deterministic check is **reproducible** — it gives the same verdict on
-  the same inputs tomorrow, in CI, and on a colleague's machine. A model
-  opinion is a sample.
-- A deterministic check is **auditable** — when it fails, you can read
-  exactly why. A model verdict must itself be verified.
-- A deterministic check is **free** — no tokens, no latency, no rate limit.
+- A plain check is **reproducible**. It gives the same answer on the same
+  input tomorrow, in CI, and on a coworker's machine. A model's opinion is
+  just one sample.
+- A plain check is **auditable**. When it fails, you can read exactly why.
+  A model's verdict has to be checked itself before you can trust it.
+- A plain check is **free**. No tokens, no delay, no rate limit.
 
 You can see the rule everywhere in the product:
 
 <CardGrid size="md">
   <SpecCard title="Is the work done?">
-    **Mechanism:** the [flip oracle](/docs/plugins) — the same test
-    fails before the change and passes after — plus the zero-diff guard and a
-    400-line diff budget.
+    **Mechanism:** the [flip oracle](/docs/plugins) — a test that fails
+    before the change and passes after — plus a guard against empty diffs
+    and a 400-line diff budget.
 
-    **Model, as fallback:** none. The ladder is terminal at every rung — when
-    the evidence does not add up it reports `Unverified`, not a guess. (Goal
-    mode's standing verifier is a different mechanism: it runs every round,
-    unconditionally, never as an inconclusive-evidence fallback.)
+    **Model, as fallback:** none. When the evidence doesn't add up, stella
+    reports `Unverified` instead of guessing. (Goal mode's verifier is
+    different: it runs every round, always, and it's never a fallback for
+    unclear evidence.)
   </SpecCard>
   <SpecCard title="What proves the change?">
-    **Mechanism:** the [witness step](/docs/plugins) replays the
-    witness test against the pre-change code — it must fail there and pass on
-    the change.
+    **Mechanism:** the [witness step](/docs/plugins) runs the witness test
+    against the code before your change. It has to fail there and pass
+    after.
 
-    **Model, as fallback:** none. A merely-green suite is *weak* evidence, never
-    proof, whoever asserts it.
+    **Model, as fallback:** none. A test suite that's simply green is weak
+    evidence, never proof, no matter who says otherwise.
   </SpecCard>
   <SpecCard title="Which model serves a role?">
-    **Mechanism:** explicit pins and typed absence (`Option::None`) — never an
-    `"auto"` magic string.
+    **Mechanism:** you pin a model explicitly, or explicitly set none.
+    There's no hidden `"auto"` string doing something unclear.
 
-    **Model, as fallback:** `auto_mode` picks from *your* `allowed_models`, by
-    stated rules — different family first, then price tier, then list order.
+    **Model, as fallback:** `auto_mode` picks from your `allowed_models`
+    list, using clear rules: a different model family first, then price
+    tier, then list order.
   </SpecCard>
   <SpecCard title="What goes in the prompt?">
-    **Mechanism:** a byte-stable system prefix plus one fixed-position recall
-    block, so prompt caching survives across turns.
+    **Mechanism:** a system prompt that never changes byte-for-byte, plus
+    one fixed-position block for recalled context, so prompt caching keeps
+    working across turns.
 
     **Model, as fallback:** none.
   </SpecCard>
   <SpecCard title="When does a run stop?">
-    **Mechanism:** the budget guard, checked between steps — never mid-tool, so
-    an abort never leaves a half-applied edit.
+    **Mechanism:** a spend guard, checked between steps, never in the
+    middle of a tool call. That means stopping never leaves a half-finished
+    edit.
 
     **Model, as fallback:** none.
   </SpecCard>
   <SpecCard title="What happened?">
-    **Mechanism:** an append-only event stream and local SQLite ledgers you can
-    query yourself.
+    **Mechanism:** an append-only event log and local SQLite records you
+    can query yourself.
 
     **Model, as fallback:** none.
   </SpecCard>
 </CardGrid>
 
-Two of those are one command away. The mechanisms are not aspirational — they
-are the surfaces you already use:
+Two of these are one command away, and they aren't just plans on paper.
+They're what you're already using:
 
 ```bash
 # The flip oracle, armed: a run that cannot prove fail→pass does not submit.
@@ -96,54 +99,64 @@ stella run --pipeline my-verifier --test-command "cargo test -p stella-core" \
 stella stats
 ```
 
-## The seven rules, briefly
+## The seven rules
 
-1. **Ports, not direct dependencies.** Every provider and tool sits behind a trait;
-   adding a vendor is an adapter, never a rewrite. Nine providers plus any
-   local server, one engine.
-2. **No I/O in the engine.** `stella-core` performs zero I/O — routing,
-   retry, compaction, loop detection, and budget are synchronous functions
-   over owned data, property-testable with no network and no filesystem.
-3. **The witness-test contract.** An agent must *prove* its change is the
-   change that fixed the problem: fail on `HEAD`, pass on the diff,
-   tamper-excluded — "the suite is green" is not a proof. An installed
-   verification plugin (Vera is the reference one) runs this check and reports
-   the result.
-4. **BYOK + zero telemetry egress by default.** Your keys call your provider
-   directly, and Community/default telemetry remains in local SQLite. Two
-   explicit configurations, and only these two, send telemetry anywhere:
+1. **Ports, not direct dependencies.** Every provider and tool sits behind
+   a shared interface. Adding a new one is an adapter, never a rewrite.
+   Nine providers plus any local server, one engine.
+2. **No I/O in the engine.** `stella-core` does no reading or writing of
+   its own. Routing, retries, trimming context, loop detection, and spend
+   limits are all plain functions over data it already owns. That makes
+   them testable, with no network and no filesystem needed.
+3. **The witness-test contract.** An agent has to *prove* its change
+   actually fixed the problem: fail before the change, pass after it,
+   with tampering ruled out. "The test suite is green" is not proof on its
+   own. An installed verification plugin (Vera is the reference one) runs
+   this check and reports the result.
+4. **Bring your own key, and no telemetry leaves your machine by default.**
+   Your keys talk to your provider directly, and by default all telemetry
+   stays in a local SQLite file. Exactly two setups send telemetry
+   anywhere, and only these two:
    [Oxagen Enterprise enrollment](/docs/telemetry#oxagen-enterprise-managed-export)
-   — a signed policy, process-free execution, a closed content-free rollup, and
-   one exact allowlisted HTTPS sink — and a
+   — a signed policy, no runaway processes, a closed and content-free
+   summary, and one exact allowed HTTPS destination — and a
    [`drain` block](/docs/commands/cloud) in `~/.stella/cloud.json` that
-   `stella cloud sync` posts to. Neither exists until you write it.
-5. **Prompt-cache-native memory.** Durable knowledge loads once into a
-   byte-stable prefix and rides the cache at ~0.1× — see
-   ["invalidation doesn't happen"](/docs/context-engine#invalidation-doesnt-happen--and-why-that-matters).
-6. **Spend limits enforced at safe boundaries.** `--spend-limit` is a hard cap checked
-   between steps — an abort is always clean, never a half-applied edit.
-7. **An open retrieval standard.** Context recall speaks the
-   [Context Graph Protocol](/docs/context-engine#the-context-graph-protocol) —
-   versioned wire types, machine-checked conformance, a trust architecture.
+   `stella cloud sync` sends to. Neither one exists until you set it up.
+5. **Memory built for prompt caching.** Durable knowledge loads once into a
+   prefix that never changes byte-for-byte, and rides the cache at about a
+   tenth of the cost. See
+   [No invalidation](/docs/context-engine#no-invalidation).
+6. **Spend limits enforced at safe points.** `--spend-limit` is a hard cap
+   checked between steps, so stopping is always clean and never leaves a
+   half-finished edit.
+7. **An open standard for pulling in context.** Context recall uses the
+   [Context Graph Protocol](/docs/context-engine#the-context-graph-protocol):
+   versioned wire types, automatic conformance checks, and a clear trust
+   model.
 
-No single one is the moat; the **combination** is. Each constrains the
-others: you can't retrofit cache-native memory onto per-turn injection, or
-witness verification onto an engine that can't replay deterministically.
+No single rule here is the advantage. The **combination** is. Each one
+constrains the others: you can't bolt cache-friendly memory onto a system
+that re-sends everything each turn, or witness verification onto an engine
+that can't replay the same way twice.
 
-## What this buys you, concretely
+## What this gets you
 
-- **Trust:** "done" means *witnessed*, not *asserted* — self-reported by an
-  installed verification plugin and evaluated against its declared rule.
-- **Reasoning:** one single-threaded loop you can read top to bottom — no
-  coordinator, no hidden control plane, no swarm state to desynchronize.
-- **Cost:** the cache discipline and the evidence ladder mean you pay for
-  intelligence only where intelligence is the only tool that works.
-- **Sovereignty:** local-first state, BYOK credentials, a copyleft license that
-  keeps the source open, and zero telemetry egress by default. Both egress paths
-  — Enterprise operational export and the `cloud.json` drain — are explicit,
-  bounded, and off until configured; the Enterprise one is additionally
-  content-free and governed by org-managed enrollment.
+- **Trust:** "done" means *witnessed*, not *asserted*. It's reported by an
+  installed verification plugin and checked against the rule that plugin
+  declared.
+- **Reasoning you can follow:** one single-threaded loop, readable top to
+  bottom. No coordinator, no hidden control layer, no swarm state to fall
+  out of sync.
+- **Cost:** the caching discipline and the evidence checks mean you pay for
+  a model's judgment only where a model's judgment is the only tool that
+  works.
+- **You stay in control:** state lives on your machine first, credentials
+  are yours, the license keeps the source open, and no telemetry leaves by
+  default. Both ways telemetry can leave — the Enterprise export and the
+  `cloud.json` drain — are explicit, limited, and off until you configure
+  them. The Enterprise path is also content-free and controlled by your
+  organization's enrollment.
 
-Continue: [Why single-thread beats the swarm →](/docs/principles/determinism)
-· [No agent silently overwrites another's work →](/docs/principles/no-clobber)
+Continue: [Why one thread beats a swarm →](/docs/principles/determinism)
+· [No agent overwrites another's work →](/docs/principles/no-clobber)
 · [A session is an artifact, not a service →](/docs/principles/session-artifacts)

@@ -1,9 +1,9 @@
 ---
 title: stella goal
-description: Work in raw step-loop rounds, optionally under an installed wrapper plugin, until a verifier model confirms the goal is met.
+description: Work in judged rounds, optionally under an installed wrapper plugin, until a verifier model confirms the goal is met.
 ---
 
-Give stella a goal and let it work in **judged rounds** until a verifier model confirms, from evidence, that the goal has actually been met.
+Give stella a goal and let it work in judged rounds until a verifier model confirms, from evidence, that the goal has actually been met.
 
 ## Synopsis
 
@@ -13,9 +13,15 @@ stella goal <goal> [--pipeline <VARIANT>] [--test-command <CMD>] [--require-verd
 
 ## What it does
 
-`stella goal` works in rounds, each a raw step-loop turn by default — pass `--pipeline <variant>` to bind an installed wrapper plugin once and dispatch it for the worker turn of every judged round. The plugin dispatched here must be a **steering/observer**-grade wrapper: `stella goal`'s own round loop is already this door's completion arbiter, so an arbiter-grade wrapper (one whose own `[oracle]` could hold a round open) is refused before the provider is even built — its designed home is [`stella run --pipeline <variant>`](/docs/commands/run) instead. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration; the verifier itself is never wrapped. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
+`stella goal` works in rounds. Each round is a plain step-loop turn by default. Pass `--pipeline <variant>` to use an installed wrapper plugin for the worker turn of every judged round instead.
 
-Crucially, the verifier is routed **cross-family** — it is a different model family than the worker, to avoid same-model bias. If only one provider family is configured, the worker doubles as its own verifier.
+The plugin used here must be a steering or observer style wrapper. `stella goal` already decides on its own when a round is complete, so a wrapper that also tries to decide completion is refused before the run even starts. That kind of wrapper belongs with [`stella run --pipeline <variant>`](/docs/commands/run) instead.
+
+At the end of each round, a verifier model checks on its own whether the goal is met. It reads the changed files, tests, and CI results with read-only tools, rather than trusting the worker's own account of what happened. The verifier itself never runs through a wrapper.
+
+The loop ends when the verifier confirms success, or when one of these stops it: a round limit (**8** rounds by default), the `--spend-limit` cap, or a worker turn that aborts. If the loop stops for any of these reasons, it reports the goal as **not met**.
+
+The verifier is a different model family than the worker, to avoid a model favoring its own kind of mistake. If only one provider family is set up, the worker checks its own work instead.
 
 <Callout type="info">
 For the full explanation of judged rounds, the cross-family verifier, and the definition-of-done check, see [Goal mode](/docs/agent-modes#outcome-driven-goal-mode).
@@ -23,48 +29,46 @@ For the full explanation of judged rounds, the cross-family verifier, and the de
 
 ## Flags
 
-`stella goal` takes the [global flags](/docs/commands), plus four of its own:
+`stella goal` takes the [global flags](/docs/commands), plus four of its own.
 
 <CardGrid size="md">
   <OptionCard name="--pipeline <VARIANT>">
-    Bind an installed wrapper plugin once, by the `[wrapper] id` its manifest
-    declares, and dispatch it for the worker turn of every judged round. Only a
-    steering/observer-grade wrapper is accepted here — an arbiter-grade wrapper
-    is refused before the provider is built, since this door's own round loop
-    is already the completion arbiter.
-    Omitted, the raw step-loop runs with nothing over it.
+    Use an installed wrapper plugin, named by the `[wrapper] id` its manifest
+    declares, for the worker turn of every judged round. Only a
+    steering or observer style wrapper is accepted here. A wrapper that decides
+    completion on its own is refused before the run starts, since `stella goal`'s
+    round loop already decides that.
+    Without this flag, the plain step loop runs with nothing over it.
   </OptionCard>
   <OptionCard name="--model <provider/model_id>">
     Pin the worker model. The verifier is routed to a different family automatically when one
     is available.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
-    The oracle a bound wrapper plugin observes its flip with. One command for
-    the whole run rather than per round: it names the witness the run is judged
-    against, and the artifacts it names are pinned once before the first round
-    so a witness rewritten mid-run cannot be vouched for. It crosses the host's
-    closed runner vocabulary before it reaches a plugin, so a plugin receives an
-    argv this host would run and never a line to hand to a shell. Refused
-    without `--pipeline`, since the raw loop runs no oracle for it to arm.
+    The command a bound wrapper plugin uses to check its result. It's one command for
+    the whole run rather than one per round, since it names the exact evidence the run
+    is judged against. That evidence is locked in before the first round starts, so
+    something rewritten mid-run can't be used as proof.
+    Refused without `--pipeline`, since the plain loop has no check to arm.
   </OptionCard>
   <OptionCard name="--spend-limit <usd>">
-    Cap total spend across all rounds; work aborts cleanly once the cap is exceeded.
+    Cap total spend across all rounds. Work stops cleanly once the cap is reached.
   </OptionCard>
   <OptionCard name="--require-verdict">
-    Exit non-zero unless the `--pipeline` wrapper declared its requirements **met**.
-    The **last** round's verdict decides — the round whose work ships — because every
-    earlier round's refusal was superseded by another round being driven; a goal the
-    verifier left unmet already fails on its own, ahead of this gate. Refused without
-    `--pipeline`, where nothing declares a verdict.
+    Exit with a non-zero code unless the `--pipeline` wrapper confirmed its requirements
+    were **met**. The **last** round's result decides, since that's the round whose work
+    ships and every earlier round's result was replaced by a later one. A goal the
+    verifier left unmet already fails on its own, before this check even runs. Refused without
+    `--pipeline`, since nothing declares a result in that case.
   </OptionCard>
 </CardGrid>
 
 <Callout type="info">
-`stella goal` is an interactive mode: it always renders human-readable text and does **not** take `--output-format` (passing it is a parse error, not a silently ignored flag). Use [`stella run`](/docs/commands/run) for headless `json` / `stream-json` output.
+`stella goal` is an interactive mode. It always shows readable text and does **not** accept `--output-format` — passing it causes an error rather than being silently ignored. Use [`stella run`](/docs/commands/run) for `json` or `stream-json` output with no interaction.
 </Callout>
 
 <Callout type="warn">
-Configure at least two provider families if you want a truly independent verifier. With a single family configured, the worker model judges its own work.
+Set up at least two provider families if you want a truly independent verifier. With only one family set up, the worker model checks its own work.
 </Callout>
 
 ## Examples
@@ -82,7 +86,7 @@ stella --model anthropic/claude-fable-5 --spend-limit 10.00 \
   goal "Make the CLI exit with a non-zero code on invalid input"
 ```
 
-Run every round's worker turn under an installed steering/observer wrapper plugin:
+Run every round's worker turn under an installed steering or observer wrapper plugin:
 
 ```bash
 stella goal --pipeline stella-research "Silence the deprecation warnings in the build"

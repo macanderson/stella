@@ -1,14 +1,14 @@
 ---
 title: stella dataset
-description: Curate a redacted, provenance-stamped training dataset from this workspace's own receipts — one JSONL record per accepted turn, plus a manifest stating the exact filter that selected them.
+description: Build a redacted, source-stamped training dataset from this workspace's own records — one JSONL record per accepted turn, plus a manifest stating the exact rule that selected them.
 ---
 
-`stella dataset` turns the receipts a workspace has already accumulated into a training-ready trajectory set: one JSONL record per **accepted** turn, every string scrubbed by the secret redactor, and a `manifest.json` beside it that states the extraction rule in full.
+`stella dataset` turns the records a workspace has already collected into a training-ready set: one JSONL record per **accepted** turn, every string scrubbed by the secret redactor, and a `manifest.json` beside it that states the selection rule in full.
 
-Offline: reads `.stella/private/store.db` only, needs no API key, and never writes to the store. The export stays on the machine.
+It works offline: it reads `.stella/private/store.db` only, needs no API key, and never writes to the store. The export stays on your machine.
 
 <Callout type="warn">
-  Human sign-off is required before any dataset is used for training. The manifest exists so that review is possible — read it before you ship the JSONL anywhere.
+  A person must sign off before any dataset is used for training. The manifest exists so that review is possible. Read it before you send the JSONL file anywhere.
 </Callout>
 
 ## Synopsis
@@ -29,8 +29,8 @@ writes two files into `./trajectories`, both owner-only (`0600`) inside an owner
 
 | File | What it is |
 | --- | --- |
-| `dataset.jsonl` | One JSON record per accepted turn, ascending by execution id |
-| `manifest.json` | The extraction filter, the redactor's fingerprint, and the store watermark |
+| `dataset.jsonl` | One JSON record per accepted turn, in ascending order by execution id |
+| `manifest.json` | The selection rule, the redactor's fingerprint, and the store's latest timestamp |
 
 ### `stella dataset export`
 
@@ -42,50 +42,50 @@ writes two files into `./trajectories`, both owner-only (`0600`) inside an owner
     Record encoding.
   </OptionCard>
   <OptionCard name="--since <timestamp>">
-    Keep only turns started at or after this timestamp. Compared lexicographically against
+    Keep only turns started at or after this timestamp. Compared as plain text against
     `executions.started_at`, which SQLite writes as UTC `YYYY-MM-DD HH:MM:SS`, so a bare date works.
   </OptionCard>
   <OptionCard name="--until <timestamp>">
-    Keep only turns started strictly before this timestamp. The window is half-open.
+    Keep only turns started strictly before this timestamp. The window includes the start but not the end.
   </OptionCard>
   <OptionCard name="--require-verdict" defaultValue="off">
-    Additionally require a verifier verdict of `passed`. Off by default — a turn the deterministic
-    ladder cleared never reaches a verifier at all.
+    Also require a verifier result of `passed`. Off by default, because a turn the deterministic
+    check already cleared never reaches a verifier at all.
   </OptionCard>
   <OptionCard name="--include-unverified-transcripts" defaultValue="off">
-    Also export otherwise-accepted turns whose transcripts cannot be digest-verified, with `calls`
-    empty and `transcript_verified` false. Off by default — an unvouched transcript must never reach
-    a training set silently.
+    Also export otherwise-accepted turns whose transcripts can't be checked against their digest, with `calls`
+    left empty and `transcript_verified` set to false. Off by default, because an unchecked transcript should never reach
+    a training set without saying so.
   </OptionCard>
 </CardGrid>
 
 ## What counts as an accepted turn
 
-The store has no "accepted" column, so the rule is named, applied in one place, and echoed verbatim into the manifest:
+The store has no "accepted" column, so the rule is named in one place and written into the manifest word for word:
 
-> `executions.outcome` in {`completed`, `goal_met`} **and** at least one mutating `file_change` event **and** at least one recorded model call, every one reconstructing digest-verified
+> `executions.outcome` in {`completed`, `goal_met`} **and** at least one mutating `file_change` event **and** at least one recorded model call, every one rebuilt and verified against its digest
 
-All three halves matter. A turn that reported success but changed nothing is a real outcome and a poor training example — there is no diff to learn from. Every other outcome the engine writes (`goal_unmet`, `verification_failed`, `aborted`, `cancelled`, `failed`, `error`, `interrupted`) is excluded. And a turn that cannot prove what its model calls actually saw cannot contribute an SFT pair, so it is excluded too and counted in the manifest as `executions_transcripts_unverified`.
+All three parts matter. A turn that reported success but changed nothing is a real result, but a poor training example, since there's no change to learn from. Every other outcome the engine writes (`goal_unmet`, `verification_failed`, `aborted`, `cancelled`, `failed`, `error`, `interrupted`) is left out. And a turn that can't prove what its model calls actually saw can't contribute a training pair, so it's left out too and counted in the manifest as `executions_transcripts_unverified`.
 
-`--require-verdict` adds a fourth clause; `--include-unverified-transcripts` loosens the third. Either one rewrites the predicate in the manifest to match — the manifest always states the rule that actually ran.
+`--require-verdict` adds a fourth condition. `--include-unverified-transcripts` loosens the third. Either flag rewrites the rule shown in the manifest to match. The manifest always states the rule that actually ran.
 
-### Turns that cannot vouch for their transcripts
+### Turns that can't vouch for their transcripts
 
-The transcript clause is what a store predating the receipts plane cannot satisfy: with no `step_receipt` rows there is no recorded model call at all, so the default filter exports **zero** records from it even though the journal still holds every one of those turns' prompt, tool calls, and changes.
+The transcript condition is what a store from before receipts existed can't satisfy. With no `step_receipt` rows there's no recorded model call at all, so the default filter exports **zero** records from it, even though the journal still holds every one of those turns' prompt, tool calls, and changes.
 
-`--include-unverified-transcripts` exports them anyway, with the transcript withheld rather than faked:
+`--include-unverified-transcripts` exports them anyway, with the transcript left out rather than guessed at:
 
-- `calls` is `[]` — an unvouched transcript is withheld whole, never emitted with a silent gap in it;
-- `transcript_verified` is `false`, so the record says why;
-- `transcript_mismatch_severity` reports what a digest mismatch here *means* — `none`, `compaction` (the journal predates compaction journaling its rewrites, so the mismatched bytes are a routine pre-compaction preimage), or `integrity` (compaction is no longer an available explanation).
+- `calls` is `[]`. An unverified transcript is withheld entirely, never sent with a silent gap in it.
+- `transcript_verified` is `false`, so the record states why.
+- `transcript_mismatch_severity` reports what a digest mismatch here means: `none`, `compaction` (the journal predates recording its own rewrites, so the mismatched bytes are an expected leftover from before compaction), or `integrity` (compaction is no longer a possible explanation).
 
-The gate itself stays era-blind: a benign `compaction` record is excluded by default exactly like an `integrity` one. The severity is reported so a consumer can tell them apart, never used to admit one. `tool_calls`, `changes`, and `verdict` come from the journal and are exactly as trustworthy on these records as on any other.
+The rule that decides what to include doesn't treat old and new journals differently: a harmless `compaction` record is left out by default exactly like an `integrity` one. The severity is reported so you can tell them apart, never used to include one. `tool_calls`, `changes`, and `verdict` come from the journal and are just as trustworthy on these records as on any other.
 
-`reward` is the one field that is not purely journal-derived, and on the pre-receipts shape it says so. Its outcome term comes from the journal's verdict, but its shaping prices the *step count*, which comes from the receipts plane — and a plane holding no row for a turn has not recorded that the turn made zero calls, it has recorded nothing. Read as zero the step penalty would simply vanish, handing exactly these records a scalar **above** what the same trajectory earns once its calls are counted. So `cost.steps` is `null` and the label reports `discard: "steps_unknown"` instead, keeping its rung, its outcome term and its policy so the row stays selectable and re-shapeable under a count of your own. A record whose receipts exist but fail to verify is unaffected: its calls were recorded, so its step count is real and its reward scores normally.
+`reward` is the one field that isn't purely read from the journal, and on records from before receipts existed, it says so. Its outcome comes from the journal's verdict, but its scoring depends on the *step count*, which comes from the receipts. A record with no receipts hasn't recorded that the turn made zero calls; it has recorded nothing at all. Treating that as zero would make the step penalty disappear, handing these records a score **higher** than the same trajectory would earn once its calls are counted. So `cost.steps` is `null` and the label reports `discard: "steps_unknown"` instead, keeping its tier, outcome, and rule so the row can still be picked and re-scored later under a count you supply. A record whose receipts exist but fail to verify isn't affected this way: its calls were recorded, so its step count is real and its reward scores normally.
 
 ## The record
 
-Every record carries the same keys — absence is spelled `null`, never omitted — so a consumer never has to distinguish "missing" from "not applicable".
+Every record carries the same keys. A missing value is written as `null`, never left out, so you never have to guess whether something is missing or simply doesn't apply.
 
 ```json
 {
@@ -156,27 +156,27 @@ Every record carries the same keys — absence is spelled `null`, never omitted 
 
 ### The transcript
 
-`calls` is every model call in wire order, each with the exact messages it was sent — rebuilt from the receipts plane by the same reconstruction `stella inspect` reads, and admitted only once its digest verifies. That is what makes an SFT pair derivable from a record alone. It is empty exactly when `transcript_verified` is `false`, which only `--include-unverified-transcripts` can produce.
+`calls` lists every model call in the order it happened, each with the exact messages it was sent. These are rebuilt from receipts by the same process `stella inspect` uses, and are only included once their digest checks out. That's what makes a training pair derivable from a record alone. `calls` is empty exactly when `transcript_verified` is `false`, which only happens with `--include-unverified-transcripts`.
 
-`reward` is the training label the settled verdict earned, computed under the workspace's resolved reward policy — and the policy rides on the label, so a scalar stays interpretable outside the workspace that produced it. It is `null` when the journal holds no verdict at all: there is nothing to derive a label from, and synthesizing one under a policy the run never saw would claim more than the store knows. The raw `verdict` is carried beside it so a reader can re-derive a label under different weights. A label that *is* present may still carry no scalar — `reward.reward` is `null` beside a named `reward.discard` whenever the trajectory cannot be priced, including the `steps_unknown` case described above.
+`reward` is the training score the settled verdict earned, computed under the workspace's own reward rules. The rules travel alongside the score, so a score stays meaningful even outside the workspace that produced it. It's `null` when the journal holds no verdict at all: there's nothing to build a score from, and making one up under rules the run never saw would claim more than the store actually knows. The raw `verdict` is included alongside it so you can build your own score under different weights. A record can have a label but still carry no score: `reward.reward` is `null` next to a named `reward.discard` whenever the trajectory can't be priced, including the `steps_unknown` case described above.
 
-### Provenance
+### Where a record comes from
 
-`session_id`, `repo`, `timestamp`, and `turn_instance` make every record traceable back to the episode it came from, which is what makes a distilled adapter auditable.
+`session_id`, `repo`, `timestamp`, and `turn_instance` trace every record back to the episode it came from, which is what makes a distilled model auditable.
 
-`repo` is a hash of the workspace's normalized `origin` URL — the same identity telemetry scoping uses — so the dataset is attributable to a repository without carrying the URL. A workspace with no remote falls back to the path-derived project id. `session_id` is `null` for a one-shot `stella run`, which never stamps one; that is a fact about the turn, not missing data.
+`repo` is a hash of the workspace's normalized `origin` URL, the same identity used for telemetry, so the dataset can be tied to a repository without carrying the URL itself. A workspace with no remote falls back to a hash of its path. `session_id` is `null` for a one-shot `stella run`, which never stamps one. That's a fact about the turn, not missing data.
 
-### What `changes` can claim
+### What `changes` can tell you
 
-There is no unified diff anywhere in the store. `diff` is the recorder's changed-region hunk, bounded at 200 lines per side; `added` and `removed` are the recorder's own counts and are **authoritative** — do not re-derive them by counting `+`/`-` lines. `diff_truncated` is `true` when the hunk demonstrably shows fewer changed lines than were counted; `false` means "no evidence of truncation", not "provably complete". The exact bytes the model produced survive in the edit and write tool `arguments`.
+There's no full diff anywhere in the store. `diff` is the recorder's changed-region excerpt, capped at 200 lines per side. `added` and `removed` are the recorder's own counts and are **the numbers to trust**. Don't recompute them by counting `+`/`-` lines yourself. `diff_truncated` is `true` when the excerpt clearly shows fewer changed lines than were counted. `false` means "no sign of truncation," not "guaranteed complete." The exact bytes the model produced are still available in the edit and write tool `arguments`.
 
 ## Redaction
 
-Every string leaf of every record — and of the manifest — passes through the same secret redactor the rest of the workspace uses, **after** the record is assembled rather than field by field, so a field added later cannot route around it. A synthetic API key planted in a prompt or in a tool argument does not reach the output.
+Every string in every record, and in the manifest, passes through the same secret redactor the rest of the workspace uses, applied **after** the record is fully built rather than field by field, so a field added later can't slip past it. A planted test API key in a prompt or a tool argument won't reach the output.
 
-`redacted` on each record reports whether anything was actually replaced, so "this was scrubbed" is a visible fact rather than an assumption.
+`redacted` on each record reports whether anything was actually replaced, so "this was scrubbed" is a fact you can see rather than something you have to assume.
 
-The manifest's `redaction.behavior_digest` fingerprints the redactor by its **decisions** on a fixed probe corpus, so it moves when a threshold, a matcher, or a rule list changes. Its one limit, stated plainly: a rule added for a vendor no probe exercises leaves the digest unchanged.
+The manifest's `redaction.behavior_digest` fingerprints the redactor by its **decisions** on a fixed test set of text, so it changes whenever a threshold, a matcher, or a rule list changes. One limit: a rule added for a vendor that test set doesn't cover leaves the digest unchanged.
 
 ## The manifest
 
@@ -208,18 +208,18 @@ The manifest's `redaction.behavior_digest` fingerprints the redactor by its **de
 }
 ```
 
-`executions_transcripts_unverified` counts the same executions in both modes — under `--include-unverified-transcripts` those are the records carrying `transcript_verified: false` rather than the ones left out — so the two modes stay comparable.
+`executions_transcripts_unverified` counts the same executions in both modes. Under `--include-unverified-transcripts` these are the records that carry `transcript_verified: false` rather than records left out entirely, so the two modes stay comparable.
 
-`schema` is bumped whenever the record shape changes incompatibly, so a reader can refuse a dataset it does not understand instead of misparsing it.
+`schema` goes up whenever the record shape changes in a way that breaks older readers, so a reader can refuse a dataset it doesn't understand instead of misreading it.
 
-`store_watermark` is the store's own newest timestamp, not the wall clock: the extraction reads no clock anywhere, so re-running it against the same store produces byte-identical files.
+`store_watermark` is the store's own most recent timestamp, not the current time. The export never reads the clock, so running it again against the same store produces the exact same files.
 
-## Determinism
+## Consistent output
 
-The same store and the same filter produce byte-identical output on every run. Executions are ordered by id, tool calls and changes by journal sequence, and the record is serialized from its typed struct so the key order is the declaration order rather than a JSON map's. Nothing in the export path reads the clock or iterates a hash map into the output.
+The same store and the same filter always produce byte-for-byte identical output. Executions are ordered by id, tool calls and changes by journal order, and each record is written from its typed structure so keys always appear in the same order. Nothing in the export reads the clock or writes from an unordered collection.
 
 ## See also
 
 - [`stella inspect`](/docs/commands/inspect) — the exact context one past model call was sent
-- [`stella tune`](/docs/commands/tune) — A/B one policy knob and promote the winner
-- [`stella stats`](/docs/commands/stats) — what the receipts cost
+- [`stella tune`](/docs/commands/tune) — compare one setting across two result files and pick a winner
+- [`stella stats`](/docs/commands/stats) — what the recorded work cost

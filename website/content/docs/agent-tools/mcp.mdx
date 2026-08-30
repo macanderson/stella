@@ -3,13 +3,13 @@ title: MCP Servers
 description: Connect Model Context Protocol servers to stella so their tools merge into the agent at session start.
 ---
 
-stella can connect to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and merge their tools into the agent. This lets you extend the agent with capabilities that live outside your workspace — without writing a [custom script tool](/docs/agent-tools/custom-tools) for each one.
+stella can connect to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and merge their tools into the agent. This lets you extend the agent with capabilities that live outside your workspace, without writing a [custom script tool](/docs/agent-tools/custom-tools) for each one.
 
 ## Configuration
 
-MCP servers are configured in `.stella/mcp.toml` in your workspace. stella connects to each configured server at **session start** and merges the tools it exposes into the agent, alongside the [built-in tools](/docs/agent-tools) and any custom tools.
+MCP servers are configured in `.stella/mcp.toml` in your workspace. stella connects to each configured server at **session start** and merges the tools it offers into the agent, alongside the [built-in tools](/docs/agent-tools) and any custom tools.
 
-The quickest way to add a server is the [`stella mcp`](/docs/commands/mcp) command family — no hand-editing:
+The quickest way to add a server is the [`stella mcp`](/docs/commands/mcp) command family. No hand-editing required:
 
 ```bash
 stella mcp search github          # find one in the registry
@@ -20,49 +20,46 @@ stella mcp usage                  # per-server, per-tool call counts from local 
 stella mcp remove github          # drop one
 ```
 
-Enabling and disabling a server is deliberately *not* a CLI verb: it is session-scoped (it changes a running conversation's tool set), so it lives in the deck's MCP tab (`/mcp`).
+Turning a server on or off is deliberately not a CLI command. It's session-scoped, since it changes a running conversation's tool set, so it lives in the deck's MCP tab (`/mcp`) instead.
 
-## An installed server is withheld until you grant it
+## Granting access
 
-A server you install from a registry is a stranger's command line, and installing it takes one keystroke. So a newly installed server **connects but cannot act**: none of its tools are offered to the model, and any call to one comes back as a refusal.
+A server you install from a registry is a stranger's command line, and installing one takes a single keystroke. So a newly installed server **connects but can't act**: none of its tools are offered to the model, and any call to one comes back as a refusal.
 
-The handshake is what you review. Connecting is how a server's declared capabilities become knowable at all, so the gate sits between the handshake and the first tool call rather than before the connect: stella asks the server what it offers, shows you the list, and records your answer.
+The handshake is what you review. Connecting is how a server's declared capabilities become knowable in the first place, so the gate sits between the handshake and the first tool call, not before the connection: stella asks the server what it offers, shows you the list, and records your answer.
 
-Either surface asks the same question. `e` on an ungranted row in the deck's MCP tab (`/mcp`) shows the declared tools and grants them; [`stella mcp grant <name>`](/docs/commands/mcp) does the same from a shell, with `--yes` for provisioning and `--revoke` to withdraw.
+Either surface asks the same question. Pressing `e` on an ungranted row in the deck's MCP tab (`/mcp`) shows the declared tools and grants them. [`stella mcp grant <name>`](/docs/commands/mcp) does the same from a shell, with `--yes` for provisioning and `--revoke` to withdraw.
 
-The answer is recorded as `granted` in `.stella/mcp.toml`, so it is read by every session — you are asked once, not every morning. An entry you wrote by hand carries no `granted` key and is usable without a grant: writing the transport yourself is already the review the gate is asking for.
+Your answer is recorded as `granted` in `.stella/mcp.toml`, so every session reads it. You're asked once, not every morning. An entry you wrote by hand carries no `granted` key and is usable without a grant, since writing the transport yourself is already the review the gate is asking for.
 
-Because the tools are added at session start, connecting a new server takes effect on your next session. Each server gets a **10-second** connect budget, and connects are isolated per server — one that hangs or fails is recorded and skipped, it does not take the session down.
+Because tools are added at session start, connecting a new server takes effect on your next session. Each server gets a **10-second** connect budget, and connections are isolated per server. One that hangs or fails is recorded and skipped, and it doesn't take the whole session down.
 
 <McpTopologyDiagram />
 
-The MCP tab is where that review happens. Each server shows its transport,
-tool count, handshake latency and auth state, and a new one arrives disabled
-with its capabilities on show. The code graph sits pinned at the top because
-it is the product rather than an integration.
+The MCP tab is where this review happens. Each server shows its transport, tool count, handshake speed, and login state, and a new one arrives disabled with its capabilities on display. The code graph sits pinned at the top, since it's part of the product rather than an add-on.
 
 <DeckShot id="mcp" />
 
 <Callout type="warn">
-`stella tools` does **not** enumerate MCP tools — it prints a note that MCP servers merge more tools at session start. Confirm a server is wired up with `stella mcp list`, or verify its tools from inside a session (the deck's MCP tab, `/mcp`).
+`stella tools` does **not** list MCP tools. It prints a note that MCP servers merge more tools at session start. Confirm a server is wired up with `stella mcp list`, or check its tools from inside a session, in the deck's MCP tab (`/mcp`).
 </Callout>
 
-## `.stella/mcp.toml` is behind the project trust boundary
+## Trust boundary
 
 <Callout type="warn">
   A repo's `.stella/mcp.toml` is **not loaded** until you trust the repo. An entry can
-  name an arbitrary `cmd` that runs at session start — the `git clone && stella`
-  remote-execution hole — or an attacker-controlled `url` that workspace content gets
-  sent to, which is the same risk class as [project hooks](/docs/agent-tools/hooks).
-  Untrusted, stella connects nothing and prints the reason once. Opt in per repo:
+  name an arbitrary `cmd` that runs at session start, the same remote-execution risk as
+  `git clone && stella`, or an attacker-controlled `url` that workspace content gets
+  sent to, which carries the same risk as [project hooks](/docs/agent-tools/hooks).
+  Until you trust the repo, stella connects nothing and prints the reason once. Opt in per repo:
 
   ```bash
   export STELLA_TRUST_PROJECT=1
   ```
 
-  Scope it with direnv or a shell-profile guard rather than exporting it globally, and
-  see the [trust boundary](/docs/configuration/settings#the-project-trust-boundary) for
-  what else the flag governs.
+  Scope it with direnv or a shell-profile guard rather than exporting it globally. See the
+  [trust boundary](/docs/configuration/settings#the-project-trust-boundary) for what
+  else the flag controls.
 </Callout>
 
 ## Example configuration
@@ -80,69 +77,52 @@ url = "https://mcp.example.com/mcp"
 headers = { Authorization = "Bearer …" }
 ```
 
-A server entry needs a `transport` discriminant — `stdio` or `http` — and the remaining fields follow from it:
+A server entry needs a `transport` value, `stdio` or `http`, and the rest of the fields follow from that choice:
 
 <CardGrid size="md">
   <OptionCard name="transport" required>
-    `stdio` or `http`. The discriminant; everything else in the entry depends
-    on it.
+    `stdio` or `http`. This decides which of the other fields apply.
   </OptionCard>
   <OptionCard name="cmd">
-    stdio only, required there. The executable stella launches, speaking
-    JSON-RPC over the child's stdio.
+    stdio only, and required there. The program stella launches, talking JSON-RPC over the child process's stdio.
   </OptionCard>
   <OptionCard name="args" defaultValue="[]">
     stdio only. Arguments passed to `cmd`.
   </OptionCard>
   <OptionCard name="env" defaultValue="{}">
-    stdio only. The variables the child receives — see the scrub note below.
+    stdio only. The variables the child process receives. See the note on scrubbing below.
   </OptionCard>
   <OptionCard name="url">
-    http only, required there. A streamable-HTTP endpoint stella POSTs JSON-RPC
-    to.
+    http only, and required there. A streamable-HTTP endpoint stella sends JSON-RPC requests to.
   </OptionCard>
   <OptionCard name="headers" defaultValue="{}">
-    http only. Static headers replayed on every request (an `Authorization`
-    bearer, an API key). Values are written to `mcp.toml` verbatim but redacted
-    from logs and debug output.
+    http only. Static headers sent with every request, such as an `Authorization` bearer token or an API key. Values are written to `mcp.toml` as-is but hidden from logs and debug output.
   </OptionCard>
   <OptionCard name="candidate_safe" defaultValue="false">
-    Opt this server into Best-of-N candidate runs — see
-    [below](#mcp-in-best-of-n-candidates). Never inferred, always human-set.
+    Opt this server into Best-of-N candidate runs. See [below](#best-of-n-candidates). Never guessed at — you always set it yourself.
   </OptionCard>
   <OptionCard name="granted">
-    Whether the model may call this server's tools. Written by a grant, and by
-    an install (which writes `false`). Absent on an entry you wrote yourself,
-    which reads as granted — see
-    [above](#an-installed-server-is-withheld-until-you-grant-it).
+    Whether the model may call this server's tools. Set by a grant, and by an install (which sets it to `false`). Left out on an entry you wrote yourself, which counts as granted. See [above](#granting-access).
   </OptionCard>
 </CardGrid>
 
-Either way, stella merges the tools the server reports for the session. Each is advertised as `mcp__<server>__<tool>`, so two servers exposing a `search` tool never collide; the entry's name in `mcp.toml` shows up in the middle segment. To keep that encoding unambiguous, an entry name may not contain `__` and may not begin or end with `_`. A name that breaks the rule is reported as unavailable rather than risking one server's tools shadowing another's.
+Either way, stella merges in the tools the server reports for the session. Each one is advertised as `mcp__<server>__<tool>`, so two servers that each expose a `search` tool never collide. The entry's name in `mcp.toml` becomes the middle part of that name. To keep that naming unambiguous, an entry name can't contain `__` and can't start or end with `_`. A name that breaks this rule is reported as unavailable, rather than risking one server's tools hiding another's.
 
 <Callout type="warn">
-A stdio MCP subprocess runs with a **scrubbed environment** — ambient shell variables (including credentials like `ANTHROPIC_API_KEY` or `GITHUB_TOKEN`) are **not** inherited. Any variable the server needs must be listed explicitly in the entry's `env` table, e.g. `env = { GITHUB_TOKEN = "…" }`. The single exception is `PATH`, which is inherited so a bare runner (`npx`, `uvx`, `docker`) can resolve at all; an `env` entry named `PATH` overrides it.
+A stdio MCP subprocess runs with a **scrubbed environment**. Ambient shell variables, including credentials like `ANTHROPIC_API_KEY` or `GITHUB_TOKEN`, are **not** passed through. Any variable the server needs must be listed directly in the entry's `env` table, for example `env = { GITHUB_TOKEN = "…" }`. The one exception is `PATH`, which is passed through so a bare runner like `npx`, `uvx`, or `docker` can resolve at all. An `env` entry named `PATH` overrides it.
 </Callout>
 
-For an HTTP server that speaks OAuth rather than a static bearer, `stella mcp login <name>` runs the browser flow and stores the tokens in a workspace-owned, owner-only token store instead of in `mcp.toml`; `stella mcp logout <name>` forgets them.
+For an HTTP server that uses OAuth instead of a static bearer token, `stella mcp login <name>` runs the browser flow and stores the tokens in a workspace-owned, owner-only token store instead of in `mcp.toml`. `stella mcp logout <name>` forgets them.
 
 <Callout type="info">
-MCP tools are treated like any other tool once merged in: they follow the [per-tool permission model](/docs/agent-tools/permissions) and their calls can be gated or blocked with a [`PreToolUse` hook](/docs/agent-tools/hooks).
+MCP tools are treated like any other tool once merged in. They follow the [per-tool permission model](/docs/agent-tools/permissions), and their calls can be gated or blocked with a [`PreToolUse` hook](/docs/agent-tools/hooks).
 </Callout>
 
-## MCP in Best-of-N candidates
+## Best-of-N candidates
 
-A Best-of-N run (a wrapper plugin's `candidates` setting) executes multiple
-candidates in isolated git shadow worktrees, so a candidate's edits never
-leak into another's, or into your real tree, until a winner is adopted. MCP
-servers stay **withheld by default** in that isolation, because most
-configured servers are either filesystem-rooted (redundant with the
-snapshot-rooted built-in read/write/edit tools) or side-effecting (harmful
-to run once per candidate — a deploy, an issue creation, a DB write).
+A Best-of-N run (set by a wrapper plugin's `candidates` setting) runs multiple candidates in isolated git shadow worktrees, so one candidate's edits never leak into another's, or into your real tree, until a winner is picked. MCP servers stay **withheld by default** during that isolation, because most configured servers are either rooted in the filesystem (which would duplicate the snapshot-rooted built-in read, write, and edit tools) or side-effecting (harmful to run once per candidate, such as a deploy, an issue creation, or a database write).
 
-The servers worth sharing — read-only, external context that doesn't depend
-on which tree it's called from (docs/web search, a code graph, GitHub/Linear
-reads) — opt in explicitly per server:
+The servers worth sharing are read-only and don't depend on which tree they're called from: think docs or web search, a code graph, or GitHub and Linear reads. You opt each one in explicitly:
 
 ```toml title=".stella/mcp.toml"
 [servers.docs]
@@ -151,28 +131,13 @@ url = "https://docs.example.com/mcp"
 candidate_safe = true
 ```
 
-`candidate_safe` defaults to `false` and is never inferred from a server's
-own `read_only_hint`. That hint can't tell "reads an external system" (safe
-to share) from "reads the local tree" (which would return your REAL tree's
-bytes inside a candidate's isolated snapshot — exactly the correctness
-hazard the isolation exists to prevent). Flip it on only for servers you've
-checked are genuinely read-only and cwd-independent.
+`candidate_safe` defaults to `false` and is never guessed from a server's own `read_only_hint`. That hint can't tell "reads an external system" (safe to share) apart from "reads the local tree" (which would return your real tree's content inside a candidate's isolated snapshot, exactly the mistake the isolation exists to prevent). Turn it on only for servers you've checked are genuinely read-only and don't care which directory they run from.
 
-Speculative execution is off the table entirely for MCP tools: they register
-as mutating (`read_only: false`) and never claim `speculation_safe`, so the
-engine runs each call exactly once, at dispatch — an external server's
-request count and rate limit are not stella's to spend twice.
+Speculative execution is off the table entirely for MCP tools. They register as mutating (`read_only: false`) and never claim `speculation_safe`, so the engine runs each call exactly once, when it's dispatched. An external server's request count and rate limit aren't stella's to spend twice.
 
-Two things follow from a server being `candidate_safe`:
+Being `candidate_safe` has two effects:
 
-- Every candidate's engine can call that server's tools live, mid-turn,
-  through the same already-connected session client (no extra subprocess
-  per candidate).
-- Before the fan-out starts, stella calls that server's zero-argument tools
-  **once** and folds the results into every candidate's starting context —
-  covering the common case where every candidate would otherwise ask the
-  same read-only question (a schema listing, say) N times over. A tool that
-  requires input is never called this way; its arguments are never guessed.
+- Every candidate's engine can call that server's tools live, mid-turn, through the same already-connected session client, with no extra subprocess per candidate.
+- Before the fan-out starts, stella calls that server's zero-argument tools **once** and folds the results into every candidate's starting context. This covers the common case where every candidate would otherwise ask the same read-only question, such as a schema listing, over and over. A tool that needs input is never called this way, since its arguments are never guessed.
 
-Candidates always run non-interactively regardless: a fan-out of N
-candidates has no single owner for an interactive prompt.
+Candidates always run non-interactively regardless, since a fan-out of N candidates has no single owner who could answer an interactive prompt.

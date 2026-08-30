@@ -1,12 +1,12 @@
 ---
 title: Agent Modes
-description: The ways to drive stella — Command Deck chat, one-shot raw or plugin-wrapped runs, judged goal mode, CI monitoring, and parallel fleets — and how to pick between them.
+description: The different ways to drive stella — chat in the Command Deck, one-shot runs, judged goal mode, CI monitoring, and parallel fleets — and how to pick between them.
 ---
 
-stella has one engine and several ways to drive it. Pick the mode by how much
-autonomy you're delegating and how the work should be checked. (For the
-under-the-hood view — what each mode actually does differently inside the
-engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
+stella has one engine and several ways to drive it. Pick a mode based on how much you
+want to hand off, and how the work should get checked. For a closer look at what each
+mode does differently inside the engine, see
+[Agent Engine Paths](/docs/agent-engine-paths).
 
 <CardGrid size="md">
   <SpecCard
@@ -35,8 +35,8 @@ engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
       { label: "Verified by", value: "an installed wrapper plugin", mono: false },
     ]}
   >
-    Opt-in ceremony where the result must carry evidence — the plugin gathers
-    it and stella evaluates it against the plugin's declared rule.
+    An extra step you opt into when the result needs to carry evidence. The plugin
+    gathers that evidence, and stella checks it against the plugin's rule.
   </SpecCard>
   <SpecCard
     title="Goal mode"
@@ -46,8 +46,8 @@ engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
       { label: "Verified by", value: "an independent verifier, over raw step-loop rounds", mono: false },
     ]}
   >
-    An outcome, not a task list. `--pipeline <variant>` runs each round's
-    worker turn under a wrapper plugin instead.
+    You describe the outcome, not a list of steps. Pass `--pipeline <variant>` to run
+    each round's worker turn under a wrapper plugin instead.
   </SpecCard>
   <SpecCard
     title="CI monitor"
@@ -67,29 +67,29 @@ engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
       { label: "Verified by", value: "per task, independently", mono: false },
     ]}
   >
-    Many tasks in parallel — one shared tree with cooperative claims, or a worktree each on opt-in.
+    Many tasks running in parallel: one shared tree with cooperative file claims by
+    default, or a separate worktree per task if you opt in.
   </SpecCard>
 </CardGrid>
 
 ## Interactive: the Command Deck
 
-Running `stella` with no subcommand opens the **Command Deck** — not a
-generic TUI in the `htop`/`vim` sense, but stella's own tabbed workspace over
-the same engine that drives every other mode on this page. One surface, nine
-tabs, and every tab is a live view over the same session: what a sub-agent is
-doing right now, the code graph, the files this turn touched, your MCP
-servers. Type to send a prompt; slash commands open tabs and overlays.
+Running `stella` with no subcommand opens the Command Deck. It isn't a generic terminal
+app like `htop` or `vim`; it's stella's own tabbed workspace over the same engine that
+drives every other mode on this page. One surface, nine tabs, and every tab is a live
+view into the same session: what a sub-agent is doing right now, the code graph, the
+files this turn touched, your MCP servers. Type to send a prompt. Slash commands open
+tabs and overlays.
 
-Click a tab below to see what's actually in it. This isn't an embedded
-terminal or a recording — each pane is trimmed straight from the deck's own
-golden render tests (`crates/stella-tui/tests/snapshots/deck/`), the fixtures
-that gate every TUI pull request. What you click through is the deck's real
-output, not a redrawn approximation.
+Click a tab below to see what's actually in it. This isn't an embedded terminal or a
+recording. Each pane is taken straight from the deck's own test snapshots
+(`crates/stella-tui/tests/snapshots/deck/`). What you click through is the deck's real
+output, not a redrawn copy.
 
 <CommandDeckExplorer />
 
-The full slash-command set — including `/inspect` and `/context` — is on
-[`stella chat`](/docs/commands/chat); here's what each tab opens:
+The full slash-command set, including `/inspect` and `/context`, is on
+[`stella chat`](/docs/commands/chat). Here's what each tab opens:
 
 <CardGrid size="sm">
   <OptionCard name="/help">Show help.</OptionCard>
@@ -97,52 +97,50 @@ The full slash-command set — including `/inspect` and `/context` — is on
   <OptionCard name="/files · /diff">What this session changed, and the working diff.</OptionCard>
   <OptionCard name="/graph">The code-graph tab.</OptionCard>
   <OptionCard name="/agents · /skills · /mcp">
-    The AGENTS tab (the agents installed on disk), skills, and MCP servers.
+    The AGENTS tab (agents installed on disk), skills, and MCP servers.
   </OptionCard>
   <OptionCard name="/settings">
-    The SETTINGS tab — home of all config, including the
+    The SETTINGS tab, home to all config, including the
     [engine-config panel](/docs/configuration/agent-engine-config).
   </OptionCard>
   <OptionCard name="/sessions · /inbox">Every session on this machine; notifications.</OptionCard>
   <OptionCard name="/export">
-    Export **this session's** telemetry to a ZIP plus an
-    [HTML dashboard](/docs/telemetry/dashboard) — scoped so the archive is
-    safe to share.
+    Export this session's telemetry to a ZIP file plus an
+    [HTML dashboard](/docs/telemetry/dashboard). It only includes this session, so the
+    archive is safe to share.
   </OptionCard>
   <OptionCard name="/clear">Reset the conversation.</OptionCard>
 </CardGrid>
 
-**⏎** inserts a line break; **⌘⏎ / ⌃⏎** submits. Prompts queue while a turn
-runs — you never wait for the agent to finish before typing the next thing
-(**Ctrl-T** opens the queue editor). A `!`-prefixed line runs a shell command
-immediately, inline in the session transcript, skipping the queue. A single **Esc** cancels the in-flight turn;
-**double-Esc** cancels *and holds* dispatch so what you type next runs first.
-Prefer a plain line-based REPL? `stella --plain` (or `STELLA_PLAIN=1`).
+`⏎` inserts a line break. `⌘⏎` or `⌃⏎` submits. Prompts queue while a turn runs, so you
+never have to wait for the agent to finish before typing the next thing (`Ctrl-T` opens
+the queue editor). A line that starts with `!` runs a shell command right away, inline in
+the session transcript, skipping the queue. A single `Esc` cancels the turn in progress.
+Pressing `Esc` twice cancels and holds dispatch, so whatever you type next runs first.
+Prefer a plain, line-based interface? Use `stella --plain` (or `STELLA_PLAIN=1`).
 
-### The transcript, and the palette
+### Transcript and palette
 
-The turn is the unit of the transcript. It opens with a rule, folds every read
-that changed nothing, keeps the edits expanded with their diffs, and closes on
-a receipt — what the turn cost, what it proved, and how much of it never
-reached a model.
+The turn is the basic unit of the transcript. It opens with a rule line, collapses any
+read that didn't change anything, keeps edits expanded with their diffs, and closes with
+a receipt: what the turn cost, what it proved, and how much of it never reached a model.
 
 <DeckShot id="turn" />
 
-Slash commands open a fuzzy palette that knows what is running: while a verify
-turn is in flight, the gate commands sort to the top.
+Slash commands open a fuzzy-search palette that knows what's currently running. While a
+verify turn is in flight, gate commands sort to the top.
 
 <DeckShot id="palette" />
 
 ## One-shot: `stella run`
 
-The non-interactive workhorse: one prompt in, the finished work and an exit
-code back. Defaults to the raw step loop, which reports what it changed and
-claims nothing about proof; pass `--pipeline <variant>` to run the
-turn under an installed [wrapper plugin](/docs/plugins), where
-`--test-command` hands that plugin's own oracle a command to check against
-(refused on the raw default). Combine with
-`--output-format json|stream-json` and `--spend-limit` for headless
-automation — see [`stella run`](/docs/commands/run) and
+This is the non-interactive workhorse: one prompt goes in, and finished work plus an
+exit code come back. By default, it runs the plain step loop, which reports what it
+changed but doesn't claim to prove anything. Pass `--pipeline <variant>` to run the turn
+under an installed [wrapper plugin](/docs/plugins) instead. With a plugin,
+`--test-command` gives its checker a command to test against (this flag is rejected on
+the plain default). Combine with `--output-format json` or `stream-json` and
+`--spend-limit` for headless automation. See [`stella run`](/docs/commands/run) and
 [Scripting](/docs/scripting).
 
 ```bash
@@ -152,57 +150,53 @@ stella run "add a --json flag to the export command and update the tests" \
 
 ## Outcome-driven: goal mode
 
-`stella goal` doesn't take a task — it takes an **objective**, and works in
-judged rounds until an independent verifier (routed to a different model family
-than the worker whenever possible) confirms the objective is met *from
-evidence*. Each round is a raw step-loop turn by default; pass
-`--pipeline <variant>` to run every round's worker turn under an installed
-[wrapper plugin](/docs/plugins) instead. Backstops — a
-round cap, `--spend-limit`, worker aborts — end the run as "not met"
-rather than optimistically.
+`stella goal` doesn't take a task. It takes an objective, and works in judged rounds
+until an independent verifier confirms, from evidence, that the objective is met. Where
+possible, that verifier runs on a different model family than the worker. Each round is
+a plain step-loop turn by default; pass `--pipeline <variant>` to run every round's
+worker turn under an installed [wrapper plugin](/docs/plugins) instead. If the run hits
+a limit, like a round cap, the `--spend-limit`, or a worker aborting, it ends the run
+marked "not met" rather than assuming success.
 
 ```bash
 stella goal "the test suite passes and there are no clippy warnings"
 ```
 
-Where `stella run` executes a single one-shot prompt, `stella goal` runs
-**judged rounds**. Each round the worker agent makes progress using the normal
-[agent step loop](/docs/agent-engine-paths), and then a separate verifier model
-reviews the evidence and decides whether the objective has been satisfied. The
-loop ends when the verifier confirms — or when a backstop trips: a hard round cap
-(default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching
-a backstop ends the run, reporting the goal as **not met** with a
-named reason.
+Where `stella run` executes a single one-shot prompt, `stella goal` runs judged rounds.
+In each round, the worker agent makes progress using the normal
+[agent step loop](/docs/agent-engine-paths). Then a separate verifier model reviews the
+evidence and decides whether the objective has been met. The loop ends when the verifier
+confirms it, or when a limit is hit: a hard cap of 8 rounds by default, the
+`--spend-limit` cap, or a worker turn aborting. Hitting a limit ends the run and reports
+the goal as not met, along with the reason.
 
 ### How judged rounds work
 
-1. **The worker works a round.** The worker model runs the step loop —
-   proposing tool calls, executing them, and feeding results back — to make
-   progress toward the objective.
-2. **The verifier assesses from evidence.** The verifier is not a passive transcript
-   reader — it runs as its own bounded engine turn with read-only access to the
-   worker's tools, inspecting the round's evidence and rejecting
-   claimed-but-unproven success.
-3. **Repeat or finish.** If the verifier is not satisfied, another round begins —
-   until the verifier confirms or a backstop (round cap, budget, abort) ends the run.
+1. **The worker works a round.** The worker model runs the step loop: it proposes tool
+   calls, runs them, and feeds the results back, making progress toward the objective.
+2. **The verifier checks the evidence.** The verifier doesn't just read a summary. It
+   runs as its own limited engine turn, with read-only access to the worker's tools,
+   checking the round's evidence directly and rejecting success that's claimed but not
+   proven.
+3. **Repeat or finish.** If the verifier isn't satisfied, another round starts. This
+   continues until the verifier confirms the goal, or a limit (round cap, budget, or
+   abort) ends the run.
 
-Because the verifier assesses **from evidence** rather than from the worker's
-narration, "I think I'm done" is never enough on its own — the goal is only
-considered met when the verifier, looking at what actually happened, agrees.
+Because the verifier checks the evidence directly instead of trusting the worker's own
+account, "I think I'm done" is never enough by itself. The goal only counts as met when
+the verifier looks at what actually happened and agrees.
 
 ### Cross-family judging
 
-The verifier is **routed cross-family** — it runs on a *different model
-family* than the worker. Asking a model to grade its own work invites
-same-model bias: it tends to share the worker's blind spots and rubber-stamp its
-output. Routing the verifier to a different family provides a genuinely independent
-second opinion.
+Whenever possible, the verifier runs on a different model family than the worker.
+Asking a model to grade its own work invites bias: it tends to share the worker's blind
+spots and approve its own output. Using a different model family for the verifier gives
+you a genuinely independent second opinion.
 
 <Callout type="info">
-If only one provider family is configured, stella cannot route the verifier to a
-different family — so the worker doubles as the verifier. Configuring a second
-provider family enables true cross-family judging and a more independent
-verdict.
+If you've only configured one model provider, stella can't route the verifier to a
+different family, so the worker ends up doubling as its own verifier. Configuring a
+second provider gives you real cross-family judging and a more independent result.
 </Callout>
 
 ### Example
@@ -213,13 +207,12 @@ Give stella a concrete objective and let it iterate until the verifier signs off
 stella goal "Add input validation to the /signup endpoint and make sure the existing test suite passes"
 ```
 
-stella will work in rounds — editing code, running the tests, reading the
-output — and a cross-family verifier will assess each round from the evidence. The
-run finishes only once the verifier confirms the endpoint is validated and the test
-suite is green.
+stella works in rounds: editing code, running tests, reading the output. A cross-family
+verifier checks each round against the evidence. The run finishes only once the
+verifier confirms the endpoint is validated and the test suite is green.
 
-You can combine goal mode with global flags, for example pinning a specific
-worker model or capping spend:
+You can combine goal mode with global flags, for example pinning a specific worker
+model or capping spend:
 
 ```bash
 stella --model anthropic/claude-fable-5 --spend-limit 5.00 \
@@ -231,32 +224,31 @@ more on `--model` and `--spend-limit`.
 
 ## CI monitor: `stella monitor`
 
-`stella monitor` is goal mode specialized for continuous integration. It
-watches CI for a branch or PR (default `main`) and keeps fixing failures until
-the latest run is fully green.
+`stella monitor` is goal mode built specifically for continuous integration. It watches
+CI for a branch or pull request (`main` by default) and keeps fixing failures until the
+latest run is fully green.
 
 ```bash
 stella monitor
 ```
 
-The goal is considered met only when the latest CI run is all-green — the same
-judged-loop discipline as goal mode, with "all CI checks pass" as the
-objective.
+The goal counts as met only when the latest CI run is all green. It follows the same
+judged-loop process as goal mode, with "all CI checks pass" as the objective.
 
 ## Parallel: fleets
 
 When the work is many tasks rather than one, [`stella fleet`](/docs/agent-fleets)
-fans a dependency-ordered task DAG out to parallel workers in one shared
-tree, where cooperative file claims keep two agents from fighting over the
-same file. `isolation = "isolated"` opts a task into its own git worktree
-on its own branch.
+spreads a dependency-ordered set of tasks out to parallel workers in one shared tree.
+Cooperative file claims keep two agents from fighting over the same file. Setting
+`isolation = "isolated"` on a task gives it its own git worktree on its own branch
+instead.
 
 ## Choosing
 
 - **You know the change and want to watch** → the Command Deck.
-- **You know the change and don't need to watch** → `stella run` (the raw
-  default is fastest; add `--pipeline <variant> --test-command` to run it
-  under a wrapper plugin that gathers evidence).
+- **You know the change and don't need to watch** → `stella run`. The plain default is
+  fastest; add `--pipeline <variant> --test-command` to run it under a wrapper plugin
+  that gathers evidence.
 - **You know the outcome but not the steps** → `stella goal`.
 - **CI is red and you want it green** → `stella monitor`.
 - **You have a backlog** → `stella fleet --plan`.

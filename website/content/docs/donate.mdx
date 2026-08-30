@@ -1,82 +1,87 @@
 ---
 title: Donate
-description: stella is free, BYOK, zero-telemetry-egress, and vendor-agnostic — built and funded by one person. If it saves you time or money, consider sponsoring.
+description: stella is free, BYOK, and built by one person. If it saves you time or money, consider sponsoring the project.
 ---
 
-stella is free software. Community/default use has no account or subscription and zero
-telemetry egress — and keeping that independent default is the point. Organizations
-may separately provision the explicit, signed
-[Oxagen Enterprise managed mode](/docs/telemetry#oxagen-enterprise-managed-export);
-that narrow operational boundary does not change the Community default.
+stella is free software. Community use has no account, no subscription, and
+sends no telemetry anywhere by default. Keeping that independent default is
+the point. Organizations can separately turn on the explicit, signed
+[Oxagen Enterprise managed mode](/docs/telemetry#oxagen-enterprise-managed-export),
+but that doesn't change the Community default for anyone else.
 
-If stella saves you time or money, please consider sponsoring its development:
+If stella saves you time or money, please consider sponsoring its
+development:
 
 <Callout type="info">
   **[Sponsor @macanderson on GitHub →](https://github.com/sponsors/macanderson)**
 </Callout>
 
-## Why sponsorship matters here
+## Why sponsor
 
-stella is not a thin wrapper around one vendor's API. It is a large, serious
-piece of systems engineering, built and maintained by one person:
+stella is not a thin wrapper around one vendor's API. It's a large, serious
+piece of engineering, built and maintained by one person.
 
-- **A workspace of focused Rust crates** — a deterministic agent engine, a
-  plugin socket for independent judging, a tree-sitter code
-  graph, a bi-temporal context store, a multi-tab terminal UI, fleet
-  orchestration over git worktrees, and native wire adapters for nine hosted
-  providers plus any local OpenAI-compatible server.
-- **Verification engineering** — witness tests replayed against the previous
-  code in a shadow worktree, fail→pass flip oracles, and cross-family judges
-  are much harder to build than "the model said it's done." This machinery
-  ships as Vera, stella's installable verification plugin — it's what makes an
-  agent worth using unattended.
-- **Real, ongoing costs.** Developing, benchmarking, and regression-testing an
-  agent against frontier models is paid for in real API bills — every
-  self-improvement benchmark run, every provider-adapter conformance pass,
-  every multi-model verifier evaluation costs actual money. Sponsorship goes
-  directly to keeping that work funded.
+- **Focused Rust code** powers a deterministic agent engine, a plugin system
+  for independent judging, a code graph built with tree-sitter, a context
+  store that keeps track of when facts were true and when stella learned
+  them, a multi-tab terminal UI, fleet orchestration over git worktrees, and
+  native support for nine hosted providers plus any local
+  OpenAI-compatible server.
+- **Verification work** is what makes an agent worth using unattended. This
+  includes tests replayed against the previous code in a separate worktree,
+  checks that confirm a fix actually turns a failing test into a passing
+  one, and judges pulled from a different model family than the one that
+  wrote the code. This is much harder to build than just asking the model if
+  it's done. It ships as Vera, stella's installable verification plugin.
+- **Real, ongoing costs** come with all of this. Developing, benchmarking,
+  and testing an agent against frontier models costs real money in API
+  bills — every benchmark run, every provider check, every verification
+  pass. Sponsorship goes straight to keeping that work funded.
 
-## What open source is supposed to look like
+## Our principles
 
-stella is built on a few non-negotiable principles:
+stella is built on a few rules that don't bend:
 
-- **Zero telemetry egress by default.** Community/default telemetry — executions,
-  tokens, cost, the files-touched ledger, and content — stays in local SQLite. Your
-  selected model provider remains the normal BYOK network path. Sending telemetry
-  anywhere takes one of [two explicit configurations](/docs/telemetry): an enrolled
-  Oxagen Enterprise managed seat, which can export only the documented minimal,
-  content-free operational rollup to its exact allowlisted HTTPS sink; or a `drain`
-  block you write into `~/.stella/cloud.json` and push with `stella cloud sync`.
+- **No telemetry leaves your machine by default.** Executions, tokens, cost,
+  the list of files touched, and content all stay in local SQLite. The only
+  network calls stella makes are to your own model provider — that's normal
+  operation, not telemetry. Sending telemetry anywhere else takes one of
+  [two explicit setups](/docs/telemetry): an enrolled Oxagen Enterprise seat,
+  which can send only a documented, content-free summary to its exact
+  approved address; or a `drain` block you write yourself into
+  `~/.stella/cloud.json` and push with `stella cloud sync`.
 - **Bring your own key.** Your credentials, your provider relationship, your
   bill. No middleman markup, no metered proxy, no lock-in.
-- **Model and vendor agnostic.** Anthropic, OpenAI, Google (Gemini and
-  Vertex), Amazon Bedrock, xAI, DeepSeek, Z.ai, OpenRouter, or any local
-  OpenAI-compatible server — pick per agent, per role, per run. stella has no
-  favorite and takes no rebate.
-- **Open source, and staying that way.** stella is licensed under
-  **AGPL-3.0-only** — free to use, read, fork, and ship, with one condition: if
-  you distribute a modified stella, or offer one to users over a network, you
-  publish your changes too. The copyleft is the point. It keeps improvements
-  flowing back instead of disappearing into someone's closed fork. Building
-  proprietary software *with* stella is unaffected — the license covers stella
-  itself, not the code you write using it. If you need to embed it in a
+- **Any model, any vendor.** Anthropic, OpenAI, Google (Gemini and Vertex),
+  Amazon Bedrock, xAI, DeepSeek, Z.ai, OpenRouter, or any local
+  OpenAI-compatible server — pick per agent, per role, per run. stella
+  doesn't favor any of them.
+- **Open source, staying open source.** stella is licensed under
+  **AGPL-3.0-only**: free to use, read, fork, and ship, with one condition.
+  If you distribute a modified stella, or offer it to users over a network,
+  you publish your changes too. This keeps improvements flowing back
+  instead of disappearing into a closed fork. Building your own proprietary
+  software *with* stella is unaffected — the license covers stella itself,
+  not the code you write using it. If you need to embed stella in a
   closed-source product, a [commercial license](https://github.com/macanderson/stella/blob/main/LICENSING.md)
-  is available and is part of what funds the work.
+  is available, and it helps fund the work too.
 
-That combination — local-first, BYOK, vendor-neutral, copyleft — is what open
-source is supposed to be like. It is also precisely the combination the
-Community edition can offer without an account or hosted telemetry dependency.
+Local-first, bring-your-own-key, vendor-neutral, and copyleft: that's what
+open source should look like. It's also exactly what the Community edition
+offers, with no account and no hosted telemetry required.
 
 ## Other ways to help
 
-Sponsorship is the most direct support, but not the only kind:
+Sponsorship helps the most, but it isn't the only way:
 
-- **Star and share** the repo — discovery is oxygen for independent projects.
-- **File sharp issues** with reproductions; fix one if you can.
-- **Write about your setup** — provider configs, fleet plans, and skills that
+- **Star and share** the repo. Discovery matters a lot for independent
+  projects.
+- **File clear bug reports** with steps to reproduce them, and fix one if
+  you can.
+- **Write about your setup.** Provider configs, fleet plans, and skills that
   worked for you help the next person.
 
-Thank you for using stella — and thank you for keeping independent,
-local-first developer tooling alive.
+Thank you for using stella, and for keeping independent, local-first
+developer tools alive.
 
 **[github.com/sponsors/macanderson](https://github.com/sponsors/macanderson)**

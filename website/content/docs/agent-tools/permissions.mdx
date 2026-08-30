@@ -3,37 +3,38 @@ title: Permissions
 description: How stella's per-tool permission model separates read-only tools from mutating tools, and how PreToolUse hooks can gate or block tool calls.
 ---
 
-Every tool the agent can call — built-in, [custom](/docs/agent-tools/custom-tools), or provided by an [MCP server](/docs/agent-tools/mcp) — has a per-tool permission model. This is what lets stella treat a harmless file read differently from a shell command that can change your system.
+Every tool the agent can call, whether it's built in, [custom](/docs/agent-tools/custom-tools), or provided by an [MCP server](/docs/agent-tools/mcp), has a per-tool permission model. This is what lets stella treat a harmless file read differently from a shell command that could change your system.
 
 <PermissionGateDiagram />
 
-Both exits are real outcomes: an allowed call executes and then fires `PostToolUse`, and a refused one is returned to the model as a refusal it can read and react to. The decision happens at the tool boundary — never by asking the model nicely in a prompt.
+Both outcomes here are real: an allowed call runs and then fires `PostToolUse`, and a refused call goes back to the model as a refusal it can read and react to. The decision happens at the tool boundary, never by asking the model nicely in a prompt.
 
 ## Read-only vs. mutating tools
 
-Tools fall into two categories:
+Tools fall into two groups.
 
-- **Read-only tools** only observe — the workspace, session state, the environment. They never change anything or perform side effects. These tools are marked `read_only: true`. The authoritative read-only set in the [built-in catalog](/docs/agent-tools) is `read_file`, `search`, `task_list`, `get_state`, `list_state`, and `get_environment`.
-- **Mutating tools** perform side effects. Among the built-ins that means running a shell command, writing or deleting a workspace file, changing the task board, writing scratch state, or dispatching a sub-agent — `bash`, `write_file`, `edit_file`, `delete_file`, `task_create`, `task_assign`, `delegate`, `save_state`, and `delete_state` are all examples. A custom or MCP tool can do the same or reach the network.
+**Read-only tools** only look, at the workspace, session state, or the environment. They never change anything or cause side effects. These tools are marked `read_only: true`. The full read-only set in the [built-in catalog](/docs/agent-tools) is `read_file`, `search`, `task_list`, `get_state`, `list_state`, and `get_environment`.
 
-The `read_only: true` marker is the signal that a tool is safe to run without changing anything. Tools without it should be treated as capable of side effects.
+**Mutating tools** cause side effects. Among the built-ins, that means running a shell command, writing or deleting a workspace file, changing the task board, writing scratch state, or handing work to a sub-agent. `bash`, `write_file`, `edit_file`, `delete_file`, `task_create`, `task_assign`, `delegate`, `save_state`, and `delete_state` are all examples. A custom or MCP tool can do the same, or reach out over the network.
 
-Only the [speculation-safe subset](/docs/agent-tools) of the read-only tools is eligible for speculative execution during the model stream — a schema declares that separately with `speculation_safe: true`, because a retried stream can run a speculated call twice, and "free to run twice" is a stronger claim than "mutates nothing".
+The `read_only: true` marker is the signal that a tool is safe to run without changing anything. Treat any tool without it as capable of side effects.
+
+Only the [speculation-safe subset](/docs/agent-tools) of the read-only tools can run speculatively during the model's stream. A schema declares that separately, with `speculation_safe: true`, because a retried stream can run a speculated call twice, and "safe to run twice" is a stronger claim than "changes nothing."
 
 <Callout type="info">
-Read-only vs. mutating is a property of the tool, not of a specific invocation. A friendly name can be a family whose members split across the boundary. In the file family, `read_file` is read-only while `write_file` / `edit_file` / `delete_file` are mutating; on the task board, `task_list` is read-only while the other five board tools and `delegate` are mutating; and in the scratch-state family `get_state` / `list_state` are read-only while `save_state` / `delete_state` are mutating.
+Read-only versus mutating is a property of the tool, not of one particular call. A tool family can split across that line. In the file family, `read_file` is read-only while `write_file`, `edit_file`, and `delete_file` are mutating. On the task board, `task_list` is read-only while the other five board tools and `delegate` are mutating. In the scratch-state family, `get_state` and `list_state` are read-only while `save_state` and `delete_state` are mutating.
 
-The two flags also come apart in the other direction. `search` is `read_only: true` but **not** speculation-safe: it changes no workspace file, yet its semantic rung writes embeddings through into `codegraph.db` while it ranks, so running it twice is not free.
+The two flags can also split from each other. `search` is `read_only: true` but **not** speculation-safe: it doesn't change any workspace file, but its semantic ranking step writes embeddings into `codegraph.db` as it works, so running it twice isn't free.
 </Callout>
 
-## Gating tool calls with hooks
+## Gating with hooks
 
-The permission model is enforced ahead of each tool call, and it can be extended with lifecycle hooks. In particular, a **`PreToolUse` hook** runs before a tool executes and can **block** it: if the hook exits with a non-zero status, the tool does not run and the model receives the hook's message instead.
+The permission model is enforced before every tool call, and you can extend it with lifecycle hooks. A **`PreToolUse` hook** runs before a tool executes and can **block** it: if the hook exits with a non-zero status, the tool doesn't run, and the model gets the hook's message instead.
 
-This gives you a programmable gate in front of any tool. A `PreToolUse` hook's matcher is a glob over the tool name, so you can target a single tool (for example, `task_assign`) or a family of tools (for example, `mcp__github__*`).
+This gives you a programmable gate in front of any tool. A `PreToolUse` hook's matcher is a glob over the tool name, so you can target one tool, such as `task_assign`, or a family of tools, such as `mcp__github__*`.
 
 <Callout type="info">
-For blocking by pattern without a hook script, stella also has native workspace-rule guards enforced at the tool boundary — `guard-tool` denies a tool by name, hard-enforced per invocation.
+If you want to block by pattern without writing a hook script, stella also has native workspace-rule guards enforced at the tool boundary. `guard-tool` denies a tool by name, enforced on every call.
 </Callout>
 
 ```json title="~/.stella/settings.json"
@@ -55,23 +56,23 @@ For blocking by pattern without a hook script, stella also has native workspace-
 }
 ```
 
-For the full hook model — events, matchers, timeouts, and the JSON payload delivered on stdin — see [Hooks](/docs/agent-tools/hooks).
+For the full hook model, including events, matchers, timeouts, and the JSON payload delivered on stdin, see [Hooks](/docs/agent-tools/hooks).
 
-## Containment: run stella in a container
+## Containment
 
-Hooks and guard rules decide *whether* a command runs. Containment bounds what it can reach once it does — the difference that matters when instructions hidden in a file the agent read steer the model into running something you never asked for.
+Hooks and guard rules decide *whether* a command runs. Containment limits what it can reach once it does run. That difference matters when instructions hidden in a file the agent read steer the model into running something you never asked for.
 
-**stella has no per-command sandbox.** A `STELLA_BASH_SANDBOX=workspace-write|restricted` setting existed in earlier versions, wrapping one spawn path in `sandbox-exec` (Seatbelt) on macOS or `bwrap` (bubblewrap) on Linux. It was removed, and the variable now does nothing.
+**stella does not sandbox individual commands.** Setting `STELLA_BASH_SANDBOX` has no effect, on any value or any platform. Nothing reads it.
 
 <Callout type="warn">
-If you set `STELLA_BASH_SANDBOX` in a shell profile, a CI job, or a service unit, it is inert — nothing reads it and nothing warns you. Remove it, and if you were relying on it for containment, replace it with a container.
+If `STELLA_BASH_SANDBOX` is set in a shell profile, a CI job, or a service unit, it's inert and prints no warning. Remove it. If you were counting on it for containment, replace it with a container instead, as described below.
 </Callout>
 
-The reason it went is that it covered one spawn path and nothing else while the others — custom script tools, MCP servers, and hooks all spawn processes of their own — ran unconfined, and the setting still said "sandbox: on". A boundary you can step around by starting a process a different way is not a boundary, and one that people believe in is worse than a clearly absent one.
+A setting that only covers one way of starting a process isn't a real boundary, because custom script tools, MCP servers, and hooks all start their own processes outside it. A boundary you can walk around by starting a process a different way isn't a boundary, and one that people believe in but can't rely on is worse than one that's clearly absent.
 
-Run the whole stella process inside a container instead — Docker, Podman, or a remote sandbox. The boundary then sits *outside* every spawn path rather than on one of them, so no tool can route around it, and it holds for file writes, network, and process execution alike.
+Run the whole stella process inside a container instead: Docker, Podman, or a remote sandbox. The boundary then sits *outside* every code path that spawns a process, so nothing can route around it, and it holds for file writes, network access, and running programs alike.
 
-No official CLI image ships today, so build one that puts `stella` on `PATH` (the [install script](/docs/getting-started/installation) works inside a `debian:bookworm-slim` stage), then mount only the repository you want the agent to touch:
+There's no official CLI image today, so build one that puts `stella` on `PATH` (the [install script](/docs/getting-started/installation) works inside a `debian:bookworm-slim` stage), then mount only the repository you want the agent to touch:
 
 ```bash
 docker run --rm -it \
@@ -81,6 +82,6 @@ docker run --rm -it \
   stella run "run the migration and fix what breaks"
 ```
 
-Everything outside `/work` is the container's own filesystem, which is discarded on exit — that is the guarantee `workspace-write` gestured at and could not enforce. For a stricter boundary, add `--network none`; be aware of what that costs, because it is the same cost `restricted` had: a session with no network cannot reach your model provider, fetch dependencies, or `git push`. It suits a task you can define offline, not a general session.
+Everything outside `/work` is the container's own filesystem, and it's thrown away when the container exits. That's the guarantee a per-command sandbox could never really give you. For a stricter boundary, add `--network none`. Know what that costs first: a session with no network can't reach your model provider, fetch dependencies, or run `git push`. It suits a task you can define fully offline, not a general session.
 
-Inside the container, whatever a custom tool, MCP server, or [hook](/docs/agent-tools/hooks) spawns runs with the container's privileges, and the `PreToolUse` policy chain still gates every tool call — the gate and the boundary are complementary, and neither substitutes for the other.
+Inside the container, anything a custom tool, MCP server, or [hook](/docs/agent-tools/hooks) starts runs with the container's own privileges, and the `PreToolUse` policy chain still gates every tool call. The gate and the container work together. Neither one replaces the other.

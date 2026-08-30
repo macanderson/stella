@@ -1,9 +1,9 @@
 ---
 title: stella stats
-description: Summarize cost, tokens, and resolve rate per provider/model from local telemetry.
+description: See cost, tokens, and how often work finished, by provider and model, from your local data.
 ---
 
-Read back what your runs actually cost. `stella stats` summarizes cost, tokens, and resolve rate per provider and model from the local telemetry store — `$/resolved-task` receipts, computed entirely on your machine.
+See what your runs actually cost. `stella stats` shows cost, tokens, and how often work got finished, broken down by provider and model. It reads your local data and works out a cost-per-finished-task number, calculated entirely on your own machine.
 
 ## Synopsis
 
@@ -14,49 +14,51 @@ stella stats prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] [-
 
 ## What it does
 
-`stella stats` reads `<workspace>/.stella/private/store.db` — the embedded SQLite store every run writes to — and aggregates it per provider/model: total tokens, total cost, and how often work resolved. It makes no network calls and needs no API key; it only reads local telemetry.
+`stella stats` reads `<workspace>/.stella/private/store.db`, a SQLite database that every run writes to. It adds up the numbers for each provider and model: total tokens, total cost, and how often work got finished. This command makes no network calls and needs no API key — it only reads data already on your machine.
 
 ## Flags
 
 <CardGrid size="md">
   <OptionCard name="--format <text|json|csv>" defaultValue="text">
-    Output format. `text` prints aligned columns with a `TOTAL` row (`table` still parses as an alias); `json` (under the versioned query envelope) and `csv`
-    are for piping into other tools.
+    Sets the output format. `text` prints lined-up columns with a `TOTAL` row at the
+    bottom (`table` also works and means the same thing). `json` and `csv` are for
+    piping into other tools. JSON output is wrapped in a versioned envelope.
   </OptionCard>
   <OptionCard name="--provider <id>">
-    Only include executions for this provider id — `zai`, `anthropic`, `local`, and so on.
+    Only shows runs from this provider, such as `zai`, `anthropic`, or `local`.
   </OptionCard>
 </CardGrid>
 
 ## Reading the cache columns
 
-Every row also carries three cache-economics columns, derived at display time from your local telemetry (they aren't stored — `stella stats` computes them fresh from the raw token counts each run):
+Every row also shows three columns about your cache savings. stella works these out fresh each time you run the command from the raw token counts — it doesn't store them:
 
 <CardGrid size="md">
   <OptionCard name="HIT%">
-    Cache-read tokens over total input tokens for that row — the same figure the deck's
-    `CACHE` statline cell shows for the live session.
+    Cache-read tokens divided by total input tokens for that row. This is the same
+    number the deck's `CACHE` statline shows during a live session.
   </OptionCard>
   <OptionCard name="SAVED ($)">
-    Estimated USD saved by prompt caching, priced at **today's** catalog rates — not the
-    price in effect when each call actually ran. Signed: a negative value means the
-    provider's cache-write premium outran the reads it bought, which is the "the cache
-    never actually helped" incident worth investigating. Shows `-` when the model isn't
-    in the running catalog.
+    The estimated dollars you saved from prompt caching, priced at **today's** rates —
+    not the rate in effect when each call actually happened. This can be negative: a
+    negative number means the provider charged more to write to the cache than it saved
+    you by reading from it, which is worth investigating. Shows `-` when the model
+    isn't in the current price list.
   </OptionCard>
   <OptionCard name="TTL REWRITES">
-    Calls whose cache prefix went cold — the gap since that session's previous call
-    exceeded the provider's cache TTL — and got rewritten instead of read back. `0` for
-    a provider with no documented TTL. This is the tax cache-TTL-aware fleet scheduling
-    exists to cut: a session parked too long between turns pays the write premium again
-    for nothing.
+    Calls whose cache went cold before you used it again — too much time passed since
+    the session's last call, longer than the provider's cache time limit — and got
+    rewritten instead of read back. Shows `0` for a provider with no documented time
+    limit. This is the extra cost that cache-aware fleet scheduling exists to avoid: a
+    session left idle too long between turns pays the cache-write cost again for
+    nothing.
   </OptionCard>
 </CardGrid>
 
-A `0%` `HIT%` across several turns on an opt-in provider (Anthropic, Bedrock, or Claude-via-OpenRouter) with `CACHE WR` also at `0` usually means the opt-in cache marker never reached the wire — check your adapter config before assuming the model just isn't cacheable. If `CACHE WR` is nonzero but `HIT%` stays low, the prompt prefix is likely being rewritten between turns instead of reused.
+If `HIT%` stays at `0%` across several turns on a provider that requires opting in to caching (Anthropic, Bedrock, or Claude through OpenRouter), and `CACHE WR` is also `0`, the cache setting probably never reached the provider — check your adapter config before assuming the model just can't be cached. If `CACHE WR` is nonzero but `HIT%` stays low, your prompt prefix is likely being rewritten between turns instead of reused.
 
 <Callout type="info">
-The deck's statline shows the same `CACHE`/`SAVED`/`WARMTH` cells live per session, and `?` expands `WARMTH` into a countdown to when the lead lane's cached prefix expires. There is no per-agent cache breakdown: the SUB-AGENTS overlay's vitals row carries model, effort and spend.
+The deck's statline shows the same `CACHE`, `SAVED`, and `WARMTH` numbers live, for the current session. Press `?` to expand `WARMTH` into a countdown until the lead lane's cached prefix expires. There's no cache breakdown per agent — the SUB-AGENTS overlay's vitals row shows model, effort, and spend instead.
 </Callout>
 
 ## Examples
@@ -79,7 +81,7 @@ Emit JSON for a dashboard or a jq pipeline:
 stella stats --format json | jq '.rows[] | {model, total_cost_usd, resolve_rate}'
 ```
 
-Find providers/models with a suspiciously low cache hit rate:
+Find providers or models with a suspiciously low cache hit rate:
 
 ```bash
 stella stats --format json | jq '.rows[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
@@ -89,11 +91,9 @@ stella stats --format json | jq '.rows[] | select(.cache_hit_rate < 0.2) | {prov
 The store is a real SQLite file. Beyond `stella stats` you can query it directly with any SQLite client — see [Telemetry &amp; budget](/docs/telemetry).
 </Callout>
 
-## Bounding the store — `stella stats prune`
+## `stella stats prune`
 
-`store.db` grows monotonically: every run appends executions and everything keyed to
-them — events, telemetry, tool calls, context blocks, receipts. `prune` is the retention
-control.
+`store.db` only ever grows: every run adds new executions, plus everything linked to them — events, telemetry, tool calls, context blocks, and receipts. `prune` controls how much history you keep.
 
 ```bash
 # What would go, without touching anything.
@@ -108,34 +108,37 @@ stella stats prune --max-rows 5000
 
 <CardGrid size="md">
   <OptionCard name="--older-than <AGE>">
-    Drop executions older than this window. `N` followed by `d`, `w`, `h`, `mo`, or `y` —
-    `90d`, `12w`, `720h`, `3mo`. A bare number means days.
+    Deletes executions older than this amount of time. Write a number followed by `d`
+    (days), `w` (weeks), `h` (hours), `mo` (months), or `y` (years) — `90d`, `12w`,
+    `720h`, `3mo`. A plain number with no letter means days.
   </OptionCard>
   <OptionCard name="--max-rows <N>">
-    Hard ceiling on retained executions; the oldest prunable ones are evicted until the
-    store is at or under it.
+    Sets the most executions to keep. stella deletes the oldest ones first, until the
+    store is at or under this limit.
   </OptionCard>
   <OptionCard name="--dry-run">
-    Report what would be pruned and delete nothing. Worth running first — the deletion
-    cascades to every table keyed to an execution.
+    Shows what would be deleted, without deleting anything. Worth running first — the
+    deletion cascades to every table linked to an execution.
   </OptionCard>
   <OptionCard name="--vacuum">
-    `VACUUM` afterwards, handing freed pages back to the filesystem. Deleting rows alone
-    shrinks the *contents* but not the file. Also runs automatically after a large prune.
+    Runs `VACUUM` after pruning, which returns freed space to your filesystem. Deleting
+    rows alone shrinks what's *inside* the file, but not the file's size on disk. Also
+    runs automatically after a large prune.
   </OptionCard>
   <OptionCard name="--force">
-    Also drop executions whose telemetry has not replicated into the usage hub. This
-    permanently loses that cost data — off by default.
+    Also deletes executions whose telemetry hasn't reached the usage hub yet. This
+    permanently loses that cost data. Off by default.
   </OptionCard>
 </CardGrid>
 
 <Callout type="warn">
-Prune is **replication-safe by default**: an execution whose telemetry has not yet
-reached the usage hub is never dropped, so a prune run before a sync cannot silently
-destroy cost data you are still billing against. `--force` is the deliberate override,
-and it is irreversible.
+By default, prune is **safe for replication**: an execution whose telemetry hasn't
+reached the usage hub yet is never deleted, so running prune before a sync can't
+silently destroy cost data you're still billing against. `--force` turns this safety
+off on purpose, and it can't be undone.
 </Callout>
 
-The same flags are also mounted as [`stella storage prune`](/docs/commands/storage#stella-storage-prune) —
-one implementation with two entry points, so store retention is discoverable both from
-where you notice the store is too big and from where the rest of the store verbs live.
+These same flags are also available as [`stella storage prune`](/docs/commands/storage#stella-storage-prune) —
+the same feature under a second name, so you can find store retention either from
+where you noticed the store getting too big, or from where the other storage commands
+live.

@@ -1,12 +1,9 @@
 ---
 title: stella observe
-description: Serve the Observatory — the canonical local telemetry dashboard, always loopback-only.
+description: See a local dashboard of what stella has been doing on your machine. It only runs on your computer and never sends data out.
 ---
 
-Serve the **Observatory**: a read-only web dashboard over the local telemetry in
-`.stella/private/store.db` and `.stella/private/fleet.db`. The Observatory itself never
-exports data and binds to `127.0.0.1` only. This remains true if a separately enrolled
-Enterprise adapter is allowed to derive its minimal operational rollup.
+The Observatory is a read-only dashboard that shows you what stella has been doing. It reads local data from `.stella/private/store.db` and `.stella/private/fleet.db`. The Observatory never sends this data anywhere else. It only listens on `127.0.0.1`, meaning your own computer, even if your organization has turned on an Enterprise adapter that collects a small summary of activity elsewhere.
 
 ## Synopsis
 
@@ -16,24 +13,35 @@ stella observe [--port <N>] [--open]
 
 ## What it does
 
-`stella observe` starts a local HTTP server (default port `7787`) and serves the embedded
-dashboard — no separate install, no build step, and no Observatory egress: the server
-binds loopback and `stella observe` itself never sends anything off the machine. It reads
-the same SQLite stores every stella command writes, so it works on any workspace that has
-run stella at least once, and it needs no API key. (Telemetry can leave the machine only
-through the two paths [the telemetry page enumerates](/docs/telemetry), neither of which
-this command uses.)
+`stella observe` starts a small web server on your computer (port `7787` by default) and shows you the dashboard. You don't need to install anything extra or build anything first. The server only listens on your own machine, and `stella observe` never sends data anywhere else.
 
-The dashboard's tabs cover the overview, executions (with per-run drill-down), the code graph, skills, MCP traffic, memory, self-improvement, and resolved config, plus model spend panels, fleet runs, and a timeframe selector for the charts. See [the Observatory dashboard](/docs/telemetry/dashboard) for a tour of what each tab shows.
+It reads the same local files that every stella command writes to. That means it works in any workspace where you've run stella at least once. You don't need an API key.
+
+Data can only leave your machine through the two paths described on [the telemetry page](/docs/telemetry). This command does not use either of them.
+
+## Dashboard tabs
+
+The dashboard covers:
+
+- Overview
+- Executions, with details for each run
+- The code graph
+- Skills
+- MCP traffic
+- Memory
+- Self-improvement
+- Your resolved config
+
+It also shows model spend, fleet runs, and a way to change the time range for the charts. See [the Observatory dashboard](/docs/telemetry/dashboard) page for a tour of each tab.
 
 ## Flags
 
 <CardGrid size="md">
   <OptionCard name="--port <N>" defaultValue="7787">
-    Port to bind on `127.0.0.1`. `0` picks a free port.
+    The port to use on `127.0.0.1`. Set it to `0` to let stella pick a free port for you.
   </OptionCard>
   <OptionCard name="--open">
-    Open the dashboard in your default browser once the server is up.
+    Opens the dashboard in your default web browser once the server starts.
   </OptionCard>
 </CardGrid>
 
@@ -45,19 +53,19 @@ Serve the dashboard and open it:
 stella observe --open
 ```
 
-Bind an ephemeral port (useful when 7787 is taken):
+Use a random open port (handy if 7787 is already taken):
 
 ```bash
 stella observe --port 0
 ```
 
-Pin a port so a bookmark keeps working, and leave it running in the background:
+Use one fixed port so a bookmark always works, and run it in the background:
 
 ```bash
 stella observe --port 8080 &
 ```
 
-Serve a different workspace's telemetry by starting from its root:
+See a different workspace's data by running the command from that workspace's folder:
 
 ```bash
 (cd ~/projects/acme && stella observe --open)

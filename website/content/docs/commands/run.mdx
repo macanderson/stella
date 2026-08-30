@@ -1,9 +1,9 @@
 ---
 title: stella run
-description: Send a one-shot prompt through the raw step loop (or an installed wrapper plugin) and let stella work to completion, no back-and-forth — built for scripts, CI jobs, and git hooks.
+description: Send a single prompt and let stella work until it's done, with no back-and-forth. Built for scripts, CI jobs, and git hooks.
 ---
 
-Send a one-shot prompt and let the agent work to completion without any interactive back-and-forth. This is the command to reach for in scripts, CI jobs, and Git hooks.
+Send a single prompt and let stella work until it finishes, without any back-and-forth conversation. Use this command in scripts, CI jobs, and Git hooks.
 
 ## Synopsis
 
@@ -13,93 +13,80 @@ stella run <prompt> [--pipeline <VARIANT>] [--test-command <CMD>] [global flags]
 
 ## What it does
 
-By default `stella run` sends the prompt through the **raw step loop**: the model proposes tool calls, the tools execute, results feed back, and the loop repeats until the model stops proposing actions. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
+By default, `stella run` sends your prompt through the **raw step loop**. Here's how that works: the model suggests a tool to run, stella runs it, the result goes back to the model, and this repeats until the model has nothing more to do. There's no interactive prompt window, and stella never asks you for more input. It's the non-interactive version of [`stella chat`](/docs/commands/chat).
 
-Pass `--pipeline <variant>` to run the turn under an installed [wrapper plugin](/docs/plugins) instead — the plugin contributes context before the turn and reports its own evidence after it.
+Use `--pipeline <variant>` to run the turn through an installed [wrapper plugin](/docs/plugins) instead. The plugin can add context before the turn starts and reports its own results after it ends.
 
-Because it is non-interactive, `stella run` is the natural place to combine `--output-format json` or `--output-format stream-json` for headless automation, and `--spend-limit` for a hard spend cap.
+Because `stella run` is non-interactive, it works well with `--output-format json` or `--output-format stream-json` for automated scripts, and with `--spend-limit` to set a hard cap on spending.
 
 <Callout type="info">
 `stella run` uses the same tools, providers, and credential chain as every other command. All [global flags](/docs/commands) apply.
 </Callout>
 
-A run typed at a terminal is [supervised](/docs/commands/daemon): it survives the window closing, and this terminal stays only to stream it. Add [`--detach`](/docs/commands/daemon#--detach-start-it-and-get-the-prompt-back) to get the prompt back immediately instead — the run keeps going, and `stella daemon list | attach | logs | stop` address it afterwards. That works from a script or a CI step too, where nothing is supervised by default.
+A run you start in a terminal is [supervised](/docs/commands/daemon): it keeps going even if you close the terminal window, and the terminal just shows you what's happening. Add [`--detach`](/docs/commands/daemon#--detach-start-it-and-get-the-prompt-back) to get your prompt back right away instead. The run keeps going in the background, and you can check on it later with `stella daemon list`, `attach`, `logs`, or `stop`. This also works from a script or CI step, where runs are not supervised by default.
 
 ## Flags
 
-`stella run` adds four command-specific flags on top of the [global flags](/docs/commands). Two of them are refused outright; they are carded here because a flag that still parses and then refuses owes the reader a reason.
+`stella run` adds four flags of its own, in addition to the [global flags](/docs/commands). Two of these flags are always refused right now. They're still listed here because if a flag exists but refuses to run, you deserve to know why.
 
 <CardGrid size="md">
   <OptionCard name="--pipeline <VARIANT>">
-    Run the turn under an installed **wrapper plugin**, named by the `[wrapper] id` its
-    manifest declares (`stella plugin list`). The plugin contributes context before the
-    turn and gathers evidence after it; the rule it declared at install — evaluated by
-    stella, never by the plugin — decides whether another turn runs. The variant id is
-    recorded on the execution row, so two variants can be compared side by side.
-    Omitted, the raw step loop runs with nothing over it.
+    Run the turn through an installed **wrapper plugin**, using the `[wrapper] id` its
+    manifest declares (see `stella plugin list`). The plugin adds context before the turn
+    and collects evidence after it. stella, not the plugin, checks the rule the plugin
+    declared at install time to decide whether another turn should run. The variant id is
+    saved with the run, so you can compare two variants later. If you leave this out, the
+    raw step loop runs on its own.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
-    The test command an installed verification plugin's own `[oracle]` runs
-    deterministically — e.g. `"cargo test -p my-crate"`. Refused on the raw loop
-    (no plugin named); passes through to a named `--pipeline <variant>` plugin's own
-    oracle when one is installed.
+    The test command that an installed verification plugin's own `[oracle]` runs, for
+    example `"cargo test -p my-crate"`. It's refused if you're using the raw loop (no
+    plugin named). If you name a plugin with `--pipeline <variant>`, this command is
+    passed to that plugin's own oracle.
   </OptionCard>
   <OptionCard name="--keep-witness">
-    **Refused on every resolution.** It promoted the staged pipeline's authored witness
-    test out of the candidate workspace and into your tree; #3865 deleted that pipeline,
-    so nothing authors a witness for it to keep. A verification plugin owns its own
-    witness files — install one (`stella plugin install`) and ask it.
+    **Always refused.** Use a verification plugin instead: install one with
+    `stella plugin install`, and it will manage its own witness files.
   </OptionCard>
   <OptionCard name="--require-verified">
-    **Refused on every resolution.** It turned "completed but unproven" into a non-zero
-    exit, reading verdicts only the built-in staged pipeline reached; the raw loop
-    reaches neither (see the statuses below). A delivery gate that must not ship
-    unproven work wants a verification plugin, `--pipeline <variant>` naming it, and
-    `--require-verdict`.
+    **Always refused.** If you need your build to fail when work isn't verified, use a
+    verification plugin with `--pipeline <variant>`, along with `--require-verdict`.
   </OptionCard>
   <OptionCard name="--require-verdict">
-    Exit non-zero unless the `--pipeline` wrapper declared its requirements **met**.
-    This is the delivery gate: without it a plugin's refusal is printed to stderr and
-    the run still exits on the turn's own result, so installing somebody's plugin can
-    never fail your build by itself. Anything other than met fails under the flag,
-    including a wrapper that reached no verdict at all — a gate that passes on
-    "undecided" is not a gate. Refused without `--pipeline`, where nothing declares a
-    verdict for it to read.
+    Makes the command exit with an error unless the `--pipeline` plugin says its
+    requirements are **met**. This is what makes a build actually fail on unverified work.
+    Without this flag, a plugin's refusal only prints a warning, and the run still exits
+    based on the turn's own result, so installing someone's plugin can never break your
+    build by itself. With this flag, anything other than "met" causes a failure, including
+    a plugin that never reached a decision at all. This flag is refused if you don't also
+    use `--pipeline`, since there's nothing to check a verdict from.
   </OptionCard>
 </CardGrid>
 
-### Reading the outcome without changing the exit code
+### Run status
 
-Whatever the exit code, a finished run states how it ended in its own right.
-`--output-format json` carries that as `status`, which a raw run spells `completed`
-(the turn reached an answer) or `aborted` (the loop stopped early — budget, a
-refusal, an error), with `reason` naming the abort. Those two are the whole set:
-they are what `crates/stella-cli/src/agent/summary.rs` can emit, and the same word
-is what the audit row records.
+No matter what exit code a run returns, it always reports how it ended. With `--output-format json`, this shows up as a `status` field. For the raw loop, this is either `completed` (the turn reached an answer) or `aborted` (the loop stopped early, for example because it hit a budget limit, a refusal, or an error). When a run aborts, the `reason` field explains why. These are the only two statuses the raw loop can report, and it's the same status stella records in the audit log.
 
-`unverified` and `verification_failed` are **not** raw-run statuses. They belonged
-to the built-in staged pipeline, which was deleted from the workspace in #3865; a
-run whose verification standing is worth reading is one handed to an installed
-verification plugin with `--pipeline <variant>`, and that plugin reports its own
-evidence.
+`unverified` and `verification_failed` are **not** statuses the raw loop reports. To see a verification result, run with an installed verification plugin using `--pipeline <variant>`. That plugin reports its own status.
 
 ```bash
 stella run "…" --output-format json | jq -e '.status == "completed"'
 ```
 
-The most relevant global flags here:
+### Useful global flags
 
 <CardGrid size="md">
   <OptionCard name="--model <provider/model_id>">
-    Pin the worker model instead of relying on auto-detection.
+    Choose which model does the work, instead of letting stella pick automatically.
   </OptionCard>
   <OptionCard name="--output-format <text|json|stream-json>" defaultValue="text">
-    Use `json` or `stream-json` for machine-readable, headless output. A flag of `run`
-    itself (not a global), so it goes after the subcommand token:
-    `stella run "…" --output-format json`. Env `STELLA_OUTPUT_FORMAT`.
+    Use `json` or `stream-json` to get output a script can read. This flag belongs to
+    `run` itself, not the global flags, so it goes after the subcommand:
+    `stella run "…" --output-format json`. You can also set it with the
+    `STELLA_OUTPUT_FORMAT` environment variable.
   </OptionCard>
   <OptionCard name="--spend-limit <usd>">
-    Cap total spend for the run; work aborts cleanly once the cap is exceeded.
+    Set a maximum amount to spend on this run. Once the cap is reached, the run stops cleanly.
   </OptionCard>
 </CardGrid>
 
@@ -111,7 +98,7 @@ Run a simple one-shot task with the default (auto-detected) model:
 stella run "Add a docstring to every public function in src/utils.py"
 ```
 
-Pin a specific model and emit a single JSON object for a script to parse. Global flags read most clearly before the subcommand, though [either position parses](/docs/commands#global-flags):
+Choose a specific model and print one JSON object for a script to read. Global flags are easiest to read before the subcommand name, though [either order works](/docs/commands#global-flags):
 
 ```bash
 stella --model anthropic/claude-fable-5 \
@@ -132,18 +119,16 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 \
   run "Explain what main.rs does"
 ```
 
-`--test-command` passes through to a named plugin's own `[oracle]`; it is
-refused only on the raw loop, which has no oracle to arm.
+`--test-command` is passed to a named plugin's own `[oracle]`. It's refused only when you're using the raw loop, since the raw loop has no oracle.
 
-Hand an installed verification plugin's oracle a deterministic test, so a fixed
-test can submit without a model-verifier call:
+Give an installed verification plugin's oracle a specific test to run, so it can check the result without an extra model call:
 
 ```bash
 stella run --pipeline my-verifier --test-command "cargo test -p stella-store" \
   "Fix the failing WAL checkpoint test"
 ```
 
-A small mechanical edit needs nothing extra — the raw loop is already the default:
+A small, simple edit needs nothing extra. The raw loop is already the default:
 
 ```bash
 stella run "Bump the serde dependency to 1.0.220 in every crate"

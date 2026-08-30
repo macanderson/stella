@@ -1,9 +1,9 @@
 ---
 title: stella auth
-description: Store, list, and remove BYOK provider keys in credentials.toml — the persistent home for your API keys.
+description: Store, list, and remove your BYOK provider keys in credentials.toml, the file where your API keys live.
 ---
 
-`stella auth` manages the BYOK provider keys stored in `~/.stella/credentials.toml`. It is the command that *writes* the credentials file the [credential chain](/docs/configuration/credentials) reads from — a small, deliberate surface for a handful of keys, not a config language. It never prints a secret value and needs no model API key of its own.
+`stella auth` manages the BYOK provider keys stored in `~/.stella/credentials.toml`. It's the command that writes the credentials file the [credential chain](/docs/configuration/credentials) reads from: a small, deliberate tool for a handful of keys, not a configuration language. It never prints a secret value, and it doesn't need a model API key of its own.
 
 ## Synopsis
 
@@ -15,26 +15,26 @@ stella auth list
 
 ## What it does
 
-A key stored here persists across sessions and shells, so you don't re-export an environment variable every time. It sits near the end of the [credential chain](/docs/configuration/credentials): a key resolved from `--api-key`, an environment variable, or `settings.json` still takes precedence. Run [`stella config`](/docs/commands/config) or [`stella models`](/docs/commands/models) to see which source actually wins for a given provider.
+A key stored here stays saved across sessions and shells, so you don't have to re-export an environment variable every time. It sits near the end of the [credential chain](/docs/configuration/credentials): a key resolved from `--api-key`, an environment variable, or `settings.json` still wins over it. Run [`stella config`](/docs/commands/config) or [`stella models`](/docs/commands/models) to see which source actually wins for a given provider.
 
-`<provider>` is a provider id — a built-in such as `zai`, `anthropic`, or `openai`, or a custom provider id you defined in [`settings.json`](/docs/configuration/settings).
+`<provider>` is a provider id: a built-in one such as `zai`, `anthropic`, or `openai`, or a custom provider id you defined in [`settings.json`](/docs/configuration/settings).
 
 ### `stella auth set <provider>`
 
-Store (or replace) a provider's key. With no flag, stella shows an interactive masked prompt — the recommended path, since nothing lands in your shell history.
+Store or replace a provider's key. With no flag, stella shows an interactive masked prompt. This is the recommended way, since nothing lands in your shell history.
 
 <CardGrid size="md">
   <OptionCard name="--key <key>">
-    Pass the key inline. **Visible in shell history and in `ps` output** — prefer
-    `--stdin` or the interactive prompt. Conflicts with `--stdin`.
+    Pass the key inline. **This is visible in shell history and in `ps` output** — prefer
+    `--stdin` or the interactive prompt. Cannot be combined with `--stdin`.
   </OptionCard>
   <OptionCard name="--stdin">
-    Read the key from stdin, one trimmed line — for scripts and secret managers.
+    Read the key from stdin, as one trimmed line. Good for scripts and secret managers.
   </OptionCard>
   <OptionCard name="--field <NAME=VALUE>">
-    Store one companion value a provider needs *beyond* its key. Repeatable. Only
-    Bedrock has any today. **Visible in shell history and in `ps`**, like `--key` —
-    omit it for a masked prompt covering each one.
+    Store one extra value a provider needs beyond its key. Can be repeated. Only
+    Bedrock needs any today. **Visible in shell history and in `ps`**, like `--key` —
+    leave it off for a masked prompt covering each one.
   </OptionCard>
 </CardGrid>
 
@@ -46,15 +46,13 @@ stella auth set anthropic
 printf '%s' "$MY_KEY" | stella auth set zai --stdin
 ```
 
-**A credential set, not one secret.** Most providers authenticate with a single key, so
-`set` takes one and stops. Bedrock does not: it needs `AWS_SECRET_ACCESS_KEY`,
+Most providers need only one key, so `set` stores it and stops. Bedrock needs more: `AWS_SECRET_ACCESS_KEY`,
 `AWS_SESSION_TOKEN`, and `AWS_REGION` alongside the access-key id. Run `stella auth set
-bedrock` with no flags and stella prompts for each companion in turn — secrets masked,
-`AWS_REGION` not, because it is routing and a masked prompt would imply a secrecy it does
-not have. Blank input leaves an existing value alone.
+bedrock` with no flags, and stella asks for each one in turn. Secrets are masked;
+`AWS_REGION` is not, because it's a routing setting, not a secret. Leaving an answer blank keeps the existing value.
 
 ```bash
-# Interactive: prompts for the key, then for each companion field
+# Interactive: prompts for the key, then for each extra field
 stella auth set bedrock
 
 # Scripted — these land in shell history, exactly as --key does
@@ -64,18 +62,18 @@ stella auth set bedrock --key "$AWS_ACCESS_KEY_ID" \
 ```
 
 <Callout type="warn">
-`--key` and `--stdin` suppress the companion prompts entirely — a script that pipes a key
-must never block on a question. So a scripted `stella auth set bedrock --key …` with no
-`--field` stores a credential that **cannot sign a request**: it resolves fine at
-[`stella models`](/docs/commands/models) and then fails at the first call with a SigV4
-error naming a variable you believed you had just configured. `set` warns when it stores a
-Bedrock key with no `AWS_SECRET_ACCESS_KEY` beside it — rerun without `--key`/`--stdin`,
+`--key` and `--stdin` skip the extra-field prompts entirely, since a script that pipes in a key
+must never wait on a question. So a scripted `stella auth set bedrock --key …` with no
+`--field` stores a credential that **cannot sign a request**. It resolves fine at
+[`stella models`](/docs/commands/models) and then fails at the first real call with a signing
+error naming a variable you thought you had already set. `set` warns when it stores a
+Bedrock key with no `AWS_SECRET_ACCESS_KEY` beside it — run it again without `--key`/`--stdin`,
 or pass the field.
 </Callout>
 
 ### `stella auth remove <provider>`
 
-Forget a provider's stored key.
+Delete a provider's stored key.
 
 ```bash
 stella auth remove openai
@@ -83,12 +81,12 @@ stella auth remove openai
 
 ### `stella auth list`
 
-List every provider with a key in `credentials.toml`, each with a redacted preview and its resolution source. Companion values stored with `--field` are listed **by name only**, never by value — the same rule as the key itself, and the reason to show them at all is that a Bedrock row missing its `AWS_SECRET_ACCESS_KEY` otherwise looks identical to a working one.
+List every provider with a key in `credentials.toml`, each with a masked preview and where it came from. Extra values stored with `--field` are listed **by name only**, never by value, the same rule as the key itself. They're shown at all because a Bedrock row missing its `AWS_SECRET_ACCESS_KEY` would otherwise look identical to a working one.
 
 ```bash
 stella auth list
 ```
 
 <Callout type="warn">
-Prefer the interactive prompt or `--stdin` over `--key`. A key passed with `--key` is visible in your shell history and in `ps` output. See [Credentials](/docs/configuration/credentials) for the full resolution chain and precedence.
+Prefer the interactive prompt or `--stdin` over `--key`. A key passed with `--key` is visible in your shell history and in `ps` output. See [Credentials](/docs/configuration/credentials) for the full resolution order.
 </Callout>

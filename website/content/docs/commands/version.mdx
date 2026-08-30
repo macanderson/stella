@@ -3,7 +3,7 @@ title: stella version
 description: Print the installed stella version and exit.
 ---
 
-Print the version of the installed `stella` binary and exit.
+Prints the version of your installed `stella` binary, then exits.
 
 ## Synopsis
 
@@ -11,30 +11,28 @@ Print the version of the installed `stella` binary and exit.
 stella version
 ```
 
-Two top-level flags print it too, and they do **not** print the same thing:
+Two other flags also print the version, but they don't print the same thing:
 
 ```bash
-stella -V         # one line, bare version
+stella -V         # one line, just the version number
 stella --version  # three lines, with the build's target and profile
 ```
 
 ## Output
 
-The `version` subcommand prints a `v`-prefixed line:
+The `version` subcommand prints a line starting with `v`:
 
 ```text
 stella v0.9.86
 ```
 
-`stella -V` prints the short form — the binary name, a space, then the bare version, no
-`v`:
+`stella -V` prints the short form: the binary name, a space, then the version number with no `v` in front:
 
 ```text
 stella 0.9.86
 ```
 
-`stella --version` prints the **long** form: the same first line, then the target triple
-and the build profile the binary was compiled with.
+`stella --version` prints the **long** form: the same first line, then the target platform and the build profile the binary was built with.
 
 ```text
 stella 0.9.86
@@ -42,12 +40,9 @@ target:  aarch64-apple-darwin
 profile: release
 ```
 
-The exact number tracks the release you installed. Binaries built in dev mode
-(`scripts/dev.sh`) append a git-sha stamp, e.g. `stella v0.9.86-dev.abc1234`; released
-binaries print the bare semver.
+The number you see matches the release you installed. A binary built in dev mode (using `scripts/dev.sh`) adds a git-sha tag at the end, for example `stella v0.9.86-dev.abc1234`. A released binary just shows the plain version number.
 
-Use it to confirm an install or upgrade, or to capture the version in a CI log. This
-command needs no provider or API key configured.
+Use this command to confirm an install or upgrade, or to save the version in a CI log. It needs no provider or API key.
 
 ## Examples
 
@@ -57,21 +52,19 @@ Confirm what you just installed:
 stella version
 ```
 
-Capture the bare semver for a CI log or a build label. Use `-V`, not `--version`:
-the long form's extra lines would each be fed through `cut` too, so you would get the
-version, a blank, and the profile.
+Capture just the version number for a CI log or a build label. Use `-V`, not `--version`: the long form's extra lines would also get piped through `cut`, giving you the version, then a blank line, then the profile.
 
 ```bash
 stella -V | cut -d' ' -f2
 ```
 
-Or take just the first line of either flag:
+Or take just the first line from either flag:
 
 ```bash
 stella --version | head -1 | cut -d' ' -f2
 ```
 
-Check that a binary is on `PATH` at all before a script depends on it:
+Check that stella is installed and on your `PATH` before a script depends on it:
 
 ```bash
 stella version >/dev/null 2>&1 || { echo "stella is not installed"; exit 1; }

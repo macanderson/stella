@@ -1,11 +1,11 @@
 ---
 title: stella chat
-description: Start an interactive session with stella — the Command Deck TUI by default, an accessible mode of the same deck, or a plain line REPL.
+description: Start an interactive session with stella. Use the Command Deck (the default), an accessible version of the same deck, or a plain line REPL.
 ---
 
-Start an interactive session. This is the **default** command: running `stella` with no subcommand is exactly the same as running `stella chat`.
+Start an interactive session. This is the default command: running `stella` with no subcommand does the same thing as running `stella chat`.
 
-On a real terminal, `stella chat` opens the **Command Deck** — a tabbed terminal UI. Pass `--accessible` (or set `STELLA_ACCESSIBLE=1`) to run that same deck so a screen reader can read it. Pass `--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead; the deck also steps aside automatically when stdin or stdout is not a terminal.
+On a real terminal, `stella chat` opens the **Command Deck**, a tabbed terminal UI. Pass `--accessible` (or set `STELLA_ACCESSIBLE=1`) to run the same deck in a way a screen reader can read. Pass `--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead. The deck also switches to plain mode automatically when stdin or stdout is not a terminal.
 
 ## Synopsis
 
@@ -24,76 +24,52 @@ stella chat --plain
 
 ## What it does
 
-`stella chat` opens a conversational session. You type a message, the agent runs its step loop — proposing tool calls, executing them, and feeding results back until the turn is done — and then hands the prompt back to you. Conversation history is retained across turns within the session.
+`stella chat` opens a conversation. You type a message, the agent runs its step loop (proposing tool calls, running them, and reading the results) until the turn is done, then hands the prompt back to you. The session keeps your conversation history across turns.
 
-The default **Command Deck** presents the session as a set of tabs — **SESSION** (the transcript), **AGENTS** (executions & installed agents), **TRACES**, **GRAPH**, **FILES**, **SKILLS**, **MCP**, **ISSUES** (your connected GitHub/Linear tracker, with instant type-ahead), and **SETTINGS** (the home of all config, incl. the engine-config panel). Slash commands jump between tabs and run actions, and `?` opens a tab-aware key list. The **plain REPL** (`--plain`) is a single scrolling line-based loop with a smaller command set — handy for narrow terminals and recordings.
+The default Command Deck shows the session as a set of tabs: **SESSION** (the transcript), **AGENTS** (executions and installed agents), **TRACES**, **GRAPH**, **FILES**, **SKILLS**, **MCP**, **ISSUES** (your connected GitHub or Linear tracker, with instant search), and **SETTINGS** (all config, including the engine-config panel). Slash commands jump between tabs and run actions, and `?` opens a key list for the tab you're on. The plain REPL (`--plain`) is a single scrolling line-based loop with a smaller command set, good for narrow terminals and recordings.
 
 ### Moving around
 
-The deck is a tree — tabs, then the panes and lists inside each, then what a list item
-opens — and four keys walk it the same way at every level, from an **empty prompt**:
+The deck is a tree: tabs, then the panes and lists inside each tab, then what a list item opens. Four keys walk it the same way at every level, starting from an empty prompt:
 
 | key | does |
 |---|---|
 | `←` `→` | the sibling: the pane beside this one, or, when the tab has none that way, the tab beside it |
-| `↑` `↓` (`k` `j`) | the item above / below in the list under the cursor |
+| `↑` `↓` (`k` `j`) | the item above or below in the list under the cursor |
 | `⏎` | open it — a file's diff, a lane's transcript, a message's full text |
 | `⌫` | back up one level — never stops anything |
 
-`Esc` is `⌫` plus one more step: once there is nothing left to close it interrupts the
-running turn (see below). `Tab` / `Shift-Tab` still cycle tabs. `q` or `Esc` closes any
-overlay, and `⇞` `⇟` `Home` `End` page through any list or body. With text in the prompt the
-arrows edit it and `⌫` deletes, as you would expect; the tree is what the keys mean when
-there is nothing to edit. `?` lists every key for the tab you are on.
+`Esc` does what `⌫` does, plus one more step: once there is nothing left to close, it interrupts the running turn (see below). `Tab` and `Shift-Tab` still cycle tabs. `q` or `Esc` closes any overlay, and `⇞` `⇟` `Home` `End` page through any list or body. With text in the prompt, the arrows edit it and `⌫` deletes, as you'd expect. The tree above is what the keys mean only when there is nothing to edit. `?` lists every key for the tab you are on.
 
-Off the SESSION tab, the row above the prompt is the **pulse row**: which agent is working,
-its status, how long since it last did anything (red once a running agent has been quiet
-for a minute and a half), where it is, and the last thing it said — so no tab is blind to the
-turn.
+Off the SESSION tab, the row above the prompt is the **pulse row**. It shows which agent is working, its status, how long since it last did anything (it turns red once a running agent has been quiet for a minute and a half), where it is, and the last thing it said. This keeps every tab aware of the current turn.
 
 ### Sub-agents
 
-`↓` on an empty prompt (or `Ctrl-A`, or `/subagents`) opens the **SUB-AGENTS** overlay:
-every lane the lead dispatched and every `delegate` child running inside a turn, each with
-its quiet time, what it is for, and where it is. `→` or `⏎` opens a lane's transcript — the
-breadcrumb reads `SESSION ▸ lead ▸ sub:2` and `⌫` brings you back to the lead; a prompt typed
-there steers that lane. Inside the overlay `n` **nudges** the selected lane (a one-line
-"where are you?" it answers on its own transcript) and `f` **flags** it to whoever
-dispatched it, with its vitals attached, asking them to check on it, stop it, or take the
-task over. `ctrl-x ctrl-x` kills, `p` pauses / resumes, `r` restarts, `l` returns to the
-lead. A `delegate` child has no control plane of its own: its row says so, `⏎` opens its
-parent, and `f` flags it to the parent.
+`↓` on an empty prompt (or `Ctrl-A`, or `/subagents`) opens the **SUB-AGENTS** overlay. It lists every lane the lead dispatched and every `delegate` child running inside a turn, each with its quiet time, what it is for, and where it is. `→` or `⏎` opens a lane's transcript. The breadcrumb reads `SESSION ▸ lead ▸ sub:2`, and `⌫` brings you back to the lead. A prompt typed there steers that lane. Inside the overlay, `n` **nudges** the selected lane (a one-line "where are you?" that it answers on its own transcript), and `f` **flags** it to whoever dispatched it, with its status attached, asking them to check on it, stop it, or take the task over. `ctrl-x ctrl-x` kills it, `p` pauses or resumes it, `r` restarts it, and `l` returns to the lead. A `delegate` child has no control of its own: its row says so, `⏎` opens its parent, and `f` flags it to the parent.
 
 ### Accessible mode
 
-`--accessible` is a **mode on the deck, not a smaller surface beside it**: every tab, every gate, the prompt queue, sub-agents, steering and resume are unchanged. What changes is how the deck talks to your terminal.
+`--accessible` is a mode of the deck, not a smaller version of it. Every tab, gate, prompt queue, sub-agent, steering, and resume feature works the same. What changes is how the deck talks to your terminal.
 
-- It never takes over the screen. The deck draws inline underneath your prompt instead of on the alternate screen, so nothing is hidden and nothing is torn down when you quit.
-- Each completed message is written into your normal **scrollback**, exactly once — announced as it arrives, reachable with your reader's review cursor, and still there after the session ends.
-- Animation is frozen (as if `--no-anim`), so no region of the screen repaints on a clock.
-- Panels **stack in one column**: the GRAPH and SKILLS tabs and the session's work rail all read top to bottom, so no rendered row splices two panes together.
-- The grid views — TRACES, ISSUES, TOOLS, AGENTS and INSTALLED — render as **one labelled record per row** (`status running · cost $0.05 · cpu 3%`) instead of aligned columns, because column alignment is whitespace to a reader.
-- Moving is **announced**: switching tabs, opening or closing an overlay, and changing which agent has focus each emit a line.
+- It never takes over the screen. The deck draws inline underneath your prompt instead of on a separate screen, so nothing is hidden and nothing disappears when you quit.
+- Each completed message is written into your normal **scrollback** exactly once. It is announced as it arrives, reachable with your reader's review cursor, and still there after the session ends.
+- Animation is frozen (as if `--no-anim` were set), so no part of the screen repaints on a timer.
+- Panels **stack in one column**. The GRAPH and SKILLS tabs and the session's work rail all read top to bottom, so no row mixes two panes together.
+- The grid views (TRACES, ISSUES, TOOLS, AGENTS, and INSTALLED) render as **one labeled record per row** (`status running · cost $0.05 · cpu 3%`) instead of lined-up columns, because column alignment is just whitespace to a screen reader.
+- Moving around is **announced**. Switching tabs, opening or closing an overlay, and changing which agent has focus each say a line out loud.
 - Messages the program itself speaks are marked `▸`, so they are never mistaken for the model's own words.
-- The terminal cursor stays on the real insertion point, which is also what an IME needs to place its candidate window.
-- Mouse capture is forced off, so your terminal's own selection keeps working.
+- The terminal cursor stays on the real insertion point, which is also what an input method needs to place its candidate window.
+- Mouse capture is forced off, so your terminal's own text selection keeps working.
 
-If your terminal does not answer a cursor-position request, the deck still starts — it draws on your own screen without the scrollback flush, and says so rather than silently not delivering it.
+If your terminal does not answer a cursor-position request, the deck still starts. It draws on your own screen without flushing to scrollback, and it says so instead of silently skipping that feature.
 
-Set `STELLA_ACCESSIBLE=1` in your shell profile to make it the default for every invocation.
+Set `STELLA_ACCESSIBLE=1` in your shell profile to make this the default for every session.
 
-Full details — what each change is for, how it degrades on a terminal that will not answer
-a cursor-position request, and how to tell the mode is working — are on the
-[Accessibility](/docs/accessibility) page.
+The [Accessibility](/docs/accessibility) page covers what each change is for, how the mode degrades on a terminal that won't answer a cursor-position request, and how to check the mode is working.
 
 ### Typing while a turn is running
 
-You never have to wait for a turn to finish. A plain prompt **queues** — it waits as the
-lead's next turn, behind anything already waiting, and the turn in flight is not touched.
-Press `Esc` and everything waiting — the queue, in order, plus whatever is in the composer —
-is delivered into the **running** turn at its next step boundary, and the turn keeps going.
-A `Steered` line per message is the acknowledgement; nothing completes, nothing is cancelled,
-and no second agent starts.
+You never have to wait for a turn to finish. A plain prompt **queues**. It waits as the lead's next turn, behind anything already waiting, and the turn in progress is not touched. Press `Esc` and everything waiting (the queue, in order, plus whatever is in the composer) is delivered into the **running** turn at its next step, and the turn keeps going. A `Steered` line per message confirms it: nothing completes, nothing is canceled, and no second agent starts.
 
 ```text
 fix the flaky login test           ⏎   ← queued
@@ -105,72 +81,42 @@ Two prefixes skip the queue:
 
 <CardGrid size="md">
   <SpecCard title="Steer now — `> …`">
-    A message prefixed `>` goes into the running turn at its next step boundary without
+    A message that starts with `>` goes into the running turn at its next step, without
     waiting for `Esc`.
   </SpecCard>
   <SpecCard title="Shell — `! …`">
-    A `!` line runs immediately as a shell command, inline in the transcript, never queued.
+    A line that starts with `!` runs immediately as a shell command, inline in the transcript, and is never queued.
   </SpecCard>
 </CardGrid>
 
 `ui.mid_turn_prompt` in [settings](/docs/configuration/settings#the-ui-section) changes what
-a plain prompt does at a running agent: `queue` (the default above), `ask` (a card offers
+a plain prompt does while an agent is running: `queue` (the default above), `ask` (a card offers
 `s` steer / `n` next turn / `p` sidecar sub-session per prompt), or `spawn` (every plain
 prompt forks a sidecar sub-session, dispatched alongside the running turn).
 
 <Callout type="info">
 A bare `⏎` **always** submits, even while an agent is busy — that is what makes queueing
-possible without waiting. The one exception is a **pending gate on the focused agent** (a
-scope review, a hunk review, or a question the approvals plane put to you): there the submit
-answers the gate rather than queueing or steering anything. Answer it first, then steer.
+possible without waiting. The one exception is a pending gate on the focused agent (a
+scope review, a hunk review, or a question the approvals plane asked you): there, the submit
+answers the gate instead of queueing or steering anything. Answer it first, then steer.
 </Callout>
-
-### Reviewing a write hunk by hunk — not yet reachable
-
-<Callout type="warn">
-  **This gate does not fire today, and no setting turns it on.** The deck can render a
-  per-hunk approval card and its key map is implemented and tested, but nothing emits the
-  `hunk_review` event that would raise one, and `hunk_review` is not a key any settings
-  struct reads — writing it into `agent_engine_config` sets nothing. Tracked in
-  [#3633](https://github.com/macanderson/stella/issues/3633). The key map below is
-  recorded for when it lands; skip to [multimodal input](#multimodal-input) for what the
-  deck does now.
-</Callout>
-
-The intended behavior: every write pauses on a card listing the hunks it would apply, and
-only the ones you keep are written, so a turn that produces one wanted and one unwanted
-change is no longer all-or-nothing.
-
-| Key | Effect |
-| --- | --- |
-| `↑` / `↓` | move between hunks |
-| `space` | keep or drop the hunk under the cursor |
-| `⏎` | apply the kept hunks — the footer always names how many that is |
-| `esc` | decline every hunk; nothing is written |
-
-Or type the ones to keep and press `⏎`: `1 3`, `2-4`, `all`, `none`. The mark keys act only
-while the composer is empty, so they never eat a line you are typing.
-
-Declined hunks are reported back to the model, so it knows why the file does not look the way
-it wrote it — a silent partial apply would look to it like somebody else edited the file.
 
 ### Line breaks and soft-stop
 
-A *modified* `⏎` (`⌘⏎` / `⌃⏎` / `⌥⏎`) inserts a line break instead of submitting, and the break
-is kept verbatim in the prompt. On a terminal that cannot report the chord it folds back to a
-plain submit.
+A modified `⏎` (`⌘⏎`, `⌃⏎`, or `⌥⏎`) inserts a line break instead of submitting, and the break
+stays exactly as typed in the prompt. On a terminal that can't report the key combination, it falls back to a plain submit.
 
-Esc with nothing queued and nothing typed soft-stops the current turn without ending the
-session; `Esc Esc` cancels it immediately and holds the queue until your next submission. See
-[Agent engine paths](/docs/agent-engine-paths) for how steering interacts with each execution
+Pressing Esc with nothing queued and nothing typed pauses the current turn without ending the
+session. `Esc Esc` cancels it right away and holds the queue until your next message. See
+[Agent engine paths](/docs/agent-engine-paths) for how steering works with each execution
 path.
 
 ### Multimodal input
 
-Prompts are multimodal: mention a path to an image, PDF, audio, or video file in your message and stella attaches the file itself as model input alongside your text. In the deck, **Ctrl-V** pastes an image straight from the clipboard as an attachment. See [Multimodal input](/docs/multimodal-input) for the `@`-mention rules, what each provider can see, and how unsupported media degrades.
+Prompts can include more than text. Mention a path to an image, PDF, audio, or video file in your message, and stella attaches the file itself as model input alongside your text. In the deck, **Ctrl-V** pastes an image straight from the clipboard as an attachment. See [Multimodal input](/docs/multimodal-input) for the `@`-mention rules, what each provider can see, and how unsupported media is handled.
 
 <Callout type="info">
-All [global flags](/docs/commands) apply, in either position — `stella --model openai/gpt-5.5 chat` pins the worker model for the whole session, and `stella chat --model openai/gpt-5.5` does the same thing.
+All [global flags](/docs/commands) apply in either position — `stella --model openai/gpt-5.5 chat` pins the worker model for the whole session, and `stella chat --model openai/gpt-5.5` does the same thing.
 </Callout>
 
 ## Flags
@@ -180,15 +126,15 @@ All [global flags](/docs/commands) apply, in either position — `stella --model
 <CardGrid size="md">
   <OptionCard name="--accessible">
     Run the Command Deck so a screen reader can read it: inline on your own screen,
-    completed messages into scrollback, single-column panels, labelled rows instead of
+    completed messages into scrollback, single-column panels, labeled rows instead of
     tables, and announcements when you move. Env `STELLA_ACCESSIBLE=1`.
   </OptionCard>
   <OptionCard name="--plain">
     Use the plain line-based REPL instead of the Command Deck. Env `STELLA_PLAIN=1`; also
-    auto-selected on a non-TTY.
+    used automatically on a non-terminal.
   </OptionCard>
   <OptionCard name="--no-anim">
-    Freeze deck animation (progress shimmer, caret blink) to a static frame — for
+    Freeze deck animation (progress shimmer, caret blink) to a still frame — for
     recordings and CI. Env `STELLA_NO_ANIM` / `NO_COLOR`.
   </OptionCard>
   <OptionCard name="--model <provider/model_id>">
@@ -215,57 +161,56 @@ Open a tab or run an action:
     Show the deck's command list.
   </OptionCard>
   <OptionCard name="/clear">
-    Reset the session — blank the transcript, drop the history, wipe the task
+    Reset the session: clear the transcript, drop the history, wipe the task
     board, and stop every sidecar worker. Each lane leaves the SUB-AGENTS
-    overlay as its worker winds down, and the cleared pane names what was
+    overlay as its worker shuts down, and the cleared pane names what was
     stopped. A cleared lane cannot be restarted.
   </OptionCard>
   <OptionCard name="/info">
     List providers and models (the same output as `stella models`). Also accepts
-    `refresh [--force]` and `list` — see below. (`/models` before the rename;
-    the old name still routes.)
+    `refresh [--force]` and `list` — see below. (`/models` still works, the older name.)
   </OptionCard>
   <OptionCard name="/model">
-    Switch **this session's** model. Bare `/model` opens a picker over the
+    Switch **this session's** model. A bare `/model` opens a picker over the
     models your configured providers offer (scoped by `[models].allowed` when
-    set); `/model zai/glm-5.2` is the typed form. Session-only — new sessions
-    keep the settings default. `/model default zai/glm-5.2` persists the
+    set); `/model zai/glm-5.2` is the typed form. This choice lasts only for this session; new sessions
+    keep the settings default. `/model default zai/glm-5.2` saves the
     default instead.
   </OptionCard>
   <OptionCard name="/agent">
     Run as an installed agent for the rest of this session. Opens a picker over
-    the definitions at user and project scope; choosing one appends its persona
-    to the system prompt, narrows the tool surface to its `tools:` grant, and
-    applies its declared `model:` (if any) as a session model switch — the same
-    assume the AGENTS tab's `a` performs.
+    the definitions at user and project scope. Choosing one adds its persona
+    to the system prompt, narrows the tool list to its `tools:` grant, and
+    applies its declared `model:` (if any) as a session model switch — the same thing
+    the AGENTS tab's `a` key does.
   </OptionCard>
   <OptionCard name="/profile">
-    Retune every role at once — `fast`, `balanced`, `pro`, `ultra`, or `auto` to
-    hand the dials back. With no argument, show what is set and what each
+    Set every role at once — `fast`, `balanced`, `pro`, `ultra`, or `auto` to
+    hand the choices back to the engine. With no argument, show what is set and what each
     profile would choose. See below.
   </OptionCard>
   <OptionCard name="/theme">
-    Switch and persist the colour theme (`stella-dark`, `stella-light`). With no
+    Switch and save the color theme (`stella-dark`, `stella-light`). With no
     argument, show the current theme.
   </OptionCard>
   <OptionCard name="/voice">
     Turn dictation on and pick the spacebar gesture: `/voice hold` (hold Space
     through a warmup, release to stop), `/voice tap` (tap Space on an empty
-    prompt to start, tap again to stop), `/voice off`. Persists, and takes
+    prompt to start, tap again to stop), `/voice off`. This choice is saved, and it takes
     effect in this session. With no argument, show what is set. Pick `tap` if
     holding Space never starts a recording — hold needs either a terminal that
     reports key releases or OS key repeat, and tap needs neither.
   </OptionCard>
   <OptionCard name="/init">
-    Index the workspace: domain taxonomy plus the code graph.
+    Index the workspace: build the domain taxonomy and the code graph.
   </OptionCard>
   <OptionCard name="/agents">
-    Open the AGENTS tab — the agents installed at user and project scope, with
-    versioned editing. Running lanes are the SUB-AGENTS overlay instead
+    Open the AGENTS tab: the agents installed at user and project scope, with
+    versioned editing. Running lanes show up in the SUB-AGENTS overlay instead
     (`ctrl-a`, `↓` from an empty prompt, or `/subagents`).
   </OptionCard>
   <OptionCard name="/settings">
-    Open the SETTINGS tab — the home of all config, models included. There are no
+    Open the SETTINGS tab, home to all config, models included. There are no
     per-agent slash commands; the engine-config editor lives here.
   </OptionCard>
   <OptionCard name="/files">
@@ -278,7 +223,7 @@ Open a tab or run an action:
     Open the GRAPH (code-graph) tab.
   </OptionCard>
   <OptionCard name="/skills">
-    Open the SKILLS tab — manage, search, create.
+    Open the SKILLS tab: manage, search, create.
   </OptionCard>
   <OptionCard name="/mcp">
     Open the MCP servers tab (enable/disable servers, enter credentials).
@@ -297,21 +242,21 @@ Open a tab or run an action:
     [`stella inspect`](/docs/commands/inspect). Also **Ctrl-G**.
   </OptionCard>
   <OptionCard name="/inbox">
-    Notifications — messages persist until read.
+    Notifications. Messages stay until you read them.
   </OptionCard>
   <OptionCard name="/export">
-    Export **this session's** telemetry to a ZIP plus an HTML dashboard —
-    scoped to the session you are in, never the whole workspace, so the
-    archive is safe to attach to a PR.
+    Export **this session's** telemetry to a ZIP plus an HTML dashboard.
+    It's scoped to the session you are in, never the whole workspace, so the
+    archive is safe to attach to a pull request.
   </OptionCard>
   <OptionCard name="/reload">
-    Re-read the settings scope chain from disk and apply it to the live
-    session — engine posture, tool switches, authority. Saving from the
+    Re-read the settings from disk and apply them to the live
+    session: engine behavior, tool switches, authority. Saving from the
     SETTINGS tab does this automatically; `/reload` covers edits made outside
     the deck. Provider, model, and credentials are untouched.
   </OptionCard>
   <OptionCard name="/donate">
-    Support stella — become a GitHub Sponsor.
+    Support stella by becoming a GitHub Sponsor.
   </OptionCard>
 </CardGrid>
 
@@ -319,7 +264,7 @@ Press **Ctrl-C** to quit the deck.
 
 #### `/info` with an argument
 
-`/info` also takes two arguments, and both are handled inside the deck without a model call. When the configured model is itself broken, `/info refresh` is how you dig out — routing it through a turn would fail on the very error you are fixing:
+`/info` also takes two arguments, and both run inside the deck without a model call. When the configured model is itself broken, `/info refresh` is how you fix it — routing it through a turn would fail on the very error you are trying to fix:
 
 ```text
 /info refresh           re-sync the catalog
@@ -327,44 +272,44 @@ Press **Ctrl-C** to quit the deck.
 /info list              the same listing the bare /info prints
 ```
 
-Parsing is conservative: one recognized token (plus `refresh --force`). A single unrecognized token gets usage back rather than a wasted model call, and anything sentence-like after `/info` stays an ordinary prompt.
+Parsing here only looks for one recognized word (plus `refresh --force`). One word it doesn't recognize gets a usage message back rather than wasting a model call, and anything sentence-like after `/info` is treated as an ordinary prompt.
 
-#### `/profile` — one word for the whole harness
+#### `/profile` — one setting for the whole session
 
-`/profile` sets a model *and* a reasoning effort for every engine role at once, chosen from the models your API keys can actually reach:
+`/profile` sets a model and a reasoning effort for every engine role at once, chosen from the models your API keys can reach:
 
 ```text
-/profile fast       cheapest models, thinking off, terse replies
-/profile balanced   good enough for daily work without burning the budget
+/profile fast       cheapest models, thinking off, short replies
+/profile balanced   good enough for daily work without spending too much
 /profile pro        strong models, real deliberation, priority capacity
-/profile ultra      the most capable models your keys can reach, effort at the ceiling
-/profile auto       no profile — hand the dials back to the engine
+/profile ultra      the most capable models your keys can reach, effort at the highest setting
+/profile auto       no profile — hand the choices back to the engine
 ```
 
 Run `/profile` with no argument to see which profile your current settings match, what this session is running, and what each profile would pick right now.
 
-**How the models are chosen.** stella's catalog carries no capability tier, so a profile ranks the reachable models by list output price — the same proxy `auto_mode` already uses to pick a verifier. This means the choice tracks catalog refreshes instead of going stale, but it is a proxy: a cheap frontier model ranks low until its price says otherwise. The confirmation names every model it picked, so you can always see what you got. Models the catalog has no price for (gateway rows like `openrouter/auto`, which bill at whatever they route to) are left out of the ranking rather than treated as free.
+**How the models are chosen.** stella's catalog doesn't track a capability tier, so a profile ranks the reachable models by list price. This is the same method `auto_mode` already uses to pick a verifier. It keeps the choice up to date as the catalog changes, but it's an approximation: a cheap frontier model ranks low until its price says otherwise. The confirmation message names every model it picked, so you can always see what you got. Models the catalog has no price for (gateway rows like `openrouter/auto`, which bill at whatever they route to) are left out of the ranking instead of treated as free.
 
-The roles are not tuned identically. Triage stays below the worker in every profile — it is a short classification under a latency ceiling, and spending your best model on it buys nothing. Research sits on triage's rung for the same reason: it reads the tree and reports what it found, and it is a fan-out, so a tier chosen for the worker would be paid once per question. Neither research nor plan is given a model of its own — both ride the worker's, so a later `--model` moves all three together.
+The roles aren't tuned the same way. Triage stays below the worker in every profile, since it's a short classification with a time limit, and spending your best model on it doesn't help. Research sits at the same level as triage for a similar reason: it reads the code and reports what it found, and because it runs many times per question, a tier chosen for the worker would be paid for repeatedly. Neither research nor plan gets a model of its own; both use the worker's, so a later `--model` change moves all three together.
 
-The verifier is the interesting one, because two goals pull against each other: a verifier from the worker's own family lets a shared blind spot pass review twice, but a verifier well below the worker's tier cannot follow the work it grades and rubber-stamps. stella resolves it in the order that gives up least. A model that is both independent and at least as capable wins outright. If nothing clears that bar but the strongest independent model is only one rung down the price list, independence is worth the single rung. Only when the best independent option is further down does capability take over — and then the confirmation tells you the review is correlated with the work.
+The verifier is trickier, because two goals pull against each other. A verifier from the same model family as the worker can share a blind spot and pass review twice, but a verifier well below the worker's tier can't follow the work it's grading and just approves everything. stella picks in the order that gives up the least. A model that is both independent and at least as capable wins outright. If nothing meets that bar but the strongest independent model is only one price rung down, independence is worth that one rung. Only when the best independent option is much further down does capability take over, and then the confirmation message says the review shares a family with the work.
 
-**What it writes, and what it leaves alone.** A profile owns the per-role model, effort, thinking switch, verbosity, and service tier, saved to your user settings. It turns `effort_auto`, `reasoning_auto`, and `auto_mode` **off**: those switches override per-agent effort, so leaving them on would let `/profile ultra` print `max` and run `medium`. Everything else survives untouched — custom per-agent prompts, pinned providers, temperatures, seeds, and your `allowed_models` list.
+**What it changes, and what it leaves alone.** A profile sets the model, effort, thinking switch, verbosity, and service tier for each role, saved to your user settings. It turns `effort_auto`, `reasoning_auto`, and `auto_mode` **off**, because those switches override per-agent effort settings — leaving them on would let `/profile ultra` claim `max` effort while actually running `medium`. Everything else stays as it was: custom per-agent prompts, pinned providers, temperatures, seeds, and your `allowed_models` list.
 
-`/profile auto` is the way back out. It restores all three switches and drops the per-role effort, thinking, verbosity, and service-tier pins a profile wrote, handing those choices to the engine again. Model pins are left alone: one may well predate the profile, and `auto_mode` re-picks the verifier on its own.
+`/profile auto` undoes this. It turns all three switches back on and removes the per-role effort, thinking, verbosity, and service-tier settings a profile wrote, handing those choices back to the engine. Model pins stay as they are, since they may predate the profile, and `auto_mode` picks the verifier on its own again.
 
-**Effort, and the providers that cannot express it.** The five-rung ladder is stella's vocabulary, not every provider's: Gemini and Vertex offer only `low` and `high`, the OpenAI shapes stop at `high`, and Z.ai has no request-level effort control at all (its thinking switch is on/off). A pick whose provider cannot express the level the profile asked for is written at the highest rung it does support.
+**Effort, and providers that can't express it.** The five-level scale is stella's own scale, not every provider's: Gemini and Vertex offer only `low` and `high`, the OpenAI models stop at `high`, and Z.ai has no per-request effort control at all (its thinking switch is just on or off). A choice whose provider can't match the level the profile asked for is set to the highest level that provider does support.
 
-Clamping alone would flatten the ladder — on a two-rung provider both `fast` and `balanced` land on `low`. The missing rung is bought back on the axis that can still carry it: among models at the same price, the one whose provider *can* express the requested level wins. That is a tiebreak and nothing more. The search never leaves the price band, so a profile cannot overspend its tier to buy a knob, and it takes the cheapest qualifying model rather than the best. Where nothing at that price can express the level, the clamp stands and the confirmation says which levels moved.
+Just rounding down would flatten the scale. On a two-level provider, both `fast` and `balanced` would land on `low`. The missing level is recovered a different way: among models at the same price, the one whose provider *can* express the requested level wins. That's a tiebreaker, nothing more. The search never leaves the price range, so a profile can't overspend its tier to get a feature, and it picks the cheapest model that qualifies rather than the best one. Where nothing at that price can express the level, the rounding stands, and the confirmation message says which levels changed.
 
-Like `/model default`, the change applies to sessions started from now on; the running session keeps its current model (a bare `/model` pick is the one that moves it).
+Like `/model default`, the change applies to sessions started from now on; the running session keeps its current model (a bare `/model` pick is the one that changes it right away).
 
 ### Plain REPL (`--plain`)
 
-The line REPL has a smaller, different set — this is the whole of it, and a `/word`
-outside this list is not a command there. Unlike the deck, which answers an unknown
-bare `/word` with a correction, the REPL lets it through as an ordinary prompt, so a
-deck command typed here (`/files`, `/diff`, `/graph`, …) costs a model call and
+The line REPL has a smaller, different set of commands. This is the whole list, and a `/word`
+outside this list is not a command there. Unlike the deck, which corrects an unrecognized
+bare `/word`, the REPL lets it through as an ordinary prompt, so a
+deck command typed here (`/files`, `/diff`, `/graph`, and so on) costs a model call and
 answers nothing.
 
 <CardGrid size="sm">
@@ -372,10 +317,10 @@ answers nothing.
     Show help.
   </OptionCard>
   <OptionCard name="/info">
-    List providers and models (`/models` still routes).
+    List providers and models (`/models` still works).
   </OptionCard>
   <OptionCard name="/config">
-    Show the current configuration — the deck has no `/config`; this is the REPL's own.
+    Show the current configuration. The deck has no `/config`; this is the REPL's own.
   </OptionCard>
   <OptionCard name="/clear">
     Clear the conversation history.
@@ -387,7 +332,7 @@ answers nothing.
     List custom agents, from `.stella/agents` or `~/.stella/agents`.
   </OptionCard>
   <OptionCard name="/init">
-    Index the workspace: domain taxonomy plus the code graph.
+    Index the workspace: build the domain taxonomy and the code graph.
   </OptionCard>
   <OptionCard name="/rename <name>">
     Rename this terminal tab.
@@ -426,7 +371,7 @@ Run the deck with a screen reader:
 stella chat --accessible
 ```
 
-Use the plain line REPL (e.g. for a narrow terminal, or a pipe):
+Use the plain line REPL (for example, for a narrow terminal, or a pipe):
 
 ```bash
 stella chat --plain

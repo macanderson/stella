@@ -1,20 +1,20 @@
 ---
 title: Model guide
-description: The master model catalog — context windows, list prices per million tokens, release timing, and which model to use for which seat.
+description: The full model catalog — context windows, list prices per million tokens, release timing, and which model fits which seat.
 ---
 
-This is the master list. Every model stella seeds into its catalog, with the numbers you
-need to make a decision — context window, list price, and what the model is actually good
-at. The pricing figures come from **stella's seed catalog**; prices are list
+This is the full list of every model stella seeds into its catalog, with the numbers
+you need to decide: context window, list price, and what the model is good at. The
+pricing figures come from **stella's seed catalog**; prices are list
 **$/Mtok** (input / output / cached-input). The **Released** and **Best for** columns are
-editorial — context these docs add, not fields the catalog stores or syncs. Verify with
-your provider before budgeting — prices and lineups drift.
+added by these docs for context — the catalog itself doesn't store or sync them. Verify
+with your provider before budgeting, since prices and lineups change.
 
 <Callout type="info">
-  The seed below is only the offline floor. `stella models refresh` syncs the **live
-  master list** — every valid provider/model slug and its current pricing, from the
-  public [models.dev](https://models.dev) catalog (no API key) — into a local model-card
-  database, and `stella models list` browses it. See
+  The seed table below is only the offline starting point. `stella models refresh` syncs
+  the **live master list** — every valid provider/model slug and its current pricing,
+  from the public [models.dev](https://models.dev) catalog (no API key needed) — into a
+  local model-card database, and `stella models list` browses it. See
   [the live model catalog](#the-live-model-catalog-stella-models-refresh) below.
 </Callout>
 
@@ -22,37 +22,37 @@ your provider before budgeting — prices and lineups drift.
 
 | Model | Provider | Context | In $/Mtok | Out $/Mtok | Cached-in $/Mtok | Released | Best for |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| <ProviderMark id="anthropic" /> `claude-fable-5` | `anthropic` | 1M | 10.00 | 50.00 | 1.00 | 2026 | The strongest coding/agentic model in the catalog, and the most expensive — first of the Claude 5 family. Best-in-class worker for hard multi-file changes; superb verifier. |
-| <ProviderMark id="anthropic" /> `claude-opus-5` | `anthropic` | 1M | 5.00 | 25.00 | 0.50 | 2026 | Half Fable's list price with the same 1M window. The Claude 5 tier to reach for when Fable's worker quality is more than the task needs. |
-| <ProviderMark id="anthropic" /> `claude-sonnet-5` | `anthropic` | 1M | 3.00 | 15.00 | 0.30 | 2026 | Sonnet pricing with a 1M window. A strong default worker where the budget rules out the tiers above. |
-| <ProviderMark id="openai" /> `gpt-5.5` | `openai` | 400k | 1.25 | 10.00 | 0.125 | late 2025 | Top-tier reasoning with a 400k window at a mid price. Excellent cross-family verifier over a Claude or GLM worker; strong worker. |
+| <ProviderMark id="anthropic" /> `claude-fable-5` | `anthropic` | 1M | 10.00 | 50.00 | 1.00 | 2026 | The strongest coding and agentic model in the catalog, and the most expensive — first of the Claude 5 family. A top-tier worker for hard multi-file changes, and a strong verifier. |
+| <ProviderMark id="anthropic" /> `claude-opus-5` | `anthropic` | 1M | 5.00 | 25.00 | 0.50 | 2026 | Half of Fable's list price, with the same 1M window. Reach for this tier when Fable's worker quality is more than the task needs. |
+| <ProviderMark id="anthropic" /> `claude-sonnet-5` | `anthropic` | 1M | 3.00 | 15.00 | 0.30 | 2026 | Sonnet pricing with a 1M window. A strong default worker when the budget rules out the tiers above. |
+| <ProviderMark id="openai" /> `gpt-5.5` | `openai` | 400k | 1.25 | 10.00 | 0.125 | late 2025 | Top-tier reasoning with a 400k window at a mid price. An excellent cross-family verifier over a Claude or GLM worker, and a strong worker on its own. |
 | <ProviderMark id="gemini" /> `gemini-3-pro` | `gemini` (also `vertex`) | 1M | 1.25 | 10.00 | 0.31 | Q4 2025 | The 1M-token window: whole-repo comprehension, long-log analysis. Solid worker, good verifier. |
-| <ProviderMark id="xai" /> `grok-4.3` | `xai` | 1M | 1.25 | 2.50 | 0.20 | 2026 | Strong reasoning at a low price, with a 1M window; a distinct model family, useful as an alternate verifier. Prices above are the below-200k-input tier — double them past it. |
-| <ProviderMark id="deepseek" /> `deepseek-chat` | `deepseek` | 128k | 0.27 | 1.10 | 0.07 | Q4 2024 (V3 line, revised through 2025) | The price/performance outlier. Ideal triage model; a very capable budget worker. |
-| <ProviderMark id="zai" /> `glm-5.2` | `zai` | 200k | 0.60 | 2.20 | 0.11 | 2026 | Excellent coding at a fraction of flagship price — stella's default worker tier. The coding-plan endpoint makes it a subscription workhorse. |
-| <ProviderMark id="bedrock" /> `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | `bedrock` | 200k | 3.00 | 15.00 | 0.30 | Sep 2025 | Claude under AWS governance — for orgs that must keep inference inside their cloud account. |
-| <ProviderMark id="openrouter" /> `moonshotai/kimi-k3` | `openrouter` | 1M | 3.00 | 15.00 | 0.30 | 2026 | Long-context agentic driver, and the OpenRouter default — a 1M window that holds a whole repo while it works. Runs at `xhigh` effort with thinking on. |
-| <ProviderMark id="openrouter" /> `openrouter/auto` | `openrouter` | 128k | gateway-priced | gateway-priced | — | rolling | OpenRouter's meta-router; and any `vendor/model` slug on the gateway routes verbatim (one key, every vendor). |
+| <ProviderMark id="xai" /> `grok-4.3` | `xai` | 1M | 1.25 | 2.50 | 0.20 | 2026 | Strong reasoning at a low price, with a 1M window. A different model family, useful as an alternate verifier. Prices above are the below-200k-input tier — double them past it. |
+| <ProviderMark id="deepseek" /> `deepseek-chat` | `deepseek` | 128k | 0.27 | 1.10 | 0.07 | Q4 2024 (V3 line, revised through 2025) | The best value in the catalog. An ideal triage model, and a very capable budget worker. |
+| <ProviderMark id="zai" /> `glm-5.2` | `zai` | 200k | 0.60 | 2.20 | 0.11 | 2026 | Excellent coding at a fraction of flagship price — stella's default worker tier. The coding-plan endpoint makes it a strong subscription option. |
+| <ProviderMark id="bedrock" /> `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | `bedrock` | 200k | 3.00 | 15.00 | 0.30 | Sep 2025 | Claude under AWS governance, for orgs that must keep inference inside their cloud account. |
+| <ProviderMark id="openrouter" /> `moonshotai/kimi-k3` | `openrouter` | 1M | 3.00 | 15.00 | 0.30 | 2026 | A long-context agentic driver, and the OpenRouter default — a 1M window that holds a whole repo while it works. Runs at `xhigh` effort with thinking on. |
+| <ProviderMark id="openrouter" /> `openrouter/auto` | `openrouter` | 128k | gateway-priced | gateway-priced | — | rolling | OpenRouter's meta-router. Any `vendor/model` slug on the gateway routes exactly as written — one key, every vendor. |
 
-## Which model for which role
+## Model by role
 
-A run distributes across distinct roles, and they want different things from a
-model:
+A run distributes work across separate roles, and each one wants different things
+from a model:
 
-- **Worker** — writes the code. It wants the strongest coding model you can afford; this
-  is where quality is bought. Worker tokens dominate a run, but most of them are
-  cached-input tokens (see below), so the effective price gap between tiers is smaller
-  than the list price suggests.
-- **Verifier** — verifies the work at high effort. It wants a **different family** than the
-  worker: cross-family judging resists same-model bias, where a model forgives the
-  mistakes it would itself have made. A Claude worker with a GPT verifier (or vice versa)
-  catches more than either family judging itself. This is
+- **Worker.** Writes the code. It wants the strongest coding model you can afford —
+  this is where quality is worth paying for. Worker tokens dominate a run, but most of
+  them are cached-input tokens (see below), so the real price gap between tiers is
+  smaller than the list price suggests.
+- **Verifier.** Checks the work at high effort. It wants a **different family** than
+  the worker: cross-family judging avoids same-model bias, where a model forgives the
+  mistakes it would have made itself. A Claude worker with a GPT verifier (or the other
+  way around) catches more than either family judging its own work. This is
   [goal mode](/docs/agent-modes#outcome-driven-goal-mode)'s standing verifier.
 
-An installed [wrapper plugin](/docs/plugins) may staff further roles of its own;
-what it runs and how it routes them is its manifest's business, not stella's.
+An installed [wrapper plugin](/docs/plugins) can add further roles of its own. What it
+runs, and how it routes them, is up to its manifest, not stella's.
 
-Three named lineups, ready to copy:
+Ready-made lineups you can copy:
 
 | Lineup | Worker | Verifier | Triage |
 | --- | --- | --- | --- |
@@ -60,68 +60,68 @@ Three named lineups, ready to copy:
 | [Balanced](/docs/examples#balanced) | `glm-5.2` | `claude-fable-5` or `gpt-5.5` | `deepseek-chat` |
 | [Dirt cheap](/docs/examples#dirt-cheap) | `deepseek-chat` | `glm-5.2` | `deepseek-chat` |
 
-Each links to a worked `settings.json` profile in [Examples](/docs/examples); wire any of
-them up per agent with
+Each one links to a worked `settings.json` profile in [Examples](/docs/examples). Wire
+any of them up per agent with
 [`agent_engine_config`](/docs/configuration/agent-engine-config).
 
 ## The live model catalog (`stella models refresh`)
 
-The seed table above can't keep up with weekly model launches — and it used to mean an
-invalid slug was only caught for seeded providers (OpenRouter and custom gateways
-accepted anything and failed later, mid-run, on the wire). The live catalog fixes both:
+The seed table above can't keep up with weekly model launches. Without a refresh, an
+invalid slug is only caught for seeded providers — OpenRouter and custom gateways
+accept anything and only fail later, mid-run, on the wire. The live catalog fixes both:
 
 ```bash
 stella models refresh                      # sync the master list (models.dev, no API key)
 stella models list --provider anthropic    # browse valid slugs + live pricing
 ```
 
-- **Master list, locally.** One public, unauthenticated document covering every provider
-  stella can select (plus ~160 more) lands in a user-tier SQLite catalog
-  (`catalog.db`, next to `usage.db`): **model cards** keyed per API provider, and
-  **model card versions** holding each pricing configuration. A refresh appends a new
-  version only when pricing actually changed — the version history is real change
+- **Master list, locally.** One public document, needing no login, covers every
+  provider stella can select (plus about 160 more). It lands in a user-tier SQLite
+  catalog (`catalog.db`, next to `usage.db`): **model cards** keyed per API provider,
+  and **model card versions** holding each pricing configuration. A refresh adds a new
+  version only when pricing actually changed, so the version history is a real change
   history, and **the latest version is the pricing that displays everywhere** (cost
   metering, `stella models list`, the deck's model picker). On top of that master list,
-  `refresh` then overlays each configured provider's own live `/models` listing
+  `refresh` also overlays each configured provider's own live `/models` listing
   (OpenRouter, Anthropic, Gemini, and any OpenAI-compatible endpoint), so newly-shipped
   slugs and per-model pricing/capability come straight from the serving provider — this
   overlay resolves through each provider's configured credential (only the models.dev
-  master list is keyless).
-- **Incremental.** The HTTP `ETag` is persisted and replayed; an unchanged list is one
-  conditional request, zero writes. A stale list (>24h) re-syncs automatically at startup,
-  and `STELLA_CATALOG_AUTO_REFRESH=0` turns the re-sync off — though *when* automatic
-  syncing may first fire differs by source (see below).
-- **Strict slug validation, everywhere.** Once a provider's master-list rows are synced,
-  an invalid `--model` slug is a hard, immediate, named error with did-you-mean
+  master list needs no key).
+- **Incremental.** The HTTP `ETag` is saved and reused, so an unchanged list is one
+  conditional request and zero writes. A stale list (older than 24 hours) re-syncs
+  automatically at startup, and `STELLA_CATALOG_AUTO_REFRESH=0` turns that re-sync off —
+  though *when* automatic syncing can first fire differs by source (see below).
+- **Strict slug validation, everywhere.** Once a provider's master-list rows are
+  synced, an invalid `--model` slug shows a clear, immediate error with did-you-mean
   suggestions — before any wire call, for **every** provider including OpenRouter and
-  settings.json-defined gateways. The seed always passes, and a custom endpoint the
-  master list doesn't know stays endpoint-authoritative, exactly as before.
-- **Exact telemetry.** A **model_aliases** table joins every string form a model travels
-  under — bare slug, `provider/slug`, date-stamped snapshots, region-prefixed Bedrock
-  profiles, and any id a provider echoes on the wire (learned automatically from
-  telemetry) — to `(api provider, model provider, model version, model card)`, so
-  per-model cost analytics never split one model across its spellings.
+  settings.json-defined gateways. The seed table always passes, and a custom endpoint
+  the master list doesn't know about is trusted as-is, exactly as before.
+- **Exact telemetry.** A **model_aliases** table connects every string form a model
+  travels under — bare slug, `provider/slug`, date-stamped snapshots, region-prefixed
+  Bedrock profiles, and any id a provider echoes on the wire (learned automatically from
+  telemetry) — to a single `(api provider, model provider, model version, model card)`
+  record, so per-model cost analytics never split one model across its different
+  spellings.
 
-### When each source may sync on its own
+### When sources sync
 
 <Callout type="info">
   **A fresh install never contacts models.dev on its own.** The two sources are gated
-  differently, and:
+  differently:
 
   - **Each configured provider's own `/models` listing** auto-syncs whenever it is stale,
     **including the very first time** — this is what surfaces new releases as they ship.
-    That traffic is BYOK-clean: it goes to a provider you already gave stella a key for,
-    the same host your next turn calls anyway. No credential for a provider means nothing
-    is fetched for it.
-  - **The models.dev master list** is a third party, so the no-phone-home rule forbids
-    contacting it implicitly. It may only auto-refresh once a sync record exists —
-    that is, **after your first explicit `stella models refresh`**. Until you run that
-    command once, the seed table above is your whole catalog and models.dev is never
-    contacted.
+    That traffic stays within your own keys: it goes to a provider you already gave
+    stella a key for, the same host your next turn calls anyway. No credential for a
+    provider means nothing is fetched for it.
+  - **The models.dev master list** is a third party, so stella never contacts it
+    without being asked. It only auto-refreshes once a sync record exists — that is,
+    **after your first explicit `stella models refresh`**. Until you run that command
+    once, the seed table above is your whole catalog and models.dev is never contacted.
 </Callout>
 
 Because the native overlay resolves through each provider's configured credential, the
-slugs and prices you get back are exactly what that key can see. It is the same
+slugs and prices you get back are exactly what that key can see. This is the same
 [credential chain](/docs/api-providers#the-credential-chain) that authorizes inference —
 resolved once, used for both:
 
@@ -131,20 +131,20 @@ Only the models.dev master list is keyless.
 
 ## Prompt caching changes the math
 
-The **cached-input** column is what most worker input actually costs mid-run. stella keeps
-the prompt prefix byte-stable on purpose — the [context engine](/docs/context-engine)
-appends rather than rewrites — so after the first turn, the bulk of every request is a
-cache hit billed at the cached-input rate: a 10x–20x discount depending on provider. This
-is why real per-run cost lands far below naive input-tokens-times-list-price math, and why
-a model's cached-input price matters more than its headline input price for long agentic
-runs.
+The **cached-input** column is what most worker input actually costs partway through a
+run. stella keeps the prompt prefix stable on purpose — the
+[context engine](/docs/context-engine) adds to it rather than rewriting it — so after
+the first turn, most of every request is a cache hit billed at the cached-input rate: a
+10x–20x discount depending on provider. This is why real per-run cost lands far below a
+simple input-tokens-times-list-price estimate, and why a model's cached-input price
+matters more than its headline input price for long agentic runs.
 
 ### The cache-write rate
 
-Reads are only half the ledger. Writing a prefix into the cache is itself billed, at a
+Reads are only half the story. Writing a prefix into the cache is itself billed, at a
 **premium over the input rate**, and the seed catalog carries that figure per model
-alongside the other three. It appears in no column above because it is not a price you
-shop on — it is the cost of entry you amortize:
+alongside the other three. It doesn't appear in any column above, because it is not a
+price you shop on — it's an upfront cost you earn back over time:
 
 | Model | Provider | In $/Mtok | Cache-write $/Mtok | Premium |
 | --- | --- | --- | --- | --- |
@@ -160,21 +160,23 @@ shop on — it is the cost of entry you amortize:
 | `moonshotai/kimi-k3` | `openrouter` | 3.00 | 3.00 | 1x |
 | `openrouter/auto` | `openrouter` | gateway-priced | gateway-priced | — |
 
-The Claude family is the only one in the seed catalog carrying a write premium — and, not
-coincidentally, the only one where caching is **opt-in** rather than implicit: Anthropic,
-Bedrock, and Claude routed through OpenRouter each take an explicit cache marker, while
-the rest of the field caches for you. With reads at roughly a tenth of the input rate and
-writes at 1.25x, a written prefix breaks even after **two** requests — and an agent loop
-replays its prefix every turn, so the premium is paid once and repaid immediately.
+The Claude family is the only one in the seed catalog carrying a write premium — and,
+not coincidentally, the only one where caching is **opt-in** rather than automatic:
+Anthropic, Bedrock, and Claude routed through OpenRouter each need an explicit cache
+marker, while the rest of the field caches for you automatically. With reads at roughly
+a tenth of the input rate and writes at 1.25x, a written prefix breaks even after
+**two** requests — and an agent loop replays its prefix every turn, so the premium is
+paid once and earned back right away.
 
-The failure case is worth naming: a prefix that goes cold before it is read back is a
-write you paid for and never used. `stella stats` reports this directly — a negative
-`SAVED ($)` means the write premium outran the reads it bought, and `TTL REWRITES` counts
-the prefixes that expired between turns. See [`stella stats`](/docs/commands/stats).
+There's one failure case worth knowing: a prefix that goes cold before it is read back
+is a write you paid for and never used. `stella stats` reports this directly — a
+negative `SAVED ($)` means the write premium cost more than the reads it bought, and
+`TTL REWRITES` counts the prefixes that expired between turns. See
+[`stella stats`](/docs/commands/stats).
 
 <Callout type="info">
-  `stella models` lists the full catalog with live key status per provider. And the
-  Observatory's models view shows **your** observed **$/resolved task** per model —
-  measured on your repo, your tasks, your prompts — which is the ultimate arbiter of what
-  a model is worth. See [The Observatory dashboard](/docs/telemetry/dashboard).
+  `stella models` lists the full catalog with live key status per provider. The
+  Observatory's models view shows **your** observed **$/resolved task** per model,
+  measured on your repo, your tasks, your prompts — the real measure of what a model is
+  worth to you. See [The Observatory dashboard](/docs/telemetry/dashboard).
 </Callout>
