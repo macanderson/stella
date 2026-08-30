@@ -248,7 +248,11 @@ pub static CAPABILITIES: &[Capability] = &[
             mechanism: "`stella whistle <message>` — one Unix domain socket per session inside \
                         its SessionRegistry sidecar, discovered exactly as `stella resume --list` \
                         discovers sessions; interactive mode reaches it through a session-scoped \
-                        relay, since its own steering tap exists only during a turn",
+                        relay, since its own steering tap exists only during a turn. `--deep` \
+                        fans the same text into the session's live worker lanes \
+                        (`a_deep_whistle_reaches_the_lead_and_every_live_lane`), and the deck's \
+                        `>@all` / `>@<id>` address broadcasts from inside a session \
+                        (`the_broadcast_address_parses_its_target_depth_and_message`)",
             witness: "a_message_sent_over_a_deck_sessions_socket_reaches_its_next_turn",
         },
         // Not "serve has POST /v1/turns/{id}/steer, so it is covered". It has

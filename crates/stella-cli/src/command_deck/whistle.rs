@@ -46,6 +46,14 @@ pub(super) struct DeckWhistle {
     live: Mutex<Weak<SteeringTap>>,
     /// Steers that arrived with no turn to take them, oldest first.
     pending: Mutex<Vec<String>>,
+    /// The worker lanes this session drives, announced as each spawns
+    /// ([`crate::subsession::LaneTapSink`]) — what a deep whistle reaches
+    /// beyond the lead. `Weak` for the reason `live` is: the driver's
+    /// `SubSessions` owns each tap and drops it with the lane, and a lane
+    /// that ended must read as gone here rather than as a queue nobody
+    /// drains. A deep whistle at an idle lane set is not buffered: a lane
+    /// that does not exist yet has no work the guidance could be about.
+    lanes: Mutex<Vec<Weak<SteeringTap>>>,
     /// This session's bound socket. Replaced when the deck switches sessions;
     /// dropping it unbinds and removes the socket file.
     listener: Mutex<Option<crate::whistle::SessionListener>>,
@@ -111,6 +119,53 @@ impl DeckWhistle {
                 .push(text),
         }
     }
+
+    /// [`Self::deliver`] to the lead, and the same text into every worker
+    /// lane still able to drain one. Lanes that ended are dropped from the
+    /// list on the way past, so it never grows with a session's history.
+    fn deliver_deep(&self, text: String) {
+        self.deliver(text.clone());
+        let mut lanes = self.lanes.lock().unwrap_or_else(|p| p.into_inner());
+        lanes.retain(|lane| lane.upgrade().is_some());
+        for tap in lanes.iter().filter_map(Weak::upgrade) {
+            if !tap.is_settling() {
+                tap.push(text.clone());
+            }
+        }
+    }
+}
+
+impl crate::subsession::LaneTapSink for DeckWhistle {
+    fn register(&self, tap: &Arc<SteeringTap>) {
+        self.lanes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(Arc::downgrade(tap));
+    }
+}
+
+/// The deck's half of the composer's broadcast address (`>@all …`,
+/// `>@<session-id> …`): send `message` to the other live sessions on this
+/// machine over their whistle sockets, off the driver's event pump, and
+/// report every outcome as one chrome note. This session is never a target
+/// of its own broadcast — a steer meant for the room lands here through the
+/// composer's ordinary route, not through its own socket.
+pub(super) fn broadcast_from_deck(
+    message: String,
+    session: Option<String>,
+    deep: bool,
+    own_session: &str,
+    in_tx: &tokio::sync::mpsc::UnboundedSender<stella_tui::Inbound>,
+) {
+    let own = own_session.to_string();
+    let in_tx = in_tx.clone();
+    tokio::spawn(async move {
+        let registry = stella_store::SessionRegistry::open_default();
+        let ids: Vec<String> = session.into_iter().collect();
+        let outcomes =
+            crate::whistle::cmd::broadcast(&registry, &message, &ids, deep, Some(&own)).await;
+        let _ = in_tx.send(super::chrome_note(crate::whistle::cmd::summary(&outcomes)));
+    });
 }
 
 /// What the listener actually holds: a weak handle back to the relay.
@@ -126,6 +181,12 @@ impl Whistleable for RelayHandle {
     fn push(&self, text: String) {
         if let Some(relay) = self.0.upgrade() {
             relay.deliver(text);
+        }
+    }
+
+    fn push_deep(&self, text: String) {
+        if let Some(relay) = self.0.upgrade() {
+            relay.deliver_deep(text);
         }
     }
 }
@@ -220,6 +281,7 @@ mod tests {
                     &mut stream,
                     &crate::whistle::wire::WhistleRequest {
                         text: "the deck is listening".to_string(),
+                        deep: false,
                     },
                 )
                 .await
@@ -238,6 +300,54 @@ mod tests {
                     vec!["the deck is listening"]
                 );
             });
+    }
+
+    /// **The witness for `--deep`.** A deep whistle reaches the lead's turn
+    /// and every live worker lane the session announced; a plain one reaches
+    /// the lead alone; a lane that ended is gone from the fan-out, and one
+    /// that is settling — past its last model step — takes nothing.
+    #[test]
+    fn a_deep_whistle_reaches_the_lead_and_every_live_lane() {
+        use crate::subsession::LaneTapSink as _;
+        let relay = Arc::new(DeckWhistle::default());
+        let lead = relay.mint_turn_tap();
+        let lane_a: Arc<SteeringTap> = Arc::default();
+        let lane_b: Arc<SteeringTap> = Arc::default();
+        let settling: Arc<SteeringTap> = Arc::default();
+        settling.mark_settling();
+        for lane in [&lane_a, &lane_b, &settling] {
+            relay.register(lane);
+        }
+        let ended: Arc<SteeringTap> = Arc::default();
+        relay.register(&ended);
+        drop(ended);
+
+        RelayHandle(Arc::downgrade(&relay)).push("lead only".to_string());
+        assert_eq!(lead.drain_steering(), vec!["lead only"]);
+        assert!(
+            lane_a.drain_steering().is_empty(),
+            "a plain whistle stops at the lead"
+        );
+
+        RelayHandle(Arc::downgrade(&relay)).push_deep("everyone: stop touching main".to_string());
+        assert_eq!(lead.drain_steering(), vec!["everyone: stop touching main"]);
+        assert_eq!(
+            lane_a.drain_steering(),
+            vec!["everyone: stop touching main"]
+        );
+        assert_eq!(
+            lane_b.drain_steering(),
+            vec!["everyone: stop touching main"]
+        );
+        assert!(
+            settling.drain_steering().is_empty(),
+            "a settling lane has no boundary left to drain at"
+        );
+        assert_eq!(
+            relay.lanes.lock().unwrap().len(),
+            3,
+            "the ended lane is pruned on the way past"
+        );
     }
 
     /// The turn that ended owns nothing: its tap is dropped with the loop

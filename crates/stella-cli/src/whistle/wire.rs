@@ -20,6 +20,11 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WhistleRequest {
     pub(crate) text: String,
+    /// Reach the session's live worker lanes as well as its lead. Absent on
+    /// the wire from a sender built before the field existed, which decodes
+    /// as the lead-only whistle that sender meant.
+    #[serde(default)]
+    pub(crate) deep: bool,
 }
 
 /// The receiving session's answer: the message was queued.
@@ -77,10 +82,21 @@ mod tests {
         let (mut a, mut b) = tokio::io::duplex(4096);
         let sent = WhistleRequest {
             text: "stop the compile, let CI handle the gate".to_string(),
+            deep: true,
         };
         write_frame(&mut a, &sent).await.unwrap();
         let received: WhistleRequest = read_frame(&mut b).await.unwrap();
         assert_eq!(received.text, sent.text);
+        assert!(received.deep);
+    }
+
+    /// A frame from a sender that predates `deep` carries no such key, and
+    /// decodes as the lead-only whistle that sender meant.
+    #[test]
+    fn a_frame_without_the_deep_key_is_a_lead_only_whistle() {
+        let received: WhistleRequest =
+            serde_json::from_str(r#"{"text":"read the failing test"}"#).unwrap();
+        assert!(!received.deep);
     }
 
     #[tokio::test]
