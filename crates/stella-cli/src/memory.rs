@@ -798,7 +798,7 @@ impl SessionMemory {
             .collect()
     }
 
-    /// [`Self::selected_skills`], and additionally note this turn's
+    /// `selected_skills`, and additionally note this turn's
     /// trigger→injection join for the trial recorder. The turn-start seam
     /// (`agent::stamp_and_record_skill_usage`) calls this instead of the plain
     /// query, so a turn that records usage also arms its own trial.
@@ -817,7 +817,7 @@ impl SessionMemory {
     /// of, and there are three ways to be one: the A/B control's coin, steering
     /// switched off, and losing the last top-k seat to a higher-scoring
     /// sibling. All three are recorded, which is why this reads the selection
-    /// pass rather than [`Self::selected_skills`] — that one returns nothing at
+    /// pass rather than `selected_skills` — that one returns nothing at
     /// all on a suppressed turn, by design.
     pub(crate) fn note_turn_skills(&self, prompt: &str) -> Vec<(String, String)> {
         let selection = self.skill_selection(prompt);
