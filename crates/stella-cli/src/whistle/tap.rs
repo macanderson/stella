@@ -17,6 +17,13 @@ pub(crate) trait Whistleable: Send + Sync {
     /// (`stella_core::driver::step_boundary::consult_hosts` — strictly
     /// between model calls, never mid-tool).
     fn push(&self, text: String);
+
+    /// As [`Self::push`], and into every live worker lane this session
+    /// drives as well. A tap that drives no lanes — every non-interactive
+    /// door — has nothing deeper to reach, so the default is the lead alone.
+    fn push_deep(&self, text: String) {
+        self.push(text);
+    }
 }
 
 /// A minimal steering tap for a non-interactive (non-deck) session: `stella run`

@@ -285,6 +285,10 @@ pub(crate) enum Command {
         /// Target only this session id (repeatable). Default: every live session.
         #[arg(long = "session")]
         session: Vec<String>,
+
+        /// Reach each session's live worker lanes as well as its lead
+        #[arg(long)]
+        deep: bool,
     },
 
     /// Analyze this workspace: domain taxonomy and code graph

@@ -936,6 +936,19 @@ pub enum WorkspaceInput {
     /// the turn going. See [`steering`] for why this is not a cancel, and why
     /// the whole queue travels in one message.
     Steer { agent: AgentId, texts: Vec<String> },
+    /// The composer's broadcast address (`>@all …`, `>@<session-id> …`,
+    /// optionally `--deep`): send `message` to the other live sessions on
+    /// this machine over their whistle sockets — every live one when
+    /// `session` is `None`, that one otherwise — and, with `deep`, into
+    /// their worker lanes too. Queue-free like a sideband command: it is
+    /// about other sessions, so it never waits on this one's turn. The driver
+    /// answers with a chrome note of per-session outcomes, and this session
+    /// is never a target of its own broadcast.
+    Whistle {
+        message: String,
+        session: Option<String>,
+        deep: bool,
+    },
     /// Re-root the Graph tab on `file`: the deck's file picker sends this when
     /// the user selects a file, and the driver answers with a fresh
     /// [`Inbound::GraphSnapshot`] centered on it (the same out-of-band refresh

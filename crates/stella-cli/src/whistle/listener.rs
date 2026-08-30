@@ -94,7 +94,11 @@ async fn accept_loop(listener: UnixListener, tap: Arc<dyn Whistleable>) {
             let Ok(request) = read_frame::<_, WhistleRequest>(&mut stream).await else {
                 return;
             };
-            tap.push(request.text);
+            if request.deep {
+                tap.push_deep(request.text);
+            } else {
+                tap.push(request.text);
+            }
             let _ = write_frame(&mut stream, &WhistleAck { delivered: true }).await;
         });
     }
@@ -131,6 +135,7 @@ mod tests {
             &mut stream,
             &WhistleRequest {
                 text: "stop the compile".to_string(),
+                deep: false,
             },
         )
         .await

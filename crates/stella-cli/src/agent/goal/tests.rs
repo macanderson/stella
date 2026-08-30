@@ -75,6 +75,7 @@ async fn whistle_over_the_socket(socket: &std::path::Path, message: &str) {
         &mut stream,
         &crate::whistle::wire::WhistleRequest {
             text: message.to_string(),
+            deep: false,
         },
     )
     .await
