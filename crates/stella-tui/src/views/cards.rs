@@ -268,28 +268,34 @@ pub(crate) fn fmt_mss(ms: u64) -> String {
 /// A `width` of 0 wraps to nothing rather than to one row per word — at zero
 /// columns there is no row to put a word on.
 ///
-/// Width is counted in `char`s, not display columns, so a row of wide glyphs
-/// wraps late and overflows the card it was measured for. That is what all
-/// three copies did, and the merge left it alone: fixing it moves goldens for
-/// a reason unrelated to the merge, and the two changes would be
-/// indistinguishable in one diff. [`crate::views::models_card`]'s `wrap_parts`
-/// measures display width and is the shape to follow — #5307.
+/// `width` is display columns, measured with `unicode_width` — the same
+/// measure [`span_w`] and [`crate::views::models_card`]'s `wrap_parts` use —
+/// because every caller passes a rect's interior width and a `char` is not a
+/// column: a CJK ideograph or an emoji occupies two, a combining mark zero. A
+/// word wider than `width` *columns* still takes a row of its own; nothing
+/// here splits one.
 pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthStr;
     if width == 0 {
         return Vec::new();
     }
     let mut out: Vec<String> = Vec::new();
     for paragraph in text.lines() {
         let mut line = String::new();
+        let mut line_w = 0usize;
         for word in paragraph.split_whitespace() {
+            let word_w = UnicodeWidthStr::width(word);
             if line.is_empty() {
                 line.push_str(word);
-            } else if line.chars().count() + 1 + word.chars().count() <= width {
+                line_w = word_w;
+            } else if line_w + 1 + word_w <= width {
                 line.push(' ');
                 line.push_str(word);
+                line_w += 1 + word_w;
             } else {
                 out.push(std::mem::take(&mut line));
                 line.push_str(word);
+                line_w = word_w;
             }
         }
         out.push(line);
@@ -365,6 +371,32 @@ mod tests {
             vec!["supercalifragilistic"]
         );
         assert!(wrap("anything", 0).is_empty());
+    }
+
+    /// **The witness (#5307).** A row of wide glyphs fits its column budget.
+    ///
+    /// Counted in `char`s, `"日本 語言"` reads as 5 and packs onto one row of
+    /// a 5-column card — 9 display columns, overflowing the card it was
+    /// measured for. Counted in columns it is 9 and breaks.
+    #[test]
+    fn wide_glyphs_wrap_to_the_column_budget() {
+        let out = wrap("日本 語言 文字", 5);
+        assert_eq!(out, vec!["日本", "語言", "文字"], "{out:?}");
+        for row in &out {
+            let w = unicode_width::UnicodeWidthStr::width(row.as_str());
+            assert!(w <= 5, "{row:?} is {w} cols in a 5-col budget");
+        }
+    }
+
+    /// The zero-width direction of #5307: a combining mark occupies no column,
+    /// so text carrying them must not wrap early. Each word here is four
+    /// `char`s (two letters, two combining acutes) but two columns, so both
+    /// fit one 5-column row; the `char` measure saw 4 + 1 + 4 = 9 and broke.
+    #[test]
+    fn combining_marks_do_not_wrap_early() {
+        let word = "e\u{301}e\u{301}";
+        let out = wrap(&format!("{word} {word}"), 5);
+        assert_eq!(out.len(), 1, "two 2-col words share a 5-col row: {out:?}");
     }
 
     /// **The witness (#5156).** A line break in the input survives.
