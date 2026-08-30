@@ -32,13 +32,7 @@ So the same pattern repeats everywhere. A candidate change is generated
 cheaply, tested against a held-out set it never trained on, and only
 promoted if it shows a real, measured improvement.
 
-That last part, measured improvement, is the goal, but it isn't what ships
-today. The setting that would enforce it exists but is off by default
-(`AutoCreateConfig::require_measured_lift` is `false`). So right now, a
-skill gets promoted based on how often and how recently it's used, which is
-exactly what the real goal is meant to rule out. Turning that setting on is
-what closes the gap. The section below on what's built today says which
-parts still promote this simpler way.
+For skills that clause ships. `context.promotion.skill.require_measured_lift` defaults **on**, so a mined candidate is held in a queue until a with-skill/without-skill comparison over the turns its trigger matched clears the bar. Frequency and recurrence decide what gets *proposed*; a measured lift is what promotes it. A workspace with no measurement history yet can set the switch to `false` to bootstrap. The components listed below say which of the others still promote on frequency alone.
 
 ## The components
 
@@ -146,15 +140,12 @@ comes right after.
     when it clearly wins, and keeps a record so you can roll it back. Runs
     offline, no API key needed.
   </SpecCard>
-  <SpecCard title="Partly there — mining without the gate">
-    A rules miner writes rules it finds to `.stella/rules/`, and
-    reflections get mined into skills. Both still promote based on how
-    often and how recently something is used, not on a measured
-    improvement. The piece that would judge real improvement already
-    exists (`stella-core`'s `skills::appraisal`, which scores a skill as
-    helping, hurting, or blocked by a guard) — what's missing is the
-    evaluation run that feeds it real data. Closing that gap is exactly
-    what experience distillation is for.
+  <SpecCard title="Partly there — the rules miner still has no gate">
+    A rules miner ships and writes mined rules to `.stella/rules/`, and reflections are mined
+    into skills. The skill half now runs the full loop: live turns are recorded as trials
+    against the skills whose trigger matched them, a sweep appraises the window, and a measured
+    lift is what promotes a queued candidate — a run of negatives retires one. Mined **rules**
+    still promote on frequency and recurrence, with no evaluation run feeding them.
   </SpecCard>
   <SpecCard title="Shipped — the nightly loop-bench gate">
     `.github/workflows/nightly-bench.yml` runs `loop-bench` on a schedule,

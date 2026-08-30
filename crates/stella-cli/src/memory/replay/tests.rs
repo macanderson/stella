@@ -193,7 +193,20 @@ fn replay_root(dir: &tempfile::TempDir) -> std::path::PathBuf {
 
 async fn replay(corpus: &Trace) -> (ReplaySummary, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let summary = Replayer::run(corpus, &replay_root(&dir))
+    let root = replay_root(&dir);
+    // The replay workspace opts into bootstrap promotion
+    // (`require_measured_lift: false`): a replayed corpus has no appraisal
+    // ledger, so under the shipped measured gate every mined
+    // candidate would be held and the corpus would "build nothing" for a
+    // reason these assertions are not about — the same shape as the
+    // `include_workspace_skills` trap the module docs warn against.
+    std::fs::create_dir_all(root.join(".stella")).expect("stella dir");
+    std::fs::write(
+        root.join(".stella/settings.json"),
+        r#"{"context":{"promotion":{"skill":{"require_measured_lift":false}}}}"#,
+    )
+    .expect("bootstrap settings");
+    let summary = Replayer::run(corpus, &root)
         .await
         .expect("the trace replays");
     (summary, dir)

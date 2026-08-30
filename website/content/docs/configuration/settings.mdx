@@ -561,12 +561,10 @@ observations from your sessions, drafting directive proposals from them, decidin
 of those get promoted, and measuring whether the context it picked actually helped.
 
 <Callout type="info">
-  This block is currently **inert**. Every field parses, round-trips, and merges, but no
-  code reads it yet — `context.lifecycle.enabled` defaults to `false`, which keeps
-  today's behavior unchanged. The schema ships ahead of the feature so a later release
-  can turn it on without a settings migration, and so the vocabulary below is settled by
-  round-trip tests rather than invented later. Read the values here as the committed
-  vocabulary and defaults, not as a description of a running mechanism.
+  The lifecycle ships **on** — `context.lifecycle.enabled` defaults to `true`, and
+  setting it `false` is the opt-out that restores the pre-adaptive-context behavior:
+  the lexical learning loop, no frame identity, no lifecycle ledger. The vocabulary
+  below is pinned by round-trip tests.
 </Callout>
 
 **Learning mode** (how much of the loop runs) and **governance mode** (who
@@ -582,7 +580,7 @@ field.
 ### Lifecycle and modes
 
 <CardGrid size="md">
-  <OptionCard name="context.lifecycle.enabled" defaultValue="false">
+  <OptionCard name="context.lifecycle.enabled" defaultValue="true">
     The master switch for the whole lifecycle. While it is off, every other field in the
     `context` block is ignored.
   </OptionCard>
@@ -625,6 +623,25 @@ what confirmation a blocking directive needs. Confidence values are on a `0`–`
   >
     A blocking directive always requires an explicit human confirmation. Not a field to
     turn off lightly.
+  </OptionCard>
+  <OptionCard name="context.promotion.skill.require_measured_lift" defaultValue="true">
+    Whether a mined skill candidate must carry a measured lift — an appraisal that found
+    injecting it improved outcomes — before it is written as a `SKILL.md`. Set `false` for
+    bootstrap: a fresh workspace with no appraisal history mints on raw mining eligibility
+    until its first skills accrue trials.
+
+    The measurement compares turns the skill's trigger matched *and* it was injected against
+    turns the trigger matched and it was not. The second arm comes from the A/B recall control,
+    so setting `context.retrieval.ab_recall_rate` to `0` leaves no baseline to measure against:
+    appraisals stay `Insufficient`, and nothing is promoted or retired on measurement.
+  </OptionCard>
+  <OptionCard
+    name="context.promotion.skill.demote_after_consecutive_negatives"
+    defaultValue="3"
+  >
+    How many consecutive demotable appraisals (harmful or inert) an auto-created skill
+    must accrue before it is demoted out of selection. Its file is never deleted; the
+    demotion is an append-only ledger event.
   </OptionCard>
 </CardGrid>
 
@@ -679,7 +696,7 @@ want:
 ```json title="~/.stella/settings.json"
 {
   "context": {
-    "lifecycle": { "enabled": false },
+    "lifecycle": { "enabled": true },
     "learning": { "mode": "off" },
     "governance": { "mode": "solo" },
     "promotion": {
@@ -689,7 +706,11 @@ want:
         "auto_activate_at_confidence": 85,
         "initial_enforcement": "advisory"
       },
-      "blocking_directive": { "requires_explicit_confirmation": true }
+      "blocking_directive": { "requires_explicit_confirmation": true },
+      "skill": {
+        "require_measured_lift": true,
+        "demote_after_consecutive_negatives": 3
+      }
     },
     "efficacy": {
       "min_attributable_uses": 5,

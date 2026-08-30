@@ -107,15 +107,15 @@ fn a_held_candidate_is_queued_exactly_once() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The join is recorded for every *known* skill, not only the selected ones:
-/// the unselected turns are the control arm, and a ledger of selections alone
-/// can only measure a skill against itself.
+/// The join is recorded for every *trigger-matched* skill, not only the
+/// injected ones: the uninjected turns are the control arm, and a ledger of
+/// injections alone can only measure a skill against itself.
 #[test]
 fn the_turn_join_records_the_control_arm_too() {
     let root = workspace("join");
-    let known = vec!["helper".to_string(), "bystander".to_string()];
-    record_turn(&root, &known, &["helper".to_string()], &trial(true));
-    record_turn(&root, &known, &[], &trial(false));
+    let matched = vec!["helper".to_string(), "bystander".to_string()];
+    record_turn(&root, &matched, &["helper".to_string()], &trial(true));
+    record_turn(&root, &matched, &[], &trial(false));
 
     let stored = read_jsonl::<StoredTrial>(&path(&root, TRIALS_FILE));
     assert_eq!(stored.len(), 4, "two skills × two turns");

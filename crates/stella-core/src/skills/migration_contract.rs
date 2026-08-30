@@ -212,9 +212,9 @@ fn the_eval_gate_is_checked_after_the_cap_and_the_no_clobber_guard() {
         score: 30.0,
     };
     let existing = vec![".stella/skills/already-there.md".to_string()];
-    // Armed explicitly: the gate ships off (see
-    // `AutoCreateConfig::require_measured_lift`), and what this pins is where
-    // it sits in the order once something turns it on.
+    // Armed explicitly rather than through the default (which is `true`),
+    // so this pin on the gate's *position* in the order cannot silently
+    // loosen if the default ever moves.
     let config = AutoCreateConfig {
         require_measured_lift: true,
         ..AutoCreateConfig::default()

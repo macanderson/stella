@@ -73,6 +73,12 @@ pub const WITHOUT_SKILL_ARM: &str = "without_skill";
 pub struct SkillTrial {
     /// The pairing key — a task name offline, one shared key for a live
     /// window. See the module docs.
+    ///
+    /// The live key carries no scoping of its own, so the caller supplies it
+    /// by choosing which turns to record: only the turns whose prompt matched
+    /// the skill's trigger belong in either arm. Feed the window every turn
+    /// and a skill's baseline becomes the session's overall success rate,
+    /// which moves with the work rather than with the skill.
     pub task: String,
     /// Whether the skill was injected into this turn. The caller reads this
     /// off a recorded selection, never off the work the turn produced.
