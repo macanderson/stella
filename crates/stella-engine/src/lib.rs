@@ -107,9 +107,11 @@
 //! It re-exports and documents; it opens no sockets, spawns no processes and
 //! touches no files, exactly like the `stella-core` it fronts. Everything the
 //! engine needs from the outside world arrives through the ports
-//! ([`Provider`], [`ToolExecutor`], [`TurnGate`], [`TurnSteering`],
-//! [`SteeringRequery`], [`TurnHalt`], [`ProviderOutcomes`],
+//! ([`Provider`], [`ToolExecutor`], [`Sleeper`], [`TurnGate`],
+//! [`TurnSteering`], [`SteeringRequery`], [`TurnHalt`], [`ProviderOutcomes`],
 //! [`FallbackResolver`], [`CheckpointSink`]), which the host implements.
+//! [`Sleeper`] is first among them in practice: [`Engine::with_sleeper`] is the
+//! only constructor and takes one, where every other port is optional.
 //!
 //! # What earns a re-export: the closure rule
 //!
@@ -239,13 +241,30 @@ pub use stella_core::loop_detect::LoopDetectionConfig;
 // which is the second-source-of-truth defect `Engine::max_steps` exists to
 // avoid.
 pub use stella_core::budget::{BudgetAxis, BudgetGuard, BudgetOutcome, DeadlineOutcome};
+// The `ToolExecutor` half is obligation 1 read at the method level, which the
+// two earlier passes did not reach. Four of its methods carry a
+// "# Decorators MUST forward this" section, and a host that wraps its own
+// executor — a tap, a filter, a policy layer — could name none of their types
+// here: `WaitRequest`, `LiveService`, `DispatchGate` and `ToolContract`. Each
+// has a trait default, so the wrapper compiles clean and silently takes the
+// default instead of the inner executor's answer: parked waits are dropped and
+// the model goes back to burning steps on polling, the end-of-turn
+// live-service assertion stops firing, and a dispatching decorator above the
+// tap finds no gate and goes ungated. `DispatchAdmission` and `admit_dispatch`
+// come with the gate, because forwarding it is only half of what the port asks
+// — a decorator that dispatches a name of its own has to run the admission.
 pub use stella_core::ports::{
-    FallbackResolver, ProviderOutcomes, ResolvedFallback, SteeringRequery, ToolExecutor, TurnGate,
-    TurnSteering,
+    DispatchAdmission, DispatchGate, FallbackResolver, LiveService, ProviderOutcomes,
+    ResolvedFallback, SteeringRequery, ToolExecutor, TurnGate, TurnSteering, admit_dispatch,
 };
 pub use stella_core::receipts::RECALL_MARKER;
 pub use stella_core::retry::{RetryPolicy, Sleeper};
 pub use stella_core::steering::TurnSignal;
+// `WaitCall` rides along because it is the type of `WaitRequest`'s public
+// `probe` and `on_wake` fields: a host that can name the request and not its
+// call can forward one but never build one, which is obligation 1 again one
+// field deeper.
+pub use stella_core::waiting::{WaitCall, WaitRequest};
 // Obligation 1 of the closure rule (stated in full in this module's docs, and
 // not restated here — a rule written twice is a rule that
 // drifts). `Provider` alone was not enough — `complete_ref` takes a
@@ -267,7 +286,7 @@ pub use stella_protocol::{
     AgentEvent, Attachment, AttachmentKind, AttachmentSource, BudgetMode, CompletionMessage,
     CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason, GenerationParams,
     MessageRole, ModelCallRole, Provider, ProviderError, ReasoningEffort, ServiceTier, ToolCall,
-    ToolCallObserver, ToolOutput, ToolResult, ToolSchema, Verbosity,
+    ToolCallObserver, ToolContract, ToolOutput, ToolResult, ToolSchema, Verbosity,
 };
 
 /// Encode a checkpoint for durable storage.

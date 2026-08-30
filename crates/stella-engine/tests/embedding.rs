@@ -45,9 +45,10 @@ use tokio::sync::mpsc;
 
 use stella_engine::{
     AbortKind, AgentEvent, BudgetGuard, BudgetMode, CheckpointSink, CompletionMessage,
-    CompletionRequestRef, CompletionResult, CompletionUsage, Engine, EngineConfig, Provider,
-    ProviderError, RECALL_MARKER, Sleeper, SteeringRequery, ToolCall, ToolExecutor, ToolOutput,
-    ToolSchema, TurnOutcome, TurnSignal,
+    CompletionRequestRef, CompletionResult, CompletionUsage, DispatchAdmission, DispatchGate,
+    Engine, EngineConfig, LiveService, Provider, ProviderError, RECALL_MARKER, Sleeper,
+    SteeringRequery, ToolCall, ToolContract, ToolExecutor, ToolOutput, ToolSchema, TurnOutcome,
+    TurnSignal, WaitCall, WaitRequest, admit_dispatch,
 };
 
 /// The one tool the host advertises. Its only job is to make the model's first
@@ -172,6 +173,135 @@ impl ToolExecutor for HostTools {
             .push(name.to_string());
         ToolOutput::ok("probed".to_string())
     }
+}
+
+/// An executor that answers every forwardable method with something other
+/// than its default, so a wrapper that drops one is visible.
+#[derive(Default)]
+struct LoadedTools {
+    inner: HostTools,
+}
+
+#[async_trait]
+impl ToolExecutor for LoadedTools {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        self.inner.schemas()
+    }
+
+    async fn execute(&self, name: &str, input: &serde_json::Value) -> ToolOutput {
+        self.inner.execute(name, input).await
+    }
+
+    fn drain_wait_request(&self) -> Option<WaitRequest> {
+        Some(WaitRequest {
+            description: "CI settles".to_string(),
+            probe: WaitCall {
+                name: HOST_TOOL.to_string(),
+                input: serde_json::json!({}),
+            },
+            baseline: "red".to_string(),
+            on_wake: None,
+            poll_interval_secs: 30,
+            timeout_secs: 600,
+        })
+    }
+
+    fn live_services(&self) -> Vec<LiveService> {
+        vec![LiveService {
+            handle: "proc-3".to_string(),
+            name: Some("dev server".to_string()),
+            display: "npm run dev".to_string(),
+        }]
+    }
+
+    fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
+        Some(&RefusingGate)
+    }
+}
+
+/// A gate that refuses everything, so "the gate was forwarded" and "no gate
+/// was found" cannot be confused for one another.
+struct RefusingGate;
+
+#[async_trait]
+impl DispatchGate for RefusingGate {
+    async fn admit(&self, _name: &str, _input: &serde_json::Value) -> DispatchAdmission {
+        DispatchAdmission::Refuse(ToolOutput::error("refused by the host's gate".to_string()))
+    }
+}
+
+/// The wrapper a host writes: a tap that adds behaviour of its own and
+/// forwards the rest.
+///
+/// Four of `ToolExecutor`'s methods carry a "# Decorators MUST forward this"
+/// section, and each has a trait default, so a wrapper that cannot name their
+/// types compiles clean and silently answers the default. Writing this impl
+/// through the facade is half the assertion; the test below is the other half.
+struct HostTap<'a> {
+    inner: &'a dyn ToolExecutor,
+}
+
+#[async_trait]
+impl ToolExecutor for HostTap<'_> {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        self.inner.schemas()
+    }
+
+    fn contracts(&self) -> Vec<ToolContract> {
+        self.inner.contracts()
+    }
+
+    async fn execute(&self, name: &str, input: &serde_json::Value) -> ToolOutput {
+        self.inner.execute(name, input).await
+    }
+
+    fn drain_wait_request(&self) -> Option<WaitRequest> {
+        self.inner.drain_wait_request()
+    }
+
+    fn live_services(&self) -> Vec<LiveService> {
+        self.inner.live_services()
+    }
+
+    fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
+        self.inner.dispatch_gate()
+    }
+}
+
+/// A host can wrap its own tool surface without losing the four mechanisms
+/// the port tells decorators to forward.
+///
+/// Before the facade exported these types the impl above could not be
+/// written at all: `WaitRequest`, `LiveService`, `DispatchGate` and
+/// `ToolContract` were unspellable here, so a host's tap took the trait
+/// defaults. Parked waits were dropped and the model went back to burning
+/// steps on polling, the end-of-turn live-service assertion stopped firing,
+/// and a dispatching decorator above the tap found no gate and ran ungated.
+#[tokio::test]
+async fn a_host_can_wrap_its_tool_surface_without_dropping_what_the_port_forwards() {
+    let base = LoadedTools::default();
+    let tap = HostTap { inner: &base };
+
+    let parked = tap.drain_wait_request().expect("the wait request survives");
+    assert_eq!(parked.description, "CI settles");
+    assert_eq!(parked.probe.name, HOST_TOOL);
+
+    let live = tap.live_services();
+    assert_eq!(live.len(), 1, "the live service survives");
+    assert_eq!(live[0].handle, "proc-3");
+
+    assert_eq!(
+        tap.contracts().len(),
+        tap.schemas().len(),
+        "every advertised tool still carries a contract"
+    );
+
+    let admitted = admit_dispatch(tap.dispatch_gate(), HOST_TOOL, &serde_json::json!({})).await;
+    assert!(
+        matches!(admitted, DispatchAdmission::Refuse(_)),
+        "the gate is forwarded, so the dispatch is still governed — a dropped \
+         gate reads as `Admit` and the call runs ungated"
+    );
 }
 
 struct NoopSleeper;
