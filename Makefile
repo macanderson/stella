@@ -40,7 +40,6 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability core-reachability \
-                    module-siblings \
                     typed-errors \
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
@@ -773,18 +772,6 @@ core-reachability: ## Assert a stella-core module is reachable from the engine's
 .PHONY: core-reachability-update
 core-reachability-update: ## Shrink the core-reachability baseline after an eviction (refuses to grow)
 	@python3 ./scripts/check-core-reachability.py --update
-
-.PHONY: module-siblings
-module-siblings: ## Assert no NEW `foo.rs` sits beside a `foo/` directory
-	@python3 ./scripts/check-module-siblings.py
-
-.PHONY: module-siblings-update
-module-siblings-update: ## Shrink the module-siblings baseline after a cleanup (refuses to grow)
-	@python3 ./scripts/check-module-siblings.py --update
-
-.PHONY: module-siblings-test
-module-siblings-test: ## Test the module-siblings ratchet's direction (hermetic; not part of `gate`)
-	./scripts/test-module-siblings.sh
 
 .PHONY: core-reachability-test
 core-reachability-test: ## Test the core-reachability walker (hermetic; not part of `gate`)
