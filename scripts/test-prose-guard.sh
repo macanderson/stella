@@ -701,6 +701,23 @@ grade_baseline "$r" docs/a.md 7.00
 expect_fail "G4 prose above its grade ceiling fails" "$r"
 expect_update_refused "G4 --update refuses to raise a grade" "$r"
 
+# ── G8: code lines in a shell file are not prose ─────────────────────────────
+# The file is full of hard-to-read CODE and holds almost no comments, so the
+# grade check must skip it rather than score the pipeline as sentences.
+r="$(new_root g8)"
+mkdir -p "$r/scripts"
+{
+  printf '#!/bin/sh\n'
+  i=0
+  while [ "$i" -lt 30 ]; do
+    printf 'organizational_infrastructure_configuration="$(comprehensive_architectural_documentation --institutional)" ; verification.\n'
+    i=$((i + 1))
+  done
+} >"$r/scripts/run.sh"
+(cd "$r" && git add -A) >/dev/null 2>&1
+baseline "$r"
+expect_pass "G8 code lines are not scored as prose" "$r"
+
 # ── G5: a missing grade baseline refuses ─────────────────────────────────────
 r="$(new_root g5)"
 easy_doc "$r" docs/a.md 12

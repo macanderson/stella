@@ -503,6 +503,24 @@ def _sentence_grade(words: list[str]) -> float:
     return 0.39 * len(words) + 11.8 * (syllables / len(words)) - 15.59
 
 
+def prose_lines(path: str, lines: list[str]) -> list[str]:
+    """The lines a reader reads as prose.
+
+    In a code file that means comment lines only -- a shell pipeline or a
+    match arm is not a sentence, and counting it as one turns the grade
+    into noise. In a markdown file every line is prose.
+    """
+    if path.endswith((".md", ".mdx")):
+        return lines
+    marker = "#" if path.endswith((".py", ".sh", ".toml")) else "//"
+    kept = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith(marker) and not stripped.startswith("#!"):
+            kept.append(stripped)
+    return kept
+
+
 def reading_grade(lines: list[str]) -> tuple[int, list[tuple[float, str]]] | None:
     """A file's Flesch-Kincaid grade in hundredths, with its worst sentences.
 
@@ -546,7 +564,7 @@ def grades(root: Path, paths: list[str]) -> dict[str, tuple[int, list]]:
             text = (root / path).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        scored = reading_grade(prose_only(text))
+        scored = reading_grade(prose_lines(path, prose_only(text)))
         if scored is not None:
             out[path] = scored
     return out
