@@ -106,21 +106,18 @@
 //!
 //! It re-exports and documents; it opens no sockets, spawns no processes and
 //! touches no files, exactly like the `stella-core` it fronts. Everything the
-//! engine needs from the outside world arrives through the ports
-//! ([`Provider`], [`ToolExecutor`], [`Sleeper`], [`TurnGate`],
-//! [`TurnSteering`], [`SteeringRequery`], [`TurnHalt`], [`ProviderOutcomes`],
-//! [`FallbackResolver`], [`CheckpointSink`]), which the host implements.
-//! [`Sleeper`] is first among them in practice: [`Engine::with_sleeper`] is the
-//! only constructor and takes one, where every other port is optional.
+//! engine needs from the outside world arrives through the ports, which the
+//! host implements: [`Sleeper`], which [`Engine::with_sleeper`] requires
+//! because it is the only constructor, and then [`Provider`],
+//! [`ToolExecutor`], [`TurnGate`], [`TurnSteering`], [`SteeringRequery`],
+//! [`TurnHalt`], [`ProviderOutcomes`], [`FallbackResolver`] and
+//! [`CheckpointSink`], each of which is optional.
 //!
 //! # What earns a re-export: the closure rule
 //!
-//! This is the crate's whole editorial policy, and it is stated here and in
-//! `README.md` in the same words — the two used to disagree, one
-//! saying a re-export is earned only when a host "genuinely cannot drive a
-//! turn without it" and the other stating a strictly wider per-port closure,
-//! which left `Engine::with_requery` reachable through the facade and
-//! unusable through it (#3715).
+//! This is the crate's whole editorial policy, and `README.md` states it in
+//! the same words. A narrower rule in one of the two places is what leaves a
+//! builder reachable through the facade and uncallable through it.
 //!
 //! **The rule.** A host must be able to write, naming nothing but
 //! `stella_engine::` paths:
