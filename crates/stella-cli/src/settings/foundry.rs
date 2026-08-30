@@ -122,7 +122,7 @@ impl Serialize for FoundryAutonomy {
 
 /// The `foundry` block with every absence filled from the defaults — what
 /// the end-of-turn hook and the autonomy pipeline actually consume.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FoundryConfig {
     /// The detector thresholds, ready to hand to `detect_tool_gaps`.
     pub detection: GapDetectionConfig,
@@ -133,17 +133,6 @@ pub struct FoundryConfig {
     pub breaker: BreakerPolicy,
     /// Foundry-built tools allowed to reach the network.
     pub network_allowlist: Vec<String>,
-}
-
-impl Default for FoundryConfig {
-    fn default() -> Self {
-        Self {
-            detection: GapDetectionConfig::default(),
-            autonomy: FoundryAutonomy::default(),
-            breaker: BreakerPolicy::default(),
-            network_allowlist: Vec::new(),
-        }
-    }
 }
 
 /// `true` iff `name` matches `^[a-z][a-z0-9_]{1,63}$` — the custom-tool name
