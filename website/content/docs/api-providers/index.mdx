@@ -1,10 +1,11 @@
 ---
 title: API Providers
-description: Every provider stella speaks to — the matrix, the auto-detection order, the credential chain, and the per-provider differences that actually matter.
+description: Every provider stella speaks to — the matrix, the auto-detection order, the credential chain, and the differences that matter for each one.
 ---
 
-stella is BYOK and vendor-agnostic: no proxy in the middle, no markup, and each
-provider's native wire dialect spoken directly. Switching vendors is a `--model` flag.
+stella is BYOK (bring your own key) and works with any vendor. There's no proxy in the
+middle, no markup, and each provider's native wire dialect is spoken directly. Switching
+vendors is just a `--model` flag.
 
 <ProviderGrid />
 
@@ -17,8 +18,8 @@ stella --model deepseek/deepseek-chat    run "add a retry to the upload path"
 
 ## The matrix
 
-Detection rank is the order auto-detection tries providers in; the default model is what
-you get when you name none.
+Detection rank is the order auto-detection tries providers in. The default model is
+what you get when you name none.
 
 | # | Provider | Credential env var | Default model | Wire dialect |
 | --- | --- | --- | --- | --- |
@@ -35,8 +36,8 @@ you get when you name none.
 
 ## Catalog pricing
 
-List prices from the in-binary seed catalog, in USD per million tokens. `stella models
-refresh` re-syncs from [models.dev](https://models.dev).
+List prices come from the built-in seed catalog, in USD per million tokens. `stella
+models refresh` re-syncs them from [models.dev](https://models.dev).
 
 | Provider / model | Context | In | Out | Cached in |
 | --- | --- | --- | --- | --- |
@@ -59,52 +60,53 @@ The [model guide](/docs/api-providers/models) covers which model fits which seat
 ## Reasoning and effort support
 
 `reasoning` and `effort` are set per agent in
-[`agent_engine_config`](/docs/configuration/agent-engine-config). What reaches the wire
-differs by provider, and a parameter a provider cannot express is dropped rather than
-failed:
+[`agent_engine_config`](/docs/configuration/agent-engine-config). What actually reaches
+the wire differs by provider. If a provider can't express a parameter, stella drops it
+instead of failing the request:
 
 | Provider | `reasoning` | `effort` | Notes |
 | --- | --- | --- | --- |
-| `anthropic` | `thinking: {type: adaptive}` | `output_config.effort`, all five tiers 1:1 | Sampling params never sent on Claude 4.6+ and the 5-line |
+| `anthropic` | `thinking: {type: adaptive}` | `output_config.effort`, all five tiers 1:1 | Sampling params are never sent on Claude 4.6+ and the 5 family |
 | `openai` | `reasoning.effort` | `low`/`medium`/`high`; **`xhigh` and `max` collapse to `high`** | Also honours `verbosity` and `service_tier` |
-| `gemini` / `vertex` | `thinkingConfig.thinkingLevel` | `low`; **everything else maps to `high`** | `reasoning: "off"` gives the *minimum* level, not zero |
-| `zai` | `thinking: {type: enabled\|disabled}` | **dropped** | Differentiate a GLM verifier with `prompt`, not `effort` |
+| `gemini` / `vertex` | `thinkingConfig.thinkingLevel` | `low`; **everything else maps to `high`** | `reasoning: "off"` gives the minimum level, not zero |
+| `zai` | `thinking: {type: enabled\|disabled}` | **dropped** | To make a GLM verifier different, use `prompt`, not `effort` |
 | `xai` | `reasoning_effort` | `low`/`medium`/`high`; `xhigh`/`max` collapse | **Gated off entirely on `grok-4`** and its dated snapshots — not on the `grok-4.3` default |
-| `deepseek` | not sent | **dropped** | Shape it with `prompt` and `params.max_tokens` |
-| `openrouter` | `reasoning` object | all five tiers 1:1 | Gateway translates per routed vendor; an unadvertised tier is normalized, not rejected |
-| `bedrock` | legacy `budget_tokens` shape | **dropped** | Converse `inferenceConfig` has slots only for `max_tokens`, `temperature`, `top_p` |
-| `local` | not sent | **dropped** | No portable reasoning field exists across OpenAI-compatible servers |
+| `deepseek` | not sent | **dropped** | Shape it with `prompt` and `params.max_tokens` instead |
+| `openrouter` | `reasoning` object | all five tiers 1:1 | The gateway translates per routed vendor; an unadvertised tier is normalized, not rejected |
+| `bedrock` | legacy `budget_tokens` shape | **dropped** | Converse `inferenceConfig` only has slots for `max_tokens`, `temperature`, `top_p` |
+| `local` | not sent | **dropped** | No reasoning field works across every OpenAI-compatible server |
 
 <Callout type="warn">
-  Claude 4.6 and the 5-line answer any sampling parameter with an HTTP 400, so
-  `temperature`, `top_p`, and `top_k` are omitted unconditionally on `anthropic`.
-  Turning `reasoning` off does not buy temperature control back. Claude 4.5 and below
-  use the legacy `thinking: {type: enabled, budget_tokens: N}` shape and do accept
-  sampling; stella classifies by model id and sends whichever the generation requires.
+  Claude 4.6 and the 5 family answer any sampling parameter with an HTTP 400, so
+  `temperature`, `top_p`, and `top_k` are always left out on `anthropic`. Turning
+  `reasoning` off does not bring temperature control back. Claude 4.5 and earlier use the
+  `thinking: {type: enabled, budget_tokens: N}` shape and do accept sampling. stella
+  checks the model id and sends whichever shape that generation needs.
 </Callout>
 
 ## Auto-detection
 
 With no `--model` and no configured default, stella picks the first provider in the
-matrix above that has a resolvable credential.
+matrix above that has a usable credential.
 
 <Callout type="info">
-  Both ends of that rank order are arguments about what a credential *means*.
+  Both ends of that rank order come from what having a credential actually means.
 
-  OpenRouter sits first because `OPENROUTER_API_KEY` is gateway-specific — nobody has one
-  exported by accident — and it reaches every other vendor in the matrix. An instance
-  holding one has already decided how it wants to route, so stella gives it a whole
-  [default engine posture](#the-default-posture), not just a default model.
+  OpenRouter sits first because `OPENROUTER_API_KEY` is specific to that gateway. Nobody
+  has one exported by accident, and it reaches every other vendor in the matrix. An
+  instance holding one has already decided how it wants to route, so stella gives it a
+  whole [default engine posture](#the-default-posture), not just a default model.
 
-  Vertex and Bedrock sit last for the mirror-image reason: they key off generic cloud
+  Vertex and Bedrock sit last for the opposite reason: they key off generic cloud
   credentials (`VERTEX_ACCESS_TOKEN`, `AWS_ACCESS_KEY_ID`) that are often exported for
-  unrelated reasons. Generic cloud credentials must not hijack detection — pin them with
+  unrelated reasons. Generic cloud credentials shouldn't hijack detection — pin them with
   `--model vertex/…` or `--model bedrock/…`. The `local` pseudo-provider is never
   auto-detected.
 </Callout>
 
-A settings-configured `default_model` sits between the `--model` flag and auto-detection:
-an explicit flag wins, but a configured default beats "first provider with a key".
+A settings-configured `default_model` sits between the `--model` flag and
+auto-detection: an explicit flag wins, but a configured default beats "first provider
+with a key."
 
 ```json title="~/.stella/settings.json"
 {
@@ -146,7 +148,7 @@ Two `settings.json` fields reroute steps 2 and 3:
 <Callout type="warn">
   In a project's `.stella/settings.json`, the credential-routing fields — `base_url`,
   `api_key`, `api_key_env` — are ignored (with a stderr notice) unless
-  `STELLA_TRUST_PROJECT=1`: a cloned repo must not redirect where your key is sent. User
+  `STELLA_TRUST_PROJECT=1`. A cloned repo must not redirect where your key is sent. User
   scope always applies. See
   [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
   Prefer an env var or `credentials.toml` over `--api-key`, which is visible in shell
@@ -169,32 +171,33 @@ dialect does not change with it.
 `--base-url` (env form `STELLA_BASE_URL`) does the same for one run and outranks the
 settings value.
 
-## Per-provider deltas
+## Per-provider differences
 
 Everything above is shared. These are the differences worth knowing.
 
 ### Anthropic
 
-Prompt caching is first-class: stella meters both cache reads and cache writes, so
+Prompt caching works fully here: stella meters both cache reads and cache writes, so
 Observatory figures reflect the true bill. Cached input bills at $0.30/Mtok against a
-$3.00 list price — the 10× discount on the byte-stable prefix the
+$3.00 list price, a 10x discount on the stable prefix the
 [context engine](/docs/context-engine) maintains.
 
-The **cache window** is the one provider delta you may want to set. Anthropic holds a
+The **cache window** is the one setting here you may want to change. Anthropic holds a
 written prefix for 5 minutes by default and offers a 1-hour window per request. stella
-picks by surface: `stella chat` and `stella resume` ask for the hour, every headless run
-keeps the 5-minute default. The reason is arithmetic — a 1-hour write bills 2× input
-against the short window's 1.25×, and that premium only earns its keep when turns are far
-enough apart to lose the prefix. An eviction is the expensive event: it re-bills the whole
-prefix at the write rate *and* forfeits the 10× read discount on it. Interactive turns sit
-minutes apart, so the wider window is close to free insurance; a headless run's calls are
-seconds apart and would pay the premium for a prefix that was never going to expire.
-Override either default with
+picks based on the surface: `stella chat` and `stella resume` ask for the hour, every
+headless run keeps the 5-minute default. The reason is cost — a 1-hour write bills at
+2x the input rate against the short window's 1.25x, and that premium only pays off when
+turns are far enough apart to lose the prefix. An eviction is the expensive event: it
+re-bills the whole prefix at the write rate *and* loses the 10x read discount on it.
+Interactive turns sit minutes apart, so the wider window is close to free insurance; a
+headless run's calls are seconds apart and would pay the premium for a prefix that was
+never going to expire. Override either default with
 [`providers.anthropic.cache_ttl`](/docs/configuration/settings) (`"5m"` or `"1h"`).
 
 `params.max_tokens` defaults to **32000 with thinking on, 4096 with it off**. Adaptive
-thinking spends from the same output allowance as the answer, so a max-effort verifier would
-otherwise truncate mid-verdict. A value you set is honoured as-is.
+thinking spends from the same output allowance as the answer, so without this, a
+max-effort verifier could get cut off mid-verdict. A value you set is used exactly as
+given.
 
 ### OpenAI
 
@@ -205,15 +208,15 @@ Two parameters only this provider puts on the wire:
 | `verbosity` | `text.verbosity` | `low`, `medium`, `high` |
 | `service_tier` | `service_tier` | `auto`, `default`, `flex`, `priority` |
 
-Every other adapter drops both silently, so they are only worth setting on an
+Every other adapter drops both silently, so they're only worth setting on an
 OpenAI-routed agent. The built-in `openai` dialect is fixed to OpenAI Responses, so a
-custom `base_url` must speak it (Azure's `/openai/v1` surface does). For a gateway that
-only speaks legacy chat completions, define a custom provider id instead.
+custom `base_url` must speak it too (Azure's `/openai/v1` surface does). For a gateway
+that only speaks the older chat completions format, define a custom provider id instead.
 
 ### Google Gemini
 
-The 1M-token window is the reason to reach for it — whole-repo comprehension, long-log
-analysis, giant-diff review. Give it something that needs one:
+The 1M-token window is the reason to reach for it: whole-repo comprehension, long-log
+analysis, giant-diff review. Give it a task that needs that much room:
 
 ```bash
 stella --model gemini/gemini-3-pro run \
@@ -222,8 +225,9 @@ stella --model gemini/gemini-3-pro run \
 
 ### Google Vertex AI
 
-Same models, same dialect as Gemini; the difference is governance — inference runs inside
-your GCP project, billed to your account, under your IAM and data-residency controls.
+Same models, same dialect as Gemini. The difference is governance: inference runs
+inside your GCP project, billed to your account, under your own IAM and
+data-residency controls.
 
 ```bash
 export VERTEX_ACCESS_TOKEN=$(gcloud auth print-access-token)
@@ -251,45 +255,45 @@ export AWS_REGION=us-east-1         # or AWS_DEFAULT_REGION; default us-east-1
 ```
 
 <Callout type="warn">
-  stella reads **only these environment variables** — it does not walk the AWS credential
-  chain. `AWS_PROFILE`, `~/.aws/credentials`, SSO caches, and IMDS/instance roles are
-  never consulted. On a profile or SSO setup, materialize env vars first:
+  stella reads **only these environment variables** — it does not walk the AWS
+  credential chain. `AWS_PROFILE`, `~/.aws/credentials`, SSO caches, and IMDS/instance
+  roles are never checked. On a profile or SSO setup, turn those into env vars first:
   `eval "$(aws configure export-credentials --profile dev --format env)"`.
 </Callout>
 
 The default model is a cross-region inference profile, not a bare model id: Bedrock
-rejects on-demand invocation of newer Anthropic models without one. The real host is
+rejects on-demand calls to newer Anthropic models without one. The real host is
 region-scoped (`bedrock-runtime.<AWS_REGION>.amazonaws.com`) and built per request.
 
 ### xAI
 
 The seeded default is `grok-4.3`: xAI's flagship on its published model list, with the
-largest context of the current line and its lowest price. `grok-4` retired on
-2026-08-15 and was the default until then.
+largest context in the current lineup and its lowest price.
 
 `grok-4.3` prices in two tiers — the catalog carries the below-200k-input figures, so a
-turn that crosses that boundary is costed low rather than high. `grok-4.6` is the newer
-frontier model for coding and agentic work at roughly 1.6x input and 2.4x output; pin it
-under `providers.xai.default_model` if that trade is worth it to you.
+turn that crosses that boundary is costed low rather than high. `grok-4.6` is a newer
+model for coding and agentic work, at roughly 1.6x the input price and 2.4x the output
+price; pin it under `providers.xai.default_model` if that trade is worth it to you.
 
 <Callout type="warn">
   A `providers.xai.default_model` pinned to `grok-4` still resolves — the catalog keeps
-  the row so an existing config does not hard-error — but the model is retired at the
-  vendor and its seeded prices are stale. It is also the one xAI model stella never
-  sends `effort` to, because it answers the parameter with a 400. Repin it.
+  the row so an existing config does not hard-error — but that model isn't served by
+  the vendor, and its seeded prices are stale. It is also the one xAI model stella never
+  sends `effort` to, because it answers the parameter with a 400. Repin it to a current
+  model.
 </Callout>
 
 ### DeepSeek
 
-The catalog's price floor among hosted models, and the natural triage model for any
-lineup. `deepseek-chat` is the non-thinking model; `deepseek-reasoner` is the reasoning
-one.
+The lowest price in the catalog among hosted models, and a natural choice for triage in
+any lineup. `deepseek-chat` is the non-thinking model; `deepseek-reasoner` is the
+reasoning one.
 
 ### Z.ai
 
 A GLM **coding plan** puts your quota on a dedicated endpoint —
 `https://api.z.ai/api/coding/paas/v4` instead of the pay-per-token
-`https://api.z.ai/api/paas/v4`. Same key, same models, flat subscription instead of a
+`https://api.z.ai/api/paas/v4`. Same key, same models, a flat subscription instead of a
 meter.
 
 ```bash
@@ -298,7 +302,7 @@ export ZAI_GLM_CODING_PLAN=1
 stella config    # Base URL must read https://api.z.ai/api/coding/paas/v4
 ```
 
-Or, durably, in **user scope**:
+Or set it permanently in **user scope**:
 
 ```json title="~/.stella/settings.json"
 {
@@ -311,28 +315,28 @@ Or, durably, in **user scope**:
 <Callout type="warn">
   Endpoint precedence, highest first: `--base-url` / `STELLA_BASE_URL` >
   `ZAI_GLM_CODING_PLAN=1` > `settings.json` `base_url` > the built-in default. A stray
-  `STELLA_BASE_URL` routes you **off** the plan without a word, and a leftover
+  `STELLA_BASE_URL` routes you off the plan without warning, and a leftover
   `ZAI_GLM_CODING_PLAN=1` overrides the settings file. Don't set both. In a project's
   `.stella/settings.json`, `base_url` needs `STELLA_TRUST_PROJECT=1` — a subscription is
-  personal, so put it in user scope.
+  personal, so put it in user scope instead.
 </Callout>
 
-On a coding plan the `$` figures in `stella stats` are notional — stella prices tokens at
-catalog list rates, and you pay the flat subscription. Token counts, step counts, and
+On a coding plan the `$` figures in `stella stats` are notional — stella prices tokens
+at catalog list rates, but you pay the flat subscription. Token counts, step counts, and
 cross-model $/resolved comparisons stay meaningful; absolute dollars for `zai/*` do not.
-`--spend-limit` caps meter against those notional prices too.
+`--spend-limit` also caps against those notional prices.
 
 ### OpenRouter
 
-One key, every vendor. Gateway slugs are `vendor/model` and pass through **unseeded** —
-any slug the gateway serves works verbatim, and a typo fails with OpenRouter's own
-400/404 rather than a stella error. The default model is `moonshotai/kimi-k3`.
+One key, every vendor. Gateway slugs are `vendor/model` and pass through unseeded: any
+slug the gateway serves works exactly as written, and a typo fails with OpenRouter's own
+400/404 error instead of a stella error. The default model is `moonshotai/kimi-k3`.
 
 #### The default posture
 
-One key reaches every vendor, so on OpenRouter the interesting question is not *which
-model* but **which model per role** — and the roles want genuinely different things. With
-no configuration at all, an OpenRouter instance runs:
+One key reaches every vendor, so on OpenRouter the interesting question isn't which
+model, but which model for which role, since each role wants genuinely different things.
+With no configuration at all, an OpenRouter instance runs:
 
 | Role | Model | Why |
 | --- | --- | --- |
@@ -340,56 +344,58 @@ no configuration at all, an OpenRouter instance runs:
 | verifier | `anthropic/claude-opus-5` | a different vendor's strongest reasoner — not the worker grading itself |
 | triage | `z-ai/glm-5.2` | fast and cheap, and it runs on every turn |
 
-Note the verifier is a different **family** from the driver. stella already
-treats cross-family judging as the goal (see `auto_mode`); this default just reaches it
-without asking you to configure anything.
+Note the verifier is a different family from the driver. stella already treats
+cross-family judging as the goal (see `auto_mode`) — this default just does that without
+asking you to configure anything.
 
-This is a *baseline*, not a lock. It composes underneath the whole
+This is a starting point, not a lock. It sits underneath the whole
 [`agent_engine_config`](/docs/configuration/agent-engine-config) scope chain, so any
 field you set is yours — set `default_model` and the session model is whatever you said,
-while the rest of the posture stays. It also applies only when OpenRouter is the provider
-that actually got picked: run `--model anthropic/…` with an OpenRouter key present and you
-have an Anthropic session, with no part of this routed through the gateway.
+while the rest of the posture stays. It also applies only when OpenRouter is the
+provider that actually got picked: run `--model anthropic/…` with an OpenRouter key
+present and you get an Anthropic session, with no part of this routed through the
+gateway.
 
 <Callout type="info">
-  The default used to be `openrouter/auto`, the gateway's own meta-router. A router that
-  picks a different backing model per request is the one thing a coding agent cannot
-  absorb: prompt-cache prefixes stop hitting between turns, tool-call dialect drifts
-  mid-session, and no two turns are comparable when something breaks. `openrouter/auto`
-  still works if you pin it — it is simply no longer the default.
+  A router that picks a different backing model per request is the one thing a coding
+  agent can't handle well: prompt-cache prefixes stop hitting between turns, tool-call
+  dialect drifts mid-session, and no two turns are comparable when something breaks.
+  That's why the default here is a fixed model rather than the gateway's own
+  meta-router, `openrouter/auto`. It still works if you pin it directly.
 </Callout>
 
 #### Pinning the upstream
 
-A gateway is a router, not a vendor: OpenRouter picks the upstream that actually serves a
-request per **app identity**, and it is free to choose a different one between two calls to
-the same slug — a probe carrying stella's own attribution once asked for
-`anthropic/claude-sonnet-5` and was served by `provider: Amazon Bedrock`. That is invisible
-in the ordinary case — you asked for a model family, and you got it — but it means the
-model *provider* behind an OpenRouter-routed run is not something a bare `--model` pins.
+A gateway is a router, not a vendor: OpenRouter picks the upstream that actually serves
+a request based on **app identity**, and it is free to choose a different one between
+two calls to the same slug. In one test, a probe carrying stella's own attribution
+asked for `anthropic/claude-sonnet-5` and was served by `provider: Amazon Bedrock`.
+This is invisible in the ordinary case: you asked for a model family, and you got it.
+But it means the model *provider* behind an OpenRouter-routed run is not something a
+bare `--model` pins.
 
-`--upstream-pin <vendor>` (env `STELLA_UPSTREAM_PIN`, repeatable or comma-separated) fixes
-it: the request carries `provider: {order: [...], allow_fallbacks: false}`, so OpenRouter
-either serves it from the named vendor, in the order given, or the call fails rather than
-silently routing elsewhere.
+`--upstream-pin <vendor>` (env `STELLA_UPSTREAM_PIN`, repeatable or comma-separated)
+fixes it: the request carries `provider: {order: [...], allow_fallbacks: false}`, so
+OpenRouter either serves it from the named vendor, in the order given, or the call fails
+rather than silently routing elsewhere.
 
 ```bash
 stella run "…" --model openrouter/anthropic/claude-fable-5 \
   --upstream-pin z-ai --upstream-pin anthropic
 ```
 
-Reach for it whenever two runs need to be the *same experiment* — a before/after
-comparison, a head-to-head against another agent, anything where "which vendor actually
-answered" is part of what you are claiming stayed fixed. See the
+Use this whenever two runs need to be the same experiment — a before/after comparison,
+a head-to-head against another agent, or anything where "which vendor actually answered"
+needs to stay fixed. See the
 [terminal-bench head-to-head guide](/docs/guides/terminal-bench-head-to-head#pin-the-upstream-when-either-arm-goes-through-a-gateway)
-for the case that motivated it. Inert on every provider that is not a gateway — a direct
+for an example. This does nothing on any provider that is not a gateway — a direct
 `anthropic/…` or `openai/…` session has no routing step to pin.
 
 <Callout type="info">
 `--upstream-pin` is a flag, not a `settings.json` field, on purpose: a benchmark harness
-runs with settings isolation (`STELLA_NO_SETTINGS`), so a settings-defined pin would never
-reach a measured trial. An argument is the only authority that survives that isolation —
-the same reason `--base-url` is one.
+runs with settings isolation (`STELLA_NO_SETTINGS`), so a settings-defined pin would
+never reach a measured trial. A command-line argument is the only thing that survives
+that isolation — the same reason `--base-url` is a flag.
 </Callout>
 
 #### Selecting models
@@ -402,13 +408,14 @@ stella --model openrouter/openrouter/auto          run "let the gateway pick per
 ```
 
 <Callout type="warn">
-  The doubled prefix on the `openrouter/openrouter/auto` line is correct. `--model` splits on the **first** `/`:
-  everything before is the provider id, everything after is the wire slug sent verbatim.
-  Every OpenRouter model id is `vendor/model`, and the meta-router's own id is
-  `openrouter/auto` — so the full spec is `openrouter` + `/` + `openrouter/auto`. Write
-  `--model openrouter/auto` and the wire slug becomes a bare `auto`, which OpenRouter
-  does not serve; stella warns on stderr that it is missing the vendor namespace, but the
-  warning is advisory and the run still fails at the gateway.
+  The doubled prefix on the `openrouter/openrouter/auto` line is correct. `--model`
+  splits on the **first** `/`: everything before is the provider id, everything after is
+  the wire slug sent exactly as written. Every OpenRouter model id is `vendor/model`,
+  and the meta-router's own id is `openrouter/auto` — so the full spec is `openrouter` +
+  `/` + `openrouter/auto`. Write `--model openrouter/auto` instead, and the wire slug
+  becomes a bare `auto`, which OpenRouter does not serve; stella warns on stderr that it
+  is missing the vendor namespace, but the warning is informational only, and the run
+  still fails at the gateway.
 </Callout>
 
 Two routing forms:
@@ -418,40 +425,40 @@ Two routing forms:
 | Flat `model` field | `openrouter/<vendor>/<slug>` | `<vendor>/<slug>` |
 | Per-agent pin | `provider: openrouter` · `model: <vendor>/<slug>` | `<vendor>/<slug>` |
 
-With `provider` set, `model` goes to that provider verbatim with no splitting — which is
-what lets an OpenRouter slug contain a `/` of its own.
+With `provider` set, `model` goes to that provider exactly as written, with no
+splitting — which is what lets an OpenRouter slug contain a `/` of its own.
 
 Verifier-diversity logic does not treat "openrouter" as one family: an OpenRouter spec's
 family is the routed slug's **vendor prefix**, so `openrouter/openai/gpt-5.5` counts as
-OpenAI and cross-family preference works through the gateway.
+OpenAI, and cross-family preference works through the gateway too.
 
 <Callout type="info">
   **Cost telemetry comes from the gateway, not the catalog.** Gateway slugs are unseeded,
   so there is no local list price. stella requests OpenRouter's usage accounting on every
-  call — and sends app-attribution headers — and takes the gateway's reported per-call
-  cost as authoritative. If a call's final usage frame carries no cost, that call falls
-  back to `$0`; treat the OpenRouter dashboard as the reconciliation source of record.
-  You also add a hop: traffic goes through OpenRouter's servers rather than to each
+  call, sends app-attribution headers, and treats the gateway's reported per-call cost as
+  the source of truth. If a call's final usage frame carries no cost, that call falls
+  back to `$0`; treat the OpenRouter dashboard as the record to reconcile against. You
+  also add a hop this way: traffic goes through OpenRouter's servers rather than to each
   vendor directly.
 </Callout>
 
 ### Local servers
 
-Any OpenAI-compatible endpoint you run yourself — Ollama, vLLM, LM Studio, llama.cpp.
-Never auto-detected; `--base-url` (or `STELLA_BASE_URL`) is required every time.
+Any OpenAI-compatible endpoint you run yourself: Ollama, vLLM, LM Studio, llama.cpp.
+Never auto-detected — `--base-url` (or `STELLA_BASE_URL`) is required every time.
 
 ```bash
 stella --model local/llama3.3      --base-url http://localhost:11434/v1 chat  # Ollama
 stella --model local/qwen2.5-coder --base-url http://localhost:8000/v1 run "…"  # vLLM
 ```
 
-A bearer token is always sent — the placeholder `local` when `LOCAL_API_KEY` is unset —
-so key-checking servers fail loudly rather than mysteriously. Local slugs are exempt from
-catalog validation: any model name your server knows is accepted.
+A bearer token is always sent (the placeholder `local` when `LOCAL_API_KEY` is unset),
+so key-checking servers fail loudly instead of mysteriously. Local slugs skip catalog
+validation: any model name your server knows is accepted.
 
 The id `local` is **reserved** and cannot be redefined in `settings.json`, which is why
-`--base-url` is always required with it. To bake an endpoint into config, define your own
-provider under a non-reserved id:
+`--base-url` is always required with it. To bake an endpoint into config instead, define
+your own provider under a non-reserved id:
 
 ```json title="~/.stella/settings.json"
 {
@@ -465,8 +472,6 @@ provider under a non-reserved id:
 }
 ```
 
-Three details:
-
 - `dialect` defaults to `openai-compatible`. `anthropic`, `gemini`, and
   `openai-responses` are also available; `vertex` and `bedrock` are **rejected** for
   custom ids, because those dialects need credential resolution a settings entry cannot
@@ -474,7 +479,7 @@ Three details:
 - A config-defined provider reads its key from a derived env var: the id uppercased with
   anything outside `[A-Za-z0-9]` folded to `_`, plus `_API_KEY` (`my-gateway` reads
   `MY_GATEWAY_API_KEY`). `api_key_env` names a different one.
-- It **auto-detects** — after every built-in — only when it has a `default_model`.
+- It **auto-detects** (after every built-in) only when it has a `default_model`.
 
 Local models have no catalog prices, so `stella stats` dollar columns read zero. Tokens,
 steps, and resolve-rate comparisons still work; `--spend-limit` has nothing to meter against.

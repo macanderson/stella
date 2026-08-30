@@ -1,10 +1,10 @@
 ---
 title: Repo initialization
-description: Prime a workspace with stella init — the domain taxonomy, the tree-sitter code graph, the semantic embedding pass, extension adoption, and everything that lands under .stella/.
+description: What `stella init` builds — the domain taxonomy, the code graph, semantic search, extension adoption, and everything that lands under .stella/.
 ---
 
-stella works in any directory with zero setup — but one command primes it
-with structured knowledge of your codebase:
+stella works in any directory with no setup. One command gives it a head
+start by mapping out your codebase:
 
 ```bash
 cd your-project
@@ -13,54 +13,55 @@ stella init
 
 ## What `stella init` does
 
-1. **Infers the domain taxonomy** → `.stella/domains.toml`. A short, shared
-   tagging vocabulary (auth, storage, api, …) used to label memories,
-   reflections, and every code-graph node — so the
-   [context engine](/docs/context-engine) can relate a memory, a reflection,
-   and a file to the same area of your project. Also persisted into the
-   context plane at `.stella/private/context.db`.
-2. **Builds the code-graph index** → `.stella/private/codegraph.db`. A tree-sitter
-   symbol/import index you query from your shell through
-   [`stella search`](/docs/commands/search) instead of grepping blind.
-3. **Embeds the indexed files for semantic search**, when an embedding
-   backend is configured (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or
-   `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`). That is what lets
-   `stella search` answer *"which file strips secrets before logging"*
-   by meaning rather than by substring.
-   With no backend configured init says so in one line and does nothing else;
-   with one, it prints how many files it embedded and how many a large
-   repository left for later (they embed on demand as searches reach them).
-4. **Adopts existing agent extensions.** Commands, skills, and agents already
-   defined for other tools (`.claude/` and `.agents/` directories, workspace
-   and user scope) are adopted as symlinks under `.stella/` — your existing
-   setup carries over instead of starting from scratch.
+1. **Guesses the domains in your code** → `.stella/domains.toml`. This is a
+   short list of tags (auth, storage, api, and so on) that labels memories,
+   reflections, and every node in the code graph. It lets the
+   [context engine](/docs/context-engine) connect a memory, a reflection, and
+   a file that all belong to the same part of your project. It's also saved
+   to `.stella/private/context.db`.
+2. **Builds the code graph** → `.stella/private/codegraph.db`. This is an
+   index of your code's symbols and imports. Query it from your shell with
+   [`stella search`](/docs/commands/search) instead of guessing with grep.
+3. **Embeds your files for search by meaning**, if you've set up an
+   embedding backend (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, or
+   `STELLA_EMBED_URL` plus `STELLA_EMBED_MODEL`). This is what lets
+   `stella search` answer a question like "which file strips secrets before
+   logging" instead of only matching exact text. Without a backend, init
+   says so in one line and skips this step. With one, it tells you how many
+   files it embedded, and how many a large repo left for later, embedding
+   them the first time a search reaches them.
+4. **Reuses your existing setup.** Commands, skills, and agents already
+   defined for other tools — in `.claude/` and `.agents/` directories, at
+   both workspace and user scope — are linked into `.stella/`. You keep what
+   you already built instead of starting over.
 
-`stella init` works **offline** with a heuristic fallback, so it never
-hard-fails: you can initialize before configuring any provider key.
+`stella init` works **offline**. With no provider key, it falls back to a
+simpler guess instead of failing, so you can run it before setting up any key.
 
 <Callout type="info">
-  In interactive sessions the graph also auto-builds in the background and
-  refreshes live as files change — `stella init` is about doing it once,
-  eagerly, and generating the taxonomy alongside. Re-run it after large
-  refactors to rebuild the index and re-infer the taxonomy.
+  In interactive sessions, the code graph also builds itself in the
+  background and updates as files change. `stella init` does this once,
+  right away, and also builds the domain list. Run it again after a big
+  refactor to refresh both.
 </Callout>
 
 ## What lands where
 
-Everything stella knows about a workspace lives under `.stella/` — plain
-files and SQLite databases you can inspect, version, or delete at will:
+Everything stella knows about your workspace lives under `.stella/`. It's
+all plain files and SQLite databases. Inspect them, put them in version
+control, or delete them — your choice.
 
-### Shared — commit these
+### Files to commit
 
 <CardGrid size="md">
   <OptionCard name=".stella/domains.toml">
-    The domain taxonomy — the tagging vocabulary `stella init` infers.
+    The domain tags `stella init` guesses.
   </OptionCard>
   <OptionCard name=".stella/memories/*.md">
     Workspace [memories](/docs/context-engine), as plain Markdown.
   </OptionCard>
   <OptionCard name=".stella/rules/*.md">
-    Workspace rules — promoted memories and guard rules.
+    Workspace rules: memories that got promoted, plus guard rules.
   </OptionCard>
   <OptionCard name=".stella/skills/">
     Project-scope [skills](/docs/agent-tools/skills).
@@ -80,56 +81,64 @@ files and SQLite databases you can inspect, version, or delete at will:
   </OptionCard>
 </CardGrid>
 
-### Local state — never commit these
+### Local state
+
+Never commit these:
 
 <CardGrid size="md">
   <OptionCard name=".stella/private/codegraph.db">
-    The tree-sitter code-graph index.
+    The code graph index.
   </OptionCard>
   <OptionCard name=".stella/private/context.db">
-    The context plane — memory nodes, reflections, episodes, bi-temporal facts.
+    The context store: memory nodes, reflections, episodes, and facts that
+    keep track of when they were true and when stella learned them.
   </OptionCard>
   <OptionCard name=".stella/private/store.db">
-    Executions, events, token/cost telemetry, the files-touched ledger, and the
-    `file_locks` table fleets coordinate through.
+    Executions, events, token and cost data, the list of files touched, and
+    the `file_locks` table fleets use to coordinate.
   </OptionCard>
   <OptionCard name=".stella/private/fleet.db">
-    The [fleet](/docs/agent-fleets) ledger — runs, tasks, attempts, commits.
+    The [fleet](/docs/agent-fleets) log: runs, tasks, attempts, commits.
   </OptionCard>
   <OptionCard name=".stella/private/reflections.jsonl">
-    Post-turn reflection log — lessons the
-    [context engine](/docs/context-engine) distills.
+    The reflection log written after each turn — lessons the
+    [context engine](/docs/context-engine) pulls out.
   </OptionCard>
   <OptionCard name=".stella/private/mcp_oauth.json">
-    **OAuth tokens** for MCP servers you have logged into. A secret — never
-    commit it.
+    **OAuth tokens** for MCP servers you've logged into. This is a secret.
+    Never commit it.
   </OptionCard>
   <OptionCard name=".stella/worktrees/">
     Dedicated worktrees for fleet tasks marked `isolation = "isolated"`.
   </OptionCard>
   <OptionCard name=".stella/exports/">
-    Session telemetry [exports](/docs/telemetry/dashboard) — ZIP + HTML.
+    Session telemetry [exports](/docs/telemetry/dashboard): ZIP and HTML
+    files.
   </OptionCard>
 </CardGrid>
 
-When upgrading from a release that wrote private files directly under
-`.stella/`, stella migrates safe, closed legacy files into `.stella/private/`
-on first use. Unsafe permissions or live SQLite WAL/SHM sidecars fail closed
-with an actionable error and remain untouched.
+If you're upgrading from an older version that wrote files directly under
+`.stella/`, stella moves the safe ones into `.stella/private/` automatically
+the first time you run it. If a file has unsafe permissions, or is an active
+SQLite WAL or SHM file, stella leaves it alone and shows a clear error
+instead of touching it.
 
-User-scope counterparts live under `~/.stella/` (settings, skills,
-agents, credentials).
+The same kinds of files exist at user scope under `~/.stella/`: settings,
+skills, agents, and credentials.
 
 ### What to commit
 
-The shared group above is team-shareable and version-control-friendly — with one
-caveat: if `.stella/settings.json` carries an inline `api_key`, keep it out of
-version control (prefer
-[`api_key_env` or `credentials.toml`](/docs/configuration/credentials)).
+The files listed above under "files to commit" are safe to share with your
+team and put in version control, with one exception. If
+`.stella/settings.json` has an inline `api_key`, keep that file out of
+version control. Use
+[`api_key_env` or `credentials.toml`](/docs/configuration/credentials)
+instead.
 
-Everything under `.stella/private/` is local state, including MCP OAuth tokens.
-stella generates `.stella/.gitignore` for you, covering the private directory
-and any stray database or reflection log left by an older layout:
+Everything under `.stella/private/` is local only, including MCP OAuth
+tokens. stella writes a `.stella/.gitignore` for you that covers the private
+directory, plus any stray database or reflection log left by an older
+layout:
 
 ```text title=".stella/.gitignore"
 *.db
@@ -139,8 +148,8 @@ reflections.jsonl
 private/
 ```
 
-If your repository uses a root ignore file instead, exclude the whole private
-directory plus the two derived directories that ride outside it:
+If your project uses one root `.gitignore` file instead, add the private
+directory plus the two extra directories that sit outside it:
 
 ```text title=".gitignore"
 .stella/private/
@@ -167,10 +176,12 @@ stella doctor
 stella config
 ```
 
-Re-run `stella init` after a large refactor to rebuild the index and re-infer
-the taxonomy. It is idempotent and works offline — the code graph is built with
-no provider at all, only the taxonomy degrades to a directory heuristic, and the
-semantic embedding pass simply says it was skipped.
+Run `stella init` again after a big refactor to rebuild the index and
+refresh the domain list. It's safe to run more than once, and it works
+offline: the code graph builds with no provider at all, the domain list
+falls back to a simple guess based on your folders, and the semantic
+embedding step just says it was skipped.
 
-Next: [configure your provider keys](/docs/getting-started/providers), then
+Next: [set up your provider keys](/docs/getting-started/providers), then
 run your first task from the [quickstart](/docs/getting-started).
+</content>

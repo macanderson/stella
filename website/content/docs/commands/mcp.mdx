@@ -1,11 +1,13 @@
 ---
 title: stella mcp
-description: Manage MCP servers — search a registry, install into .stella/mcp.toml, list configured servers, and show usage telemetry.
+description: Manage MCP servers. Search for them, install one, list what's configured, and see usage stats.
 ---
 
-Manage the Model Context Protocol servers stella connects at session start. `stella mcp` is the scriptable half of the surface; the [Command Deck](/docs/commands/chat)'s **MCP tab** (`/mcp`) is the interactive half, where per-session enable/disable and the masked credential prompt live.
+MCP stands for Model Context Protocol. MCP servers give stella extra tools it can use during a session. Stella connects to your configured servers when a session starts.
 
-For how MCP tools reach the agent, see [MCP servers](/docs/agent-tools/mcp). This page is the command reference.
+`stella mcp` is the command-line way to manage these servers. The [Command Deck](/docs/commands/chat) has an **MCP tab** (`/mcp`) that does the same job interactively. Use the MCP tab to turn a server on or off for a single session, or to enter a credential it needs.
+
+See [MCP servers](/docs/agent-tools/mcp) for how MCP tools reach the agent.
 
 ## Synopsis
 
@@ -15,74 +17,57 @@ stella mcp <list|search|install|remove|grant|login|logout|usage> [args]
 
 ## What it does
 
-`stella mcp` reads and writes the workspace's `.stella/mcp.toml` and talks to the MCP server registry (over HTTP) for search and install. It needs no provider API key. Servers configured here are connected at the start of each interactive session.
+`stella mcp` reads and writes your workspace's `.stella/mcp.toml` file. It also talks to the MCP server registry over HTTP to search for servers and install them. It does not need a provider API key. Any server listed in `.stella/mcp.toml` connects at the start of each interactive session.
 
 ## Subcommands
 
 ### `stella mcp list`
 
-List the MCP servers configured in `.stella/mcp.toml`. Each entry shows what it
-is — the publisher's name and description, recorded at install — with its local
-alias underneath, and flags any server that is still withheld pending a
-capability grant. An entry installed by hand (or before descriptions were kept)
-falls back to its endpoint: the URL or the spawn command line.
+List the MCP servers set up in `.stella/mcp.toml`. Each entry shows its name and description, saved when you installed it, with its local alias underneath. If a server is waiting for your approval, this list flags it. If a server was added by hand, or installed before stella started saving descriptions, the list shows its endpoint instead: the URL or the command used to start it.
 
 ```bash
 stella mcp list
 ```
 
-The identity matters because the alias is lossy on purpose. Installing
-`com.stripe/mcp` writes `[servers.mcp]`, since the alias is also the
-tool-namespace segment (`mcp__mcp__create_refund`) — so a list keyed on it
-alone would name nothing.
+The alias matters because it's also used to build tool names. Installing `com.stripe/mcp` writes `[servers.mcp]`. That alias, `mcp`, becomes part of the tool name, like `mcp__mcp__create_refund`. A list that only showed the alias wouldn't tell you which server is which, so stella shows the full name and description too.
 
 ### `stella mcp search <query>...`
 
-Search the MCP server registry (the `mcp.registry_url` from `settings.json`, else the official registry). Omit the query to page through everything; `--limit` caps the page.
+Search the MCP server registry. This uses the `mcp.registry_url` from `settings.json` if you set one, or the official registry if you didn't. Leave off the query to page through every server. Use `--limit` to control how many show per page.
 
 ```bash
 stella mcp search filesystem
 stella mcp search github --limit 5
 ```
 
-Each row carries the three facts that decide whether the description under it
-is worth reading: the **source tier** the registry verified, the **install
-count** where the registry publishes one (`installs unknown` where it does
-not — never a fabricated `0`), and the **signature**.
+Each row shows three facts that tell you whether to trust a server: its **source tier**, its **install count**, and its **signature** status.
 
-The tier is read from the entry's namespace, which is what a registry actually
-verifies when someone publishes: `official` is the registry operator's own
-namespace, `vendor` is a reverse-DNS namespace under a domain the publisher
-proved they control (`com.stripe/mcp`), and `community` is a code-host account
-(`io.github.acme/…`) or the registry's anonymous namespace.
+The source tier comes from the server's namespace:
 
-`signed` means the registry attributes the entry to a verified publisher and
-its lifecycle record says `active`. It does **not** mean stella verified a
-signature over the package bytes; no MCP registry publishes one to verify yet.
-Anything else — an entry the registry attributes to nobody, or one it has
-withdrawn — reads `blocked`, and `stella mcp install` refuses it.
+- `official` — published under the registry's own namespace.
+- `vendor` — published under a domain the publisher proved they control, for example `com.stripe/mcp`.
+- `community` — published from a code-hosting account, for example `io.github.acme/…`, or the registry's anonymous namespace.
+
+Install count shows how many people installed the server, or "installs unknown" if the registry doesn't publish that number. Stella never shows a fake `0`.
+
+"Signed" means the registry has confirmed who published the entry, and that entry is marked active. It does **not** mean stella checked a signature on the actual files — no MCP registry publishes one to check yet. Anything the registry can't attribute to a publisher, or has withdrawn, shows as "blocked." `stella mcp install` refuses to install a blocked server.
 
 ### `stella mcp install <name>`
 
-Install a registry server (by the name shown in `stella mcp search`) into `.stella/mcp.toml`, so you don't hand-edit the file. `--alias` sets a local alias / tool-namespace segment (default: a sanitized form of the name). Installing overwrites any existing entry — MCP servers are not versioned.
+Install a server from the registry into `.stella/mcp.toml`, using the name shown by `stella mcp search`. This saves you from editing the file by hand. Use `--alias` to set a local name; by default, stella makes one from the server's name. Installing over an existing entry replaces it. MCP servers don't have versions.
 
 ```bash
 stella mcp install filesystem
 stella mcp install github --alias gh
 ```
 
-An entry the registry does not vouch for is refused rather than installed: an
-install writes a command line this process later spawns, so the check is on the
-install path and not only in the search listing.
+If the registry can't vouch for a server, `install` refuses it. Installing writes the command stella will later run to start the server, so this check happens at install time, not just when you search.
 
-**A newly installed server is withheld.** None of its tools are offered to the
-model and every call to it is refused until you review what it declares and
-grant it — see `stella mcp grant` below. Re-installing over an alias you
-already granted does not re-ask.
+**A newly installed server starts out withheld.** None of its tools are offered to the model, and any call to it is refused, until you review what it can do and approve it with `stella mcp grant` (see below). If you reinstall a server you already approved, it does not ask you again.
 
 ### `stella mcp remove <name>`
 
-Remove a configured server from `.stella/mcp.toml` by its local name.
+Remove a server from `.stella/mcp.toml` by its local name.
 
 ```bash
 stella mcp remove filesystem
@@ -90,24 +75,17 @@ stella mcp remove filesystem
 
 ### `stella mcp grant <name>`
 
-Connect to a configured server, print what it declares at handshake, and record
-whether its tools may be used. This is the scriptable half of the deck's
-first-enable handshake; `e` on an ungranted row in the MCP tab (`/mcp`) shows
-the same capabilities and asks the same question.
+Connect to a configured server, show what it says it can do, and record whether its tools may be used. This is the command-line version of the approval step in the MCP tab: pressing `e` on a server you haven't approved yet shows the same information and asks the same question.
 
 ```bash
-stella mcp grant github            # print the capabilities, then ask
-stella mcp grant github --yes      # record the grant without the prompt
-stella mcp grant github --revoke   # withdraw a grant given earlier
+stella mcp grant github            # show what it can do, then ask
+stella mcp grant github --yes      # approve without asking
+stella mcp grant github --revoke   # take back an approval you gave before
 ```
 
-It connects because the capabilities being granted are what the process on the
-other end announces *now*, not what a registry card once said. The prompt
-declines on anything but an explicit `y`, closed stdin included.
+This connects to the real server because what matters is what it announces right now, not what a registry listing said in the past. Unless you type an explicit `y`, the prompt treats everything else, including closed input, as no.
 
-The decision is recorded as `granted` in `.stella/mcp.toml`, so it is read by
-every session — unlike enable/disable, which is per-session. Three states are
-distinguishable, and they mean different things:
+Your decision is saved as `granted` in `.stella/mcp.toml`, so it applies to every future session. Turning a server on or off is different — that's per-session only. There are three states, and each means something different:
 
 | In `mcp.toml` | Written by | The model can call it |
 | --- | --- | --- |
@@ -115,20 +93,15 @@ distinguishable, and they mean different things:
 | `granted = false` | an install, or `--revoke` | no |
 | no `granted` key | you, editing the file | yes |
 
-An entry you wrote by hand carries no key and is usable: writing the transport
-yourself is already the review the gate is asking for. The gate exists for the
-other door — one keystroke on a registry search result, which adds a stranger's
-server. A server contributed by an installed plugin has no entry at all and is
-usable for the same reason.
+If you add a server by hand, with no `granted` key, stella treats it as approved. Writing the connection details yourself already counts as review. The approval step exists for the other case: installing a server from a search result with one keystroke, which adds a server you haven't reviewed. A server that comes from an installed plugin also has no `granted` key, for the same reason.
 
-While a server is withheld it still connects (that is how its capabilities
-become knowable), and a call to it comes back as a refusal naming this command.
+A withheld server still connects. That's how stella learns what it can do. But any call to it is refused, and the refusal names this command so you know what to run next.
 
 ### `stella mcp login <name>` / `stella mcp logout <name>`
 
-OAuth login to a configured HTTP server that requires it (and log back out). Tokens land in `.stella/private/mcp_oauth.json` and refresh automatically at session start.
+Log in (or out) with OAuth for a configured HTTP server that needs it. Tokens are saved to `.stella/private/mcp_oauth.json` and refresh automatically each time a session starts.
 
-A server that rejects a connect with `401 Unauthorized` is not re-dialed on every startup: the 401 is cached (`.stella/private/mcp_auth_probes.json`) and the server is skipped for 15 minutes — advertising a single `mcp__<name>__login_required` placeholder tool that tells the model (and you) to run `stella mcp login <name>`. Logging in clears the suppression immediately; otherwise the probe resumes when the window lapses.
+If a server rejects a connection with `401 Unauthorized`, stella does not keep retrying it on every startup. It caches the 401 in `.stella/private/mcp_auth_probes.json` and skips that server for 15 minutes. During that time, it shows a single placeholder tool, `mcp__<name>__login_required`, telling the model, and you, to run `stella mcp login <name>`. Logging in clears this wait right away; otherwise stella tries again once the 15 minutes pass.
 
 ```bash
 stella mcp login github
@@ -137,12 +110,12 @@ stella mcp logout github
 
 ### `stella mcp usage`
 
-Show MCP tool-usage telemetry from `.stella/private/store.db` — calls per server and tool.
+Show how much each MCP tool has been used, from `.stella/private/store.db`: calls per server and per tool.
 
 ```bash
 stella mcp usage
 ```
 
 <Callout type="info">
-Enabling or disabling a server for a session, and entering any credentials it needs, happen in the deck's MCP tab (`/mcp`) — those are session-scoped and not part of the scriptable CLI. That tab also has an inspector: **ctrl+o** on a server opens its full detail — description, registry entry, repository, endpoint, what the live server announced at handshake, its credential fields, and every tool it advertises with a call count. If the server has no recorded description, **r** inside the inspector looks it up in the registry once and saves what it finds.
+Turning a server on or off for one session, and entering any credentials it needs, both happen in the deck's MCP tab (`/mcp`). Those settings apply only to that session, so they aren't part of this command. The MCP tab also has an inspector: press **ctrl+o** on a server to see its full details — description, registry entry, repository, endpoint, what it announced when stella connected, its credential fields, and every tool it offers with a call count. If a server has no saved description yet, press **r** inside the inspector to look one up in the registry.
 </Callout>

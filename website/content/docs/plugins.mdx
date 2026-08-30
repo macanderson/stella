@@ -1,68 +1,98 @@
 ---
 title: Plugins
-description: The turn-loop plugin platform — participation grades, the wrapper socket, the plugin.toml manifest, and how to write one in Python, TypeScript, or Rust with no stella SDK.
+description: How stella plugins work — participation levels, the plugin.toml manifest, and how to write one in Python, TypeScript, or Rust without an SDK.
 ---
 
-A **plugin** is a directory with a `plugin.toml` manifest and, usually, a program. The manifest declares exactly how much say the plugin wants in your turn loop and what it wants to reach outside it; you read that declaration once, at install, and say yes or no. Nothing a plugin does is inferred from its code — the manifest is the whole contract, and it is designed so a non-Rust author never has to read this repository to write one.
-
-This page covers what a plugin is, the manifest, how to install one, how to write one in Python (the worked example) or briefly in TypeScript and Rust, who verifies what, and what does not work yet.
+A plugin is a directory with a `plugin.toml` manifest, and usually a
+program. The manifest states exactly how much say the plugin gets in your
+turn loop, and what it wants to reach outside it. You read that once, when
+you install it, and say yes or no. The manifest is the whole contract.
+Stella never guesses what a plugin does from its code. You can write one
+without knowing Rust or reading stella's own source code.
 
 ## What a plugin is
 
-A plugin answers up to four points in the turn loop. You can send a message to two of them; two of them it can never receive, in any language:
+A plugin can answer up to four points in your turn loop. Two of them can
+receive a message from stella. The other two never receive one, in any
+language:
 
 | Point | Who runs it | Shape |
 | --- | --- | --- |
-| `before_turn` | **the plugin**, out of process | async — contribute context, narrow scope, name a role, publish a signal for a later stage |
-| `after_turn` | **the plugin**, out of process | async — gather evidence: run a test, read a diff, spend a declared model role and report the result |
-| `judge` | **the host**, in process | synchronous — evidence in, verdict out |
-| `again?` | **the host**, in process | synchronous — verdict in, continuation out: another turn with a correction, or stop |
+| `before_turn` | the plugin, outside stella | Async. Adds context, narrows scope, names a role, or sends a signal for a later stage. |
+| `after_turn` | the plugin, outside stella | Async. Gathers evidence: runs a test, reads a diff, spends a declared model role, and reports the result. |
+| `judge` | stella, inside the process | Synchronous. Takes evidence in, returns a verdict. |
+| `again?` | stella, inside the process | Synchronous. Takes a verdict in, decides what happens next: another turn with a correction, or stop. |
 
-`judge` and `again?` are not messages a plugin can be sent — the wire has exactly two request/response pairs, `before_turn` and `after_turn`, and neither one is a verdict. That is the design, not an oversight: a plugin declares its verdict **rule** as data in `plugin.toml` — the requirements it wants met, the flip policy, the checks — and stella evaluates that rule against the evidence the plugin reported. There is no `.await` inside `judge`, no subprocess it can spawn, and no way to smuggle a model call through it.
+A plugin can never be sent a `judge` or `again?` message. The wire only has
+two request/response pairs: `before_turn` and `after_turn`. Neither one is a
+verdict. This is deliberate, not a gap. A plugin declares its verdict rule
+as data in `plugin.toml`: the requirements it wants met, the flip policy,
+and the checks. Stella evaluates that rule against the evidence the plugin
+reports. `judge` can't wait on anything, spawn a subprocess, or call a
+model — that path doesn't exist for it.
 
-This is a feature, not a limitation, and it is worth being explicit about why. A verification plugin that could implement its own `judge` could quietly call a model to decide "done" — and in the output, a model ruling on its own work looks identical to one that never got the chance. Keeping `judge` a host function a plugin cannot touch makes "a verification plugin grades its own work with a model" impossible **by construction**, in Rust, in Python, in anything — rather than a rule a reviewer must keep re-checking by hand.
+Here's why that matters. If a verification plugin could write its own
+`judge`, it could quietly call a model to decide "done." In the output,
+that would look identical to a real, independent check. Keeping `judge`
+inside stella, where a plugin can never reach it, makes it impossible for a
+plugin to grade its own work with a model. No language can get around
+this — it's built into how the wire works, not a rule someone has to
+remember to enforce.
 
 <Callout type="info">
-Every capability a plugin needs arrives **in the request**. There is no ambient authority to reach for — no environment variable beyond what its manifest declared, no working directory, no terminal, no credential. That is what lets the identical plugin process run under the CLI, a headless server, or an application that embedded the loop, unchanged.
+Every capability a plugin needs arrives in the request. A plugin can't reach
+for anything else: no environment variable beyond what its manifest
+declared, no working directory, no terminal, no credential. That's what
+lets the same plugin process run unchanged under the CLI, a headless
+server, or an app that embeds the loop.
 </Callout>
 
-What that looks like from the driver's seat. A red gate is not something the
-model can talk its way past: it answers with a proposed plan revision naming
-the cause, the merge stays blocked until the board is green, and nothing runs
-until you approve it.
+Here's what that looks like in practice. A red gate can't be talked past by
+the model. It responds with a proposed plan revision that names the cause,
+the merge stays blocked until the board is green, and nothing runs until
+you approve it.
 
 <DeckShot id="gate" />
 
-## The participation ladder
+## Participation levels
 
-`[loop].participation` is how much say a plugin has asked for, on a four-rung ladder. Each grade includes every grade below it, and the power that separates two rungs is rejected below the rung that grants it — a manifest cannot quietly hold more than its declared grade.
+`[loop].participation` sets how much say a plugin gets, on a scale of four
+levels. Each level includes everything the levels below it can do. A
+plugin can't quietly do more than its declared level allows — stella
+rejects anything above it.
 
 <CardGrid size="md">
   <OptionCard name="none">
-    Nothing — a content bundle of skills, commands, agents, or custom tools. Never invoked inside a turn at all. The default when a manifest has no `[loop]` block.
+    No say at all. Just a bundle of skills, commands, agents, or custom tools — never called during a turn. This is the default when a manifest has no `[loop]` block.
   </OptionCard>
   <OptionCard name="observer">
-    May subscribe to the turn event stream. Cannot influence anything.
+    Can watch the turn event stream. Can't change anything.
   </OptionCard>
   <OptionCard name="steering">
-    May act at declared hook points and at `before_turn` / `after_turn` — inject context, rewrite tool input, decide permissions, gather evidence. May **not** touch completion.
+    Can act at its declared hook points and at `before_turn` / `after_turn`: add context, rewrite tool input, decide permissions, gather evidence. Cannot decide when a turn is done.
   </OptionCard>
   <OptionCard name="arbiter">
-    Everything steering may do, plus it binds the `Stop` gate: at each would-be completion the host asks the plugin's declared rule for a verdict, and an unmet requirement re-enters the loop, bounded by `max_holds`. The strongest grant.
+    Everything steering can do, plus it controls the `Stop` gate. At each point where a turn would finish, stella asks the plugin's declared rule for a verdict. If a requirement isn't met, the turn goes back into the loop, up to `max_holds` times. This is the strongest level.
   </OptionCard>
 </CardGrid>
 
-These rules hold regardless of grade:
+These rules hold at every level:
 
-- **An undeclared hook is never invoked.** Registering a process that listens for `PreToolUse` buys nothing if `[loop].hooks` does not name it — the manifest is the authority, not what the process does at runtime.
-- **An undeclared wrapper point is never dispatched.** `[loop].points` names which of `before_turn` / `after_turn` this plugin answers, exhaustively. A plugin that only gathers evidence declares `points = ["after_turn"]` and nothing else; the host never asks it for `before_turn`.
-- **Unknown keys are a load error, everywhere.** Every table in `plugin.toml` denies unknown fields. A typo'd grant fails loudly at install, rather than silently granting nothing.
+- **An undeclared hook is never called.** If `[loop].hooks` doesn't name `PreToolUse`, registering a process that listens for it does nothing. The manifest decides what runs, not what the process itself is built to do.
+- **An undeclared wrapper point is never called.** `[loop].points` lists every point this plugin answers, out of `before_turn` and `after_turn`. A plugin that only gathers evidence declares `points = ["after_turn"]`. Stella never asks it for `before_turn`.
+- **An unknown key always fails to load.** Every table in `plugin.toml` rejects fields it doesn't recognize. A typo in a grant fails loudly at install, instead of silently granting nothing.
 
-`[[capabilities]]` — what a plugin wants to reach *outside* the turn (a tool, at a named risk level, with the reason a human reads) — is orthogonal to this ladder on purpose. A `none`-grade content bundle shipping one custom tool that runs `git push` asks for more of the world than an `observer` that only watches; tying the two together would let the widest grant hide behind the weakest participation grade.
+`[[capabilities]]` (what a plugin wants to reach outside the turn, such as
+a tool, at a named risk level, with a reason a human can read) is kept
+separate from participation on purpose. A `none`-level content bundle that
+ships one custom tool running `git push` is asking for more than an
+`observer` that only watches. If the two were tied together, the widest
+grant could hide behind the weakest participation level.
 
 ## The manifest
 
-A complete, working manifest — an arbiter that holds a turn open until a test command it is handed goes from failing to passing:
+Here's a complete, working manifest: an arbiter that holds a turn open
+until a test command it's given goes from failing to passing.
 
 ```toml title="plugin.toml"
 name = "verify"
@@ -109,47 +139,55 @@ purpose = "run the test invocation the request's candidate grant names"
 scope = ["the program and args in `candidate.test`, spawned in `candidate.root`"]
 ```
 
-Every block, in the shape the manifest parser accepts:
+Here's every block the manifest parser accepts:
 
 <CardGrid size="md">
   <OptionCard name="[loop]">
-    `participation` (the ladder above), `hooks` (which lifecycle events — `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`, `PreCompact` — this plugin acts at), `points` (which of `before_turn` / `after_turn` it answers), and `max_holds` (arbiter only — the most completion-vetoes it asks for per turn). Absent entirely, a manifest defaults to `none`: a content bundle with no say in the loop at all.
+    `participation` sets the level, described above. `hooks` lists which lifecycle events this plugin acts at: `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`, `PreCompact`. `points` lists which of `before_turn` / `after_turn` it answers. `max_holds` (arbiter only) sets the most times it can veto completion per turn. If `[loop]` is missing entirely, the manifest defaults to `none`: a content bundle with no say in the loop.
   </OptionCard>
   <OptionCard name="[requirements]">
-    Arbiter only. A table of `name = "human-readable statement"` — the enumerable definition of done. Keys are what an unmet hold cites; must be non-empty if declared, and every statement must be non-blank.
+    Arbiter only. A table of `name = "human-readable statement"` pairs that define what "done" means. An unmet hold cites these keys by name. If you declare `[requirements]`, it can't be empty, and every statement must have text.
   </OptionCard>
   <OptionCard name="[oracle]">
-    Arbiter only, and it must declare `points = ["after_turn"]` alongside it — that is the one response its evidence rides on. `flip` is `"required"` (the plugin reports a fail→pass transition) or `"not-applicable"` (this oracle's evidence is a measurement, not a transition — every requirement must then be decided by a `[[oracle.checks]]` entry, or the manifest is refused). `measurements` names the numbers the plugin's process reports; `[[oracle.checks]]` states a rule over one of them (`<measurement> <op> <integer>`) that decides one named requirement. `command` is optional when `[runtime]` is declared — absent means "the oracle is this plugin's own process," which is the common case and keeps a manifest from writing the same argv out twice.
+    Arbiter only, and it must also declare `points = ["after_turn"]` — that's the one response its evidence rides on. `flip` is either `"required"` (the plugin reports a fail-to-pass change) or `"not-applicable"` (the evidence is a measurement, not a change — every requirement must then be decided by a `[[oracle.checks]]` entry, or stella refuses to load the manifest). `measurements` names the numbers the plugin's process reports. `[[oracle.checks]]` states a rule over one of them (`<measurement> <op> <integer>`) that decides one named requirement. `command` is optional when `[runtime]` is declared. Leaving it out means "the oracle is this plugin's own process," which is the common case, and saves you from writing the same argv twice.
   </OptionCard>
   <OptionCard name="[runtime]">
-    Observer and above. `argv` — program and arguments, never a shell string, with `${plugin_dir}` interpolated by the host to the plugin's install directory. `timeout_secs` — at least 1. `env` — the **allowlist**, exact names and nothing else: the child process starts with an empty environment and receives only the variables named here. There is no `language` field; `["python3", "${plugin_dir}/main.py"]` already says everything the host needs to know.
+    Observer and above. `argv` is the program and its arguments, never a shell string. Stella replaces `${plugin_dir}` with the plugin's install directory. `timeout_secs` must be at least 1. `env` is an allowlist: the child process starts with no environment variables at all, and gets only the exact names listed here. There's no `language` field — `["python3", "${plugin_dir}/main.py"]` already says everything stella needs to know.
   </OptionCard>
   <OptionCard name="[wrapper]">
-    Steering and above, optional. Declares this plugin as a turn-loop wrapper: an `id` (the variant name recorded on the run, for A/B comparison) and an ordered `[[wrapper.stages]]` list, each naming a stage and carrying an optional `if` condition over a closed, published signal vocabulary (`questions > 0`, `no-conversational`, …). A condition naming a signal the host does not publish, or one only a later or conditionally-run stage produces, is a load error — a manifest that would quietly do nothing is refused instead.
+    Steering and above, optional. Declares this plugin as a turn-loop wrapper: an `id` (the variant name recorded on the run, for A/B comparison), and an ordered `[[wrapper.stages]]` list. Each stage has a name and an optional `if` condition over a fixed set of published signals (`questions > 0`, `no-conversational`, and others). If a condition names a signal stella doesn't publish, or one that only a later or conditional stage produces, stella refuses to load the manifest rather than run a stage that quietly does nothing.
 
-    **The stage name is an open vocabulary.** A stage may be one of the host's own boundaries (`triage`, `recall`, `research`, `plan`, `scope`, `execute`, `witness`, `verify`, `verdict`, `reflect`, `contextwrite`, `complete`) or a word your plugin contributes — `name = "triage-lite"` runs a stage the host has never heard of, under your name for it, and the statline and transcript render it in its own colour. A contributed name must be lowercase ASCII letters, digits and `-`, start with a letter, be at most 32 characters, and must not be the wire spelling of a host boundary (`context_recall`, `scope_review`, `context_write`, `judge`, `verifier`) — that would make your stage read as one of the host's. A contributed stage may be conditional on any published signal; it publishes none of its own.
+    **A stage name can be one of stella's own stages** (`triage`, `recall`, `research`, `plan`, `scope`, `execute`, `witness`, `verify`, `verdict`, `reflect`, `contextwrite`, `complete`), or a name your plugin makes up. `name = "triage-lite"` runs a stage stella has never seen, under the name you gave it, shown in its own color in the statline and transcript. A name you make up must use lowercase letters, digits, and `-`, start with a letter, be 32 characters or fewer, and can't match the internal spelling of a real stella stage (`context_recall`, `scope_review`, `context_write`, `judge`, `verifier`) — that would make your stage look like one of stella's own. A stage you name can react to any published signal, but it can't publish signals of its own.
   </OptionCard>
   <OptionCard name="[roles]">
-    Requires `[subloop]` (steering and above — a declared list of stages the host runs as bounded child turns, a separate block from `[wrapper]`). Each `[roles.<name>]` declares a routing **intent** for one subloop stage — `tier = "cheap"` — never a model id, provider, or credential. The host resolves the intent against your configured providers at run time and refuses an intent the manifest never declared.
+    Requires `[subloop]` (steering and above): a declared list of stages stella runs as bounded child turns, separate from `[wrapper]`. Each `[roles.<name>]` declares a routing intent for one subloop stage, such as `tier = "cheap"` — never a model ID, provider, or credential. Stella resolves that intent against your configured providers at run time, and refuses any intent the manifest didn't declare.
   </OptionCard>
   <OptionCard name="[[capabilities]]">
-    Zero or more. `tool` (free text — the tool name, matched against the host's registry at install), `risk` (`low` / `medium` / `high` / `destructive`, the same grade the authorization gate refuses on), `purpose` (required — why the plugin needs it, shown at consent), and `scope` (the plugin's own claimed limit, shown verbatim and labeled as a claim the gate does not verify). Orthogonal to `[loop]` by design — see the ladder section above.
+    Zero or more entries. `tool` is free text — the tool name, matched against stella's registry at install. `risk` is `low`, `medium`, `high`, or `destructive` — the same scale the authorization gate uses. `purpose` is required: why the plugin needs it, shown when you're asked to approve it. `scope` is the plugin's own claimed limit, shown to you word for word and labeled as a claim stella does not check. This is kept separate from `[loop]` on purpose — see participation levels above.
   </OptionCard>
 </CardGrid>
 
-## What a package ships beside the manifest
+## Package contents
 
-`plugin.toml` declares; the directory beside it carries. Three conventions, each handed to the loader that already owns that format:
+`plugin.toml` declares what the plugin can do. The rest of its directory
+carries three kinds of content, each read by the part of stella that
+already understands that format:
 
-- `<plugin_dir>/tools/*.toml` — [custom script tools](/docs/agent-tools/custom-tools), advertised to the model beside the built-ins and executed as the plugin, never as you.
-- `<plugin_dir>/skills/<slug>/SKILL.md` — [skills](/docs/agent-tools/skills), selected against the prompt and injected as context. Never enforced.
-- `<plugin_dir>/rules/*.toml` — context records, in the format `.stella/rules/` holds. Advisory only: a plugin's record cannot arm itself to deny a tool call.
+- `<plugin_dir>/tools/*.toml` — [custom script tools](/docs/agent-tools/custom-tools), shown to the model alongside the built-in tools, and run as the plugin, never as you.
+- `<plugin_dir>/skills/<slug>/SKILL.md` — [skills](/docs/agent-tools/skills), matched against your prompt and added as context. Never enforced.
+- `<plugin_dir>/rules/*.toml` — context records, in the same format `.stella/rules/` uses. Advisory only: a plugin's rule can't block a tool call on its own.
 
-Everything under these is named in the install prompt before any of it exists on your machine. A `tools/` entry the manifest does not declare is a load error, in both directions.
+Every file under these directories is named in the install prompt before
+any of it lands on your machine. If a `tools/` file exists but the manifest
+doesn't declare it, or the manifest declares one that doesn't exist,
+loading fails.
 
 ### `${plugin_dir}` in a package's tools
 
-A shipped tool does not know where it will be installed, so its manifest writes the same placeholder `[runtime].argv` does, and the host expands it to the package's own directory — in **every** `command` element and **every** `[env]` value:
+A shipped tool doesn't know where it'll be installed. So its manifest uses
+the same placeholder that `[runtime].argv` uses, and stella expands it to
+the package's own directory, in every `command` element and every `[env]`
+value:
 
 ```toml title="tools/lint-fix.toml"
 name = "lint-fix"
@@ -160,9 +198,15 @@ command = ["${plugin_dir}/scripts/lint-fix.sh"]
 RULESET = "${plugin_dir}/rules/strict.yaml"
 ```
 
-Ship `scripts/lint-fix.sh` executable — the host spawns it directly, never through a shell, and never invokes an interpreter you did not name in `command`.
+Ship `scripts/lint-fix.sh` as an executable file. Stella runs it directly,
+never through a shell, and never invokes an interpreter you didn't name in
+`command`.
 
-The placeholder is expanded **only** for a manifest read out of a package. Your own `.stella/tools/` and `~/.stella/tools/` manifests are left verbatim: no package is in scope there, and quietly expanding `${plugin_dir}/x.sh` to `/x.sh` would run a different file rather than fail with a message naming what the manifest actually asked for.
+Stella only expands the placeholder for a manifest that comes from a
+package. Your own `.stella/tools/` and `~/.stella/tools/` manifests are
+left exactly as written, because there's no package directory to expand it
+to. Silently turning `${plugin_dir}/x.sh` into `/x.sh` would run the wrong
+file instead of failing with a clear error.
 
 ## Installing a plugin
 
@@ -172,7 +216,11 @@ stella plugin list
 stella plugin remove <name>
 ```
 
-`install` reads and validates `plugin.toml`, then prints the **whole** declared grant — the participation grade, every hook point, the process it runs as, the exact environment slice it inherits, every requirement it will hold a turn open for, and every capability it asks for outside the turn — and installs nothing until you accept it:
+`install` reads and checks `plugin.toml`, then prints the whole grant it's
+asking for: the participation level, every hook point, the process it runs
+as, the exact environment variables it gets, every requirement it can hold
+a turn open for, and every capability it wants outside the turn. Nothing
+installs until you accept it:
 
 ```text
 Install `verify`?
@@ -202,23 +250,46 @@ Nothing above is granted until you accept.
 Install it? [y/N]
 ```
 
-`stella plugin list` shows what is installed and — separately — the dispatches stella would actually make from that declaration; `stella plugin remove <name>` deletes it from every tier that holds the name. Full flag reference: [`stella plugin`](/docs/commands/plugin).
+`stella plugin list` shows what's installed, and separately, what stella
+would actually call based on that declaration. `stella plugin remove <name>`
+deletes it from every tier that has it. Full flag reference:
+[`stella plugin`](/docs/commands/plugin).
 
-### The project-tier trust gate
+### Project trust gate
 
-Two tiers are read as one roster: `~/.stella/plugins/` (installed once, visible everywhere) and `<workspace>/.stella/plugins/` (this repository only). The second one is content a `git clone` can bring with it, and **a plugin is strictly more powerful than a hook or an MCP server** — it declares a `[runtime]` process the host spawns and, at `arbiter`, a grant that can hold your turn loop open indefinitely. So a cloned repository's plugins do **not** load until you trust the workspace:
+Stella reads plugins from two places as one list: `~/.stella/plugins/`
+(installed once, visible in every project) and
+`<workspace>/.stella/plugins/` (this project only). The second one is
+something a `git clone` can bring with it. A plugin is more powerful than a
+hook or an MCP server: it declares a `[runtime]` process that stella runs,
+and at the `arbiter` level, a grant that can hold your turn loop open
+indefinitely. So a cloned project's plugins don't load until you trust the
+workspace:
 
 ```bash
 export STELLA_TRUST_PROJECT=1
 ```
 
-Without it, `<workspace>/.stella/plugins/` is skipped and a stderr notice names what was skipped, the same shape used for [project-scope hooks](/docs/agent-tools/hooks) and [`.stella/mcp.toml`](/docs/agent-tools/mcp). The user tier is not gated — nothing arrives there except through `stella plugin install`'s own consent prompt, which is already a transaction you approved.
+Without it, stella skips `<workspace>/.stella/plugins/` and prints a notice
+on stderr naming what it skipped — the same pattern used for
+[project-scope hooks](/docs/agent-tools/hooks) and
+[`.stella/mcp.toml`](/docs/agent-tools/mcp). The user tier isn't gated,
+because nothing lands there except through `stella plugin install`'s own
+consent prompt, which you already approved.
 
 ## Writing one in Python
 
-This is the point of the whole page: a plugin needs no SDK, in any language. The `verify` plugin above is real and shipped — [`plugins/verify-py/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-py) in `stella-examples` — and its [`main.py`](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/main.py) is about 320 lines of Python using only `json`, `subprocess`, `sys`, and `time` from the standard library. If you want to learn the protocol, that file is the shortest complete statement of it that exists.
+A plugin needs no SDK, in any language. The `verify` plugin above is real
+and ready to use — [`plugins/verify-py/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-py)
+in `stella-examples` — and its
+[`main.py`](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/main.py)
+is about 320 lines of Python, using only `json`, `subprocess`, `sys`, and
+`time` from the standard library. If you want to learn the protocol, that
+file is the shortest complete example there is.
 
-The wire is one exchange per call: the host spawns `[runtime].argv` directly — never through a shell — writes one JSON request on stdin, closes it, and reads one JSON response from stdout.
+Each call is one exchange. Stella spawns `[runtime].argv` directly, never
+through a shell, writes one JSON request to stdin, closes it, and reads one
+JSON response from stdout.
 
 ```jsonc
 // stdin — an after_turn request
@@ -241,14 +312,15 @@ The wire is one exchange per call: the host spawns `[runtime].argv` directly —
                        "measurements": {"test-command-exit-code": 0}}}}
 ```
 
-Four properties of that exchange are worth internalizing, because each one is something a naive implementation gets wrong:
+Four things about this exchange matter, because each one is easy to get
+wrong:
 
-1. **Every table denies unknown fields, the envelope included.** `protocol_version` rides on every message and the contract only ever grows additively, but a field the host does not know at a version it accepts is a typo — and a message that quietly does nothing is worse than one that refuses.
-2. **There is no error variant.** A response type cannot carry a failure. A plugin that cannot answer *fails*: non-zero exit, one line on stderr, nothing on stdout — and the host substitutes an "unobservable" evidence set on its behalf, which makes `judge` abstain rather than blame the worker for evidence nobody collected.
-3. **Every capability arrives in the request.** The `candidate` field is a grant: a handle, the canonical workspace `root`, and — when the host has one to give — the `test` to run there, as a program, its arguments, and what that same invocation reported *before* the turn (`baseline`). A wrapper never reaches for a terminal, a git checkout, a credential, an environment variable, or a working directory of its own.
-4. **A plugin cannot report a tamper finding.** The response type has no field for one, in any language. Snapshotting witness-artifact identity is the host's job, and the host merges its own finding in before `judge` ever runs — a plugin vouching for its own witness is exactly what that split exists to prevent.
+1. **Every table rejects fields it doesn't know, including the envelope itself.** `protocol_version` is on every message, and the contract only ever adds fields over time. But a field stella doesn't recognize at a version it accepts is a typo. A message that quietly does nothing is worse than one that fails outright.
+2. **There's no way to report an error in the response itself.** A plugin that can't answer fails outright: a non-zero exit code, one line on stderr, nothing on stdout. Stella then fills in an "unobservable" evidence set for it, so `judge` abstains instead of blaming the plugin for evidence that was never collected.
+3. **Every capability arrives in the request.** The `candidate` field is a grant: a handle, the workspace `root`, and, when stella has one to give, the `test` to run there — a program, its arguments, and what that same test reported before the turn (`baseline`). A wrapper never reaches for a terminal, a git checkout, a credential, an environment variable, or a working directory of its own.
+4. **A plugin can't report a tamper finding.** The response type has no field for one, in any language. Checking witness-artifact identity is stella's job, and stella adds its own finding before `judge` ever runs. This is deliberate — a plugin vouching for its own witness is exactly what this split is meant to prevent.
 
-The whole shape, condensed to what `main.py` actually does:
+Here's the whole shape, condensed to what `main.py` actually does:
 
 ```python title="main.py — the shape, condensed"
 import json, subprocess, sys, time
@@ -290,7 +362,14 @@ if __name__ == "__main__":
     main()
 ```
 
-The real `main.py` is stricter than this — it denies unknown fields at every level, distinguishes a timed-out test from a signal-killed one, and never guesses at a command it was not given — but the shape above is the entire protocol. Read the [real file](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/main.py) and its [README](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/README.md) for the complete, defensive version, including how to run it by hand with a single `echo | python3 main.py` and how its test suite grades it against the same golden vectors the Rust and TypeScript versions use.
+The real `main.py` is stricter than this: it rejects unknown fields at
+every level, tells a timed-out test apart from a signal-killed one, and
+never guesses at a command it wasn't given. But the shape above is the
+whole protocol. Read the [real file](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/main.py)
+and its [README](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/README.md)
+for the full version, including how to run it by hand with
+`echo | python3 main.py`, and how its tests check it against the same
+reference cases the Rust and TypeScript versions use.
 
 Install it the same way as any plugin:
 
@@ -299,46 +378,61 @@ stella plugin install plugins/verify-py            # this workspace
 stella plugin install plugins/verify-py --scope user  # every workspace
 ```
 
-## TypeScript and Rust, briefly
+## TypeScript and Rust
 
-The same plugin ships two more times in `stella-examples`, to prove the wire — not the SDK — is the platform. All three manifests are generated from one template and differ in exactly the `[runtime].argv` line naming the program; a script in CI (`check-manifests-identical.py`) fails the build if that ever stops being true.
+The same plugin also ships in TypeScript and Rust in `stella-examples`, to
+prove the wire itself, not an SDK, is what makes a plugin work. All three
+manifests come from one template and differ only in the `[runtime].argv`
+line naming the program. A script called `check-manifests-identical.py`
+checks this stays true.
 
 <CardGrid size="md">
   <OptionCard name="verify-ts">
-    [`plugins/verify-ts/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-ts). Zero runtime dependencies — not even `@types/node`. The Node surface it touches is hand-declared in a 14-line `.d.ts` file. `npm run build` compiles `src/main.ts` to `dist/main.js`, and `[runtime].argv` is `["node", "${plugin_dir}/dist/main.js"]` — build before you install; the host never invokes a compiler.
+    [`plugins/verify-ts/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-ts). No runtime dependencies at all, not even `@types/node`. The small part of Node it uses is declared by hand in a 14-line `.d.ts` file. `npm run build` compiles `src/main.ts` to `dist/main.js`, and `[runtime].argv` is `["node", "${plugin_dir}/dist/main.js"]`. Build it before you install it — stella never runs a compiler for you.
   </OptionCard>
   <OptionCard name="verify-rs">
-    [`plugins/verify-rs/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-rs). The reference implementation, and the one CI still exercises over the *wire* rather than in-process — its own rule for itself, so the wire path never rots for lack of use. Depends only on `serde` / `serde_json`, not on any crate from this workspace: a third-party Rust author could not link `stella-plugin` either. `cargo build --release` produces the binary `[runtime].argv` names directly — the cheapest thing a host can spawn.
+    [`plugins/verify-rs/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-rs). The reference version, and the one tested over the actual wire protocol rather than in-process, so that path stays exercised. It depends only on `serde` and `serde_json`, not on any of stella's own code — a third-party Rust author couldn't link against stella's internals either. `cargo build --release` produces the binary that `[runtime].argv` names directly, the simplest thing stella can run.
   </OptionCard>
 </CardGrid>
 
-## How much a plugin can do
+## What plugins can do
 
-Read this before installing a verification plugin, and match it to what the install prompt already tells you — this is architecture, not an apology.
+Read this before installing a verification plugin, and compare it with what
+the install prompt tells you. This is how the system is built, not an
+excuse.
 
-**Verification is delivered by an installed plugin.** A plugin's `[oracle]` runs in the plugin's own process. stella does not run that oracle, and it does not re-check what comes back: the fail→pass flip, and every number a declared check compares against a budget, are what the plugin's own process said it saw. stella applies the declared rule — `[requirements]`, the flip policy, the checks — to those reported claims, and it will not credit a requirement they leave undecided. What it cannot do is tell an earned result from a typed one.
+Verification is delivered by an installed plugin. A plugin's `[oracle]`
+runs in the plugin's own process. Stella doesn't run that oracle itself,
+and it doesn't double-check the result: the fail-to-pass change, and every
+number a check compares against a limit, come from what the plugin's own
+process reports. Stella applies the declared rule (`[requirements]`, the
+flip policy, the checks) to those reported claims, and won't credit a
+requirement the plugin leaves undecided. What stella can't do is tell a
+result the plugin actually earned from one it just typed in.
 
-Two guarantees stay in the host no matter what a manifest declares:
+Two things always stay under stella's own control, no matter what a
+manifest declares:
 
-- **`judge` is still synchronous, I/O-free, and total**, over the evidence the plugin reported. A plugin cannot decide "done" for itself, in any language — see [What a plugin is](#what-a-plugin-is) above. What changed with this architecture is not that guarantee; it is where the *evidence* comes from.
-- **The tamper finding is the host's, never the plugin's.** Snapshotting witness-artifact identity happens host-side, and the response type a plugin sends has no field for a tamper finding in any language — a plugin cannot vouch for its own witness even if it wanted to.
+- **`judge` still runs inside stella, with no I/O**, over the evidence the plugin reported. A plugin can't decide "done" for itself, in any language — see [What a plugin is](#what-a-plugin-is) above. What changes is where the evidence comes from, not who decides.
+- **The tamper check is always stella's, never the plugin's.** Checking witness-artifact identity happens inside stella, and a plugin's response has no field for a tamper finding, in any language. A plugin can't vouch for its own witness even if it tried.
 
-Installing a verification plugin means trusting it to report what it saw. That is the same trust you place in a third-party test runner or CI check you did not write yourself.
+Installing a verification plugin means trusting it to report what it
+actually saw. That's the same trust you already place in a third-party
+test runner or a CI check you didn't write yourself.
 
-## What does not work yet
-
-Named plainly, because a platform whose documentation describes only the finished half is not documented.
+## What's not built yet
 
 <Callout type="warn">
-**Dispatch into a live turn is not wired.** `stella plugin install`, `list`, and `remove` are complete: they parse and validate manifests, render the full consent text, write to `.stella/plugins/` or `~/.stella/plugins/`, and (for `list`) show you the hook and wrapper-socket dispatches that *would* happen. But nothing in a real `stella run` or Command Deck session reads that installed roster yet — no `PreToolUse`/`Stop`/etc. hook process is spawned, and no `before_turn` / `after_turn` request is sent, during an actual turn. The wrapper socket itself (the wire contract, the subprocess and in-process transports, `judge`, `again?`) is implemented and covered by its own integration tests, and the three reference plugins are graded against a shared conformance harness that replays the wire protocol directly, not against a live session. Verify it yourself: today a plugin manifest changes what `stella plugin list` prints, and nothing else.
+**A plugin doesn't run during a real turn yet.** `stella plugin install`, `list`, and `remove` are complete: they read and check manifests, show you the full consent text, write to `.stella/plugins/` or `~/.stella/plugins/`, and, for `list`, show you the hook and wrapper dispatches that would happen. But nothing in a real `stella run` or Command Deck session reads that installed list yet. No `PreToolUse`, `Stop`, or other hook process gets started, and no `before_turn` or `after_turn` request gets sent, during an actual turn. The wrapper system itself — the wire contract, the transports, `judge`, and `again?` — is built and tested on its own. The three example plugins are checked against a shared test harness that replays the wire protocol directly, not against a live session. You can check this yourself: today, a plugin manifest only changes what `stella plugin list` prints, nothing else.
 </Callout>
 
-Smaller, standing gaps in the wire contract itself, worth knowing before you rely on them:
+Smaller gaps in the wire contract itself, worth knowing before you rely on
+it:
 
-- **`unobservable` covers several different problems with one value.** A root that does not resolve, a program that is not there, a run that outlived its budget, and a baseline that never watched an assertion in the first place all report the same `FlipObservation::Unobservable` — the host cannot currently tell them apart.
-- **A `TestPlan` names no environment and no timeout.** The grant says which program to run and where, but not what environment it would have run in or how long it would have waited — so "the same invocation" is the same argv, not provably the same run, and each plugin author has to pick their own internal budget.
-- **The version check is the reader's job, not the wire type's.** A body claiming `protocol_version: 2` still decodes as a structurally valid request; a host (or a careful plugin) has to compare the number itself rather than have decoding fail for it.
-- **A plugin cannot declare a measurement as "absent on purpose."** A number a plugin's oracle simply did not compute this run and a number the author forgot to report both arrive the same way: missing.
+- **`unobservable` covers several different problems with one value.** A root that doesn't resolve, a program that isn't there, a run that went over its time budget, and a baseline that never checked anything in the first place all report the same `FlipObservation::Unobservable`. Stella can't currently tell them apart.
+- **A `TestPlan` doesn't name an environment or a timeout.** The grant says which program to run and where, but not what environment it ran in or how long it waited. So "the same invocation" means the same command and arguments, not provably the same run. Each plugin author has to pick their own timeout.
+- **Checking the version is up to the reader, not the wire format.** A message claiming `protocol_version: 2` still decodes as a valid request. Stella, or a careful plugin, has to check the number itself — decoding won't fail on its own.
+- **A plugin can't mark a measurement as "left out on purpose."** A number the plugin's oracle didn't compute this run, and a number the author simply forgot to report, both show up the same way: missing.
 
 ## See also
 

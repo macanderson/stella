@@ -1,9 +1,9 @@
 ---
 title: stella self-driving
-description: Deterministic controls for the perpetual delivery loop — the governor, the ledger, the aperture ladder, and the dedup oracle, as a first-class subcommand.
+description: Commands that control the self-driving loop — how much work to do, what got done, which check runs next, and how duplicate issues are caught.
 ---
 
-Drive the perpetual delivery loop: plan, cycle, audit, watch.
+Run the loop that keeps finding and fixing problems on its own: plan the work, run a cycle, check the code, and watch for the next change.
 
 ## Synopsis
 
@@ -37,186 +37,178 @@ stella self-driving phase <name>
 
 ## What it does
 
-`self-driving` is a cycle: fix a batch of defects, audit what is left, file what it cannot fix, benchmark against the comparator, ship, and repeat. The loop never terminates — when an audit lens goes dry the next one opens, and when every lens is dry it drops to a cheap watch mode and wakes on a change.
+`self-driving` runs in a cycle: fix a batch of problems, check what's left, file what it can't fix as issues, compare results against a baseline, ship changes, and start over. The loop never stops. When one audit check runs out of new findings, the next one opens. When every check is dry, the loop drops into a low-cost watch mode and wakes up when something changes.
 
-This command is the **deterministic half** of that loop: everything a machine can decide without a model, so the model driving the loop never has to re-derive it and cannot get it subtly wrong. The judgement half (which defects to fix, what a finding means) stays with the agent; the `/self-driving` slash commands call these verbs, and `scripts/self-driving.sh` delegates its ported verbs here one-for-one.
+This command handles the deterministic part of the loop: everything a computer can decide with fixed rules instead of guesses. Because these decisions never need a model, the model driving the loop can never get them subtly wrong. Deciding which problems to fix, and what a finding means, is still left to the agent. The `/self-driving` slash commands call these same functions, and the `scripts/self-driving.sh` script uses this command for the same tasks.
 
-State lives at `~/.stella/self-driving/<slug>/`, keyed by the repository's remote URL so every worktree of one repository shares one ledger, seen-set, and calibration. The [Observatory](/docs/commands/observe) reads the same files read-only. Everything works offline and needs no API key; only `queue`, `plan`, and `watch` read the defect queue through `gh` (and degrade gracefully without it).
+Stella stores this state at `~/.stella/self-driving/<slug>/`. The slug comes from your repository's remote URL, so every worktree of the same repository shares one ledger, one seen-list, and one calibration. The [Observatory](/docs/commands/observe) reads these same files, but never changes them. Everything works offline and needs no API key — the exceptions are `queue`, `plan`, and `watch`, which read your issue queue through `gh` (and still work, just with less information, when `gh` isn't available).
 
 ## The verbs
 
-### surface — what a host outside the binary may call
+### surface
 
 ```bash
 stella self-driving surface
 stella self-driving surface --format json
 ```
 
-Prints the **host-verb surface this build carries**: every verb a driver
-outside the binary may call, and the shape each writes to stdout.
+Prints every command a driver outside the binary is allowed to call on this build, and the shape each one writes to stdout.
 
-This exists because self-driving is a *host*, not a turn-loop wrapper — it
-drives stella from outside, as `scripts/self-driving.sh` already does.
-A host reads this surface once
-at start-up and refuses a build it was not written against, rather than meeting
-the skew halfway through a cycle as an `unrecognized subcommand`.
+Self-driving controls stella from the outside, the same way `scripts/self-driving.sh` does. A driver script reads this list once, when it starts. If the list doesn't match what the script expects, the script can refuse to run instead of failing partway through a cycle with an `unrecognized subcommand` error.
 
-The declaration is checked against the binary in **both** directions: a verb
-added to the CLI with no row fails, and a row naming a verb this build does not
-carry fails. Without the first it would silently stop describing the program;
-without the second it would be a document that only ever grows.
+Stella checks this list against the real program in both directions. If a command is added to the CLI but missing from this list, that's an error. If this list names a command that no longer exists, that's also an error. This keeps the list matching the program exactly, instead of slowly falling out of date.
 
-### plan — size the cycle to this machine
+### plan
 
-Supply (what the box has right now) × demand (what the queue needs) × calibration (what previous cycles proved this box survives) → a tier and concrete knobs, emitted as `SELF_DRIVING_*` shell assignments so the caller cannot mis-transcribe them. `--explain` shows the reasoning instead — every tier decision names *why*, because a governor whose decisions cannot be explained gets overridden and then ignored.
+`plan` looks at three things: supply (what your machine can handle right now), demand (what the issue queue needs), and calibration (what past cycles proved your machine can survive). It combines these into a tier and a set of settings, printed as `SELF_DRIVING_*` shell variables so you can't mistype them. Use `--explain` to see the reasoning instead of just the settings — every tier decision comes with a reason, because a governor that can't explain itself gets overridden and ignored.
 
-The probes (cores, load, memory, disk, battery, contention) each yield to a `SELF_DRIVING_PROBE_*` environment override before touching the machine, so the governor's senses can be pinned — by the hermetic test suites, and by an operator on a box where a probe reads the wrong machine.
+Each probe stella uses (cores, load, memory, disk, battery, and contention) checks for a `SELF_DRIVING_PROBE_*` environment variable first, before reading your actual machine. This lets test suites, or you, correct a probe's reading if a machine is being read wrong.
 
-### cycle — allocate and record
+### cycle
 
-`cycle begin` allocates cycle N, banks any abandoned run record, and emits the cycle context (`SELF_DRIVING_CYCLE`, the dry streak so far, the base SHA, the open aperture and its declared tool). `cycle end` appends the ledger record, feeds the outcome to the controller, and advances the aperture when the lens has produced nothing new for two consecutive cycles.
+`cycle begin` starts cycle N. It saves any abandoned run record and prints the cycle's context: `SELF_DRIVING_CYCLE`, how many dry cycles have happened in a row, the base commit, and the current audit lens with its tool. `cycle end` adds a record to the ledger, tells the controller what happened, and moves to the next audit lens once the current one has found nothing new for two cycles in a row.
 
-`--outcome` is the controller's only input: `ok` means the cycle completed inside its resources; `resource-fail` means a killed compiler, OOM, or ENOSPC. A red gate is *not* a resource failure — the batch was wrong, not too big.
+`--outcome` is the only thing the controller looks at. `ok` means the cycle finished within its resource limits. `resource-fail` means something ran out, like a killed compiler process, an out-of-memory error, or running out of disk space. A failing CI check is *not* a resource failure — that means the batch of work was wrong, not that it was too big.
 
-### aperture — the audit lens ladder
+### aperture
 
-"No more defects" is always a statement about the **lens**, never about the code. The ladder — `rubric`, `properties`, `invariants`, `concurrency`, `performance`, `supply-chain`, `security`, `docs`, `soak` — asks a distinct question per lens. `--list` shows each lens with the concrete command that backs it, or an explicit `model-only` marker when no tooling exists yet: no lens is silently a no-op. Lenses that spend real money (`performance`, `soak`) open only on the governor's heavy tier.
+"No more defects" always means no more defects for the *current lens*, never for the whole codebase. The ladder of lenses is `rubric`, `properties`, `invariants`, `concurrency`, `performance`, `supply-chain`, `security`, `docs`, and `soak`, and each one checks something different. `--list` shows each lens with the actual command behind it, or the label `model-only` if there's no tool for it yet, so you always know whether a lens does real work. The `performance` and `soak` lenses cost real money to run, so they only open on the governor's heaviest tier.
 
-Exhausting the ladder drops the loop to `watch`; it never exits.
+Once every lens has been checked, the loop drops into `watch` mode. It never exits.
 
-### seen — the dedup oracle
+### seen
 
-Findings are deduplicated by content digest, never by issue number: `--digest` normalizes (lowercase, collapsed whitespace, line numbers replaced) and hashes, so the same defect re-described after unrelated edits shifted it twelve lines is still one finding. `--new` filters to unseen digests; `--add` records them. A cycle is **dry** when it produced zero unseen findings — fixing things does not make a cycle dry; discovering nothing does.
+Stella tells findings apart by their content, not by issue number. `--digest` cleans up the text (lowercase, collapsed whitespace, line numbers removed) and hashes it, so the same problem is recognized as one finding even after unrelated edits move it twelve lines down. `--new` shows which digests haven't been seen before. `--add` saves new digests to the seen list. A cycle counts as **dry** when it finds zero new problems — fixing problems doesn't make a cycle dry, finding nothing does.
 
-### calibrate — the AIMD controller
+### calibrate
 
-Additive increase on a clean cycle (+2 batch, one more parallel worktree after three consecutive clean cycles), multiplicative decrease on a resource failure (halve the batch, drop to serial). This is the only place the ceilings move, and it moves them from evidence — the same command is right on a 16 GiB laptop and a 123 GiB rig without anyone editing a threshold.
+After a clean cycle, the batch size grows by 2. After three clean cycles in a row, stella also adds one more parallel worktree. After a resource failure, the batch size is cut in half and stella drops back to running one worktree at a time. This is the only place these limits change, and they change based on real evidence — the same command works correctly on a small 16 GiB laptop and a large 123 GiB machine, without you setting any thresholds by hand.
 
-### watch — the low-duty mode
+### watch
 
-Checks what would invalidate the last clean sweep: `main` moved, defects filed, CI red. Any trigger reopens the aperture at `rubric` and exits `0` (WAKE); a quiet check exits `1` (SLEEP) so a driver can loop on the exit code and spend nothing.
+`watch` checks for anything that would undo the last clean sweep: new commits on `main`, new problems filed, or a red CI run. If any of these happened, the audit lens reopens at `rubric` and the command exits with code `0` (WAKE). If nothing changed, it exits with code `1` (SLEEP), so a driver script can loop on this exit code and spend nothing while waiting.
 
-### run, runs, phase — the run lifecycle
+### run, runs, phase
 
-A **run** spans many cycles (one `/loop` session, one daemon lifetime) and is the unit a person starts, stops, and drills into. Transitions append to `runs.jsonl` (readers fold by `run_id`, last write wins); the live pointer `run.json` carries the phase and a heartbeat. A run whose last record says `running` but whose heartbeat has gone stale reports **crashed** — only a reader can say so, because the process that would have written it is gone.
+A run covers many cycles: one `/loop` session, or one daemon's whole lifetime. It's the unit you start, stop, and look into. Each change of state is added to `runs.jsonl`; when reading this file, the last entry for a given `run_id` wins. A separate file, `run.json`, always points to the current phase and the last heartbeat. If a run's last record says `running` but its heartbeat has gone stale, stella reports it as `crashed` — only a reader can tell this, because the process that would have updated the heartbeat is gone.
 
 ### metrics, state, queue
 
-`metrics` folds the ledger into the loop's evidence about itself, with named pathology signals (`STUCK`, `STARVED`, `NOISY`, `FRAGILE`) for the meta-cycle to act on. `state` shows the counters and the last five cycles. `queue` ranks the open defects P0 &gt; P1 &gt; P2 &gt; untriaged, oldest first inside a rank — feature work is excluded, because this loop closes defects.
+`metrics` turns the ledger into evidence about how the loop itself is doing, flagging specific problems: `STUCK`, `STARVED`, `NOISY`, and `FRAGILE`. `state` shows the current counters and the last five cycles. `queue` ranks open problems by priority — P0, then P1, then P2, then untriaged, oldest first within each rank. Feature requests are left out, because this loop only closes defects.
 
 ### file
 
-`stella self-driving file` files a finding as an issue through the bound provider, and it **refuses rather than degrades**.
+`stella self-driving file` turns a finding into an issue in your connected tracker. If something's wrong with it, it **refuses to file the issue** instead of filing a bad one.
 
-Two checks run before the tracker is reached. A finding whose digest is already in the seen-set is not filed twice — the same normalization the aperture ladder's dry streak rests on, so the same defect reported against a shifted line number is one finding. And the draft must match this workspace's issue convention.
+Two checks happen before anything reaches the tracker. First, if a finding's digest is already in the seen list, it won't be filed again — this uses the same text-cleanup rule the aperture ladder's dry streak relies on, so the same problem reported at a different line number still counts as one finding. Second, the draft must match your workspace's issue format.
 
-That second check exists because of a feedback loop. The ranker counts an issue as a defect if it carries `bug` *or* `triage`; GitHub's triage workflow adds `triage` to any issue opened without a type label, and issues opened through the API carry no labels at all. So an unclassified filing comes back next cycle as an untriaged defect the loop is responsible for triaging — the loop manufactures its own queue, and every measure of ground gained on the backlog quietly includes its own exhaust.
+This second check exists to stop a feedback loop. Stella's ranker treats any issue carrying a `bug` or `triage` label as a defect. GitHub's own triage workflow adds a `triage` label to any issue with no type label, and issues opened through the API start with no labels at all. Without this check, an unlabeled filing would come back next cycle as an untriaged defect the loop then has to triage itself — the loop would be manufacturing its own backlog, and its progress numbers would quietly include work it created for itself.
 
-The convention is **learned, not assumed**: read from `.stella/issues/convention.json` if the workspace pins one, otherwise discovered from the automation that enforces it. Where nothing can be discovered the loop *proposes* a convention and files nothing under it until a human accepts — it may propose any convention and grants itself none. A refusal names every violation at once and says which source the convention came from, because "what did I get wrong" and "wrong according to what" are both questions you need answered.
+Stella learns your issue format instead of guessing it: it reads `.stella/issues/convention.json` if your workspace has saved one, or otherwise figures it out from the automation that enforces it. If nothing can be found, the loop *proposes* a format and files nothing under it until a human accepts — it can suggest any format, but it can't approve its own suggestion. If a filing is refused, stella lists every problem with it at once and says where the format came from, so you know both what went wrong and what rule it broke.
 
 ### work
 
-`stella self-driving work --issue KEY` runs one issue through stella's turn loop in an isolated worktree, and reports what the tree says.
+`stella self-driving work --issue KEY` runs one issue through stella's normal turn loop, in its own isolated worktree, and reports what actually changed.
 
-It **spawns a real `stella run`** rather than embedding a turn. Self-driving is a host — it drives stella from outside — so a unit of work gets exactly what a `stella run` gets on that machine, with whatever plugins are installed over it and nothing else. Be clear about what that is worth: with no verification plugin installed, a completed work unit means *the turn finished*, not *the change is proven*. What makes an autonomous merge safe is the CI gating in `deliver`, not this step.
+It starts a real `stella run`, rather than running a turn internally. Self-driving controls stella from the outside, so each unit of work gets exactly what a normal `stella run` gets on your machine — the same plugins, nothing extra. This matters: with no verification plugin installed, a completed work unit only means the turn finished, not that the change was proven correct. What actually makes an automatic merge safe is the CI check in `deliver`, not this step.
 
-Two properties are deliberate and tested.
+Two things here are deliberate, and tested. Issue text is never a command: anyone who can file an issue could write anything in it, so its text always reaches the prompt as a quote, with no authority to instruct the agent. The quote marker is generated from the issue's own content rather than fixed in advance, so text inside the issue can't fake the end of the quote and pretend to speak as you.
 
-**Issue text is data, never instruction.** An issue is written by whoever can file one, so its body reaches the prompt as quoted material carrying no authority. The fence is derived from the body rather than fixed, so text inside it cannot close the quotation early and continue as though it were you speaking.
+**The outcome is measured from the actual files, never from what the turn says.** If a turn exits cleanly and claims success but changes nothing, stella reports `no_change` and releases the worktree. This matters exactly when a turn's own summary and the real result disagree — a loop that trusted the summary instead would open empty pull requests.
 
-**The outcome is measured from the tree, never from what the turn said.** A turn that exits cleanly and narrates success while changing nothing reports `no_change` and releases its worktree. The two disagree exactly when it matters, and a loop that believed the narration would open empty pull requests.
-
-Worktrees live under `.stella/private/self-driving/` on `self-driving/` branches — outside the fleet's namespace, because `stella fleet gc` reclaims by namespace and must not be given authority over checkouts it did not create.
+Worktrees for this command live under `.stella/private/self-driving/`, on `self-driving/` branches. This is outside the fleet's namespace, because `stella fleet gc` cleans up by namespace, and it should never be allowed to delete checkouts it didn't create.
 
 ### drive
 
-`stella self-driving drive` is the verb that runs unattended. It asks the machine what to do next, does it, and asks again: claim from the ranked queue, work the issue through the turn loop, open a pull request, watch CI, merge when the machine says to.
+`stella self-driving drive` runs on its own, without you watching it. It keeps asking what to do next, does it, and asks again: claim the next issue from the ranked queue, run it through the turn loop, open a pull request, watch CI, and merge when it's ready.
 
-**On a block it parks and keeps polling — it does not exit.** Self-resume is structural, because the machine holds no latch: a block is recomputed from scratch on every call and stops being returned the moment its cause is gone. But a host that exits on a block makes resumption impossible no matter what the machine returns. Nobody should ever have to tell this loop it may resume; a human who raises the ceiling, restores the grant, drops the stop flag or merges the escalated pull request has already said everything that needs saying.
+**When it hits a block, it parks and keeps checking — it does not exit.** Nothing stays "stuck" on purpose: every block is recalculated from scratch each time, so as soon as its cause is gone, it stops being reported. If the command exited on a block instead, nothing could resume it automatically. You never need to tell this loop it can resume — raising a limit, restoring a permission, removing a stop flag, or merging an escalated pull request already says everything that needs to be said.
 
-`--max-issues` bounds one invocation so it terminates. The real loop never does, which is why the bound is a flag rather than a constant, and why reaching it is reported as *reached the bound* rather than as *finished*.
+`--max-issues` limits one run so that it eventually stops. The loop itself never stops on its own, which is why this limit is a flag you set, not a fixed number. When the loop hits this limit, it's reported as *reached the bound*, not as *finished*.
 
-Steps the machine returns that this build cannot perform — sweeping an audit lens, curating a proposal — are **reported and then stop the loop**, never silently skipped. A driver that did nothing for a step it was handed would look healthy forever.
+If the machine asks for a step this build can't do, like sweeping an audit lens or curating a proposal, stella reports it and stops the loop, instead of silently skipping it. A driver that silently skipped steps would always look healthy, even when it wasn't doing anything.
 
 ### stop
 
-`stella self-driving stop` asks a running loop to park. It writes the flag `drive` re-reads on every poll and prints the path it wrote.
+`stella self-driving stop` asks a running loop to pause. It writes a flag file that `drive` checks on every poll, and prints the path of the file it wrote.
 
-The loop parks at its **next boundary** — between issues, between turns — and never mid-turn. A turn killed where it stands leaves a worktree, a branch and possibly a pull request that nothing has recorded, which is a mess an operator then has to clean up by hand.
+The loop pauses at its next natural stopping point, between issues or between turns, never in the middle of one. A turn stopped mid-way would leave behind a worktree, a branch, and maybe a pull request that nothing has recorded, which someone would then have to clean up by hand.
 
-**Nothing latches the request.** Deleting the file puts the loop back to work with no other input, which is the same self-resume property every other block has: the machine recomputes from scratch on every call, so a cause that is gone stops being returned on the very next poll. There is no `resume` verb because `rm` is the whole operation.
+**The stop request isn't permanent.** Deleting the flag file starts the loop working again, with no other input needed. This works the same way as every other block: the machine checks from scratch each time, so once the cause is gone, it stops appearing on the very next poll. There's no `resume` command, because deleting the file is the whole operation.
 
-`--root` names the loop's durable state directory, for stopping a loop rooted somewhere other than this workspace's own — a second clone, or a state root shared across machines. Without it the flag lands in the root this workspace resolves, the same one the [Observatory](/docs/commands/observe) reads.
+`--root` names the loop's state directory, in case you need to stop a loop that isn't rooted in this workspace — a second clone, or a state root shared across machines. Without `--root`, the flag is written to this workspace's own root, the same one the [Observatory](/docs/commands/observe) reads.
 
-Asking a loop that is already stopping is not an error; the output says which case it was, because "already asked" tells an operator whose loop is still working that the flag is not what is holding it.
+Asking a loop to stop when it's already stopping is not an error. The output tells you which case happened, because knowing it was "already asked" tells you the stop flag isn't why the loop is still working.
 
 ### stats
 
-`stella self-driving stats` is what a session has done so far — issues claimed, attempted, changed, failed, escalated and deferred; issues created, refused and deduplicated; issues closed by each resolution; pull requests opened, merged and escalated; fixes, rebases, and time spent waiting on a broken base; reflections, memories and proposals; turns run and turns stopped by their ceiling.
+`stella self-driving stats` shows what a session has done so far: issues claimed, attempted, changed, failed, escalated, and deferred; issues created, refused, and marked as duplicates; issues closed, broken down by how they were closed; pull requests opened, merged, and escalated; fixes, rebases, and time spent waiting on a broken base branch; reflections, memories, and proposals written; and turns run, including turns stopped by their limit.
 
-It is written after **every step**, not at the end. A perpetual loop that only reported on exit would never report at all, and the point is a record readable while the loop is still running. Writes are atomic, so a dashboard sampling mid-write reads the previous complete document rather than a truncated one.
+Stella writes these stats after **every step**, not just at the end. Since the loop never stops on its own, a report written only on exit would never get written at all — the point is a record you can read while the loop is still running. Each write is atomic, so a dashboard reading the file mid-write always sees the last complete version, never a half-written one.
 
-**The ratios are printed beside the counts.** A raw count answers *how busy was it*, which is the question that flatters. Three derived numbers answer *was it worth it*, and each can report badly:
+#### Ratios
 
-- **inflation** — issues created per issue closed. Above 1.00 sustained means the loop is **losing ground**: filing faster than it finishes. That is the failure mode the design names as the one none of its mitigations is proven to prevent, so it belongs on the dashboard rather than in a report somebody reads later.
-- **attempt yield** — the share of attempts that changed something.
-- **merge rate** — the share of opened pull requests that landed.
+A raw count only tells you how busy the loop was, which always looks good. The ratios below tell you whether the work was worth it, and each can look bad for a real reason:
 
-A ratio with no denominator prints `--` rather than `0.00`: a ratio against zero is undefined, not small, and a number would tell a reader something the session has not established. The three closure kinds are checked against the total, and a mismatch is reported — a dashboard showing a total beside kinds that sum to something else is worse than one showing neither, because a reader believes whichever they saw first.
+- `inflation` — issues created for every issue closed. If this stays above 1.00, the loop is **losing ground**: it's filing new issues faster than it's finishing them. This is a known risk that no safeguard fully prevents, so it's shown here on the dashboard where you'll see it right away.
+- `attempt yield` — the share of attempts that actually changed something.
+- `merge rate` — the share of opened pull requests that got merged.
+
+If a ratio has no denominator, stella prints `--` instead of `0.00`. A ratio of zero over zero isn't a small number, it's undefined, and showing `0.00` would suggest something false. Stella also checks that the three closure kinds add up to the total, and reports it if they don't — a dashboard showing a total that doesn't match its own breakdown is worse than showing neither, because people tend to trust whichever number they see first.
 
 ### triage
 
-`stella self-driving triage --issue KEY` brings an issue up to this workspace's convention.
+`stella self-driving triage --issue KEY` updates one issue to match your workspace's issue format.
 
-The loop owns the backlog it draws from, so an issue that arrived unclassified is one it may classify — but the authority is split. It **removes what the convention reserves**, which is mechanical and needs no judgement. It **reports what needs deciding** rather than guessing: choosing between `bug` and `feature`, or between `P0` and `P2`, is a reading of what the issue says, and a loop that guessed would be manufacturing the very classification the queue is ranked by — the ranking would then be measuring the loop's own invention.
+The loop manages its own backlog, so it can classify an issue that arrived unclassified, but its authority is limited. It removes anything the format reserves, since that's mechanical and needs no judgment. It **reports what still needs a decision**, instead of guessing: choosing between `bug` and `feature`, or between `P0` and `P2`, requires reading and understanding the issue. If the loop guessed, it would be inventing the very classification its queue ranking depends on, which would make the ranking measure the loop's own guesses instead of real priority.
 
-The same rule drives both directions. `conform` decides whether a new filing may go out; `repair` decides what an existing issue is missing. One standard, so the loop's own filings and the backlog it inherited are held to it equally.
+The same rule applies in both directions. `conform` decides whether a new issue can be filed; `repair` decides what's missing from an existing one. Both the loop's own filings and the backlog it inherited are held to the same standard.
 
 ### close
 
-`stella self-driving close --issue KEY` ends an issue with a receipt. There are four kinds, mapping onto the three close reasons a tracker offers.
+`stella self-driving close --issue KEY` closes an issue and records proof of why. There are four kinds of closure, mapping onto the three close reasons most trackers offer.
 
-**Every kind cites something, and the citations are not interchangeable.**
+**Every kind of closure needs a citation, and the citations aren't interchangeable.**
 
-`--completed` closes as done and must cite the change that carried it: `--pr KEY`, or `--commit SHA` for the all-hands case where a fix lands directly on the branch rather than through a pull request. Citing a document here is refused — a document is not a change.
+`--completed` closes an issue as done. It must cite the change that fixed it — `--pr KEY`, or `--commit SHA` for the rare case where a fix goes directly onto the branch without a pull request. You can't cite a document here: a document is not a change.
 
-`--not-planned REASON` closes as not planned, and must cite the authority that settles it with `--per`: a document id (`doc:backlog-self-driving`) or a context-record lineage id. A reason with no authority behind it is an opinion wearing a decision's clothes, and the next person to hit the same problem has no way to find out who decided or what would reopen it. Citing a pull request here is refused for the mirror reason — a change is not a decision.
+`--not-planned REASON` closes an issue as not planned. It must cite the decision behind it with `--per`, using either a document id (like `doc:backlog-self-driving`) or a context-record id. A reason with no cited authority is just an opinion pretending to be a decision, and the next person to hit the same problem won't know who decided this or what would change it. You can't cite a pull request here either, for the opposite reason: a change is not a decision.
 
-`--duplicate-of KEY` closes as a duplicate and names what it duplicates, because a duplicate closure that does not say so sends the reader looking for an original they cannot find.
+`--duplicate-of KEY` closes an issue as a duplicate and names the issue it duplicates. Without this, anyone reading the closure would go looking for an original they can't find.
 
-`--partial DONE --remaining KEY…` is the one that matters most. "Mostly done" is the usual state of real work and the easiest thing to round up, so it is **refused outright** unless the remainder already exists as its own tracked issues. The comment links them, and the backlog never shrinks by more than the work actually finished.
+`--partial DONE --remaining KEY…` is the most important one. "Mostly done" is how most real work actually ends up, and it's tempting to round that up to "done." Stella refuses this outright unless the remaining work already exists as its own tracked issues. The closing comment links to them, so the backlog only shrinks by the amount of work actually finished.
 
-Everything is refused *before* the tracker is reached, so a closure missing its citation cannot half-happen.
+All of these checks happen *before* anything reaches the tracker, so a closure that's missing its citation can never half-happen.
 
-### Which tracker, and how it talks
+### Tracker support
 
-`stella.toml`'s `[issues]` section says **which** tracker is active and where its manifest lives. That manifest — `.stella/issues/<provider>.toml` by default — says how that tracker **talks**: what marks an issue open or closed, how each resolution is spelled, what the fields are called.
+The `[issues]` section in `stella.toml` says which issue tracker is active, and where its manifest file lives. That manifest file, `.stella/issues/<provider>.toml` by default, says how that tracker works: what marks an issue open or closed, how each resolution is spelled, and what its fields are called.
 
-The split is deliberate. `stella.toml` is where a person looks for anything configurable about stella, so *which tracker* belongs there; a vendor's spellings do not, and a workspace spanning two trackers needs somewhere to put the second one's words.
+This is split on purpose. `stella.toml` is where you look for anything you can configure about stella, so *which tracker to use* belongs there. A specific vendor's exact wording doesn't belong there, and if a workspace uses two trackers, there needs to be somewhere to put the second one's settings.
 
-stella branches on exactly three resolutions — `completed`, `not_planned`, `duplicate`, which are GitHub's own close reasons. A tracker offering twenty maps those three and the rest pass through verbatim. Nothing needs configuring to work against GitHub: absent config, absent section and absent manifest all yield working defaults.
+Stella only recognizes three resolutions: `completed`, `not_planned`, and `duplicate` — these are GitHub's own close reasons. If your tracker offers twenty resolutions, it maps to these three and the rest pass through as-is. You don't need to configure anything to use stella with GitHub: with no config, no `[issues]` section, and no manifest file, everything works with sensible defaults.
 
 ### deliver
 
-`stella self-driving deliver` is the pull-request rhythm: open, observe, decide, merge.
+`stella self-driving deliver` handles the pull-request cycle: open, check, decide, and merge.
 
-**Deciding buys no model call.** What to do with an open pull request is arithmetic over observed facts, so the decision lives in a pure state machine and this command only reads the forge and performs what the machine returned. `merge` re-derives the decision from a fresh observation rather than trusting that the caller already ran `next` — the forge moves between calls, and a merge authorised by a stale read is exactly what the machine's "mergeability not yet computed" arm exists to prevent.
+Deciding what to do never calls a model. What to do with an open pull request is a straightforward calculation based on observed facts, not a judgment call, so the decision lives in a pure state machine and this command only reads the pull request's state and does whatever the calculation says. `merge` recalculates the decision fresh, instead of trusting that `next` was already run — a pull request's state can change between calls, and merging based on stale information is exactly what the "mergeability not yet computed" check exists to prevent.
 
-**`base_ci` is a second read, and it is the point.** A failure that reproduces on the base branch is not this pull request's failure, and treating it as one burns every cycle on somebody else's breakage. So `observe` does not ask a blanket "is main red" — it compares **the same checks by name**. For every check failing on the pull request, it asks what the check of that name concluded on the base branch's head, and the base counts as broken only when the failures actually overlap. A blanket read would call a genuine regression "inherited" whenever anything unrelated was red, which is the expensive direction to be wrong in.
+`base_ci` checks the base branch separately, on purpose. A test failure that also happens on the base branch isn't this pull request's fault, and treating it as one wastes every cycle chasing somebody else's broken build. So `observe` doesn't just ask "is `main` red?" It compares the same checks, by name. For every check that fails on the pull request, it looks at what that same check concluded on the base branch's head, and the base only counts as broken if the failures actually overlap. A blanket check would wrongly call a real regression "inherited" any time something unrelated was red, which is a much more costly mistake to make.
 
-**Closing an issue takes both spellings.** `Closes #N` goes in the pull request body *and* as a commit trailer, because a squash merge composes its message from the commits and never from the body, while a rebase merge replays the commits verbatim. Either alone is a silent single point of failure. The trailer is applied by `work`, since the turn is what authors the commit.
+Closing an issue needs to be written twice. `Closes #N` goes both in the pull request body and as a commit trailer. A squash merge builds its final message from the commits, never from the body, while a rebase merge keeps the commits as-is. Writing it in only one place would silently fail depending on the merge type. The commit trailer is added by `work`, since that's the step that writes the commit.
 
-A pull request opens as a **draft** and the machine takes it out of draft itself once CI is green — so one that never goes green never asks a human to look at it. Merging waits for a human approval unless `--no-review` is passed: a default that merged unreviewed would make the safe choice the one an operator has to remember to opt into.
+A pull request opens as a **draft**, and stella takes it out of draft on its own once CI turns green — so a pull request that never passes CI never asks a person to review it. Merging waits for a human approval unless you pass `--no-review`. This default is deliberate: if unreviewed merges were the default, you'd have to remember to turn on the safe option instead of the other way around.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
 | `~/.stella/self-driving/<slug>/ledger.jsonl` | One record per completed cycle |
-| `~/.stella/self-driving/<slug>/runs.jsonl` | Run state transitions (append-only, folded by readers) |
-| `~/.stella/self-driving/<slug>/run.json` | The live pointer: phase, heartbeat, pids |
+| `~/.stella/self-driving/<slug>/runs.jsonl` | Run state changes, added to over time and combined by readers |
+| `~/.stella/self-driving/<slug>/run.json` | The live pointer: current phase, heartbeat, and process ids |
 | `~/.stella/self-driving/<slug>/seen.txt` | Every finding digest ever triaged |
-| `~/.stella/self-driving/<slug>/calibration.json` | The AIMD controller's learned ceilings |
+| `~/.stella/self-driving/<slug>/calibration.json` | The learned batch-size and worktree limits |
 | `~/.stella/self-driving/<slug>/aperture` | The open audit lens |
 
-`SELF_DRIVING_STATE_DIR` relocates the whole directory (the hermetic tests use this); `STELLA_HOME` moves it with the rest of the stella home.
+`SELF_DRIVING_STATE_DIR` moves this whole directory somewhere else (used by the test suite); `STELLA_HOME` moves it along with the rest of stella's home directory.

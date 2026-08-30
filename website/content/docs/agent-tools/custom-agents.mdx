@@ -1,20 +1,13 @@
 ---
 title: Custom Agents
-description: Define reusable personas in AGENT.md files — the frontmatter schema, where definitions live, versioned editing, and how stella init adopts existing ones.
+description: Define reusable personas in AGENT.md files. Covers the frontmatter fields, where definitions live, versioned editing, and how stella init imports existing ones.
 ---
 
-A **custom agent** is a named persona the session can adopt: a
-system-prompt-shaped Markdown body with a frontmatter header, invoked as
-`/agent-name <task>`. Agents are distinct from
-[skills](/docs/agent-tools/skills) (know-how selected into context
-automatically) and [custom commands](/docs/agent-tools/commands) (prompt
-templates) — an agent changes *who is doing the work*, optionally with a
-restricted toolbelt.
+A **custom agent** is a named persona the session can adopt. It's a system-prompt-shaped Markdown file with a frontmatter header, invoked as `/agent-name <task>`. An agent is different from a [skill](/docs/agent-tools/skills), which is know-how brought in automatically, and from a [custom command](/docs/agent-tools/commands), which is a prompt template. An agent changes who is doing the work, optionally with a restricted toolbelt.
 
 ## The AGENT.md schema
 
-An agent is one Markdown file with YAML frontmatter — nested
-`<slug>/AGENT.md` or flat `<slug>.md`:
+An agent is one Markdown file with YAML frontmatter, in the nested layout (`<slug>/AGENT.md`) or the flat layout (`<slug>.md`):
 
 ```md title=".stella/agents/docs-writer.md"
 ---
@@ -27,43 +20,27 @@ You are a technical writer. Prefer working examples over abstractions.
 Never document a flag you haven't verified against --help output.
 ```
 
-Every field, in the shape the loader accepts:
+### Fields
 
 <CardGrid size="md">
   <OptionCard name="name" defaultValue="the filename stem, or the directory name">
-    The agent's slug — what `/name` invokes. Falls back to the filename stem
-    (flat layout) or the directory name (nested layout).
+    The agent's slug. This is what `/name` invokes. Falls back to the filename stem in the flat layout, or the directory name in the nested layout.
   </OptionCard>
   <OptionCard name="description" defaultValue="the body's first non-empty line">
-    One-line summary for the `/agents` listing. The fallback strips leading
-    markdown heading markers and truncates to 72 characters with an ellipsis.
+    A one-line summary for the `/agents` listing. If you skip it, stella strips leading markdown heading marks from the first line and cuts it to 72 characters with an ellipsis.
   </OptionCard>
   <OptionCard name="tools" defaultValue="all tools">
-    The agent's toolbelt — the tool names granted to this persona. Omitted
-    means **all** tools. When the agent is assumed for a session (`/agent`,
-    or `a` on the AGENTS tab), the grant is enforced: the session's tool
-    surface narrows to the intersection of this list with whatever the
-    operator already allows.
+    The agent's toolbelt: the tool names granted to this persona. Leave it out and the agent gets every tool. When you assume this agent for a session (`/agent`, or `a` on the AGENTS tab), the grant is enforced. The session's tools narrow to whatever is in both this list and whatever the operator already allows.
   </OptionCard>
   <OptionCard name="model" defaultValue="the session's model">
-    The model this agent runs on, as `provider/slug` (`zai/glm-5.2`) or a
-    bare catalog slug. Applied as a **session-only** model switch when the
-    agent is assumed — the settings default is untouched, and a model whose
-    provider has no credential is reported and skipped rather than failing
-    the assume.
+    The model this agent runs on, written as `provider/slug` (`zai/glm-5.2`) or a bare catalog slug. This is a session-only switch applied when you assume the agent. Your settings default stays untouched. If the model's provider has no credential, stella reports it and skips the switch rather than failing the assume.
   </OptionCard>
   <OptionCard name="body" required>
-    The persona's instructions — everything after the frontmatter. A file with
-    an empty body is skipped with a diagnostic, never a fatal error.
+    The persona's instructions: everything after the frontmatter. A file with an empty body is skipped, with a diagnostic rather than a fatal error.
   </OptionCard>
 </CardGrid>
 
-The `tools:` field is parsed tolerantly, accepting every shape the
-ecosystem has taught authors. A bare comma list (`Read, Grep`), a JSON/YAML
-flow array (`["Read", "Grep"]`, `[Read, Grep]`), a block sequence, per-item
-quotes, and trailing commas all normalize to the same clean list, with
-duplicates collapsed. An empty list or the explicit wildcard forms (`*`,
-`all`, `all tools`) mean the same as omitting the field: no restriction.
+The `tools:` field reads several formats, so most spellings you'd try will work. A comma list (`Read, Grep`), a JSON or YAML flow array (`["Read", "Grep"]`, `[Read, Grep]`), a block sequence, quoted items, and trailing commas all turn into the same clean list, with duplicates removed. An empty list, or one of the wildcard forms (`*`, `all`, `all tools`), means the same as leaving the field out: no restriction.
 
 ## Where agents live
 
@@ -75,7 +52,7 @@ duplicates collapsed. An empty list or the explicit wildcard forms (`*`,
       { label: "Travels with", value: "the repo", mono: false },
     ]}
   >
-    Commit it and the whole team gets the persona on their next session.
+    Commit it, and the whole team gets the persona on their next session.
   </SpecCard>
   <SpecCard
     title="User"
@@ -88,21 +65,15 @@ duplicates collapsed. An empty list or the explicit wildcard forms (`*`,
   </SpecCard>
 </CardGrid>
 
-Definitions load user-global first, then workspace — **workspace wins** on
-a name collision.
+Stella loads user-scope agents first, then project-scope agents. If both define the same name, the project version wins.
 
 ## Invoking an agent
 
-Typing `/docs-writer polish the CLI reference` wraps the agent's body as an
-explicit persona-adoption instruction above your task and runs it as the
-prompt. In the slash menu, built-ins can never be shadowed, and when a
-custom name collides across kinds, commands shadow skills shadow agents.
+Type `/docs-writer polish the CLI reference` and stella wraps the agent's body as a persona-adoption instruction above your task, then runs it as the prompt. Built-in commands can never be overridden in the slash menu. When a custom name collides across kinds, commands win over skills, and skills win over agents.
 
-## Versioned editing in the Command Deck
+## Versioned editing
 
-`/agents` opens the AGENTS tab, which lists installed agents in both scopes
-with versioned editing and pinning — like skills, every save is a new
-version you can roll back:
+`/agents` opens the AGENTS tab, which lists installed agents in both scopes with versioned editing and pinning. Like skills, every save creates a new version you can roll back to:
 
 ```text
 <agents-dir>/<slug>.md                  ← the loaded definition
@@ -110,19 +81,11 @@ version you can roll back:
 <agents-dir>/.versions/<slug>/PINNED    ← one line: the pinned version
 ```
 
-No `.versions/` entry is created until the first edit, so hand-authored
-agents stay exactly as you wrote them. Editing an agent that was adopted as
-a symlink (see below) replaces the symlink with a real file in the agents
-directory — the original stays untouched, and your edit lives on the
-stella side from then on.
+No `.versions/` entry is created until your first edit, so a hand-authored agent stays exactly as you wrote it. If you edit an agent that was imported as a symlink (see below), stella replaces the symlink with a real file in the agents directory. The original file stays untouched, and your edit lives on the stella side from then on.
 
-## Adopted from .claude/ and .agents/ on init
+## Import from Claude and Agents
 
-Ecosystem tools already maintain `.claude/{commands,skills,agents}` and
-`.agents/{commands,skills,agents}`. On `stella init` (and `/init`),
-definitions found there are **symlinked** into the matching stella
-directory — adopted, not copied, so edits stay in one place and your
-existing setup carries over instead of being rewritten:
+Other agent tools already maintain `.claude/{commands,skills,agents}` and `.agents/{commands,skills,agents}`. When you run `stella init` (or `/init`), stella finds definitions there and **symlinks** them into the matching stella directory. They're imported, not copied, so edits stay in one place and your existing setup carries over instead of getting rewritten:
 
 <CardGrid size="md">
   <SpecCard
@@ -132,7 +95,7 @@ existing setup carries over instead of being rewritten:
       { label: "Destination", value: "<workspace>/.stella/agents/" },
     ]}
   >
-    Adopted when you run `stella init` inside the repo.
+    Imported when you run `stella init` inside the repo.
   </SpecCard>
   <SpecCard
     title="User scope"
@@ -141,35 +104,20 @@ existing setup carries over instead of being rewritten:
       { label: "Destination", value: "~/.stella/agents/" },
     ]}
   >
-    Adopted by the same run — your global personas carry over once.
+    Imported by the same run. Your global personas carry over once.
   </SpecCard>
 </CardGrid>
 
-(The same sync adopts `commands/` and `skills/` into their matching
-directories.) Three rules keep the adoption sane:
+The same sync imports `commands/` and `skills/` into their matching directories.
 
-1. **`.claude` wins over `.agents`.** Sources are scanned in that
-   precedence order; the first occurrence of a name is the one adopted.
-2. **Never clobber, never re-adopt.** A name already present in the
-   destination — hand-authored or linked by a previous init — is skipped,
-   so the sync is idempotent and your own definitions always win.
-3. **Never follow a symlink.** Other tools symlink between these
-   directories too (e.g. `.claude/agents/x → ../../.agents/agents/x`);
-   stella links each definition from its *real* home exactly once. A
-   directory entry with no `AGENT.md` inside is also skipped — and
-   reported, so nothing disappears silently.
+### Import rules
 
-After init, the `/agents` tab lists the adopted definitions alongside your
-own, and init itself prints a per-scope `✓ adopted …` summary of what it
-linked and skipped.
+- **`.claude` wins over `.agents`.** Stella scans sources in that order, so the first occurrence of a name is the one it imports.
+- **Never overwrite, never re-import.** A name already present in the destination, whether you wrote it by hand or a previous init linked it, is skipped. The sync is safe to run again, and your own definitions always win.
+- **Never follow a symlink.** Other tools link between these directories too, for example `.claude/agents/x → ../../.agents/agents/x`. Stella links each definition from its real home exactly once. A folder with no `AGENT.md` inside it is skipped too, and reported, so nothing disappears silently.
+
+After init, the `/agents` tab lists the imported definitions alongside your own, and init itself prints a per-scope summary of what it linked and skipped.
 
 <Callout type="info">
-  An agent's `tools:` restriction is enforced when the agent is **assumed**
-  for a session (the deck's `/agent` picker or the AGENTS tab's `a`): the
-  session tool surface narrows to the grant. On a plain `/agent-name task`
-  invocation it remains a prompt-level toolbelt note. For hard boundaries
-  independent of any agent — gated mutations, blocked paths — reach for
-  [permissions](/docs/agent-tools/permissions) and
-  [hooks](/docs/agent-tools/hooks); to add genuinely new actions, define a
-  [custom tool](/docs/agent-tools/custom-tools).
+  An agent's `tools:` restriction is enforced when you **assume** the agent for a session, through the deck's `/agent` picker or the AGENTS tab's `a` key. The session's tools narrow to the grant. On a plain `/agent-name task` call, it's just a prompt-level note. For hard boundaries that don't depend on any agent, like gated actions or blocked paths, use [permissions](/docs/agent-tools/permissions) and [hooks](/docs/agent-tools/hooks). To give the agent a genuinely new action, define a [custom tool](/docs/agent-tools/custom-tools).
 </Callout>

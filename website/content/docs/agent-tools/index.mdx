@@ -1,43 +1,43 @@
 ---
 title: Built-in Tools
-description: The complete catalog of tools the stella agent can call in every session — one shell, file CRUD, one search, sub-agent delegation, the task board, scratch state, and the environment probe — including which are read-only.
+description: Every tool the stella agent can call in every session. Covers the shell, file create/read/update/delete, code search, sub-agent delegation, the task board, scratch state, and the environment probe, and notes which ones are read-only.
 ---
 
-stella ships a small built-in surface: **18 tools**, covering the shell, file create/read/update/delete, code search, sub-agent delegation, the session task board, scratch session state, and the session environment. The surface is small on purpose — it is the set of verbs the agent needs to do work in a repository, and nothing beyond it. Everything else the agent can do comes from [custom script tools](/docs/agent-tools/custom-tools) you define and from tools merged in from [MCP servers](/docs/agent-tools/mcp). Every tool — built-in or merged — is subject to a [per-tool permission model](/docs/agent-tools/permissions).
+stella ships a small built-in surface: **18 tools**. They cover the shell, file create/read/update/delete, code search, sub-agent delegation, the session task board, scratch session state, and the session environment. The surface stays small on purpose. It's the set of actions the agent needs to do work in a repository, and nothing more. Everything else the agent can do comes from [custom script tools](/docs/agent-tools/custom-tools) you define, and from tools merged in from [MCP servers](/docs/agent-tools/mcp). Every tool, built-in or merged, follows a [per-tool permission model](/docs/agent-tools/permissions).
 
 ## Listing tools
 
-To see everything available to the agent in the current session — built-ins, developer custom tools, and manifest diagnostics — run:
+To see everything available to the agent in the current session, built-ins, your own custom tools, and manifest diagnostics, run:
 
 ```bash
 stella tools
 ```
 
-This reflects the live session: it accounts for custom tools discovered in `.stella/tools/` and `~/.stella/tools/`, and for any tools merged in from configured MCP servers.
+This reflects the live session. It includes custom tools found in `.stella/tools/` and `~/.stella/tools/`, and any tools merged in from configured MCP servers.
 
-## The built-in catalog
+## Built-in catalog
 
-Each tool is either **read-only** (it only observes — the workspace, session state, or the environment) or **mutating** (it writes a file, runs a command, changes the task board, writes scratch state, or dispatches work to a sub-agent). The read-only marker is the schema's `read_only: true` flag; anything else is treated as capable of side effects. The engine parallelizes on that flag, so a mutating tool marked read-only would race writes.
+Each tool is either **read-only** (it only looks, at the workspace, session state, or the environment) or **mutating** (it writes a file, runs a command, changes the task board, writes scratch state, or hands work to a sub-agent). The read-only marker is the schema's `read_only: true` flag. Anything without it is treated as capable of side effects. The engine runs tools in parallel based on that flag, so a mutating tool marked read-only by mistake would cause writes to race each other.
 
-A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a narrower claim than read-only: a retried stream can run a speculated call twice, so only calls that are free to repeat opt in. A mutating tool is never speculated, and MCP-provided tools never opt in.
+A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag). For these, the engine runs a step's first batch of speculation-safe calls at the same time, while the model is still streaming its response, and collects the results when it's ready to use them. This means those lookups cost almost no extra time. Speculation is a narrower claim than read-only: a retried stream can run a speculated call twice, so only calls that are free to repeat can opt in. A mutating tool is never speculated, and tools from MCP servers never opt in either.
 
-The speculation-safe subset is exactly: `read_file`, `task_list`, `get_state`, `list_state`, and `get_environment`.
+The speculation-safe tools are exactly: `read_file`, `task_list`, `get_state`, `list_state`, and `get_environment`.
 
-`search` is the instructive exception: it is read-only about the *workspace* — it never edits a file — yet it is not speculation-safe, because its semantic rung writes embeddings through into `codegraph.db` as it ranks. Running it twice is not free, so it observes without opting in.
+`search` is a useful exception. It's read-only about the *workspace* — it never edits a file — but it isn't speculation-safe, because its semantic ranking step writes embeddings into `codegraph.db` as it works. Running it twice isn't free, so it stays read-only without opting into speculation.
 
-Tool names are their exact identifiers — the agent dispatches by name, and these are the names `stella tools` prints.
+Tool names are their exact identifiers. The agent calls them by name, and these are the same names `stella tools` prints.
 
 <Callout type="warn">
-This page **is** maintained by hand, and nothing in the gate compares it to `crates/stella-tools/src/catalog.rs`. The generated, gate-enforced copy of the same facts is `docs/tools/*.toml` — one file per tool, rebuilt by `make tool-docs-update` and checked by `make tool-docs`. When the two disagree, `docs/tools/` is right and this page is stale; fix it in the PR that adds or removes the tool. (An earlier version of this callout claimed a `crates/stella-tools/tests/docs_in_sync.rs` asserted the cards below against the catalog. No such test has ever existed, which is exactly how this page came to describe a surface the binary had not shipped for months.)
+This page is written by hand. It isn't checked against `crates/stella-tools/src/catalog.rs`. The generated, gate-enforced version of the same facts lives in `docs/tools/*.toml`, one file per tool, rebuilt with `make tool-docs-update` and checked with `make tool-docs`. If the two disagree, trust `docs/tools/`, and treat this page as needing an update.
 </Callout>
 
-All 18 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+All 18 tools register in every session, with no setup and no prerequisites. Here they are, grouped by what they touch.
 
 ### Shell
 
 <CardGrid size="md">
   <ToolCard name="bash" access="mutating">
-    Run a shell command in the workspace root. Returns stdout+stderr with a timeout backstop. The only built-in that runs something nobody bounded — hence its `high` risk grade. A permission ceiling that withholds it still leaves the rest of the surface working.
+    Run a shell command in the workspace root. Returns stdout and stderr, with a timeout backstop. This is the only built-in that runs something with no other bound, which is why it carries a `high` risk grade. Turning it off with a permission ceiling still leaves the rest of the tools working.
   </ToolCard>
 </CardGrid>
 
@@ -45,16 +45,16 @@ All 18 tools register in every session — no configuration, no prerequisites. G
 
 <CardGrid size="md">
   <ToolCard name="read_file" access="read">
-    Read a file from the workspace. Returns content with 1-based line numbers; `offset` and `limit` take a range out of a large file rather than the whole thing.
+    Read a file from the workspace. Returns its content with 1-based line numbers. `offset` and `limit` pull a range out of a large file instead of the whole thing.
   </ToolCard>
   <ToolCard name="write_file" access="mutating">
-    Create or overwrite a file, creating parent directories as needed. Overwriting an existing file is refused unless the session has already been shown all of it — the argument is the whole file, so a model working from a fragment would silently truncate the rest. `edit_file` is the way to change part of a file you have not read whole.
+    Create or overwrite a file, creating parent folders as needed. Overwriting an existing file is refused unless the session has already been shown all of it. The argument is the whole file, so a model working from a partial view would silently cut off the rest. Use `edit_file` instead to change part of a file you haven't read in full.
   </ToolCard>
   <ToolCard name="edit_file" access="mutating">
-    Replace an exact substring in a file. The old string must appear exactly once unless `replace_all` is set — an ambiguous match is refused rather than guessed at.
+    Replace an exact piece of text in a file. The text you're replacing must appear exactly once, unless `replace_all` is set. An ambiguous match is refused instead of guessed at.
   </ToolCard>
   <ToolCard name="delete_file" access="mutating">
-    Delete a file in the workspace. Prefer it over `bash rm`: a symlink is removed as the link, and its target is left alone. The one `destructive` grade in the catalog, because an unlinked file is the one thing on this surface the agent cannot undo from inside the turn.
+    Delete a file in the workspace. Prefer this over `bash rm`: a symlink is removed as the link itself, leaving its target alone. This is the one `destructive` grade in the catalog, because deleting a file is the one thing here the agent can't undo from inside the same turn.
   </ToolCard>
 </CardGrid>
 
@@ -62,33 +62,33 @@ All 18 tools register in every session — no configuration, no prerequisites. G
 
 <CardGrid size="md">
   <ToolCard name="search" access="read">
-    Find code by meaning, not just by text: describe what you are looking for and get back the files that answer it with their symbols, callers, imports and source attached, so one call usually replaces a run of grep/glob/read round trips. The answer always states which strategies ran and whether it was truncated.
+    Find code by meaning, not just by text. Describe what you're looking for, and get back the files that answer it, with their symbols, callers, imports, and source attached. One call usually replaces a run of separate grep, glob, and read calls. The answer always states which strategies ran and whether the result was cut short.
   </ToolCard>
 </CardGrid>
 
-### Task board &amp; sub-agents
+### Task board and sub-agents
 
 <CardGrid size="md">
   <ToolCard name="task_create" access="mutating">
-    Add a task to the session task board — one per concrete deliverable, created before multi-step work starts.
+    Add a task to the session task board, one per concrete deliverable, created before multi-step work starts.
   </ToolCard>
   <ToolCard name="task_list" access="read">
     Show the board: every task as `[status] #id subject (owner)`.
   </ToolCard>
   <ToolCard name="task_start" access="mutating">
-    Mark a board task in-progress — exactly one at a time.
+    Mark a board task in progress, one at a time.
   </ToolCard>
   <ToolCard name="task_complete" access="mutating">
-    Mark a board task completed the moment its work is done and verified.
+    Mark a board task complete the moment its work is done and checked.
   </ToolCard>
   <ToolCard name="task_cancel" access="mutating">
-    Cancel a task that is no longer worth doing, with a reason; the row stays as an audit trail.
+    Cancel a task that's no longer worth doing, with a reason. The row stays as a record.
   </ToolCard>
   <ToolCard name="task_assign" access="mutating">
-    Delegate a board task to a parallel sub-agent — the briefing is passed verbatim, so write it self-contained.
+    Hand a board task to a parallel sub-agent. The briefing is passed along exactly as written, so write it so it stands on its own.
   </ToolCard>
   <ToolCard name="delegate" access="mutating">
-    Hand a self-contained research question to a read-only sub-agent that investigates and returns only its findings. Its intermediate work never enters the conversation, so the parent never re-sends it on later steps.
+    Hand a self-contained research question to a read-only sub-agent that investigates and reports back only its findings. Its intermediate work never enters the conversation, so the parent never has to re-send it on later steps.
   </ToolCard>
 </CardGrid>
 
@@ -96,16 +96,16 @@ All 18 tools register in every session — no configuration, no prerequisites. G
 
 <CardGrid size="md">
   <ToolCard name="save_state" access="mutating">
-    Save intermediate session state under a key so later steps can reference it instead of re-deriving it (parse results, extracted lists, computed digests). Capped at 1 MiB for model-authored content; files produced into `$STELLA_SCRATCH` are uncapped.
+    Save session state under a key, so later steps can reference it instead of working it out again — parse results, extracted lists, computed digests. Capped at 1 MiB for content the model writes directly; files written into `$STELLA_SCRATCH` have no cap.
   </ToolCard>
   <ToolCard name="get_state" access="read">
-    Read a saved scratch entry by key, paged at 30 KB with explicit remainder headers. Prefer this over re-deriving expensive state.
+    Read a saved scratch entry by key, shown 30 KB at a time with clear markers for what's left. Prefer this over recomputing something expensive.
   </ToolCard>
   <ToolCard name="list_state" access="read">
-    List saved scratch entries (key and size in bytes), including files written into `$STELLA_SCRATCH`.
+    List saved scratch entries, with key and size in bytes, including files written into `$STELLA_SCRATCH`.
   </ToolCard>
   <ToolCard name="delete_state" access="mutating">
-    Delete one scratch entry by key — use when saved state is stale or superseded so later steps cannot read an invalidated value.
+    Delete one scratch entry by key. Use this when saved state is stale or replaced, so later steps can't read an outdated value.
   </ToolCard>
 </CardGrid>
 
@@ -113,15 +113,15 @@ All 18 tools register in every session — no configuration, no prerequisites. G
 
 <CardGrid size="md">
   <ToolCard name="get_environment" access="read">
-    Report this session's environment in one call: workspace root, whether it is a git repository (and whether it is a linked worktree), platform/arch, OS release, login shell dialect, and the scratch directory path. Reads the same facts the system prompt's "Session environment" block already states, minus the model line — that is the CLI prompt layer's job alone.
+    Report this session's environment in one call: workspace root, whether it's a git repository (and whether it's a linked worktree), platform and architecture, OS release, login shell, and the scratch directory path. It reads the same facts already stated in the system prompt's "Session environment" block, minus the model name, which only the CLI prompt layer reports.
   </ToolCard>
 </CardGrid>
 
-The read-only partition is exactly: `read_file`, `search`, `task_list`, `get_state`, `list_state`, and `get_environment`. The other twelve are mutating.
+The read-only tools are exactly: `read_file`, `search`, `task_list`, `get_state`, `list_state`, and `get_environment`. The other twelve are mutating.
 
 ## Switching tools off
 
-Every tool ships **on**. The one way to turn something off is a `"tools"` entry in [`settings.json`](/docs/configuration/settings), and it reads the same whether the name is a built-in, an MCP server's tool, or one you registered yourself:
+Every tool ships turned **on**. The only way to turn one off is a `"tools"` entry in [`settings.json`](/docs/configuration/settings), and it works the same whether the name is a built-in, an MCP server's tool, or one you registered yourself:
 
 ```json title="settings.json"
 {
@@ -132,9 +132,9 @@ Every tool ships **on**. The one way to turn something off is a `"tools"` entry 
 }
 ```
 
-A key is a **tool name**, a **group name** (the family headings above — `shell`, `file`, `search`, `task`, `scratch`, `environment` — plus `mcp` and `custom` for tools the built-in catalog has never heard of), or `"*"` for everything. Most specific wins: name beats group beats `"*"`, and anything unmentioned is on.
+A key can be a **tool name**, a **group name** (the family headings above — `shell`, `file`, `search`, `task`, `scratch`, `environment` — plus `mcp` and `custom` for tools the built-in catalog doesn't know about), or `"*"` for everything. The most specific setting wins: a name beats a group, and a group beats `"*"`. Anything not mentioned stays on.
 
-Two recipes that fall out of that rule:
+Two examples that follow from that rule:
 
 ```json title="A board reader that cannot change the board"
 {
@@ -154,16 +154,16 @@ Two recipes that fall out of that rule:
 }
 ```
 
-A switched-off tool is **withheld from the schema list and refused if called anyway** — the refusal reads like the unknown-tool error, so a disabled tool is indistinguishable from one that was never built. Enforcement is at the tool boundary, not by prompt discipline.
+A switched-off tool is **left out of the schema and refused if called anyway**. The refusal looks the same as an unknown-tool error, so a disabled tool is indistinguishable from one that was never built. This is enforced at the tool boundary, not by asking the model nicely.
 
-Scopes merge per key (project beats user), with one asymmetry: an **org-managed** `settings.json` that turns a tool off is a ceiling. A user or project scope may narrow further but can never turn it back on — see [settings](/docs/configuration/settings).
+Settings merge per key, project beats user, with one exception: an **org-managed** `settings.json` that turns a tool off acts as a ceiling. A user or project scope can narrow it further, but can never turn it back on. See [settings](/docs/configuration/settings).
 
 ## Where to go next
 
-- [Agent Skills](/docs/agent-tools/skills) — reusable SKILL.md capabilities, versioned and registry-installable.
-- [Custom Commands](/docs/agent-tools/commands) — extend the slash menu with your own prompt templates.
-- [Custom Agents](/docs/agent-tools/custom-agents) — reusable personas with an optional restricted toolbelt, adopted from `.claude/` and `.agents/`.
+- [Agent Skills](/docs/agent-tools/skills) — reusable SKILL.md capabilities, versioned and installable from the registry.
+- [Custom Commands](/docs/agent-tools/commands) — add your own prompt templates to the slash menu.
+- [Custom Agents](/docs/agent-tools/custom-agents) — reusable personas with an optional restricted toolbelt, imported from `.claude/` and `.agents/`.
 - [Permissions](/docs/agent-tools/permissions) — how read-only and mutating tools are gated, and how hooks can block tool calls.
 - [Custom Tools](/docs/agent-tools/custom-tools) — add your own script tools with a TOML manifest.
-- [MCP Servers](/docs/agent-tools/mcp) — merge tools from Model Context Protocol servers.
+- [MCP Servers](/docs/agent-tools/mcp) — merge in tools from Model Context Protocol servers.
 - [Hooks](/docs/agent-tools/hooks) — run shell commands on agent lifecycle events.

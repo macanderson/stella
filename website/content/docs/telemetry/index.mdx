@@ -1,73 +1,82 @@
 ---
 title: Telemetry & budget
-description: Local-first metering, the opt-in Oxagen Enterprise operational export boundary, spool diagnostics, and how --spend-limit becomes a hard spend cap.
+description: How stella tracks usage locally, the opt-in Oxagen Enterprise export, spool diagnostics, and how --spend-limit becomes a hard spend cap.
 ---
 
-stella meters every run **locally**. Token usage, cost, per-step accounting, and the
-full execution record land in SQLite on your disk.
+stella tracks every run **locally**. Token usage, cost, step-by-step
+accounting, and the full record of what happened land in a SQLite file on
+your disk.
 
 <TelemetryFlowDiagram />
 
-**Telemetry leaves your machine only if you configure it to.** A default install
-constructs no telemetry spool and no telemetry HTTP client. The model provider you
-selected remains stella's normal BYOK network path; the local Observatory remains
-loopback-only.
+**Telemetry only leaves your machine if you set it up to.** A default
+install creates no telemetry spool and no telemetry network client at all.
+The model provider you picked stays stella's only normal network path, and
+the local Observatory stays loopback-only.
 
-Exactly two things count as configuring telemetry egress. Both are explicit local
-configuration, both are inert until you write them, and neither can be turned on by a
-file a repository ships:
+Exactly two things count as turning on telemetry export. Both need explicit
+local configuration, both do nothing until you write them, and neither can
+be switched on by a file that ships inside a project:
 
-1. **Oxagen Enterprise managed enrollment.** Not a user preference and not readable from
-   a project file: a valid signed document in the org-managed settings scope must
-   authorize one minimal operational event class, one exact HTTPS sink, and process-free
-   execution. Invalid, missing, expired, or unsupported enrollment leaves export
-   inactive. [Details below](#oxagen-enterprise-managed-export).
-2. **A `drain` block in `~/.stella/cloud.json`.** [`stella cloud sync`](/docs/commands/cloud)
-   POSTs staged telemetry rows to the org intake named there. This is a *separate pipe*
-   from the Enterprise export — its own wire contract, its own encoder, its own endpoint
-   — and it fires only when the file carries **both** an `org_id` (written by `stella
-   cloud register`) and a `drain` block. With either absent, `stella cloud sync` performs
-   no network I/O, and nothing else in stella invokes it.
+1. **Oxagen Enterprise managed enrollment.** This isn't a personal setting,
+   and it can't be read from a project file. It needs a valid, signed
+   document in the org-managed settings scope that authorizes one minimal
+   category of operational events, one exact HTTPS destination, and
+   execution with no extra background processes. If the enrollment is
+   invalid, missing, expired, or unsupported, export stays off.
+   [Details below](#oxagen-enterprise-managed-export).
+2. **A `drain` block in `~/.stella/cloud.json`.**
+   [`stella cloud sync`](/docs/commands/cloud) sends staged telemetry rows
+   to the destination named there. This is a *separate path* from the
+   Enterprise export, with its own format, its own encoding, and its own
+   endpoint. It only runs when the file has **both** an `org_id` (written
+   by `stella cloud register`) and a `drain` block. If either is missing,
+   `stella cloud sync` makes no network calls at all, and nothing else in
+   stella triggers it.
 
-That list is complete: those two transports are the only code paths in the tree that send
-telemetry anywhere.
+That's the complete list. Those two paths are the only ones in stella that
+send telemetry anywhere.
 
 ## Local metering
 
-Everything lands in one SQLite file: `<workspace>/.stella/private/store.db`. Because the store is
-a real SQLite file, you can inspect it with any SQLite client after a run — e.g.
-`sqlite3 <workspace>/.stella/private/store.db` — and every execution, its model, and its cost are
-queryable on your own machine. WAL is enabled, so a read-only reader like
-[`stella stats`](/docs/commands/stats) is never blocked by a live session. This local
-store stays canonical even when an Enterprise seat is enrolled; the managed adapter
-can only derive the closed rollup described below.
+Everything lands in one SQLite file: `<workspace>/.stella/private/store.db`.
+Because it's a real SQLite file, you can inspect it with any SQLite client
+after a run. For example: `sqlite3 <workspace>/.stella/private/store.db`.
+Every execution, its model, and its cost are queryable right on your own
+machine. WAL mode is on, so a read-only tool like
+[`stella stats`](/docs/commands/stats) never blocks a live session. This
+local store stays the source of truth even when an Enterprise seat is
+enrolled. The managed adapter can only build the closed summary described
+below from it.
 
 ### What's in the store
 
-Metering is only part of it. The store owns **21 tables** — a full record of what each run
-*did*, not just what it cost — and the [Observatory](/docs/telemetry/dashboard) reads these
-same tables.
+Metering is only part of it. The store has **21 tables**, a full record of
+what each run *did*, not just what it cost. The
+[Observatory](/docs/telemetry/dashboard) reads these same tables.
 
 <CardGrid size="md">
   <OptionCard name="executions">
-    One row per run / goal / chat turn — kind, prompt, provider/model, outcome, cost. The
-    spine every other table keys off.
+    One row per run, goal, or chat turn: kind, prompt, provider and model,
+    outcome, cost. Every other table is keyed off this one.
   </OptionCard>
   <OptionCard name="events">
-    The full, ordered event stream of each execution — replayable, reasoning deltas
-    included.
+    The full, ordered event stream for each execution. You can replay it,
+    and it includes reasoning as it streamed in.
   </OptionCard>
   <OptionCard name="telemetry">
-    One row per model call: input/output tokens, cache read/write/miss, cost, latency,
-    retries.
+    One row per model call: input/output tokens, cache read/write/miss,
+    cost, latency, retries.
   </OptionCard>
   <OptionCard name="files_touched">
-    The per-execution file-touch ledger — CRUD letters, line deltas, JSON audit log.
-    Rows come from the surfaces that report file changes.
+    The file-touch record for each execution: create/read/update/delete
+    letters, line changes, and a JSON audit log. Rows come from whatever
+    surface reported the file change.
   </OptionCard>
   <OptionCard name="tool_calls">
-    One row per tool call (native, MCP, skill, or agent) — shape, timing, success, bytes
-    returned. Large outputs are never stored, only their size.
+    One row per tool call, whether native, MCP, skill, or agent: its
+    shape, timing, success, and bytes returned. Large outputs are never
+    stored, only their size.
   </OptionCard>
   <OptionCard name="mcp_usage">
     Per-call MCP log: server, tool, reason, call time.
@@ -76,103 +85,117 @@ same tables.
     One row per skill applied in a turn, with the skill's pinned version.
   </OptionCard>
   <OptionCard name="agent_uses">
-    One row per invocation of an installed agent definition, with its pinned version.
+    One row per invocation of an installed agent definition, with its
+    pinned version.
   </OptionCard>
   <OptionCard name="memory_citations">
-    Recall receipts: per memory cited in a turn, its usefulness score and truthfulness
-    verdict.
+    A record for each memory cited in a turn: its usefulness score and
+    whether it held up as true.
   </OptionCard>
   <OptionCard name="forgotten">
-    Explicit human tombstones over anything that steers the agent — one verdict per item,
-    with the forgotten text copied in at forget time. That copy is what makes the tombstone
-    survive re-learning: the reflection recorder and the skill miner compare *candidates*
-    against it, so a re-mined paraphrase with a brand-new id is still caught. Unlike
-    quarantine, which is derived from citation counts, this is a stored judgment — a
-    person read it and said remove it. Restoring is a plain delete.
+    Records of anything a person has explicitly told stella to forget,
+    whether it's steering the agent or not. One entry per item, with the
+    forgotten text copied in at the moment it was forgotten. That copy is
+    what makes the removal stick even if stella tries to relearn it: the
+    reflection recorder and the skill miner compare new *candidates*
+    against it, so a reworded version with a brand-new id still gets
+    caught. This is different from quarantine, which is based on citation
+    counts. This one is a person's judgment: they read it and said remove
+    it. Undoing it is a plain delete.
   </OptionCard>
   <OptionCard name="rules">
-    Promoted workspace rules — the full rule markdown, one row per rule.
+    Promoted workspace rules: the full rule text, one row per rule.
   </OptionCard>
   <OptionCard name="reflections">
     Durable lessons and self-critiques, tagged by domain.
   </OptionCard>
   <OptionCard name="execution_reflection">
-    The post-turn self-review, tied 1:1 to its execution — the model's self-rating beside
-    the objective companions (did it produce output, did it write files, was it truncated),
-    so a silent zero-output turn is visibly a failure even if the model rated itself kindly.
+    The self-review written after each turn, linked one-to-one with its
+    execution. It pairs the model's own rating with objective facts (did
+    it produce output, did it write files, was it cut off), so a silent,
+    zero-output turn shows up as a failure even if the model rated itself
+    well.
   </OptionCard>
   <OptionCard name="tasks">
     The latest task-board snapshot, one row per task per session.
   </OptionCard>
   <OptionCard name="pull_requests">
-    Tracked pull requests — status and CI verdict, keyed by URL.
+    Tracked pull requests: status and CI result, keyed by URL.
   </OptionCard>
   <OptionCard name="file_locks">
     Cooperative file claims for multi-agent work.
   </OptionCard>
   <OptionCard name="graph_nodes / graph_edges">
-    Two tables: reserved schema for a future context-plane seam — the code graph itself
-    lives in `.stella/private/codegraph.db`.
+    Two tables reserved for future use. The code graph itself lives in
+    `.stella/private/codegraph.db`, not here.
   </OptionCard>
 </CardGrid>
 
-#### The receipts plane: what made a past step
+#### Step receipts
 
-Three of the twenty-one exist for one question — *what exactly did the model see on step
-N, and why was it allowed to see that much?* Together they make a past step
-reconstructable without keeping a copy of the prompt: replay the ordering and the numbers
-line up with the decision that was actually made.
+Three of the twenty-one tables exist to answer one question: *what exactly
+did the model see at step N, and why was it allowed to see that much?*
+Together, they let you reconstruct a past step without keeping a copy of
+the prompt. Replay the order, and the numbers match the decision that was
+actually made.
 
 <CardGrid size="md">
   <OptionCard name="context_blocks">
-    One row per durable, individually attributable unit that entered a step's prompt, born
-    once and keyed by its content-addressed `block_id`. Carries `kind`, `token_cost`,
-    `content_digest`, and `citation_label` — and is deliberately **content-free**: the
-    digest, never the payload bytes, whose preimage lives in the originating event in the
-    journal. `call_id` / `memory_id` join back to the tool call or memory node that
-    produced the block. A byte-identical block re-entering context resolves to the same id,
-    so the second registration is an idempotent no-op rather than data.
+    One row for every durable, separately trackable piece that entered a
+    step's prompt. Each one is created once and keyed by a `block_id` based
+    on its content. It carries `kind`, `token_cost`, `content_digest`, and
+    `citation_label`, and it's deliberately **content-free**: it only holds
+    a fingerprint of the content, never the content itself, which lives in
+    the original event in the journal. `call_id` and `memory_id` link back
+    to the tool call or memory node that created it. If the exact same
+    block enters context again, it resolves to the same id, so registering
+    it a second time changes nothing instead of creating a duplicate.
   </OptionCard>
   <OptionCard name="step_manifest">
-    One row per (step, block) in **wire order** — the receipt that makes a past step
-    reconstructable, because replaying the fold plus this ordering yields exactly what the
-    model saw. `call_seq` separates the several model calls that can share one step (the
-    worker, an overflow summarizer, allocated management roles), `cache_zone` and
-    `resident_since_step` record where a block sat and how long it had been carried, and
-    `call_id` gives per-occurrence attribution that content-addressed block ids cannot.
-    Its reverse index — every step a given block was resident for — is what cost-of-carry
-    and eviction analysis read.
+    One row per step-and-block pair, in the exact order they were sent.
+    This is the receipt that lets you reconstruct a past step: replay the
+    content plus this order, and you get exactly what the model saw.
+    `call_seq` separates the several model calls that can share one step
+    (the worker, an overflow summarizer, other management roles).
+    `cache_zone` and `resident_since_step` record where a block sat and how
+    long it had been carried. `call_id` gives per-occurrence attribution
+    that a content-based block id can't. Its reverse index — every step a
+    given block was present for — is what cost-of-carry and eviction
+    analysis read.
   </OptionCard>
   <OptionCard name="step_receipt">
-    The manifest header: one row per **model call**, not per step. Records `provider`,
-    `model`, `call_role`, `effective_budget_tokens`, `calibration_factor`, and
-    `estimated_input_tokens` — the budget the compaction pass actually compared against,
-    so a receipt's numbers reconcile with the decision it documents rather than with a
-    figure recomputed later.
+    The header for the manifest: one row per **model call**, not per step.
+    It records `provider`, `model`, `call_role`, `effective_budget_tokens`,
+    `calibration_factor`, and `estimated_input_tokens`. This is the exact
+    budget the compaction pass compared against, so a receipt's numbers
+    match the decision it documents instead of a number recalculated
+    later.
   </OptionCard>
 </CardGrid>
 
 <Callout type="info">
-  Those twenty-one are the tables the store *owns* — the ones versioned by the migration
-  chain. `store.db` additionally carries the optional `enterprise_export_*` tables, which
-  converge by column probing **outside** that chain and are created after the fresh-file
-  probe runs. They exist only where a managed enrollment does.
+  Those twenty-one are the tables the store *owns*, the ones tracked by the
+  migration history. `store.db` also has the optional `enterprise_export_*`
+  tables, which are set up separately, outside that history, and only
+  created after a fresh-file check runs. They only exist where a managed
+  enrollment does.
 </Callout>
 
 ### The same stream, on screen
 
-The event stream is what the deck's transcript renders, and each kind of event
-carries its own rail: gold where stella acted on the world, silver where the
-world came in, red for failure and nothing else. A delete shows the graph
-check that ran before the tool did; a memory shows its promotion from
-observation to rule; a compaction is one dim line rather than a wall of text.
+The event stream is what the Command Deck's transcript displays, and each
+kind of event gets its own color: gold for when stella acted on the world,
+silver for when the world sent something back, and red only for failures.
+A delete shows the check that ran before the tool did. A memory shows its
+promotion from observation to rule. A compaction shows as one dim line
+instead of a wall of text.
 
 <DeckShot id="events" />
 
 ### Querying it yourself
 
-It is an ordinary SQLite file, so anything that speaks SQLite speaks to it. The five most
-expensive runs in this workspace:
+It's an ordinary SQLite file, so any tool that speaks SQLite can read it.
+Here are the five most expensive runs in this workspace:
 
 ```bash
 sqlite3 -json .stella/private/store.db \
@@ -183,8 +206,8 @@ sqlite3 -json .stella/private/store.db \
   | jq -r '.[] | "\(.cost_usd)\t\(.model)\t\(.outcome // "—")\t\(.kind)"'
 ```
 
-And the receipts for one run — every model call, what it estimated it was sending, and the
-budget it was measured against:
+And the receipts for one run: every model call, what it estimated it was
+sending, and the budget it was measured against:
 
 ```bash
 sqlite3 -json .stella/private/store.db \
@@ -195,14 +218,15 @@ sqlite3 -json .stella/private/store.db \
   | jq -r '.[] | "step \(.step).\(.call_seq)\t\(.call_role)\t\(.estimated_input_tokens)/\(.effective_budget_tokens)"'
 ```
 
-### Who actually served a gateway-routed call
+### Who served the call
 
-`step_receipt.provider` (and the `telemetry` table's own provider column) name the provider
-you **configured** — for an OpenRouter run, that is always the string `openrouter`, the
-gateway, never the vendor it routed to. [Pinning the upstream](/docs/api-providers#pinning-the-upstream)
-stops the gateway from routing inconsistently between calls; *auditing* which vendor served
-a past call reads `step_receipt.upstream_provider`, the receipt column added for exactly
-that question ([#3054](https://github.com/macanderson/stella/issues/3054)):
+`step_receipt.provider` (and the `telemetry` table's own provider column)
+names the provider you **configured**. For an OpenRouter run, that's
+always the string `openrouter`, the gateway itself, never the vendor it
+routed to. [Pinning the upstream](/docs/api-providers#pinning-the-upstream)
+stops the gateway from routing inconsistently between calls. To *audit*
+which vendor actually served a past call, read
+`step_receipt.upstream_provider`, the column that records exactly that:
 
 ```bash
 sqlite3 .stella/private/store.db \
@@ -211,12 +235,13 @@ sqlite3 .stella/private/store.db \
    ORDER BY turn_instance, step, call_seq"
 ```
 
-[`stella inspect`](/docs/commands/inspect) shows the same fact without any SQL: the call
-listing renders `openrouter→Amazon Bedrock` in its PROVIDER column, and
-`--format json` carries `upstream_provider` per call. The column is `NULL` on a direct
-endpoint (where `provider` is already the honest answer) and on any receipt recorded
-before the column existed — for those older executions the raw `events` payload of the
-`step_usage` event remains the only source:
+[`stella inspect`](/docs/commands/inspect) shows the same thing without any
+SQL. The call listing shows `openrouter→Amazon Bedrock` in its PROVIDER
+column, and `--format json` includes `upstream_provider` for each call.
+This column is `NULL` on a direct endpoint, where `provider` is already
+the right answer, and on any receipt recorded before this column existed.
+For those older executions, the raw `events` payload of the `step_usage`
+event is the only place to find it:
 
 ```bash
 sqlite3 -json .stella/private/store.db \
@@ -226,35 +251,37 @@ sqlite3 -json .stella/private/store.db \
 
 ## Oxagen Enterprise managed export
 
-Managed mode exists for cross-seat operational visibility, capacity planning, and
-cost/reliability diagnostics. It does not ingest `stella fleet` runs; that execution
-surface is rejected under the current process-free authority. This is **operational
-telemetry, not compliance evidence**: it does not produce an audit trail, attest policy
-conformance, capture content for investigations, or replace an organization's SIEM or
-records-retention controls. The `compliance_audit` event class is explicitly
-unsupported.
+Managed mode exists for visibility across seats, capacity planning, and
+cost and reliability diagnostics. It does not take in `stella fleet` runs;
+that execution surface is rejected under the current process-free rules.
+This is **operational telemetry, not compliance evidence**: it doesn't
+produce an audit trail, prove policy compliance, capture content for
+investigations, or replace an organization's SIEM or records-retention
+tools. The `compliance_audit` event class is explicitly not supported.
 
-### Option A product boundary
+### Product boundary
 
-stella remains the local execution product: provider calls, tools, workspace access,
-the full event stream, context, and the Observatory stay on the developer host. Oxagen
-is the optional Enterprise control plane: it may provision signed enrollment and
-receive the minimal operational envelope described here.
+stella stays the local execution tool: provider calls, tools, workspace
+access, the full event stream, context, and the Observatory all stay on
+your machine. Oxagen is the optional Enterprise control plane. It can
+provision signed enrollment and receive the minimal operational summary
+described here.
 
-This repository implements stella's enrollment verification, projection, durable
-spool, and HTTPS delivery client. A production Oxagen intake with matching
-authentication, schema validation, idempotency, tenancy, retention, and observability
-is a **companion server requirement**; these stella docs do not claim that intake is
-already deployed.
+stella implements enrollment verification, the projection step, a durable
+spool, and the HTTPS delivery client. A production Oxagen intake, with
+matching authentication, schema checks, safe retries, multi-tenant
+support, retention, and monitoring, is a **separate server requirement**.
+These docs don't claim that intake is already running.
 
-### Enrollment and sink authorization
+### Enrollment and authorization
 
-Only the org-managed settings file can carry `enterprise_telemetry` (normally
-`/Library/Application Support/stella/settings.json` on macOS or
-`/etc/stella/settings.json` on Linux). Project and user scopes cannot enroll a seat.
-Provisioning writes a shape like this; the signature is generated over canonical claim
-bytes, so this is an administrator/provisioning artifact rather than a hand-edited
-example:
+Only the org-managed settings file can carry `enterprise_telemetry`
+(normally `/Library/Application Support/stella/settings.json` on macOS, or
+`/etc/stella/settings.json` on Linux). Project and user scopes can't
+enroll a seat. Provisioning writes something shaped like this. The
+signature is generated over the exact bytes of the claim, so this is
+something your administrator's provisioning tool produces, not something
+you'd hand-edit yourself:
 
 ```json title="org-managed settings.json (provisioning shape)"
 {
@@ -288,72 +315,82 @@ example:
 }
 ```
 
-The signed endpoint and an administrator allowlist entry must parse to the **same exact
-credential-free HTTPS URL**. Redirects, URL credentials, query strings, fragments,
-HTTP endpoints, proxy-derived destinations, and merely matching hosts are refused.
-Issuer, audience, event class, process-free mode, lifetime, signature, signing-secret
-reference, and distinct bearer-secret reference are also verified before activation.
-An enrollment is valid for at most 90 days and must be renewed by provisioning.
+The signed endpoint and an administrator's allowed-list entry must resolve
+to the **exact same credential-free HTTPS URL**. Redirects, credentials in
+the URL, query strings, fragments, plain HTTP endpoints, proxy-derived
+destinations, and hosts that merely look similar are all refused. The
+issuer, audience, event class, process-free mode, lifetime, signature, and
+secret references are also checked before activation. An enrollment is
+valid for at most 90 days, and provisioning has to renew it.
 
 ### Eligible execution path
 
-An enrolled process activates a restricted execution authority. Today the only eligible
-surface is the raw one-shot step loop:
+An enrolled process runs under restricted authority. Right now, the only
+eligible surface is the raw one-shot step loop:
 
 ```bash
 stella run "update the parser and run its in-process checks"
 ```
 
-The registry proof disables shell/process, test-process, skill-install/search, web, and
-host-readable media paths. Wrapped runs, `goal`, `fleet`, Command Deck/chat,
-interactive sessions, workspace-port assembly, and candidate-workspace execution are
-rejected while managed export authority is active. Enrollment therefore narrows what
-may execute; it never silently exports from an ineligible path.
+This mode disables shell and process access, test-process access, skill
+install and search, web access, and reading host media paths. Wrapped
+runs, `goal`, `fleet`, the Command Deck, chat, interactive sessions, and
+workspace-port or candidate-workspace execution are all rejected while
+managed export is active. Enrollment narrows what can run. It never
+quietly exports from a surface that isn't eligible.
 
 ### Exported envelope
 
-Only a finalized, post-enrollment run can produce one
-`stella.operational.v1` / `execution_rollup` event. Its closed schema contains:
+Only a finished run, after enrollment, can produce one
+`stella.operational.v1` / `execution_rollup` event. Its fixed schema
+contains:
 
 - managed enrollment, organization, and workspace identifiers;
-- an allowlisted provider/model pair, or the bounded `other` bucket;
-- finalized outcome, duration, input/output token totals, and cost in micro-USD;
+- an approved provider and model pair, or a limited `other` bucket;
+- finalized outcome, duration, input/output token totals, and cost in
+  micro-USD;
 - tool-call count, changed-file count, and whether output was produced; and
-- a deterministic, sink-scoped event ID used for idempotent at-least-once delivery.
+- a consistent, destination-specific event ID used for safe at-least-once
+  delivery.
 
-It has no fields for prompts, responses, paths or filenames, tool names, tool
-arguments/results, reasoning, errors, git state, memories, rules, full local events,
-local execution IDs, or raw installation/store identifiers. Those values are not
-redacted after collection; they are unrepresentable in the export type.
+It has no fields for prompts, responses, paths or filenames, tool names,
+tool arguments or results, reasoning, errors, git state, memories, rules,
+full local events, local execution IDs, or raw installation or store
+identifiers. These values aren't removed after the fact. There's simply no
+place for them in the export format.
 
-### Durable spool, retry, and rollover
+### Spool and retry
 
-Finalization first records a durable local export intent, then projects an eligible
-rollup into an owner-only SQLite spool outside the model-writable workspace. On a later
-runtime, up to 256 pending intents are backfilled before delivery. Retained event
-payloads are bounded to **10,000 rows and 16 MiB**; SQLite pages, indexes, WAL/SHM, and
-quarantine metadata can make the physical database larger, so `status` reports physical
-bytes separately. When the payload bound is exceeded, the oldest unleased row for the
-active sink is discarded and the durable `dropped` counter increments.
+When a run finishes, stella first records a durable local export intent,
+then builds an eligible summary into an owner-only SQLite spool, kept
+outside the workspace the model can write to. On a later run, up to 256
+pending intents are caught up before delivery. Stored event data is
+capped at **10,000 rows and 16 MiB**. SQLite's own pages, indexes, WAL/SHM
+files, and quarantine metadata can make the actual database bigger than
+that, so `status` reports the physical size separately. When the data cap
+is hit, the oldest row not already being sent for the active destination
+is dropped, and the durable `dropped` counter goes up.
 
-Delivery is at least once and sink-scoped. A flush leases at most **50 events** and
-**256 KiB** for 30 seconds, refuses redirects, and acknowledges rows only after a
-successful HTTPS response. Credential, transport, or server failures release the exact
-lease with deterministic exponential backoff plus jitter: from one second up to five
-minutes, with jitter capped at 25%. Clock rollback is repaired under a sink-specific
-generation fence.
+Delivery happens at least once, per destination. A flush reserves at most
+**50 events** and **256 KiB** for 30 seconds, refuses redirects, and only
+marks rows as sent after a successful HTTPS response. If a credential,
+connection, or server error happens, the reservation is released and
+retried with growing delays plus some randomness: from one second up to
+five minutes, with the randomness capped at 25%. If your system clock goes
+backward, that's corrected using a destination-specific safeguard.
 
-Changing the signed sink fingerprint never sends old rows to the new sink. Those rows
-become **stranded** until the old enrollment is restored or an administrator explicitly
-discards them:
+Changing the signed destination never sends old rows to the new one. Those
+rows become **stranded** until the old enrollment is restored, or an
+administrator explicitly discards them:
 
 ```bash
 stella telemetry rollover-discard
 ```
 
-That destructive action increments a durable `rollover_discarded` counter. Capacity,
-corruption, and rollover loss therefore remain visible rather than being silently
-treated as delivery.
+This is a destructive action, and it increases a durable
+`rollover_discarded` counter. Capacity limits, corruption, and rollover
+loss all stay visible this way, instead of being silently counted as
+delivered.
 
 ### Status and flushing
 
@@ -364,28 +401,31 @@ stella telemetry status
 stella telemetry flush
 ```
 
-`status` reports either `disabled (no managed enrollment)` or `enrolled`, followed by
-pending and stranded rows/bytes, quarantined diagnostic rows/bytes, physical spool
-bytes, and cumulative dropped, corrupt-dropped, and rollover-discarded counts. Invalid
-or expired managed configuration fails with a diagnostic rather than reporting an
-enrolled state.
+`status` reports either `disabled (no managed enrollment)` or `enrolled`,
+then pending and stranded rows and bytes, quarantined diagnostic rows and
+bytes, the physical size of the spool, and running totals for dropped,
+corrupt-dropped, and rollover-discarded rows. Invalid or expired managed
+configuration shows an error instead of falsely reporting that it's
+enrolled.
 
-`flush` attempts one bounded delivery batch immediately and reports sent, pending, and
-dropped counts. stella also starts a detached best-effort flush after enrollment is
-verified at process startup. That background attempt is non-blocking: it never delays
-agent execution and stella does not wait for it during shutdown. Use explicit `flush`
-when an operator needs a synchronous delivery attempt before maintenance.
+`flush` tries one delivery batch right away and reports sent, pending, and
+dropped counts. stella also starts a background best-effort flush after
+enrollment is checked at startup. That background attempt never blocks
+anything: it never delays agent work, and stella doesn't wait for it when
+shutting down. Run `flush` yourself when you need to make sure delivery
+happens right before maintenance.
 
 ## Budget: observed vs. enforced
 
-The `--spend-limit` flag (or the `STELLA_SPEND_LIMIT` environment variable) attaches a USD spend
-limit to the whole run or session.
+The `--spend-limit` flag (or the `STELLA_SPEND_LIMIT` environment variable)
+sets a dollar limit for the whole run or session.
 
-- **Observed mode (default, no `--spend-limit`)** — stella meters spend for the end-of-run cost
-  summary but never blocks. Use it to *see* what a task costs.
-- **Enforced mode (`--spend-limit <usd>`)** — a hard cap. Once total spend exceeds the limit,
-  work aborts **cleanly** — never in the middle of a tool call — so you are never left with
-  a half-applied edit.
+- **Observed mode (the default, no `--spend-limit`)** tracks spend for the
+  end-of-run cost summary, but never blocks anything. Use it to *see* what
+  a task costs.
+- **Enforced mode (`--spend-limit <usd>`)** is a hard cap. Once total spend
+  goes over the limit, work stops **cleanly**, never in the middle of a
+  tool call, so you're never left with a half-finished edit.
 
 ```bash
 # Observed: meter the cost, never block
@@ -400,26 +440,28 @@ stella run "port the utils module to the new API"
 ```
 
 <Callout type="info">
-  The budget must be a positive, finite dollar amount. It applies to the entire run or
-  interactive session, not per turn.
+  The limit must be a positive dollar amount. It applies to the whole run
+  or interactive session, not to each turn.
 </Callout>
 
 ## Cost summary
 
-Every run ends with a cost summary derived from the same metering that feeds the local
-SQLite store, so the number you see matches what was recorded locally.
+Every run ends with a cost summary built from the same tracking that feeds
+the local SQLite store, so the number you see matches what was recorded
+locally.
 
 ## Seeing your usage
 
-Three ways to read the canonical local telemetry back:
+Three ways to read your local telemetry back:
 
-- **[`stella observe`](/docs/telemetry/dashboard)** — the Observatory, a loopback-only web
-  dashboard (default `http://127.0.0.1:7787/`): runs, spend, resolve rates, **$/resolved**
-  per model, tool and file leaderboards, the memory plane, MCP traffic, and the fleet
-  ledger.
-- **[`stella stats`](/docs/commands/stats)** — the same per-provider/model aggregation in
-  the terminal, as a table, JSON, or CSV.
-- **`/export`** (in the Command Deck) — a portable ZIP with raw JSON dumps and a
-  self-contained `dashboard.html` report, scoped to the session you are in so
-  the archive is safe to share. See
+- **[`stella observe`](/docs/telemetry/dashboard)**: the Observatory, a
+  loopback-only web dashboard (default `http://127.0.0.1:7787/`). Shows
+  runs, spend, resolve rates, **cost per resolved task** by model, tool
+  and file leaderboards, memory, MCP traffic, and the fleet log.
+- **[`stella stats`](/docs/commands/stats)**: the same per-provider and
+  per-model numbers, right in the terminal, as a table, JSON, or CSV.
+- **`/export`** (in the Command Deck): a portable ZIP with raw JSON dumps
+  and a self-contained `dashboard.html` report, scoped to the session
+  you're in so it's safe to share. See
   [the dashboard page](/docs/telemetry/dashboard).
+</content>

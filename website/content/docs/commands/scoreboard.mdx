@@ -1,11 +1,11 @@
 ---
 title: stella scoreboard
-description: What the work cost, and whether anyone said it was good — calls, characters typed, follow-ups, and the verdict a merged or closed PR implies.
+description: See what a piece of work cost and whether people liked it, using model calls, typing, follow-ups, and pull request outcomes.
 ---
 
-`stella scoreboard` reports four numbers per unit of work: how many times intelligence was invoked, how much a person had to type, how many times they came back, and what they thought of the result. Three are counted from rows the store already writes. The fourth is read from a pull request somebody merged or closed.
+`stella scoreboard` shows four numbers for each piece of work: how many times a model was called, how much you had to type, how many times you had to follow up, and what people thought of the result. The first three numbers come from your local store. The fourth comes from a pull request that someone merged or closed.
 
-Reads local state only — no API key, and **no model judges anything here**, which is the point.
+This command only reads data on your machine. It needs no API key, and **no model judges the work here.** That is on purpose.
 
 ## Synopsis
 
@@ -15,29 +15,29 @@ stella scoreboard
 
 ## What it does
 
-Agent quality metrics have an obvious failure mode: ask the model how it did. stella's store does carry a self-rating field (`execution_reflection.self_rating`) and the scoreboard **deliberately does not use it** — that is the model grading its own homework. Every number here is either counted from events that happened or read from a judgement a human made.
+Most tools that measure agent quality just ask the model how it did. Stella's store keeps a self-rating field (`execution_reflection.self_rating`), but the scoreboard never reads it. Letting a model grade its own work isn't a fair test. Every number here either comes from something that actually happened, or from a judgment a person made.
 
 <CardGrid size="md">
   <SpecCard title="Model calls">
-    How many times intelligence was invoked for this unit of work. Counted from the execution
-    rows.
+    How many times a model was called for this piece of work. Counted from the execution
+    records.
   </SpecCard>
   <SpecCard title="Characters typed">
-    How much a person had to write to get the result — prompt characters, summed. The cost of
-    the work that was not automated.
+    How much you had to write to get the result — prompt text, added up. This is the cost
+    of the work that wasn't automated.
   </SpecCard>
   <SpecCard title="Follow-ups">
-    How many times a person came back. Every execution begins with something a person typed,
-    so N executions are N human inputs — which makes follow-ups `N - 1`.
+    How many times you had to come back. Every task starts with something you type, so N
+    executions means N things you typed — which makes follow-ups `N - 1`.
   </SpecCard>
   <SpecCard title="Verdict">
     What a person actually thought, read from the pull request they merged or closed.
   </SpecCard>
 </CardGrid>
 
-## Verdicts come from pull requests, not opinions
+## Where verdicts come from
 
-A pull request status maps to a verdict, with one deliberate gap:
+A pull request's status becomes a verdict, with one gap on purpose:
 
 <CardGrid size="md">
   <OptionCard name="merged">
@@ -47,11 +47,11 @@ A pull request status maps to a verdict, with one deliberate gap:
     Someone rejected it.
   </OptionCard>
   <OptionCard name="draft / open">
-    **Not a verdict.** Work still in flight has not been judged.
+    **Not a verdict.** Work still in progress hasn't been judged yet.
   </OptionCard>
 </CardGrid>
 
-Counting an open PR as anything would be inventing an opinion nobody expressed — which is the exact failure this surface exists to avoid.
+Counting an open pull request as a verdict would mean guessing at an opinion nobody gave. The scoreboard leaves it out instead.
 
 ```bash
 # What did the work cost, and did anyone say it was good?
@@ -59,23 +59,23 @@ stella scoreboard
 ```
 
 <Callout type="info">
-The arithmetic lives in `stella-core` and is unit-tested there, so the CLI reads rows and renders rather than re-deriving numbers. A rollup is rebuilt from the underlying event sequence, which is why the totals cannot drift away from the events that produced them.
+The math behind these numbers is tested once, in one place. The CLI just reads the results and displays them — it never recalculates anything. Totals are rebuilt from the actual event history, so they can never drift from what really happened.
 </Callout>
 
 <Callout type="warn">
-`interrupted` is never reported today: nothing in the store distinguishes a human cancellation from a provider error, so the scoreboard declines to guess rather than mislabeling one as the other.
+Stella never reports `interrupted` as a verdict. The store can't tell the difference between you canceling a task and a provider error, so the scoreboard leaves it out rather than guessing wrong.
 </Callout>
 
 ## Related
 
 <CardGrid size="sm">
   <SpecCard title="stella stats" href="/docs/commands/stats">
-    Cost, tokens, and resolve rate per provider and model — the spend view of the same store.
+    Cost, tokens, and how often work finished, by provider and model — the spending view of the same store.
   </SpecCard>
   <SpecCard title="stella usage" href="/docs/commands/usage">
     The same numbers across every project on this machine.
   </SpecCard>
   <SpecCard title="The Observatory" href="/docs/telemetry/dashboard">
-    The browser dashboard over this workspace's telemetry, loopback-only.
+    A browser dashboard for this workspace's data. It only works from your own machine.
   </SpecCard>
 </CardGrid>

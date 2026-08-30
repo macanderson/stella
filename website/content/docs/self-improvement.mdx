@@ -1,219 +1,282 @@
 ---
 title: Self-improvement
-description: The track where stella makes stella measurably more capable — seven components, their dependency order, what's built today, and the guardrails on each.
+description: How stella becomes measurably more capable over time — the parts involved, what depends on what, what's built today, and the safety rules for each.
 ---
 
-Most of what gets called agent "self-improvement" is recall: a note file the agent writes to and reads back. That is useful, and stella does it — see [Memory](/docs/context-engine). It is also not the same thing as getting *better*.
+Most of what people call agent "self-improvement" is really just recall: a
+note file the agent writes to and reads back later. That's useful, and
+stella does it — see [Memory](/docs/context-engine). But writing notes
+isn't the same thing as getting better.
 
-This track is the other thing. Each component below changes what stella can do, not just what it remembers, and each one carries a **success metric and a guardrail** so that "improvement" is something proven rather than asserted.
+This page is about the other thing. Each part below changes what stella
+can actually do, not just what it remembers. Each one has a way to measure
+success and a safety rule, so "improvement" has to be proven, not just
+claimed.
 
 <Callout type="warn">
-**This page describes a direction, much of which is not built.** Four slices have shipped —
-[`stella tune`](/docs/commands/tune), `stella dataset export`, the Tool Foundry, and the nightly
-loop-bench gate. Everything else is a design under active discussion in the issue tracker, and the
-details will change. Read it as a map of where stella is heading, and check the linked issue for
-the current state of any one component.
+**Much of this is a plan, not shipped behavior.** Four pieces are shipped:
+[`stella tune`](/docs/commands/tune), `stella dataset export`, the Tool
+Foundry, and the nightly loop-bench gate. Everything else is still being
+designed, and the details will change. Read this as a map, not a feature
+list, and check the linked issue for the current state of any one part.
 </Callout>
 
-## The shape of the problem
+## The core problem
 
-Every component here answers the same question in a different place: *what would it take to make this improvement believable?* The failure mode being designed against is a system that reports its own progress — an agent that grades its own homework will always be improving.
+Every part here answers the same question in a different place: what would
+it take to make an improvement believable? The problem this is designed to
+avoid is a system that just reports its own progress. An agent that grades
+its own homework will always look like it's improving.
 
-So the pattern repeats. A candidate change is generated cheaply, evaluated against a **held-out** set it did not train on, and promoted on a measured lift.
+So the same pattern repeats everywhere. A candidate change is generated
+cheaply, tested against a held-out set it never trained on, and only
+promoted if it shows a real, measured improvement.
 
-That last clause is the design target, and it is not what ships today. The measured-lift gate exists and is **off by default** — `AutoCreateConfig::require_measured_lift` is `false` — so the shipped default promotes a skill on mining eligibility: frequency and recurrence, which is exactly what the target rules out. Turning the switch on is what closes the gap, and the section on skills below says which components still promote that way.
+That last part, measured improvement, is the goal, but it isn't what ships
+today. The setting that would enforce it exists but is off by default
+(`AutoCreateConfig::require_measured_lift` is `false`). So right now, a
+skill gets promoted based on how often and how recently it's used, which is
+exactly what the real goal is meant to rule out. Turning that setting on is
+what closes the gap. The section below on what's built today says which
+parts still promote this simpler way.
 
-## The seven components
+## The components
 
 <CardGrid size="md">
-  <SpecCard title="Tool Foundry (#830)">
-    A capability gap — the same shell incantation reconstructed three times — becomes a typed
-    tool, proved by a witness test and registered only after a human adopts and enables it.
-    Expands the *action space*, not just memory. Today the last two steps ship and the first
-    does not: nothing turns a detected gap into a staged tool, so the pair is written by hand.
+  <SpecCard title="Tool Foundry">
+    When stella rebuilds the same shell command by hand several times,
+    that's a capability gap. This turns it into a typed, reusable tool,
+    proven by a test, and only registered after a person adopts and enables
+    it. It grows what stella can *do*, not just what it remembers. Today,
+    the adopt-and-enable steps work, but the first step doesn't: nothing
+    yet turns a detected gap into a ready-to-adopt tool automatically, so
+    someone has to write it by hand.
   </SpecCard>
-  <SpecCard title="Eval-driven self-tuning (#831)">
-    A bandit over stella's own prompts, policies, and model routing. Variants run A/B on real
-    tasks, scored from receipts; the winner is promoted. Optimizes the *policy that acts on
-    facts* rather than the facts.
+  <SpecCard title="Eval-driven self-tuning">
+    Tests different versions of stella's own prompts, policies, and model
+    routing against each other on real tasks, scores them from the actual
+    results, and promotes the winner. This improves how stella decides to
+    act, not what it knows.
   </SpecCard>
-  <SpecCard title="stella-maintains-stella (#832)">
-    The most literal version: stella audits its own source, opens gated draft PRs against
-    itself, drives them through the witness gate, and lands verified improvements behind a
-    human merge gate.
+  <SpecCard title="stella-maintains-stella">
+    The most direct version of this idea: stella reviews its own source
+    code, opens draft pull requests against itself, runs them through the
+    same test gate as any other change, and only lands a verified
+    improvement after a person approves the merge.
   </SpecCard>
-  <SpecCard title="Experience distillation (#833)">
-    Turn repeated successful trajectories into parameterized Skills and evaluated few-shot
-    exemplar sets. A distilled Skill is a reusable *procedure*, not a recalled fact — and it is
-    promoted only on measured lift.
+  <SpecCard title="Experience distillation">
+    Turns repeated successful approaches into reusable Skills and tested
+    example sets. A distilled Skill is a reusable procedure, not just a
+    remembered fact, and it's only promoted when it shows a measured
+    improvement.
   </SpecCard>
-  <SpecCard title="Causal self-model (#834)">
-    A model of stella's own failure modes — wrong-model pick, tool-choice error, loop, budget
-    blow-out — that predicts the likely failure of the *current* plan and intervenes before it
-    costs a turn.
+  <SpecCard title="Causal self-model">
+    A model of how stella tends to fail: picking the wrong model, choosing
+    the wrong tool, looping, or blowing through budget. It predicts when
+    the current plan is likely to fail, and steps in before that costs a
+    whole turn.
   </SpecCard>
-  <SpecCard title="Capability curriculum (#835)">
-    Map the capability frontier from failed and low-confidence tasks, generate graded practice
-    tasks, attempt them in sandboxed worktrees under `verify`, and expand the *verified*
-    capability set. Self-directed practice.
+  <SpecCard title="Capability curriculum">
+    Finds the edge of what stella can currently do by looking at failed and
+    low-confidence tasks, generates practice tasks at the right difficulty,
+    attempts them in an isolated sandbox under `verify`, and grows the set
+    of things stella can verifiably do. Self-directed practice.
   </SpecCard>
-  <SpecCard title="Weight-space adapters (#836)">
-    The frontier item, and the only one that changes the model rather than the harness around it:
-    curate a redacted trajectory dataset, train and evaluate LoRA adapters offline, and — gated by
-    eval **and** human sign-off — promote one that measurably improves behavior. Planned and
-    unbuilt. The export half ships (`stella dataset export`); there is no trainer, no adapter
-    registry, and no promotion loop in the workspace yet.
+  <SpecCard title="Weight-space adapters">
+    The most ambitious piece, and the only one that changes the model
+    itself rather than the tools around it: build a redacted training
+    dataset, train and test LoRA adapters offline, and, only with both a
+    passing evaluation and a person's sign-off, promote one that measurably
+    improves behavior. This is planned but not built. The dataset export
+    half ships today (`stella dataset export`); there's no trainer, no
+    adapter registry, and no promotion process yet.
   </SpecCard>
 </CardGrid>
 
 ## Dependency order
 
-Four of the seven form a spine, because each one needs the previous one's output to be judged at all. You cannot evaluate an adapter without an evaluator, and you cannot build an evaluator's training set without a dataset.
+Four of these parts form a chain, because each one needs the output of the
+one before it to even be judged. You can't evaluate an adapter without an
+evaluator, and you can't build an evaluator's training set without a
+dataset first.
 
-The last link is drawn dashed because it is planned rather than built — the dashes say what exists, not what is intended.
+In the diagram below, the last link is dashed because it's planned but not
+built yet. The dashes show what exists today, not what's intended.
 
 ```text
-  parallel — need nothing from the spine
+  runs in parallel — needs nothing else first
   ┌──────────────────────────┐   ┌──────────────────────────┐
-  │ #830 Tool Foundry        │   │ #835 Capability          │
-  │ authors new tools        │   │      curriculum (drills) │
+  │ Tool Foundry              │   │ Capability                │
+  │ authors new tools         │   │ curriculum (drills)       │
   └──────────────────────────┘   └──────────────────────────┘
                 │                            │
                 └──────── wins feed ─────────┤
                                              ▼
-  the spine
+  the main chain
   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐   ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-  │ #872 dataset  │──▶│ #831 eval     │──▶│ #833 distill  │┈ ▷│ #836 adapters │
-  │  trajectories │   │  A/B + gate   │   │ Skills/exemp. │   │  LoRA + eval  │
+  │ Dataset        │──▶│ Eval          │──▶│ Distill       │┈ ▷│ Adapters      │
+  │ trajectories   │   │ A/B + gate    │   │ Skills/exemp. │   │ LoRA + eval   │
   └───────────────┘   └───────────────┘   └───────────────┘   └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
                               ▲
                               │ the same gate promotes everything above
   ┌──────────────────────────────────────────────────────────────────────────┐
-  │ #834 Causal self-model — predicts and preempts failures underneath it all │
+  │ Causal self-model — predicts and prevents failures underneath it all      │
   └──────────────────────────────────────────────────────────────────────────┘
 
-  its own lane
+  its own separate path
   ┌──────────────────────────────────────────────────────────────────────────┐
-  │ #832 stella-maintains-stella — audit → gated draft self-PR → human merge  │
+  │ stella-maintains-stella — audit → gated draft self-PR → human merge       │
   └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-The required edge is **dataset → eval**. #836's stated first slice is "just the dataset + eval halves, no training" — prove you can *measure* an improvement before you try to *train* one. Every other promotion in the track reuses that same evaluator, which is why the edge is worth building first whether or not the training half follows immediately.
+The one link that everything needs is dataset to eval. The stated first
+step for weight-space adapters is "just the dataset and eval halves, no
+training yet" — prove you can measure an improvement before trying to
+train one. Every other promotion in this system reuses that same
+evaluator, which is why it's worth building first, whether or not training
+comes right after.
 
-## What is actually built today
+## What's built today
 
 <CardGrid size="md">
   <SpecCard title="Shipped — stella tune">
-    [`stella tune`](/docs/commands/tune) is #831's first slice: A/B one policy knob (worker
-    reasoning effort) over two loop-bench runs, promote the winner only when it confidently
-    wins, and keep a reversible rollback record. Offline, no API key.
+    [`stella tune`](/docs/commands/tune) is the first working slice of
+    eval-driven self-tuning: it A/B tests one policy setting (worker
+    reasoning effort) over two loop-bench runs, promotes the winner only
+    when it clearly wins, and keeps a record so you can roll it back. Runs
+    offline, no API key needed.
   </SpecCard>
   <SpecCard title="Partly there — mining without the gate">
-    A rules miner ships and writes mined rules to `.stella/rules/`, and reflections are mined
-    into skills. Both still promote on **frequency and recurrence**, not on measured lift. The
-    appraisal that would judge lift exists (`stella-core`'s `skills::appraisal`, which scores a
-    skill as helping, harming, or guard-blocked); what has not landed is the evaluation *run*
-    that feeds it. Closing that loop is precisely what #833 is.
+    A rules miner writes rules it finds to `.stella/rules/`, and
+    reflections get mined into skills. Both still promote based on how
+    often and how recently something is used, not on a measured
+    improvement. The piece that would judge real improvement already
+    exists (`stella-core`'s `skills::appraisal`, which scores a skill as
+    helping, hurting, or blocked by a guard) — what's missing is the
+    evaluation run that feeds it real data. Closing that gap is exactly
+    what experience distillation is for.
   </SpecCard>
   <SpecCard title="Shipped — the nightly loop-bench gate">
-    #873. `.github/workflows/nightly-bench.yml` runs `loop-bench` on a cron schedule against a
-    fixed task pool on a flash-tier model, so stella is now run against real tasks in CI rather
-    than only the analysis tooling's pytest suite.
+    `.github/workflows/nightly-bench.yml` runs `loop-bench` on a schedule,
+    against a fixed set of tasks, on a fast, low-cost model. This means
+    stella is tested against real tasks automatically, not just through
+    the analysis tooling's own test suite.
   </SpecCard>
   <SpecCard title="Shipped — the dataset">
-    #872. [`stella dataset export`](/docs/commands/dataset) writes one JSONL record per accepted
-    turn plus a `manifest.json` describing the filter that selected them — `--since` / `--until`
-    / `--require-verdict`, every string through the secret redactor, written owner-only.
+    [`stella dataset export`](/docs/commands/dataset) writes one JSONL
+    record per accepted turn, plus a `manifest.json` describing the filter
+    used to select them (`--since` / `--until` / `--require-verdict`).
+    Every string passes through the secret redactor first, and the output
+    file is written owner-only.
   </SpecCard>
   <SpecCard title="Shipped in slices — the Tool Foundry">
-    #830. The capability-gap detector is `stella-core`'s `tool_foundry`; the witness and the
-    adoption gate are `stella-tools`' `foundry_witness` / `foundry_gate`. The promotion half
-    ships as [`stella tools --adopt`, `--enable`, `--disable` and
-    `--foundry`](/docs/commands/tools), and a proposed tool is inert until it is **both**
-    adopted and enabled. The detector's only shipped consumer is the offline
-    `make replay-learning` report — no live session mines proposals — and the pass that used to
-    render one into a staged manifest+script pair was retired for want of a caller
-    ([#3629](https://github.com/macanderson/stella/issues/3629)), so staging is by hand.
+    The capability-gap detector is `stella-core`'s `tool_foundry`. The
+    witness check and the adoption gate are `stella-tools`'
+    `foundry_witness` and `foundry_gate`. The promotion half ships as
+    [`stella tools --adopt`, `--enable`, `--disable`, and
+    `--foundry`](/docs/commands/tools), and a proposed tool does nothing
+    until it's both adopted and enabled. Today, the detector's only
+    consumer is the offline `make replay-learning` report — no live
+    session mines proposals on its own — and turning a detected gap into a
+    ready-to-stage tool is done by hand.
   </SpecCard>
 </CardGrid>
 
-Nothing in #832, #834, #835, or #836 is implemented.
+stella-maintains-stella, the causal self-model, the capability curriculum,
+and weight-space adapters are not implemented yet.
 
 ## Guardrails
 
-These are not per-component footnotes; they are the conditions under which any of this is allowed to ship. They repeat across all seven issues because they are the actual design.
+These aren't footnotes on individual parts — they're the conditions that
+any of this has to meet before it can ship. They repeat across every part
+described above because they're the actual design, not an afterthought.
 
 <CardGrid size="md">
   <SpecCard title="Human sign-off on anything that sticks">
-    Self-authored PRs open as **drafts** and never auto-merge. An adapter is never promoted to
-    default without a person approving it. New self-authored tools land disabled behind the
-    same authority gate as any other capability.
+    Self-authored pull requests open as drafts and never merge on their
+    own. An adapter is never promoted to the default without a person
+    approving it. New self-authored tools land disabled, behind the same
+    authorization gate as any other capability.
   </SpecCard>
   <SpecCard title="Promotion requires measured lift on held-out data">
-    Never frequency, never plausibility, never recency. A promotion needs a statistically real
-    improvement on a task set the candidate did not see, plus no regression on a guard set.
+    Never based on frequency, plausibility, or recency alone. A promotion
+    needs a real, statistically meaningful improvement on a set of tasks
+    the candidate never saw, with no regression on a separate guard set.
   </SpecCard>
   <SpecCard title="Reversibility">
-    The prior state is kept, so every promotion can be rolled back — a prior config overlay, a
-    pinned and revertible adapter version, an auto-retired Skill that stopped helping.
+    The previous state is always kept, so every promotion can be rolled
+    back: a previous config overlay, a pinned adapter version you can
+    revert to, or a Skill that gets automatically retired once it stops
+    helping.
   </SpecCard>
-  <SpecCard title="Provenance and redaction">
-    Training data and distilled artifacts carry their lineage, and are scrubbed before they are
-    stored. Never train on secrets or PII. Publish the eval and the dataset lineage.
+  <SpecCard title="Data origin and redaction">
+    Training data and distilled results keep a record of where they came
+    from, and are cleaned before they're stored. Stella never trains on
+    secrets or personal information. The evaluation and the data's origin
+    are both published.
   </SpecCard>
   <SpecCard title="Advisory before autonomous">
-    Interventions warn before they act, and a firing intervention logs predicted versus actual
-    outcome so the predictor stays calibrated. **No silent plan changes on safety-relevant paths.**
+    An intervention warns before it acts, and every time one fires, it
+    logs what it predicted against what actually happened, so its
+    predictions stay accurate over time. **Stella never silently changes a
+    plan on a safety-relevant path.**
   </SpecCard>
   <SpecCard title="Sandboxed practice">
-    Practice and drill runs are isolated in worktrees and budget-capped. Nothing from a practice
-    run touches the real workspace or ships without the same gate as ordinary work.
+    Practice runs are isolated in their own worktrees and have a spending
+    cap. Nothing from a practice run touches your real workspace, or ships
+    without passing the same gate as ordinary work.
   </SpecCard>
 </CardGrid>
 
 <Callout type="info">
-The reversibility and provenance guardrails are not new to this track — they are the same
-discipline the [memory lifecycle](/docs/commands/memory) already runs on, where retirement is
-reversible, nothing is ever deleted, and the agent's own self-reports are explicitly barred from
-driving a retirement. Self-improvement inherits that posture rather than inventing one.
+The reversibility and data-origin rules aren't new here — they're the same
+discipline the [memory lifecycle](/docs/commands/memory) already follows,
+where retirement is reversible, nothing is ever deleted, and the agent's
+own self-reports can never be the reason something gets retired.
+Self-improvement follows that same approach rather than inventing a new
+one.
 </Callout>
 
-## What the loop looks like
+## The deck view
 
-The deck is where the self-maintenance track becomes something you watch
-rather than read about.
+The Command Deck is where this becomes something you can watch, not just
+read about.
 
-A tracker backlog arrives over [MCP](/docs/agent-tools/mcp) and sorts by
-heat: the coupling of the files an issue touches, weighted by its age, read
-off the [code graph](/docs/context-engine) rather than guessed at.
+A backlog of issues arrives over [MCP](/docs/agent-tools/mcp) and gets
+sorted by "heat": how connected the files an issue touches are, weighted
+by the issue's age, read directly from the [code graph](/docs/context-engine)
+instead of guessed at.
 
 <DeckShot id="issues" />
 
-Starting work on one drafts a plan and stops. The sources line names exactly
-what went into it — the issue text, the coupled files, the memory rules that
-applied — every task carries a "done means" clause before any of them runs,
-and the estimate is on the table. Nothing is touched until the plan is
-approved.
+Starting work on one drafts a plan, then stops there. A sources line names
+exactly what went into the plan: the issue text, the related files, and
+any memory rules that applied. Every task states what "done" means before
+it runs, and the time estimate is shown up front. Nothing is touched until
+you approve the plan.
 
 <DeckShot id="start-work" />
 
 ## Following along
 
-Each component has an issue carrying its vision, grounded mechanism, success metric, guardrail, and first slice:
+Each part has an issue describing its goal, how it would actually work,
+how success is measured, its safety rule, and its first step:
 
-- [#830 — Tool Foundry](https://github.com/macanderson/stella/issues/830)
-- [#831 — Eval-driven self-tuning](https://github.com/macanderson/stella/issues/831)
-- [#832 — stella-maintains-stella](https://github.com/macanderson/stella/issues/832)
-- [#833 — Experience distillation](https://github.com/macanderson/stella/issues/833)
-- [#834 — Causal self-model](https://github.com/macanderson/stella/issues/834)
-- [#835 — Capability curriculum](https://github.com/macanderson/stella/issues/835)
-- [#836 — Weight-space adapters](https://github.com/macanderson/stella/issues/836)
+- [Tool Foundry](https://github.com/macanderson/stella/issues/830)
+- [Eval-driven self-tuning](https://github.com/macanderson/stella/issues/831)
+- [stella-maintains-stella](https://github.com/macanderson/stella/issues/832)
+- [Experience distillation](https://github.com/macanderson/stella/issues/833)
+- [Causal self-model](https://github.com/macanderson/stella/issues/834)
+- [Capability curriculum](https://github.com/macanderson/stella/issues/835)
+- [Weight-space adapters](https://github.com/macanderson/stella/issues/836)
 
-The two first slices, [#872 — dataset export](https://github.com/macanderson/stella/issues/872) and [#873 — nightly loop-bench gate](https://github.com/macanderson/stella/issues/873), have both shipped; see "What is actually built today" above.
+The two first steps, [dataset export](https://github.com/macanderson/stella/issues/872)
+and [the nightly loop-bench gate](https://github.com/macanderson/stella/issues/873),
+have both shipped. See "What's built today" above.
 
 ## See also
 
 - [`stella tune`](/docs/commands/tune) — the one piece of this you can run today.
-- [Memory](/docs/context-engine) — the recall layer this track is explicitly *beyond*.
+- [Memory](/docs/context-engine) — the recall layer this goes beyond.
 - [Plugins](/docs/plugins) — the witness and verify machinery every self-authored change has to pass.
-- [`stella scoreboard`](/docs/commands/scoreboard) — outcome measurement that refuses to ask the model how it did.
+- [`stella scoreboard`](/docs/commands/scoreboard) — measures outcomes without asking the model how it did.

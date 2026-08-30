@@ -1,12 +1,11 @@
 ---
 title: Context Engine
-description: How stella remembers — bi-temporal memory, prompt-cache-native recall, the citation loop, reflections, the tree-sitter code graph, and the domain taxonomy.
+description: How stella remembers — memory that tracks when facts were true, recall that works with prompt caching, the citation loop, reflections, the code graph, and domain tags.
 ---
 
-stella accumulates knowledge about your workspace so each session starts
-smarter than a blank slate — and it does so **prompt-cache-natively**: durable
-knowledge rides the provider's prompt cache instead of being re-billed at
-full price every call.
+stella builds up knowledge about your workspace, so each session starts smarter than a
+blank slate. It does this in a way that works with your model provider's prompt cache:
+durable knowledge rides the cache instead of getting billed at full price on every call.
 
 ## Where knowledge lives
 
@@ -17,13 +16,14 @@ Everything is on your disk, under `.stella/`:
     Workspace memories — one Markdown lesson per file, loaded into every session's prompt.
   </OptionCard>
   <OptionCard name=".stella/private/context.db">
-    The **bi-temporal** context store: episodes, reflection memories, domain facts.
+    The context store: episodes, reflection memories, and domain facts. It keeps track
+    of both when a fact was true and when stella learned it.
   </OptionCard>
   <OptionCard name=".stella/private/reflections.jsonl">
-    The reflection mining log — one JSON lesson per line.
+    The reflection log — one JSON lesson per line.
   </OptionCard>
   <OptionCard name=".stella/private/codegraph.db">
-    The tree-sitter code-graph index.
+    The code-graph index that powers structural code search.
   </OptionCard>
   <OptionCard name=".stella/rules/*.md">
     Rules — promoted memories and guard rules. Also read from `.claude/rules/` and
@@ -33,277 +33,263 @@ Everything is on your disk, under `.stella/`:
     Project [skills](/docs/agent-tools/skills).
   </OptionCard>
   <OptionCard name=".stella/domains.toml">
-    The domain taxonomy — the shared tagging vocabulary.
+    The domain tags: a shared vocabulary for tagging things in your project.
   </OptionCard>
   <OptionCard name=".stella/private/store.db">
     The citation ledger and [telemetry](/docs/telemetry).
   </OptionCard>
 </CardGrid>
 
-*Bi-temporal* means the context store keeps both when a fact was true and
-when stella believed it: re-running `stella init` **supersedes** stale facts
-rather than deleting them, so "what did we believe then?" stays answerable.
+The context store keeps track of two things: when a fact was true, and when stella
+learned it. Running `stella init` again replaces stale facts with new ones instead of
+deleting them, so you can still answer "what did stella believe back then?"
 
 ### Where rules come from
 
-Rules are read from **three** directories, in precedence order — a later one overrides an
-earlier one *by rule id*, so a repository can replace a personal rule that shares its name:
+Rules are read from three directories, in this order. A later directory overrides an
+earlier one when two rules share the same id, so a repository can replace a personal
+rule that has the same name:
 
 <CardGrid size="sm">
   <OptionCard name="~/.stella/rules/">
-    Your own rules, applied in every workspace. Lowest precedence, and the only directory
-    that survives when project prompts are not permitted.
+    Your own rules, applied in every workspace. This has the lowest precedence, and it's
+    the only directory stella still reads when project prompts aren't allowed.
   </OptionCard>
   <OptionCard name=".claude/rules/">
-    Claude Code interop — an existing rules directory works unchanged.
+    Works with Claude Code: an existing rules directory here works without any changes.
   </OptionCard>
   <OptionCard name=".stella/rules/">
-    The workspace's own rules, and where `stella memory promote` writes. Highest
-    precedence.
+    The workspace's own rules, and where `stella memory promote` writes new ones. This
+    has the highest precedence.
   </OptionCard>
 </CardGrid>
 
-Both project directories are skipped entirely when the effective
-[managed authority](/docs/configuration/settings#managed-authority-ceilings) does not
-permit project prompts, leaving your user rules armed. Prompt-only (Tier-1) rules follow
-that plain latest-wins precedence. User-global **hard guards** are monotonic instead: a
-project rule with the same id can never disarm one, and a distinct project guard is added
-under a provenance-qualified id so both constraints stay in force.
+Both project directories are skipped entirely when your
+[managed authority](/docs/configuration/settings#managed-authority-ceilings) setting
+doesn't allow project prompts. In that case, only your own user rules apply. Normal
+rules follow the precedence order above: the latest one wins. Hard guards in your user
+directory are different. A project rule can never turn one off. If a project adds its
+own guard with the same name, both guards stay active.
 
-## Local-first today; share rules through Git
+## Local by default
 
-The stores above are **workspace-local**. stella does not currently aggregate
-memories, reflection logs, or telemetry into a hosted team graph, and it does
-not silently publish a learned pattern as organization policy.
+The stores above stay on your workspace. stella does not combine memories, reflection
+logs, or telemetry into a shared team graph, and it does not automatically turn a
+learned pattern into organization policy.
 
-The shareable boundary is `.stella/rules/*.md`: commit a reviewed rule file to
-the repository and every contributor receives the same repository steering on
-their next session. `stella memory promote <id>` creates that local rule file
-after a memory has earned promotion; it does **not** stage, commit, push, or
-open a pull request.
+The one thing you can share is `.stella/rules/*.md`. Commit a reviewed rule file to the
+repository, and every contributor gets the same guidance in their next session.
+`stella memory promote <id>` creates that rule file once a memory has earned promotion,
+but it does not stage, commit, push, or open a pull request for you.
 
-This distinction is intentional:
+### What stays local
 
-- **Local observations** and personal preferences remain private by default.
-- **Repository rules** are durable, human-readable instructions that can be
-  reviewed, versioned, and reverted with ordinary Git workflows.
-- **Context retrieval** remains local and bounded to the current workspace and
-  task.
+- Local observations and personal preferences stay private by default.
+- Repository rules are durable, human-readable instructions you can review, version,
+  and revert with normal Git workflows.
+- Context retrieval stays local, scoped to the current workspace and task.
 
 For the current promotion command, see [`stella memory`](/docs/commands/memory).
-Any future team-level Context PR workflow should extend this Git-governed rule
-boundary rather than make private local telemetry a shared source of truth.
 
-## Two injection points, one cache discipline
+## How context reaches the model
 
-stella feeds context to the model at exactly two places, chosen so the
+stella feeds context to the model in exactly two places. Both are chosen so the
 expensive part never changes:
 
-1. **The baked prefix (stable).** At session start, workspace memories and
-   Tier-1 rules are concatenated into the system prompt — deterministically,
-   byte-stable for the whole session. That stability is what lets the entire
-   prefix ride the provider's prompt cache (~0.1× input cost on cached
-   reads). A memory saved mid-session takes effect **next**
-   session: hot-injecting it would invalidate the cache on every save.
-2. **The recall block (volatile).** Each turn, a single `[auto-recalled
-   context]` message is refreshed **in place** right after the stable prefix
-   — never accumulating. It carries what's relevant to *this* prompt:
-   matching memories (similarity + domain overlap + recency), code-graph
-   hits, past episodes, and selected [skills](/docs/agent-tools/skills) —
-   capped by default at 5 frames / ~1,200 tokens. Nothing relevant? No block
-   at all.
+1. **The fixed prefix.** At the start of a session, workspace memories and rules get
+   combined into the system prompt. This prefix stays exactly the same, byte for byte,
+   for the whole session. That's what lets it ride your provider's prompt cache, which
+   costs roughly a tenth of the price of a normal call. A memory you save mid-session
+   takes effect in your next session, not this one. Adding it right away would break
+   the cache every time you saved something.
+2. **The recall block.** Every turn, stella refreshes a single `[auto-recalled
+   context]` message in place, right after the fixed prefix. It never grows or piles
+   up. It carries whatever's relevant to this specific prompt: matching memories (based
+   on similarity, shared tags, and recency), code-graph hits, past episodes, and
+   selected [skills](/docs/agent-tools/skills). By default, it's capped at 5 items and
+   about 1,200 tokens. If nothing is relevant, there's no block at all.
 
-Recall fans out through the **Context Graph Protocol (CGP)** host to
-in-process providers — the workspace memory store and the code graph — fused
-by score under one token budget.
+Recall works through the Context Graph Protocol (CGP), reaching out to the workspace
+memory store and the code graph, then combining the results by score under one shared
+token budget.
 
 <RecallLoopDiagram />
 
-## Invalidation doesn't happen — and why that matters
+## No invalidation
 
-Most agents treat memory as dynamic injection: retrieve per turn, splice
-into the prompt. It maximizes relevance and **destroys prompt-cache
-locality** — every turn's prompt is different, the cache misses every call,
-and the whole system prompt re-bills at full input price, forever.
+Many AI agents treat memory as something to inject fresh on every turn: look things up,
+then splice them into the prompt. This maximizes relevance, but it wrecks prompt
+caching. Every turn's prompt ends up different, so the cache misses every time, and the
+whole system prompt gets billed at full price, forever.
 
-stella is built so invalidation *structurally cannot happen*, at two layers:
+stella is built so this can't happen, at two levels:
 
-- **The cache layer.** The prefix is byte-stable by discipline — same
-  memories, same order, same bytes, every call of the session — and the
-  volatile recall block lives in its own message *after* the prefix,
-  refreshed in place. Nothing ever rewrites the cached bytes, so the cache
-  entry is never invalidated mid-session. That is the difference between
-  paying ~0.1× (cache-read) and 1.0× (cache-miss) on every call — a
-  **10× structural cost gap that compounds across a session**. It is also
-  why a freshly saved memory waits for the next session: hot-injecting it
-  would convert every subsequent cache hit into a miss.
-- **The knowledge layer.** The context store is bi-temporal: new facts
-  **supersede** old ones with validity windows — they never overwrite or
-  delete them. Re-initializing a workspace doesn't invalidate what stella
-  believed before; it records what changed and when. History stays
-  queryable, provenance stays intact, and a recalled fact can always say
-  *when* it was true.
+- **The cache.** The prefix stays byte-for-byte identical for the whole session: same
+  memories, same order, same bytes, every call. The recall block lives in its own
+  message after the prefix and gets refreshed in place. Nothing ever rewrites the
+  cached bytes, so the cache never breaks mid-session. That's the difference between
+  paying about a tenth of the price on a cache hit versus full price on a cache miss, a
+  gap that adds up across a whole session. It's also why a memory you just saved waits
+  until the next session: injecting it right away would turn every future cache hit
+  back into a miss.
+- **The knowledge store.** New facts replace old ones for a given time window; they
+  never overwrite or delete the old ones outright. Re-running setup on a workspace
+  doesn't erase what stella believed before. It records what changed and when. You can
+  still look back at old facts, trace where they came from, and a recalled fact can
+  always tell you when it was true.
 
-The practical significance: stella's memory gets **cheaper and richer** as a
-session runs and as a workspace ages — where per-turn-injection designs get
-more expensive with every memory they add. Cost architecture, not a cache
-trick.
+In practice, this means stella's memory gets cheaper and richer the longer a session
+runs and the older a workspace gets. Systems that inject memory fresh every turn get
+more expensive with every memory they add. This is a difference in how the system is
+built, not a clever cache trick.
 
 ## The Context Graph Protocol
 
-The recall seam isn't private plumbing — it is a versioned, open wire
-protocol: the **[Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)**
-(`contextgraph/1.0-draft`), now its own project, with stella as its reference host.
+Recall doesn't run on private, one-off code. It runs on an open, versioned protocol
+called the
+[Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+(`contextgraph/1.0-draft`). It's its own project, and stella is its reference
+implementation.
 
-- **Zero-dependency wire types.** The protocol's types depend on nothing but
-  a JSON codec — a context provider can be written in any language without
-  importing a line of stella.
-- **Machine-checked conformance.** "CGP conformant" isn't marketing — it's
-  green on the public conformance suite. A conforming provider works with
-  any CGP host, checked at CI time rather than discovered at integration
-  time.
-- **A trust architecture**, not just a transport: provenance (every frame
-  says where it came from), budget discipline (providers respect the token
-  budget they're given), consent, citation guarantees, version stability,
-  and temporal validity — the bi-temporal "invalidation doesn't happen"
-  property, standardized.
+- **No dependencies to adopt.** The protocol's data types need nothing but a JSON
+  encoder and decoder. You can write a context provider in any language without
+  importing a single line of stella's code.
+- **Tested compliance.** A provider that calls itself "CGP conformant" has actually
+  passed the public conformance test suite. A conforming provider works with any CGP
+  host, and you find that out by running the tests, not by discovering a mismatch
+  later.
+- **Built-in trust rules**, not just a way to move data: every frame says where it came
+  from, providers respect the token budget they're given, and the protocol also
+  standardizes consent, citation, version stability, and the same "facts never get
+  erased, only replaced" behavior described above.
 
-The consequence for you: the context engine is **extensible without forks**.
-Your company wiki, your issue tracker, your vector store — anything that
-speaks CGP can feed stella's recall block under the same budget, scoring,
-and citation rules as the built-in providers. The full analysis lives in
+What this means for you: you can extend the context engine without forking stella's
+code. Your company wiki, your issue tracker, your vector store: anything that speaks
+CGP can feed stella's recall block, under the same budget, scoring, and citation rules
+as the built-in providers. For more detail, see
 [the CGP advantages paper](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md).
 
+## The citation loop
 
-## The citation loop: memories that earn their place
+Memory in stella isn't just write and forget. It's a feedback loop:
 
-Memory in stella is not write-only. It is a feedback loop:
-
-- A memory is a lesson — a slug plus ≤ 2,000 chars of Markdown — saved as
+- A memory is a lesson: a short name plus up to 2,000 characters of Markdown, saved as
   one file in `.stella/memories/`.
-- Recalled memories carry a stable id (`nod_…`). Citations against those
-  ids — a usefulness score (1–5), a truthfulness flag, and a remark —
-  aggregate into a ledger in `.stella/private/store.db`.
-- **`stella memory list`** ranks memories by citation count, average
-  usefulness, and truthful rate. **`stella memory validate`** flags memories
-  whose file-path anchors no longer exist.
-- **Promotion:** a memory cited successfully **more than 10 consecutive
-  times** (one negative citation resets the streak) becomes eligible for
-  `stella memory promote <id>`, which turns it into a durable rule at
-  `.stella/rules/<slug>.md`.
-- **Quarantine:** a memory repeatedly cited as *untruthful* is filtered out
-  of every future recall block. Bad memories don't just rank lower — they
-  disappear.
+- Recalled memories carry a stable id, starting with `nod_`. Each time a memory gets
+  cited, that citation records a usefulness score from 1 to 5, whether it was true, and
+  a short note. These citations build up in a ledger at `.stella/private/store.db`.
+- `stella memory list` ranks memories by how often they're cited, their average
+  usefulness, and how often they turn out to be true. `stella memory validate` flags
+  memories that point to a file path that no longer exists.
+- **Promotion.** A memory cited successfully more than 10 times in a row (one bad
+  citation resets the count to zero) becomes eligible for `stella memory promote <id>`,
+  which turns it into a durable rule at `.stella/rules/<slug>.md`.
+- **Quarantine.** A memory that keeps getting cited as untrue gets filtered out of every
+  future recall block. Bad memories don't just rank lower; they stop showing up at all.
 
-### One memory's arc: from lesson to rule
+### From lesson to rule
 
 Concretely, over a few sessions:
 
-1. **Save.** A durable lesson — say, *"the integration suite needs
-   `TEST_DB=memory`; against a real socket it hangs"* — lands as a
-   slug-named file (at most 2,000 characters of Markdown) in
-   `.stella/memories/` and, per the cache discipline above, takes effect
-   from the **next** session.
-2. **Recall.** In a later session, a prompt about the integration tests
-   matches; recall surfaces the lesson in the `[auto-recalled context]`
-   block as a frame tagged with its stable id (`nod_` plus 24 hex
-   characters) — competing with everything else relevant for the default
-   cap of 5 frames / ~1,200 tokens.
-3. **Cite.** The lesson actually informs the turn, and a citation against
-   that `nod_…` id — a usefulness score (1–5), a truthfulness flag, and a
-   one-line remark — lands in the ledger in `.stella/private/store.db`.
-4. **Inspect.** `stella memory list` shows the memory climbing the ranking
-   — citation count, average usefulness, truthful rate — and flags it once
-   it has earned promotion.
-5. **Promote.** After **more than 10 consecutive positive citations** (one
-   negative citation resets the streak to zero), the memory is eligible:
-   `stella memory promote <id>` writes it as a durable rule at
-   `.stella/rules/<slug>.md`.
-6. **Graduate.** From the next session on, the promoted rule rides the
-   byte-stable prompt prefix as a Tier-1 rule — standing guidance on every
-   call, at cached-read prices, no longer needing to win recall's 5-frame
-   contest to be seen.
+1. **Save.** A durable lesson, for example "the integration suite needs
+   `TEST_DB=memory`; against a real socket it hangs," gets saved as a file (up to 2,000
+   characters of Markdown) in `.stella/memories/`. As described above, it takes effect
+   starting with the next session.
+2. **Recall.** In a later session, a prompt about the integration tests matches this
+   lesson. Recall surfaces it in the `[auto-recalled context]` block, tagged with its
+   stable id (`nod_` plus 24 hex characters). It competes with everything else relevant
+   for the default limit of 5 items and about 1,200 tokens.
+3. **Cite.** The lesson actually helps with the turn, so a citation against that
+   `nod_…` id lands in the ledger at `.stella/private/store.db`: a usefulness score
+   from 1 to 5, whether it was true, and a one-line note.
+4. **Inspect.** `stella memory list` shows the memory climbing the ranking (citation
+   count, average usefulness, truthful rate) and flags it once it has earned
+   promotion.
+5. **Promote.** After more than 10 positive citations in a row (one negative citation
+   resets the count to zero), the memory becomes eligible. `stella memory promote <id>`
+   writes it as a durable rule at `.stella/rules/<slug>.md`.
+6. **Graduate.** From the next session on, the promoted rule rides the fixed prompt
+   prefix as standing guidance on every call, at cached-read prices, without needing to
+   compete for one of recall's 5 slots to be seen.
 
-## Reflections: learning from every working turn
+## Reflections
 
-After any turn that did real work (a pure chat turn is
-skipped to save the call), stella spends one cheap, deterministic model call
-to extract **0–3 lessons**. Each is tagged with allowed domains and written to both the
-context store and `.stella/private/reflections.jsonl`. Failed turns get a dedicated
-root-cause prompt — failure is treated as the highest-value learning signal,
-not something to forget.
+After any turn that did real work, stella makes one cheap, predictable model call to
+pull out 0 to 3 lessons. A pure chat turn skips this step to save the cost. Each lesson
+gets tagged with a domain and written to both the context store and
+`.stella/private/reflections.jsonl`. A failed turn gets its own prompt asking what went
+wrong, because stella treats failure as the most valuable thing to learn from, not
+something to move past quickly.
 
-Every working turn is also recorded as an **episode** — a summary, the files
-touched, the outcome, and its time window — so future recall can surface
-"the last time we touched this area."
+Every working turn also gets recorded as an episode: a summary, the files touched, the
+outcome, and when it happened. This lets future recall surface things like "the last
+time we touched this area."
 
-Recurring lessons that keep showing up in the reflection log are
-**auto-promoted into skills** (a new `.stella/skills/<slug>/SKILL.md`),
-capped per session and never clobbering an existing skill.
+Lessons that keep coming up in the reflection log get automatically turned into skills,
+written to a new `.stella/skills/<slug>/SKILL.md`. There's a cap on how many happen per
+session, and this never overwrites an existing skill.
 
-### Measuring recall: A/B control turns
+### Measuring recall
 
-Does recall actually help? stella measures instead of assuming: at a fixed
-rate (every 10th turn by default), recall is deterministically suppressed and
-the turn recorded as a **control turn** — its episode summary carries an
-`[ab-control]` marker. Comparing outcomes with and against controls keeps the
-memory system accountable for real, measured lift.
+Does recall actually help? stella checks instead of assuming. At a fixed rate (every
+10th turn, by default), recall gets turned off on purpose, and that turn is recorded as
+a control turn, marked `[ab-control]` in its episode summary. Comparing outcomes with
+and without recall keeps the memory system honest about how much it actually helps.
 
-A control turn is frameless *everywhere*: the worker's recall block, the
-planner's context, and the witness author all see nothing, so the two arms
-differ by recall and nothing else. The schedule is counted per workspace in
-`context.db`, not per session. That lets one-turn-per-process
-surfaces — `stella run`, a `/goal` run, a fleet task — share the same
-interleaved sequence as a long chat session. Set
-`context.retrieval.ab_recall_rate` to change the rate, or to `0` to switch the
-experiment off.
+On a control turn, nothing gets recalled anywhere: the worker's recall block, the
+planner's context, and the evidence-gathering step all see nothing. That way, the only
+difference between the two groups is recall, and nothing else. This schedule is
+counted per workspace in `context.db`, not per session, so single-turn commands like
+`stella run`, a goal run, or a fleet task share the same rotation as a long chat
+session. Set `context.retrieval.ab_recall_rate` to change how often this happens, or
+set it to `0` to turn the experiment off.
 
 ## The code graph
 
-The code graph gives structural answers instead of grep guesses, backed by
-a native **tree-sitter** index of your code:
+The code graph gives structural answers instead of grep-style guesses. It's backed by
+a tree-sitter index of your code, tree-sitter being a tool that parses code instead of
+just searching its text:
 
 - **Languages:** Rust, Python, JavaScript, TypeScript, TSX, Go, Java, C, C++,
   PHP, SQL, and Markdown.
-- **Indexed:** symbol definitions, import edges, and call sites (the callee
-  *name* at each call — unresolved by design).
-- **Queries:** `definitions`, `references`, `callees`, and `callers`
-  (by symbol name — `callers` is a best-effort name match and says so);
-  `imports`, `importers`, and `neighbors` (by file path).
-  [`stella search`](/docs/commands/search) is the door onto the index:
-  a single ranked query rather than seven individual operations.
+- **Indexed:** symbol definitions, import connections, and call sites. For each call,
+  it records the name of the function being called, not a fully resolved link to it —
+  that's intentional.
+- **Queries:** by symbol name, you can ask for `definitions`, `references`, `callees`,
+  and `callers` (`callers` does its best to match by name and tells you when it's
+  guessing). By file path, you can ask for `imports`, `importers`, and `neighbors`.
+  [`stella search`](/docs/commands/search) is the way into the index: one ranked query
+  instead of running each of these separately.
 
-The deck puts the whole index behind one tab. Every answer on it is computed
-rather than asked for, which is why it prices at `$0.00`; the coupling ranking
-at the bottom is the useful one, because it is the blast radius if you edit
-the file you are looking at.
+The deck puts the whole index behind one tab. Every answer there is computed locally
+rather than sent to a model, which is why it costs `$0.00`. The coupling ranking at the
+bottom is especially useful: it shows how much would be affected if you edit the file
+you're looking at.
 
 <DeckShot id="graph" />
 
-The index builds automatically: [`stella init`](/docs/getting-started/initialization)
-builds it eagerly, and recall's graph-backed retrieval refreshes it as it
-reads. An in-process file watcher (200 ms debounce, no daemon) keeps it
-fresh as files change, for exactly as long as a session runs.
+The index builds itself. [`stella init`](/docs/getting-started/initialization) builds
+it right away, and recall refreshes it as it reads from it. A file watcher built into
+the running session (with a 200ms delay, and no background service) keeps it up to
+date as files change, for as long as the session runs.
 
 <Callout type="info">
-  `importers` edges resolve for relative TypeScript/JavaScript and Python
-  imports, and for Rust `use`/`mod` paths through the workspace module tree
-  (file-level edges; external crates stay unresolved). Remaining
-  gaps: Go and Java package imports, and PHP namespace `use`, are indexed
-  unresolved.
+  `importers` connections work for relative TypeScript/JavaScript and Python imports,
+  and for Rust `use`/`mod` paths through the workspace's module tree (at the file
+  level; external crates aren't resolved). Go and Java package imports, and PHP
+  namespace `use`, are indexed but not resolved.
 </Callout>
 
-## The domain taxonomy
+## Domain tags
 
-`stella init` infers a short tagging vocabulary for *your* project —
-`.stella/domains.toml` — and it becomes the connective tissue of the whole
-engine: memories, reflections, episodes, skills, and code-graph nodes all
-carry domain tags, so recall can relate a lesson, a past episode, and a file
-to the same area of the codebase.
+`stella init` figures out a short set of tags for your project and saves them to
+`.stella/domains.toml`. These tags connect everything in the engine: memories,
+reflections, episodes, skills, and code-graph nodes all carry domain tags, so recall
+can connect a lesson, a past episode, and a file to the same area of your codebase.
 
-## Version-control your agent's brain
+## Put it under version control
 
-Memories, rules, skills, and the taxonomy are plain files — commit them, and
-your whole team's agents share the same accumulated knowledge. The `.db`
-files are local state; see
+Memories, rules, skills, and domain tags are all plain files. Commit them, and your
+whole team's agents share the same accumulated knowledge. The `.db` files hold local
+state and shouldn't be committed; see
 [what to commit](/docs/getting-started/initialization#what-to-commit).

@@ -1,23 +1,22 @@
 ---
 title: Accessibility
-description: Run the Command Deck so a screen reader can read it — what --accessible changes, what it leaves alone, and how it differs from --plain.
+description: Run the Command Deck with a screen reader. What --accessible changes, what stays the same, and how it's different from --plain.
 ---
 
-stella's interactive surface is the **Command Deck**, a tabbed terminal UI. By default it
-draws the way full-window terminal apps do: on the alternate screen, repainting a whole
-grid many times a second. That is a good surface for an eye and a poor one for a screen
-reader, which is handed cell churn with no notion of *a new line appeared* — and which
-loses the entire conversation the moment you quit, because the alternate screen is torn
-down with the program.
+stella's interactive surface is the Command Deck, a tabbed terminal interface. By
+default, it draws the way most full-window terminal apps do: it takes over the whole
+screen and repaints the grid many times a second. That works well for your eyes. It does
+not work for a screen reader, which gets a flood of changing text with no way to tell
+that a new line appeared. Worse, the whole conversation disappears the moment you quit,
+because the screen it drew on is torn down with the program.
 
-`--accessible` changes how the deck talks to your terminal so that a reader can follow it.
+`--accessible` changes how the deck talks to your terminal so a screen reader can follow
+it.
 
 <Callout type="info">
-  **It is a mode on the deck, not a smaller surface beside it.** Every tab, every gate,
-  every key, the prompt queue, sub-agents, steering and resume are exactly what they
-  always were. Nothing is removed and nothing is simplified — a separate "accessible
-  build" is a permanent second-class tier, where every feature shipped afterwards becomes
-  a gap it never closes.
+  **This is a mode on the deck, not a separate, smaller tool.** Every tab, every gate,
+  every key, the prompt queue, sub-agents, steering, and resume work exactly the way they
+  always do. Nothing is removed and nothing is simplified.
 </Callout>
 
 ## Turning it on
@@ -36,77 +35,79 @@ stella resume --accessible
 `--accessible` is a global flag, and `stella chat` and `stella resume` are the two
 commands that open the deck.
 
-To make it your default, set the environment variable in your shell profile rather than
-remembering a flag on every invocation:
+To make it your default, set the environment variable in your shell profile instead of
+typing the flag every time:
 
 ```bash
 export STELLA_ACCESSIBLE=1
 ```
 
-The variable is on when it is present and set to anything other than `0` — so
-`STELLA_ACCESSIBLE=1` and `STELLA_ACCESSIBLE=yes` both enable it, while
+The variable turns the mode on when it is set to anything other than `0`. So
+`STELLA_ACCESSIBLE=1` and `STELLA_ACCESSIBLE=yes` both turn it on, while
 `STELLA_ACCESSIBLE=0` and an empty value leave it off.
 
-`--simple` is accepted as an alias for `--accessible`. It is the spelling an earlier,
-short-lived separate surface used; it now selects this mode.
+`--simple` also works, and does the same thing as `--accessible`.
 
 ## What changes
 
-### The deck never takes over the screen
+### The deck stays on your screen
 
-The session draws **inline, underneath your prompt**, on your own screen. The alternate
-screen is never entered and never left. Nothing above the deck is hidden while it runs,
-and nothing is destroyed when it exits.
+The session draws inline, right below your prompt, on your own screen. It never switches
+to a separate screen. Nothing above the deck gets hidden while it runs, and nothing gets
+destroyed when it exits.
 
 ### Finished messages move into scrollback
 
-Each completed transcript entry is written into your terminal's ordinary scrollback
-**exactly once** — so your reader announces it as it arrives, your review cursor can go
-back through it, and it is still there after you quit. The live pane skips whatever has
-already been written, so nothing is read out twice.
+Each finished message gets written into your terminal's normal scrollback exactly once.
+Your screen reader announces it as it arrives. You can scroll back through it with your
+review cursor. And it stays there after you quit. The live pane skips anything already
+written, so nothing gets read out twice.
 
-Entries move per agent lane, and the newest entry of each lane is held in the pane until
-the session ends, because streaming deltas keep coalescing into it until it settles.
+Messages move into scrollback one agent lane at a time. The newest message in each lane
+stays in the live pane until the session ends, because it keeps updating while the
+response streams in.
 
 ### Motion is frozen
 
-Accessible mode implies [`--no-anim`](#related-terminal-controls): the progress bar's
-shimmer and pulse and the caret blink all stop. No region of the screen repaints on a
-clock, so there is nothing for a reader to pick up as churn.
+Accessible mode turns on [`--no-anim`](#related-terminal-controls) automatically. The
+progress bar's shimmer and pulse stop, and the caret stops blinking. No part of the
+screen repaints on a timer, so there is nothing for a screen reader to mistake for new
+content.
 
 ### Panels stack into one column
 
-The three places the deck drew two panes side by side — the **GRAPH** tab, the **SKILLS**
-tab, and the session's work rail — stack vertically instead. No rendered row splices
-content from two logical panes, so reading order is top to bottom. For the work rail, the
-deck takes the path a narrow terminal already takes: a one-row state strip, with `⌃S`
-opening the whole thing.
+The deck normally draws three areas as two panes side by side: the GRAPH tab, the
+SKILLS tab, and the session's work rail. In accessible mode, these stack vertically
+instead. No row mixes content from two panes, so the reading order goes top to bottom.
+For the work rail, the deck uses the same layout it already uses on a narrow terminal: a
+one-row status strip, with `⌃S` opening the full view.
 
-### Grid views read as labelled records
+### Grid views read as labeled records
 
-A table is a compression scheme that only works on an eye. `$0.05` sitting under a `Cost`
-header two rows up is a labelled value if you can see the column; read aloud it is the
-number five with nothing attached, because the alignment carrying the meaning is
-whitespace — exactly what a reader collapses.
+A table only makes sense if you can see it. `$0.05` sitting under a `Cost` header two
+rows up works fine for your eyes, because you can see the column line up. Read aloud, it
+is just the number five with nothing attached, because the spacing that carries the
+meaning is whitespace, and a screen reader skips over whitespace.
 
-So **TRACES**, **ISSUES**, **TOOLS**, **AGENTS** and **INSTALLED** render one record per
-row, with every value carrying its own label:
+So the TRACES, ISSUES, TOOLS, AGENTS, and INSTALLED tabs each show one record per row,
+with every value carrying its own label:
 
 ```text
 status running · cost $0.05 · cpu 3%
 ```
 
-Nothing is dropped — the same fields, in the same order, saying what they are. A row too
-long for the terminal is clipped with an ellipsis rather than wrapped, because the deck's
-scrolling is line-exact and a record that wrapped to two rows would break ↑/↓.
+Nothing is dropped. You get the same fields, in the same order, each one labeled. If a
+row is too long for your terminal, it gets cut off with an ellipsis instead of wrapping
+to a second line. That's because the deck scrolls one line at a time, and a row that
+wrapped to two lines would break the up and down arrow keys.
 
 ### Moving somewhere is announced
 
-On the alternate screen, changing tabs is self-evident: the whole grid changes. Drawn
-inline and read aloud, the same transition is silent — the pane repaints in place and
-nothing says you are somewhere else.
+Normally, changing tabs is obvious because the whole screen changes. In accessible mode,
+drawn inline, that same move is silent. The pane just repaints in place, with nothing to
+say you are somewhere new.
 
-So each move emits a line into scrollback:
+So each move writes a line into scrollback:
 
 | You did | You hear |
 | --- | --- |
@@ -115,58 +116,59 @@ So each move emits a line into scrollback:
 | Closed an overlay | `▸ help closed` |
 | Focus moved to another agent | `▸ focus <agent-id>` |
 
-The overlays that announce themselves are help, state, queue editor, sessions, context,
-inbox, inspect, transcript search, and the graph file picker. Chrome that opens and closes
-on nearly every keystroke — the slash menu, the composer's own popups — deliberately stays
-quiet, because announcing it would bury the moves that matter.
+These overlays announce themselves when opened or closed: help, state, queue editor,
+sessions, context, inbox, inspect, transcript search, and the graph file picker. Things
+that open and close on almost every keystroke, like the slash menu and the composer's
+own popups, stay quiet on purpose. Announcing those would bury the moves that actually
+matter.
 
 ### The program's own voice is marked
 
-Messages stella itself speaks — "conversation cleared", driver and chrome notices — open
-with `▸`. In the default deck those are distinguished by which rail they render on, which
-is a *visual* distinction, and therefore exactly the one that does not survive being read
-aloud. Without the marker the transcript asserts that the model said "conversation
-cleared".
+Messages that stella itself speaks, like "conversation cleared" and other system
+notices, start with `▸`. In the normal deck, you tell these apart by which column they
+appear in. That works for your eyes but not for your ears. Without the `▸` marker, a
+screen reader would make it sound like the model itself said "conversation cleared."
 
 ### The cursor and the mouse
 
-The hardware cursor sits on the real insertion point in the composer, which is what a
-reader follows and what a CJK/Japanese/Korean IME anchors its candidate window to.
+The text cursor sits at the real insertion point in the composer. That is what a screen
+reader follows, and what a Chinese, Japanese, or Korean input method uses to place its
+candidate window.
 
-Mouse capture is forced **off**, even if something asked for it: a captured mouse takes
-your terminal's own selection away, and selection is how several assistive technologies
-read a terminal.
+Mouse capture is **always off** in accessible mode, even if something else asks for it.
+A captured mouse takes away your terminal's own text selection, and several assistive
+technologies rely on that selection to read the terminal.
 
-## What does not change
+## What stays the same
 
 Everything else. All nine tabs, the prompt queue, sub-agents, steering a running turn,
-permission gates, slash commands, resume — the same program, the same keys, the same
-behavior. If a feature works in the deck, it works here.
+permission gates, slash commands, and resume all work the same way, with the same keys
+and the same behavior. If a feature works in the deck, it works here too.
 
-## When your terminal will not cooperate
+## Terminal limits
 
-Drawing inline means anchoring to the cursor's current position, which stella has to
-*ask* for: it writes a cursor-position request and waits for the terminal to answer.
-Every real emulator answers. Some minimal terminals and most test harnesses do not, and
-the request times out.
+Drawing inline means stella needs to know where your cursor is right now. It asks your
+terminal for this, then waits for an answer. Every real terminal emulator answers. Some
+minimal terminals and most automated test tools do not, and the request times out.
 
-When that happens the deck still starts. It draws on your own screen — never the alternate
-one — with the scrollback flush disabled, and it says so:
+When that happens, the deck still starts. It still draws on your own screen, never a
+separate one, but it turns off the scrollback flush and tells you:
 
 ```text
 accessible mode: this terminal did not report its cursor position, so messages stay in
 the deck pane instead of moving into scrollback
 ```
 
-The degrade is announced rather than silent on purpose. The promise of the mode is that
-finished messages become durable output, and quietly not delivering it is worse than not
-offering it. If you see that notice, everything else about the mode still applies —
-stacked panels, labelled records, frozen motion, marked notices — but the transcript stays
-in the pane, and announcements have nowhere to go.
+This message shows up on purpose instead of failing silently. The whole point of
+accessible mode is that finished messages become permanent output. Quietly failing to
+deliver that would be worse than not offering it at all. If you see this notice,
+everything else about the mode still works: stacked panels, labeled records, frozen
+motion, and marked notices. But the transcript stays in the live pane, and announcements
+have nowhere to go.
 
 ## `--accessible` or `--plain`?
 
-They answer different questions, and they compose with different things.
+They answer different questions.
 
 | | `--accessible` | `--plain` |
 | --- | --- | --- |
@@ -177,12 +179,12 @@ They answer different questions, and they compose with different things.
 | **Env** | `STELLA_ACCESSIBLE=1` | `STELLA_PLAIN=1` |
 
 Use `--accessible` when you are at a terminal with a screen reader. Use `--plain` for
-pipes, CI logs, `TERM=dumb`, and anywhere there is no interactive terminal at all — the
-deck steps aside for the REPL automatically in those cases anyway.
+pipes, CI logs, `TERM=dumb`, and anywhere there is no interactive terminal at all. The
+deck switches to the REPL automatically in those cases anyway.
 
-Accessible mode takes no part in that deck-or-REPL decision. If stdin or stdout is not a
-terminal you get the REPL, whether or not you asked for accessible mode, because an inline
-viewport needs a real terminal just as much as the alternate screen does.
+Accessible mode has no say in that choice. If stdin or stdout is not a terminal, you get
+the REPL whether or not you asked for accessible mode. An inline viewport needs a real
+terminal just as much as a full-screen one does.
 
 ## Related terminal controls
 
@@ -195,29 +197,31 @@ These are independent of `--accessible` and work on their own:
 | `TERM=dumb` | Switches ANSI output off entirely. `CLICOLOR_FORCE` overrides it. |
 | `--plain` / `STELLA_PLAIN=1` | The line REPL instead of the deck. |
 
-## Checking that it is working
+## Check it works
 
 Start a session with `stella --accessible` and look for these, in order:
 
 1. **Your prompt is still visible above the deck.** If the screen cleared and your
-   scrollback disappeared, you are on the alternate screen and the mode is not on — check
-   for a `STELLA_ACCESSIBLE=0` in your environment overriding the profile you expected.
-2. **No degrade notice.** If you see the cursor-position message quoted above, your
-   terminal did not answer, and finished messages will stay in the pane.
-3. **Ask something, and let the turn finish.** The completed message should be in ordinary
-   scrollback — scroll your terminal up, or use your reader's review cursor, and it should
-   be reachable as normal text.
+   scrollback disappeared, the mode is not on and you are on the full-screen view. Check
+   for a `STELLA_ACCESSIBLE=0` in your environment that might be overriding your
+   profile.
+2. **No fallback notice.** If you see the cursor-position message shown above, your
+   terminal did not answer, and finished messages will stay in the pane instead of
+   moving to scrollback.
+3. **Ask something, and let the turn finish.** The finished message should be in
+   ordinary scrollback. Scroll your terminal up, or use your screen reader's review
+   cursor, and you should be able to reach it as normal text.
 4. **Press `⇥`.** You should hear `▸ AGENTS tab` or similar.
 5. **Quit.** The conversation should still be on screen.
 
 ## Reporting a gap
 
-Accessibility here means ordinary sequential terminal output, which every screen reader
-already handles — there is no terminal accessibility API to target, so there is nothing
-reader-specific to configure. If some part of the deck still does not read correctly,
-that is a bug worth filing on the
-[issue tracker](https://github.com/macanderson/stella/issues), with your terminal
-emulator and reader named.
+Accessibility here just means ordinary, sequential terminal output, which every screen
+reader already handles. There is no special terminal accessibility API to target, so
+there is nothing reader-specific to configure. If some part of the deck still does not
+read correctly, file a bug on the
+[issue tracker](https://github.com/macanderson/stella/issues) and name your terminal
+emulator and screen reader.
 
 ## See also
 

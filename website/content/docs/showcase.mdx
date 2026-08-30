@@ -1,41 +1,42 @@
 ---
 title: Showcase
-description: Teams and projects shipping real software with stella, and stella-examples, the open cookbook with a working example for every configurable surface.
+description: Teams shipping real software with stella, and stella-examples, an open library with a working example for every setting you can configure.
 ---
 
-Real teams, shipping real software, with stella in the loop. Each entry names
-who they are, what they ship, and how stella fits the way they work.
+Real teams ship real software with stella in the loop. Each entry below
+names who they are, what they build, and how stella fits into their work.
 
 ## Oxagen
 
-**[oxagen.sh](https://oxagen.sh)** ships **Oxagen** with the stella CLI as
-their **code agent of choice**. Day-to-day feature work, refactors, and
-fix-ups run through stella sessions: the [Command Deck](/docs/commands/chat)
-for interactive work, [goal mode](/docs/agent-modes#outcome-driven-goal-mode) when there's a
-definition of done to drive to green, and
-[fleets](/docs/agent-fleets) when a batch of tasks can fan out across
-isolated worktrees — with every run's cost and outcome metered in the
+[oxagen.sh](https://oxagen.sh) builds Oxagen using the stella CLI as its
+code agent. Day-to-day feature work, refactors, and fixes all run through
+stella sessions: the [Command Deck](/docs/commands/chat) for interactive
+work, [goal mode](/docs/agent-modes#outcome-driven-goal-mode) when there's
+a clear definition of done to work toward, and
+[fleets](/docs/agent-fleets) when a batch of tasks can run in parallel
+across isolated worktrees. Every run's cost and outcome is tracked in the
 workspace's [local telemetry](/docs/telemetry).
 
-Oxagen also hosts this documentation site — `stella.oxagen.sh` runs on their
-infrastructure.
+Oxagen also hosts this documentation site. `stella.oxagen.sh` runs on
+their infrastructure.
 
 <Callout type="info">
-stella is BYOK and local-first for showcased teams too. Community/default sessions use
-their own provider keys and send telemetry nowhere until someone configures a path for it.
-There are [exactly two such paths](/docs/telemetry): the governed Enterprise mode an
-organization may explicitly enroll, which can send only the documented content-free
-operational rollup from process-free eligible runs; and a `drain` block in
-`~/.stella/cloud.json`, which `stella cloud sync` uses to POST staged rows to an org
-intake you name. The full local store stays on the machine either way.
+Stella is bring-your-own-key and local-first for every team shown here, not
+just Oxagen. By default, sessions use your own provider keys and send
+telemetry nowhere, until you set up a path for it yourself. There are
+[exactly two such paths](/docs/telemetry): the Enterprise mode an
+organization can choose to enroll in, which sends only a documented,
+content-free usage summary, and a `drain` block in `~/.stella/cloud.json`,
+which `stella cloud sync` uses to send staged rows to an intake you name.
+Either way, the full local record always stays on your machine.
 </Callout>
 
 ## stella-examples
 
-**[github.com/macanderson/stella-examples](https://github.com/macanderson/stella-examples)**
-is the open configuration cookbook for stella itself: a working example for
-**every configurable surface** in the CLI, each file matching the schema
-stella actually parses, each directory README saying where the file goes on
+[github.com/macanderson/stella-examples](https://github.com/macanderson/stella-examples)
+is an open library of working examples for stella: one for every
+configurable part of the CLI. Each file matches the format stella actually
+reads, and each directory's README says exactly where the file goes on
 disk. Clone it, copy a file into place, and it works.
 
 <CardGrid size="md">
@@ -48,16 +49,16 @@ disk. Clone it, copy a file into place, and it works.
     and [team](https://github.com/macanderson/stella-examples/blob/main/settings/team.settings.json)
     `settings.json` profiles, plus the
     [`credentials.toml`](https://github.com/macanderson/stella-examples/blob/main/settings/credentials.example.toml)
-    shape — the model lineups from the docs as ready-to-copy files.
+    shape. These are the model lineups from the docs, ready to copy.
 
     [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/settings) · [Examples docs](/docs/examples)
   </SpecCard>
   <SpecCard title="Lifecycle hooks">
     A [`SessionStart` context injector](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/session-context.sh),
     a [`PreToolUse` bash guard](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/guard-bash.sh)
-    that vetoes destructive commands, and a
-    [`PostToolUse` JSONL audit log](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/log-tool-use.sh)
-    — wired together in one
+    that blocks destructive commands, and a
+    [`PostToolUse` JSONL audit log](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/log-tool-use.sh),
+    all wired together in one
     [`hooks` block](https://github.com/macanderson/stella-examples/blob/main/hooks/settings.json).
 
     [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/hooks) · [Hooks docs](/docs/agent-tools/hooks)
@@ -87,11 +88,11 @@ disk. Clone it, copy a file into place, and it works.
     [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/skills) · [Skills docs](/docs/agent-tools/skills)
   </SpecCard>
   <SpecCard title="Rules &amp; guards">
-    Hard guards —
+    Hard guards:
     [`no-force-push`](https://github.com/macanderson/stella-examples/blob/main/rules/no-force-push.md),
     [`protect-migrations`](https://github.com/macanderson/stella-examples/blob/main/rules/protect-migrations.md),
-    [`no-shell`](https://github.com/macanderson/stella-examples/blob/main/rules/no-shell.md)
-    — and a soft
+    and [`no-shell`](https://github.com/macanderson/stella-examples/blob/main/rules/no-shell.md).
+    Plus a soft
     [`code-conventions`](https://github.com/macanderson/stella-examples/blob/main/rules/code-conventions.md)
     rule.
 
@@ -112,32 +113,32 @@ disk. Clone it, copy a file into place, and it works.
     [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/mcp) · [MCP servers docs](/docs/agent-tools/mcp)
   </SpecCard>
   <SpecCard title="Fleet plans">
-    A feature build-out DAG in
+    A feature build-out plan in
     [TOML](https://github.com/macanderson/stella-examples/blob/main/fleet/plan.toml)
     and a parallel cleanup sweep in
     [JSON](https://github.com/macanderson/stella-examples/blob/main/fleet/plan.json),
-    with claims and worktree isolation.
+    both using claims and worktree isolation.
 
     [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/fleet) · [Agent fleets docs](/docs/agent-fleets)
   </SpecCard>
   <SpecCard title="Memory &amp; domains">
     A hand-tuned
-    [`domains.toml`](https://github.com/macanderson/stella-examples/blob/main/memory/domains.toml)
-    and the lesson → skill → rule promotion loop.
+    [`domains.toml`](https://github.com/macanderson/stella-examples/blob/main/memory/domains.toml),
+    and the lesson-to-skill-to-rule promotion loop.
 
     [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/memory) · [Memory docs](/docs/commands/memory)
   </SpecCard>
   <SpecCard title="Scripting &amp; CI">
     [`ci-autofix.sh`](https://github.com/macanderson/stella-examples/blob/main/scripting/ci-autofix.sh)
-    (budget-capped, oracle-armed) and
+    (budget-capped, with a verification check armed) and
     [`nightly-goal.sh`](https://github.com/macanderson/stella-examples/blob/main/scripting/nightly-goal.sh)
-    (cron-able goal runs).
+    (goal runs you can schedule with cron).
 
     [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/scripting) · [Scripting docs](/docs/scripting)
   </SpecCard>
 </CardGrid>
 
-Clone it once and the whole cookbook is a `cp` away:
+Clone it once, and the whole library is a single `cp` away:
 
 ```bash
 git clone https://github.com/macanderson/stella-examples.git
@@ -157,17 +158,17 @@ stella tools --validate
 
 <Callout type="info">
 Everything in stella-examples respects the trust boundary: project-scope
-hooks, MCP servers, and credential-routing fields stay inert in a cloned
-repo until you opt in with `STELLA_TRUST_PROJECT=1`.
+hooks, MCP servers, and credential-routing fields stay inactive in a
+cloned repository until you opt in with `STELLA_TRUST_PROJECT=1`.
 </Callout>
 
 ## Add your project
 
 Shipping with stella? Open a pull request against
-[macanderson/stella](https://github.com/macanderson/stella) that adds an entry
-to `website/content/docs/showcase.mdx` — who you are, a link, and a few
-sentences on how stella fits your workflow. Entries should be things that
-actually ship; hello-worlds are better served by the
-[examples](/docs/examples). Have a hook, agent, profile, or plan worth
-sharing instead? Send it to
+[macanderson/stella](https://github.com/macanderson/stella) that adds an
+entry to `website/content/docs/showcase.mdx`: who you are, a link, and a
+few sentences on how stella fits your workflow. Entries should be real,
+shipped projects — a hello-world example fits better in the
+[examples](/docs/examples) page. If you have a hook, agent, profile, or
+plan worth sharing instead, send it to
 [stella-examples](https://github.com/macanderson/stella-examples).

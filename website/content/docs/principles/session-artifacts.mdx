@@ -1,210 +1,221 @@
 ---
-title: A session is an artifact, not a service
-description: stella will hand you a session you can carry to another machine — and will not carry it for you. Why the line sits there, what stella still owes you when the artifact lands somewhere new, and what it refuses to own.
+title: Session artifacts
+description: stella can hand you a session you can carry to another machine, but it won't carry it there for you. Why that line is drawn there, what stella still owes you, and what it won't take on.
 ---
 
-stella already survives a crash. Kill the process mid-turn and the next run
-picks up the resume point, with the [no-clobber
-guarantee](/docs/principles/no-clobber) intact, because both live in a durable
-git store stella keeps in its own directory.
+stella already survives a crash. If you kill the process mid-turn, the next
+run picks up right where it left off, with the
+[no-clobber guarantee](/docs/principles/no-clobber) still intact, because
+both live in a durable git store stella keeps in its own directory.
 
-What it does not survive is a *machine*. Your laptop dies, or you want to hand a
-half-finished session to a colleague, or start something on a desktop and finish
-it on a plane. None of that works today, and the reason is worth being precise
-about, because it points straight at where the line belongs.
+What it doesn't survive is a *machine*. If your laptop dies, or you want to
+hand a half-finished session to a coworker, or start something on your
+desktop and finish it on a plane, none of that works today. The reason is
+worth being precise about, because it shows exactly where the line belongs.
 
 <Callout type="info">
-  This page describes a **decided boundary, not shipped behaviour**. The
-  reasoning below is settled in
-  [ADR 0013](https://github.com/macanderson/stella/blob/main/docs/adr/0013-session-artifact-boundary.md);
-  the export and replay APIs it describes are not built yet. Everything said
-  about *current* behaviour — the local store, the reverse-RPC model — is
-  shipping today. The durable staleness map is **not**: it was removed in
-  #3780 as a map nothing ever wrote or read, so the fingerprint described
-  below has yet to be founded on a mechanism that exists.
+  **Heads up: this describes a planned design, not shipped behavior.** The
+  checkpoint and replay APIs below don't exist yet. What is real today: the
+  local store and the remote-call model described in "Why not build sync
+  in" are both live. The fingerprint check described below is not: it
+  depends on a mechanism that hasn't been built yet.
 </Callout>
 
-## Why local state is local on purpose
+## Why state stays local
 
-stella's durable store is keyed on a machine-local workspace id. That id lives
-in `.stella/private/`, which is gitignored by construction, so a clone never
-carries it. Identity is decided by comparing absolute paths — a comparison with
-no meaning across machines. And when stella sees the same id at a path where
-another copy is still live, it mints a *fresh* id, so two copies of
-a project can never silently write into each other's history.
+stella's durable store is keyed to a workspace id that only means something
+on one machine. That id lives in `.stella/private/`, which is gitignored by
+default, so cloning a project never carries it along. stella decides
+identity by comparing absolute paths, and that comparison means nothing
+across machines. If stella sees the same id at a path where another copy
+is still running, it creates a *fresh* id instead, so two copies of a
+project can never silently write into each other's history.
 
-Every one of those choices is right for the question that module answers: *is
-this the same working copy I saw last time?* Every one of them is fatal to
-resuming somewhere else.
+Every one of these choices is right for the question this part of stella
+is answering: *is this the same working copy I saw last time?* And every
+one of them rules out resuming somewhere else.
 
-The obvious fix is to give stella a portable identity — an account, a project
-id, a login. That is the fix this project declines, and declining it is the
-whole decision.
+The obvious fix is to give stella a portable identity: an account, a
+project id, a login. stella doesn't do this, and that choice is the whole
+point of this page.
 
 ## The line
 
-**stella provides a checkpoint API and a replay API. The checkpoint API returns
-a self-contained artifact; the replay API accepts one.** Identifying a
-workspace, storing the artifact, moving it, authenticating it, and deciding who
-may read it are the caller's concerns.
+**stella provides a checkpoint API and a replay API. Checkpoint returns a
+self-contained artifact. Replay accepts one.** Identifying a workspace,
+storing the artifact, moving it around, authenticating it, and deciding who
+can read it are all up to whatever calls these APIs.
 
-That is not a division invented for this feature. It is the line stella already
-draws everywhere else.
+This isn't a line invented just for this feature. It's the same line
+stella draws everywhere else.
 
-When stella runs as a headless engine behind a host — the `stella-serve` crate —
-every governed side effect is remoted back to the host. Model calls and tool
-calls are *requests the host answers*. The engine never holds ambient authority,
-which means a served turn is structurally incapable of reading one of your
-files: it can only ask, and something else decides. The workspace was never
-stella's in that model.
+When stella runs headlessly behind a host, using the `stella-serve` crate,
+every governed side effect goes back to the host. Model calls and tool
+calls are *requests the host answers*. The engine never has authority of
+its own, so a turn running this way literally cannot read one of your
+files on its own. It can only ask, and something else decides. In this
+setup, the workspace was never stella's to begin with.
 
-Durability is the same shape of problem, so it gets the same answer. Extending
-an existing line costs nothing to explain. Carving an exception into it costs
-you the ability to say what the system does.
+## Why not sync
 
-## Why not just build sync in
+Building sync in would mean one integration instead of two, which is a real
+advantage if you're one person with two machines. But it loses anyway, for
+three reasons.
 
-It is one integration instead of two, and for a single user with two machines
-that is a real advantage. It loses anyway, on three counts.
-
-**It requires an identity nobody can derive.** stella sees a directory. It has
-no way to know that `~/src/api` on your laptop and `/work/api` on the build box
-are the same project — only something with a concept of *project* knows that.
-Every scheme that guesses eventually binds two unrelated codebases together,
-which is worse than a miss.
+**It needs an identity nobody can derive.** stella only sees a directory.
+It has no way to know that `~/src/api` on your laptop and `/work/api` on a
+build machine are the same project. Only something with a concept of
+*project* can know that. Any scheme that tries to guess will eventually
+link two unrelated codebases together, which is worse than just missing
+the match.
 
 **It contradicts what this project promises.** Local-first state, BYOK
-credentials, and [zero telemetry egress by
-default](/docs/principles#the-seven-rules-briefly) are claims the project's
-whole premise depends on,
-with exactly two explicit opt-in exceptions. A first-party upload path makes
-them conditional — and the condition is precisely the thing people choose stella
-to avoid. An artifact API adds no third path: producing an artifact writes bytes
-locally, and stella still uploads nothing.
+credentials, and
+[zero telemetry egress by default](/docs/principles#the-seven-rules)
+are claims the project's whole premise depends on, with exactly two
+explicit opt-in exceptions. A first-party upload path makes them
+conditional, and the condition is precisely the thing people choose stella
+to avoid. An artifact API adds no third path: producing an artifact writes
+bytes locally, and stella still uploads nothing.
 
-**It builds the easy half twice.** Storage, auth, tenancy, retention, audit —
-these are solved, and they do not get better for being reimplemented inside a
-CLI.
+**It builds the easy half twice.** Storage, auth, tenancy, retention,
+audit — these are solved problems, and they don't get better for being
+rebuilt inside a CLI.
 
 ## What stella still owes you
 
-"Identity is the caller's problem" is right. "Any artifact may be replayed into
-any tree" is not.
+"Identity is the caller's problem" is the right line. "Any artifact can be
+replayed into any tree" is not.
 
-Replay an artifact into the wrong checkout and you get a session whose
-transcript describes files that were never there. The model reasons confidently
-from content that does not exist in the tree it is about to edit, and *nothing
-reports it*. That is a worse failure than the one the no-clobber guard exists to
-prevent, for the same reason it is worse to be quietly misinformed than loudly
-blocked.
+Replay an artifact into the wrong checkout, and you get a session whose
+transcript describes files that were never there. The model reasons
+confidently from content that doesn't exist in the tree it's about to
+edit, and *nothing reports it*. That's worse than the failure the
+no-clobber guard exists to prevent, for the same reason it's worse to be
+quietly misinformed than loudly blocked.
 
-So the artifact carries a fingerprint of the tree it came from, and **replay
-verifies it and refuses by default**. stella is not naming your workspace. It is
-checking that this artifact belongs to this tree.
+So the artifact carries a fingerprint of the tree it came from, and
+**replay checks it and refuses by default** if it doesn't match. stella
+isn't naming your workspace. It's checking that this artifact belongs to
+this tree.
 
-The fingerprint was to be founded on the staleness map the no-clobber guard was
-thought to keep — every path this session touched, and the digest of what it saw
-there. That map was removed in #3780: nothing wrote it and nothing read it, so
-the fingerprint needs a mechanism this tree actually has before it can be built.
-What follows describes the intended shape, not a mechanism in place.
-Verifying it is re-hashing those paths in the target tree. A mismatch
-names the exact files, exactly as a refused write does, and nothing is consumed.
-Overriding it is possible, but it is a distinct argument you pass, never a
-fallback stella takes on your behalf when the check fails.
+This fingerprint would need to build on the same kind of tracking the
+no-clobber guard uses: every path a session touched, and a fingerprint of
+what it saw there. That tracking doesn't currently exist in a form the
+fingerprint could use, so what follows describes the intended design, not
+something built yet.
 
-That map covers the files the session actually touched and no others — so it
-cannot cry wolf over unrelated churn elsewhere in the repo, and it cannot detect
-a tree that differs *only* in files the session never read. Same precision, same
-reasoning as the guard it comes from: a check that fired on noise would get
-overridden by reflex, and then it would protect nothing.
+Checking it means re-hashing those paths in the tree being replayed into.
+A mismatch names the exact files, the same way a refused write does, and
+nothing is lost. It can be overridden, but only by passing an explicit
+argument. It's never automatic, and never a fallback stella takes for you
+when the check fails.
 
-## Two ways to land, and you pick
+This tracking would only cover the files the session actually touched,
+nothing else. So it can't cry wolf over unrelated changes elsewhere in the
+project, and it can't catch a tree that differs only in files the session
+never read. That's the same reasoning as the guard it's based on: a check
+that fires on noise gets overridden out of habit, and then it protects
+nothing.
 
-Replaying against a tree you already have and building a tree from scratch are
-different operations with different failure modes, so they are different modes —
-never inferred from what happens to be on disk.
+## Two ways to land
 
-- **Apply** (the default) replays against a checkout you already have, gated on
-  the fingerprint. The same-laptop-next-morning case.
-- **Materialize** writes the session's files out first. The cross-machine case.
+Replaying into a tree you already have and building a tree from scratch
+are different operations with different failure modes. So they're two
+different modes you choose, never guessed from what happens to be on disk.
 
-Materialize has a limit worth stating plainly: the artifact holds *the files the
-agent touched*, not your whole repository. stella records the base commit so a
-caller can name it, but does not carry the base and never will. Bundling your
-tree into an artifact would move files the agent never read — an egress
-decision stella has no standing to make for you.
+- **Apply** (the default) replays against a checkout you already have,
+  checked against the fingerprint. This is the same-laptop-the-next-morning
+  case.
+- **Materialize** writes the session's files out first. The cross-machine
+  case.
 
-Fetching the base is exactly the kind of thing a control plane is for. It has
-the repository, the credentials, and the policy about who may use them.
+Materialize has a real limit: the artifact holds *the files the agent
+touched*, not your whole project. stella records the base commit so a
+caller can name it, but it doesn't carry that base, and never will.
+Bundling your whole project into an artifact would move files the agent
+never even read, and that's a decision about what leaves your machine that
+stella has no business making for you.
 
-## What is actually in the artifact
+Fetching the base commit is exactly the kind of thing a control plane is
+for. It already has the repository, the credentials, and the policy about
+who can use them.
 
-The conversation, verbatim. Which means **the full content of every file the
-agent read** — including whatever was in those files: the credentials in the
-`.env` you asked it to debug, the customer rows in a fixture, a key in a test.
+## What's in the artifact
 
-That sentence belongs in the documentation of the type that holds it, where
-someone reads it before writing the code that moves the bytes — not in a release
-note and not in a banner.
+The conversation, word for word. That means **the full content of every
+file the agent read**, including whatever was in those files: the
+credentials in the `.env` you asked it to debug, customer rows in a test
+fixture, a key in a test file.
 
-stella does not encrypt it, redact it, classify it, or expire it. Those need to
-know whose data it is, what jurisdiction it sits in, and who may read it, and
-stella knows none of those. Its entire obligation here is to be accurate about
-the contents so your decision is an informed one. That is not a gap in the
-design; it is the boundary doing its job.
+Keep that in mind every time — it's not a one-time warning in a release
+note.
+
+stella doesn't encrypt it, redact it, classify it, or expire it. Doing any
+of that requires knowing whose data it is, what jurisdiction it's under,
+and who's allowed to read it, and stella knows none of that. Its only job
+here is to be honest about what's in the artifact, so you can make an
+informed decision. That's not a gap. It's the boundary working as
+intended.
 
 ## Forks stay visible
 
-Two machines replay the same artifact. Which one wins is a policy question, and
-stella does not answer it.
+Two machines replay the same artifact. Which one wins is a policy
+question, and stella does not answer it.
 
-What it guarantees is that the divergence is *visible*: every replay starts its
-own session, with its own ref in the durable store, and the artifact's origin is
-kept as provenance. You get two histories with a common ancestor that can be
-named — not one history with two sessions interleaved into it, which is the
-outcome that cannot be untangled afterwards.
+What stella guarantees is that the split is *visible*. Every replay starts
+its own session, with its own reference in the durable store, and where
+the artifact came from is kept on record. You get two histories with a
+common starting point you can point to, not one history with two sessions
+tangled together, which you could never untangle afterward.
 
 ## Where the line falls
 
 | stella owns | Your control plane owns |
 |---|---|
 | what is in the artifact | naming a workspace or project |
-| byte-exact round-trip | storing artifacts, and keeping them |
-| refusing a tree the artifact did not come from | transport, auth, tenancy |
-| the version contract, and how long old artifacts stay readable | encryption at rest and in flight |
-| making a fork visible | retention, deletion, audit |
+| an exact round trip | storing artifacts, and keeping them |
+| refusing a tree the artifact did not come from | moving it, checking who it's from, keeping customers separate |
+| the version rules, and how long old artifacts stay readable | encryption, at rest and in transit |
+| making a fork visible | how long it's kept, deleting it, and auditing it |
 | telling you what the artifact contains | who wins a conflict, and when |
 
-[Oxagen](https://oxagen.sh) is that control plane at enterprise scale —
-accounts and projects as the portable identity stella refuses to invent, a
-store, access control, audit, and resuming a session from a browser.
+[Oxagen](https://oxagen.sh) is that control plane at enterprise scale:
+accounts and projects as the portable identity stella won't invent on its
+own, plus storage, access control, auditing, and resuming a session right
+from a browser.
 
-That is a **layering, not a dependency**, and the distinction is the test of
-whether the line is in the right place. stella has to stay fully usable and
-fully durable on its own: the work journal, crash resume, and the no-clobber
-guarantee are local mechanisms and stay local mechanisms. If a change ever made
-one of them conditional on a control plane existing, the change would be the
-thing that is wrong.
+This is a **layer on top, not a dependency**, and that difference is the
+test of whether the line sits in the right place. stella has to stay fully
+usable and fully durable on its own. The work journal, crash resume, and
+the no-clobber guarantee are local mechanisms, and they stay local
+mechanisms. If a future change ever made one of them depend on a control
+plane existing, that change would be the mistake, not this design.
 
 ## What this does not claim
 
-- **It is not sync.** There is no `stella login`, no stella-hosted store, and no
-  first-party upload path. Not deferred — declined.
-- **Old artifacts do not read forever.** A stored artifact stays replayable
-  across a stated support window, not indefinitely. When a build genuinely
-  cannot read one, it says so and names what can — it does not guess at a format
-  it half-understands, which would resume your session subtly wrong.
-- **stella does not merge forks.** It makes them visible. Resolving them needs
-  to know which one matters, which is exactly what stella does not know.
-- **The artifact is not a backup of your repository.** It is what the agent did,
-  plus the identity of what it did it to.
+- **This is not sync.** There's no `stella login`, no stella-hosted store,
+  and no built-in upload path. This isn't a "later" feature. It's a
+  deliberate no.
+- **Old artifacts don't stay readable forever.** A stored artifact stays
+  replayable for a stated support window, not forever. When a build
+  genuinely can't read an old one, it tells you and names what can, instead
+  of guessing at a format it only half understands, which would resume
+  your session subtly wrong.
+- **stella doesn't merge forks.** It just makes them visible. Resolving a
+  fork means knowing which one matters, and that's exactly what stella
+  doesn't know.
+- **The artifact isn't a backup of your project.** It's a record of what
+  the agent did, plus a fingerprint of what it did it to.
 
 ## Where this sits
 
-The same rule as everywhere else in this codebase: where a mechanism can decide
-something, [the mechanism decides it](/docs/principles/determinism). Whether an
-artifact belongs to a tree is checkable, so it is checked, and the check refuses
-rather than warns. Everything genuinely not checkable from inside a directory —
-whose project this is, who may read it, which copy wins — is handed to the layer
-that can actually answer it, instead of being guessed at by the layer that
-cannot.
+The same rule shows up everywhere in stella: where something can be
+decided by a mechanism,
+[the mechanism decides it](/docs/principles/determinism). Whether an
+artifact belongs to a tree is checkable, so it gets checked, and the check
+refuses rather than just warning. Anything genuinely not checkable from
+inside a directory, like whose project this is, who may read it, or which
+copy wins, gets handed to a layer that can actually answer it, instead of
+being guessed at by a layer that can't.
+</content>

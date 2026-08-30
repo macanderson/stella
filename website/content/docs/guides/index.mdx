@@ -1,88 +1,93 @@
 ---
 title: Guides
-description: Task-shaped walkthroughs — fix a red CI run, land a change in an unfamiliar codebase, find out what a run cost. Each one carried to a verified result.
+description: Step-by-step guides for real tasks — fix a red CI run, make a change in a codebase you don't know, find out what a run cost.
 ---
 
 The rest of the documentation is organized around stella's parts: a page per
 command, a page per subsystem. This section is organized around **your
-afternoon**. Each guide is one real task carried from the symptom to a verified
+afternoon**. Each guide walks through one real task from start to a checked
 result, in the order you would actually type the commands.
 
-Nothing here restates the reference. Every step links down into it, so you can
-stop and read the whole flag surface at the moment you need it and not before.
+Nothing here repeats the reference pages. Every step links down to them, so
+you can go read the full details when you need them, and skip them when you
+don't.
 
 ## Start here
 
 <CardGrid size="md">
   <SpecCard title="Fix a failing CI run" href="/docs/guides/fix-failing-ci">
-    CI is red on a branch you own. `stella monitor` watches it, fixes root
-    causes, pushes, and re-checks — and stops only on a green run somebody else can
-    see. Includes what to do when the fix doesn't hold.
+    CI is red on a branch you own. `stella monitor` watches it, fixes the root
+    cause, pushes the fix, and checks again. It stops only when the run is
+    green and anyone can see it. Covers what to do when the fix doesn't stick.
   </SpecCard>
   <SpecCard title="Fix a backlog in parallel" href="/docs/guides/parallel-fixes">
-    A list of independent fixes and one afternoon. `stella fleet` runs them
-    concurrently in one tree, with file claims keeping the workers off each other —
-    including how to decompose the list and how to review what landed.
+    A list of small, separate fixes and one afternoon to do them. `stella
+    fleet` runs them at the same time in one project folder, using file
+    claims to keep workers from stepping on each other. Covers how to split
+    up the list and how to check the results.
   </SpecCard>
   <SpecCard title="Change an unfamiliar codebase" href="/docs/guides/unfamiliar-codebase">
-    A repository you have never read, and a change that has to land in it. `stella
-    init` builds the code graph, `stella search` answers the blast-radius question
-    before you commit to an approach, and the change ships verified.
+    A codebase you have never read, and a change you have to make in it.
+    `stella init` builds a map of the code. `stella search` tells you what
+    else your change might break, before you write any code. Then you make
+    the change and check it.
   </SpecCard>
   <SpecCard title="Find out what a run cost" href="/docs/guides/what-a-run-cost">
-    A run cost more than you expected. Follow it from the dollar figure down to the
-    exact bytes of the model call that produced it — `stats`, `observe`, `inspect`.
+    A run cost more than you expected. Trace it from the total dollar amount
+    down to the exact model call that caused it, using `stats`, `observe`,
+    and `inspect`.
   </SpecCard>
   <SpecCard title="Work within a spend limit" href="/docs/guides/spend-limit">
-    A hard ceiling in dollars, and what stella does as it approaches one: where the
-    abort lands, what compaction costs, and how to spend the money on the task
-    instead of on the transcript.
+    Set a hard dollar limit and see what stella does as it gets close to it:
+    where it stops, what compacting the conversation costs, and how to spend
+    money on the task instead of on chat history.
   </SpecCard>
   <SpecCard title="Drop stella in as your agent engine" href="/docs/guides/embed-the-engine">
-    You have a product with an LLM feature and a hand-rolled loop. Replace the loop
-    and keep your models, tools, keys, and data — ending on an integration test that
-    exercises the whole agent loop without an API key.
+    You have a product with an AI feature and a loop you built by hand. Swap
+    in stella's loop and keep your own models, tools, keys, and data. Ends
+    with a test that runs your whole agent loop without needing an API key.
   </SpecCard>
   <SpecCard title="Gate on engine quality in CI" href="/docs/guides/ci-engine-gate">
-    Run stella and Claude Code side by side on the same committed task set on every
-    pull request. Block the merge on loop correctness, which is deterministic; report
-    the quality delta, which is not.
+    Run stella and Claude Code side by side on the same set of tasks on every
+    pull request. Block the merge only on loop correctness, which you can
+    measure exactly. Report the quality difference separately, since that
+    part is never exact.
   </SpecCard>
   <SpecCard title="Benchmark against Claude Code" href="/docs/guides/terminal-bench-head-to-head">
-    Terminal-Bench 2.1 with stella in one arm and Claude Code in the other. The
-    setup, the parity checks that make the comparison mean something, and the traps
-    that quietly void a result.
+    Run Terminal-Bench 2.1 with stella and Claude Code in separate runs.
+    Covers the setup, the checks that make the comparison fair, and the
+    mistakes that quietly ruin a result.
   </SpecCard>
   <SpecCard title="When something isn't working" href="/docs/guides/troubleshooting">
-    Config that isn't applying, a key that won't resolve, a hook that never fires, a
-    graph that answers about code you deleted. The four checks in the order that
-    finds it fastest.
+    Settings that won't apply, a key that won't resolve, a hook that never
+    runs, a code map that answers about code you deleted. Four checks, in the
+    order that finds the problem fastest.
   </SpecCard>
 </CardGrid>
 
 ## What these assume
 
 Every guide assumes you have [installed stella](/docs/getting-started/installation)
-and that one provider key resolves — `stella config` prints a provider, a model,
-and a redacted key preview rather than an error. If that is not yet true,
-[Getting started](/docs/getting-started) is thirty seconds long and this section
-will still be here.
+and that a provider key works. Run `stella config` — it should print a
+provider, a model, and a partly hidden key, not an error. If it doesn't,
+[Getting started](/docs/getting-started) takes about thirty seconds, and this
+page will still be here after.
 
-Nothing else is assumed. Where a guide needs `gh`, a git remote, or an
-initialized code graph, it says so at the point of need and tells you what
-happens if you don't have it.
+Nothing else is assumed. If a guide needs `gh`, a git remote, or a code map
+that's already built, it says so at that point, and tells you what happens
+if you don't have it.
 
-## The idea the guides share
+## The idea behind every guide
 
-stella's distinguishing behavior is not any single command — it is that **work
-ends on evidence rather than on the worker's own claim**. A test that failed
-before the change and passes after it. A diff that exists. A CI run whose latest
-attempt is green. A verifier from a different model family than the worker, reading
-the diff and not the narration.
+stella's most important habit isn't any one command. It's that **work only
+counts as done when there's proof, not just a claim from the worker**. A test
+that failed before the change and passes after it. A diff that actually
+exists. A CI run that's green on its latest attempt. A different model
+checking the diff itself, instead of reading what the worker says it did.
 
-That is worth knowing before the first guide, because it explains a shape you
-will see in all of them: the fastest, cheapest path is usually the one that hands
-stella something deterministic to check.
+Keep that in mind before you read the first guide. It explains a pattern
+you'll see again and again: the fastest, cheapest path is usually the one
+where you give stella something it can check on its own.
 
 ```bash
 # --test-command arms an installed verification plugin's fail→pass flip oracle,
@@ -92,22 +97,22 @@ stella run --pipeline my-verifier --test-command "cargo test -p api" \
   "add cursor pagination to /orders"
 ```
 
-The [plugin socket](/docs/plugins) is the full account of how
-that works. You do not need it to follow any guide here.
+The [plugin socket](/docs/plugins) explains all of this in full. You don't
+need it to follow any guide here.
 
 ## Related reading
 
 <CardGrid size="sm">
   <SpecCard title="Examples & recipes" href="/docs/examples">
-    The configuration half — complete `settings.json` files for a given set of keys
-    and a given budget. Answers *how do I set stella up*, where the guides answer
-    *how do I get this done*.
+    Complete `settings.json` files for a given set of keys and a given
+    budget. Answers *how do I set stella up*, where the guides answer *how do
+    I get this done*.
   </SpecCard>
   <SpecCard title="Agent modes" href="/docs/agent-modes">
-    Deck, run, goal, monitor, fleet — which surface to reach for, and why.
+    Deck, run, goal, monitor, fleet — which one to use, and why.
   </SpecCard>
   <SpecCard title="Commands" href="/docs/commands">
-    The reference every guide links into: each subcommand's synopsis, flags, and
+    The reference every guide links into: each command's syntax, flags, and
     exit codes.
   </SpecCard>
 </CardGrid>

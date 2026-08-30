@@ -1,15 +1,13 @@
 ---
 title: Agent Skills
-description: Reusable capabilities in SKILL.md files — project and user scopes, versioning, the public registry, and how skills reach the model through recall.
+description: Reusable capabilities in SKILL.md files. Covers project and user scopes, versioning, the public registry, and how skills reach the model through recall.
 ---
 
-A **skill** is a reusable capability described in Markdown — a checklist, a
-workflow, a house style — that stella injects when it's relevant and that you
-can invoke explicitly as a slash command.
+A **skill** is a reusable capability written in Markdown: a checklist, a workflow, a house style. Stella brings it in automatically when it's relevant, and you can also run it directly as a slash command.
 
 ## The format
 
-A `SKILL.md` with frontmatter and a Markdown body:
+A `SKILL.md` file with frontmatter and a Markdown body:
 
 ```md title=".stella/skills/release-checklist/SKILL.md"
 ---
@@ -23,25 +21,20 @@ domains: [build, ci]
 3. Tag `vX.Y.Z` and push — CI publishes.
 ```
 
-Both layouts are accepted: nested `<slug>/SKILL.md` (the ecosystem layout)
-or a flat `<slug>.md`. The frontmatter fields:
+Both layouts work: the nested layout (`<slug>/SKILL.md`) and the flat layout (`<slug>.md`). The frontmatter fields:
 
 <CardGrid size="md">
   <OptionCard name="name" defaultValue="the filename stem, or the directory name">
-    The skill's slug — also the ⚡ slash command it registers.
+    The skill's slug. This is also the ⚡ slash command it registers.
   </OptionCard>
   <OptionCard name="description" required>
-    One line on what the skill is for. Unlike a command or an agent, a skill
-    has **no fallback** here: a `SKILL.md` without a description is skipped
-    with a diagnostic, because the description is what selection matches
-    against.
+    One line on what the skill is for. Unlike a command or an agent, a skill has **no fallback** here. A `SKILL.md` without a description is skipped, with a diagnostic, because the description is what skill selection matches against.
   </OptionCard>
   <OptionCard name="domains" defaultValue="[]">
-    Domain tags from `.stella/domains.toml`, used by selection alongside the
-    lexical match.
+    Domain tags from `.stella/domains.toml`, used by skill selection alongside the text match.
   </OptionCard>
   <OptionCard name="body" required>
-    The know-how itself. An empty body is skipped with a diagnostic.
+    The know-how itself. An empty body is skipped, with a diagnostic.
   </OptionCard>
 </CardGrid>
 
@@ -55,7 +48,7 @@ or a flat `<slug>.md`. The frontmatter fields:
       { label: "Travels with", value: "the repo", mono: false },
     ]}
   >
-    Commit it and the team shares the playbook.
+    Commit it, and the team shares the playbook.
   </SpecCard>
   <SpecCard
     title="User"
@@ -68,27 +61,17 @@ or a flat `<slug>.md`. The frontmatter fields:
   </SpecCard>
 </CardGrid>
 
-When both scopes define the same name, **project wins** for recall; the
-SKILLS tab lists both.
+When both scopes define the same name, the project version wins for recall. The SKILLS tab lists both.
 
-## How skills reach the model
+## Reaching the model
 
-- **Automatic recall.** Each turn, skill selection (lexical + domain
-  matching against your prompt) picks the relevant skills and renders them
-  into the [recall block](/docs/context-engine) — no invocation needed.
-- **Explicit invocation.** Every skill is also a ⚡ slash command:
-  `/release-checklist ship 1.4` wraps the skill body as explicit
-  instructions above your task.
-- **Auto-promotion.** Lessons that keep recurring in the
-  [reflection log](/docs/context-engine) are promoted into new skills
-  automatically — your agent literally writes its own playbook over time.
+- **Automatic recall.** Each turn, skill selection (matching text and domains against your prompt) picks the relevant skills and adds them to the [recall block](/docs/context-engine). No need to invoke anything.
+- **Explicit invocation.** Every skill is also a ⚡ slash command. `/release-checklist ship 1.4` adds the skill body as explicit instructions above your task.
+- **Auto-promotion.** Lessons that keep showing up in the [reflection log](/docs/context-engine) get promoted into new skills automatically. Your agent writes its own playbook over time.
 
 ## Versions and pinning
 
-Every edit bumps a version: history lives under `<slug>/versions/vN/SKILL.md`,
-and a per-scope state sidecar tracks which version is **pinned** (active) and
-which skills are **disabled** (kept on disk, excluded from recall). Pin an
-older version to roll back without losing the newer one.
+Every edit creates a new version. History lives under `<slug>/versions/vN/SKILL.md`, and a per-scope file tracks which version is **pinned** (active) and which skills are **disabled** (kept on disk, left out of recall). Pin an older version to roll back, without losing the newer one.
 
 ```text
 <skills-dir>/<slug>/SKILL.md              ← the loaded definition
@@ -97,67 +80,51 @@ older version to roll back without losing the newer one.
 <skills-dir>/.stella-skills.json          ← { "disabled": [...], "pins": { "<slug>": 2 } }
 ```
 
-No pin entry means the latest version. The sidecar is dot-prefixed so the
-recall walk — which reads only `*.md` and `<slug>/SKILL.md` — never sees it.
+No pin entry means the latest version is active. This tracking file's name starts with a dot, so the recall process, which only reads `*.md` and `<slug>/SKILL.md`, never sees it.
 
-## The public registry
+## Public registry
 
-stella integrates with the community skills registry via `npx skills`:
+stella connects to the community skills registry through `npx skills`:
 
-- The SKILLS tab search — runs `npx skills find <query>`.
-- Installing from the registry pane — runs `npx skills add`, staging into a
-  private temp directory and adopting the produced `SKILL.md` into your
-  chosen scope. Installation **always requires your confirmation**.
+- The SKILLS tab's search runs `npx skills find <query>`.
+- Installing from the registry pane runs `npx skills add`, staging the result in a private temp folder, then adds the resulting `SKILL.md` into your chosen scope. Installing always asks you to confirm first.
 
-The underlying commands are overridable (`STELLA_SKILLS_SEARCH_CMD`,
-`STELLA_SKILLS_INSTALL_CMD`, `STELLA_SKILLS_USE_CMD`) for private registries.
+You can override the underlying commands (`STELLA_SKILLS_SEARCH_CMD`, `STELLA_SKILLS_INSTALL_CMD`, `STELLA_SKILLS_USE_CMD`) to point at a private registry.
 
-## Managing skills in the Command Deck
+## Managing skills
 
-`/skills` opens the SKILLS tab. Installed skills carry their own injection
-counts and token cost, so the ones that never fire are visible and can be
-pruned; the learned rows below them are the ones stella wrote from its own
-traces; and an unsigned registry result installs disabled.
+`/skills` opens the SKILLS tab. Installed skills show their own injection counts and token cost, so you can see the ones that never fire and prune them. Below those are the skills stella learned from its own traces, and an unsigned registry result installs disabled by default.
 
 <DeckShot id="skills" />
 
-The keys:
+Keys in this tab:
 
 <CardGrid size="sm">
   <OptionCard name="space">
-    Enable / disable the selected skill. A disabled skill stays on disk and
-    drops out of recall.
+    Enable or disable the selected skill. A disabled skill stays on disk and drops out of recall.
   </OptionCard>
   <OptionCard name="ctrl+o">
-    Preview the highlighted skill's body in a modal overlay — installed pane
-    and registry pane both.
+    Preview the highlighted skill's body in an overlay, in both the installed pane and the registry pane.
   </OptionCard>
   <OptionCard name="e">
-    Edit. Saving always writes a new version and pins it; no prior version is
-    modified or deleted.
+    Edit. Saving always writes a new version and pins it. No earlier version is changed or deleted.
   </OptionCard>
   <OptionCard name="p">
-    Pin a specific version — the rollback control. Pinning never creates a
-    version.
+    Pin a specific version. This is the rollback control. Pinning never creates a new version.
   </OptionCard>
   <OptionCard name="n">
-    Create a new skill, LLM-drafted from a description.
+    Create a new skill, drafted by the model from a description you give it.
   </OptionCard>
   <OptionCard name="ctrl+x ×2">
-    Uninstall — delete from disk. The first press arms it, the second commits.
+    Uninstall: delete from disk. The first press arms it, and the second one commits.
   </OptionCard>
   <OptionCard name="← / →">
-    Switch panes: installed ↔ registry search.
+    Switch panes: installed and registry search.
   </OptionCard>
 </CardGrid>
 
-`/context` shows which skills (and MCP servers) are active in the current
-session.
+`/context` shows which skills (and MCP servers) are active in the current session.
 
 <Callout type="info">
-  Skills are prompt-level guidance. For capabilities with hard boundaries —
-  new executable actions, blocked paths — reach for
-  [custom tools](/docs/agent-tools/custom-tools),
-  [hooks](/docs/agent-tools/hooks), or
-  [guard rules](/docs/agent-tools/permissions) instead.
+  Skills are prompt-level guidance. For capabilities with hard boundaries, like new executable actions or blocked paths, use [custom tools](/docs/agent-tools/custom-tools), [hooks](/docs/agent-tools/hooks), or [guard rules](/docs/agent-tools/permissions) instead.
 </Callout>

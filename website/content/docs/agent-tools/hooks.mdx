@@ -1,185 +1,157 @@
 ---
 title: Hooks
-description: Run shell commands on stella's agent lifecycle events — inside a turn, and around the self-driving loop's runs, cycles, issues, pull requests and checks — configured under the hooks key in settings.json.
+description: Run shell commands on stella's agent lifecycle events. Covers events inside a turn, and events around the self-driving loop's runs, cycles, issues, pull requests, and checks. Configured under the hooks key in settings.json.
 ---
 
-Hooks are shell commands that fire on agent lifecycle events. They are configured under the `hooks` key in your `settings.json` and follow Claude Code parity, so existing hook knowledge carries over.
+Hooks are shell commands that fire on agent lifecycle events. You configure them under the `hooks` key in your `settings.json`. They follow Claude Code's format, so if you already know hooks from there, that knowledge carries over here.
 
-Each hook receives the event payload as **JSON on stdin**, so your command can read the event details and react to them.
+Each hook receives the event payload as **JSON on stdin**, so your command can read the event's details and react to them.
 
 <Callout type="info">
-  This page covers the **config-driven shell hooks** — the `hooks` key in `settings.json`,
-  no code required. For the *programmatic* in-process event bus (observe every event, gate
-  actions with allow / modify / deny / require-approval, in code when you embed stella's
-  engine), see [Extension hooks](/docs/extensions).
+  These hooks are shell commands set with the `hooks` key in `settings.json`. No code required. If you embed stella's engine and want to watch events or gate actions in code (allow, modify, deny, or require approval), see [Extension hooks](/docs/extensions).
 </Callout>
 
 ## Events
 
-Hook events come in two families, and the difference decides who fires them and whether one can say no.
+Hook events fall into two groups. Which group an event is in decides who fires it, and whether it can say no.
 
-**Inside a turn** — five events, fired by the engine as it runs. Two of them block.
+**Inside a turn** are five events, fired by the engine as it runs. Two of them can block.
 
-**Outside every turn** — the rest, fired by the [self-driving loop](/docs/self-improvement) as it works through a backlog: a run, a cycle, an issue, a pull request, a set of checks. Exactly one of these blocks (`PreIssueWork`), and the naming rule is why: a `Pre` brackets something that has not happened yet, and everything else is a Start, an End, or a past participle — something that already did, where a `deny` would arrive too late to act on.
+**Outside every turn** are the rest, fired by the [self-driving loop](/docs/self-improvement) as it works through a backlog: a run, a cycle, an issue, a pull request, a set of checks. Only one of these can block, `PreIssueWork`. The naming tells you why: a `Pre` event happens before something takes effect, and everything else is a Start, an End, or something that already happened, where a deny would arrive too late to matter.
 
-Both families live in the same `hooks` block and speak the same vocabulary. Only a turn event can be granted to a plugin; the loop's own events are dispatched from the operator's settings and nowhere else.
+Both groups live in the same `hooks` block and use the same vocabulary. Only a turn event can be granted to a plugin. The loop's own events are dispatched from the operator's settings alone.
 
 <HookLifecycleDiagram />
 
 <CardGrid size="md">
   <OptionCard name="SessionStart">
-    Runs once before the turn. **Never blocks** — its stdout is used as context instead.
-    The matcher is ignored.
+    Runs once before the turn. **Never blocks** — its stdout is used as extra context instead. The matcher is ignored.
   </OptionCard>
   <OptionCard name="PreToolUse">
-    Runs before a tool executes. **Blocking**: a non-zero exit stops the tool. The matcher
-    is a glob over the tool name.
+    Runs before a tool executes. **Blocking**: a non-zero exit stops the tool. The matcher is a glob over the tool name.
   </OptionCard>
   <OptionCard name="PostToolUse">
-    Runs after a tool executes. **Never blocks** — side effects only. The matcher is a glob
-    over the tool name.
+    Runs after a tool executes. **Never blocks** — side effects only. The matcher is a glob over the tool name.
   </OptionCard>
   <OptionCard name="Stop">
-    Runs when a turn is about to complete. A `deny` decision holds the turn open **once per
-    turn**, feeding its reason back to the model. The matcher is ignored.
+    Runs when a turn is about to finish. A `deny` decision holds the turn open **once per turn**, feeding its reason back to the model. The matcher is ignored.
   </OptionCard>
   <OptionCard name="PreCompact">
-    Runs before an overflow-summarization round. A `deny` decision vetoes the round; a
-    `modify` decision can steer the summarizer. The matcher is ignored.
+    Runs before an overflow-summarization round. A `deny` decision vetoes the round. A `modify` decision can steer the summarizer. The matcher is ignored.
   </OptionCard>
   <OptionCard name="PreIssueWork">
-    Runs before the self-driving loop works an issue. **Blocking**: a `deny` makes the
-    loop skip that issue and move on. The matcher is ignored.
+    Runs before the self-driving loop works an issue. **Blocking**: a `deny` makes the loop skip that issue and move on. The matcher is ignored.
   </OptionCard>
   <OptionCard name="PostIssueWork">
-    Runs after that work unit, whatever the outcome. **Never blocks** — the work is done.
-    The matcher is ignored.
+    Runs after that work is done, whatever the outcome. **Never blocks** — the work is already finished. The matcher is ignored.
   </OptionCard>
 </CardGrid>
 
-### The loop's own events
+### Loop events
 
-Every one of these **reports and never blocks**, and every one ignores the matcher. They fire from `stella self-driving`'s verbs, so a workspace that never runs the loop never sees them.
+Every one of these events reports what happened and never blocks, and every one ignores the matcher. They fire from `stella self-driving`'s commands, so a workspace that never runs the loop never sees them.
 
 <CardGrid size="md">
   <OptionCard name="DriveRunStart">
-    A run has begun, before its first cycle. Payload carries `run.runId`.
+    A run has begun, before its first cycle. The payload carries `run.runId`.
   </OptionCard>
   <OptionCard name="DriveRunEnd">
-    A run has ended, with `reason` naming why it stopped.
+    A run has ended. `reason` names why it stopped.
   </OptionCard>
   <OptionCard name="DriveCycleStart">
-    A cycle has begun. Payload carries `run.runId` and `run.cycle`.
+    A cycle has begun. The payload carries `run.runId` and `run.cycle`.
   </OptionCard>
   <OptionCard name="DriveCycleEnd">
-    A cycle has ended and its ledger record is written.
+    A cycle has ended, and its ledger record is written.
   </OptionCard>
   <OptionCard name="DriveIdle">
-    A cycle produced nothing. The signal that separates *alive but starved* from *dead* —
-    a loop with an empty backlog and a loop whose process died emit the same silence.
+    A cycle produced nothing. This is what tells apart *alive but starved* from *dead*: a loop with an empty backlog and a loop whose process died look the same otherwise.
   </OptionCard>
   <OptionCard name="IssueCreated">
-    The loop filed a finding as an issue. Fires only for one that reached the tracker,
-    never for a deduplicated finding.
+    The loop filed a finding as an issue. Fires only when the issue actually reached the tracker, never for a duplicate that got merged into an existing one.
   </OptionCard>
   <OptionCard name="IssueClosed">
-    The loop closed an issue, `--partial` included. `reason` carries how.
+    The loop closed an issue, including with `--partial`. `reason` says how.
   </OptionCard>
   <OptionCard name="IssueEscalated">
-    The loop gave up and handed an issue to a human. `reason` says what ran out, so a
-    subscriber knows whether to fix, wait, or raise a ceiling.
+    The loop gave up and handed an issue to a person. `reason` says what ran out, so whoever's watching knows whether to fix something, wait, or raise a limit.
   </OptionCard>
   <OptionCard name="PullRequestOpened">
-    Payload carries `pullRequest.number` and the `pullRequest.issue` it settles.
+    The payload carries `pullRequest.number` and the `pullRequest.issue` it resolves.
   </OptionCard>
   <OptionCard name="PullRequestReadyForReview">
     The loop took a pull request out of draft.
   </OptionCard>
   <OptionCard name="PullRequestConflicted">
-    The base moved under a pull request.
+    The base branch moved under a pull request.
   </OptionCard>
   <OptionCard name="PullRequestMerged">
-    A pull request the loop merged landed. Not fired for one a human merged first.
+    A pull request the loop merged has landed. Doesn't fire for one a person merged first.
   </OptionCard>
   <OptionCard name="ChecksFailed">
-    A pull request's checks failed **and the base is green**, so the failure is this
-    change's.
+    A pull request's checks failed, **and the base branch is green**, so the failure belongs to this change.
   </OptionCard>
   <OptionCard name="BaseBroken">
-    The checks failed **and so does the base**. Not this change's fault — the event a
-    `main`-health monitor wants.
+    The checks failed **and so does the base branch**. Not this change's fault. This is the event a `main`-health monitor wants.
   </OptionCard>
   <OptionCard name="ChecksGreen">
     A pull request's checks passed.
   </OptionCard>
   <OptionCard name="DriveBudgetExhausted">
-    The loop reached its spend ceiling.
+    The loop reached its spending limit.
   </OptionCard>
   <OptionCard name="DriveRefused">
-    The loop declined to run — an operator stop, a hold it is waiting on. Distinct from an
-    error: nothing broke, and a subscriber that read it as a failure would page somebody
-    about a working system.
+    The loop chose not to run, because an operator stopped it or it's waiting on a hold. This is different from an error: nothing broke, and a subscriber that treats it as a failure would page someone about a system that's working fine.
   </OptionCard>
 </CardGrid>
 
 <Callout type="info">
-  **`ChecksFailed` and `BaseBroken` are two events on purpose.** The loop's whole delivery
-  machine turns on that distinction, and collapsing them is how an agent spends its budget
-  fixing somebody else's breakage. The same split is why the reason a hook reads is prose
-  for a person: what a subscriber *branches* on is the event name.
+  **`ChecksFailed` and `BaseBroken` are two separate events on purpose.** The loop's whole delivery process depends on that distinction. Collapsing them into one event is how an agent ends up spending its budget fixing someone else's breakage. The same split is why the `reason` field reads like prose for a person: what a subscriber *branches* on is the event name, not the reason text.
 </Callout>
 
-While the loop polls, a repeated answer is reported **once**. A pull request waiting on
-review re-derives the same green every few seconds, and a subscriber woken each time would
-stop reading — so a check event fires on a change of answer, and a standing refusal is
-reported once until the loop runs again.
+While the loop polls, a repeated answer is only reported **once**. A pull request waiting on review would otherwise report the same green result every few seconds, and anyone subscribed would stop reading. So a check event fires only when the answer changes, and a standing refusal is reported once until the loop runs again.
 
 ### `SessionStart`
 
-Runs once before the turn begins. Anything the hook prints to **stdout is appended to the system prompt** as extra context — a handy way to inject environment details, project conventions, or the current date into every session. The matcher is **ignored** for this event.
+Runs once before the turn begins. Anything the hook prints to **stdout is appended to the system prompt** as extra context. This is a handy way to inject environment details, project conventions, or the current date into every session. The matcher is **ignored** for this event.
 
 ### `PreToolUse`
 
-Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool does not run, and the model receives the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target a single tool such as `task_assign` or a family of tools such as `mcp__github__*`.
+Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool doesn't run, and the model gets the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target one tool, such as `task_assign`, or a family of tools, such as `mcp__github__*`.
 
-A `PreToolUse` hook can also **decide** rather than just block: print one JSON decision document on stdout — the same `allow` / `deny` / `require_approval` / `modify` vocabulary the in-process [extension bus](/docs/extensions) speaks — and stella folds it exactly as it folds a policy chain. See [Decisions on stdout](#decisions-on-stdout).
+A `PreToolUse` hook can also **decide** instead of just blocking: print one JSON decision document on stdout, using the same `allow` / `deny` / `require_approval` / `modify` vocabulary the in-process [extension bus](/docs/extensions) uses. Stella folds this in exactly as it folds a policy chain. See [Decisions on stdout](#decisions-on-stdout).
 
 ### `PostToolUse`
 
-Runs after a tool executes. It is for **side effects only and never blocks** — its exit status cannot stop or undo the tool call that already ran. Use it for logging, formatting, notifications, or similar follow-up work. The matcher is a **glob over the tool name**. When a `modify` decision rewrote the input, the `PostToolUse` payload reports the input the tool actually ran with.
+Runs after a tool executes. It's for **side effects only, and it never blocks**. Its exit status can't stop or undo a tool call that already ran. Use it for logging, formatting, notifications, or similar follow-up work. The matcher is a **glob over the tool name**. When a `modify` decision rewrote the input, the `PostToolUse` payload reports the input the tool actually ran with.
 
 ### `Stop`
 
-Runs when a turn is about to complete, with the would-be final text in the payload's `finalText`. Printing `{"action":"deny","reason":"…"}` holds the turn open: the reason is injected back to the model as a `[stop-hook feedback` message and the model gets one more round to act on it. The gate fires **at most once per turn** — the latch that stops a hook which always denies from holding a turn open forever. A `Stop` hook that fails (non-zero exit, spawn failure) never blocks completion; the failure surfaces as a diagnostic instead, because failing closed at a turn boundary would mean never completing. The matcher is **ignored**.
+Runs when a turn is about to complete, with the would-be final text in the payload's `finalText`. Print `{"action":"deny","reason":"…"}` and the turn stays open: the reason is sent back to the model as a `[stop-hook feedback` message, and the model gets one more round to act on it. This gate fires **at most once per turn**. That's what stops a hook that always denies from holding a turn open forever. A `Stop` hook that fails, through a non-zero exit or a spawn failure, never blocks completion. The failure shows up as a diagnostic instead, because failing closed at a turn boundary would mean the turn never completes. The matcher is **ignored**.
 
 ### `PreCompact`
 
-Runs before each overflow-summarization round (the model-written summary that replaces the oldest span when the conversation outgrows its context budget). Printing `{"action":"deny","reason":"…"}` vetoes the round — the transcript is left intact, at the risk of a later hard overflow — and `{"action":"modify","payload":{"instructions":"…"}}` appends your instructions to the summarizer's prompt (for example, "keep every file path verbatim"). A failing `PreCompact` hook proceeds un-vetoed, so a broken hook cannot starve compaction. The matcher is **ignored**.
+Runs before each overflow-summarization round (the model-written summary that replaces the oldest span once the conversation outgrows its context budget). Print `{"action":"deny","reason":"…"}` and the round is vetoed. The transcript stays intact, at the risk of a harder overflow later. Print `{"action":"modify","payload":{"instructions":"…"}}` and your instructions are appended to the summarizer's prompt, for example "keep every file path verbatim." A failing `PreCompact` hook lets the round proceed unvetoed, so a broken hook can't block compaction forever. The matcher is **ignored**.
 
 ### `PreIssueWork`
 
-Runs before the self-driving loop works an issue — **before the worktree exists and before any model call**, so a skip costs nothing and leaves nothing behind. The payload carries the issue under `issue`. Printing `{"action":"deny","reason":"…"}` makes the loop **skip that issue and continue to the next one**; the reason is printed for the operator. The matcher is **ignored**.
+Runs before the self-driving loop works an issue, **before the worktree exists and before any model call**, so a skip costs nothing and leaves nothing behind. The payload carries the issue under `issue`. Print `{"action":"deny","reason":"…"}` and the loop **skips that issue and continues to the next one**. The reason is printed for the operator to see. The matcher is **ignored**.
 
-This is the hook to reach for when you want a person to be able to hold an agent off specific work — an issue that is still being specified, one a colleague has started, or anything under a release freeze. See [Holding an agent off an issue](#holding-an-agent-off-an-issue).
+Reach for this hook when you want a person to be able to hold an agent off specific work: an issue still being specified, one a colleague already started, or anything under a release freeze. See [Pausing an issue](#pausing-an-issue).
 
-A skip is **not a failure**: the verb exits 0, because a driver working through a backlog should step over a held item rather than stop at it. Nothing distinguishes "skip this one" from "stop everything" in a `deny` alone, so a hook that means the latter has to say so to its operator.
+A skip is **not a failure**. The command exits 0, because a driver working through a backlog should step over a held item rather than stop at it. A `deny` alone doesn't distinguish "skip this one" from "stop everything," so a hook that means the second one has to say so directly to its operator.
 
 <Callout type="warn">
-  **`PreIssueWork` fails closed**, unlike most gates here. A hook that never ran, timed out,
-  or exited non-zero **skips the issue**. The two outcomes are not symmetric: skipping an
-  issue that was in fact free costs one cycle and corrects itself next run, while working an
-  issue that was in fact held leaves a branch, a pull request, and a comment on something
-  somebody fenced off. `require_approval` also skips — an unattended loop has
-  nobody at the keyboard to answer it.
+  **`PreIssueWork` fails closed**, unlike most gates on this page. A hook that never ran, timed out, or exited non-zero **skips the issue**. The two outcomes aren't equally bad: skipping an issue that was actually free costs one cycle and corrects itself next run, while working an issue that was actually held leaves behind a branch, a pull request, and a comment on something someone meant to fence off. `require_approval` also skips, since an unattended loop has nobody at the keyboard to answer it.
 </Callout>
 
 ### `PostIssueWork`
 
-Runs after the loop has finished a work unit, whatever happened. **Never blocks**: the work is already done and there is nothing left to veto. The payload carries the same `issue` plus an `issueOutcome`. It fires for a failed attempt as well as a successful one — a dashboard, a notifier, or a second agent waiting on the branch needs the failure at least as much. It does **not** fire when `PreIssueWork` denied, because nothing was worked. The matcher is **ignored**.
+Runs after the loop finishes a work unit, whatever happened. **Never blocks**: the work is already done, so there's nothing left to veto. The payload carries the same `issue` plus an `issueOutcome`. It fires for a failed attempt as well as a successful one. A dashboard, a notifier, or a second agent waiting on the branch needs to know about the failure at least as much as the success. It does **not** fire when `PreIssueWork` denied, because nothing was worked. The matcher is **ignored**.
 
-## The stdin payload
+## Stdin payload
 
-Every hook receives one JSON document on stdin. Its shape:
+Every hook receives one JSON document on stdin. Here's its shape:
 
 ```json title="stdin of a PostToolUse hook"
 {
@@ -195,69 +167,47 @@ Every hook receives one JSON document on stdin. Its shape:
 
 <CardGrid size="md">
   <OptionCard name="event">
-    String, always present. `"SessionStart"`, `"PreToolUse"`, `"PostToolUse"`, `"Stop"`,
-    `"PreCompact"`, `"PreIssueWork"`, `"PostIssueWork"`, or any of the loop's own event
-    names above — the same PascalCase names as
-    the config keys.
+    String, always present. `"SessionStart"`, `"PreToolUse"`, `"PostToolUse"`, `"Stop"`, `"PreCompact"`, `"PreIssueWork"`, `"PostIssueWork"`, or any of the loop's own event names above. These are the same PascalCase names used as the config keys.
   </OptionCard>
   <OptionCard name="cwd">
-    String, always present. The workspace root — also the hook's working directory.
+    String, always present. The workspace root, which is also the hook's working directory.
   </OptionCard>
   <OptionCard name="tool">
-    Object, on `PreToolUse` and `PostToolUse`. `{ "name": …, "input": …, "read_only": … }` —
-    the tool's exact name, the JSON input it was (or will be) called with, and the
-    `read_only` bit its schema advertises, so "deny anything non-read-only" is one `jq`
-    expression. Further tool-contract metadata joins here as it lands (#2716).
+    Object, present on `PreToolUse` and `PostToolUse`. `{ "name": …, "input": …, "read_only": … }`: the tool's exact name, the JSON input it was (or will be) called with, and the `read_only` flag from its schema. This means "deny anything non-read-only" is one `jq` expression. More tool metadata will join this object over time.
   </OptionCard>
   <OptionCard name="toolResult">
-    String, on `PostToolUse` only. The result string the tool returned — either the
-    success content or the error message. **Nothing clips it.** A hook matched against a
-    tool that returns a large body receives that whole body on stdin, so if you only want a
-    summary, truncate on your own side.
+    String, present on `PostToolUse` only. The result string the tool returned, either the success content or the error message. **Nothing shortens it.** A hook matched against a tool that returns a large body receives that whole body on stdin, so if you only want a summary, trim it yourself.
   </OptionCard>
   <OptionCard name="finalText">
-    String, on `Stop` only. The text the turn is about to complete with — whole, same
-    unclipped posture as `toolResult`.
+    String, present on `Stop` only. The text the turn is about to finish with, whole and unshortened just like `toolResult`.
   </OptionCard>
   <OptionCard name="issue">
-    Object, on `PreIssueWork`, `PostIssueWork` and the three tracker events.
-    `{ "number": …, "title": …, "branch": … }`.
-    Only `number` is guaranteed — the rest is whatever the loop had already read. A hook
-    that needs more should fetch it itself (`gh issue view` is one line), rather than have
-    every loop pay a tracker round trip for the hooks that do not.
+    Object, present on `PreIssueWork`, `PostIssueWork`, and the three tracker events. `{ "number": …, "title": …, "branch": … }`. Only `number` is guaranteed. The rest is whatever the loop had already read. If a hook needs more, have it fetch it directly (`gh issue view` is one line), rather than have every loop pay for a tracker round trip that most hooks don't need.
   </OptionCard>
   <OptionCard name="issueOutcome">
-    Object, on `PostIssueWork` only. `{"status":"changed","summary":…}`,
-    `{"status":"no_change"}`, or `{"status":"failed","reason":…}`. Three states rather
-    than a boolean: *nothing to do* and *needs a human* are the two a dashboard most needs
-    to tell apart.
+    Object, present on `PostIssueWork` only. `{"status":"changed","summary":…}`, `{"status":"no_change"}`, or `{"status":"failed","reason":…}`. Three states rather than a yes/no, because *nothing to do* and *needs a human* are the two things a dashboard most needs to tell apart.
   </OptionCard>
 </CardGrid>
 
-Absent fields are **omitted entirely**, not set to `null` — a `SessionStart` payload is just `{ "event": "SessionStart", "cwd": "…" }`, and `toolResult` never appears on a `PreToolUse` payload.
+A field that doesn't apply is **left out entirely**, not set to `null`. A `SessionStart` payload is just `{ "event": "SessionStart", "cwd": "…" }`, and `toolResult` never shows up on a `PreToolUse` payload.
 
 <Callout type="warn">
-  Because `toolResult` is unbounded, a `PostToolUse` hook matched on `"*"` will be handed
-  the full output of every tool call in the session — including an MCP or custom tool
-  that returns a large body. Match narrowly, and read stdin in a streaming or size-capped
-  way if the hook logs it anywhere.
+  Because `toolResult` has no size limit, a `PostToolUse` hook matched on `"*"` gets the full output of every tool call in the session, including a large body from an MCP or custom tool. Match narrowly, and if your hook logs stdin anywhere, read it in a streaming or size-capped way.
 </Callout>
 
 ## Timeouts
 
-Each hook may set a `timeoutMs`, the maximum time the command is allowed to run:
+Each hook can set `timeoutMs`: how long the command is allowed to run.
 
 <CardGrid size="sm">
   <OptionCard name="timeoutMs" defaultValue="60000">
-    Milliseconds a hook command may run before it is killed — 60 seconds by default. The
-    hard maximum is `600000` (600 seconds, or 10 minutes); a larger value buys no more
-    time.
+    Milliseconds a hook command may run before it's killed. The default is 60 seconds. The hard maximum is `600000` (600 seconds, or 10 minutes). Setting a larger value buys no more time.
   </OptionCard>
 </CardGrid>
 
 ## Example
 
-The following `settings.json` runs `./scripts/guard.sh` before every `mcp__github__push_files` tool call, with a 5-second timeout. Because it is a `PreToolUse` hook, a non-zero exit from the script blocks the call. Each hook runs as `bash -c <command>` with its working directory set to the workspace root, so a relative path like `./scripts/guard.sh` resolves from the repository root.
+This `settings.json` runs `./scripts/guard.sh` before every `mcp__github__push_files` tool call, with a 5-second timeout. Because it's a `PreToolUse` hook, a non-zero exit from the script blocks the call. Each hook runs as `bash -c <command>` with its working directory set to the workspace root, so a relative path like `./scripts/guard.sh` resolves from the repository root.
 
 ```json title="<workspace>/.stella/settings.json"
 {
@@ -278,7 +228,7 @@ The following `settings.json` runs `./scripts/guard.sh` before every `mcp__githu
 }
 ```
 
-And the script itself — a complete `PreToolUse` guard that reads the payload with `jq` and vetoes pushes to the default branch:
+And here's the script itself: a complete `PreToolUse` guard that reads the payload with `jq` and blocks pushes to the default branch.
 
 ```bash title="scripts/guard.sh"
 #!/usr/bin/env bash
@@ -300,11 +250,11 @@ esac
 exit 0
 ```
 
-Blocking is **fail-closed** on `PreToolUse`: a hook that times out, fails to start, exits non-zero, or prints a malformed decision blocks the tool, with the failure message as the reason. A missing or broken guard script never silently waves a call through, and no enforcement-softening switch changes that. (`PostToolUse` and `SessionStart` never block on either failure mode, and `Stop`/`PreCompact` fail open — see their sections.)
+Blocking is **fail-closed** on `PreToolUse`. A hook that times out, fails to start, exits non-zero, or prints a malformed decision blocks the tool, with the failure message as the reason. A missing or broken guard script never quietly waves a call through, and no setting changes that. (`PostToolUse` and `SessionStart` never block on either kind of failure, and `Stop` and `PreCompact` fail open — see their sections above.)
 
 ## Decisions on stdout
 
-A hook that exits `0` may print **one JSON decision document** on stdout (the whole stdout, or its last non-empty line). The vocabulary is exactly the extension bus's `HookDecision` — one enum, no shell-surface dialect:
+A hook that exits `0` can print **one JSON decision document** on stdout, either the whole stdout or its last non-empty line. This uses the exact same vocabulary as the extension bus's `HookDecision`: one set of options, no separate shell-only dialect.
 
 ```json
 { "action": "allow" }
@@ -313,16 +263,16 @@ A hook that exits `0` may print **one JSON decision document** on stdout (the wh
 { "action": "modify", "payload": { "input": { … } } }
 ```
 
-- **`deny`** blocks with your reason (on `PreToolUse`), holds the turn open (on `Stop`), or vetoes the round (on `PreCompact`).
-- **`require_approval`** (on `PreToolUse`) parks the call on the same approval flow the extension bus's gates use. The question is emitted before the wait, a human answers through the interactive surface, and the wait is bounded. On an interactive run you get the yes/no prompt; headless runs refuse with a message naming the grant path.
-- **`modify`** rewrites the tool input (`payload.input`, on `PreToolUse` — later hooks in the chain see the rewritten payload) or steers the summarizer (`payload.instructions`, on `PreCompact`).
-- **`allow`** — or any stdout that is *not* a decision document — continues the chain; a chain that only modified ends allowed. Precedence is fixed: an operator deny outranks everything, `require_approval` outranks any allow.
+- **`deny`** blocks the call with your reason (on `PreToolUse`), holds the turn open (on `Stop`), or vetoes the round (on `PreCompact`).
+- **`require_approval`** (on `PreToolUse`) parks the call on the same approval flow the extension bus's gates use. The question is shown before the wait, a person answers through the interactive surface, and the wait has a limit. In an interactive session, you get a yes/no prompt. A headless run refuses with a message naming the grant path instead.
+- **`modify`** rewrites the tool input (`payload.input`, on `PreToolUse`; later hooks in the chain see the rewritten input) or steers the summarizer (`payload.instructions`, on `PreCompact`).
+- **`allow`**, or any stdout that isn't a decision document, lets the chain continue. A chain that only modifies still ends up allowed. Precedence is fixed: an operator's deny beats everything, and `require_approval` beats any allow.
 
-Stdout that parses as JSON with an `action` key **must** be a well-formed decision — a typo there fails the evaluation and denies, rather than silently allowing.
+If your stdout parses as JSON with an `action` key, it **must** be a well-formed decision. A typo there fails the check and denies the call, rather than silently allowing it.
 
-### A `PostToolUse` logger that respects the unbounded result
+### Logging tool results
 
-`toolResult` arrives whole, so a hook that appends it somewhere has to bound it itself. This one keeps a one-line-per-call audit trail with the result capped at 200 characters:
+`toolResult` arrives with no length limit, so a hook that logs it somewhere has to trim it itself. This one keeps a one-line-per-call audit trail, with the result capped at 200 characters:
 
 ```bash title="scripts/audit.sh"
 #!/usr/bin/env bash
@@ -338,7 +288,7 @@ printf '%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$tool" "$result" \
   >> "${TMPDIR:-/tmp}/stella-tool-audit.tsv"
 ```
 
-Wire it to every tool with a `"*"` matcher:
+Wire it up to every tool with a `"*"` matcher:
 
 ```json title="~/.stella/settings.json"
 {
@@ -355,9 +305,9 @@ Wire it to every tool with a `"*"` matcher:
 }
 ```
 
-### Holding an agent off an issue
+### Pausing an issue
 
-The self-driving loop works whatever the backlog hands it. `PreIssueWork` is where a person gets a say — and the cleanest way to express that is a label on the issue itself, because the tracker is where the intent already lives and anyone on the team can set it without touching a config file.
+The self-driving loop works whatever the backlog hands it. `PreIssueWork` is where a person gets a say, and the cleanest way to say it is a label on the issue itself. The tracker is where the intent already lives, and anyone on the team can set the label without touching a config file.
 
 This hook holds the loop off any issue labelled `agent-hold`:
 
@@ -399,21 +349,18 @@ Register it in your user-scope settings:
 Now `gh issue edit 123 --add-label agent-hold` is all it takes to fence an issue off, and removing the label hands it back. The loop prints `skipped #123 — issue #123 is labelled agent-hold` and moves on to the next item.
 
 <Callout type="warn">
-  Note the exit status: the script exits **0** and expresses its decision on stdout. A
-  non-zero exit also skips the issue — `PreIssueWork` fails closed — but it reports as
-  *"the hook could not be evaluated"* rather than as your reason, which is much harder to
-  read six issues later. Decide on stdout; reserve a non-zero exit for genuinely broken.
+  Note the exit status: the script exits **0** and puts its decision on stdout. A non-zero exit also skips the issue, since `PreIssueWork` fails closed, but it shows up as *"the hook could not be evaluated"* rather than your actual reason, which is much harder to read six issues later. Put your decision on stdout, and save a non-zero exit for something genuinely broken.
 </Callout>
 
-The same shape gives you several other things, with no change to stella:
+This same pattern covers other cases too, with no changes to stella:
 
-- **Two agents, one backlog.** Have the hook claim the issue (assign it, or add an `agent-claimed-$HOSTNAME` label) and deny when it is already claimed by someone else.
+- **Two agents, one backlog.** Have the hook claim the issue, by assigning it or adding an `agent-claimed-$HOSTNAME` label, and deny when it's already claimed by someone else.
 - **A release freeze.** Deny everything while a `freeze` milestone is open.
-- **Working hours.** Deny outside a window, so an unattended loop does not open pull requests at 3am.
-- **Scope limits.** Deny anything not labelled `good-first-issue`, or anything whose estimate exceeds what you want an agent attempting unattended.
+- **Working hours.** Deny outside a set window, so an unattended loop doesn't open pull requests at 3am.
+- **Scope limits.** Deny anything not labelled `good-first-issue`, or anything whose estimate is bigger than what you want an agent attempting unattended.
 
 <Callout type="warn">
-**Project-scope hooks are a trust boundary.** Hooks declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) do **not** load unless the repo is trusted — set `STELLA_TRUST_PROJECT=1`, or the legacy hooks-scoped `STELLA_PROJECT_HOOKS=1`. Either flag unlocks them; without one, the merged hook set is rebuilt from the user and org-managed scopes alone and a stderr notice names what was skipped. This stops a cloned repo from running arbitrary commands on your machine. Hooks in the user scope (`~/.stella/settings.json`) always load. See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+**Project-scope hooks are a trust boundary.** Hooks declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) do **not** load unless the repo is trusted. Set `STELLA_TRUST_PROJECT=1`, or the older hooks-only `STELLA_PROJECT_HOOKS=1`. Either flag unlocks them. Without one, the merged hook set is built from the user and org-managed scopes alone, and a stderr message names what was skipped. This stops a cloned repo from running arbitrary commands on your machine. Hooks in the user scope (`~/.stella/settings.json`) always load. See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
 </Callout>
 
 <Callout type="info">

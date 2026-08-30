@@ -1,18 +1,17 @@
 ---
 title: Custom Commands
-description: Extend the slash menu with your own prompt templates in markdown or TOML — $ARGUMENTS expansion, namespaces, and project or user scopes.
+description: Add your own prompt templates to the slash menu, in Markdown or TOML. Covers $ARGUMENTS expansion, namespaces, and project or user scopes.
 ---
 
-The Command Deck's slash menu is extensible: alongside the built-ins
-(`/help`, `/models`, `/export`, …), your ⚡
+The Command Deck's slash menu is open for you to extend. Alongside the built-ins
+(`/help`, `/models`, `/export`, and more), your ⚡
 [skills](/docs/agent-tools/skills), and your
-[custom agents](/docs/agent-tools/custom-agents), you can define
-**commands** — reusable prompt templates invoked as `/name`.
+[custom agents](/docs/agent-tools/custom-agents), you can add
+**commands**: reusable prompt templates you run as `/name`.
 
 ## The format
 
-A `COMMAND.md` (nested `<slug>/COMMAND.md` or flat `<slug>.md`) with
-optional frontmatter and a Markdown body:
+A command is a `COMMAND.md` file. Use the nested layout (`<slug>/COMMAND.md`) or the flat layout (`<slug>.md`). It has optional frontmatter and a Markdown body:
 
 ```md title=".stella/commands/review.md"
 ---
@@ -27,56 +26,40 @@ Focus areas: $ARGUMENTS
 - Check error paths before happy paths.
 ```
 
-Both frontmatter fields are optional: `name:` falls back to the filename
-stem (or the directory name in the nested layout), and `description:` falls
-back to the body's first non-empty line. Only the body is required — a
-command with an empty body is skipped with a diagnostic, never a fatal
-error.
+Both frontmatter fields are optional. Skip `name:` and stella uses the filename stem, or the directory name in the nested layout. Skip `description:` and stella uses the body's first non-empty line. Only the body is required. A command with an empty body is skipped, with a diagnostic message rather than a hard error.
 
-### Every field
+### Fields
 
 <CardGrid size="md">
   <OptionCard name="name" defaultValue="the filename stem">
-    The bare command name, without the leading slash and without any namespace.
+    The command name, without the leading slash and without any namespace.
   </OptionCard>
   <OptionCard name="description" defaultValue="the body's first line">
-    Menu description, shown in the slash menu.
+    The description shown in the slash menu.
   </OptionCard>
   <OptionCard name="argument-hint">
-    What the argument slot expects (`<pr-number>`), shown next to the name.
-    **Documentation only** — nothing validates against it, because a command that
-    refuses to run on a shape its author did not anticipate is worse than one that
-    passes the text through.
+    What the argument slot expects, such as `<pr-number>`. It shows next to the name in the menu. It's **for humans only** — nothing checks your input against it. A command that refused to run just because your input didn't match the hint would be worse than one that passes the text through.
   </OptionCard>
   <OptionCard name="allowed-tools" defaultValue="no restriction">
-    Tools this command's turn may use. Omitted, the command runs with the session's
-    full toolbelt.
+    The tools this command's turn may use. Leave it out and the command runs with every tool the session already has.
   </OptionCard>
   <OptionCard name="model" defaultValue="the session's model">
-    A model pin for this command's turn, as `provider/model_id`.
+    Pin a model for this command's turn, written as `provider/model_id`.
   </OptionCard>
   <OptionCard name="disable-model-invocation" defaultValue="false">
-    Set `true` so only *you* can invoke it, never the model — for commands that should
-    always be deliberate.
+    Set this to `true` so only you can run the command. The model can never trigger it on its own. Use it for commands that should always be a deliberate choice.
   </OptionCard>
 </CardGrid>
 
-Every field is accepted in both kebab-case and snake_case (`argument-hint` or
-`argument_hint`), matching the spellings contributors already know from the
-wider ecosystem.
+Write any field in kebab-case or snake_case. `argument-hint` and `argument_hint` both work.
 
 <Callout type="info">
-`disable-model-invocation` exists to *remove* a capability, so an unparseable value
-is never read as the removal — a typo leaves the command invocable rather than
-silently disabling it.
+`disable-model-invocation` exists to turn a capability off. If stella can't read the value, it treats the command as still on. A typo leaves the command open to the model instead of quietly locking it out.
 </Callout>
 
-## Markdown or TOML — the same command
+## Markdown or TOML
 
-A definition can be authored as markdown-with-frontmatter (`<slug>.md`) **or** as
-TOML (`<slug>.toml`). The two formats carry exactly the same fields and produce the
-same command: TOML is a spelling, not a feature tier, so nothing is gained or lost by
-converting, and a workspace can hold both.
+Write a command as Markdown with frontmatter (`<slug>.md`) or as TOML (`<slug>.toml`). Both formats support the same fields and produce the same command. TOML isn't a more advanced option, just a different way to write the same thing. A workspace can mix both.
 
 ```toml title=".stella/commands/review.toml"
 name = "review"
@@ -93,38 +76,27 @@ Focus areas: $ARGUMENTS
 """
 ```
 
-The body lives under `prompt` rather than being the file's tail. That is the one
-practical reason to prefer TOML: a `prompt` string needs no frontmatter fence, so a
-template that itself contains markdown (or a `---` rule) has nothing to escape. The
-other is a typed `allowed-tools` array instead of a delimited string.
+In TOML, the body lives under `prompt` instead of at the end of the file. That's the real reason to reach for TOML. A `prompt` string needs no frontmatter fence, so a template that already contains Markdown, or a `---` line, has nothing to escape. TOML also gives you a real array for `allowed-tools` instead of a comma-delimited string.
 
-[`stella commands convert`](/docs/commands/commands) converts markdown definitions to
-TOML, and [`stella commands list`](/docs/commands/commands) shows what a workspace
-actually offers.
+[`stella commands convert`](/docs/commands/commands) turns a Markdown command into TOML. [`stella commands list`](/docs/commands/commands) shows every command available in your workspace.
 
 ## Namespaces
 
-A definition one level down is namespaced by its directory, and typed with a colon:
+A command one level down is namespaced by its folder, and you call it with a colon:
 
 ```text
 .stella/commands/deploy.toml          →  /deploy
 .stella/commands/vercel/deploy.toml   →  /vercel:deploy
 ```
 
-Namespacing is **commands only** — skills and agents have no namespace syntax and keep
-a stricter one-file rule. A namespace directory containing no loadable definition is
-reported with a diagnostic rather than skipped silently.
+Only commands support namespaces. Skills and agents don't, and each still needs one file per definition. A namespace folder with no loadable command inside it isn't skipped quietly. You get a diagnostic instead.
 
 ## Argument expansion
 
-Typing `/review auth module` expands the template and runs the result as
-the prompt:
+Type `/review auth module` and stella fills in the template, then runs the result as your prompt.
 
-- Every `$ARGUMENTS` occurrence in the body is replaced with whatever
-  follows the command name (`auth module` above).
-- A body **without** the placeholder still takes arguments — non-empty
-  arguments are appended as a trailing paragraph, so plain prompt files
-  written for other tools work unchanged.
+- Every `$ARGUMENTS` in the body is replaced with whatever you typed after the command name. That's `auth module` in this example.
+- If the body has no `$ARGUMENTS` placeholder, your arguments are still used. Stella adds them as a paragraph at the end. This means prompt files written for other tools work here with no changes.
 
 ## Where commands live
 
@@ -136,7 +108,7 @@ the prompt:
       { label: "Travels with", value: "the repo", mono: false },
     ]}
   >
-    Commit it — everyone who clones gets the command in their slash menu.
+    Commit it, and everyone who clones the repo gets the command in their slash menu.
   </SpecCard>
   <SpecCard
     title="User"
@@ -145,45 +117,24 @@ the prompt:
       { label: "Travels with", value: "you, across every workspace", mono: false },
     ]}
   >
-    Your own templates, in every repo you open.
+    Your own templates, available in every repo you open.
   </SpecCard>
 </CardGrid>
 
-Definitions load user-global first, then workspace — **workspace wins** on
-a name collision. In the slash menu, built-ins can never be shadowed, and
-when a custom name collides across kinds, commands shadow skills shadow
-agents.
+Stella loads user-scope commands first, then project-scope commands. If both define the same name, the project version wins. Built-in commands can never be overridden. When a custom name collides across kinds, commands win over skills, and skills win over agents.
 
-### Project-scope commands need a trusted repo
+### Trusted repos
 
-A cloned repository's commands are **withheld** until you declare the repo
-trusted with `STELLA_TRUST_PROJECT=1`. Your own user-scope commands in
-`~/.stella/commands/` are always available; it is the project scope that is
-gated, because a prompt template that ships in a repo is content you did not
-write.
+A command from a repo you cloned doesn't run until you mark the repo trusted, with `STELLA_TRUST_PROJECT=1`. Your own commands in `~/.stella/commands/` are always available. Only project-scope commands are held back, because a prompt template shipped inside someone else's repo is content you didn't write.
 
-If a command you added to `.stella/commands/` does not appear in the slash menu
-or in [`stella commands list`](/docs/commands/commands), check the repo's trust
-before you check the file — the loader is telling you what will actually run.
+If a command you added to `.stella/commands/` doesn't show up in the slash menu or in [`stella commands list`](/docs/commands/commands), check whether the repo is trusted before you check the file. The loader is telling you what will actually run.
 
-## Adopted from tools you already use
+## Bring in existing commands
 
-`stella init` (and `/init`) **adopts** command definitions from other agent
-tools' directories as symlinks — `.claude/commands/` and
-`.agents/commands/` (workspace scope), `~/.claude/commands/` and
-`~/.agents/commands/` (user scope) — so your existing setup carries over
-instead of being rewritten. `.claude` wins over `.agents` on a name
-collision, existing stella-side definitions are never clobbered, and the
-sync is idempotent. The same adoption covers skills and agents — the full
-mechanics are documented on the
-[Custom Agents](/docs/agent-tools/custom-agents#adopted-from-claude-and-agents-on-init)
-page.
+Running `stella init` (or `/init`) brings in command definitions from other agent tools you already use, as symlinks. It reads from `.claude/commands/` and `.agents/commands/` in your workspace, and from `~/.claude/commands/` and `~/.agents/commands/` for your user scope. Your existing setup carries over instead of getting rewritten. If `.claude` and `.agents` both define the same name, `.claude` wins. A command you already defined in stella is never overwritten, and running init again is always safe. The same process brings in skills and agents too. See the full details on the [Custom Agents](/docs/agent-tools/custom-agents#import-from-claude-and-agents) page.
 
 <Callout type="info">
-  Commands are prompt-level extensions — templates. For a reusable persona
-  with an optional restricted toolbelt, define a
-  [custom agent](/docs/agent-tools/custom-agents); to give the agent a
-  genuinely new *action* (a deploy script, a database query), define a
-  [custom tool](/docs/agent-tools/custom-tools); to run shell commands on
-  lifecycle events, use [hooks](/docs/agent-tools/hooks).
+  Commands are prompt templates, nothing more. For a reusable persona with its own restricted toolbelt, define a
+  [custom agent](/docs/agent-tools/custom-agents). To give the agent a genuinely new action, like a deploy script or a database query, define a
+  [custom tool](/docs/agent-tools/custom-tools). To run shell commands on lifecycle events, use [hooks](/docs/agent-tools/hooks).
 </Callout>

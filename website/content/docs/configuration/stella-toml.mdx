@@ -1,24 +1,26 @@
 ---
 title: stella.toml
-description: The comment-preserving, schema-versioned TOML config format — where each scope's file lives, what moved from settings.json, what stays identical, and what is not built yet.
+description: The TOML config format that keeps comments and tracks schema versions — where each scope's file lives, what moved from settings.json, what stays the same, and what isn't built yet.
 ---
 
-`stella.toml` is stella's config file in TOML instead of JSON. It reads across the same
-three scopes as [`settings.json`](/docs/configuration/settings), merges by the same rules,
-and is gated by the same [project trust boundary](/docs/configuration/settings#the-project-trust-boundary)
-— the file format changed, nothing about who is trusted did. What TOML adds is what JSON
-structurally cannot hold: comments that survive a write, and a `[meta]` block that turns
-forward compatibility into a mechanism instead of a warning.
+`stella.toml` is stella's config file, written in TOML instead of JSON. It reads across
+the same three scopes as [`settings.json`](/docs/configuration/settings), merges by the
+same rules, and is gated by the same
+[project trust boundary](/docs/configuration/settings#the-project-trust-boundary). The
+file format is different, but who is trusted is not. TOML adds what JSON can't hold:
+comments that survive a write, and a `[meta]` block that helps stella handle future
+versions safely instead of just guessing.
 
 <Callout type="info">
-  This page documents the **TOML shape**. For the full meaning of every section — merge
-  rules, the trust boundary, worked examples — [settings.json](/docs/configuration/settings)
-  remains the canonical reference; the two formats lower into the same `Settings` and behave
-  identically once loaded. This page exists to answer the questions specific to the file
-  itself: where it lives, what its keys are called, and what changed in the port.
+  This page documents the **TOML shape**. For the full meaning of every section, including
+  merge rules, the trust boundary, and worked examples,
+  [settings.json](/docs/configuration/settings) is the main reference — the two formats
+  load into the same settings and behave identically once loaded. This page answers the
+  questions specific to the file itself: where it lives, what its keys are called, and
+  what changed when it was ported to TOML.
 </Callout>
 
-## Where each scope's file lives
+## Where files live
 
 <CardGrid size="sm">
   <SpecCard
@@ -28,8 +30,8 @@ forward compatibility into a mechanism instead of a warning.
       { label: "Path", value: <code>{"<repo>/stella.toml"}</code> },
     ]}
   >
-    At the **repository root**, not under `.stella/` — a committed, human-reviewed file
-    belongs where `Cargo.toml` and `pyproject.toml` live, in a PR diff rather than three
+    At the repository root, not under `.stella/`. A committed, reviewed file belongs
+    where `Cargo.toml` and `pyproject.toml` live: in a pull request diff, not three
     directories deep.
   </SpecCard>
   <SpecCard
@@ -39,7 +41,7 @@ forward compatibility into a mechanism instead of a warning.
       { label: "Path", value: <code>~/.stella/stella.toml</code> },
     ]}
   >
-    Your personal defaults — the same role `~/.stella/settings.json` plays today.
+    Your personal defaults, the same role `~/.stella/settings.json` plays.
   </SpecCard>
   <SpecCard
     title="managed"
@@ -48,36 +50,35 @@ forward compatibility into a mechanism instead of a warning.
       { label: "Path", value: <code>STELLA_MANAGED_SETTINGS</code> },
     ]}
   >
-    Or the platform default — `/Library/Application Support/stella/stella.toml` on macOS,
-    `/etc/stella/stella.toml` elsewhere. Deployed by an administrator, and the extension on
-    that one named file decides its format; there is never a second managed file competing
-    with it.
+    Or the platform default: `/Library/Application Support/stella/stella.toml` on macOS,
+    `/etc/stella/stella.toml` elsewhere. An administrator deploys this file, and its
+    extension decides its format. There is never a second managed file competing with it.
   </SpecCard>
 </CardGrid>
 
-The scope hierarchy — precedence, the trust boundary, which fields merge per-field versus
-whole-block versus concatenate — is unchanged from JSON. See
-[The scope hierarchy](/docs/configuration/settings#the-scope-hierarchy) for the full rules;
-<SettingsCascadeDiagram /> shows the same shape either format reads through.
+The scope hierarchy is unchanged from JSON: precedence, the trust boundary, and which
+fields merge per field, whole block, or by concatenating. See
+[The scope hierarchy](/docs/configuration/settings#the-scope-hierarchy) for the full
+rules; <SettingsCascadeDiagram /> shows the same shape either format reads through.
 
-## Getting there: `stella migrate config`
+## Migrating to TOML
 
 ```bash
 stella migrate config          # write the TOML for every scope that has JSON
 stella migrate config --dry-run
 ```
 
-Every value it writes is serialized from the `settings.json` stella actually parsed —
-never re-typed — and the generated file is re-parsed and re-validated before it touches
-disk. The original JSON is never deleted; you remove it once you've confirmed the TOML
-says what you meant. Full walkthrough: [`stella migrate`](/docs/commands/migrate).
+Every value it writes comes straight from the `settings.json` stella actually parsed —
+it's never retyped by hand — and the generated file is re-parsed and re-validated before
+it touches disk. The original JSON is never deleted; you remove it yourself once you've
+confirmed the TOML says what you meant. Full walkthrough: [`stella migrate`](/docs/commands/migrate).
 
-## TOML and settings.json are never merged
+## TOML or JSON
 
-If both files exist at a scope, stella reads the TOML **whole** and ignores the JSON —
-never a field-by-field composite of the two. A composite would make "which file configures
-this?" unanswerable from either file alone; the actual failure mode that guards against is
-someone editing the JSON, seeing no effect, and having nothing to look at.
+If both files exist at a scope, stella reads the whole TOML file and ignores the JSON —
+it never combines them field by field. A combined file would make "which file configures
+this?" impossible to answer from either file alone. This rule guards against someone
+editing the JSON, seeing no effect, and having nothing to check.
 
 ```text
 ! ~/.stella/stella.toml and ~/.stella/settings.json both exist — reading the TOML and
@@ -85,28 +86,28 @@ someone editing the JSON, seeing no effect, and having nothing to look at.
 ```
 
 This notice prints once per launch, at every scope where it applies. A missing TOML file
-falls back to the JSON exactly as before; a missing file at either format is fine and is
+falls back to the JSON exactly as before; a missing file in either format is fine and is
 simply skipped.
 
 ## The `[meta]` block
 
-The one section with no JSON equivalent — `settings.json` has no version field at all, so a
-typo and a key from a future release look identical to serde. `[meta]` is what makes that
-distinguishable.
+This is the one section with no JSON equivalent. `settings.json` has no version field at
+all, so a typo and a key from a future release look identical to the parser. `[meta]` is
+what tells them apart.
 
 <CardGrid size="md">
   <OptionCard name="meta.schema_version">
     This build reads exactly one schema version. A file naming a version this build does
-    not understand is a **named load error** telling you to upgrade stella or pin the file
-    back — never a silent partial read. A file with no `[meta]` block at all is version 1 by
-    definition, which is what will eventually make it safe to stop reading `settings.json`.
+    not understand shows a **named load error** telling you to upgrade stella or pin the
+    file back — never a silent partial read. A file with no `[meta]` block at all is
+    version 1 by definition.
   </OptionCard>
   <OptionCard name="meta.scope">
     Self-declared as `"user"`, `"managed"`, or `"project"` — checked against the file's
     actual **location**, not the other way around. The path decides the scope; this field
-    only has to agree with it. A project file declaring `scope = "managed"` is refused with
-    a named error, because that mismatch is either a copy-paste mistake or an attempt to
-    borrow authority the file's location does not grant.
+    only has to agree with it. A project file declaring `scope = "managed"` is refused
+    with a named error, because that mismatch is either a copy-paste mistake or an attempt
+    to claim authority the file's location doesn't grant.
   </OptionCard>
 </CardGrid>
 
@@ -116,25 +117,26 @@ schema_version = 1
 scope          = "project"   # "user" | "managed" | "project"
 ```
 
-## What moved, and why
+## What moved
 
-These changed shape in the port. Everything else kept its name.
+These changed shape when TOML was added. Everything else kept its name.
 
 | settings.json | stella.toml | Why |
 | --- | --- | --- |
-| `enable_recap` (bare root key) | `[run].recap` | TOML attaches a bare key to whatever `[table]` precedes it — move one line in the file and it silently reassigns. Every scalar gets a table home; there are no bare keys at the document root. |
-| `agent_engine_config` | `[agents]` | Shorter, and the JSON name described the Rust struct rather than the thing it configures. |
-| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** and holds one name — `default` is a struct field, not a map key, so the per-agent table can never collide with a root field. It held six until #3908 collapsed the engine to one role; a file still naming `worker`, `verifier`, `triage`, `research` or `plan` loads and reports the key. |
-| `agent_engine_config.allowed_models` | `[models].allowed` | Promoted out of the agents block — it's a statement about models, not about any one agent. Still replaces wholesale across scopes rather than concatenating. |
+| `enable_recap` (bare root key) | `[run].recap` | TOML attaches a bare key to whatever `[table]` precedes it, so moving one line in the file can silently reassign it. Every scalar gets a table home; there are no bare keys at the document root. |
+| `agent_engine_config` | `[agents]` | Shorter, and clearer — the JSON name described an internal structure rather than the thing it configures. |
+| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. This is safe because the agent set is **closed** and holds one name — `default` is a fixed field, not a map key, so the per-agent table can never collide with a root field. A file still naming `worker`, `verifier`, `triage`, `research` or `plan` loads normally and reports the key. |
+| `agent_engine_config.allowed_models` | `[models].allowed` | Promoted out of the agents block, since it's a statement about models, not about any one agent. Still replaces wholesale across scopes rather than concatenating. |
 
 `trace_capture`, `create_worktrees`, `candidate_isolation` and `ignore_gitignore`
 needed no such move: each shipped straight into its `[run]` table home, so none ever
 had a bare-root JSON form to retire.
 
-## Every section, in the TOML shape
+## Every section
 
-Merge rules below are identical to their JSON counterparts — restated here only so this
-page is a complete reference on its own; see the linked section for the full explanation.
+The merge rules below are identical to their JSON counterparts. They're restated here so
+this page works as a complete reference on its own — see the linked section for the full
+explanation.
 
 ### `[run]`
 
@@ -147,13 +149,14 @@ page is a complete reference on its own; see the linked section for the full exp
   <OptionCard name="run.candidate_isolation" defaultValue="worktree">
     `"worktree"` or `"copy-tree"` — how a best-of-N fan-out isolates one candidate's
     tree from the next. `"worktree"` cuts a git worktree per candidate and promotes the
-    winner as a patch, so a candidate cannot land anything you could not have written
-    yourself and an adoption that no longer applies refuses. `"copy-tree"` copies the
-    whole directory instead, gitignored files included, and promotes by **replacing**
-    the tree's contents with the winner's — right for a disposable benchmark container
-    whose `node_modules/` or `.venv/` the task's own tests execute, and destructive
-    anywhere else. Never selected for you. An empty string, `null`, or the key being
-    absent all mean `"worktree"`; anything else is a hard parse error.
+    winner as a patch, so a candidate can't land anything you couldn't have written
+    yourself, and adopting the patch is refused if it no longer applies cleanly.
+    `"copy-tree"` copies the whole directory instead, gitignored files included, and
+    promotes by **replacing** the tree's contents with the winner's — right for a
+    disposable benchmark container whose `node_modules/` or `.venv/` the task's own
+    tests execute, and destructive anywhere else. Never selected for you. An empty
+    string, `null`, or the key being absent all mean `"worktree"`; anything else is a
+    hard parse error.
   </OptionCard>
   <OptionCard name="run.ignore_gitignore" defaultValue="on">
     Same name as JSON, and the one toggle here that defaults **on**. See
@@ -161,12 +164,12 @@ page is a complete reference on its own; see the linked section for the full exp
   </OptionCard>
   <OptionCard name="run.auto_trust_project" defaultValue="false">
     `true` trusts every project this machine opens by default — the config-file
-    alternative to typing `STELLA_TRUST_PROJECT=1` on every launch. **Honored only
-    from the user or org-managed file.** Set in a project's own `stella.toml` it
-    still parses, but is discarded before it can affect anything and a stderr
-    notice says so: a project cannot vote on its own trust. An explicit
-    `STELLA_TRUST_PROJECT` env var always overrides this, either direction, for
-    one launch. See [The project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+    alternative to typing `STELLA_TRUST_PROJECT=1` on every launch. **Only honored from
+    the user or org-managed file.** Set in a project's own `stella.toml`, it still
+    parses, but is discarded before it can affect anything, with a stderr notice saying
+    so: a project cannot vote on its own trust. An explicit `STELLA_TRUST_PROJECT` env
+    var always overrides this, either direction, for one launch. See
+    [The project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
   </OptionCard>
 </CardGrid>
 
@@ -177,22 +180,20 @@ ignore_gitignore = "on"
 auto_trust_project = false
 ```
 
-`run.recap` and `run.trace_capture` were **retired** in #3870: both renderers read the
-built-in staged pipeline's verdict types and left the workspace with that crate (#3865).
-Setting either is not a typo and is not reported as one — the config walker names the key
-and says what it used to do.
+`run.recap` and `run.trace_capture` do nothing. Setting either one is not a typo and is
+not reported as one — the config loader recognizes the key and tells you it's inactive.
 
 ### `[workspace]`
 
-Facts about the tree this config belongs to, rather than how one run behaves. Its own
-section for exactly that reason: `allowed_dirs` states what the workspace *is*.
+This section holds facts about the tree this config belongs to, not how one run behaves.
+`allowed_dirs` states what the workspace *is*, which is why it gets a section of its own.
 
 <CardGrid size="md">
   <OptionCard name="workspace.allowed_dirs">
     Directories outside the workspace root that the write tools may touch. Relative
     entries resolve against the **workspace root**, never the directory you launched
     from, so a committed entry means the same directory for every teammate. Blank
-    entries are dropped rather than read as a grant of the root itself, and a
+    entries are dropped instead of being read as a grant of the root itself, and a
     directory that does not exist yet is carried through unchanged.
   </OptionCard>
 </CardGrid>
@@ -208,8 +209,9 @@ allowed_dirs = ["../shared-fixtures", "/opt/vendor-src"]
 
 ### `[providers]`
 
-Identical shape and rules to JSON's `providers` map — a table keyed by provider id,
-merged per-id and per-field. See [The providers map](/docs/configuration/settings#the-providers-map).
+This has the same shape and rules as JSON's `providers` map: a table keyed by provider
+id, merged per id and per field. See
+[The providers map](/docs/configuration/settings#the-providers-map).
 
 ```toml title="stella.toml"
 [providers.zai]
@@ -222,13 +224,13 @@ default_model = "n-5.2"
 <Callout type="warn">
   **A literal `api_key` is refused at project scope.** `<repo>/stella.toml` sits next to
   `README.md` and is committed and reviewed like source. A plaintext secret in it leaks
-  into version control the moment someone runs `git add .` — unlike `.stella/settings.json`,
-  which was at least one gitignore line away from that mistake. The refusal is enforced on
-  both the load path and `stella migrate config`'s write path, from one check, so a key
-  sitting in an untracked `settings.json` can never be silently copied into the committed
-  file. Use `api_key_env = "..."` to name an environment variable, or
-  `stella auth set <provider>` to store it in
-  [`credentials.toml`](/docs/configuration/credentials) instead — owner-only permissions,
+  into version control the moment someone runs `git add .` — a risk that
+  `.stella/settings.json` was at least one gitignore line away from. This refusal is
+  enforced on both the load path and `stella migrate config`'s write path, from one
+  check, so a key sitting in an untracked `settings.json` can never be silently copied
+  into the committed file. Use `api_key_env = "..."` to name an environment variable
+  instead, or `stella auth set <provider>` to store it in
+  [`credentials.toml`](/docs/configuration/credentials) with owner-only permissions and
   never committed. User and managed scope keep accepting `api_key` unchanged.
 </Callout>
 
@@ -236,12 +238,12 @@ default_model = "n-5.2"
 
 <CardGrid size="md">
   <OptionCard name="models.allowed">
-    Was `agent_engine_config.allowed_models`. Replaces wholesale across scopes — one
-    vocabulary, so a project can narrow the user's list without needing to restate it.
+    The TOML name for `agent_engine_config.allowed_models`. Replaces wholesale across
+    scopes — one list, so a project can narrow the user's list without restating it.
   </OptionCard>
   <OptionCard name="models.output_caps">
     Per-model output-token ceilings, merged **per key** (unlike `allowed` above). See
-    [`[models.output_caps]`](/docs/configuration/agent-engine-config#modelsoutput_caps--this-workspace)
+    [`[models.output_caps]`](/docs/configuration/agent-engine-config#modelsoutput_caps)
     for the full precedence chain.
   </OptionCard>
 </CardGrid>
@@ -260,13 +262,13 @@ allowed = ["anthropic/claude-fable-5", "zai/glm-5.2", "openrouter/openai/gpt-5.5
 The flattened, closed-set engine config — see
 [Agent engine config](/docs/configuration/agent-engine-config) for the full schema, model
 precedence, auto modes, and generation parameters, all unchanged. Flattening
-`[agents.default]` (rather than the JSON nesting's `[agents.agents.default]`) is safe only
-because the set of agent names is closed and none of them can collide with a root scalar
-like `default_model`.
+`[agents.default]` (instead of the JSON nesting's `[agents.agents.default]`) is safe
+only because the set of agent names is closed and none of them can collide with a root
+value like `default_model`.
 
-That closed set is exactly why plugin seats get a section of their own rather
-than joining this one: a seat name comes from whatever you installed, and
-user-chosen keys must not share a namespace with `auto_mode`.
+That closed set is exactly why plugin seats get a section of their own instead of
+joining this one: a seat name comes from whatever you installed, and user-chosen keys
+must not share a namespace with `auto_mode`.
 
 ```toml title="stella.toml"
 [agents]
@@ -299,10 +301,10 @@ entry runs on the session's model.
 
 ### `[plugins]`
 
-The per-plugin retraction switches — one `name = "on" | "off"` entry per installed
-plugin, the same shape JSON carries. An absent entry means the plugin runs; `"off"`
-withholds it without uninstalling it, which is what you want when a plugin is
-misbehaving mid-task and reinstalling it later should be a no-op.
+The per-plugin on/off switches — one `name = "on" | "off"` entry per installed plugin,
+the same shape JSON carries. An absent entry means the plugin runs; `"off"` turns it off
+without uninstalling it, which is what you want when a plugin is misbehaving mid-task
+and you want reinstalling it later to be a no-op.
 
 Keys are plugin ids, so like `[seats]` this is an **open** map: it cannot join
 `[agents]`, whose closed name set is what makes that table's flattening safe.
@@ -314,9 +316,9 @@ vera = "off"
 
 ### `[tools]`
 
-Same open map, same deny-list, same name-over-group-over-`"*"` precedence as
-[The tools section](/docs/configuration/settings#the-tools-section). The one TOML-specific
-wrinkle: `*` is not a valid bare TOML key, so the wildcard needs quotes.
+This is the same open map, deny-list, and name-over-group-over-`"*"` precedence as
+[The tools section](/docs/configuration/settings#the-tools-section). The one
+TOML-specific difference: `*` isn't a valid bare TOML key, so the wildcard needs quotes.
 
 ```toml title="stella.toml"
 [tools]
@@ -327,10 +329,10 @@ mcp         = "off"
 
 ### `[hooks]`
 
-Same schema and the same **concatenate-across-scopes** rule (the one block that isn't
-per-field or whole-block last-wins) as [Lifecycle hooks](/docs/agent-tools/hooks) — and the
-same project-trust gate. TOML expresses the event arrays as
-[array-of-tables](https://toml.io/en/v1.0.0#array-of-tables) rather than JSON's bracketed
+This has the same schema and the same **concatenate-across-scopes** rule (the one block
+that isn't per-field or whole-block last-wins) as [Lifecycle hooks](/docs/agent-tools/hooks),
+and the same project-trust gate. TOML expresses the event arrays as
+[array-of-tables](https://toml.io/en/v1.0.0#array-of-tables) instead of JSON's bracketed
 arrays:
 
 ```toml title="stella.toml"
@@ -347,11 +349,11 @@ matcher = "mcp__github__push_files"
 `registry_url` carries over unchanged — see [The mcp section](/docs/configuration/settings#the-mcp-section).
 
 <Callout type="warn">
-  **`[mcp.servers]` parses, but does nothing yet.** MCP servers still load exclusively from
-  [`.stella/mcp.toml`](/docs/agent-tools/mcp). A `stella.toml` declaring `[mcp.servers.*]`
-  entries loads without error and prints a startup notice naming the count — stated loudly
-  rather than silently dropped — but those servers will not start until the fold lands.
-  Keep server definitions in `.stella/mcp.toml` for now.
+  **`[mcp.servers]` parses, but does nothing yet.** MCP servers still load only from
+  [`.stella/mcp.toml`](/docs/agent-tools/mcp). A `stella.toml` declaring
+  `[mcp.servers.*]` entries loads without error and prints a startup notice naming the
+  count, so nothing is silently dropped — but those servers won't start yet. Keep server
+  definitions in `.stella/mcp.toml` for now.
 </Callout>
 
 ```toml title="stella.toml"
@@ -361,9 +363,10 @@ registry_url = "https://registry.example.internal/mcp"
 
 ### `[context]` and `[context_providers]`
 
-Unchanged shape and rules — whole-block last-wins for `context`, per-entry last-wins for
-`context_providers`. See [The context block](/docs/configuration/settings#the-context-block)
-and [External context providers](/docs/configuration/settings#external-context-providers).
+The shape and rules are unchanged: whole-block last-wins for `context`, per-entry
+last-wins for `context_providers`. See
+[The context block](/docs/configuration/settings#the-context-block) and
+[External context providers](/docs/configuration/settings#external-context-providers).
 
 ### `[ui]`
 
@@ -379,14 +382,14 @@ mid_turn_prompt = "queue"   # queue | ask | spawn
 
 Dictation from the composer: speak, and the transcript lands at the cursor. Hold Space
 through a warmup and release, or set `mode = "tap"` to tap Space on an empty prompt to
-start and tap again to stop — the mode to pick when holding Space never starts anything,
-because your terminal reports no key releases and OS key repeat is off. `/voice tap`,
+start and tap again to stop. Pick `tap` when holding Space never starts anything, because
+your terminal reports no key releases and OS key repeat is off. `/voice tap`,
 `/voice hold` and `/voice off` write these fields for you. Whole-block last-wins, like
-`[ui]`. Off by default — recording
-streams microphone audio to the provider named below, an egress you opt into by name.
-The provider id resolves through `[providers]` (or the built-in table) for its endpoint
-and API key, so this section holds no credential of its own; any provider with an
-OpenAI-compatible `audio/transcriptions` endpoint works, a local Whisper server included.
+`[ui]`. Off by default — recording sends microphone audio to the provider named below, a
+transfer you opt into by name. The provider id resolves through `[providers]` (or the
+built-in table) for its endpoint and API key, so this section holds no credential of its
+own; any provider with an OpenAI-compatible `audio/transcriptions` endpoint works, a
+local Whisper server included.
 
 ```toml title="stella.toml"
 [voice]
@@ -399,14 +402,14 @@ language = "en"              # BCP 47 hint; omit to auto-detect
 
 ### `[reward]`
 
-What a finished turn's verdict is worth as a training label (#1043). Whole-block last-wins,
-like `[ui]`; carries no credential or egress authority, so a project setting a weight is
-stating an opinion about its own evidence, not borrowing permission.
+What a finished turn's verdict is worth as a training label. Whole-block last-wins,
+like `[ui]`; it carries no credential or off-machine authority, so a project setting a
+weight is stating an opinion about its own evidence, not borrowing permission.
 
 <CardGrid size="sm">
   <OptionCard name="reward.deterministic_weight" defaultValue="1.0">
-    Magnitude of a deterministic pass or fail — the unit the shaping prices are measured
-    against.
+    The size of a deterministic pass or fail — the unit the other prices below are
+    measured against.
   </OptionCard>
   <OptionCard name="reward.per_step" defaultValue="0.02">
     Subtracted per model call.
@@ -424,26 +427,24 @@ stating an opinion about its own evidence, not borrowing permission.
 per_usd = 0.05   # price a dollar of spend at a tenth of the default
 ```
 
-`reward.verifier_weight` is **retired**. It priced a model verifier's opinion against
-`deterministic_weight`, and the verdict call that produced that tier no longer runs, so the
-weight steered nothing. A file that still sets it loads normally and reports the key as
-unrecognized.
+`reward.verifier_weight` does nothing. A file that sets it loads normally and reports
+the key as unrecognized.
 
 ### `[plan_review]`
 
-The deck's plan gate: before the first step of a plan runs, the task board goes to whoever is
-driving, as a card they can approve or send back. Both of its facts live here rather than
-compiled in (#4611). Whole-block last-wins, like `[ui]` and `[reward]` — the switch and the
-threshold are one policy, so a scope that declares either states both.
+The deck's plan gate: before the first step of a plan runs, the task board goes to
+whoever is driving, as a card they can approve or send back. Both parts of this gate are
+settings you can change here. Whole-block last-wins, like `[ui]` and `[reward]` — the
+switch and the threshold are one policy, so a scope that declares either one states both.
 
 <CardGrid size="sm">
   <OptionCard name="plan_review.enabled" defaultValue="on">
-    `off` withholds the gate, and no card is ever raised. Distinct from an unattended run,
-    which installs no gate anyway because nobody is there to answer one.
+    `off` removes the gate, and no card is ever raised. This is different from an
+    unattended run, which installs no gate anyway because nobody is there to answer one.
   </OptionCard>
   <OptionCard name="plan_review.min_steps" defaultValue="3">
-    How many **open** board rows raise a card. `1` asks about every plan; `0` is refused,
-    because an empty board has no open rows and `enabled` is how you say off.
+    How many **open** board rows raise a card. `1` asks about every plan; `0` is
+    refused, because an empty board has no open rows and `enabled` is how you say off.
   </OptionCard>
 </CardGrid>
 
@@ -457,22 +458,22 @@ put to the driver, whatever the file says.
 
 ### `[self_driving]`
 
-What [`stella self-driving`](/docs/commands/self-driving) signs its work with, which checks
-may block a merge, how it proves a change when CI cannot, how it decides where two operators
-would decide differently, and what vocabulary it places an issue in.
+What [`stella self-driving`](/docs/commands/self-driving) signs its work with, which
+checks can block a merge, how it proves a change when CI can't, how it decides things two
+operators would decide differently, and what vocabulary it places an issue in.
 
-Read from the **project** file alone. The loop resolves `<repo>/stella.toml` directly instead
-of through the scope merge, so a `[self_driving]` block in `~/.stella/stella.toml` parses
-without complaint and steers nothing. A project file the loop cannot parse prints a warning
-and the loop runs on its defaults — a typo in a section a run may never reach is not a reason
-to refuse to start. Everything here defaults, so a repository that writes none of it still
-gets a working loop.
+Read from the **project** file alone. The loop resolves `<repo>/stella.toml` directly
+instead of through the scope merge, so a `[self_driving]` block in
+`~/.stella/stella.toml` parses without complaint and steers nothing. A project file the
+loop cannot parse prints a warning and the loop runs on its defaults — a typo in a
+section a run may never reach is not a reason to refuse to start. Everything here has a
+default, so a repository that writes none of it still gets a working loop.
 
 #### `[self_driving.attribution]`
 
 What the loop appends to what it writes, and how it names branches and pull requests. It
 travels with the repository and an installed plugin may rewrite it, so a downstream
-distribution signs in its own name without forking.
+distribution can sign in its own name without forking.
 
 <CardGrid size="sm">
   <OptionCard name="self_driving.attribution.commit" defaultValue="created by stella*">
@@ -488,24 +489,25 @@ distribution signs in its own name without forking.
     Footer on every issue comment it posts.
   </OptionCard>
   <OptionCard name="self_driving.attribution.branch_prefix" defaultValue="stella/">
-    Namespace for every branch it creates. A prefix that does not end in `/` is used
-    verbatim rather than corrected — some teams namespace with `-`. An **empty** prefix is
-    read as unset and falls back to the default: an unnamespaced branch is indistinguishable
-    from a human's ref, and it is also what `stella fleet gc` would believe it owned.
+    The namespace for every branch it creates. A prefix that does not end in `/` is used
+    exactly as written, not corrected — some teams namespace with `-`. An **empty**
+    prefix is read as unset and falls back to the default: an unnamespaced branch is
+    indistinguishable from a human's ref, and it is also what `stella fleet gc` would
+    believe it owned.
   </OptionCard>
   <OptionCard name="self_driving.attribution.title_prefix" defaultValue="stella self-driving:">
-    Prefix on the **title** of every pull request it opens, so an autonomous one is
-    distinguishable in the list where a maintainer actually triages. Not applied
+    A prefix on the **title** of every pull request it opens, so an autonomous one
+    stands out in the list where a maintainer actually triages. Not applied
     to commit messages: those follow Conventional Commits, and a prefix in front of
     `fix(stella-cli):` would break the scope. An already-prefixed title is left alone, so
-    re-opening a pull request for the same issue cannot stack it twice.
+    reopening a pull request for the same issue cannot stack it twice.
   </OptionCard>
 </CardGrid>
 
 A footer lands after the body's last non-blank character, separated by a blank line and a
 `---` rule; trailing whitespace on the body is normalized first, so two callers whose bodies
 differ only in how they ended produce identical output. Setting a surface's string to `""`
-suppresses its footer and leaves the body untouched. The separator itself is fixed.
+turns off its footer and leaves the body untouched. The separator itself is fixed.
 
 ```toml title="stella.toml"
 [self_driving.attribution]
@@ -518,15 +520,17 @@ title_prefix  = "auto:"
 
 #### `[self_driving.merge]`
 
-Which checks are allowed to block a merge. Filtering to a repository's *required* contexts is
-necessary and not sufficient: a required check fails identically whether the code is wrong or
-the billing account is suspended, and only one of those is fixable by a pull request.
+Which checks are allowed to block a merge. Filtering down to a repository's *required*
+contexts is necessary but not enough on its own: a required check fails the same way
+whether the code is wrong or the billing account is suspended, and only one of those
+problems can be fixed by a pull request.
 
 <CardGrid size="sm">
   <OptionCard name="self_driving.merge.ignore_checks" defaultValue="[]">
-    Checks that never block, whatever their history. The operator's escape hatch — automatic
-    detection needs several commits of evidence, and somebody who already knows their deploy
-    provider is suspended should not have to wait for the loop to infer it.
+    Checks that never block, whatever their history. The operator's escape hatch —
+    automatic detection needs several commits of evidence, and somebody who already
+    knows their deploy provider is suspended should not have to wait for the loop to
+    infer it.
   </OptionCard>
   <OptionCard name="self_driving.merge.stuck_after" defaultValue="3">
     Consecutive failing base commits after which a check is treated as unwinnable. `0`
@@ -536,41 +540,42 @@ the billing account is suspended, and only one of those is fixable by a pull req
 
 #### `[self_driving.verify]`
 
-How to prove a change when CI cannot. A repository whose remote checks cannot go green — a
-suspended account, an exhausted quota — still has a test suite. Running it on this machine is
-a weaker signal than a clean CI run and a far stronger one than nothing.
+How to prove a change when CI can't. A repository whose remote checks can't go green — a
+suspended account, an exhausted quota — still has a test suite. Running it on this
+machine is a weaker signal than a clean CI run and a far stronger one than nothing.
 
 <CardGrid size="sm">
   <OptionCard name="self_driving.verify.command" defaultValue="unset">
-    The command that proves a change, run in the work worktree. Absent means detect it from
-    the project's own tooling.
+    The command that proves a change, run in the work worktree. Absent means detect it
+    from the project's own tooling.
   </OptionCard>
   <OptionCard name="self_driving.verify.timeout_secs" defaultValue="1800">
-    Seconds before the command is abandoned — long enough for a monorepo suite, short enough
-    that a wedged process does not hold the loop overnight.
+    Seconds before the command is abandoned — long enough for a monorepo suite, short
+    enough that a stuck process does not hold the loop overnight.
   </OptionCard>
 </CardGrid>
 
 #### `[self_driving.doctrine]`
 
-How the loop decides, where two operators would decide differently. These are judgements
-about a team's norms rather than facts about the code, which is why they are declared instead
-of compiled in: the person who starts the loop is the person who decides how it decides, and
-that is only true if what it will do is legible before it does it.
+How the loop decides things where two operators would decide differently. These are
+judgment calls about a team's norms rather than facts about the code, which is why they
+are declared instead of built in: the person who starts the loop is the person who
+decides how it decides, and that is only true if what it will do is clear before it does
+it.
 
 <CardGrid size="sm">
   <OptionCard name="self_driving.doctrine.foreign_breakage" defaultValue="file_and_adopt">
     What to do about breakage the loop did not cause. `file_and_adopt` files it and then
     fixes it at the top of the queue; `file_and_wait` leaves the fix to a human; `ignore`
-    does neither. Adopting is the default because a red base blocks this loop exactly as hard
-    as it blocks its author, so a loop that files and waits has handed its throughput to
-    somebody else's response time.
+    does neither. Adopting is the default because a broken base blocks this loop exactly
+    as hard as it blocks its author, so a loop that files and waits has handed its
+    progress to somebody else's response time.
   </OptionCard>
   <OptionCard name="self_driving.doctrine.contention" defaultValue="defer">
-    How much weight another actor's apparent work carries. `defer` treats any sign — a branch,
-    a worktree, a held ledger claim — as reason to leave the issue alone; `claims_only`
-    defers on a held claim and reads branches and worktrees as advisory; `proceed` claims
-    regardless.
+    How much weight another actor's apparent work carries. `defer` treats any sign — a
+    branch, a worktree, a held ledger claim — as reason to leave the issue alone;
+    `claims_only` defers on a held claim and reads branches and worktrees as advisory;
+    `proceed` claims regardless.
   </OptionCard>
   <OptionCard name="self_driving.doctrine.abandon_escalated" defaultValue="false">
     Whether an escalated pull request is abandoned so the loop can carry on, rather than
@@ -581,10 +586,11 @@ that is only true if what it will do is legible before it does it.
 
 #### `[self_driving.triage]`
 
-The vocabulary the loop places issues in — which labels mean urgent, which mean "this is ours
-to work", which mean "this is not". It lives here rather than in the tracker manifest because
-these are *this operator's* judgements about their own backlog, not how a tracker spells a
-concept every tracker has; two teams on one GitHub can want different ladders.
+The vocabulary the loop places issues in: which labels mean urgent, which mean "this is
+ours to work," and which mean "this is not." It lives here rather than in the tracker
+manifest because these are *this operator's* judgment calls about their own backlog, not
+how a tracker spells a concept every tracker has; two teams on one GitHub can want
+different ladders.
 
 <CardGrid size="sm">
   <OptionCard name="self_driving.triage.priorities" defaultValue='["P0", "P1", "P2", "P3"]'>
@@ -594,15 +600,16 @@ concept every tracker has; two teams on one GitHub can want different ladders.
     Labels meaning "this loop works this".
   </OptionCard>
   <OptionCard name="self_driving.triage.excluded_kinds" defaultValue='["enhancement", "feature", "documentation", "question"]'>
-    Labels meaning "this loop does not work this". Named explicitly rather than inferred from
-    "not a defect kind": an issue labelled `enhancement` has been judged and excluded, while
-    an issue labelled only `P0` has been judged on one axis and not the other, and only the
-    first may be dropped silently.
+    Labels meaning "this loop does not work this". Named explicitly rather than inferred
+    from "not a defect kind": an issue labelled `enhancement` has been judged and
+    excluded, while an issue labelled only `P0` has been judged on one axis and not the
+    other, and only the first may be dropped silently.
   </OptionCard>
 </CardGrid>
 
-Each list defaults on its own, and declaring one **replaces** it wholesale rather than adding
-to it — a partial override would leave you unable to *remove* a built-in you disagree with.
+Each list defaults on its own, and declaring one **replaces** it wholesale rather than
+adding to it — a partial override would leave you unable to *remove* a built-in you
+disagree with.
 
 ```toml title="stella.toml"
 [self_driving.triage]
@@ -610,21 +617,21 @@ priorities   = ["Sev1", "Sev2", "Sev3"]
 defect_kinds = ["defect"]
 ```
 
-**An issue carrying no rung is not ranked last.** It is separated out as unassessed, and the
-loop spends a turn triaging it before claiming any work — so a `Sev1` filed thirty seconds
-ago with no labels yet does not sort beneath a `Sev3` from March. That turn judges the issue
-against the workspace's [context records](/docs/commands/context), which means the
-ladder is changed by publishing and retiring records rather than by editing code. A turn that
-cannot place an issue in the declared vocabulary labels it for a human instead of meeting it
-again on the next pass. The design behind this is `doc:backlog-self-driving` §3.2.
+**An issue carrying no rung is not ranked last.** It is set aside as unassessed, and the
+loop spends a turn triaging it before claiming any work — so a `Sev1` filed thirty
+seconds ago with no labels yet does not sort beneath a `Sev3` from March. That turn
+judges the issue against the workspace's [context records](/docs/commands/context),
+which means the ladder is changed by publishing and retiring records rather than by
+editing code. A turn that cannot place an issue in the declared vocabulary labels it for
+a human instead of meeting it again on the next pass.
 
 ### `[issues]`
 
-Which tracker is active, and where its vocabulary lives. Two fields and no more: *which*
-tracker is a stella-level decision and belongs in `stella.toml`; *how that tracker spells
-things* is the tracker's own vocabulary and belongs in its manifest, which this points at.
-Collapsing them would leave a workspace spanning two trackers nowhere to put the second one's
-words. Read from the project file alone, like `[self_driving]`.
+Which tracker is active, and where its vocabulary lives. Two fields and no more: which
+tracker to use is a stella-level decision and belongs in `stella.toml`; how that tracker
+spells things is the tracker's own vocabulary and belongs in its manifest, which this
+points at. Combining them would leave a workspace spanning two trackers with nowhere to
+put the second one's words. Read from the project file alone, like `[self_driving]`.
 
 <CardGrid size="sm">
   <OptionCard name="issues.provider" defaultValue="github">
@@ -632,9 +639,9 @@ words. Read from the project file alone, like `[self_driving]`.
     name warns and falls back to GitHub's until you declare the manifest.
   </OptionCard>
   <OptionCard name="issues.manifest" defaultValue=".stella/issues/<provider>.toml">
-    Path to the provider's manifest, relative to the workspace root. An absent **file** is
-    the built-in defaults for that provider rather than an error, so a workspace that has
-    configured nothing still works.
+    Path to the provider's manifest, relative to the workspace root. A missing file just
+    means the built-in defaults for that provider, not an error, so a workspace with no
+    configuration still works.
   </OptionCard>
 </CardGrid>
 
@@ -644,43 +651,43 @@ provider = "github"
 manifest = ".stella/issues/github.toml"
 ```
 
-What the manifest holds, and the three resolutions stella branches on, are covered in
-[Which tracker, and how it talks](/docs/commands/self-driving#which-tracker-and-how-it-talks).
+The manifest fields, and how stella reads them, are covered in
+[Tracker support](/docs/commands/self-driving#tracker-support).
 
-### `[authority]` — managed scope only
+### `[authority]`
 
-Unchanged — see [Managed authority ceilings](/docs/configuration/settings#managed-authority-ceilings).
+Only valid at managed scope. Unchanged from JSON — see
+[Managed authority ceilings](/docs/configuration/settings#managed-authority-ceilings).
 Present in a user or project `stella.toml`, it is ignored; only the file at the
 managed-scope path grants it.
 
-### `[enterprise_telemetry]` — managed scope only
+### `[enterprise_telemetry]`
 
-Unchanged — see [Enterprise telemetry enrollment](/docs/configuration/settings#enterprise-telemetry-enrollment).
-Round-trips as an untyped table and is validated fail-open by its own adapter, so its shape
-is not pinned by this schema.
+Only valid at managed scope. Unchanged from JSON — see
+[Enterprise telemetry enrollment](/docs/configuration/settings#enterprise-telemetry-enrollment).
+It round-trips as an untyped table and is checked by its own adapter, which fails open,
+so its shape is not fixed by this schema.
 
-## Comments and edits survive a write
+## Comments survive a write
 
-The whole reason to migrate: `stella.toml` is edited through
+This is the whole reason to migrate: `stella.toml` is edited through
 [`toml_edit`](https://docs.rs/toml_edit), which rewrites only the keys a save actually
-touches and preserves everything else — comments, key order, blank lines — byte-for-byte.
-`/theme`, the tool-switch editor, and the [engine config panel](/docs/configuration/agent-engine-config#the-config-panel-in-the-command-deck)
-all edit `stella.toml` in place once one exists for that scope. A `settings.json` re-render
-through `serde_json::Value` cannot make this promise — JSON has nothing to preserve besides
-keys — which is why comment loss was the risk this whole format port was built to avoid.
+touches and preserves everything else (comments, key order, blank lines) exactly as
+they were. `/theme`, the tool-switch editor, and the
+[engine config panel](/docs/configuration/agent-engine-config#config-panel) all edit
+`stella.toml` in place once one exists for that scope. A `settings.json` re-render can't
+make this promise, since JSON has nothing to preserve besides keys — comment loss is the
+risk this whole format was built to avoid.
 
-## What is not built yet
+## Not built yet
 
-Phase 1 — the format port covered on this page — is complete. `docs/spec/config-system/DESIGN.md`
-lays out five further phases that are **design only**, not yet functional: wrapper-stage
-toggles, per-agent tool scope over an agent set wider than the engine's, `[models]` pin /
-track_latest policy, provider fallback (`provider_preference`), and declarative
-`[integrations.<id>]` blocks for tools with interchangeable backends. The engine's own set
-is no longer the four names that phrase was written against: #3908 collapsed it to one role
-(`[agents.default]`), and the open, user-chosen half of the problem is already answered for
-plugin-declared roles by `[seats]`. None of those keys do
-anything if you write them today — read the design doc on GitHub if you want the plan before
-it ships:
+Several features are planned but not built yet: wrapper-stage toggles, per-agent tool scope over an agent set
+wider than the engine's, `[models]` pin / track_latest policy, provider fallback
+(`provider_preference`), and declarative `[integrations.<id>]` blocks for tools with
+interchangeable backends. The engine's own agent set is one role today
+(`[agents.default]`), and the open, user-chosen half of that problem is already
+answered for plugin-declared roles by `[seats]`. None of the planned keys above do
+anything if you write them today — see the design document for the full plan:
 [`docs/spec/config-system/DESIGN.md`](https://github.com/macanderson/stella/blob/main/docs/spec/config-system/DESIGN.md).
 
 ## A complete example file
@@ -728,7 +735,8 @@ matcher = "mcp__github__push_files"
 theme = "stella-dark"
 ```
 
-Check what actually resolved — the same two commands regardless of which format loaded it:
+Check what actually resolved. These are the same two commands regardless of which
+format loaded it:
 
 ```bash
 stella config
@@ -737,8 +745,8 @@ stella models
 
 ## Security
 
-Same posture as `settings.json`: a `stella.toml` may carry an `api_key` in plaintext at
-user or managed scope, so treat it like any other secret file at those scopes. Project
-scope removes the temptation entirely — see [`[providers]`](#providers) above — which is
-the one thing the JSON format could never enforce, because `.stella/settings.json` had no
-single canonical location to enforce it from.
+This follows the same rule as `settings.json`: a `stella.toml` may carry an `api_key` in
+plaintext at user or managed scope, so treat it like any other secret file at those
+scopes. Project scope removes the temptation entirely — see [`[providers]`](#providers)
+above — which is one thing the JSON format could never enforce, because
+`.stella/settings.json` had no single fixed location to enforce it from.
