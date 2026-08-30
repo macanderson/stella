@@ -1576,7 +1576,7 @@ crates/stella-tui/src/tool_class.rs 9.23
 crates/stella-tui/src/transcript_build.rs 9.04
 crates/stella-tui/src/transcript_build/tests.rs 10.61
 crates/stella-tui/src/transcript_nav.rs 9.44
-crates/stella-tui/src/views.rs 9.46
+crates/stella-tui/src/views/mod.rs 9.46
 crates/stella-tui/src/views/agents_page.rs 8.79
 crates/stella-tui/src/views/approval.rs 7.68
 crates/stella-tui/src/views/budget_card.rs 9.98
