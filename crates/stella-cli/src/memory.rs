@@ -120,11 +120,11 @@ pub(crate) use skill_files::{
 // here, so exactly one place in the crate resolves a `context.*` sub-block.
 pub use tuning::session_lifecycle_enabled;
 
-/// Marker prefixing a recalled-context message so `inject_recall_block`
-/// can find the newest one for dedup. Blocks land at the conversation
-/// tail and stay in place as durable history (L-E8: the byte-stable
-/// prefix — system prompt AND replayed turns — is never rewritten, which
-/// is what preserves prompt-cache hits).
+/// Marker prefixing a recalled-context message so
+/// [`recall::inject_recall_block`] can find the newest one for dedup. Blocks
+/// land at the conversation tail and stay in place as durable history (L-E8:
+/// the byte-stable prefix — system prompt AND replayed turns — is never
+/// rewritten, which is what preserves prompt-cache hits).
 ///
 /// Phase 2 (#713) moved the definition to `stella-core`, where receipt
 /// decomposition reads it to recognize a recall block. This is a re-export,
