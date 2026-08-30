@@ -472,6 +472,33 @@ fn defer_stream_terminal(
     }
 }
 
+/// The two facts a bare bool collapsed at this function's call sites: whether
+/// the writes this close-out performs actually reached the store, and
+/// whether the resulting audit record is complete enough to export. A
+/// cancelled execution can have the first true and the second false — every
+/// write succeeded, but the provider-side usage envelope is unknowably lost,
+/// not that anything failed to write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ExecutionEndOutcome {
+    /// The agent-use, MCP-usage and outcome writes this function performs
+    /// all reached the store.
+    pub(crate) write_ok: bool,
+    /// Every fact this execution needs to export is present.
+    /// `false` for a cancelled execution even when `write_ok` is true.
+    pub(crate) audit_complete: bool,
+}
+
+impl ExecutionEndOutcome {
+    /// The old bare bool's meaning, for a caller that has not been split into
+    /// "did the write fail" versus "is the audit incomplete" yet: both facts
+    /// must hold. Equivalent to the pre-split `audit_complete && finish_ok`,
+    /// since `audit_complete` already folds in the same write checks
+    /// `write_ok` does.
+    pub(crate) fn fully_recorded(self) -> bool {
+        self.write_ok && self.audit_complete
+    }
+}
+
 /// Close out one execution's audit record: drain the registry's agent-use
 /// and MCP-usage ledgers (each already single-execution), settle the
 /// outcome, and hand the finished row to the downstream projections.
@@ -482,7 +509,7 @@ pub(crate) fn record_execution_end(
     outcome_label: &str,
     cost_usd: f64,
     persistence_complete: bool,
-) -> bool {
+) -> ExecutionEndOutcome {
     let uses: Vec<stella_store::AgentUseRow> = registry
         .drain_agent_uses()
         .into_iter()
@@ -511,7 +538,10 @@ pub(crate) fn record_execution_end(
     let _ = store.finalize_execution_reflection(execution_id);
     let _ = store.sync_to_usage_default(execution_id);
     let _ = crate::enterprise_telemetry::enqueue_finalized_execution(store, execution_id);
-    audit_complete && finish_ok
+    ExecutionEndOutcome {
+        write_ok: uses_ok && mcp_usage_ok && finish_ok,
+        audit_complete,
+    }
 }
 
 fn mcp_usage_rows(registry: &ToolRegistry) -> Vec<stella_store::McpUsageRow> {

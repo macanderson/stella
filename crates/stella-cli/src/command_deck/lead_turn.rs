@@ -219,7 +219,9 @@ pub(super) async fn run_lead_turn(
             outcome_label,
             cost,
             persistence_complete,
-        ) {
+        )
+        .fully_recorded()
+        {
             forwarder::warn_audit_record_incomplete(in_tx, LEAD, persistence_complete);
             // That warning lands AFTER the turn's Complete event, and the
             // deck's status fold maps a retryable Error back to Running — so
