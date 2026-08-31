@@ -459,9 +459,10 @@ pub(crate) enum Command {
         #[arg(long, value_name = "FILE", conflicts_with = "tasks")]
         plan: Option<std::path::PathBuf>,
 
-        /// Max tasks dispatched concurrently within one wave
-        #[arg(long, default_value_t = 4)]
-        max_concurrency: usize,
+        /// Max tasks running at once within one wave (default: the
+        /// self-driving governor's number for this machine)
+        #[arg(long)]
+        max_concurrency: Option<usize>,
 
         /// Git ref `isolation = "isolated"` worktrees branch from
         /// (default: current HEAD); shared-tree tasks ignore it

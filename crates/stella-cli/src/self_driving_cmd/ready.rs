@@ -1,11 +1,11 @@
-//! The backlog-seeded work generator behind `drive --backlog`, and the
+//! The backlog-seeded work generator behind `drive --backlog`, plus the
 //! dry-run report.
 //!
-//! The defect queue takes only what triage classified as a defect; this
-//! generator drains a whole backlog in readiness order — see
-//! `stella_autonomy::ready` for what ready means and how `Blocked by:` lines
-//! are read. A sibling of `self_driving_cmd.rs` because new logic lands
-//! beside that file, never in it.
+//! The defect queue takes only what triage classified as a defect. This
+//! generator drains a whole backlog in readiness order. See
+//! `stella_autonomy::ready` for what ready means and how `Blocked by:`
+//! lines are read. New logic lands here, beside `self_driving_cmd.rs`,
+//! never inside it.
 
 use std::collections::BTreeSet;
 
@@ -20,22 +20,54 @@ use super::state::LoopState;
 
 /// One read of the tracker, folded into the ready backlog.
 ///
-/// The open set and the items come from the same read, so an issue and its
-/// blocker are judged against one moment — two reads could see a blocker
-/// close between them and disagree with themselves.
+/// The open set and the items come from the same read. An issue and its
+/// blocker are judged against one moment. Two separate reads could see a
+/// blocker close between them and disagree with each other.
 ///
-/// `stella_autonomy::ready`'s readiness rule trusts the open set it is
-/// handed to be complete: a blocker not present there reads as closed. A
-/// read that lands exactly on `QUEUE_READ_LIMIT` cannot make that promise —
-/// the tracker may hold more open issues than the page carried, and one of
-/// them could be the very blocker a dependent issue names. Silently folding
-/// a truncated page into `open` would let that dependent read as ready when
-/// its blocker is simply off-page, so a hit on the ceiling fails loud
-/// instead of guessing.
+/// `stella_autonomy::ready`'s readiness rule trusts that the open set it
+/// gets is complete. A blocker missing from that set reads as closed. A
+/// read that lands exactly on `QUEUE_READ_LIMIT` cannot promise that. The
+/// tracker may hold more open issues than the page carried, and one of
+/// them could be the blocker a dependent issue names. Folding a cut-off
+/// page into `open` would let that dependent issue read as ready when its
+/// blocker is only off the page. So a read at the ceiling fails with an
+/// error instead of guessing.
 fn ready_issues(
     provider: &dyn IssueProvider,
     ladder: &PriorityLadder,
 ) -> Result<Vec<stella_autonomy::QueueIssue>, String> {
+    let issues = open_page(provider)?;
+    Ok(fold_ready(&issues, ladder))
+}
+
+/// The ready backlog with the tracker's full records attached, in the order
+/// the loop should take them.
+///
+/// The parallel wave needs whole issues, because a worker's prompt quotes
+/// the body. The serial loop's queue wants bare keys instead, and looks
+/// each one up again later. Same single read here, same readiness fold.
+/// The ready numbers are then joined back to the records of the read that
+/// judged them. So a wave can never pair one moment's readiness with
+/// another moment's body.
+pub(super) fn ready_full(
+    provider: &dyn IssueProvider,
+    ladder: &PriorityLadder,
+) -> Result<Vec<stella_protocol::issue::Issue>, String> {
+    let issues = open_page(provider)?;
+    let ready = fold_ready(&issues, ladder);
+    Ok(ready
+        .iter()
+        .filter_map(|queued| {
+            issues
+                .iter()
+                .find(|issue| issue.key.as_str() == queued.number.to_string())
+                .cloned()
+        })
+        .collect())
+}
+
+/// One bounded read of the open set — the truncation refusal above.
+fn open_page(provider: &dyn IssueProvider) -> Result<Vec<stella_protocol::issue::Issue>, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -52,7 +84,14 @@ fn ready_issues(
             super::backlog::QUEUE_READ_LIMIT,
         ));
     }
+    Ok(issues)
+}
 
+/// The readiness fold over one read's records.
+fn fold_ready(
+    issues: &[stella_protocol::issue::Issue],
+    ladder: &PriorityLadder,
+) -> Vec<stella_autonomy::QueueIssue> {
     let open: BTreeSet<u64> = issues
         .iter()
         .filter_map(|issue| issue.key.as_str().parse().ok())
@@ -64,14 +103,14 @@ fn ready_issues(
             blocked_by: stella_autonomy::ready::blocker_refs(&issue.body),
         })
         .collect();
-
-    Ok(stella_autonomy::ready::ready_queue(items, &open, ladder))
+    stella_autonomy::ready::ready_queue(items, &open, ladder)
 }
 
 /// The ready backlog as bare keys, in the order the loop should take them.
 ///
-/// The backlog twin of `backlog::ranked_keys`: same read ceiling, same shape,
-/// a different definition of "next" — readiness instead of defect rank.
+/// The backlog twin of `backlog::ranked_keys`. Same read ceiling, same
+/// shape, but a different rule for "next": readiness instead of defect
+/// rank.
 pub(super) fn ready_keys(
     provider: &dyn IssueProvider,
     ladder: &PriorityLadder,
@@ -84,8 +123,9 @@ pub(super) fn ready_keys(
 
 /// Report what `drive` would take next, and take nothing.
 ///
-/// One tracker read and a printed answer. No claim, no branch, no label, no
-/// session record — a caller checking the loop's aim must not move its hand.
+/// One tracker read, and one printed answer. No claim, no branch, no
+/// label, no session record. A caller checking the loop's aim must not
+/// move its hand.
 pub(super) fn dry_run(
     provider: &dyn IssueProvider,
     cfg: &LoopConfig,
@@ -124,16 +164,17 @@ pub(super) fn dry_run(
 
 /// Append one delivered issue to the cycle ledger.
 ///
-/// The same `ledger.jsonl` the audit cycles write, so `state`, `metrics` and
-/// the dashboard fold delivered work with no second reader. The aperture is
-/// `backlog` — a delivered cycle is not a lens going dry, and scoping the
-/// dry-streak arithmetic by aperture keeps the two from mixing.
+/// This writes the same `ledger.jsonl` the audit cycles write. `state`,
+/// `metrics`, and the dashboard fold delivered work with no second
+/// reader. The aperture is `backlog`. A delivered cycle is not a lens
+/// going dry, and scoping the dry-streak math by aperture keeps the two
+/// apart.
 ///
-/// The ledger row is appended before the durable counter advances: if the
-/// append fails, the counter is untouched and the next attempt still claims
-/// this same cycle number. Advancing the counter first would let a failed
-/// append leave it ahead of the ledger, so the next successful delivery
-/// would skip a cycle number the ledger never recorded.
+/// The ledger row is appended before the durable counter moves. If the
+/// append fails, the counter stays put, and the next attempt still
+/// claims this same cycle number. Moving the counter first would let a
+/// failed append leave it ahead of the ledger. Then the next successful
+/// delivery would skip a cycle number the ledger never recorded.
 pub(super) fn record_delivery_cycle(st: &LoopState, issue: &str, pr: &str) -> Result<(), String> {
     let cycle = st.cycle_counter() + 1;
 
@@ -173,8 +214,8 @@ mod tests {
 
     use super::*;
 
-    /// A tracker fixture that counts every write, so a test can assert not
-    /// only what was read but that nothing was written.
+    /// A tracker fixture that counts every write. A test can then assert
+    /// what it read, and also that it wrote nothing.
     #[derive(Default)]
     struct FixtureProvider {
         open: Vec<Issue>,
@@ -271,10 +312,10 @@ mod tests {
         }
     }
 
-    /// The delivery witness. The generator picks the ready issue — the open
-    /// blocker holds one back, the closed blocker holds nothing back — and a
-    /// delivered issue lands in the cycle ledger as a row the existing folds
-    /// can read.
+    /// The delivery witness. The generator picks the ready issue. The open
+    /// blocker holds one back. The closed blocker holds nothing back. A
+    /// delivered issue lands in the cycle ledger as a row the existing
+    /// folds can read.
     #[test]
     fn the_backlog_generator_picks_the_ready_issue_and_records_the_delivered_cycle() {
         let provider = FixtureProvider::with(vec![
@@ -311,8 +352,8 @@ mod tests {
         assert_eq!(st.cycle_counter(), 1, "the counter moved with the row");
     }
 
-    /// The counter/ledger ordering witness: a failed append must not leave
-    /// the durable counter ahead of the ledger it counts.
+    /// The counter/ledger ordering witness. A failed append must not
+    /// leave the durable counter ahead of the ledger it counts.
     #[test]
     fn a_failed_ledger_append_leaves_the_cycle_counter_untouched() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -330,9 +371,9 @@ mod tests {
         );
     }
 
-    /// The truncation witness: a read that lands on the read ceiling must
-    /// not be trusted as the complete open set — a blocker could be sitting
-    /// just off the page and misread as closed.
+    /// The truncation witness. A read that lands on the read ceiling must
+    /// not be trusted as the complete open set. A blocker could sit just
+    /// off the page and read as closed by mistake.
     #[test]
     fn a_read_at_the_ceiling_refuses_to_judge_readiness() {
         let issues: Vec<Issue> = (0..super::super::backlog::QUEUE_READ_LIMIT)
@@ -347,8 +388,9 @@ mod tests {
         );
     }
 
-    /// The dry-run witness: it reads the tracker and writes nothing — no
-    /// filing, no label, no comment, no closure — in either generator mode.
+    /// The dry-run witness. It reads the tracker and writes nothing: no
+    /// filing, no label, no comment, no closure, in either generator
+    /// mode.
     #[test]
     fn a_dry_run_reads_the_tracker_and_writes_nothing() {
         let provider = FixtureProvider::with(vec![

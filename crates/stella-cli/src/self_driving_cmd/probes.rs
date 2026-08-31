@@ -49,13 +49,15 @@ fn run(cmd: &str, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-fn cpu_total() -> u32 {
+/// Core count. Honours `SELF_DRIVING_PROBE_CPU` like every other probe.
+/// Crate-visible because the AIMD limits derive their hard cap from this
+/// alone. Reading the whole supply there would pay for the battery and
+/// busy-box probes just to drop them.
+pub(crate) fn cpu_total() -> u32 {
     if let Some(v) = env_override("SELF_DRIVING_PROBE_CPU") {
         return v as u32;
     }
-    std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(2)
+    stella_autonomy::detected_cpus()
 }
 
 /// Integer part of the 1-minute load average; the governor compares

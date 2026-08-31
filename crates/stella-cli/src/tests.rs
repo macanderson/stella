@@ -463,7 +463,7 @@ fn session_flags_parse_after_subcommand() {
             ..
         }) => {
             assert_eq!(tasks, vec!["fix the flaky auth test".to_string()]);
-            assert_eq!(max_concurrency, 2);
+            assert_eq!(max_concurrency, Some(2));
         }
         _ => panic!("expected the fleet subcommand"),
     }

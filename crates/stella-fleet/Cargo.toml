@@ -12,6 +12,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+stella-autonomy = { path = "../stella-autonomy" }
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
 stella-store = { path = "../stella-store" }

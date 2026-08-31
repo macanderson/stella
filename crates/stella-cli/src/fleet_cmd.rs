@@ -98,7 +98,7 @@ pub async fn run_fleet(
     prompts: &[String],
     plan_file: Option<&Path>,
     base_ref: Option<&str>,
-    max_concurrency: usize,
+    max_concurrency: Option<usize>,
     budget_limit: Option<f64>,
     watch: bool,
     task_timeout: Option<std::time::Duration>,
@@ -121,6 +121,14 @@ pub async fn run_fleet(
     let root = cfg.workspace_root.clone();
     let plan = load_plan(prompts, plan_file)?;
     plan.validate().map_err(|e| format!("invalid plan: {e}"))?;
+
+    // The fan-out width. An explicit flag wins; absent one, the governor's
+    // number, so the default is derived rather than written down.
+    let max_concurrency = effective_concurrency(max_concurrency, || {
+        let width = crate::self_driving_cmd::governor::recommended_parallelism();
+        println!("  concurrency {width} — the self-driving governor's number\n");
+        width
+    });
     // Resolved once here, before a worktree is cut or a provider is built, for
     // the reason `run_raw_one_shot` resolves before its own paid call: a
     // `--pipeline` naming nothing installed must fail as a typo, not once per
@@ -385,6 +393,16 @@ pub async fn run_fleet(
         ));
     }
     Ok(())
+}
+
+/// The width one run uses: the flag when given, else the governor's
+/// number. Both arms clamp to at least one. The governor arm is a closure
+/// so a run with an explicit flag never pays to read battery and load.
+fn effective_concurrency(flag: Option<usize>, governor: impl FnOnce() -> u32) -> usize {
+    match flag {
+        Some(n) => n.max(1),
+        None => governor().max(1) as usize,
+    }
 }
 
 /// Build the plan: an explicit `--plan` file (JSON or TOML, deserializing

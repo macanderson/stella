@@ -156,7 +156,8 @@ pub struct AimdLimits {
     pub batch_max: u32,
     /// A resource failure can never halve the batch below this (default 2).
     pub batch_min: u32,
-    /// Worktree parallelism can never exceed this (default 4).
+    /// Worker fan-out can never exceed this. The default comes from
+    /// [`machine_parallel_ceiling`], not from a constant.
     pub parallel_max: u32,
 }
 
@@ -165,9 +166,33 @@ impl Default for AimdLimits {
         Self {
             batch_max: 20,
             batch_min: 2,
-            parallel_max: 4,
+            parallel_max: machine_parallel_ceiling(detected_cpus()),
         }
     }
+}
+
+/// The hard cap on workers this machine can host: two cores short of all
+/// of them, and never below four.
+///
+/// The cap comes from the box, not from a constant. A 16-core machine held
+/// to a written-down 4 idles most of itself, and the controller above can
+/// only adapt inside the bound it is given. Two cores are held back so the
+/// operator's own shell still runs well. The floor of four keeps a small
+/// box at the width the controller was tuned on. The
+/// `SELF_DRIVING_PARALLEL_MAX` knob still wins over this value; that check
+/// lives with the other env knobs in `stella-cli`, not here.
+#[must_use]
+pub fn machine_parallel_ceiling(cpu: u32) -> u32 {
+    cpu.saturating_sub(2).max(4)
+}
+
+/// How many CPUs this process can see. A box that will not say reads as 2 —
+/// small, the same direction the supply probes lean.
+#[must_use]
+pub fn detected_cpus() -> u32 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(2)
 }
 
 /// The controller's learned state, persisted as `calibration.json`.
@@ -726,6 +751,24 @@ pub fn plan_cycle(
         bench,
         reason,
     }
+}
+
+/// How many workers this box should run right now, on its own.
+///
+/// This is [`plan_cycle`]'s `parallel` knob, pulled out for the callers
+/// that need only it: the fleet's fan-out width and `drive`'s worker
+/// count. Both draw from the one source the planner uses, instead of
+/// writing down a width the calibration never sees. Demand plays no part
+/// here. The queue can shrink a cycle's *batch*, never its worker count,
+/// so an empty demand changes nothing about this answer.
+#[must_use]
+pub fn recommended_parallelism(
+    supply: Supply,
+    ceilings: &Calibration,
+    floors: Floors,
+    limits: &AimdLimits,
+) -> u32 {
+    plan_cycle(supply, Demand::default(), ceilings, floors, limits).parallel
 }
 
 // ---------------------------------------------------------------------------

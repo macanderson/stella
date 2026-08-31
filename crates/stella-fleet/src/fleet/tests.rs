@@ -13,6 +13,25 @@ use stella_protocol::BudgetMode;
 
 use crate::git::{GitCli, GitError, GitOutput};
 
+/// **The witness.** The default fan-out width comes from the machine, not
+/// from a written-down number. A literal 4 here bounded every run on every
+/// box the same way, and nothing calibrated it. The same source feeds the
+/// self-driving governor, so the fleet and the loop cannot disagree about
+/// what one machine can host.
+#[test]
+fn the_default_fan_out_width_is_the_machine_ceiling_not_a_constant() {
+    let config = FleetConfig::new("run1", "HEAD");
+    assert_eq!(
+        config.max_concurrency,
+        stella_autonomy::machine_parallel_ceiling(stella_autonomy::detected_cpus()) as usize,
+        "the default width must be the machine-derived ceiling"
+    );
+    assert!(
+        config.max_concurrency >= 4,
+        "the ceiling never drops below the width the controller was tuned on"
+    );
+}
+
 // Fakes
 
 /// A monotonically-increasing clock so started_at < finished_at without a
