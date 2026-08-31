@@ -602,10 +602,10 @@ fn deregister_of_the_focused_row_drops_the_stale_selection() {
     assert!(ui.session_scroll.follow, "tail-follow re-arms");
 }
 
-/// **The witness.** Front-eviction rebases every UI-held entry index
-/// so it still names the entry the reader chose — clamping the selection or
-/// dropping the expansion set silently re-attaches reader state to whichever
-/// entry slid into the slot, ~one chunk later.
+/// **The witness.** Eviction rebases every entry index the UI holds, so
+/// each one still names the entry the reader chose. Clamping would pick a
+/// different entry, about one chunk later. Dropping the whole set would
+/// discard state the pass never touched.
 #[test]
 fn eviction_rebases_the_selection_and_expansions_to_the_same_entries() {
     use crate::model::{MAX_TRANSCRIPT_ENTRIES, TranscriptEntry};
@@ -619,8 +619,8 @@ fn eviction_rebases_the_selection_and_expansions_to_the_same_entries() {
         },
     };
     // Grow to just under the cap, then highlight + expand near the tail.
-    // Entry index == attempt number, which is what lets the assertions ask
-    // "is this still the same entry?" rather than "is this still in range?".
+    // Entry index == attempt number. That lets each assertion ask "is this
+    // still the same entry?" rather than "is this still in range?".
     for i in 0..(MAX_TRANSCRIPT_ENTRIES - 1) {
         ingest_inbound(&retry(i), &mut model, &mut ui);
     }
@@ -653,8 +653,8 @@ fn eviction_rebases_the_selection_and_expansions_to_the_same_entries() {
     assert!(ui.expanded_rev > rev, "fold cache invalidated");
 }
 
-/// The other half of the rebase rule: an index that named a drained entry is
-/// dropped outright — clamping would select an entry the reader never chose.
+/// The other half of the rebase rule: an index naming a drained entry is
+/// dropped outright. Clamping would select an entry the reader never chose.
 #[test]
 fn a_selection_inside_the_evicted_chunk_is_dropped_not_clamped() {
     use crate::model::MAX_TRANSCRIPT_ENTRIES;
@@ -674,7 +674,7 @@ fn a_selection_inside_the_evicted_chunk_is_dropped_not_clamped() {
     ingest_inbound(&retry(MAX_TRANSCRIPT_ENTRIES), &mut model, &mut ui);
     assert_eq!(
         ui.session_selected, None,
-        "a selection on a drained entry has nothing honest to point at"
+        "a selection on a drained entry has nothing left to point at"
     );
 }
 

@@ -393,12 +393,10 @@ fn a_match_inside_a_folded_turn_unfolds_it() {
     assert_eq!(ui.session_pending_scroll, Some(2));
 }
 
-/// Fold sets are keyed on turn-start indices, which front-eviction shifts by
-/// the same amount it shifts everything else. A set left where it was would
-/// silently re-attach to whichever turn slid into the slot — folding away a
-/// turn the reader never touched — so it rebases by the shift alongside the
-/// expansion set it travels with, and an index inside the drained chunk
-/// drops.
+/// Fold sets are keyed on turn-start indices. Front-eviction shifts those
+/// like every other retained index, so the set rebases by the same shift as
+/// the expansions it travels with. A set left in place would fold away a
+/// turn the reader never touched. An index inside the drained chunk drops.
 #[test]
 fn eviction_rebases_fold_state_alongside_expansions() {
     use crate::model::MAX_TRANSCRIPT_ENTRIES;
@@ -423,7 +421,7 @@ fn eviction_rebases_fold_state_alongside_expansions() {
     let (fold_rev, expanded_rev) = (ui.fold_rev, ui.expanded_rev);
 
     // One more event crosses the cap: a chunk of the front evicts. The pass
-    // drains a chunk and stands one marker in its place, so every surviving
+    // drains a chunk and stands one marker in its place. Every surviving
     // index moves down by one slot less than the chunk.
     ingest_inbound(&retry(MAX_TRANSCRIPT_ENTRIES), &mut model, &mut ui);
     let len = model.agents[0].model.transcript.len();
