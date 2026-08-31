@@ -55,9 +55,8 @@ pub struct CardState {
     pub plan_sel: usize,
     /// The budget editor's input buffer — digits and at most one `.`.
     pub budget_input: String,
-    /// The task zoom's body scroll (#5154). The zoom has no row cursor — its
-    /// selection is the *task* — so the window is offset-driven rather than
-    /// selection-driven, and a long contract is read with `↑`/`↓`/`⇞`/`⇟`.
+    /// The task zoom's body scroll. The zoom's selection is the *task*, not
+    /// a row, so this offset drives the window. `↑`/`↓`/`⇞`/`⇟` move it.
     pub zoom_scroll: crate::scroll::ScrollState,
 }
 
@@ -88,8 +87,7 @@ impl CardState {
     /// move between two views of one selection.
     pub fn zoom_selected_step(&mut self) {
         self.open = Some(Card::TaskZoom);
-        // A document body opens at its top, not glued to its tail — follow
-        // would show the spend strip and hide the contract the ⏎ asked for.
+        // Open at the top. Tail-follow would hide the contract ⏎ asked for.
         self.zoom_scroll = crate::scroll::ScrollState {
             top: 0,
             follow: false,
@@ -164,10 +162,10 @@ pub fn handle_card_key(
 /// - `⌥` diff plan — #5153. Needs the `[:NEXT]`/`[:THEN]` edges (#5037) to
 ///   have two revisions to diff.
 ///
-/// The body scrolls (#5154): the zoom has no row cursor for the fold window
-/// to follow, so `↑`/`↓`/`⇞`/`⇟` (and the rest of [`list_nav::scroll`]'s
-/// vocabulary) drive an offset instead, against the viewport the last render
-/// recorded in [`crate::deck_ui::DeckMetrics`] — the `files_diff` contract.
+/// The body scrolls. The zoom has no row cursor to follow, so
+/// [`list_nav::scroll`]'s vocabulary drives an offset instead. It scrolls
+/// against the viewport the last render recorded in
+/// [`crate::deck_ui::DeckMetrics`] — the `files_diff` contract.
 ///
 /// Every other key is swallowed regardless, so a stray letter never reaches
 /// the composer behind a surface the reader is looking at.

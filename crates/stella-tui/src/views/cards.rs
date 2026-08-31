@@ -220,12 +220,11 @@ fn fold_to(
     out
 }
 
-/// Window `lines` to the slice a [`crate::scroll::ScrollState`] chose,
-/// spending the first and last visible rows on fold admissions when rows
-/// remain beyond either cut — the scroll-driven sibling of [`fold_to`], which
-/// windows around a selection instead. Same conventions: the admission's
-/// count includes the row its own marker displaced, and a one-row window
-/// that cannot hold both content and the admission carries the admission.
+/// Window `lines` to the slice a [`crate::scroll::ScrollState`] chose — the
+/// scroll-driven sibling of [`fold_to`], which follows a selection instead.
+/// When rows remain past either cut, that edge row becomes a fold admission.
+/// The count includes the row the marker displaced, as in [`fold_to`], and a
+/// window too short for content plus admissions carries one admission.
 pub(crate) fn scroll_window(
     lines: Vec<Line<'static>>,
     window: std::ops::Range<usize>,

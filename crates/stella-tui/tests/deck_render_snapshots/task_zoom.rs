@@ -25,11 +25,10 @@ use super::*;
 /// A golden is the only thing that can hold the second frame to what it says:
 /// the elision copy is a *sentence*, and a sentence quietly becoming a blank
 /// line is invisible to every other kind of test.
-/// **The witness (#5154).** On a short terminal the zoom's body scrolls: the
-/// first frame folds its tail and admits the cut, `⇟` moves the window, and
-/// the moved frame admits what scrolled past at the top. Before this the zoom
-/// had no scroll at all, so the first N rows were all a short terminal could
-/// ever show of a long contract.
+/// **The witness.** On a short terminal the zoom's body scrolls. The first
+/// frame folds its tail and admits the cut. `⇟` moves the window, and the
+/// moved frame admits what scrolled past at the top. Before this the zoom
+/// had no scroll at all. The first rows were all a short terminal showed.
 #[test]
 fn the_task_zoom_scrolls_on_a_short_terminal() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

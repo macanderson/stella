@@ -66,8 +66,8 @@ pub struct DeckMetrics {
     /// handler can clamp/scroll — same contract as `session_total`/`_height`.
     pub help_height: usize,
     pub help_total: usize,
-    /// Task-zoom body viewport metrics (#5154), same contract as the pairs
-    /// above: the render records them, the pure key handler scrolls with them.
+    /// Task-zoom body viewport metrics, same contract as the pairs above:
+    /// the render records them, the pure key handler scrolls with them.
     pub zoom_height: usize,
     pub zoom_total: usize,
 }

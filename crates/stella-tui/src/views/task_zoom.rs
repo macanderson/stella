@@ -513,10 +513,9 @@ fn render_foot(area: Rect, buf: &mut Buffer) {
 /// Draw the zoom over `area` — the deck's content band, which it owns
 /// entirely while it is up.
 ///
-/// `ui` is mutable for one reason: the render records the body's row count
-/// and viewport height in [`crate::deck_ui::DeckMetrics`], so the pure key
-/// handler can scroll a body whose size only the render knows (#5154) — the
-/// contract the files diff and the help overlay already use.
+/// `ui` is mutable for one reason. The render records the body's row count
+/// and viewport height in [`crate::deck_ui::DeckMetrics`], and the pure key
+/// handler scrolls with them — the files diff and help overlay contract.
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;

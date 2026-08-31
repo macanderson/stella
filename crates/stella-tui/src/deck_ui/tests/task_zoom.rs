@@ -77,11 +77,11 @@ fn esc_leaves_the_zoom_for_the_plan_card_on_the_same_step() {
     assert!(!ui.cards.is_open());
 }
 
-/// **The witness (#5154).** The zoom's body scrolls: it has no row cursor for
-/// the fold window to follow — its selection is the *task* — so `↑`/`↓` and
-/// `⇞`/`⇟` drive an offset against the viewport the last render recorded in
-/// `DeckMetrics`. Before this, a long contract on a short terminal showed its
-/// first rows and the reader could never reach the evidence or the spend.
+/// **The witness.** The zoom's body scrolls. It has no row cursor, so the
+/// keys drive an offset against the viewport the last render recorded in
+/// `DeckMetrics`. Before this, a short terminal showed only the first rows
+/// of a long contract. The reader could never reach the evidence or the
+/// spend strip.
 #[test]
 fn the_zoom_body_scrolls_against_the_recorded_viewport() {
     let model = model_with_board();
@@ -106,9 +106,8 @@ fn the_zoom_body_scrolls_against_the_recorded_viewport() {
     assert_eq!(ui.cards.zoom_scroll.window(40, 10).start, 0);
 }
 
-/// Re-entering the zoom opens at the top again — a scroll left behind by the
-/// last visit would put an arbitrary middle of the next task's contract on
-/// screen with nothing saying why.
+/// Re-entering the zoom opens at the top again. A scroll kept from the last
+/// visit would show a random middle of the next task's contract.
 #[test]
 fn reentering_the_zoom_resets_its_scroll_to_the_top() {
     let model = model_with_board();
