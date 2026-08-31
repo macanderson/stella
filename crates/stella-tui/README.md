@@ -339,7 +339,7 @@ Adding a deck tab:
    `render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer)`,
    pulling every colour from `stella_tui_theme::token` and every state glyph
    from `stella_tui_theme::glyph`, and recording viewport metrics onto
-   `ui.metrics`. Register it in [`src/views.rs`](src/views.rs).
+   `ui.metrics`. Register it in [`src/views/mod.rs`](src/views/mod.rs).
    [`src/views/mcp_tab.rs`](src/views/mcp_tab.rs) is the worked example.
    `area` is the content band `render_deck` has already carved between the tab
    row and the pulse row, and the chrome around it is

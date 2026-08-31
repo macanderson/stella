@@ -201,6 +201,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-lockfile-sync.sh
 
+      - name: the module-layout guard, both refusal directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-module-layout.sh
+
       - name: the red-main hold, blocking branch included
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-red-hold.sh
