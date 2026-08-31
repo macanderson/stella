@@ -43,19 +43,19 @@ pub fn detect_truecolor() -> bool {
 /// - The grounds ([`token::BG`], [`token::PANEL`]) go to black, and the seams
 ///   ([`token::HL`], [`token::BORDER`], [`token::RULE`]) to bright black: a
 ///   seam that collapses into the ground stops being a seam.
-/// - Gold takes bright yellow rather than plain: a 16-color terminal has no
-///   second yellow to lift a live accent to, so the brand's one identity
-///   colour needs the brighter of the two stops it can reach, or a reader on
-///   that terminal cannot tell the mark from an ordinary warning.
+/// - Gold takes bright yellow, not plain. A 16-color terminal has no second
+///   yellow to lift a live accent to. So the brand's one identity colour
+///   takes the brighter of the two stops it can reach. Without that, a reader
+///   there cannot tell the mark from an ordinary warning.
 /// - [`token::TEXT`] and [`token::SILVER_TYPE`] both take bright white, one
 ///   tier above plain [`token::SILVER`], so an emphasised secondary still
 ///   reads as emphasised rather than collapsing into the same stand-in as
 ///   the text beside it — the whole reason `SILVER_TYPE` is a separate token.
 /// - The status colours ([`token::GREEN`], [`token::RED`]) take the bright
-///   half, like every chromatic stop above. Both tokens are pale on a dark
-///   ground, and the deck's own table (`stella-tui`'s `FALLBACKS`) has
-///   always shipped bright green and bright red — a session drawn by the v1
-///   deck and a v2 surface must not disagree about a status colour.
+///   half, like every chromatic stop above. Both are pale on a dark ground.
+///   The deck's own table (`stella-tui`'s `FALLBACKS`) has always shipped
+///   bright green and bright red. The v1 deck and a v2 surface must not
+///   disagree about a status colour.
 /// - The diff tints go to black rather than to a green and a red background.
 ///   At 16 colours a tint is not available; only a wash is, and a wash on
 ///   every changed row would spend the palette's whole red budget on a healthy
