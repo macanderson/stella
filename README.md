@@ -43,10 +43,10 @@ exist in no default install. Written in Rust as a workspace of focused crates.
   plugin's declared rule and never re-runs it. Oxagen's Vera is the reference
   plugin, private and not shipped here.
 - **Embeddable** — link `stella-core` and supply the `Provider` and
-  `ToolExecutor` ports in process, or drive
-  [`stella-serve`](crates/stella-serve/README.md) over HTTP/SSE and keep every
-  model call, tool call and credential on your side of the wire.
-  `doc:engine-embedding` is the contract.
+  `ToolExecutor` ports in process. Or drive
+  [`stella-serve`](crates/stella-serve/README.md) over HTTP/SSE. Every model
+  call, tool call and credential stays on your side of the wire. See
+  [Agent Engine in Your App](https://stella.oxagen.sh/docs/agent-engine-in-your-app).
 - **Prompt-cache-native memory** — lessons in `.stella/memories/` load once at
   session start into a byte-stable system prompt (~0.1× input cost).
 - **Code graph** — a tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,
