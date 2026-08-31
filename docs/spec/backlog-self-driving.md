@@ -6,7 +6,7 @@ status: living
 
 # Backlog Self-Driving — the loop that owns a queue, not a task
 
-Status: **B0 built, B1–B7 designed and unbuilt.** Phases in §9. The driver
+Status: **B0–B3 and B5 built; B4, B6 and B7 designed and unbuilt.** Phases in §9. The driver
 channel §3.0 specifies exists — `stella_plugin::driver` is its wire half,
 `stella_runtime::wrapper::DriverCallGate` its host half, and
 `plugins/stella-selfdriving/plugin.toml` declares the `[driver]` grant a human
@@ -81,7 +81,7 @@ Nothing below proposes changing it.
 | Capability | Where | State |
 |---|---|---|
 | The `Issue` kernel, provider manifests, `kind = "exec"` | [`doc:agent-native-delivery`](agent-native-delivery.md) §3–§4 | Design only. Epic closed `not_planned` under a freeze that has since lifted. |
-| The residue gate — a prose follow-up becomes undischargeable | [`doc:agent-native-delivery`](agent-native-delivery.md) §7 | Design only. This is the mechanism that makes "file new tickets" a *guarantee* rather than a habit. |
+| The residue gate — a prose follow-up becomes undischargeable | `crates/stella-cli/src/self_driving_cmd/residue.rs` | **Built** (§9 B5): an end-of-turn transcript check that files through `file_finding`. "File new tickets" is now a *guarantee*, not a habit. |
 | Backlog dedup + decay | [`doc:agent-native-delivery`](agent-native-delivery.md) §10.1 | Design only. |
 | Self-driving as a plugin that actually drives | #3546, [`doc:pipeline-as-plugins`](pipeline-as-plugins.md) §10 D6 | Manifest exists (`plugins/stella-selfdriving/plugin.toml`) and now declares a `[driver]` grant a human reads at install. It still starts nothing (B2), and every capability it declares answers `unsupported` (B1–B6) — but it **can** hold one, which it could not before B0. |
 | The host-call channel: `recall`, `child_turn`, `run_test`, `candidate_fanout`, `adopt_candidate` | `crates/stella-plugin/src/host_call.rs`, `crates/stella-runtime/src/wrapper/host_call.rs` | **Built** (#3590), and reachable only from inside a turn. |
@@ -884,11 +884,11 @@ its witness — a test that fails on `main` and passes with the change.
 | Phase | Deliverable | Witness | Unblocks |
 |---|---|---|---|
 | **B0** — **built** | **The driver channel** (§3.0). A second dispatch context for the existing host-call machinery, opened by a driver session rather than a wrapper point; a `[driver]` block with its own `calls` list and its own `permits_call`, *without* touching the `Participation` ladder; the grant rendered at install consent. `stella-plugin/src/driver.rs` is the wire half and `stella-runtime/src/wrapper/driver_call.rs` the host half. **A call carries no arguments and returns no payload yet** — no verb is implemented, so no argument or result table can be written honestly; each lands with the verb that needs it. `plugins/stella-selfdriving` declares its `[driver]` grant but is still not a program the host runs, which is B2. | `an_undeclared_call_is_refused_and_the_session_keeps_running` (`stella-runtime/src/wrapper/driver_call.rs`): a driver whose manifest omits a call is refused it with a `HostCallRefusal` code, is not charged for it, and **keeps running**; a declared one is served. Both directions, because either alone is half a gate. Plus `a_driver_holds_capabilities_without_a_participation_grade` (`stella-plugin/src/manifest.rs`) — the defect itself, that `participation = "none"` made every capability unreachable. | everything below |
-| **B1** — *port landed* | **The issue port.** `Issue` kernel in `stella-protocol`; `IssueProvider` port; GitHub as a shipped manifest under `.stella/issues/`; the `backlog` calls on the channel; the CLI's `queue` row reshaped, `HOST_SURFACE_VERSION` → 2. | The ranked queue is produced against a fixture provider with **no `gh` on `PATH`**. | "any issue provider" |
-| **B2** | **`work` + the loop step machine.** `LoopStep`/`step` pure in `stella-autonomy`; `work_start`/`work_status`/`work_abandon` served over the channel from `stella-cli`, built on the existing `child_turn` dispatcher rather than a second one; the plugin becomes a policy loop over declared calls; the eight slash commands and `scripts/self-driving.sh` retire **only after** `scripts/test-self-driving.sh` is green against the new path with every assertion intact. | One issue goes from `backlog next` to a verified diff with no Claude Code and no human. | the headline |
-| **B3** | **`deliver`.** `PrState` pure; open/observe/next/merge; `Escalated` reachable and terminal; `CiRed` vs `BaseBroken` distinguished. | A PR whose CI is red *on its base branch* transitions to `BaseBroken`, and the loop does not push a fix. |  PR rhythm (#2374's named weakness) |
+| **B1** — **built** | **The issue port.** `Issue` kernel in `stella-protocol`; `IssueProvider` port; GitHub as a shipped manifest under `.stella/issues/`; the `backlog` calls on the channel; the CLI's `queue` row reshaped, `HOST_SURFACE_VERSION` → 2. | The ranked queue is produced against a fixture provider with **no `gh` on `PATH`**. | "any issue provider" |
+| **B2** — **built** | **`work` + the loop step machine.** `LoopStep`/`step` pure in `stella-autonomy`; `work_start`/`work_status`/`work_abandon` served over the channel from `stella-cli`, built on the existing `child_turn` dispatcher rather than a second one; the plugin becomes a policy loop over declared calls; the eight slash commands and `scripts/self-driving.sh` retire **only after** `scripts/test-self-driving.sh` is green against the new path with every assertion intact. | One issue goes from `backlog next` to a verified diff with no Claude Code and no human. | the headline |
+| **B3** — **built** | **`deliver`.** `PrState` pure; open/observe/next/merge; `Escalated` reachable and terminal; `CiRed` vs `BaseBroken` distinguished. | A PR whose CI is red *on its base branch* transitions to `BaseBroken`, and the loop does not push a fix. |  PR rhythm (#2374's named weakness) |
 | **B4** | **Supply.** Ladder re-arm on baseline delta; `sweep regress` over closed-issue receipts; `sweep meta`. Per-supply switch, default queue-only. | A lens dry at `HEAD` re-opens after the declared baseline delta and yields **only** digests absent from `seen.txt`. | never runs out |
-| **B5** | **The residue gate** ([`doc:agent-native-delivery`](agent-native-delivery.md) §7) in `warn`, plus fingerprint dedup and decay. | A run stating a follow-up in prose and claiming `done` fails the gate; the same run with the item `filed` passes. | filing is a guarantee |
+| **B5** — **built** | **The residue gate** ([`doc:agent-native-delivery`](agent-native-delivery.md) §7), as an end-of-turn transcript check in `stella-cli` (`self_driving_cmd/residue.rs`). A fixed phrase list finds leftover-work statements — never a model call. Every hit is filed through `file_finding`, so the seen-set dedup and the convention check apply unchanged. `residue_gate = "off"` in `stella.toml` turns it off. | `two_residue_statements_file_two_issues_and_a_rerun_files_none` (`self_driving_cmd/residue.rs`): two stated leftovers file exactly two issues on a fixture provider. A re-run with those digests seen files none. | filing is a guarantee |
 | **B6** | **`curate`.** Proposals from ledger evidence; acceptance gated on declared authority; `regulated` keeps the human on context records. | A skill proposal reaching the recurrence threshold is *proposed* and, under `regulated`, **not** applied. | self-curation |
 | **B7** | **`release`,** opt-in, gated on green `main` + quiet canary + derivable changelog. | Deferred — see §6.4. | shipping |
 
@@ -916,8 +916,8 @@ drew its batch from. Both numbers are now folds of one ranking of one read.
 |---|---|
 | `LoopStep`, `step`, `PrState`, supply model, re-arm rule | `stella-autonomy` (pure; new modules — the crate has no god files and must keep none) |
 | `Issue`, `IssueState`, `IssueClass`, `PrId`, receipts | `stella-protocol` (types only) |
-| Residue detection, discharge rules | `stella-core` (pure, no I/O) |
-| The residue gate stage | **Homeless.** `stella-pipeline` is deleted (#3852/#3865) and this row named it; B5 has to pick a home before it can be built — a wrapper plugin's own side, or a `stella-cli` check over the turn's transcript. Tracked in #3901's sweep of the same stale claim. |
+| Residue detection | `stella-cli` (`self_driving_cmd/residue.rs`): a pure, fixed-phrase detector beside the gate. Its only caller is the filing path one file away, so it did not land in `stella-core`. |
+| The residue gate stage | **Built**, in `stella-cli`: the end-of-turn check over the turn's transcript (`self_driving_cmd/residue.rs`), hooked at the interactive turn boundary. Of the two homes this row once named, the transcript check won. It needs no plugin lifecycle and reuses the filing path whole. |
 | `backlog`/`work`/`deliver`/`sweep`/`curate` verbs, the forge adapter, provider manifests | `stella-cli` (`self_driving_cmd/` — `self_driving_cmd.rs` is close enough to the 1500-line ceiling that new logic lands in siblings; it carries no baseline entry, so a crossing fails the gate rather than being grandfathered) |
 | Issue claims | `stella-fleet` ledger |
 | The driver channel: dispatch context, `[driver]` block, `permits_call` | `stella-plugin` (wire + gate), `stella-runtime` (`src/wrapper/`, beside the existing host-call dispatch) |
@@ -929,8 +929,8 @@ hold any capability at all. It is also the smallest of the three, because the wi
 refusal codes, the manifest gate, the consent rendering and the subprocess
 transport all exist and are exercised by `stella-research` — B0 adds a dispatch
 context, not a platform. B3 and B4 are independent of
-each other and both need B2. B5 is independent of everything after B1 and could
-land early if the residue gate is wanted sooner than the autonomy.
+each other and both need B2. B5 depended only on B1 and landed early, as the
+end-of-turn transcript check.
 
 ---
 

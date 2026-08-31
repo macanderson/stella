@@ -34,6 +34,7 @@ pub(crate) mod probes;
 mod query;
 mod ready;
 mod report;
+pub(crate) mod residue;
 pub(crate) mod state;
 mod stats;
 mod stop;

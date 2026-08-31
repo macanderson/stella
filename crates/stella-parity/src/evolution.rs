@@ -423,6 +423,26 @@ evolution_surfaces! {
          its issue, so the unit of undo is the unit of change. `stella self-driving stop` \
          parks the loop at its next boundary, and applying the escalation label withdraws an \
          issue from the queue across restarts";
+
+    /// The backlog Stella feeds itself: issues it files about its own
+    /// leftover work.
+    Backlog => "backlog",
+        EvolutionPosture::Shipped {
+            mechanism: "the end-of-turn residue gate (`doc:backlog-self-driving` phase B5): \
+                        `detect_residue` scans the turn's transcript for explicit \
+                        leftover-work statements against a fixed phrase list — no model \
+                        call — and each hit is filed through `file_finding`, so the \
+                        seen-set dedup and the convention conformance check apply to the \
+                        loop's own residue exactly as they do to an audit finding. \
+                        `residue_gate = \"off\"` in `stella.toml` turns the gate off",
+            witness: "two_residue_statements_file_two_issues_and_a_rerun_files_none",
+        },
+        EvolutionTiming::BetweenTurns,
+        ImpactClass::AdvisoryRecord,
+        "close the filed issue; its digest stays in the seen-set, so closing is terminal \
+         rather than a snooze — the same statement never re-files. `residue_gate = \"off\"` \
+         stops the gate wholesale, and deleting a digest line from `seen.txt` re-arms that \
+         one statement for the operator who wants it re-filed";
 }
 
 /// How many live rows name no witness.
@@ -461,7 +481,7 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 11] {
+fn evolution_sources() -> [&'static str; 12] {
     [
         // The Delivery row's witness: what the backlog picks and the
         // ledger row it writes, proven on a fixture tracker.
@@ -480,6 +500,8 @@ fn evolution_sources() -> [&'static str; 11] {
         // The SkillInvocation row's witness: an auto-selected skill's
         // directives reach the plane through the recall seam.
         include_str!("../../stella-cli/src/memory/tests/skill_event.rs"),
+        // The Backlog row's witness lives beside the residue gate it proves.
+        include_str!("../../stella-cli/src/self_driving_cmd/residue.rs"),
     ]
 }
 
