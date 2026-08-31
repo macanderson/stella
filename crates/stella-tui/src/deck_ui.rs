@@ -62,10 +62,10 @@ pub struct DeckMetrics {
     pub trace_total: usize,
     pub files_diff_height: usize,
     pub files_diff_total: usize,
-    /// Help-overlay viewport metrics, recorded each frame so the pure key
-    /// handler can clamp/scroll — same contract as `session_total`/`_height`.
     pub help_height: usize,
     pub help_total: usize,
+    pub zoom_height: usize,
+    pub zoom_total: usize,
 }
 
 /// The INSTALLED AGENTS pane's interaction mode. `Browse` is plain tab

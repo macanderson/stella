@@ -55,6 +55,9 @@ pub struct CardState {
     pub plan_sel: usize,
     /// The budget editor's input buffer — digits and at most one `.`.
     pub budget_input: String,
+    /// The task zoom's body scroll. The zoom's selection is the *task*, not
+    /// a row, so this offset drives the window. `↑`/`↓`/`⇞`/`⇟` move it.
+    pub zoom_scroll: crate::scroll::ScrollState,
 }
 
 impl CardState {
@@ -70,6 +73,10 @@ impl CardState {
         self.open = Some(card);
         self.plan_sel = 0;
         self.budget_input.clear();
+        self.zoom_scroll = crate::scroll::ScrollState {
+            top: 0,
+            follow: false,
+        };
     }
 
     /// Zoom the plan card's selected step (SPEC 7.5), and come back out of it.
@@ -80,6 +87,11 @@ impl CardState {
     /// move between two views of one selection.
     pub fn zoom_selected_step(&mut self) {
         self.open = Some(Card::TaskZoom);
+        // Open at the top. Tail-follow would hide the contract ⏎ asked for.
+        self.zoom_scroll = crate::scroll::ScrollState {
+            top: 0,
+            follow: false,
+        };
     }
 
     /// Leave the zoom for the plan card it was opened from.
@@ -122,7 +134,7 @@ pub fn handle_card_key(
     Some(match card {
         Card::Plan => handle_plan_key(key, model, ui),
         Card::Budget => handle_budget_key(key, ui),
-        Card::TaskZoom => handle_zoom_key(key),
+        Card::TaskZoom => handle_zoom_key(key, ui),
         // Read-only surface: every key is swallowed so a stray letter never
         // reaches the composer behind a card the user is looking at.
         Card::Models => DeckAction::Handled,
@@ -150,9 +162,16 @@ pub fn handle_card_key(
 /// - `⌥` diff plan — #5153. Needs the `[:NEXT]`/`[:THEN]` edges (#5037) to
 ///   have two revisions to diff.
 ///
-/// Every key is swallowed regardless, so a stray letter never reaches the
-/// composer behind a surface the reader is looking at.
-fn handle_zoom_key(_key: KeyEvent) -> DeckAction {
+/// The body scrolls. The zoom has no row cursor to follow, so
+/// [`super::list_nav::scroll`]'s vocabulary drives an offset instead. It scrolls
+/// against the viewport the last render recorded in
+/// [`crate::deck_ui::DeckMetrics`] — the `files_diff` contract.
+///
+/// Every other key is swallowed regardless, so a stray letter never reaches
+/// the composer behind a surface the reader is looking at.
+fn handle_zoom_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    let (total, height) = (ui.metrics.zoom_total, ui.metrics.zoom_height);
+    let _ = super::list_nav::scroll(key, &mut ui.cards.zoom_scroll, total, height, true);
     DeckAction::Handled
 }
 

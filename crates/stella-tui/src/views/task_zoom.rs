@@ -512,7 +512,11 @@ fn render_foot(area: Rect, buf: &mut Buffer) {
 
 /// Draw the zoom over `area` — the deck's content band, which it owns
 /// entirely while it is up.
-pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+///
+/// `ui` is mutable for one reason. The render records the body's row count
+/// and viewport height in [`crate::deck_ui::DeckMetrics`], and the pure key
+/// handler scrolls with them — the files diff and help overlay contract.
+pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -533,6 +537,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         .or_else(|| steps.last())
         .cloned()
     else {
+        (ui.metrics.zoom_total, ui.metrics.zoom_height) = (0, 0);
         render_nothing_to_zoom(
             "this turn has no plan yet — there is no task to zoom",
             head_area,
@@ -548,9 +553,13 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         Paragraph::new(header_row(&step, agent.meta.model.as_deref(), width))
             .render(head_area, buf);
     }
-    if body_area.height > 0 {
-        let rows = body_rows(&step, plan.ledger.get(&step.id), plan.lanes.as_ref(), width);
-        cards::render_body(rows, None, body_area, buf);
+    let rows = body_rows(&step, plan.ledger.get(&step.id), plan.lanes.as_ref(), width);
+    let (total, height) = (rows.len(), body_area.height as usize);
+    (ui.metrics.zoom_total, ui.metrics.zoom_height) = (total, height);
+    if height > 0 {
+        let window = ui.cards.zoom_scroll.window(total, height);
+        let visible = cards::scroll_window(rows, window, total);
+        Paragraph::new(visible).render(body_area, buf);
     }
     render_foot(foot_area, buf);
 }
