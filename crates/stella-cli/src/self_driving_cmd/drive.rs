@@ -124,8 +124,8 @@ pub(super) fn drive(
     let doctrine = cfg.doctrine;
     let provider = crate::issue_provider::GhIssueProvider;
 
-    // Checked before the session record, the label installs, and the
-    // claims. A caller checking the loop's aim must not move its hand.
+    // Answered before the session record, the label installs and the
+    // claims. Checking the loop's aim must not move its hand.
     if dry_run {
         return super::ready::dry_run(&provider, &cfg, backlog, max_issues);
     }
@@ -465,7 +465,7 @@ pub(super) fn drive(
                 // The backlog generator runs no triage pass. Labels and
                 // `Blocked by:` lines decide readiness, not a model
                 // classifying kinds. The queue it drains includes work
-                // triage would leave out.
+                // triage would exclude.
                 if !backlog
                     && let Err(error) = triage::assess_one(
                         durable,
@@ -871,10 +871,9 @@ pub(super) fn drive(
                         ),
                     }
 
-                    // The delivered issue lands in the same cycle ledger
-                    // the audit cycles write. `state`, `metrics`, and the
-                    // dashboard fold delivered work with no second
-                    // reader.
+                    // The delivered issue lands in the cycle ledger the
+                    // audit cycles write. `state`, `metrics` and the
+                    // dashboard then fold it with no second reader.
                     if backlog
                         && let Err(error) =
                             super::ready::record_delivery_cycle(durable, &issue.0, &pr.0)

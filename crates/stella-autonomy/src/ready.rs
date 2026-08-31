@@ -1,23 +1,23 @@
-//! Whether a backlog issue is ready for the delivery loop to take.
+//! Readiness over a backlog: which issues the loop may take next.
 //!
 //! An issue is ready when it carries [`READY_LABEL`], or when every
-//! `Blocked by: #N` line in its body names a closed issue. Write one
-//! blocker per line: `Blocked by: #4`. One line can name more than one
-//! blocker: `Blocked by: #4, #7`. A blocker number missing from the open
-//! set does not block. The issue is closed, or it never existed. Either
-//! way, that is not a reason to hold the work.
+//! `Blocked by: #N` line in its body names a closed issue.
+//! One line per blocker, leading the line: `Blocked by: #4`.
+//! Several blockers may share one line: `Blocked by: #4, #7`.
+//! A reference outside the open set does not block. The issue it
+//! names is closed, or it never existed. Neither holds work back.
 //!
-//! Every function here is pure. It takes owned data and does no I/O. The
-//! caller reads the tracker once and passes in the open set.
+//! Pure over owned data, like the rest of this crate. The caller
+//! reads the tracker once and hands in the open set. Nothing here
+//! performs I/O.
 
 use std::collections::BTreeSet;
 
 use crate::QueueIssue;
 use crate::priority::{PriorityLadder, by_age, rank_of};
 
-/// A human applies this label to say an issue is ready now, no matter what
-/// its `Blocked by:` lines say. A human's judgement wins over the parsed
-/// convention.
+/// The label a human applies to say: work this now, whatever its
+/// `Blocked by:` lines say. That call outranks the parsed lines.
 pub const READY_LABEL: &str = "status:ready";
 
 /// One backlog issue with the blockers parsed out of its body.
@@ -40,10 +40,10 @@ pub enum Readiness {
 
 /// Parse the `Blocked by: #N` lines out of an issue body.
 ///
-/// A line counts once its leading markdown marks (`-`, `*`, `>`, blank
-/// space) are stripped, if what is left starts with `blocked by` in any
-/// case. Every `#N` on the rest of that line is a blocker. The same number
-/// named twice is still one blocker.
+/// A line counts when it starts with `blocked by`, in any case, once
+/// markdown chrome (`-`, `*`, `>`, whitespace) is stripped. Every `#N`
+/// on the rest of that line is a blocker. A body that says the same
+/// blocker twice declares one blocker.
 #[must_use]
 pub fn blocker_refs(body: &str) -> Vec<u64> {
     let mut refs = Vec::new();
@@ -81,11 +81,11 @@ pub fn blocker_refs(body: &str) -> Vec<u64> {
     refs
 }
 
-/// Whether this issue may be taken now, given which issues are open.
+/// Whether this issue may be taken, given which issues are still open.
 ///
-/// [`READY_LABEL`] wins over the parsed lines. A human who applied it
-/// already read the blockers and judged them stale. The loop must not
-/// overrule that by parsing the prose again. A blocker naming the issue
+/// [`READY_LABEL`] wins over the parsed lines. The human who applied
+/// it read the blockers and judged them stale. The loop must not
+/// overrule that by re-parsing prose. A blocker naming the issue
 /// itself is ignored — an issue cannot hold itself out of the queue.
 #[must_use]
 pub fn readiness(item: &BacklogItem, open: &BTreeSet<u64>) -> Readiness {
@@ -105,15 +105,14 @@ pub fn readiness(item: &BacklogItem, open: &BTreeSet<u64>) -> Readiness {
     }
 }
 
-/// The ready backlog, in the order the delivery loop should take it.
+/// The ready backlog, in the order the loop should take it.
 ///
 /// Escalated issues are dropped. The loop already tried them, and the
-/// label is how that survives a restart. What is left is filtered to the
-/// ready issues, then sorted: issues with a rung come first, most urgent
-/// rung first, then oldest first within a rung. The rest come after,
-/// oldest first. An unranked issue is still work. This generator drains
-/// the whole backlog, so it delivers unranked issues once the ranked ones
-/// are done.
+/// label is how that survives a restart. The rest is filtered to the
+/// ready and ordered. Issues with a rung come first: most urgent rung,
+/// then oldest. The unranked follow, oldest first. The defect queue
+/// holds unranked issues for triage; this one does not. It drains a
+/// whole backlog, so work nobody ranked still ships in the end.
 #[must_use]
 pub fn ready_queue(
     items: Vec<BacklogItem>,
@@ -176,9 +175,9 @@ mod tests {
         numbers.iter().copied().collect()
     }
 
-    /// The selection witness. An issue whose `Blocked by:` line names an
-    /// open issue waits. The same issue is ready the moment that blocker
-    /// closes. Nobody has to edit the body or apply a label.
+    /// The selection witness. An issue whose `Blocked by:` line names
+    /// an open issue waits. It is ready the moment that blocker closes.
+    /// Nobody edits the body. Nobody applies a label.
     #[test]
     fn an_issue_blocked_by_an_open_issue_waits_and_a_closed_blocker_frees_it() {
         let blocked = item(41, &["feature", "P1"], &[40]);
@@ -195,18 +194,18 @@ mod tests {
         );
     }
 
-    /// A human's `status:ready` label outranks the parsed lines. A human
-    /// read the blockers and judged them stale. Parsing the prose again
-    /// must not overrule that.
+    /// A human's `status:ready` label outranks the parsed lines. They
+    /// read the blockers and judged them stale. Re-parsing prose must
+    /// not overrule that.
     #[test]
     fn the_ready_label_marks_an_issue_ready_even_while_a_blocker_is_open() {
         let overridden = item(41, &["feature", READY_LABEL], &[40]);
         assert_eq!(readiness(&overridden, &open(&[40, 41])), Readiness::Ready);
     }
 
-    /// The convention is machine-greppable, and this is the machine. Plain,
-    /// lower-case, bold, bulleted, and multi-reference spellings all parse.
-    /// Prose that only mentions blocking does not.
+    /// The line format is greppable, and this is the grep. Plain,
+    /// lower-case, bold, bulleted, and shared-line spellings all parse.
+    /// Prose that merely mentions blocking does not.
     #[test]
     fn blocker_lines_follow_the_machine_greppable_convention() {
         assert_eq!(blocker_refs("Blocked by: #1"), vec![1]);
@@ -221,17 +220,16 @@ mod tests {
         assert_eq!(blocker_refs("Blocked by: nothing"), Vec::<u64>::new());
     }
 
-    /// An issue cannot hold itself out of the queue by citing its own number.
+    /// An issue cannot block itself by citing its own number.
     #[test]
     fn a_self_reference_does_not_block() {
         let looped = item(41, &["bug", "P1"], &[41]);
         assert_eq!(readiness(&looped, &open(&[41])), Readiness::Ready);
     }
 
-    /// The queue order. Rungs come first, most urgent first, then oldest
-    /// first. The unranked issues come after, oldest first. This generator
-    /// drains the whole backlog. It does not hold unranked issues back for
-    /// triage.
+    /// The queue order: rungs first, most urgent then oldest. The
+    /// unranked follow, oldest first. This queue drains a whole
+    /// backlog; it does not hold unranked issues for triage.
     #[test]
     fn the_ready_queue_ranks_by_rung_then_age_and_appends_the_unranked() {
         let ladder = PriorityLadder::default();
