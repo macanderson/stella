@@ -41,12 +41,12 @@ canary_scratch() {
 
 # A minimal, network-free workspace at $1 whose lock matches its manifests.
 #
-# `git init` and the two empty baselines are what let `file-size` and `prose`
+# `git init` and the empty baselines are what let `file-size` and `prose`
 # judge THIS fixture instead of the real repository: both rows require being
 # inside a git repository, `check-file-size.sh` refuses to run at all against
 # a manifest directory with no baseline file, and `check-prose.py` refuses the
-# same way when its module-header density baseline is missing — a real
-# checkout always carries both, so a fixture needs its own, empty ones, to
+# same way when its density or reading-grade baseline is missing — a real
+# checkout always carries them, so a fixture needs its own, empty ones, to
 # read as a clean tree rather than as a misconfigured one.
 make_workspace() {
   local dir="$1"
@@ -70,6 +70,8 @@ TOML
   echo "# Empty — the fixture starts under every ratchet." >"$dir/scripts/file-size-baseline.txt"
   echo "# Empty — the fixture's one crate starts under the density ceiling." \
     >"$dir/scripts/prose-density-baseline.txt"
+  echo "# Empty — the fixture's prose starts under the reading-grade ceiling." \
+    >"$dir/scripts/prose-grade-baseline.txt"
   (cd "$dir" && git init -q && cargo generate-lockfile --offline >/dev/null 2>&1)
 }
 

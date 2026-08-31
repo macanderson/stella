@@ -41,7 +41,7 @@ machine can check. A reviewer checks the rest.
    Never the other way around. *(Reviewer-checked.)*
 5. **Write at a 5th grade reading level.** Short sentences. Common words.
    One idea per sentence. If a 10-year-old cannot follow the sentence,
-   rewrite it. *(Gate tracked separately; reviewer-checked until it lands.)*
+   rewrite it. *(Gated: the reading-grade ratchet in `make prose`.)*
 6. **No jargon and no complex words.** Say "dependency", not `concretion`.
    Say "rule", not `invariant`. Say "unrelated", not `orthogonal`. *(Gated:
    `rust-jargon`, `interface-jargon`, `complex-word`.)*
