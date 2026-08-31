@@ -736,7 +736,7 @@ pub struct DeckUi {
     pub expanded_rev: u64,
     /// Per-agent eviction count last reconciled by [`ingest_inbound`] —
     /// front-eviction shifts every retained index, so when it advances that
-    /// agent's `expanded` set is rebased by the shift (#5371).
+    /// agent's `expanded` set is rebased by the shift.
     pub evicted_seen: std::collections::HashMap<String, usize>,
     /// The no-selection `ctrl+o` overlay: every expandable transcript entry
     /// renders expanded, without touching the per-entry `expanded` sets.
@@ -1608,7 +1608,7 @@ fn clamp(model: &WorkspaceModel, ui: &mut DeckUi) {
     };
     // Front-eviction shifts every retained index, so every entry index the
     // UI holds is rebased down by the same shift — a flag left where it was
-    // would silently re-attach to whichever entry slid into its slot (#5371).
+    // would silently re-attach to whichever entry slid into its slot.
     // Rebased rather than cleared: the fold-state stance in
     // `stella_transcript::fold` is that reader state survives what happens
     // around it, and a reader's expansions are reader state. An index naming

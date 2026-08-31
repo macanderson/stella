@@ -602,7 +602,7 @@ fn deregister_of_the_focused_row_drops_the_stale_selection() {
     assert!(ui.session_scroll.follow, "tail-follow re-arms");
 }
 
-/// **The witness (#5371).** Front-eviction rebases every UI-held entry index
+/// **The witness.** Front-eviction rebases every UI-held entry index
 /// so it still names the entry the reader chose — clamping the selection or
 /// dropping the expansion set silently re-attaches reader state to whichever
 /// entry slid into the slot, ~one chunk later.
@@ -653,7 +653,7 @@ fn eviction_rebases_the_selection_and_expansions_to_the_same_entries() {
     assert!(ui.expanded_rev > rev, "fold cache invalidated");
 }
 
-/// The other half of #5371's rule: an index that named a drained entry is
+/// The other half of the rebase rule: an index that named a drained entry is
 /// dropped outright — clamping would select an entry the reader never chose.
 #[test]
 fn a_selection_inside_the_evicted_chunk_is_dropped_not_clamped() {

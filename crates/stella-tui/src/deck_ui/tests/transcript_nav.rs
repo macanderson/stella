@@ -397,8 +397,8 @@ fn a_match_inside_a_folded_turn_unfolds_it() {
 /// the same amount it shifts everything else. A set left where it was would
 /// silently re-attach to whichever turn slid into the slot — folding away a
 /// turn the reader never touched — so it rebases by the shift alongside the
-/// expansion set it travels with, and an index inside the drained chunk drops
-/// (#5371).
+/// expansion set it travels with, and an index inside the drained chunk
+/// drops.
 #[test]
 fn eviction_rebases_fold_state_alongside_expansions() {
     use crate::model::MAX_TRANSCRIPT_ENTRIES;
