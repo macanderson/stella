@@ -39,14 +39,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Both trees that hold a v2 rendering. website/public/tui/ is what the site
-# serves, and its copies differ from design/ in their own content: one says
-# `tab expand` where design says `^S expand`, and the command palette is a
-# different frame showing six results in a taller box rather than three. So
-# they are NOT held to byte-parity here — only to the same prose, which is the
-# fact this guard is about. Scoping to design/ alone left the public copies
-# drawing `det %` while the gate reported OK (#5276).
+# Both trees that hold a v2 rendering. design/ is the source (SPEC §15);
+# website/public/tui/ is what the site serves — a byte-copy, held so below.
+# Both stay in the fact sweep. Scoping it to design/ alone once let the
+# served copies draw `det %` while the gate reported OK (#5276).
 DIRS=(design/tui-v2/renderings website/public/tui)
+
+# Files excused from byte-parity, as `name|issue that restores it`. An
+# entry is a declared gap, not a licence. The two copies drifted for
+# months, and three renderings taught three different facts.
+PARITY_EXCEPTIONS=(
+  "08-command-palette.svg|\`#5212\` regenerates both copies from the shipped palette"
+)
 
 # One entry per retired fact: the pattern, then where the prose retires it.
 # The pattern is a POSIX ERE, matched against the SVG source.
@@ -84,8 +88,33 @@ for entry in "${BAN[@]}"; do
   fi
 done
 
+# The parity half. Each served SVG is the byte-copy of its design source,
+# minus the declared exceptions above. Two drifting copies of one picture
+# teach two facts, and neither is labelled stale. `^S expand` against
+# `tab expand` was live for months, and the deck bound neither.
+for src in design/tui-v2/renderings/svg/*.svg; do
+  name=$(basename "$src")
+  skip=0
+  for exception in "${PARITY_EXCEPTIONS[@]}"; do
+    [[ $name == "${exception%%|*}" ]] && skip=1
+  done
+  ((skip)) && continue
+  served="website/public/tui/$name"
+  if [[ ! -f $served ]]; then
+    fail=1
+    echo "check-rendering-facts: $served is missing — the site serves every design rendering" >&2
+    continue
+  fi
+  if ! cmp -s "$src" "$served"; then
+    fail=1
+    echo "check-rendering-facts: $served differs from $src" >&2
+    echo "  design/ is the source (SPEC §15). Edit it there, then: cp $src $served" >&2
+    echo "  A divergence is declared in PARITY_EXCEPTIONS beside the issue that ends it." >&2
+  fi
+done
+
 if ((fail)); then
   exit 1
 fi
 
-echo "check-rendering-facts: OK — no rendering draws a retired fact (${#BAN[@]} checked)"
+echo "check-rendering-facts: OK — no rendering draws a retired fact (${#BAN[@]} checked), and the served copies match design/"

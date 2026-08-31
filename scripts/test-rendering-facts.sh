@@ -94,7 +94,12 @@ clean "$web"
 # checks by provenance (`DET / MODEL  88 / 12`), which SPEC §3 keeps. The
 # retired cell is the percentage on the status bar, and the guard has to tell
 # them apart or the fix for it would be deleting a live surface.
+#
+# Planted in both trees. This case is the only one that asserts exit 0, so it
+# is the only one a second rule can break: leave the copies unequal and the
+# parity rule fails the run, and the near miss goes untested behind it.
 plant "$svg" "DET / MODEL  88 / 12"
+plant "$web" "DET / MODEL  88 / 12"
 check 0 "the task-zoom DET / MODEL split still passes"
 
 # A missing renderings directory is a broken invocation, not a clean tree: a

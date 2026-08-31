@@ -511,4 +511,6 @@ The manifest's own name is held to the same standard: it is composed into chrome
 | `09-gate-failure` | red-as-alarm gate failure and proposed plan revision |
 | `10-start-work` | issue-to-plan overlay with contract previews and approval |
 
-SVGs are the source of truth; PNGs are 2x raster exports. Renders use DejaVu Sans Mono as a stand-in; the brand font is JetBrains Mono.
+SVGs are the source of truth; PNGs are 2x raster exports (`rsvg-convert -z 2`). Renders use DejaVu Sans Mono as a stand-in; the brand font is JetBrains Mono.
+
+The copies the website serves (`website/public/tui/*.svg`) are byte-copies of the SVGs here — edit a rendering in this tree, then copy it across. `scripts/check-rendering-facts.sh` holds the two trees identical, and a divergence is declared there beside the issue that ends it.

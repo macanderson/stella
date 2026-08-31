@@ -2,7 +2,7 @@
 <rect x="0" y="0" width="680" height="520" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
 <text x="16" y="22" font-size="11" fill="#EFC53F" font-weight="500">SESSION</text>
 <text x="80" y="22" font-size="11" fill="#777782">▸ plan r3 · task 3 wire dedup digest · 2/6</text>
-<text x="500" y="22" font-size="11" fill="#4B4B56">tab expand</text>
+<text x="500" y="22" font-size="11" fill="#4B4B56">⌃S plan</text>
 <text x="600" y="22" font-size="12" fill="#E8E8EC" font-weight="500">stella</text>
 <text x="645" y="22" font-size="12" fill="#EFC53F" font-weight="500">*</text>
 <line x1="0" y1="32" x2="680" y2="32" stroke="#26262C" stroke-width="1"/>
@@ -75,17 +75,23 @@
 <text x="92" y="394" font-size="11" fill="#E8E8EC">types</text>
 <text x="140" y="394" font-size="11" fill="#F7D96B">◐ running</text>
 <text x="588" y="394" font-size="11" fill="#4B4B56">$0.00</text>
-<text x="16" y="428" font-size="12" fill="#EFC53F" font-weight="500">&gt;&gt;&gt;</text>
-<rect x="46" y="418" width="7" height="13" fill="#E8E8EC"/>
-<text x="16" y="452" font-size="11" fill="#4B4B56">⏎ queue · esc steer · ^N failure · ^Z fold turn · / commands</text>
-<line x1="0" y1="464" x2="680" y2="464" stroke="#26262C" stroke-width="1"/>
-<text x="16" y="486" font-size="11" fill="#777782">kimi-k3 · execute · ctx</text>
-<text x="196" y="486" font-size="12" fill="#EFC53F">███▊</text>
-<text x="236" y="486" font-size="12" fill="#26262C">░░░░░░</text>
-<text x="292" y="486" font-size="11" fill="#E8E8EC">35%</text>
-<text x="330" y="486" font-size="11" fill="#EFC53F">$0.45</text>
-<text x="386" y="486" font-size="11" fill="#777782">saved</text>
-<text x="428" y="486" font-size="11" fill="#EFC53F">$0.69</text>
-<text x="486" y="486" font-size="11" fill="#A9AAB5">✉ 21</text>
-<text x="606" y="486" font-size="11" fill="#777782">? help</text>
+<text x="16" y="438" font-size="12" fill="#EFC53F" font-weight="500">&gt;&gt;&gt;</text>
+<text x="16" y="414" font-size="11" fill="#777782">✓ plan</text>
+<text x="74" y="414" font-size="11" fill="#EFC53F" font-weight="500">▸ execute</text>
+<text x="156" y="414" font-size="12" fill="#EFC53F">████</text>
+<text x="196" y="414" font-size="12" fill="#26262C">░░░░</text>
+<text x="240" y="414" font-size="11" fill="#777782">50%</text>
+<text x="276" y="414" font-size="11" fill="#4B4B56">· verify</text>
+<rect x="46" y="428" width="7" height="13" fill="#E8E8EC"/>
+<text x="16" y="462" font-size="11" fill="#4B4B56">⏎ queue · esc steer · ^N failure · ^Z fold turn · / commands</text>
+<line x1="0" y1="474" x2="680" y2="474" stroke="#26262C" stroke-width="1"/>
+<text x="16" y="496" font-size="11" fill="#777782">kimi-k3 · execute · ctx</text>
+<text x="196" y="496" font-size="12" fill="#EFC53F">███▊</text>
+<text x="236" y="496" font-size="12" fill="#26262C">░░░░░░</text>
+<text x="292" y="496" font-size="11" fill="#E8E8EC">35%</text>
+<text x="330" y="496" font-size="11" fill="#EFC53F">$0.45</text>
+<text x="386" y="496" font-size="11" fill="#777782">saved</text>
+<text x="428" y="496" font-size="11" fill="#EFC53F">$0.69</text>
+<text x="486" y="496" font-size="11" fill="#A9AAB5">✉ 21</text>
+<text x="606" y="496" font-size="11" fill="#777782">? help</text>
 </svg>
