@@ -373,7 +373,7 @@ mod tests {
         assert!(wrap("anything", 0).is_empty());
     }
 
-    /// **The witness (#5307).** A row of wide glyphs fits its column budget.
+    /// **The witness.** A row of wide glyphs fits its column budget.
     ///
     /// Counted in `char`s, `"日本 語言"` reads as 5 and packs onto one row of
     /// a 5-column card — 9 display columns, overflowing the card it was
@@ -388,7 +388,7 @@ mod tests {
         }
     }
 
-    /// The zero-width direction of #5307: a combining mark occupies no column,
+    /// The zero-width direction: a combining mark occupies no column,
     /// so text carrying them must not wrap early. Each word here is four
     /// `char`s (two letters, two combining acutes) but two columns, so both
     /// fit one 5-column row; the `char` measure saw 4 + 1 + 4 = 9 and broke.
