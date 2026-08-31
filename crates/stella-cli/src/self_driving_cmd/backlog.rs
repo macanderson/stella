@@ -373,6 +373,106 @@ pub(super) fn file_base_breakage(
         .map_err(|error| error.to_string())
 }
 
+/// The label that marks an issue as *the release workflow is red*.
+///
+/// A sibling of [`BASE_BREAKAGE_LABEL`] with the same contract. The label
+/// is the dedup key. A restarted process — or a second one — finds the
+/// emergency already filed instead of filing it again.
+pub(super) const DEPLOY_BREAKAGE_LABEL: &str = "release-red";
+
+/// The open deploy-breakage issue, if one exists.
+///
+/// Matched on [`DEPLOY_BREAKAGE_LABEL`] and read through the port. It
+/// degrades as [`open_base_breakage`] does. An unreachable tracker answers
+/// `None`, the filing that follows fails too, and the loop waits rather
+/// than acting on a guess.
+#[must_use]
+pub(super) fn open_deploy_breakage(provider: &dyn IssueProvider) -> Option<String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    let issues = runtime
+        .block_on(provider.list_open(QUEUE_READ_LIMIT))
+        .ok()?;
+
+    issues
+        .into_iter()
+        .find(|issue| {
+            issue
+                .labels
+                .iter()
+                .any(|label| label.name == DEPLOY_BREAKAGE_LABEL)
+        })
+        .map(|issue| issue.key.as_str().to_owned())
+}
+
+/// File the report that the release workflow is red — once.
+///
+/// The dedup lives in this function, not in the caller. The property that
+/// matters is one open issue per outage, and a caller that filed first and
+/// checked second would already have the duplicate in the tracker.
+/// `Ok(None)` is the ordinary answer on every poll after the first: the
+/// emergency is known, nothing was sent.
+///
+/// Like [`file_base_breakage`] it bypasses [`file_finding`]. There is one
+/// deploy outage at a time, its dedup key is "is one already open", and a
+/// convention refusal here would leave releases broken over a label
+/// spelling.
+pub(super) fn file_deploy_breakage(
+    provider: &dyn IssueProvider,
+    workflow: &str,
+    run_url: &str,
+    attribution: &stella_autonomy::Attribution,
+) -> Result<Option<String>, String> {
+    if open_deploy_breakage(provider).is_some() {
+        return Ok(None);
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
+
+    let body = stella_autonomy::sign(
+        &format!(
+            "The `{workflow}` workflow's most recent run finished red, so the \
+             release path is broken: nothing can ship until it is green again.\n\n\
+             Failing run: {run_url}\n\n\
+             ## Reproduce\n\n\
+             ```\n\
+             gh run list --workflow {workflow} --limit 3\n\
+             ```\n\n\
+             Read the newest failing run, then reproduce the failing step \
+             locally where the job permits it.\n\n\
+             ## Done when\n\n\
+             A run of `{workflow}` completes green, and the fix names which run \
+             it was diagnosed from.\n\n\
+             Filed automatically on noticing the release workflow was red and no \
+             issue was open. The label `{DEPLOY_BREAKAGE_LABEL}` is what marks it \
+             as this — removing the label makes the loop file a second one."
+        ),
+        &attribution.issue,
+    );
+
+    let draft = IssueDraft {
+        title: format!("{workflow} is red — the release path is broken"),
+        body,
+        labels: vec![
+            IssueLabel::from(DEPLOY_BREAKAGE_LABEL),
+            IssueLabel::from("bug"),
+            IssueLabel::from("P0"),
+        ],
+        parent: None,
+        assignee: None,
+    };
+
+    runtime
+        .block_on(provider.file(&draft))
+        .map(|key| Some(key.as_str().to_owned()))
+        .map_err(|error| error.to_string())
+}
+
 /// Mark an issue as one the loop tried and could not resolve, and say why.
 ///
 /// Both halves matter. The label is what the next run reads, so it stops
@@ -1050,6 +1150,58 @@ mod tests {
             Some(Demand::default()),
             "and is distinguishable from a backlog that really is empty"
         );
+    }
+
+    /// **The deploy-watch witness.** A red release run is filed exactly
+    /// once. The first pass files, with the dedup label riding the draft.
+    /// A pass that finds the label already open sends nothing.
+    #[test]
+    fn a_red_release_run_is_filed_exactly_once() {
+        let attribution = stella_autonomy::Attribution::default();
+        let run_url = "https://example.invalid/actions/runs/1";
+
+        // Nobody has filed it: one draft goes out, carrying the dedup label.
+        let provider = FixtureProvider::default();
+        let filed = file_deploy_breakage(&provider, "release.yml", run_url, &attribution)
+            .expect("the port was reachable");
+        assert_eq!(filed, Some("1001".to_owned()));
+        let drafts = provider.filed();
+        assert_eq!(drafts.len(), 1);
+        assert!(
+            drafts[0]
+                .labels
+                .iter()
+                .any(|label| label.name == DEPLOY_BREAKAGE_LABEL),
+            "the dedup label must ride the draft, or the next pass re-files"
+        );
+        assert!(
+            drafts[0].body.contains(run_url),
+            "the report must name the failing run"
+        );
+
+        // The issue is open: the same red run files nothing further.
+        let already = FixtureProvider::with(vec![issue(
+            "77",
+            &[DEPLOY_BREAKAGE_LABEL, "bug", "P0"],
+            "2026-08-19T00:00:00Z",
+        )]);
+        let second = file_deploy_breakage(&already, "release.yml", run_url, &attribution)
+            .expect("the port was reachable");
+        assert_eq!(second, None, "already filed — nothing to send");
+        assert!(already.filed().is_empty());
+    }
+
+    /// An unreachable tracker fails the deploy filing rather than
+    /// swallowing it — the contract every write in this module keeps.
+    #[test]
+    fn an_unreachable_tracker_fails_the_deploy_filing() {
+        let outcome = file_deploy_breakage(
+            &DeadProvider,
+            "release.yml",
+            "https://example.invalid/actions/runs/1",
+            &stella_autonomy::Attribution::default(),
+        );
+        assert!(outcome.is_err(), "{outcome:?}");
     }
 
     /// The limit bounds what crosses the port, not what the ranker discards

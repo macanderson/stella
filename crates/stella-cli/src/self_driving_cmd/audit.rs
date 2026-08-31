@@ -71,6 +71,9 @@ pub(super) enum Action {
     Waived,
     /// The base branch was found broken with no issue open, so one was filed.
     FiledBaseBreakage,
+    /// The release workflow was found red with no issue open, so one was
+    /// filed.
+    FiledDeployBreakage,
     /// A turn was asked to place an issue nobody had judged.
     TriageStarted,
     /// An issue was placed, and the labels written.
@@ -111,7 +114,7 @@ impl Action {
             Self::Verified => "verified",
             Self::VerifyFailed => "unverified",
             Self::Waived => "waived",
-            Self::FiledBaseBreakage => "filed",
+            Self::FiledBaseBreakage | Self::FiledDeployBreakage => "filed",
             Self::TriageStarted => "triaging",
             Self::Triaged => "triaged",
             Self::PrOpened => "pr opened",

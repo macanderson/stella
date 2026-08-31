@@ -409,6 +409,12 @@ pub struct SelfDrivingSection {
     /// find it to turn the gate on.
     #[serde(default)]
     pub residue_gate: ResidueGateSwitch,
+    /// `deploy_watch = "on" | "off"` — whether the drive loop also watches
+    /// the release workflow's latest run and files on red. On unless an
+    /// operator stands it down: a watch that must be asked for is a watch
+    /// that is off exactly when nobody thought about it.
+    #[serde(default)]
+    pub deploy_watch: DeployWatch,
 }
 
 /// The end-of-turn residue gate's switch (`doc:backlog-self-driving` B5).
@@ -430,6 +436,29 @@ impl ResidueGateSwitch {
     #[must_use]
     pub fn enabled(self) -> bool {
         matches!(self, Self::On)
+    }
+}
+
+/// The two positions of the deploy watch.
+///
+/// A named switch rather than a bare boolean so the config reads as the
+/// operator speaks — `deploy_watch = "off"` — and so an unset field has a
+/// default the type itself declares.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeployWatch {
+    /// Watch the release workflow, and file-and-adopt on red.
+    #[default]
+    On,
+    /// Do not watch it.
+    Off,
+}
+
+impl DeployWatch {
+    /// Whether the watch runs.
+    #[must_use]
+    pub fn enabled(self) -> bool {
+        self == Self::On
     }
 }
 

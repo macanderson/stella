@@ -92,9 +92,41 @@ pub(super) fn assess_one(
     // The body, so the turn judges the report rather than the headline. An
     // unreadable body is not a reason to skip the issue; a title-only
     // judgement is still better than leaving it unplaced forever.
-    let body = crate::self_driving_cmd::backlog::resolve(provider, &issue.key)
-        .map(|resolved| resolved.body)
+    let resolved = crate::self_driving_cmd::backlog::resolve(provider, &issue.key).ok();
+    let body = resolved
+        .as_ref()
+        .map(|full| full.body.clone())
         .unwrap_or_default();
+
+    // An issue this loop sized, back again as unassessed, was not un-judged.
+    // The triage guard stripped its priority label: the guard takes
+    // priorities only from logins it allows, and the runner's is not one.
+    // Re-triaging would relabel, get stripped, and loop forever. So it
+    // escalates once, and a human fixes the guard's login list.
+    // `crate::self_driving_cmd::triage::assessment_stripped` says why the
+    // size label is the tell.
+    if let Some(full) = &resolved
+        && crate::self_driving_cmd::triage::assessment_stripped(full, &cfg.triage)
+    {
+        crate::self_driving_cmd::backlog::escalate_blocking(
+            provider,
+            &issue.key,
+            "this loop placed the issue, and the triage guard stripped the \
+             priority it wrote — the drive runner's login is not on the \
+             guard's list. Add it to TRIAGE_LOGINS in the guard workflow, or \
+             set the priority from an allowed login. Then remove the \
+             escalation label to requeue",
+            &cfg.attribution.issue_comment,
+        )?;
+        audit::record(
+            durable,
+            Audit::Escalated,
+            Some(&issue.key),
+            "placed before, then stripped by the triage guard — escalated \
+             once rather than re-triaged forever",
+        );
+        return Ok(());
+    }
 
     let prompt = crate::self_driving_cmd::triage::prompt(&issue, &body, &cfg.triage);
     let output = crate::self_driving_cmd::work::run_turn(root, root, &prompt, budget)?;
@@ -129,5 +161,25 @@ pub(super) fn assess_one(
         Some(&issue.key),
         &assessment.reason(),
     );
+
+    // The assessment passed, so readiness is decidable now, and deciding it
+    // costs no model call. A failure here is transient like any other
+    // tracker write. The placed labels already stand, and the next reader
+    // re-derives readiness from the same facts.
+    match crate::self_driving_cmd::triage::flip_ready(provider, &issue.key, &body) {
+        Ok(true) => audit::record(
+            durable,
+            Audit::Triaged,
+            Some(&issue.key),
+            "no open blocker remains — flipped `status:blocked` to `status:ready`",
+        ),
+        Ok(false) => {}
+        Err(error) => audit::record(
+            durable,
+            Audit::Transient,
+            Some(&issue.key),
+            &format!("could not decide readiness ({error}); the labels stand"),
+        ),
+    }
     Ok(())
 }
