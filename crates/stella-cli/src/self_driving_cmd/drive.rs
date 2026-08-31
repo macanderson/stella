@@ -645,7 +645,6 @@ pub(super) fn drive(
                         continue;
                     }
                 };
-
                 // Recorded before the work starts, so a failure cannot make the
                 // loop re-claim the same issue forever.
                 spent.entry(issue.0.clone()).or_default();
@@ -666,20 +665,25 @@ pub(super) fn drive(
                 // A `work` that cannot start is one issue's problem, not the
                 // loop's: a single leftover branch must not halt a run that has
                 // other issues to get on with.
-                let outcome =
-                    match super::work::start(&root, &resolved, &mut budget, &cfg.attribution) {
-                        Ok(outcome) => outcome,
-                        Err(reason) => {
-                            audit::record(
-                                durable,
-                                Audit::Deferred,
-                                Some(&issue.0),
-                                &format!("could not start ({reason}); moving on"),
-                            );
-                            durable.update_stats(|s| s.issues_deferred += 1);
-                            continue;
-                        }
-                    };
+                let outcome = match super::work::start(
+                    &root,
+                    &resolved,
+                    &mut budget,
+                    &cfg.attribution,
+                    &cfg.worker,
+                ) {
+                    Ok(outcome) => outcome,
+                    Err(reason) => {
+                        audit::record(
+                            durable,
+                            Audit::Deferred,
+                            Some(&issue.0),
+                            &format!("could not start ({reason}); moving on"),
+                        );
+                        durable.update_stats(|s| s.issues_deferred += 1);
+                        continue;
+                    }
+                };
                 let learned = super::learning::tally(&root).since(learned_before);
 
                 // Every counter this unit moves, in one write — shared with the

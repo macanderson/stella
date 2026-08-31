@@ -118,6 +118,21 @@ Issue text is never a command: anyone who can file an issue could write anything
 
 Worktrees for this command live under `.stella/private/self-driving/`, on `self-driving/` branches. This is outside the fleet's namespace, because `stella fleet gc` cleans up by namespace, and it should never be allowed to delete checkouts it didn't create.
 
+By default, stella does the coding work itself. You can point it at Claude Code instead:
+
+```toml
+[self_driving.worker]
+kind = "claude"
+command = "claude"
+model = "opus"       # optional
+max_turns = 40       # optional limit per issue
+dangerously_skip_permissions = false
+```
+
+Claude runs as `claude -p --output-format json` inside the same isolated worktree, so your normal project and user settings still apply. Skipping permission prompts is a separate setting you have to turn on yourself, because it lets the worker write files and run commands without asking first.
+
+A Claude worker will not accept `--spend-limit`. Claude does not report what a run cost in the form stella measures, so stella cannot hold it to a dollar cap. Use `max_turns`, or your provider's own spending controls, instead.
+
 ### drive
 
 `stella self-driving drive` runs on its own, without you watching it. It keeps asking what to do next, does it, and asks again: claim the next issue from the ranked queue, run it through the turn loop, open a pull request, watch CI, and merge when it's ready.
