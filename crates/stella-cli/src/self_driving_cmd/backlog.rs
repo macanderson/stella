@@ -47,6 +47,27 @@ use super::state::LoopState;
 /// pins.
 pub(super) const QUEUE_READ_LIMIT: usize = 1_000;
 
+/// What an operator is told when the queue read filled its page.
+///
+/// A full page means the tracker held at least this many open issues, so the
+/// ranking covers only the ones that crossed. The loop reports and carries on
+/// rather than refusing, because it can still work the issues it can see and a
+/// queue that stops dead on a large backlog helps nobody. Silence is the one
+/// option ruled out: a truncated read that looks like a complete one is the
+/// whole defect.
+///
+/// A function rather than an inline print, so what an operator is told can be
+/// asserted without running a loop.
+fn truncation_notice(total: usize, provider: &str) -> Option<String> {
+    (total >= QUEUE_READ_LIMIT).then(|| {
+        format!(
+            "warning: `{provider}` returned {total} open issues, which fills this read. \
+             The ladder ranks that page alone, and the tracker chose it by its own order. \
+             Issues behind the page did not reach the ranker."
+        )
+    })
+}
+
 /// Read the tracker once and rank it, or explain why it could not be read.
 ///
 /// The port is async because a tracker is a network service. These callers are
@@ -65,6 +86,9 @@ pub(super) fn ranked(
         .block_on(provider.list_open(QUEUE_READ_LIMIT))
         .map_err(|error| error.to_string())?;
     let total = issues.len();
+    if let Some(notice) = truncation_notice(total, provider.id()) {
+        eprintln!("{notice}");
+    }
     let queue = stella_autonomy::priority::triage(
         issues
             .iter()
@@ -1135,6 +1159,32 @@ mod tests {
             OLD_PAGE + 1,
             "the reported backlog size counts every open issue, not one page \
              of them"
+        );
+    }
+
+    /// **Witness.** A read that fills its page says so.
+    ///
+    /// The page is sized to exceed a backlog, and a repository that outgrows it
+    /// has the ordering defect back. What must not come back with it is the
+    /// silence. The queue is then ranked over a page the tracker chose by date,
+    /// and the ranking alone gives an operator no way to see that.
+    #[test]
+    fn a_read_that_fills_its_page_reports_the_truncation() {
+        assert_eq!(
+            truncation_notice(QUEUE_READ_LIMIT - 1, "github"),
+            None,
+            "a read the backlog has not filled is a complete one and says nothing"
+        );
+
+        let notice = truncation_notice(QUEUE_READ_LIMIT, "github")
+            .expect("a filled page is a truncated read and has to be reported");
+        assert!(
+            notice.contains("github"),
+            "the notice names the tracker it read: {notice}"
+        );
+        assert!(
+            notice.contains(&QUEUE_READ_LIMIT.to_string()),
+            "the notice names how many issues crossed: {notice}"
         );
     }
 
