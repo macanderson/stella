@@ -1606,58 +1606,7 @@ fn clamp(model: &WorkspaceModel, ui: &mut DeckUi) {
     } else {
         ui.queue_sel.min(queued - 1)
     };
-    // Front-eviction shifts every retained index, so every entry index the
-    // UI holds is rebased down by the same shift — a flag left where it was
-    // would silently re-attach to whichever entry slid into its slot.
-    // Rebased rather than cleared: the fold-state stance in
-    // `stella_transcript::fold` is that reader state survives what happens
-    // around it, and a reader's expansions are reader state. An index naming
-    // an entry the pass drained is dropped, never clamped — clamping selects
-    // an entry the reader never chose.
-    for (idx, agent) in model.agents.iter().enumerate() {
-        let evicted = agent.model.evicted_entries();
-        let seen = ui.evicted_seen.get(&agent.meta.id).copied().unwrap_or(0);
-        if evicted > seen {
-            ui.evicted_seen.insert(agent.meta.id.clone(), evicted);
-            // The shift is in *index slots*, not counted entries: each pass
-            // drains a chunk and stands one marker in its place, so those
-            // differ by exactly one — and only for the first pass (later
-            // passes drain a marker that was already occupying a slot).
-            // Getting this wrong in the other direction would suppress
-            // entries from the live pane that were never written anywhere.
-            let slots = (evicted - seen).saturating_sub(usize::from(seen == 0));
-            ui.scrollback.shift_after_eviction(&agent.meta.id, slots);
-            // Slot 0 is the marker; a survivor lands at 1 or later. An old
-            // index at or below `slots` named a drained entry (or the old
-            // marker, which the new marker absorbed at slot 0).
-            let rebase = move |i: usize| -> Option<usize> {
-                if i == 0 && seen > 0 {
-                    return Some(0);
-                }
-                i.checked_sub(slots).filter(|&n| n >= 1)
-            };
-            if let Some(set) = ui.expanded.get_mut(&agent.meta.id) {
-                *set = set.iter().copied().filter_map(rebase).collect();
-                if set.is_empty() {
-                    ui.expanded.remove(&agent.meta.id);
-                }
-                ui.expanded_rev += 1;
-            }
-            // Fold sets are keyed on turn-start indices, which shift by
-            // exactly the same amount — they rebase together.
-            if let Some(set) = ui.folded_turns.get_mut(&agent.meta.id) {
-                *set = set.iter().copied().filter_map(rebase).collect();
-                if set.is_empty() {
-                    ui.folded_turns.remove(&agent.meta.id);
-                }
-                ui.fold_rev += 1;
-            }
-            // The ↑/↓ highlight belongs to the focused agent's transcript.
-            if idx == ui.focused {
-                ui.session_selected = ui.session_selected.and_then(rebase);
-            }
-        }
-    }
+    eviction::rebase(model, ui);
     // The ↑/↓ highlight must stay inside the retained window — a session
     // reset (`/clear`) can shrink the transcript below a selection taken
     // before it. Eviction never needs this arm: the rebase above already
@@ -1684,6 +1633,7 @@ pub mod cards;
 pub mod composer_mode;
 mod create;
 pub mod dispatch;
+mod eviction;
 /// The focus tree — `←`/`→` siblings, `⏎` open, `⌫` back.
 pub mod focus;
 mod gates;

@@ -434,11 +434,10 @@ fn eviction_rebases_fold_state_alongside_expansions() {
         Some(&std::collections::HashSet::from([chosen - shift])),
         "the surviving fold moved with its turn; the drained one dropped"
     );
+    let expanded = MAX_TRANSCRIPT_ENTRIES - 2 - shift;
     assert_eq!(
         ui.expanded.get("lead"),
-        Some(&std::collections::HashSet::from([
-            MAX_TRANSCRIPT_ENTRIES - 2 - shift
-        ])),
+        Some(&std::collections::HashSet::from([expanded])),
         "the expansion shifted identically"
     );
     assert!(ui.fold_rev > fold_rev, "the fold cache is invalidated");
