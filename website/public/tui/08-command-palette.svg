@@ -1,39 +1,70 @@
-<svg viewBox="0 0 680 312" width="680" height="312" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
-<rect x="0" y="0" width="680" height="312" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
-<rect x="40" y="16" width="600" height="222" fill="#0F0F12" stroke="#2C2C33" stroke-width="1"/>
+<svg viewBox="0 0 680 584" width="680" height="584" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
+<!-- Frame 1: browse — a bare `/` shows relevant now, the domain groups, then recent. -->
+<rect x="0" y="0" width="680" height="318" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<rect x="40" y="16" width="600" height="230" fill="#0F0F12" stroke="#2C2C33" stroke-width="1"/>
 <text x="54" y="36" font-size="11" fill="#EFC53F">/ commands</text>
-<text x="150" y="36" font-size="11" fill="#4B4B56">6 of 129 · fuzzy</text>
-<text x="452" y="36" font-size="11" fill="#4B4B56">↑↓ move · ↵ run · ⇥ args</text>
+<text x="150" y="36" font-size="11" fill="#4B4B56">browse · 31 commands</text>
+<text x="420" y="36" font-size="11" fill="#4B4B56">↑↓ move · ↵ run · ⇥ args · esc</text>
 <line x1="40" y1="44" x2="640" y2="44" stroke="#26262C" stroke-width="1"/>
-<text x="54" y="64" font-size="11" fill="#4B4B56">relevant now · verify is running</text>
+<text x="54" y="64" font-size="11" fill="#4B4B56">relevant now · a turn is running</text>
 <rect x="41" y="70" width="598" height="18" fill="#17171B"/>
-<text x="54" y="83" font-size="11" fill="#EFC53F">/g</text>
-<text x="70" y="83" font-size="11" fill="#EFC53F">a</text>
-<text x="78" y="83" font-size="11" fill="#E8E8EC">tes</text>
-<text x="180" y="83" font-size="11" fill="#777782">show the gate board</text>
-<text x="524" y="83" font-size="11" fill="#F7D96B">◐ 2/5 green</text>
-<text x="54" y="105" font-size="11" fill="#EFC53F">/g</text>
-<text x="70" y="105" font-size="11" fill="#EFC53F">a</text>
-<text x="78" y="105" font-size="11" fill="#A9AAB5">te rerun</text>
-<text x="180" y="105" font-size="11" fill="#777782">rerun one gate</text>
-<text x="500" y="105" font-size="11" fill="#4B4B56">⇥ &lt;name&gt;</text>
-<text x="54" y="129" font-size="11" fill="#4B4B56">plan</text>
-<text x="54" y="149" font-size="11" fill="#EFC53F">/</text>
-<text x="62" y="149" font-size="11" fill="#A9AAB5">plan diff</text>
-<text x="180" y="149" font-size="11" fill="#777782">planned vs actual · ↯ 1 drift</text>
-<text x="54" y="173" font-size="11" fill="#4B4B56">graph</text>
-<text x="54" y="193" font-size="11" fill="#EFC53F">/g</text>
-<text x="70" y="193" font-size="11" fill="#A9AAB5">r</text>
-<text x="78" y="193" font-size="11" fill="#EFC53F">a</text>
-<text x="86" y="193" font-size="11" fill="#A9AAB5">ph query</text>
-<text x="180" y="193" font-size="11" fill="#777782">free-form graph query</text>
-<text x="524" y="193" font-size="11" fill="#4B4B56">det · $0.00</text>
-<text x="54" y="217" font-size="11" fill="#4B4B56">recent</text>
-<text x="54" y="233" font-size="11" fill="#EFC53F">/</text>
-<text x="62" y="233" font-size="11" fill="#A9AAB5">theme stella-gold</text>
-<text x="220" y="233" font-size="11" fill="#777782">2m ago</text>
-<text x="40" y="266" font-size="12" fill="#EFC53F" font-weight="500">&gt;&gt;&gt;</text>
-<text x="70" y="266" font-size="12" fill="#E8E8EC">/ga</text>
-<rect x="98" y="256" width="7" height="13" fill="#E8E8EC"/>
-<text x="40" y="294" font-size="11" fill="#4B4B56">palette = Clear widget over a centered Rect · stock ratatui</text>
+<text x="54" y="83" font-size="11" fill="#EFC53F">/</text>
+<text x="61" y="83" font-size="11" fill="#E8E8EC">plan</text>
+<text x="180" y="83" font-size="11" fill="#777782">the plan — every step…</text>
+<text x="416" y="83" font-size="11" fill="#F7D96B">executing — 2 of 6 steps done</text>
+<text x="54" y="105" font-size="11" fill="#EFC53F">/</text>
+<text x="61" y="105" font-size="11" fill="#A9AAB5">inspect</text>
+<text x="180" y="105" font-size="11" fill="#777782">the context sent to the model…</text>
+<text x="54" y="127" font-size="11" fill="#EFC53F">/</text>
+<text x="61" y="127" font-size="11" fill="#A9AAB5">budget</text>
+<text x="180" y="127" font-size="11" fill="#777782">set or clear the session spend cap</text>
+<text x="468" y="127" font-size="11" fill="#4B4B56">run $0.12 · set a cap</text>
+<text x="54" y="151" font-size="11" fill="#4B4B56">session</text>
+<text x="54" y="171" font-size="11" fill="#EFC53F">/</text>
+<text x="61" y="171" font-size="11" fill="#A9AAB5">help</text>
+<text x="180" y="171" font-size="11" fill="#777782">show commands</text>
+<text x="54" y="191" font-size="11" fill="#EFC53F">/</text>
+<text x="61" y="191" font-size="11" fill="#A9AAB5">clear</text>
+<text x="180" y="191" font-size="11" fill="#777782">reset the conversation</text>
+<text x="54" y="215" font-size="11" fill="#4B4B56">recent</text>
+<text x="54" y="235" font-size="11" fill="#EFC53F">/</text>
+<text x="61" y="235" font-size="11" fill="#A9AAB5">theme</text>
+<text x="180" y="235" font-size="11" fill="#777782">switch colour theme</text>
+<text x="360" y="235" font-size="11" fill="#4B4B56">2m ago</text>
+<text x="40" y="274" font-size="12" fill="#EFC53F" font-weight="500">&gt;&gt;&gt;</text>
+<text x="70" y="274" font-size="12" fill="#E8E8EC">/</text>
+<rect x="80" y="264" width="7" height="13" fill="#E8E8EC"/>
+<text x="40" y="302" font-size="11" fill="#4B4B56">browse — relevant now, the domain groups, then recent · anchored, opening upward</text>
+<!-- Frame 2: a typed query is one flat ranked list, no section headings. -->
+<rect x="0" y="330" width="680" height="254" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
+<rect x="40" y="346" width="600" height="148" fill="#0F0F12" stroke="#2C2C33" stroke-width="1"/>
+<text x="54" y="366" font-size="11" fill="#EFC53F">/ commands</text>
+<text x="150" y="366" font-size="11" fill="#4B4B56">5 of 31 · fuzzy</text>
+<text x="420" y="366" font-size="11" fill="#4B4B56">↑↓ move · ↵ run · ⇥ args · esc</text>
+<line x1="40" y1="374" x2="640" y2="374" stroke="#26262C" stroke-width="1"/>
+<rect x="41" y="382" width="598" height="18" fill="#17171B"/>
+<text x="54" y="396" font-size="11" fill="#EFC53F">/in</text>
+<text x="74" y="396" font-size="11" fill="#E8E8EC">fo</text>
+<text x="180" y="396" font-size="11" fill="#777782">model routing — think · work · verify</text>
+<text x="54" y="418" font-size="11" fill="#EFC53F">/in</text>
+<text x="74" y="418" font-size="11" fill="#A9AAB5">it</text>
+<text x="180" y="418" font-size="11" fill="#777782">index the workspace: domains + code graph</text>
+<text x="54" y="440" font-size="11" fill="#EFC53F">/in</text>
+<text x="74" y="440" font-size="11" fill="#A9AAB5">spect</text>
+<text x="180" y="440" font-size="11" fill="#777782">the context sent to the model on any call</text>
+<text x="54" y="462" font-size="11" fill="#EFC53F">/in</text>
+<text x="74" y="462" font-size="11" fill="#A9AAB5">box</text>
+<text x="180" y="462" font-size="11" fill="#777782">notifications — messages persist until read</text>
+<text x="516" y="462" font-size="11" fill="#F7D96B">3 unread</text>
+<text x="54" y="484" font-size="11" fill="#EFC53F">/</text>
+<text x="61" y="484" font-size="11" fill="#A9AAB5">sess</text>
+<text x="87" y="484" font-size="11" fill="#EFC53F">i</text>
+<text x="94" y="484" font-size="11" fill="#A9AAB5">o</text>
+<text x="100" y="484" font-size="11" fill="#EFC53F">n</text>
+<text x="107" y="484" font-size="11" fill="#A9AAB5">s</text>
+<text x="180" y="484" font-size="11" fill="#777782">every stella session on this machine</text>
+<text x="40" y="522" font-size="12" fill="#EFC53F" font-weight="500">&gt;&gt;&gt;</text>
+<text x="70" y="522" font-size="12" fill="#E8E8EC">/in</text>
+<rect x="93" y="512" width="7" height="13" fill="#E8E8EC"/>
+<text x="40" y="550" font-size="11" fill="#4B4B56">a typed query is one flat ranked list · no section headings · scattered letters light gold</text>
 </svg>
