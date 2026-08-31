@@ -77,6 +77,55 @@ fn esc_leaves_the_zoom_for_the_plan_card_on_the_same_step() {
     assert!(!ui.cards.is_open());
 }
 
+/// **The witness (#5154).** The zoom's body scrolls: it has no row cursor for
+/// the fold window to follow — its selection is the *task* — so `↑`/`↓` and
+/// `⇞`/`⇟` drive an offset against the viewport the last render recorded in
+/// `DeckMetrics`. Before this, a long contract on a short terminal showed its
+/// first rows and the reader could never reach the evidence or the spend.
+#[test]
+fn the_zoom_body_scrolls_against_the_recorded_viewport() {
+    let model = model_with_board();
+    let mut ui = ready_ui();
+    ui.cards.raise(Card::Plan);
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(ui.cards.open, Some(Card::TaskZoom));
+    // What the last render recorded: a 40-row body in a 10-row viewport.
+    ui.metrics.zoom_total = 40;
+    ui.metrics.zoom_height = 10;
+    assert_eq!(
+        ui.cards.zoom_scroll.window(40, 10),
+        0..10,
+        "the zoom opens at the top of its body"
+    );
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    assert_eq!(ui.cards.zoom_scroll.window(40, 10).start, 1);
+    handle_deck_key(key(KeyCode::PageDown), &model, &mut ui);
+    assert_eq!(ui.cards.zoom_scroll.window(40, 10).start, 11);
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    handle_deck_key(key(KeyCode::PageUp), &model, &mut ui);
+    assert_eq!(ui.cards.zoom_scroll.window(40, 10).start, 0);
+}
+
+/// Re-entering the zoom opens at the top again — a scroll left behind by the
+/// last visit would put an arbitrary middle of the next task's contract on
+/// screen with nothing saying why.
+#[test]
+fn reentering_the_zoom_resets_its_scroll_to_the_top() {
+    let model = model_with_board();
+    let mut ui = ready_ui();
+    ui.cards.raise(Card::Plan);
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    ui.metrics.zoom_total = 40;
+    ui.metrics.zoom_height = 10;
+    handle_deck_key(key(KeyCode::PageDown), &model, &mut ui);
+    assert_ne!(ui.cards.zoom_scroll.window(40, 10).start, 0);
+
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(ui.cards.open, Some(Card::TaskZoom));
+    assert_eq!(ui.cards.zoom_scroll.window(40, 10), 0..10);
+}
+
 /// `⌃S` raised the plan card, so it closes the whole surface from inside the
 /// zoom too. A chord that only opens is a trap.
 #[test]

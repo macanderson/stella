@@ -1,0 +1,25 @@
+# deck golden · zoom_scrolled
+# the task zoom paged down on a short terminal — the window moved, admission at the top
+# viewport 80×20 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION  ▸ plan · task 5 Wire the triggers API · 4/7         ⌃S plan   stella*
+task 5 · Wire the triggers API             ◐ working · lead · glm-5.2 · esc back
+
+↑ 12 more above
+  run    cargo test -p stella-serve triggers                                 2/4
+  graph  3 nodes · TriggerRoute, org guard                                    wr
+
+planned vs actual · [:NEXT] is the plan · [:THEN] is what happened
+  planned  read the trigger routes → wire the org guard → test
+  actual   read the trigger routes → wire the org guard → ⌥ fix borrow err →
+           test
+  1 divergence · cause E0502 borrow · recorded as a trace outcome
+
+↓ 2 more below
+r re-run checks · s split task · b hand to worker · i promote to issue · ⌥ diff
+a task closes when its checks pass, not when the model says so.
+ ✓ plan ▸ execute ████░░░░ 50% · verify
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · /
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00     ? help

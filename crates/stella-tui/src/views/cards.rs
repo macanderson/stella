@@ -220,6 +220,36 @@ fn fold_to(
     out
 }
 
+/// Window `lines` to the slice a [`crate::scroll::ScrollState`] chose,
+/// spending the first and last visible rows on fold admissions when rows
+/// remain beyond either cut — the scroll-driven sibling of [`fold_to`], which
+/// windows around a selection instead. Same conventions: the admission's
+/// count includes the row its own marker displaced, and a one-row window
+/// that cannot hold both content and the admission carries the admission.
+pub(crate) fn scroll_window(
+    lines: Vec<Line<'static>>,
+    window: std::ops::Range<usize>,
+    total: usize,
+) -> Vec<Line<'static>> {
+    let height = window.len();
+    if height == 0 || total <= height {
+        return lines;
+    }
+    let cut_above = window.start > 0;
+    let cut_below = window.end < total;
+    if height <= usize::from(cut_above) + usize::from(cut_below) {
+        return vec![fold_row(format!("… {total} rows, none fit"))];
+    }
+    let mut out: Vec<Line<'static>> = lines[window.clone()].to_vec();
+    if cut_above {
+        out[0] = fold_row(format!("↑ {} more above", window.start + 1));
+    }
+    if cut_below {
+        out[height - 1] = fold_row(format!("↓ {} more below", total - window.end + 1));
+    }
+    out
+}
+
 /// A mini fraction bar over `width` cells: `filled/total` in the given
 /// color, the rest a dim groove. Deliberately painted with `▰`/`▱` — never
 /// the `█` glyph, which belongs exclusively to the brand-gradient run bar so

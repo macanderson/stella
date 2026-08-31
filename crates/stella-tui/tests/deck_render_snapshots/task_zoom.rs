@@ -25,6 +25,56 @@ use super::*;
 /// A golden is the only thing that can hold the second frame to what it says:
 /// the elision copy is a *sentence*, and a sentence quietly becoming a blank
 /// line is invisible to every other kind of test.
+/// **The witness (#5154).** On a short terminal the zoom's body scrolls: the
+/// first frame folds its tail and admits the cut, `⇟` moves the window, and
+/// the moved frame admits what scrolled past at the top. Before this the zoom
+/// had no scroll at all, so the first N rows were all a short terminal could
+/// ever show of a long contract.
+#[test]
+fn the_task_zoom_scrolls_on_a_short_terminal() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use stella_tui::deck_ui::cards::Card;
+
+    let (board, lanes, ledger) = stella_tui::scenario::demo_task_zoom();
+    let mut model = fixture_model();
+    model.apply_inbound(&Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::TaskUpdate { tasks: board },
+    });
+    let lead = &mut model.agents[0].model.plan;
+    lead.lanes = Some(lanes);
+    lead.ledger.insert("5".to_string(), ledger);
+
+    let mut ui = ui_for(DeckTab::Session);
+    ui.cards.raise(Card::TaskZoom);
+    ui.cards.plan_sel = 4;
+    let (w, h) = (80u16, 20u16);
+    let before = render_frame(&model, &mut ui, w, h);
+    assert!(
+        before.contains("more below"),
+        "the fold admits the rows it cut:\n{before}"
+    );
+
+    stella_tui::deck_ui::cards::handle_card_key(
+        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        &model,
+        &mut ui,
+    );
+    let frame = render_frame(&model, &mut ui, w, h);
+    assert_ne!(before, frame, "⇟ moved the body");
+    assert!(
+        frame.contains("more above"),
+        "the moved window admits what scrolled past:\n{frame}"
+    );
+    assert_golden(
+        "zoom_scrolled",
+        "the task zoom paged down on a short terminal — the window moved, admission at the top",
+        w,
+        h,
+        &frame,
+    );
+}
+
 #[test]
 fn deck_render_snapshots_pin_the_task_zoom() {
     use stella_tui::deck_ui::cards::Card;
