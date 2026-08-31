@@ -1183,7 +1183,8 @@ fn work_issue(
     let root = state::repo_root();
     let issue = backlog::resolve(&crate::issue_provider::GhIssueProvider, key)?;
 
-    let attribution = config::load(&root).attribution;
+    let loop_config = config::load(&root);
+    let attribution = &loop_config.attribution;
 
     // The `PreIssueWork` gate (#3599), before the worktree exists and before
     // any model call — so a skip costs nothing and leaves nothing behind.
@@ -1220,7 +1221,7 @@ fn work_issue(
     // child turn's ceiling is decided and one place its cost is folded back in
     // (#4353).
     let mut budget = budget::RunBudget::new(flags.clone());
-    let outcome = work::start(&root, &issue, &mut budget, &attribution)?;
+    let outcome = work::start(&root, &issue, &mut budget, attribution, &loop_config.worker)?;
     let learned = learning::tally(&root).since(learned_before);
     hooks::after_issue_work(&root, &settings, &hook_issue, hook_outcome(&outcome));
 

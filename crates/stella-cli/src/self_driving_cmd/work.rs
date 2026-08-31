@@ -1,24 +1,38 @@
-//! `work` — one issue through Stella's own turn loop, in an isolated worktree.
+//! `work` — one issue through a coding agent's turn loop, in an isolated
+//! worktree.
 //!
 //! `doc:backlog-self-driving` §3.2 (#3599 B2). This is the verb that does not
 //! exist in any other form, and it is the whole autonomous half: everything
 //! else in the loop ranks, decides, or reports.
 //!
-//! # Stella is started, not embedded
+//! # The worker is started, not embedded
 //!
-//! `work start` **spawns `stella run`** in the worktree rather than dispatching
-//! a turn in-process. That is the design's shape, not a convenience:
-//! `doc:pipeline-as-plugins` §10 settles that self-driving is a *host*, not a
-//! wrapper — *"Stella never starts this program — a person does, and then it
-//! starts Stella"* — and `plugins/stella-selfdriving/plugin.toml` already
-//! declares exactly this capability, so a human has read and granted it.
+//! `work start` **spawns a coding agent** in the worktree rather than
+//! dispatching a turn in-process. That is the design's shape, not a
+//! convenience: `doc:pipeline-as-plugins` §10 settles that self-driving is a
+//! *host*, not a wrapper — *"Stella never starts this program — a person does,
+//! and then it starts Stella"* — and `plugins/stella-selfdriving/plugin.toml`
+//! already declares exactly this capability, so a human has read and granted
+//! it.
 //!
-//! It also gets the definition of done right for free. There is no built-in
-//! verification pipeline any more (`stella-pipeline` was deleted, #3852/#3865),
-//! so a unit of work gets **the turn loop plus whatever plugins are installed**
-//! and nothing else. Spawning the real binary is what makes that true by
-//! construction rather than by a claim in a doc comment: whatever a `stella
-//! run` gets on this machine, a work unit gets.
+//! Which agent is [`WorkerKind`], and `stella run` is the default. The seam is
+//! here and nowhere else: ranking, claiming, worktree isolation, the pull
+//! request and the merge never learn which agent wrote the diff, because the
+//! outcome is measured from the tree rather than reported by the worker. That
+//! is what makes a second worker a setting rather than a second loop.
+//!
+//! Spawning also gets the definition of done right for free. There is no
+//! built-in verification pipeline any more (`stella-pipeline` was deleted,
+//! #3852/#3865), so a unit of work gets **the turn loop plus whatever plugins
+//! are installed** and nothing else. Spawning the real binary is what makes
+//! that true by construction rather than by a claim in a doc comment: whatever
+//! a `stella run` gets on this machine, a work unit gets.
+//!
+//! A claude worker is held to the same bar by the same mechanism, with one
+//! exception it is refused rather than allowed to ignore: `--spend-limit`.
+//! Claude Code reports no cost this loop can read, so the ceiling could never
+//! be reached, and a cap that is silently infinite is worse than one the
+//! operator was told to remove.
 //!
 //! What that is worth is stated plainly in §3.2 and repeated here because it is
 //! easy to over-read: with no verification plugin installed, a completed work
@@ -70,6 +84,7 @@ use stella_protocol::issue::Issue;
 
 use super::budget::RunBudget;
 use super::turn_flags::TurnFlags;
+use crate::settings::toml_config::WorkerKind;
 
 /// Where this verb's worktrees live — gitignored, and outside the fleet's
 /// namespace so `stella fleet gc` cannot see them.
@@ -435,6 +450,107 @@ pub(super) fn run_turn(
     }
 }
 
+/// The Claude Code child, built but not spawned.
+///
+/// Separated from [`run_claude`] for the reason [`turn_command`] is separated
+/// from [`run_turn`]: the whole command is then a test seam, so what the
+/// worker's settings actually put on the command line is assertable without
+/// running an agent.
+fn claude_command(
+    dir: &Path,
+    prompt: &str,
+    worker: &crate::settings::toml_config::WorkerSection,
+) -> Command {
+    let mut cmd = Command::new(&worker.command);
+    cmd.current_dir(dir)
+        .arg("-p")
+        .arg("--output-format")
+        .arg("json");
+    if let Some(model) = worker.model.as_deref() {
+        cmd.arg("--model").arg(model);
+    }
+    if let Some(max_turns) = worker.max_turns {
+        cmd.arg("--max-turns").arg(max_turns.to_string());
+    }
+    // Only when the operator asked for it in as many words. Choosing a worker
+    // and widening what that worker may do are two decisions, and this is the
+    // second one.
+    if worker.dangerously_skip_permissions {
+        cmd.arg("--dangerously-skip-permissions");
+    }
+    cmd.arg(prompt);
+    cmd
+}
+
+/// Run Claude Code non-interactively in one issue's isolated worktree.
+///
+/// The prompt rides as an argument rather than on stdin, and stdin is closed:
+/// this is an unattended loop, so a worker that stops to ask a question must
+/// fail rather than wait for a person who is not there.
+fn run_claude(
+    dir: &Path,
+    prompt: &str,
+    worker: &crate::settings::toml_config::WorkerSection,
+) -> Result<String, String> {
+    let out = claude_command(dir, prompt, worker)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| {
+            format!(
+                "could not start claude (`{}`): {error}. Set worker.command to \
+                 the executable's name on PATH, or an absolute path to it.",
+                worker.command
+            )
+        })?;
+
+    let summary = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if out.status.success() {
+        Ok(summary)
+    } else {
+        Err(format!(
+            "claude exited {}{}",
+            out.status.code().unwrap_or(-1),
+            match claude_reason(&summary) {
+                Some(reason) => format!(" — {reason}"),
+                None => String::new(),
+            }
+        ))
+    }
+}
+
+/// What Claude Code said about a run that ended badly.
+///
+/// Its `--output-format json` is not the shape [`turn_reason`] reads, so that
+/// parser is not reused: pointed at this document it finds none of the keys it
+/// looks for and falls back to the raw last line, which for a JSON document is
+/// the whole document. `result` carries the human-readable text in both the
+/// success and error shapes; `error` appears when the run failed before there
+/// was a result to report.
+fn claude_reason(summary: &str) -> Option<String> {
+    let condense = |text: &str| -> Option<String> {
+        let condensed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if condensed.is_empty() {
+            return None;
+        }
+        let clipped: String = condensed.chars().take(600).collect();
+        Some(if condensed.chars().count() > 600 {
+            format!("{clipped}…")
+        } else {
+            clipped
+        })
+    };
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(summary) else {
+        return condense(summary.lines().last().unwrap_or(summary));
+    };
+    ["result", "error"]
+        .iter()
+        .find_map(|key| value.get(key).and_then(serde_json::Value::as_str))
+        .and_then(condense)
+}
+
 /// The child `stella run`, built but not spawned.
 ///
 /// Separated from [`run_turn`] so the *whole* command is a test seam rather
@@ -608,6 +724,7 @@ pub(super) fn start(
     issue: &Issue,
     budget: &mut RunBudget,
     attribution: &stella_autonomy::Attribution,
+    worker: &crate::settings::toml_config::WorkerSection,
 ) -> Result<WorkOutcome, String> {
     use stella_fleet::git::{SystemGitCli, WorktreeManager};
 
@@ -656,12 +773,21 @@ pub(super) fn start(
         path: created.path.clone(),
     };
 
-    let turn = run_turn(
-        &created.path,
-        root,
-        &prompt_for(issue, &attribution.commit),
-        budget,
-    );
+    let prompt = prompt_for(issue, &attribution.commit);
+    let turn = match worker.kind {
+        WorkerKind::Stella => run_turn(&created.path, root, &prompt, budget),
+        // A spend limit is refused rather than ignored. Claude Code reports no
+        // number this loop can read, so `RunBudget` would charge every turn
+        // nothing and the ceiling would never be reached — a cap that is
+        // silently infinite is worse than one the operator was told to remove.
+        WorkerKind::Claude if budget.cap().is_some() => Err(format!(
+            "a claude worker cannot be held to --spend-limit ${:.2}: claude does \
+             not report what a turn cost in the form this loop reads. Set \
+             worker.max_turns, or drop the dollar cap.",
+            budget.cap().unwrap_or_default()
+        )),
+        WorkerKind::Claude => run_claude(&created.path, &prompt, worker),
+    };
     let change = tree_change(&created.path, &base);
     let outcome = classify(turn, change, &wt);
 
@@ -917,6 +1043,112 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect()
+    }
+
+    /// The claude child's argv, as strings.
+    fn claude_args(worker: &crate::settings::toml_config::WorkerSection) -> Vec<String> {
+        claude_command(Path::new("/tmp/worktree"), "fix #1", worker)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// A worker section with claude selected and nothing else said.
+    fn claude_worker() -> crate::settings::toml_config::WorkerSection {
+        crate::settings::toml_config::WorkerSection {
+            kind: WorkerKind::Claude,
+            ..Default::default()
+        }
+    }
+
+    /// **Witness.** Selecting claude does not also hand it permission bypass.
+    ///
+    /// The two are separate decisions, and the flag that grants ambient write
+    /// and command authority must appear only when the operator wrote it down.
+    #[test]
+    fn a_claude_worker_does_not_skip_permissions_unless_asked() {
+        let args = claude_args(&claude_worker());
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "--dangerously-skip-permissions"),
+            "the default claude worker must not bypass permissions: {args:?}"
+        );
+
+        let asked = crate::settings::toml_config::WorkerSection {
+            dangerously_skip_permissions: true,
+            ..claude_worker()
+        };
+        assert!(
+            claude_args(&asked)
+                .iter()
+                .any(|arg| arg == "--dangerously-skip-permissions"),
+            "asking for the bypass must put it on the command line"
+        );
+    }
+
+    /// **Witness.** The worker's settings reach claude's command line, and the
+    /// ones that were not set put nothing there.
+    #[test]
+    fn the_claude_worker_settings_reach_the_command_line() {
+        let bare = claude_args(&claude_worker());
+        assert_eq!(
+            bare,
+            ["-p", "--output-format", "json", "fix #1"],
+            "an unconfigured claude worker sends only the print-mode contract \
+             and the prompt"
+        );
+
+        let configured = crate::settings::toml_config::WorkerSection {
+            model: Some("opus".to_owned()),
+            max_turns: Some(40),
+            ..claude_worker()
+        };
+        assert_eq!(
+            claude_args(&configured),
+            [
+                "-p",
+                "--output-format",
+                "json",
+                "--model",
+                "opus",
+                "--max-turns",
+                "40",
+                "fix #1"
+            ]
+        );
+    }
+
+    /// **Witness.** Claude's own JSON is read by its own keys.
+    ///
+    /// Fed to [`turn_reason`], which reads stella's summary shape, this
+    /// document matches nothing and falls back to "the last line" — which for
+    /// a one-line JSON document is the entire document, quoted at an operator
+    /// as though it were a diagnosis.
+    #[test]
+    fn a_failed_claude_run_reports_what_claude_said() {
+        let summary =
+            r#"{"type":"result","is_error":true,"result":"I need write access to continue."}"#;
+        assert_eq!(
+            claude_reason(summary).as_deref(),
+            Some("I need write access to continue.")
+        );
+
+        assert_eq!(
+            claude_reason(r#"{"error":"credit balance is too low"}"#).as_deref(),
+            Some("credit balance is too low")
+        );
+
+        // Not JSON at all — a crash, a shell error — still yields the last
+        // line, so a missing executable reads as one.
+        assert_eq!(
+            claude_reason("boom\ncommand not found: claude").as_deref(),
+            Some("command not found: claude")
+        );
+
+        // JSON this parser does not recognise reports nothing, so the caller
+        // prints the bare exit code rather than a whole document.
+        assert_eq!(claude_reason(r#"{"type":"result"}"#), None);
     }
 
     /// **Witness (#4362).** The turn the loop spawns does not inherit the
