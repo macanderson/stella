@@ -1,7 +1,7 @@
 <svg viewBox="0 0 680 508" width="680" height="508" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
 <rect x="0" y="0" width="680" height="508" rx="6" fill="#0A0A0C" stroke="#26262C" stroke-width="1"/>
 <line x1="20" y1="20" x2="20" y2="176" stroke="#EFC53F" stroke-width="2"/>
-<text x="32" y="32" font-size="12" fill="#EFC53F">＋ write</text>
+<text x="32" y="32" font-size="12" fill="#EFC53F">+ write</text>
 <text x="100" y="32" font-size="11" fill="#E8E8EC">crates/stella-cli/src/dedup.rs</text>
 <text x="342" y="32" font-size="11" fill="#74C991">new file · 34 lines</text>
 <text x="600" y="32" font-size="11" fill="#777782">⚡1ms</text>
