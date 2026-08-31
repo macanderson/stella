@@ -25,6 +25,50 @@ use super::*;
 /// A golden is the only thing that can hold the second frame to what it says:
 /// the elision copy is a *sentence*, and a sentence quietly becoming a blank
 /// line is invisible to every other kind of test.
+#[test]
+fn deck_render_snapshots_pin_the_task_zoom() {
+    use stella_tui::deck_ui::cards::Card;
+
+    let (board, lanes, ledger) = stella_tui::scenario::demo_task_zoom();
+    let mut model = fixture_model();
+    model.apply_inbound(&Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::TaskUpdate { tasks: board },
+    });
+    // Assigned rather than folded: no event carries a plan graph or a task id
+    // yet — that is the whole of #5037 and #5039, and the reason the second
+    // frame below exists.
+    let lead = &mut model.agents[0].model.plan;
+    lead.lanes = Some(lanes);
+    lead.ledger.insert("5".to_string(), ledger);
+
+    let mut ui = ui_for(DeckTab::Session);
+    ui.cards.raise(Card::TaskZoom);
+    // Task 5 — the board's in-progress row, and the one the fixture contracted.
+    ui.cards.plan_sel = 4;
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "zoom_scripted",
+        "the task zoom over a scripted task: contract, evidence, lanes, spend",
+        W,
+        H,
+        &frame,
+    );
+
+    let model = fixture_model();
+    let mut ui = ui_for(DeckTab::Session);
+    ui.cards.raise(Card::TaskZoom);
+    ui.cards.plan_sel = 4;
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "zoom_elided",
+        "the task zoom with no contract, ledger or plan graph — every block names why",
+        W,
+        H,
+        &frame,
+    );
+}
+
 /// **The witness.** On a short terminal the zoom's body scrolls. The first
 /// frame folds its tail and admits the cut. `⇟` moves the window, and the
 /// moved frame admits what scrolled past at the top. Before this the zoom
@@ -70,50 +114,6 @@ fn the_task_zoom_scrolls_on_a_short_terminal() {
         "the task zoom paged down on a short terminal — the window moved, admission at the top",
         w,
         h,
-        &frame,
-    );
-}
-
-#[test]
-fn deck_render_snapshots_pin_the_task_zoom() {
-    use stella_tui::deck_ui::cards::Card;
-
-    let (board, lanes, ledger) = stella_tui::scenario::demo_task_zoom();
-    let mut model = fixture_model();
-    model.apply_inbound(&Inbound::Event {
-        agent: "lead".into(),
-        event: AgentEvent::TaskUpdate { tasks: board },
-    });
-    // Assigned rather than folded: no event carries a plan graph or a task id
-    // yet — that is the whole of #5037 and #5039, and the reason the second
-    // frame below exists.
-    let lead = &mut model.agents[0].model.plan;
-    lead.lanes = Some(lanes);
-    lead.ledger.insert("5".to_string(), ledger);
-
-    let mut ui = ui_for(DeckTab::Session);
-    ui.cards.raise(Card::TaskZoom);
-    // Task 5 — the board's in-progress row, and the one the fixture contracted.
-    ui.cards.plan_sel = 4;
-    let frame = render_frame(&model, &mut ui, W, H);
-    assert_golden(
-        "zoom_scripted",
-        "the task zoom over a scripted task: contract, evidence, lanes, spend",
-        W,
-        H,
-        &frame,
-    );
-
-    let model = fixture_model();
-    let mut ui = ui_for(DeckTab::Session);
-    ui.cards.raise(Card::TaskZoom);
-    ui.cards.plan_sel = 4;
-    let frame = render_frame(&model, &mut ui, W, H);
-    assert_golden(
-        "zoom_elided",
-        "the task zoom with no contract, ledger or plan graph — every block names why",
-        W,
-        H,
         &frame,
     );
 }
