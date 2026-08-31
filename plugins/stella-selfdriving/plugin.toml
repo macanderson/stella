@@ -69,7 +69,7 @@ purpose = "run every external program a delivery cycle needs — the defect queu
 scope = [
   "`gh` — read the defect queue, file findings as issues, open and read pull requests",
   "`git` and `make`/`cargo` inside the workspace it was started in",
-  "`brew tap macanderson/stella` and `brew install|upgrade macanderson/stella/stella` — the tap-qualified name only, because homebrew-core's `stella` is an Atari 2600 emulator and installing it exits 0",
+  "`brew tap macanderson/tap` and `brew install|upgrade macanderson/tap/stella` — the tap-qualified name only, because homebrew-core's `stella` is an Atari 2600 emulator and installing it exits 0 — plus `brew untap macanderson/stella`, which is a second name for the same repo and leaves a machine with two taps that fetch independently",
   "`aws ec2 start-instances`/`stop-instances` on the benchmark rig named by SELF_DRIVING_RIG_INSTANCE — it bills $45.56/day for as long as it is running",
   "`ssh`/`scp` to that rig, with the key at ~/.stella/keys/, to run the head-to-head match",
 ]

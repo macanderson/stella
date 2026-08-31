@@ -150,7 +150,7 @@ All three fail silently, which is why they are constants in the script rather
 than instructions in a prompt.
 
 **`brew install stella` installs an Atari 2600 emulator.** Homebrew-core owns the
-name. `macanderson/stella/stella` is the only safe spelling, and the wrong one
+name. `macanderson/tap/stella` is the only safe spelling, and the wrong one
 exits 0.
 
 **There is no `alias stella`.** It resolves to the dev build through a PATH

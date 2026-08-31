@@ -957,6 +957,14 @@ releases-baseline-update: ## Grandfather the tags that shipped nothing and never
 releases-published-test: ## Test the tag/release reconciliation rule (hermetic; not part of `gate`)
 	./scripts/test-releases-published.sh
 
+.PHONY: tap-current
+tap-current: ## Assert the Homebrew tap formula serves the newest published release (#5551)
+	@./scripts/check-tap-current.sh
+
+.PHONY: tap-current-test
+tap-current-test: ## Test the tap staleness rule (hermetic; not part of `gate`)
+	./scripts/test-tap-current.sh
+
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)
 	git config core.hooksPath .githooks
