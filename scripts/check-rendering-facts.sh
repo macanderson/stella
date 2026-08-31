@@ -48,9 +48,7 @@ DIRS=(design/tui-v2/renderings website/public/tui)
 # Files excused from byte-parity, as `name|issue that restores it`. An
 # entry is a declared gap, not a licence. The two copies drifted for
 # months, and three renderings taught three different facts.
-PARITY_EXCEPTIONS=(
-  "08-command-palette.svg|\`#5212\` regenerates both copies from the shipped palette"
-)
+PARITY_EXCEPTIONS=()
 
 # One entry per retired fact: the pattern, then where the prose retires it.
 # The pattern is a POSIX ERE, matched against the SVG source.
@@ -95,7 +93,9 @@ done
 for src in design/tui-v2/renderings/svg/*.svg; do
   name=$(basename "$src")
   skip=0
-  for exception in "${PARITY_EXCEPTIONS[@]}"; do
+  # The +-expansion keeps an empty list safe under `set -u` on bash 3.2,
+  # which is what macOS ships and what `make gate` runs this with.
+  for exception in ${PARITY_EXCEPTIONS[@]+"${PARITY_EXCEPTIONS[@]}"}; do
     [[ $name == "${exception%%|*}" ]] && skip=1
   done
   ((skip)) && continue
