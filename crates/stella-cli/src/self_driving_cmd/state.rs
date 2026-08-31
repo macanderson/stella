@@ -63,7 +63,17 @@ pub(crate) fn aimd_limits() -> AimdLimits {
     AimdLimits {
         batch_max: env_u64("SELF_DRIVING_BATCH_MAX", 20) as u32,
         batch_min: 2,
-        parallel_max: env_u64("SELF_DRIVING_PARALLEL_MAX", 4) as u32,
+        // The hard cap follows the machine: two cores short of all of
+        // them, never below four. The box should set the bound, not a
+        // constant, and the AIMD controller adapts inside it. The env
+        // override still wins. The core count honours
+        // `SELF_DRIVING_PROBE_CPU`, so both pins reach this number.
+        parallel_max: env_u64(
+            "SELF_DRIVING_PARALLEL_MAX",
+            u64::from(stella_autonomy::machine_parallel_ceiling(
+                super::probes::cpu_total(),
+            )),
+        ) as u32,
     }
 }
 

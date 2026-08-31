@@ -237,15 +237,22 @@ pub struct FleetConfig {
 }
 
 impl FleetConfig {
-    /// A config for `run_id`, branching isolated worktrees from `base_ref`,
-    /// with the default fan-out width of 4 (override with
-    /// [`with_max_concurrency`](Self::with_max_concurrency)).
+    /// A config for `run_id`, branching isolated worktrees from `base_ref`.
+    ///
+    /// The default fan-out width is the machine's own ceiling
+    /// (`stella_autonomy::machine_parallel_ceiling`), not a constant — a
+    /// literal here was the number nothing derived and nothing calibrated.
+    /// A caller with a better-informed number (the self-driving governor's,
+    /// or an operator's flag) overrides it with
+    /// [`with_max_concurrency`](Self::with_max_concurrency).
     #[must_use]
     pub fn new(run_id: impl Into<String>, base_ref: impl Into<String>) -> Self {
         Self {
             run_id: run_id.into(),
             base_ref: base_ref.into(),
-            max_concurrency: 4,
+            max_concurrency: stella_autonomy::machine_parallel_ceiling(
+                stella_autonomy::detected_cpus(),
+            ) as usize,
             task_timeout: None,
         }
     }

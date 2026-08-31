@@ -34,6 +34,38 @@ fn ready_issues(
     provider: &dyn IssueProvider,
     ladder: &PriorityLadder,
 ) -> Result<Vec<stella_autonomy::QueueIssue>, String> {
+    let issues = open_page(provider)?;
+    Ok(fold_ready(&issues, ladder))
+}
+
+/// The ready backlog with the tracker's full records attached, in the order
+/// the loop should take them.
+///
+/// The parallel wave needs whole issues, because a worker's prompt quotes
+/// the body. The serial loop's queue wants bare keys instead, and looks
+/// each one up again later. Same single read here, same readiness fold.
+/// The ready numbers are then joined back to the records of the read that
+/// judged them. So a wave can never pair one moment's readiness with
+/// another moment's body.
+pub(super) fn ready_full(
+    provider: &dyn IssueProvider,
+    ladder: &PriorityLadder,
+) -> Result<Vec<stella_protocol::issue::Issue>, String> {
+    let issues = open_page(provider)?;
+    let ready = fold_ready(&issues, ladder);
+    Ok(ready
+        .iter()
+        .filter_map(|queued| {
+            issues
+                .iter()
+                .find(|issue| issue.key.as_str() == queued.number.to_string())
+                .cloned()
+        })
+        .collect())
+}
+
+/// One bounded read of the open set — the truncation refusal above.
+fn open_page(provider: &dyn IssueProvider) -> Result<Vec<stella_protocol::issue::Issue>, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -50,7 +82,14 @@ fn ready_issues(
             super::backlog::QUEUE_READ_LIMIT,
         ));
     }
+    Ok(issues)
+}
 
+/// The readiness fold over one read's records.
+fn fold_ready(
+    issues: &[stella_protocol::issue::Issue],
+    ladder: &PriorityLadder,
+) -> Vec<stella_autonomy::QueueIssue> {
     let open: BTreeSet<u64> = issues
         .iter()
         .filter_map(|issue| issue.key.as_str().parse().ok())
@@ -62,8 +101,7 @@ fn ready_issues(
             blocked_by: stella_autonomy::ready::blocker_refs(&issue.body),
         })
         .collect();
-
-    Ok(stella_autonomy::ready::ready_queue(items, &open, ladder))
+    stella_autonomy::ready::ready_queue(items, &open, ladder)
 }
 
 /// The ready backlog as bare keys, in the order the loop takes them.
@@ -173,8 +211,8 @@ mod tests {
 
     use super::*;
 
-    /// A tracker fixture that counts every write, so a test can assert not
-    /// only what was read but that nothing was written.
+    /// A tracker fixture that counts every write. A test can then assert
+    /// what it read, and also that it wrote nothing.
     #[derive(Default)]
     struct FixtureProvider {
         open: Vec<Issue>,

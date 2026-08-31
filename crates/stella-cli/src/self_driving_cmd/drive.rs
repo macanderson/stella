@@ -100,6 +100,12 @@ struct Spent {
 /// `max_issues` bounds one invocation so a demonstration terminates; the real
 /// loop never does, which is why the bound is a parameter rather than a
 /// constant and why reaching it reports *reached the bound*, never *finished*.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every parameter is one `drive` flag, taken from clap and passed straight through \
+              by the single caller in `self_driving_cmd::run`; a struct here would be a second \
+              copy of the subcommand's own field list, free to drift from it one flag at a time"
+)]
 pub(super) fn drive(
     durable: &Durable,
     max_issues: u32,
@@ -108,6 +114,7 @@ pub(super) fn drive(
     poll_secs: u64,
     backlog: bool,
     dry_run: bool,
+    parallel: Option<u32>,
 ) -> Result<(), String> {
     let root = super::state::repo_root();
     let cfg = super::config::load(&root);
@@ -121,6 +128,33 @@ pub(super) fn drive(
     // claims. Checking the loop's aim must not move its hand.
     if dry_run {
         return super::ready::dry_run(&provider, &cfg, backlog, max_issues);
+    }
+
+    // The worker count. The flag wins when given; otherwise the governor's
+    // number — what the probes and the AIMD calibration say this box can
+    // host. Only the backlog generator knows how to fan out (the defect
+    // queue's claim/work/deliver machine is one strictly serial state
+    // machine), so an explicit width above 1 without it is refused rather
+    // than accepted and ignored, and the governor's advice quietly collapses
+    // to the serial path there instead.
+    if let Some(width) = parallel
+        && width > 1
+        && !backlog
+    {
+        return Err(format!(
+            "--parallel {width} needs --backlog: only the backlog generator dispatches \
+             more than one worker; the defect queue is worked serially"
+        ));
+    }
+    if backlog {
+        let width = parallel
+            .unwrap_or_else(super::governor::recommended_parallelism)
+            .max(1);
+        if width > 1 {
+            return super::parallel::wave(
+                durable, &root, &cfg, &provider, flags, width, max_issues,
+            );
+        }
     }
     // The branch every pull request targets, and the one whose health
     // decides whether there is any point opening more.

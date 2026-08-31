@@ -44,8 +44,12 @@ For anything beyond a handful of independent prompts, use a plan file (`--plan`)
     A `.json` or `.toml` plan file with `[[tasks]]` entries — `id`, `title`, `prompt`, and
     optional `depends_on`, `isolation`, `claims`, and `test_command` — instead of prompts on the command line.
   </OptionCard>
-  <OptionCard name="--max-concurrency <N>" defaultValue="4">
-    Maximum tasks running at once within one wave.
+  <OptionCard name="--max-concurrency <N>" defaultValue="the governor's number">
+    Maximum tasks running at once within one wave. The default is the self-driving
+    governor's number: machine probes crossed with the learned calibration, capped at two
+    cores short of the machine and never below 4. `SELF_DRIVING_PARALLEL_MAX` overrides
+    the cap. So an idle 16-core box fans out wider than a busy laptop, with nobody
+    choosing a width.
   </OptionCard>
   <OptionCard name="--base-ref <ref>" defaultValue="current HEAD">
     Git ref the isolated worktrees branch from. The default is pinned to a commit at the

@@ -11,6 +11,34 @@ use stella_protocol::CompletionMessage;
 
 use super::*;
 
+/// **The witness.** With no `--max-concurrency`, the fleet's width IS the
+/// governor's number — the wiring the machine-sizing governor emits into.
+/// An explicit flag still wins without ever paying for the probes, and
+/// both arms clamp to at least one so a wave always makes progress.
+#[test]
+fn the_fleet_defaults_to_the_governors_number_and_the_flag_overrides_it() {
+    assert_eq!(
+        effective_concurrency(None, || 3),
+        3,
+        "flag absent: the governor's number is the width"
+    );
+    assert_eq!(
+        effective_concurrency(Some(7), || panic!("a flag must not pay for the probes")),
+        7,
+        "an explicit flag wins and skips the governor entirely"
+    );
+    assert_eq!(
+        effective_concurrency(Some(0), || 3),
+        1,
+        "zero clamps to one"
+    );
+    assert_eq!(
+        effective_concurrency(None, || 0),
+        1,
+        "a governor answer of zero still dispatches one worker"
+    );
+}
+
 /// The #803 cancellation seam, pinned from both directions: dropping the
 /// dispatch's abandon sender IS a stop (the claims are being released;
 /// the worker must stop writing), while dropping the supervisor's stop

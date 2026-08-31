@@ -27,9 +27,11 @@ mod contention;
 mod convention;
 mod deliver;
 mod drive;
+pub(crate) mod governor;
 mod hooks;
 mod learning;
 mod lifecycle;
+mod parallel;
 pub(crate) mod probes;
 mod query;
 mod ready;
@@ -268,6 +270,16 @@ pub(crate) enum SelfDrivingCmd {
         /// label, no session record.
         #[arg(long)]
         dry_run: bool,
+
+        /// How many issues to work at once. Requires --backlog.
+        ///
+        /// Defaults to the governor's number — what the machine probes and
+        /// the AIMD calibration say this box can host right now. At 1 the
+        /// loop runs exactly the serial path; above 1 the ready issues are
+        /// dispatched as a fleet plan, one isolated worktree per issue, each
+        /// under its own dispatch lease.
+        #[arg(long)]
+        parallel: Option<u32>,
     },
 
     /// What this session has done so far — the counters a dashboard reads.
@@ -637,6 +649,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
             poll_secs,
             backlog,
             dry_run,
+            parallel,
         } => drive::drive(
             &st,
             *max_issues,
@@ -645,6 +658,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
             *poll_secs,
             *backlog,
             *dry_run,
+            *parallel,
         ),
         SelfDrivingCmd::Stats { format } => stats::session_stats(&st, *format),
         SelfDrivingCmd::Triage {

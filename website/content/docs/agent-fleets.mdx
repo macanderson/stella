@@ -37,9 +37,10 @@ stella fleet \
    with branches and worktrees left over from an earlier fleet. Isolated workers can't
    see each other's uncommitted work and can't touch your checkout.
 3. **Dispatch in waves.** Tasks run in dependency order, in waves of up to
-   `--max-concurrency` tasks at once (4 by default). A failed task does not unblock the
-   tasks waiting on it; those end the run marked `skipped`. Nothing retries
-   automatically. The ledger records every attempt, but re-running is up to you.
+   `--max-concurrency` tasks at once. The default is the governor's number. A failed
+   task does not unblock the tasks waiting on it; those end the run marked `skipped`.
+   Nothing retries on its own. The ledger records every attempt, but re-running is up
+   to you.
 4. **Work.** Each worker runs the full engine: the plain step loop by default, with the
    standard set of tools, following your
    [agent-engine config](/docs/configuration/agent-engine-config). Workers run headless
@@ -235,8 +236,9 @@ stella fleet --plan release-prep.toml --max-concurrency 2 --watch
     A `.json` or `.toml` file with `[[tasks]]` entries instead of inline prompts. This
     is the only way to set `depends_on`, `claims`, or `isolation`.
   </OptionCard>
-  <OptionCard name="--max-concurrency <N>" defaultValue="4">
-    The most tasks that can run at once within one wave.
+  <OptionCard name="--max-concurrency <N>" defaultValue="the governor's number">
+    The most tasks that can run at once within one wave. The default is the
+    self-driving governor's number: machine probes crossed with the learned cap.
   </OptionCard>
   <OptionCard name="--base-ref <ref>" defaultValue="current HEAD">
     The git ref that `isolation = "isolated"` worktrees branch from. It's locked to a

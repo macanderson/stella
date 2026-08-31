@@ -562,6 +562,71 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
+// the governor's parallelism — the number fleet and drive default to
+// ---------------------------------------------------------------------------
+
+/// **The witness.** The hard cap follows the machine: two cores short of
+/// all of them, never below four. A written-down 4 on a 16-core box idled
+/// most of it, and the controller can only adapt inside the bound it gets.
+#[test]
+fn the_parallel_ceiling_follows_the_machine_with_a_floor_of_four() {
+    assert_eq!(
+        machine_parallel_ceiling(2),
+        4,
+        "a small box keeps the floor"
+    );
+    assert_eq!(machine_parallel_ceiling(6), 4, "the floor holds through 6");
+    assert_eq!(machine_parallel_ceiling(8), 6);
+    assert_eq!(machine_parallel_ceiling(16), 14);
+    assert_eq!(
+        machine_parallel_ceiling(0),
+        4,
+        "an unread box is a small one"
+    );
+    assert_eq!(
+        AimdLimits::default().parallel_max,
+        machine_parallel_ceiling(detected_cpus()),
+        "the default limit is the machine's cap, not a constant"
+    );
+}
+
+/// **The witness.** `recommended_parallelism` is the planner's own number:
+/// the learned cap on a healthy box, one worker on a busy one. It moves
+/// when the calibration moves. That is what makes it a governor output,
+/// not a constant a caller re-invents.
+#[test]
+fn recommended_parallelism_tracks_supply_and_calibration() {
+    let limits = AimdLimits::default();
+    let mut cal = ceilings();
+
+    assert_eq!(
+        recommended_parallelism(base_supply(), &cal, Floors::default(), &limits),
+        cal.parallel_ceiling,
+        "a healthy box gets the calibrated ceiling"
+    );
+
+    // Three clean cycles raise the ceiling, and the recommendation follows.
+    for _ in 0..3 {
+        calibrate(&mut cal, CycleOutcome::Ok, &limits);
+    }
+    assert_eq!(
+        recommended_parallelism(base_supply(), &cal, Floors::default(), &limits),
+        3,
+        "a raised calibration raises the recommendation"
+    );
+
+    let busy = Supply {
+        busy: true,
+        ..base_supply()
+    };
+    assert_eq!(
+        recommended_parallelism(busy, &cal, Floors::default(), &limits),
+        1,
+        "a contended box is worked serially whatever the calibration says"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // metrics — the loop's evidence about itself
 // ---------------------------------------------------------------------------
 

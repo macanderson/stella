@@ -414,7 +414,12 @@ evolution_surfaces! {
                         that closes it, merged only when the deterministic transition says \
                         `Merge`, and appended to the cycle ledger as a `backlog` row. \
                         `--dry-run` prints the issue the loop would take and changes \
-                        nothing; `--max-issues` bounds one invocation",
+                        nothing; `--max-issues` bounds one invocation. `--parallel N` fans \
+                        the ready issues out as a single-wave fleet plan — one isolated \
+                        worktree and one issue lease per worker, the run budget divided \
+                        across the width — with N defaulting to the governor's number \
+                        (`stella_autonomy::recommended_parallelism`: machine probes x AIMD \
+                        calibration); at 1 the loop runs exactly the serial path",
             witness: "the_backlog_generator_picks_the_ready_issue_and_records_the_delivered_cycle",
         },
         EvolutionTiming::OfflineBatch,
