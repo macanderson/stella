@@ -4,25 +4,25 @@
 #
 #   ./scripts/test-tap-current.sh
 #
-# Run it after touching that script. Not part of `make gate`: a dozen jq
-# invocations over fixtures, the same posture as `make releases-published-test`.
+# Run it after touching that script. Not part of `make gate`: a dozen jq calls
+# over fixtures, the same posture as `make releases-published-test`.
 #
 # ── What is under test ───────────────────────────────────────────────────────
 #
-# This is an alarm, and both ways an alarm fails are bad in different ways:
+# This is an alarm. An alarm fails in two ways, and each is bad:
 #
-#   silent   the tap stops being updated and nothing says so. `brew install`
-#            keeps serving an old build while the tag, the release, and
-#            check-releases-published.sh all report success. Every surface a
-#            maintainer glances at says the release shipped.
-#   crying   it fires in the minutes between a release being published and the
-#            `homebrew` job pushing the formula for it. This repo releases on
-#            nearly every merge, so that window is entered constantly, and an
-#            alarm that fires there is one a maintainer mutes.
+#   silent   the tap stops updating and nothing says so. `brew install` keeps
+#            serving an old build. The tag, the release, and
+#            check-releases-published.sh all report success. Every screen a
+#            maintainer checks says the release shipped.
+#   crying   it fires in the minutes between a release and the `homebrew` job
+#            pushing the formula for it. This repo releases on nearly every
+#            merge, so that window opens all day. An alarm that fires there is
+#            one a maintainer mutes.
 #
-# Every case below straddles one of those. The `--select` mode is the rule with
-# the I/O taken out, so a fixture is a complete input and no live repository,
-# tap, or API is involved.
+# Every case below sits on one of those lines. The `--select` mode is the rule
+# with the I/O taken out. A fixture is a whole input, so no live repo, tap, or
+# API is involved.
 #
 # bash 3.2 compatible.
 
@@ -31,18 +31,18 @@ set -uo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd -P)"
 SCRIPT="$repo_root/scripts/check-tap-current.sh"
 
-# A fixed clock. Real time would make these cases drift into and out of the
-# grace window depending on when the suite ran.
+# A fixed clock. With real time these cases would drift in and out of the
+# grace window, based on when the suite ran.
 NOW=1000000
 GRACE=5400 # 90 minutes, the script's default
 
 pass=0
 fail=0
 
-# The whole finding line, so the expected version, the behind count and the age
-# are covered rather than only the fact that something fired. A count that is
-# always 1 would satisfy a bare "did it report" assertion and tell a reader
-# nothing about how far behind the tap actually is.
+# The whole finding line. That covers the expected version, the behind count
+# and the age, not just the fact that something fired. A count stuck at 1 would
+# pass a bare "did it report" check. It would tell a reader nothing about how
+# far behind the tap is.
 run() { printf '%s' "$1" | "$SCRIPT" --select --now "$NOW" --grace-secs "$GRACE" 2>&1 | tr '\t' ' ' | tr '\n' ' ' | sed 's/ *$//'; }
 
 # want <name> <expected-line-or-empty> <json>
@@ -63,7 +63,7 @@ day=86400
 hour=3600
 
 # ── Silent: the failure this exists to catch ─────────────────────────────────
-# Releases keep flowing and the tap stops receiving them.
+# Releases keep coming. The tap stops getting them.
 want "S1 a tap many releases behind is reported with the gap" \
   "0.9.235 0.9.238 3 172800" \
   "{\"formula_version\":\"0.9.235\",\"releases\":[$(rel v0.9.235 $((5 * day))),$(rel v0.9.236 $((4 * day))),$(rel v0.9.237 $((3 * day))),$(rel v0.9.238 $((2 * day)))]}"
@@ -72,9 +72,9 @@ want "S2 a tap one release behind is reported" \
   "0.9.291 0.9.292 1 7200" \
   "{\"formula_version\":\"0.9.291\",\"releases\":[$(rel v0.9.291 $((4 * hour))),$(rel v0.9.292 $((2 * hour)))]}"
 
-# A tap that never received a formula at all reads as behind every settled
-# release, not as "nothing to compare". The credential being unset from the
-# first release is the same defect as it expiring on the hundredth.
+# A tap that never got a formula reads as behind every settled release. It does
+# not read as "nothing to compare". A credential unset from the first release
+# is the same defect as one that expires on the hundredth.
 want "S3 a tap carrying no formula is behind every settled release" \
   "(none) 0.9.292 2 7200" \
   "{\"formula_version\":null,\"releases\":[$(rel v0.9.291 $((4 * hour))),$(rel v0.9.292 $((2 * hour)))]}"
@@ -84,8 +84,8 @@ want "C1 a tap at the newest settled release reports nothing" \
   "" \
   "{\"formula_version\":\"0.9.292\",\"releases\":[$(rel v0.9.291 $((4 * hour))),$(rel v0.9.292 $((2 * hour)))]}"
 
-# The normal state for the minutes after every release: the tap job has already
-# pushed the formula for a release that has not aged past the window yet.
+# Normal for the minutes after every release. The tap job has pushed the
+# formula for a release that has not aged past the window yet.
 want "C2 a tap AHEAD of the newest settled release reports nothing" \
   "" \
   "{\"formula_version\":\"0.9.293\",\"releases\":[$(rel v0.9.292 $((2 * hour))),$(rel v0.9.293 $((10 * 60)))]}"
@@ -133,12 +133,12 @@ want "V4 skipping a non-numeric tag does not hide a real gap behind it" \
   "{\"formula_version\":\"0.9.291\",\"releases\":[$(rel v0.9.292 $((2 * day))),$(rel nightly $((1 * day)))]}"
 
 # ── A version the rule cannot read ───────────────────────────────────────────
-# The worst direction available to this script: not a wrong answer but a clean
-# OK for a formula it never compared. A jq definition that emits nothing on one
-# input drops the whole document through the binding that consumes it, so an
-# unreadable formula version silenced the entire check rather than the one
-# comparison. It lands where `(none)` lands, because a check that cannot
-# establish the tap is current must not report that it is.
+# The worst way this script can be wrong. Not a bad answer, but a clean OK for
+# a formula it never compared. A jq definition that emits nothing on one input
+# drops the whole document through the binding that reads it. So one bad
+# formula version silenced the whole check, not just that one row. It lands
+# where `(none)` lands. A check that cannot prove the tap is current must not
+# say that it is.
 want "E1 a formula version the rule cannot parse is reported, not passed over" \
   "0.9.292-rc 0.9.292 1 172800" \
   "{\"formula_version\":\"0.9.292-rc\",\"releases\":[$(rel v0.9.292 $((2 * day)))]}"
@@ -148,11 +148,10 @@ want "E2 an unreadable formula version with nothing settled is still not a findi
   "{\"formula_version\":\"garbage\",\"releases\":[$(rel v0.9.292 $((20 * 60)))]}"
 
 # ── Drafts ───────────────────────────────────────────────────────────────────
-# A draft is not something `brew install` can serve, and `gh` gives it a publish
-# date of `0001-01-01T00:00:00Z`. Measuring the tap against one would report
-# every tap in the world as behind, permanently, for a release that does not
-# exist yet. Found by running the live check, which hit exactly this on the
-# repo's own open draft.
+# A draft is not something `brew install` can serve. `gh` gives it a publish
+# date of `0001-01-01T00:00:00Z`. Measure the tap against one and every tap in
+# the world reads as behind, for good, for a release that does not exist yet.
+# Found by running the live check. It hit this on the repo's own open draft.
 want "D1 a draft newer than the tap is not a finding" \
   "" \
   "{\"formula_version\":\"0.9.292\",\"releases\":[$(rel v0.9.292 $((2 * day))),{\"tag\":\"v1.0.0\",\"published_unix\":null}]}"

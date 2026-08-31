@@ -34,16 +34,16 @@ brew upgrade macanderson/tap/stella      # correct
 brew install stella                      # WRONG — Atari emulator, exit 0
 ```
 
-The tap is `macanderson/tap`, which Homebrew maps to the repo
+The tap is `macanderson/tap`. Homebrew maps that to the repo
 `https://github.com/macanderson/homebrew-tap.git`. The formula installs the
-**prebuilt binary** from the GitHub Release — no Rust toolchain, and an upgrade
-is a download rather than a build. (`packaging/homebrew/stella.rb` in this
-repository is the from-source formula, and it is not what the tap serves.)
+**prebuilt binary** from the GitHub Release. No Rust toolchain is needed, and
+an upgrade is a download rather than a build. (`packaging/homebrew/stella.rb`
+in this repo is the from-source formula. It is not what the tap serves.)
 
-`upgrade` also untaps `macanderson/stella` if it finds it. That name reaches the
-same repo, so a machine can end up with two taps for it — two clones that fetch
-independently, one of which can sit at an old commit and answer `brew info` with
-a version nobody is shipping.
+`upgrade` also untaps `macanderson/stella` if it finds it. That name reaches
+the same repo, so one machine can hold two taps for it. They are two clones
+that fetch on their own. One can sit at an old commit and answer `brew info`
+with a version nobody ships.
 
 **2. There is no alias to remove — it is a PATH prepend.**
 

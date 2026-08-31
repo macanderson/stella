@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Reconcile the Homebrew tap formula against the newest published release.
+# Check the Homebrew tap formula against the newest published release.
 #
 #   ./scripts/check-tap-current.sh [--grace-secs N] [--tap-repo OWNER/REPO]
 #   ./scripts/check-tap-current.sh --select --now <unix> --grace-secs <n>   # pure: JSON on stdin
@@ -8,35 +8,34 @@
 #
 # ── The silence this closes ──────────────────────────────────────────────────
 #
-# `release.yml`'s `homebrew` job renders the formula and pushes it to the tap,
-# and it exits 0 with a warning when neither tap credential is set, so a release
-# is never blocked on the tap being wired. That is the right call for the
-# release and it means a tap that stops being updated says nothing anywhere: the
-# tag is cut, the GitHub Release is published, `check-releases-published.sh`
-# reports a clean bill of health, and `brew install macanderson/tap/stella`
-# quietly keeps serving whichever build the tap last received. An expired deploy
-# key, a revoked token, or a renamed tap repo all land here, and all of them look
-# exactly like success from every surface a maintainer glances at.
+# The `homebrew` job in `release.yml` builds the formula and pushes it to the
+# tap. It exits 0 with a warning when neither tap credential is set. So a
+# release is never blocked on the tap. That is right for the release. It also
+# means a tap that stops updating says nothing. The tag is cut. The release is
+# published. `check-releases-published.sh` reports a clean bill of health. And
+# `brew install macanderson/tap/stella` keeps serving the old build.
 #
-# That is the same shape check-releases-published.sh beside it exists for, one
-# hop further down the pipeline, and it gets the same remedy: compare the state
-# the tap is in against the state it should be in, on a cadence, and say so.
+# An expired deploy key does this. So does a revoked token, or a renamed tap
+# repo. Each one looks like success from every screen a maintainer checks.
+#
+# `check-releases-published.sh` beside it covers the same shape one step
+# earlier. This gets the same cure. Compare the tap against what it should be,
+# on a schedule, and say so.
 #
 # ── The grace window ─────────────────────────────────────────────────────────
 #
-# The tap is pushed by a job that runs after the GitHub Release exists, so a
-# release published seconds ago legitimately has no tap commit yet. This repo
-# cuts a release on nearly every merge to main, so the newest release is
-# routinely that young. A release inside the grace window is therefore not
-# evidence of anything and is not what the formula is measured against.
+# The tap is pushed by a job that runs after the release exists. So a release
+# from seconds ago has no tap commit yet, and that is fine. This repo cuts a
+# release on nearly every merge, so the newest one is often that young. A
+# release inside the window proves nothing. The formula is not measured
+# against it.
 #
 # ── What "stale" means here ──────────────────────────────────────────────────
 #
-# The formula is compared against the newest release that has settled, and it
-# is a finding only when the formula names an OLDER version. A formula that is
-# newer than the newest settled release is the normal state a few minutes after
-# every release — the tap job has run and the release it shipped has not aged
-# past the window yet.
+# The formula is compared against the newest release that has settled. It is a
+# finding only when the formula names an OLDER version. A formula newer than
+# the newest settled release is normal. It happens for a few minutes after
+# every release, while the new one ages past the window.
 set -euo pipefail
 
 # shellcheck source=scripts/lib/help-header.sh
@@ -67,34 +66,33 @@ done
 #   { "releases":        [ { "tag": "v0.9.292", "published_unix": 1234567890 }, … ],
 #     "formula_version": "0.9.235" }
 #
-# and prints one tab-separated finding line when the tap is behind:
+# and prints one tab-separated line when the tap is behind:
 #
 #   <formula-version>\t<expected-version>\t<releases-behind>\t<age-of-expected-secs>
 #
-# `formula_version` is null when the tap carries no formula at all, which is
-# reported as `(none)` and counts as behind every settled release. A version
-# string the rule cannot parse lands in the same place, for the same reason the
-# I/O half below errors on an unreachable tap: a check that cannot establish the
-# tap is current must not report that it is. `parts` therefore returns null on
-# anything it cannot read rather than emitting nothing — a jq definition that
-# emits nothing on one input silently drops the whole document through the
-# binding that consumes it, and the script then prints a clean OK for a formula
-# it never compared.
+# `formula_version` is null when the tap has no formula. That prints as
+# `(none)` and counts as behind every settled release. A version string the
+# rule cannot read lands there too. The reason is the one the I/O half below
+# errors for: a check that cannot prove the tap is current must not say that it
+# is. So `parts` returns null on input it cannot read. It must not emit
+# nothing. A jq definition that emits nothing drops the whole document through
+# the binding that reads it, and the script then prints a clean OK for a
+# formula it never compared.
 #
-# A release with a null `published_unix` is a draft. `gh` reports one with a
-# publish date of `0001-01-01T00:00:00Z`, which is not a date at all, and a
-# draft is not something `brew install` can serve — so it is skipped rather than
-# taken for the newest release and made the standard the tap is held to.
+# A release with a null `published_unix` is a draft. `gh` gives it a publish
+# date of `0001-01-01T00:00:00Z`, which is not a date. A draft is not
+# something `brew install` can serve. So it is skipped. It must not become the
+# newest release and the standard the tap is held to.
 #
-# Kept free of I/O so scripts/test-tap-current.sh can drive every rule from a
-# fixture. A suite that asked GitHub would pass or fail for reasons that have
-# nothing to do with the rule under test, and the rules that matter here are the
-# boundary ones: an alarm that fires on the minutes between a release and its
-# tap push is one a maintainer mutes, and a muted alarm is the silence again.
+# No I/O here, so scripts/test-tap-current.sh can drive every rule from a
+# fixture. A suite that asked GitHub would pass or fail for reasons outside
+# the rule under test. The rules that matter here are the boundary ones. An
+# alarm that fires in the minutes between a release and its tap push is one a
+# maintainer mutes, and a muted alarm is the silence again.
 #
-# Versions compare as number arrays rather than as strings, so 0.9.235 sorts
-# below 0.9.9 the way a reader means and not the way ASCII does. A tag that is
-# not a plain dotted-numeric version is skipped rather than guessed at.
+# Versions compare as number arrays, not as strings. So 0.9.235 sorts below
+# 0.9.9, the way a reader means it. ASCII would get it wrong. A tag that is
+# not a plain dotted number is skipped, never guessed at.
 select_stale() {
   jq -r --argjson now "$now" --argjson grace "$grace_secs" '
     def parts:
@@ -133,20 +131,20 @@ command -v gh >/dev/null 2>&1 || { echo "::error::gh is not installed" >&2; exit
 command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed" >&2; exit 1; }
 [ -n "$now" ] || now="$(date -u +%s)"
 
-# `gh` colorizes even `--json` output when it believes it has a terminal, which
-# makes the result invalid JSON. It costs nothing on a runner and is the
-# difference between working and not when a maintainer runs this by hand.
+# `gh` adds colour to `--json` output when it thinks it has a terminal. That
+# makes the result invalid JSON. Turning it off costs nothing on a runner. By
+# hand it is the difference between working and not.
 #
-# The limit is above the real count and then CHECKED, for the reason
-# check-releases-published.sh checks its own: a truncated release list silently
-# changes the answer, and here it would hide the newest release and report a
-# current tap as current for the wrong reason.
+# The limit is set above the real count and then CHECKED. This is the reason
+# check-releases-published.sh checks its own: a cut-off release list changes
+# the answer and says nothing. Here it would hide the newest release and call
+# a stale tap current.
 releases_limit=1000
 #
-# A draft carries no publish date — `gh` renders it as `0001-01-01T00:00:00Z`,
-# which `fromdateiso8601` refuses outright — so it is carried through as a null
-# the rule skips rather than dropped here. Dropping it would put the rule's
-# reason for ignoring drafts in the half of the script no fixture can reach.
+# A draft carries no publish date. `gh` renders it as `0001-01-01T00:00:00Z`,
+# which `fromdateiso8601` refuses. So it is carried through as a null that the
+# rule skips. Dropping it here would move the reason for ignoring drafts into
+# the half of the script no fixture can reach.
 releases_json="$(
   CLICOLOR_FORCE=0 NO_COLOR=1 gh release list --limit "$releases_limit" --json tagName,publishedAt,isDraft \
     --jq '[ .[] | { tag: .tagName,
@@ -157,11 +155,11 @@ if [ "$(printf '%s' "$releases_json" | jq 'length')" -ge "$releases_limit" ]; th
   exit 1
 fi
 
-# The formula, straight from the tap. A missing FILE is the finding this script
-# exists for (the tap was never written, or the formula was renamed out from
-# under `brew install`); an unreachable REPO is an unknown, and an alarm that
-# cannot ask its question must say so rather than report a clean bill of health
-# it did not earn.
+# The formula, straight from the tap. A missing FILE is the finding this
+# script exists for: the tap was never written, or the formula was renamed out
+# from under `brew install`. An unreachable REPO is an unknown. An alarm that
+# cannot ask its question must say so. It must not report a clean bill of
+# health it did not earn.
 formula_version="null"
 if formula_text="$(gh api "repos/${tap_repo}/contents/${formula_path}" \
   -H "Accept: application/vnd.github.raw" 2>/dev/null)"; then
