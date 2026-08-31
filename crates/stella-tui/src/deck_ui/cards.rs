@@ -163,7 +163,7 @@ pub fn handle_card_key(
 ///   have two revisions to diff.
 ///
 /// The body scrolls. The zoom has no row cursor to follow, so
-/// [`list_nav::scroll`]'s vocabulary drives an offset instead. It scrolls
+/// [`super::list_nav::scroll`]'s vocabulary drives an offset instead. It scrolls
 /// against the viewport the last render recorded in
 /// [`crate::deck_ui::DeckMetrics`] — the `files_diff` contract.
 ///
