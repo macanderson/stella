@@ -90,8 +90,8 @@ default, an isolated git worktree per task on request · **lifecycle
 hooks** and an **MCP client** that merges external tools into the registry · and
 the **Command Deck** TUI with PR-style diffs and an editable prompt queue. Deep
 dives: [lifecycle hooks](https://stella.oxagen.sh/docs/agent-tools/hooks),
-[the files-touched ledger](https://stella.oxagen.sh/docs/telemetry/files-touched),
-[the memory citation loop](https://stella.oxagen.sh/docs/context-engine#the-citation-loop-memories-that-earn-their-place).
+[the files-touched ledger](https://stella.oxagen.sh/docs/telemetry),
+[the memory citation loop](https://stella.oxagen.sh/docs/context-engine#the-citation-loop).
 
 ## What it optimizes for
 

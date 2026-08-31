@@ -347,11 +347,13 @@ stella            # or: stella chat
 ```
 
 On a terminal this opens the tabbed interactive interface (Session · Agents ·
-Traces · Graph · Files · Skills · MCP) with PR-style diffs and an editable
-prompt queue. `--accessible` (or `STELLA_ACCESSIBLE=1`) runs the same interface
-for a screen reader: inline on your own screen, each finished message into
-normal scrollback exactly once, single-column panels, labelled rows instead of
-tables, and a spoken line on every tab, overlay, or focus change. `--plain` (or
+Traces · Graph · Files · Skills · MCP · Issues · Settings) with PR-style diffs
+and an editable prompt queue.
+
+`--accessible` (or `STELLA_ACCESSIBLE=1`) runs the same interface for a screen
+reader. It draws inline on your own screen. Each finished message goes into
+normal scrollback exactly once. Panels become single columns, rows replace
+tables, and every tab, overlay, or focus change is spoken. `--plain` (or
 `STELLA_PLAIN=1`, or piped stdio) falls back to the line-oriented prompt.
 
 **In-chat commands** — the two surfaces implement their own vocabularies, so
