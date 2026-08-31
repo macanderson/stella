@@ -99,7 +99,7 @@ export const DECK_SHOTS = {
   palette: {
     file: "08-command-palette",
     width: 680,
-    height: 312,
+    height: 584,
     alt: "The deck's command palette: a fuzzy-matched list of commands with the matched characters highlighted, a section of commands relevant to what is running now, and a recent section.",
     caption:
       "Fuzzy match over every command, with a section for the ones that make sense right now — while a verify turn is running, the gate commands come first.",
