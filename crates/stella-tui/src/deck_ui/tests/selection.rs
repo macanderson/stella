@@ -602,9 +602,13 @@ fn deregister_of_the_focused_row_drops_the_stale_selection() {
     assert!(ui.session_scroll.follow, "tail-follow re-arms");
 }
 
+/// **The witness (#5371).** Front-eviction rebases every UI-held entry index
+/// so it still names the entry the reader chose — clamping the selection or
+/// dropping the expansion set silently re-attaches reader state to whichever
+/// entry slid into the slot, ~one chunk later.
 #[test]
-fn eviction_clamps_the_selection_and_drops_stale_expansions() {
-    use crate::model::MAX_TRANSCRIPT_ENTRIES;
+fn eviction_rebases_the_selection_and_expansions_to_the_same_entries() {
+    use crate::model::{MAX_TRANSCRIPT_ENTRIES, TranscriptEntry};
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     let retry = |i: usize| Inbound::Event {
@@ -615,26 +619,63 @@ fn eviction_clamps_the_selection_and_drops_stale_expansions() {
         },
     };
     // Grow to just under the cap, then highlight + expand near the tail.
+    // Entry index == attempt number, which is what lets the assertions ask
+    // "is this still the same entry?" rather than "is this still in range?".
     for i in 0..(MAX_TRANSCRIPT_ENTRIES - 1) {
         ingest_inbound(&retry(i), &mut model, &mut ui);
     }
-    ui.session_selected = Some(MAX_TRANSCRIPT_ENTRIES - 2);
-    toggle_expanded(&mut ui, "lead", MAX_TRANSCRIPT_ENTRIES - 2);
+    let chosen = MAX_TRANSCRIPT_ENTRIES - 2;
+    ui.session_selected = Some(chosen);
+    toggle_expanded(&mut ui, "lead", chosen);
+    // An expansion inside the soon-to-be-evicted chunk must drop, not clamp.
+    toggle_expanded(&mut ui, "lead", 5);
     let rev = ui.expanded_rev;
 
     // One more event crosses the cap: a chunk of the front evicts.
     ingest_inbound(&retry(MAX_TRANSCRIPT_ENTRIES), &mut model, &mut ui);
-    let len = model.agents[0].model.transcript.len();
-    assert!(len < MAX_TRANSCRIPT_ENTRIES, "a chunk was evicted");
+    let transcript = &model.agents[0].model.transcript;
     assert!(
-        ui.session_selected.is_some_and(|sel| sel < len),
-        "selection clamped into the retained window"
+        transcript.len() < MAX_TRANSCRIPT_ENTRIES,
+        "a chunk was evicted"
     );
+    let sel = ui.session_selected.expect("the chosen entry survived");
     assert!(
-        !ui.expanded.contains_key("lead"),
-        "index-keyed expansions are stale once the front moved"
+        matches!(&transcript[sel], TranscriptEntry::Retry { attempt, .. } if *attempt == chosen as u32),
+        "the selection still names the entry the reader chose, got {:?}",
+        transcript[sel]
+    );
+    let expanded = ui.expanded.get("lead").expect("the surviving expansion");
+    assert_eq!(
+        expanded,
+        &std::collections::HashSet::from([sel]),
+        "the expansion moved with its entry; the evicted one dropped"
     );
     assert!(ui.expanded_rev > rev, "fold cache invalidated");
+}
+
+/// The other half of #5371's rule: an index that named a drained entry is
+/// dropped outright — clamping would select an entry the reader never chose.
+#[test]
+fn a_selection_inside_the_evicted_chunk_is_dropped_not_clamped() {
+    use crate::model::MAX_TRANSCRIPT_ENTRIES;
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    let retry = |i: usize| Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::Retry {
+            attempt: i as u32,
+            reason: "r".into(),
+        },
+    };
+    for i in 0..(MAX_TRANSCRIPT_ENTRIES - 1) {
+        ingest_inbound(&retry(i), &mut model, &mut ui);
+    }
+    ui.session_selected = Some(5);
+    ingest_inbound(&retry(MAX_TRANSCRIPT_ENTRIES), &mut model, &mut ui);
+    assert_eq!(
+        ui.session_selected, None,
+        "a selection on a drained entry has nothing honest to point at"
+    );
 }
 
 /// Front-eviction moves every retained index down, and the scrollback counter
