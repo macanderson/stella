@@ -23,12 +23,16 @@
 //!
 //! # What a worker is
 //!
-//! The same thing a serial work unit is: a real child `stella run`
-//! (`super::work::run_turn`) with the issue quoted as data, in a
-//! worktree, under a budget slice. Never an embedded engine holding the
-//! parent's keys. The run's spend cap is divided across the width before
-//! any child starts. So a wave's children, all in flight at once, cannot
-//! spend past what the operator granted the run.
+//! A real child `stella run` (`super::work::run_turn`) with the issue
+//! quoted as data, in a worktree, under a budget slice. Never an
+//! embedded engine holding the parent's keys. The run's spend cap is
+//! divided across the width before any child starts. So a wave's
+//! children, all in flight at once, cannot spend past what the operator
+//! granted the run.
+//!
+//! The serial path picks its worker. A wave does not. It runs stella's
+//! own turn loop. So a workspace that chose another agent is refused
+//! here, rather than given stella under a setting that names one.
 
 use std::path::{Path, PathBuf};
 
@@ -44,6 +48,27 @@ use super::budget::RunBudget;
 use super::config::LoopConfig;
 use super::state::LoopState as Durable;
 use super::turn_flags::TurnFlags;
+use crate::settings::toml_config::WorkerKind;
+
+/// Refuse a wave that cannot run the worker the workspace chose.
+///
+/// A wave dispatches to `super::work::run_turn`. That is a child `stella
+/// run`. The serial path's worker branch is not on this route. So a wave
+/// under `kind = "claude"` would run stella. The setting would name one
+/// agent and the loop would use another. That is the swap the typed choice
+/// exists to stop.
+fn refuse_unsupported_worker(
+    worker: &crate::settings::toml_config::WorkerSection,
+) -> Result<(), String> {
+    match worker.kind {
+        WorkerKind::Stella => Ok(()),
+        WorkerKind::Claude => Err("a parallel wave runs stella's own turn loop, so \
+             worker.kind = \"claude\" cannot be honoured here. Drop --parallel to work \
+             issues one at a time with the worker you chose, or set worker.kind = \
+             \"stella\" for the wave."
+            .to_owned()),
+    }
+}
 
 /// Run one wave of ready issues at `width` workers, then return.
 ///
@@ -62,6 +87,7 @@ pub(super) fn wave(
     max_issues: u32,
 ) -> Result<(), String> {
     super::work::refuse_if_unsteered(root)?;
+    refuse_unsupported_worker(&cfg.worker)?;
 
     let ready = super::ready::ready_full(provider, &cfg.triage.ladder)?;
     let bound = (max_issues.max(width)) as usize;
@@ -396,6 +422,37 @@ mod tests {
                 .prompt
                 .contains("open a pull request against main"),
             "a wave worker is told to deliver, not only to commit"
+        );
+    }
+
+    /// **Witness.** A wave refuses a worker it cannot run.
+    ///
+    /// A wave runs a child `stella run`. Under a claude worker it would run
+    /// stella instead. The refusal names both ways out, so the choice stays
+    /// with the operator.
+    #[test]
+    fn a_wave_refuses_a_worker_it_cannot_run() {
+        let stella = crate::settings::toml_config::WorkerSection::default();
+        assert_eq!(
+            stella.kind,
+            WorkerKind::Stella,
+            "the default worker is the one a wave runs"
+        );
+        assert!(refuse_unsupported_worker(&stella).is_ok());
+
+        let claude = crate::settings::toml_config::WorkerSection {
+            kind: WorkerKind::Claude,
+            ..Default::default()
+        };
+        let refusal = refuse_unsupported_worker(&claude)
+            .expect_err("a wave cannot run claude, so it must say so rather than run stella");
+        assert!(
+            refusal.contains("--parallel"),
+            "the refusal names the flag to drop: {refusal}"
+        );
+        assert!(
+            refusal.contains("worker.kind"),
+            "the refusal names the setting to change: {refusal}"
         );
     }
 }
