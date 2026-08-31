@@ -1236,8 +1236,8 @@ fn enrollment_signature_matches_the_committed_conformance_vector() {
     assert_eq!(
         signature_hex,
         fixture["signature_hex"].as_str().unwrap(),
-        "the enrollment signature no longer matches the conformance vector — \
-         if the encoding changed deliberately, update the fixture here AND the \
-         vendored copy in macanderson/oxagen in the same change"
+        "the enrollment signature does not match the conformance vector — an \
+         encoding change must update the fixture here AND the vendored copy in \
+         macanderson/oxagen in the same change"
     );
 }
