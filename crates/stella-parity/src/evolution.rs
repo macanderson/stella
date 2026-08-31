@@ -403,7 +403,7 @@ evolution_surfaces! {
          what constrains the build: an adapter is an `ExecutableTool`, so the rollback artifact \
          has to exist before the promotion path does, not after";
 
-    /// The codebase Stella ships to, changed through issue-driven delivery.
+    /// The product code itself, shipped issue by issue.
     Delivery => "delivery",
         EvolutionPosture::Shipped {
             mechanism: "`stella self-driving drive --backlog` seeds the loop from the ready \
@@ -463,8 +463,8 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 #[cfg(test)]
 fn evolution_sources() -> [&'static str; 11] {
     [
-        // The Delivery row's witness: the backlog generator's selection and
-        // the ledger row it writes, proven against a fixture tracker.
+        // The Delivery row's witness: the ready pick and its ledger row,
+        // proven against a fixture tracker.
         include_str!("../../stella-cli/src/self_driving_cmd/ready.rs"),
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),

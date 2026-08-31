@@ -117,8 +117,8 @@ pub(super) fn drive(
     let doctrine = cfg.doctrine;
     let provider = crate::issue_provider::GhIssueProvider;
 
-    // Answered before the session record, the label installs and the claims —
-    // a caller checking the loop's aim must not move its hand.
+    // Answered before anything writes: no session record, no label
+    // installs, no claims.
     if dry_run {
         return super::ready::dry_run(&provider, &cfg, backlog, max_issues);
     }
@@ -428,10 +428,9 @@ pub(super) fn drive(
                 // operator whose clone is full of their own leftovers wants
                 // `ContentionPolicy::ClaimsOnly`, which is what that policy
                 // is for (`stella_autonomy::ContentionPolicy`).
-                // The backlog generator runs no triage pass: readiness is
-                // decided by labels and `Blocked by:` lines rather than by a
-                // model classifying kinds, and the queue it drains includes
-                // work triage would exclude.
+                // Backlog mode runs no triage pass. Readiness comes from
+                // labels and `Blocked by:` lines, not from a model. Its
+                // queue also takes work triage would drop.
                 if !backlog
                     && let Err(error) = triage::assess_one(
                         durable,
@@ -837,9 +836,9 @@ pub(super) fn drive(
                         ),
                     }
 
-                    // The delivered issue lands in the same cycle ledger the
-                    // audit cycles write, so `state`, `metrics` and the
-                    // dashboard fold delivered work with no second reader.
+                    // The delivered issue lands in the cycle ledger the
+                    // audit cycles already use. The existing folds read it
+                    // with no second reader.
                     if backlog
                         && let Err(error) =
                             super::ready::record_delivery_cycle(durable, &issue.0, &pr.0)
