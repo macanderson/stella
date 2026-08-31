@@ -101,8 +101,8 @@ The stand-in for every token, by the ANSI name rather than by ratatui's spelling
 | `text` | bright white |
 | `muted` | bright black |
 | `dim` | bright black |
-| `green` | green |
-| `red` | red |
+| `green` | bright green |
+| `red` | bright red |
 | `diff_add_bg` | black |
 | `diff_del_bg` | black |
 | `ink` | black |
@@ -112,7 +112,7 @@ The stand-in for every token, by the ANSI name rather than by ratatui's spelling
 
 <!-- END degradation -->
 
-The two golds collapse to one yellow and the two silvers to one white: at sixteen colors there is no second stop to lift to. The diff tints go to black rather than to a green and a red ground — at sixteen colors a tint is not available, only a wash, and a wash on every changed row would spend the palette's whole red budget on a healthy diff. The mandatory sign column (§6.4) is what carries the diff here, which is the case the sign column exists for.
+The two golds collapse to one yellow and the two silvers to one white: at sixteen colors there is no second stop to lift to. The status colors take the bright half, like every other chromatic stop here. Both are pale on a dark ground. The v1 deck's own 16-color table has always shipped bright green and bright red, and the two surfaces must not disagree about a status color. The diff tints go to black rather than to a green and a red ground — at sixteen colors a tint is not available, only a wash, and a wash on every changed row would spend the palette's whole red budget on a healthy diff. The mandatory sign column (§6.4) is what carries the diff here, which is the case the sign column exists for.
 
 ## 4. Glyph language
 

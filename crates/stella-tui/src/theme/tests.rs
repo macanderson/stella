@@ -254,36 +254,16 @@ fn ansi_index(color: Color) -> Option<u8> {
 /// a 16-colour terminal?* — about the same hex, reached by different paths:
 /// `degrade_buffer` for the v1 deck, `fallback::ansi16` for the v2 surfaces.
 /// Each had a coverage test and neither had ever been compared to the other,
-/// so five rows disagreed and nothing said so. `gold`, `gold-bright` and
-/// `silver-type` are settled: `ansi16` now takes the deck's own answer, which
-/// carried the only written reasoning either table had for its choice — see
-/// `stella_tui_theme::fallback::ansi16`'s doc comment.
-///
-/// `green` and `red` remain open. Unlike gold and silver-type, no comment on
-/// either table's row explains *why* it picked bright over standard or the
-/// reverse, so settling them is a genuine design call rather than a reading
-/// of reasoning already on record — tracked separately rather than decided
-/// here by guessing. That is
+/// so five rows disagreed and nothing said so. All five are settled now, and
+/// on one rule: every chromatic stop takes the bright half of the sixteen,
+/// the deck's own long-shipped answer —
+/// `stella_tui_theme::fallback::ansi16`'s doc comment carries the reasoning
+/// row by row. The empty table stays, because it is the declaration channel:
+/// a future divergence is declared here with its reason, or the cross-check
+/// below fails. That is
 /// `crates/stella-model/src/provider_parity.rs`'s posture — a matrix checked
 /// from both sides, with every gap named and issue-cited (AGENTS.md #10).
-const DEGRADATION_DIVERGENCE: &[(&str, u8, u8, &str)] = &[
-    (
-        "green",
-        10,
-        2,
-        "bright green against §3.5's green: the palette's `#74C991` is a pale \
-         mint, and which ANSI green is nearer depends on the reader's own \
-         sixteen. Refs #5000",
-    ),
-    (
-        "red",
-        9,
-        1,
-        "bright red against §3.5's red, the same question as `green` and the \
-         one row where the deck's answer is the nearer of the two against \
-         xterm's defaults. Refs #5000",
-    ),
-];
+const DEGRADATION_DIVERGENCE: &[(&str, u8, u8, &str)] = &[];
 
 /// **The two 16-colour tables agree, or the row says why not.**
 ///
