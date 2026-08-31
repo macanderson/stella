@@ -96,6 +96,14 @@ pub(super) async fn reflect_on_interactive_turn<T, E: std::fmt::Display>(
     result: &Result<T, E>,
     budget: &mut BudgetGuard,
 ) {
+    // The residue gate (`doc:backlog-self-driving` B5) rides the same turn
+    // boundary, outside reflection's own gate. Work the turn said it left
+    // undone is filed even when the turn taught nothing. A filing failure
+    // is a notice, never a failed turn.
+    for notice in crate::self_driving_cmd::residue::end_of_turn(turn.turn_slice()).await {
+        println!("  {} {notice}", "✦".white());
+    }
+
     if should_reflect_on(result)
         && crate::agent::output::should_reflect_on_turn(
             turn_warrants_reflection(turn.turn_slice()),

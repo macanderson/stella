@@ -597,6 +597,13 @@ min_steps = 3       # open steps that raise a card
 #
 # This whole block is strict — an unknown key is a load error, not a warning.
 # -----------------------------------------------------------------------------
+[self_driving]
+# The end-of-turn residue gate. When a turn states leftover work in prose
+# ("still doesn't handle the 429 case — follow-up"), the gate files it as an
+# issue through the same dedup and convention checks every automatic filing
+# takes. Absent means "on"; filing stated follow-up work is the default.
+residue_gate = "on"
+
 [self_driving.attribution]
 # What the loop appends to what it writes. Source-tracked so it travels with the
 # repository, and rewritable by an installed plugin — a downstream distribution

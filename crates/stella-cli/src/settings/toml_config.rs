@@ -401,6 +401,36 @@ pub struct SelfDrivingSection {
     /// every tracker has. Two teams on one GitHub can want different ladders.
     #[serde(default)]
     pub triage: TriageSection,
+    /// `residue_gate = "on" | "off"` — whether the end-of-turn residue gate
+    /// files leftover-work statements from a turn's transcript as issues.
+    ///
+    /// Absent means on: filing stated follow-up work is the default, and the
+    /// switch exists so an operator can turn the gate off, not so they must
+    /// find it to turn the gate on.
+    #[serde(default)]
+    pub residue_gate: ResidueGateSwitch,
+}
+
+/// The end-of-turn residue gate's switch (`doc:backlog-self-driving` B5).
+///
+/// A named two-value switch rather than a bare boolean so the document reads
+/// `residue_gate = "off"` — the same spelling `[plugins]` switches use.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResidueGateSwitch {
+    /// The gate scans and files. The default.
+    #[default]
+    On,
+    /// The gate neither scans nor files.
+    Off,
+}
+
+impl ResidueGateSwitch {
+    /// Whether the gate runs.
+    #[must_use]
+    pub fn enabled(self) -> bool {
+        matches!(self, Self::On)
+    }
 }
 
 /// `[self_driving.merge]` — which checks may block a merge.

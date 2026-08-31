@@ -423,6 +423,22 @@ evolution_surfaces! {
          its issue, so the unit of undo is the unit of change. `stella self-driving stop` \
          parks the loop at its next boundary, and applying the escalation label withdraws an \
          issue from the queue across restarts";
+
+    /// Issues Stella files about its own leftover work.
+    Backlog => "backlog",
+        EvolutionPosture::Shipped {
+            mechanism: "the end-of-turn residue gate (`doc:backlog-self-driving` phase B5). \
+                        `detect_residue` scans the turn's transcript with a fixed phrase \
+                        list. No model call. Each hit is filed through `file_finding`. \
+                        The seen-set dedup and the convention check apply here too. \
+                        `residue_gate = \"off\"` in `stella.toml` turns the gate off",
+            witness: "two_residue_statements_file_two_issues_and_a_rerun_files_none",
+        },
+        EvolutionTiming::BetweenTurns,
+        ImpactClass::AdvisoryRecord,
+        "close the filed issue. The digest stays in the seen-set, so the same statement \
+         never re-files. `residue_gate = \"off\"` stops the gate. Deleting a digest line \
+         from `seen.txt` re-arms that one statement";
 }
 
 /// How many live rows name no witness.
@@ -461,7 +477,7 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 11] {
+fn evolution_sources() -> [&'static str; 12] {
     [
         // The Delivery row's witness: what the backlog picks and the
         // ledger row it writes, proven on a fixture tracker.
@@ -480,6 +496,8 @@ fn evolution_sources() -> [&'static str; 11] {
         // The SkillInvocation row's witness: an auto-selected skill's
         // directives reach the plane through the recall seam.
         include_str!("../../stella-cli/src/memory/tests/skill_event.rs"),
+        // The Backlog row's witness sits beside the gate it proves.
+        include_str!("../../stella-cli/src/self_driving_cmd/residue.rs"),
     ]
 }
 

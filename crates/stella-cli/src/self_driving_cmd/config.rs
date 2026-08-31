@@ -57,6 +57,9 @@ pub(crate) struct LoopConfig {
     pub verify_command: Option<String>,
     /// Seconds before local verification is abandoned.
     pub verify_timeout_secs: u64,
+    /// Whether the end-of-turn residue gate scans and files leftover work
+    /// (`residue_gate = "on" | "off"`, absent means on).
+    pub residue_gate: bool,
 }
 
 impl Default for LoopConfig {
@@ -69,6 +72,7 @@ impl Default for LoopConfig {
             merge: stella_autonomy::BlockingPolicy::default(),
             verify_command: None,
             verify_timeout_secs: 1800,
+            residue_gate: true,
         }
     }
 }
@@ -93,6 +97,7 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         merge: parsed.self_driving.merge.policy(),
         verify_command: parsed.self_driving.verify.command.clone(),
         verify_timeout_secs: parsed.self_driving.verify.timeout_secs.unwrap_or(1800),
+        residue_gate: parsed.self_driving.residue_gate.enabled(),
     }
 }
 
