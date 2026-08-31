@@ -88,7 +88,12 @@ pub(crate) async fn run_autonomy(
         // draft staged for review — authored work is never silently thrown
         // away, and nothing unproven registers.
         match adopt::adopt_in_async(root, store, &pair.name, "adopt (autonomous)").await {
-            Ok(record) => match adopt::set_enabled_in(root, store, &pair.name, true) {
+            Ok(record) => match adopt::set_enabled_in(
+                root,
+                store,
+                &pair.name,
+                Some(stella_store::EnableAuthority::Autonomy),
+            ) {
                 Ok(()) => notices.push(format!(
                     "auto-adopted tool `{}` from gap {} — {}; network denied at spawn; \
                      disable with `stella tools --disable {}`",

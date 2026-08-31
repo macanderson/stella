@@ -31,6 +31,7 @@
 //! | [`task_contract`] | v28 → v29 | what a task promised, beside what became of it |
 //! | [`task_events`] | v38 → v39 | which task an event is evidence for |
 //! | [`agent_use_kind`] | v30 → v31 | which of two writers minted an `agent_uses` name |
+//! | [`enable_authority`] | v41 → v42 | which mechanism enabled a foundry tool |
 //!
 //! A new step gets a new module (or joins the group whose shape it shares),
 //! declares itself here, and takes the next slot in the ladder. It does not
@@ -55,6 +56,7 @@ mod agent_use_kind;
 mod call_identity;
 mod delivered_runs;
 mod dispatched_executions;
+mod enable_authority;
 mod error_class;
 mod execution_plane;
 mod execution_role;
@@ -83,6 +85,7 @@ use additive_tables::{
     migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v6, migrate_v6_to_v7,
     migrate_v13_to_v14, migrate_v19_to_v20, migrate_v20_to_v21, migrate_v39_to_v40,
 };
+use enable_authority::migrate_v41_to_v42;
 use error_class::migrate_v24_to_v25;
 use execution_plane::{
     migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10, migrate_v21_to_v22, migrate_v22_to_v23,
@@ -110,7 +113,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 41] = [
+pub(crate) const MIGRATIONS: [Migration; 42] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -340,6 +343,12 @@ pub(crate) const MIGRATIONS: [Migration; 41] = [
     // the circuit breaker's recorded answer to "why is this tool off". See
     // the module's own doc.
     migrate_v40_to_v41,
+    // v41 → v42: `foundry_tools.enabled_authority` — how a tool got
+    // turned on: a typed yes, a `--yes` flag, the autonomy loop, or a
+    // rollback. Additive, column-guarded ADD COLUMN, defaulted to '' with
+    // no backfill: no old row wrote the fact, so every pre-v42 row reads as
+    // unknown rather than as any grant. See the module's own doc.
+    migrate_v41_to_v42,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -397,7 +406,8 @@ pub(crate) const MIGRATIONS: [Migration; 41] = [
     //   v39 → v40: CLAIMED above by the plan graph's `plan_revisions` and
     //              `plan_edges` tables (#5037).
     //   v40 → v41: CLAIMED above by the autonomous-foundry plane.
-    // Nothing is reserved now: take v41 → v42 and add your own line here.
+    //   v41 → v42: CLAIMED above by `foundry_tools.enabled_authority`.
+    // Nothing is reserved now: take v42 → v43 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

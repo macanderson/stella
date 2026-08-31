@@ -241,6 +241,7 @@ mod tests {
                     enabled: false,
                     adopted_at: String::new(),
                     disabled_reason: String::new(),
+                    enabled_authority: None,
                 })
                 .expect("adopt");
             store
@@ -255,7 +256,10 @@ mod tests {
                 .expect("version");
         }
         store
-            .set_foundry_tool_enabled("cat_file", true)
+            .set_foundry_tool_enabled(
+                "cat_file",
+                Some(stella_store::EnableAuthority::FlagAssertion),
+            )
             .expect("enable");
         let (manifest_path, script_path) = super::super::adopt::adopted_paths(root, "cat_file");
         std::fs::create_dir_all(manifest_path.parent().expect("parent")).expect("mkdir");
@@ -298,6 +302,11 @@ mod tests {
             .expect("row");
         assert!(row.enabled, "a rollback re-enables");
         assert_eq!(row.disabled_reason, "", "and clears the breaker verdict");
+        assert_eq!(
+            row.enabled_authority,
+            Some(stella_store::EnableAuthority::Rollback),
+            "and records the mechanism that re-enabled it"
+        );
         assert_eq!(
             row.script_digest,
             stella_tools::foundry_gate::digest(SCRIPT_V1.as_bytes()),

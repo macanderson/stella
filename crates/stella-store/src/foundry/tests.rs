@@ -17,6 +17,7 @@ fn adopted(name: &str) -> AdoptedTool {
         enabled: false,
         adopted_at: String::new(),
         disabled_reason: String::new(),
+        enabled_authority: None,
     }
 }
 
@@ -62,7 +63,7 @@ fn an_adoption_survives_a_restart() {
             .expect("adopt");
         assert!(
             store
-                .set_foundry_tool_enabled("cat_file", true)
+                .set_foundry_tool_enabled("cat_file", Some(EnableAuthority::InteractiveHuman))
                 .expect("enable")
         );
     }
@@ -71,6 +72,11 @@ fn an_adoption_survives_a_restart() {
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name, "cat_file");
     assert!(tools[0].enabled, "the human decision must survive");
+    assert_eq!(
+        tools[0].enabled_authority,
+        Some(EnableAuthority::InteractiveHuman),
+        "and so must how it was made"
+    );
     assert_eq!(tools[0].witness_expect, "alpha-contents");
     assert_eq!(tools[0].witness_input, r#"{"p1":"a.txt"}"#);
     assert!(
@@ -104,7 +110,7 @@ fn re_adopting_revokes_the_approval() {
         .adopt_foundry_tool(&adopted("cat_file"))
         .expect("adopt");
     store
-        .set_foundry_tool_enabled("cat_file", true)
+        .set_foundry_tool_enabled("cat_file", Some(EnableAuthority::InteractiveHuman))
         .expect("enable");
 
     let mut edited = adopted("cat_file");
@@ -119,13 +125,89 @@ fn re_adopting_revokes_the_approval() {
     assert_eq!(stored.script_digest, "s1-different");
 }
 
+/// **Witness.** Every grant records how it was made, the paths read back
+/// as distinct, and withdrawing the grant withdraws the record:
+/// `enabled_authority` describes the grant in force, so a row that is off
+/// must not keep claiming an approval it lost.
+#[test]
+fn each_grant_records_its_authority_and_a_disable_clears_it() {
+    let store = Store::in_memory().expect("store");
+    store
+        .adopt_foundry_tool(&adopted("cat_file"))
+        .expect("adopt");
+
+    let read = |store: &Store| {
+        store
+            .adopted_foundry_tool("cat_file")
+            .expect("read")
+            .expect("present")
+            .enabled_authority
+    };
+
+    store
+        .set_foundry_tool_enabled("cat_file", Some(EnableAuthority::FlagAssertion))
+        .expect("enable");
+    assert_eq!(read(&store), Some(EnableAuthority::FlagAssertion));
+
+    store
+        .set_foundry_tool_enabled("cat_file", Some(EnableAuthority::InteractiveHuman))
+        .expect("re-enable");
+    assert_eq!(
+        read(&store),
+        Some(EnableAuthority::InteractiveHuman),
+        "the two consent paths are different recorded claims"
+    );
+
+    store
+        .set_foundry_tool_enabled("cat_file", None)
+        .expect("disable");
+    assert_eq!(read(&store), None, "no grant, no authority");
+
+    // The breaker's disable withdraws the record the same way.
+    store
+        .set_foundry_tool_enabled("cat_file", Some(EnableAuthority::Autonomy))
+        .expect("enable");
+    store
+        .disable_foundry_tool_with_reason("cat_file", "3 consecutive failures")
+        .expect("breaker");
+    assert_eq!(read(&store), None);
+}
+
+/// **Witness.** Re-adoption revokes the approval, and the record of how
+/// it was made goes with it. New bytes wearing the old grant's record would
+/// be the same laundering `re_adopting_revokes_the_approval` refuses.
+#[test]
+fn re_adopting_clears_the_recorded_authority() {
+    let store = Store::in_memory().expect("store");
+    store
+        .adopt_foundry_tool(&adopted("cat_file"))
+        .expect("adopt");
+    store
+        .set_foundry_tool_enabled("cat_file", Some(EnableAuthority::InteractiveHuman))
+        .expect("enable");
+
+    store
+        .adopt_foundry_tool(&adopted("cat_file"))
+        .expect("re-adopt");
+    let row = store
+        .adopted_foundry_tool("cat_file")
+        .expect("read")
+        .expect("present");
+    assert!(!row.enabled);
+    assert_eq!(row.enabled_authority, None);
+}
+
 /// Enabling something that was never adopted reports that, rather than
 /// silently succeeding — a no-op that answers "done" is how an approval gets
 /// believed for a tool that has none.
 #[test]
 fn enabling_an_unadopted_tool_says_so() {
     let store = Store::in_memory().expect("store");
-    assert!(!store.set_foundry_tool_enabled("ghost", true).expect("set"));
+    assert!(
+        !store
+            .set_foundry_tool_enabled("ghost", Some(EnableAuthority::InteractiveHuman))
+            .expect("set")
+    );
     assert!(store.adopted_foundry_tool("ghost").expect("read").is_none());
 }
 
@@ -137,7 +219,7 @@ fn forgetting_an_adoption_removes_its_approval() {
     let store = Store::in_memory().expect("store");
     store.adopt_foundry_tool(&adopted("gone")).expect("adopt");
     store
-        .set_foundry_tool_enabled("gone", true)
+        .set_foundry_tool_enabled("gone", Some(EnableAuthority::InteractiveHuman))
         .expect("enable");
     assert!(store.forget_foundry_tool("gone").expect("forget"));
     assert!(store.adopted_foundry_tools().expect("read").is_empty());

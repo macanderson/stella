@@ -37,8 +37,98 @@
 //! adoption cannot inflate the number.
 
 use rusqlite::{OptionalExtension, params};
+use stella_protocol::provenance::PublicationAuthority;
 
 use crate::{Result, Store};
+
+/// How a tool got turned on — the fact the enabling path saw, kept on the
+/// row so "who approved this, and how?" has an answer later.
+///
+/// This records the *path taken*, not a second authority grading. The
+/// grading vocabulary is `stella_protocol::provenance`, and
+/// [`EnableAuthority::established_authority`] reads each path into it.
+/// Store the fact, derive the grade — the evolution ledger's own rule
+/// (`stella-parity/src/evolution.rs`): a stored authority column is a
+/// second copy of the policy, free to drift from it.
+///
+/// One `approved_by_human: bool` would not do. A typed yes and a `--yes`
+/// flag are claims of different strength: the first is a person the CLI
+/// saw at a terminal, the second is a claim by whatever process passed the
+/// flag — which an agent holding a shell can be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnableAuthority {
+    /// A person at a terminal read the declaration and answered yes. The
+    /// one path where the CLI saw a human.
+    InteractiveHuman,
+    /// `--yes` on `stella tools --enable`: the caller claims the
+    /// declaration was read. Nobody was seen. The flag serves scripts with
+    /// no terminal, and an agent running a shell can pass it too.
+    FlagAssertion,
+    /// The `auto` autonomy loop turned on its own witness-proven
+    /// adoption, under the standing controls that replace the prompt.
+    Autonomy,
+    /// `stella tools --rollback` turned a restored prior version back on.
+    Rollback,
+}
+
+impl EnableAuthority {
+    /// The `snake_case` tag this path is stored as. `''` in the column is
+    /// not a tag: it means the grant predates the recording (or the row is
+    /// off), and reads as unknown rather than as any of these claims.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InteractiveHuman => "interactive_human",
+            Self::FlagAssertion => "flag_assertion",
+            Self::Autonomy => "autonomy",
+            Self::Rollback => "rollback",
+        }
+    }
+
+    /// The stored tag, read back. `None` for a tag not on the list — the
+    /// callers turn that into an error, not a guess, because the
+    /// schema-version gate means an unknown tag is a corrupt row, not a
+    /// newer writer.
+    #[must_use]
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "interactive_human" => Some(Self::InteractiveHuman),
+            "flag_assertion" => Some(Self::FlagAssertion),
+            "autonomy" => Some(Self::Autonomy),
+            "rollback" => Some(Self::Rollback),
+            _ => None,
+        }
+    }
+
+    /// The strongest `provenance.rs` authority the recorded path *proves*
+    /// — not the one it claims.
+    ///
+    /// Only a typed yes proves [`PublicationAuthority::LocalHuman`].
+    /// `--yes` claims a human read the declaration, but what was seen is a
+    /// process saying so, and provenance's own rule is that a claim is not
+    /// promoted to a sighting — so it proves only
+    /// [`PublicationAuthority::Agent`], the weakest actor the evidence
+    /// allows. A rollback is the same: a command nobody checked. Autonomy
+    /// is the agent acting alone by definition.
+    #[must_use]
+    pub fn established_authority(self) -> PublicationAuthority {
+        match self {
+            Self::InteractiveHuman => PublicationAuthority::LocalHuman,
+            Self::FlagAssertion | Self::Autonomy | Self::Rollback => PublicationAuthority::Agent,
+        }
+    }
+
+    /// One line for the `stella tools --foundry` report.
+    #[must_use]
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::InteractiveHuman => "a person answered the prompt at a terminal",
+            Self::FlagAssertion => "--yes: asserted by the caller, no person observed",
+            Self::Autonomy => "the autonomy pipeline, under its standing controls",
+            Self::Rollback => "re-enabled by rolling back to a prior approved version",
+        }
+    }
+}
 
 /// One workspace's record that a foundry-authored tool was adopted.
 ///
@@ -73,6 +163,11 @@ pub struct AdoptedTool {
     /// human `--disable`, and every pre-v41 row: `enabled` says whether the
     /// tool is offered, this says which mechanism turned it off and why.
     pub disabled_reason: String,
+    /// How the tool got turned on, `disabled_reason`'s mirror: that says
+    /// what turned the tool off, this says what turned it on. `None` while
+    /// off — and for a row turned on before v42 kept the fact, which reads
+    /// as unknown rather than as any path.
+    pub enabled_authority: Option<EnableAuthority>,
 }
 
 /// One adopted tool with the use it has actually seen since — the #830
@@ -124,7 +219,8 @@ impl Store {
                enabled = 0, \
                adopted_at = CURRENT_TIMESTAMP, \
                enabled_at = NULL, \
-               disabled_reason = ''",
+               disabled_reason = '', \
+               enabled_authority = ''",
             params![
                 tool.name,
                 tool.signature,
@@ -139,17 +235,29 @@ impl Store {
     }
 
     /// Enable or disable an adopted tool — the one human decision in the
-    /// protocol. Returns `false` when no such adoption exists, so a caller can
-    /// tell "flipped it" from "there was nothing to flip" rather than
-    /// reporting success for a no-op.
-    pub fn set_foundry_tool_enabled(&self, name: &str, enabled: bool) -> Result<bool> {
+    /// protocol. `Some(authority)` enables and records how; `None` disables,
+    /// asks nobody, and records nothing. A caller cannot enable without
+    /// saying how, which is the point: the ledger answers "who approved
+    /// this?" only if every grant writes the answer. Returns `false` when no
+    /// such adoption exists, so a caller can tell "flipped it" from "there
+    /// was nothing to flip" rather than reporting success for a no-op.
+    pub fn set_foundry_tool_enabled(
+        &self,
+        name: &str,
+        authority: Option<EnableAuthority>,
+    ) -> Result<bool> {
         let conn = self.lock();
         let changed = conn.execute(
             "UPDATE foundry_tools SET enabled = ?2, \
                enabled_at = CASE WHEN ?2 = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, \
+               enabled_authority = ?3, \
                disabled_reason = '' \
              WHERE name = ?1",
-            params![name, i64::from(enabled)],
+            params![
+                name,
+                i64::from(authority.is_some()),
+                authority.map(EnableAuthority::as_str).unwrap_or(""),
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -167,7 +275,7 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT name, signature, manifest_digest, script_digest, witness, witness_input, \
-                    witness_expect, enabled, adopted_at, disabled_reason \
+                    witness_expect, enabled, adopted_at, disabled_reason, enabled_authority \
              FROM foundry_tools ORDER BY name ASC",
         )?;
         let rows = stmt.query_map([], row_to_adopted)?;
@@ -184,7 +292,7 @@ impl Store {
         let row = conn
             .query_row(
                 "SELECT name, signature, manifest_digest, script_digest, witness, witness_input, \
-                        witness_expect, enabled, adopted_at, disabled_reason \
+                        witness_expect, enabled, adopted_at, disabled_reason, enabled_authority \
                  FROM foundry_tools WHERE name = ?1",
                 params![name],
                 row_to_adopted,
@@ -206,6 +314,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT f.name, f.signature, f.manifest_digest, f.script_digest, f.witness, \
                     f.witness_input, f.witness_expect, f.enabled, f.adopted_at, f.disabled_reason, \
+                    f.enabled_authority, \
                     (SELECT COUNT(*) FROM tool_calls t \
                       WHERE t.name = f.name AND t.ts >= f.adopted_at AND t.state != 'running'), \
                     (SELECT COUNT(*) FROM tool_calls t \
@@ -217,9 +326,9 @@ impl Store {
         let rows = stmt.query_map([], |r| {
             Ok(FoundryReuse {
                 tool: row_to_adopted(r)?,
-                calls: r.get(10)?,
-                errors: r.get(11)?,
-                last_used: r.get(12)?,
+                calls: r.get(11)?,
+                errors: r.get(12)?,
+                last_used: r.get(13)?,
             })
         })?;
         let mut out = Vec::new();
@@ -395,7 +504,8 @@ impl Store {
     pub fn disable_foundry_tool_with_reason(&self, name: &str, reason: &str) -> Result<bool> {
         let conn = self.lock();
         let changed = conn.execute(
-            "UPDATE foundry_tools SET enabled = 0, enabled_at = NULL, disabled_reason = ?2 \
+            "UPDATE foundry_tools SET enabled = 0, enabled_at = NULL, enabled_authority = '', \
+               disabled_reason = ?2 \
              WHERE name = ?1",
             params![name, reason],
         )?;
@@ -420,9 +530,14 @@ impl Store {
         let changed = conn.execute(
             "UPDATE foundry_tools SET manifest_digest = ?2, script_digest = ?3, \
                enabled = 1, enabled_at = CURRENT_TIMESTAMP, disabled_reason = '', \
-               adopted_at = CURRENT_TIMESTAMP \
+               enabled_authority = ?4, adopted_at = CURRENT_TIMESTAMP \
              WHERE name = ?1",
-            params![name, manifest_digest, script_digest],
+            params![
+                name,
+                manifest_digest,
+                script_digest,
+                EnableAuthority::Rollback.as_str(),
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -460,9 +575,25 @@ impl Store {
     }
 }
 
-/// The ten leading columns every reader above selects, in one place so the
+/// The eleven leading columns every reader above selects, in one place so the
 /// column order and the struct cannot drift.
 fn row_to_adopted(r: &rusqlite::Row<'_>) -> rusqlite::Result<AdoptedTool> {
+    let authority_tag: String = r.get(10)?;
+    let enabled_authority = if authority_tag.is_empty() {
+        None
+    } else {
+        // The schema-version gate refuses a database newer than this build,
+        // so an unrecognised tag is a corrupt row and errors rather than
+        // reading as "unknown" — which is reserved for rows that genuinely
+        // predate the recording.
+        Some(EnableAuthority::from_tag(&authority_tag).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                10,
+                rusqlite::types::Type::Text,
+                format!("unrecognised enabled_authority tag `{authority_tag}`").into(),
+            )
+        })?)
+    };
     Ok(AdoptedTool {
         name: r.get(0)?,
         signature: r.get(1)?,
@@ -474,6 +605,7 @@ fn row_to_adopted(r: &rusqlite::Row<'_>) -> rusqlite::Result<AdoptedTool> {
         enabled: r.get::<_, i64>(7)? != 0,
         adopted_at: r.get(8)?,
         disabled_reason: r.get(9)?,
+        enabled_authority,
     })
 }
 

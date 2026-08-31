@@ -31,7 +31,7 @@ use colored::Colorize;
 use serde_json::Value;
 use stella_core::ports::ToolExecutor;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
-use stella_store::{AdoptedTool, Store};
+use stella_store::{AdoptedTool, EnableAuthority, Store};
 use stella_tools::custom::{self, CustomTool, CustomToolSet};
 use stella_tools::foundry_gate::PROPOSED_DIR;
 use stella_tools::foundry_witness::{WitnessVerdict, prove};
@@ -276,6 +276,7 @@ fn finish_adoption(
         enabled: false,
         adopted_at: String::new(),
         disabled_reason: String::new(),
+        enabled_authority: None,
     };
     store
         .adopt_foundry_tool(&record)
@@ -301,6 +302,13 @@ fn finish_adoption(
 ///
 /// `Ok(false)` means a human was asked and said no — the one outcome that is
 /// neither a grant nor an error.
+///
+/// Which consent path ran is stamped onto the row: a typed yes records
+/// [`EnableAuthority::InteractiveHuman`], `--yes` records
+/// [`EnableAuthority::FlagAssertion`]. They are different claims — a person
+/// the CLI saw at a terminal versus a claim by whatever process passed the
+/// flag — and recording them as one would throw away the difference the
+/// consent gate exists for.
 pub(crate) fn run_tools_enable_in(
     root: &Path,
     store: &Store,
@@ -328,7 +336,13 @@ pub(crate) fn run_tools_enable_in(
         }
     }
 
-    set_enabled_in(root, store, name, enabled)?;
+    let authority = match (enabled, yes) {
+        (false, _) => None,
+        (true, true) => Some(EnableAuthority::FlagAssertion),
+        // The prompt above ran and was answered yes, at a verified terminal.
+        (true, false) => Some(EnableAuthority::InteractiveHuman),
+    };
+    set_enabled_in(root, store, name, authority)?;
     Ok(true)
 }
 
@@ -399,7 +413,8 @@ fn confirm_enable(name: &str) -> Result<bool, String> {
 }
 
 /// Flip one adoption's enablement, refusing to enable a tool whose bytes no
-/// longer match the ones the witness ran against.
+/// longer match the ones the witness ran against. `Some(authority)` enables,
+/// saying how the grant was authorised; `None` disables.
 ///
 /// Checking here as well as at discovery is not redundant: the gate withholds
 /// a tampered tool silently-but-explainably at session start, whereas someone
@@ -408,7 +423,7 @@ pub(crate) fn set_enabled_in(
     root: &Path,
     store: &Store,
     name: &str,
-    enabled: bool,
+    authority: Option<EnableAuthority>,
 ) -> Result<(), String> {
     let record = store
         .adopted_foundry_tool(name)
@@ -420,7 +435,7 @@ pub(crate) fn set_enabled_in(
             )
         })?;
 
-    if enabled {
+    if authority.is_some() {
         let manifest_path = root.join(ADOPTED_DIR).join(format!("{name}.toml"));
         let text = std::fs::read_to_string(&manifest_path)
             .map_err(|e| format!("cannot read {}: {e}", manifest_path.display()))?;
@@ -445,7 +460,7 @@ pub(crate) fn set_enabled_in(
     }
 
     if !store
-        .set_foundry_tool_enabled(name, enabled)
+        .set_foundry_tool_enabled(name, authority)
         .map_err(|e| format!("cannot update the adoption ledger: {e}"))?
     {
         return Err(format!("`{name}` has not been adopted"));
@@ -474,10 +489,30 @@ pub(crate) fn render_report(store: &Store) -> Result<String, String> {
             "adopted, disabled"
         };
         out.push_str(&format!(
-            "  {} [{state}] {}\n    witness: {}\n    reuse:   {} call(s), {} failed{}\n",
-            row.tool.name,
-            row.tool.signature,
-            row.tool.witness,
+            "  {} [{state}] {}\n    witness: {}\n",
+            row.tool.name, row.tool.signature, row.tool.witness,
+        ));
+        // Only for enabled rows: the answer to "who approved this, and how?"
+        // is a fact about a live grant. `None` on an enabled row is a grant
+        // made before the ledger recorded the fact, and says so instead of
+        // guessing. The parenthesised tag is the provenance vocabulary
+        // (`stella_protocol::provenance::PublicationAuthority`): the
+        // strongest authority the recorded path proves.
+        if row.tool.enabled {
+            out.push_str(&format!(
+                "    enabled: {}\n",
+                match row.tool.enabled_authority {
+                    Some(authority) => format!(
+                        "{} (proves {})",
+                        authority.describe(),
+                        authority.established_authority().as_str()
+                    ),
+                    None => "unrecorded — turned on before the ledger kept this".to_string(),
+                }
+            ));
+        }
+        out.push_str(&format!(
+            "    reuse:   {} call(s), {} failed{}\n",
             row.calls,
             row.errors,
             match &row.last_used {

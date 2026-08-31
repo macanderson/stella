@@ -1070,7 +1070,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       included), `foundry_invocations` (per-launch telemetry the
     //       circuit breaker folds over), and `foundry_tools.disabled_reason`
     //       (the breaker's recorded verdict; `''` means no breaker spoke).
-    assert_eq!(SCHEMA_VERSION, 41);
+    //       v42 `foundry_tools.enabled_authority` — how a tool got turned
+    //       on: a typed yes, a `--yes` flag, the autonomy loop, or a
+    //       rollback; `''` means the grant predates the recording and reads
+    //       as unknown.
+    assert_eq!(SCHEMA_VERSION, 42);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

@@ -805,6 +805,12 @@ pub(crate) const STEP_RECEIPT_DDL: &str = "CREATE TABLE IF NOT EXISTS step_recei
 /// `enabled` defaults to 0 and `enabled_at` to NULL, which is the schema-level
 /// statement of #830's guardrail: adoption alone grants nothing.
 ///
+/// `enabled_authority` records which mechanism authorised the current
+/// enablement (`crate::foundry::EnableAuthority`'s tags). `''` — every
+/// disabled row and every row enabled before v42 — means no mechanism was
+/// recorded, which must read as unknown rather than as any particular
+/// grant.
+///
 /// No index beyond the implicit one on the primary key. The table holds one
 /// row per self-authored tool in a workspace — single digits, realistically —
 /// and every reader either fetches by name or scans the lot.
@@ -819,7 +825,8 @@ pub(crate) const FOUNDRY_TOOLS_DDL: &str = "CREATE TABLE IF NOT EXISTS foundry_t
        enabled INTEGER NOT NULL DEFAULT 0,
        adopted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
        enabled_at TEXT,
-       disabled_reason TEXT NOT NULL DEFAULT ''
+       disabled_reason TEXT NOT NULL DEFAULT '',
+       enabled_authority TEXT NOT NULL DEFAULT ''
      );";
 
 /// `foundry_tool_versions` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the append-only

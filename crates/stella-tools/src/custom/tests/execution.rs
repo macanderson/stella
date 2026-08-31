@@ -400,9 +400,12 @@ fn adopt_enabled(root: &Path, name: &str) -> stella_store::Store {
             enabled: false,
             adopted_at: String::new(),
             disabled_reason: String::new(),
+            enabled_authority: None,
         })
         .expect("adopt");
-    store.set_foundry_tool_enabled(name, true).expect("enable");
+    store
+        .set_foundry_tool_enabled(name, Some(stella_store::EnableAuthority::FlagAssertion))
+        .expect("enable");
     store
 }
 
