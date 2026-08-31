@@ -51,6 +51,11 @@ pub fn detect_truecolor() -> bool {
 ///   tier above plain [`token::SILVER`], so an emphasised secondary still
 ///   reads as emphasised rather than collapsing into the same stand-in as
 ///   the text beside it — the whole reason `SILVER_TYPE` is a separate token.
+/// - The status colours ([`token::GREEN`], [`token::RED`]) take the bright
+///   half, like every chromatic stop above. Both tokens are pale on a dark
+///   ground, and the deck's own table (`stella-tui`'s `FALLBACKS`) has
+///   always shipped bright green and bright red — a session drawn by the v1
+///   deck and a v2 surface must not disagree about a status colour.
 /// - The diff tints go to black rather than to a green and a red background.
 ///   At 16 colours a tint is not available; only a wash is, and a wash on
 ///   every changed row would spend the palette's whole red budget on a healthy
@@ -68,8 +73,8 @@ pub fn ansi16(color: Color) -> Color {
         token::SILVER => Color::Gray,
         token::TEXT | token::SILVER_TYPE => Color::White,
         token::MUTED | token::DIM => Color::DarkGray,
-        token::GREEN => Color::Green,
-        token::RED => Color::Red,
+        token::GREEN => Color::LightGreen,
+        token::RED => Color::LightRed,
         // The light-theme stops. They reach the terminal only when a paper
         // theme is active, and at sixteen colours a paper ground *is* white —
         // there is no lighter tier to distinguish panel from canvas, so they

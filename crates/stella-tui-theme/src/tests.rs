@@ -304,11 +304,15 @@ fn the_named_fallbacks_are_what_the_spec_says() {
         Color::DarkGray,
         "dim to bright black"
     );
-    assert_eq!(fallback::ansi16(token::RED), Color::Red, "red to ANSI red");
+    assert_eq!(
+        fallback::ansi16(token::RED),
+        Color::LightRed,
+        "red to bright red"
+    );
     assert_eq!(
         fallback::ansi16(token::GREEN),
-        Color::Green,
-        "green to ANSI green"
+        Color::LightGreen,
+        "green to bright green"
     );
 }
 
