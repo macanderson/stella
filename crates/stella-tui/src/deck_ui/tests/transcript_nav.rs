@@ -393,12 +393,12 @@ fn a_match_inside_a_folded_turn_unfolds_it() {
     assert_eq!(ui.session_pending_scroll, Some(2));
 }
 
-/// Fold sets are keyed on turn-start indices, which front-eviction shifts by
-/// the same amount it shifts everything else. A surviving set would silently
-/// re-attach to whichever turn slid into the slot — folding away a turn the
-/// reader never touched — so it drops with the expansion set it travels with.
+/// Fold sets are keyed on turn-start indices. Front-eviction shifts those
+/// like every other retained index, so the set rebases by the same shift as
+/// the expansions it travels with. A set left in place would fold away a
+/// turn the reader never touched. An index inside the drained chunk drops.
 #[test]
-fn eviction_drops_fold_state_alongside_expansions() {
+fn eviction_rebases_fold_state_alongside_expansions() {
     use crate::model::MAX_TRANSCRIPT_ENTRIES;
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
@@ -412,26 +412,33 @@ fn eviction_drops_fold_state_alongside_expansions() {
     for i in 0..(MAX_TRANSCRIPT_ENTRIES - 1) {
         ingest_inbound(&retry(i), &mut model, &mut ui);
     }
+    let chosen = MAX_TRANSCRIPT_ENTRIES - 3;
     ui.folded_turns
         .entry("lead".to_string())
         .or_default()
-        .insert(0);
+        .extend([0, chosen]);
     toggle_expanded(&mut ui, "lead", MAX_TRANSCRIPT_ENTRIES - 2);
     let (fold_rev, expanded_rev) = (ui.fold_rev, ui.expanded_rev);
 
-    // One more event crosses the cap: a chunk of the front evicts.
+    // One more event crosses the cap: a chunk of the front evicts. The pass
+    // drains a chunk and stands one marker in its place. Every surviving
+    // index moves down by one slot less than the chunk.
     ingest_inbound(&retry(MAX_TRANSCRIPT_ENTRIES), &mut model, &mut ui);
-    assert!(
-        model.agents[0].model.transcript.len() < MAX_TRANSCRIPT_ENTRIES,
-        "a chunk was evicted"
+    let len = model.agents[0].model.transcript.len();
+    assert!(len < MAX_TRANSCRIPT_ENTRIES, "a chunk was evicted");
+    // Pre-eviction the transcript held MAX entries; the drain-and-marker pass
+    // left `len`, and every surviving index moved down by the difference.
+    let shift = MAX_TRANSCRIPT_ENTRIES - len;
+    assert_eq!(
+        ui.folded_turns.get("lead"),
+        Some(&std::collections::HashSet::from([chosen - shift])),
+        "the surviving fold moved with its turn; the drained one dropped"
     );
-    assert!(
-        !ui.folded_turns.contains_key("lead"),
-        "index-keyed folds are stale once the front moved"
-    );
-    assert!(
-        !ui.expanded.contains_key("lead"),
-        "…and go with the expansions, which shifted identically"
+    let expanded = MAX_TRANSCRIPT_ENTRIES - 2 - shift;
+    assert_eq!(
+        ui.expanded.get("lead"),
+        Some(&std::collections::HashSet::from([expanded])),
+        "the expansion shifted identically"
     );
     assert!(ui.fold_rev > fold_rev, "the fold cache is invalidated");
     assert!(ui.expanded_rev > expanded_rev);
