@@ -32,6 +32,7 @@ mod learning;
 mod lifecycle;
 pub(crate) mod probes;
 mod query;
+mod ready;
 mod report;
 pub(crate) mod state;
 mod stats;
@@ -250,6 +251,22 @@ pub(crate) enum SelfDrivingCmd {
         /// Seconds between polls while waiting on CI.
         #[arg(long, default_value_t = 45)]
         poll_secs: u64,
+
+        /// Seed the loop from the ready backlog instead of the defect queue.
+        ///
+        /// Ready means the issue carries the `status:ready` label, or every
+        /// `Blocked by: #N` line in its body names a closed issue. This
+        /// generator drains a whole backlog, feature work included, and
+        /// records each delivered issue as a cycle in the ledger.
+        #[arg(long)]
+        backlog: bool,
+
+        /// Print the issue the loop would take next, then stop.
+        ///
+        /// Reads the tracker and changes nothing: no claim, no branch, no
+        /// label, no session record.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// What this session has done so far — the counters a dashboard reads.
@@ -617,7 +634,17 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
             max_issues,
             no_review,
             poll_secs,
-        } => drive::drive(&st, *max_issues, *no_review, flags, *poll_secs),
+            backlog,
+            dry_run,
+        } => drive::drive(
+            &st,
+            *max_issues,
+            *no_review,
+            flags,
+            *poll_secs,
+            *backlog,
+            *dry_run,
+        ),
         SelfDrivingCmd::Stats { format } => stats::session_stats(&st, *format),
         SelfDrivingCmd::Triage {
             issue,

@@ -402,6 +402,27 @@ evolution_surfaces! {
         "nothing is promoted yet, so there is nothing to reverse. This row's `ImpactClass` is \
          what constrains the build: an adapter is an `ExecutableTool`, so the rollback artifact \
          has to exist before the promotion path does, not after";
+
+    /// The code Stella ships, changed by the loop that works its backlog.
+    Delivery => "delivery",
+        EvolutionPosture::Shipped {
+            mechanism: "`stella self-driving drive --backlog` seeds the loop from the ready \
+                        backlog rather than the defect queue: an issue is ready when it \
+                        carries `status:ready` or when every `Blocked by: #N` line in its \
+                        body names a closed issue (`stella_autonomy::ready`). Each ready \
+                        issue is worked in an isolated worktree, opened as a pull request \
+                        that closes it, merged only when the deterministic transition says \
+                        `Merge`, and appended to the cycle ledger as a `backlog` row. \
+                        `--dry-run` prints the issue the loop would take and changes \
+                        nothing; `--max-issues` bounds one invocation",
+            witness: "the_backlog_generator_picks_the_ready_issue_and_records_the_delivered_cycle",
+        },
+        EvolutionTiming::OfflineBatch,
+        ImpactClass::ExecutableTool,
+        "`git revert` of the merged pull request — each delivery is one pull request citing \
+         its issue, so the unit of undo is the unit of change. `stella self-driving stop` \
+         parks the loop at its next boundary, and applying the escalation label withdraws an \
+         issue from the queue across restarts";
 }
 
 /// How many live rows name no witness.
@@ -440,8 +461,11 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 10] {
+fn evolution_sources() -> [&'static str; 11] {
     [
+        // The Delivery row's witness: what the backlog picks and the
+        // ledger row it writes, proven on a fixture tracker.
+        include_str!("../../stella-cli/src/self_driving_cmd/ready.rs"),
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),
         include_str!("../../stella-cli/src/memory/validation/tests.rs"),
