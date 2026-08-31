@@ -43,7 +43,7 @@ pub(super) const QUEUE_READ_LIMIT: usize = 200;
 /// short-lived CLI verbs with no runtime of their own, so each blocks on one
 /// current-thread runtime rather than making every self-driving verb async for
 /// a single awaited call.
-fn ranked(
+pub(super) fn ranked(
     provider: &dyn IssueProvider,
     policy: &stella_autonomy::priority::TriagePolicy,
 ) -> Result<(stella_autonomy::priority::Queue, usize), String> {
