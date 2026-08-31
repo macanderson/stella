@@ -60,6 +60,9 @@ pub(crate) struct LoopConfig {
     /// Whether the end-of-turn residue gate scans and files leftover work
     /// (`residue_gate = "on" | "off"`, absent means on).
     pub residue_gate: bool,
+    /// Whether the drive loop also watches the release workflow's latest run
+    /// and files on red. On unless `stella.toml` says `deploy_watch = "off"`.
+    pub deploy_watch: bool,
 }
 
 impl Default for LoopConfig {
@@ -73,6 +76,7 @@ impl Default for LoopConfig {
             verify_command: None,
             verify_timeout_secs: 1800,
             residue_gate: true,
+            deploy_watch: true,
         }
     }
 }
@@ -98,6 +102,7 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         verify_command: parsed.self_driving.verify.command.clone(),
         verify_timeout_secs: parsed.self_driving.verify.timeout_secs.unwrap_or(1800),
         residue_gate: parsed.self_driving.residue_gate.enabled(),
+        deploy_watch: parsed.self_driving.deploy_watch.enabled(),
     }
 }
 
@@ -320,6 +325,30 @@ foreign_breakage = "file_and_wait"
             stella_autonomy::Doctrine::default(),
             "and a workspace that declares nothing gets the shipped default"
         );
+    }
+
+    /// The deploy watch is on for a workspace that says nothing, and an
+    /// operator stands it down with one line — the default direction matters,
+    /// because a watch that must be asked for is off exactly when nobody
+    /// thought about it.
+    #[test]
+    fn the_deploy_watch_defaults_on_and_can_be_stood_down() {
+        assert!(load(workspace().path()).deploy_watch);
+
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            r#"
+[meta]
+schema_version = 1
+scope = "project"
+
+[self_driving]
+deploy_watch = "off"
+"#,
+        );
+        assert!(!load(ws.path()).deploy_watch);
     }
 
     /// A malformed manifest falls back to a working vocabulary rather than

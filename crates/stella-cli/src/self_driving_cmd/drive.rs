@@ -66,6 +66,7 @@ use stella_autonomy::{
 };
 use stella_fleet::issue_claim_key;
 
+mod deploy;
 mod ending;
 mod notify;
 mod settlement;
@@ -315,6 +316,23 @@ pub(super) fn drive(
     for kind in &cfg.triage.defect_kinds {
         let _ = crate::issue_provider::ensure_label(kind, "Work the self-driving loop may take.");
     }
+    // The size scale and the readiness pair ride the same install pass as
+    // the rungs. Triage writes them, and a tracker that lacks a label
+    // rejects the write. The rung loop above holds the full argument.
+    for size in super::triage::SIZES {
+        let _ = crate::issue_provider::ensure_label(
+            &super::triage::size_label(size),
+            "Effort estimate written by the self-driving loop's triage.",
+        );
+    }
+    let _ = crate::issue_provider::ensure_label(
+        super::triage::READY_LABEL,
+        "Assessed, with no open blocker remaining — ready to take.",
+    );
+    let _ = crate::issue_provider::ensure_label(
+        super::triage::BLOCKED_LABEL,
+        "Waiting on another issue named in the body as `Blocked by`.",
+    );
 
     // The run's USD ceiling, and the accounting that makes `--spend-limit`
     // mean what its help says (#4353). Every child turn is spawned through
@@ -384,6 +402,14 @@ pub(super) fn drive(
             max_issues,
             tally.opened,
         );
+
+        // The deploy watch rides the same poll as the base watch, and it
+        // yields to it. A red base already has the loop's full attention.
+        // A parked loop must not spend the forge's rate limit either.
+        // `deploy::pass` says what one pass does.
+        if cfg.deploy_watch && !obs.stop_requested && !obs.base_broken {
+            deploy::pass(durable, &provider, &mut state, &cfg.attribution);
+        }
 
         let next = step(&state, &obs, &doctrine);
         // A pass that is not blocked clears the latch, so a block that returns

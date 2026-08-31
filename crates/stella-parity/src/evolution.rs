@@ -429,21 +429,32 @@ evolution_surfaces! {
          parks the loop at its next boundary, and applying the escalation label withdraws an \
          issue from the queue across restarts";
 
-    /// Issues Stella files about its own leftover work.
+    /// The backlog Stella governs for itself. These labels steer what its
+    /// own loop takes next. It also files alarms to itself here.
     Backlog => "backlog",
         EvolutionPosture::Shipped {
-            mechanism: "the end-of-turn residue gate (`doc:backlog-self-driving` phase B5). \
-                        `detect_residue` scans the turn's transcript with a fixed phrase \
-                        list. No model call. Each hit is filed through `file_finding`. \
-                        The seen-set dedup and the convention check apply here too. \
-                        `residue_gate = \"off\"` in `stella.toml` turns the gate off",
-            witness: "two_residue_statements_file_two_issues_and_a_rerun_files_none",
+            mechanism: "drive's triage places an issue in the operator's own words — \
+                        kind, rung, and a `size/` scale — and writes the labels through \
+                        the issue port. It flips `status:blocked` to `status:ready` once \
+                        every `Blocked by` in the body has closed. The base and deploy \
+                        watches file-and-adopt a breakage issue when `main` or the \
+                        release run goes red with none open. The end-of-turn residue \
+                        gate (`doc:backlog-self-driving` phase B5) files leftover work \
+                        too: `detect_residue` scans the turn's transcript with a fixed \
+                        phrase list. No model call. Each hit is filed through \
+                        `file_finding`, under the seen-set dedup and the convention \
+                        check. Every write is a label or a filing, signed and deduped — \
+                        never an edit to anybody's words",
+            witness: "a_sized_assessment_parses_and_writes_exactly_one_size_label",
         },
         EvolutionTiming::BetweenTurns,
-        ImpactClass::AdvisoryRecord,
-        "close the filed issue. The digest stays in the seen-set, so the same statement \
-         never re-files. `residue_gate = \"off\"` stops the gate. Deleting a digest line \
-         from `seen.txt` re-arms that one statement";
+        ImpactClass::SteeringDirective,
+        "re-label the issue by hand — the next cycle reads the labels, not the loop's \
+         comment. The triage guard strips a rung set by a login off its list. Removing \
+         the escalation label requeues the issue. `deploy_watch = \"off\"` in \
+         `stella.toml` stands the release watch down, and `residue_gate = \"off\"` \
+         stops the residue gate. A filed residue statement's digest stays in the \
+         seen-set, so it never re-files; deleting its line from `seen.txt` re-arms it";
 }
 
 /// How many live rows name no witness.
@@ -482,7 +493,7 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 12] {
+fn evolution_sources() -> [&'static str; 13] {
     [
         // The Delivery row's witness: what the backlog picks and the
         // ledger row it writes, proven on a fixture tracker.
@@ -501,8 +512,11 @@ fn evolution_sources() -> [&'static str; 12] {
         // The SkillInvocation row's witness: an auto-selected skill's
         // directives reach the plane through the recall seam.
         include_str!("../../stella-cli/src/memory/tests/skill_event.rs"),
-        // The Backlog row's witness sits beside the gate it proves.
+        // The residue gate's proof sits beside the gate it proves.
         include_str!("../../stella-cli/src/self_driving_cmd/residue.rs"),
+        // The Backlog row's witness. A sized answer becomes the labels
+        // the tracker convention asks for.
+        include_str!("../../stella-cli/src/self_driving_cmd/triage.rs"),
     ]
 }
 

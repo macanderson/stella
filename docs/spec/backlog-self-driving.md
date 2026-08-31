@@ -371,6 +371,42 @@ no-workspace-dependency property that lets the Observatory link its folds. That
 is the same trade `rank_defects` already makes, and the one mapping from a
 tracker's shape into this one lives in the caller.
 
+### 3.1b Sizing, readiness, and the guard's logins
+
+A passing assessment answers three axes, not two: kind, priority, and a size.
+The size scale is `XS`/`S`/`M`/`L`/`XL`, judged on the largest of risk, blast
+radius and effort. It lands on the tracker as exactly one `size/<answer>`
+label. The size is an estimate for a human reader, not an input to the
+ranker, so the scale is fixed in code rather than declared per workspace.
+The drive loop's own label pass installs the labels, so a fresh repository
+needs no preparation.
+
+The same pass decides readiness. An issue body may declare
+`Blocked by: #<key>` lines. After an assessment lands, each declared blocker
+is resolved through the issue port. When none is still open, the loop flips
+`status:blocked` to `status:ready` in one relabel. A blocker the tracker
+cannot answer for holds the flip — an outage must not mark work ready.
+
+**The expected login story.** `triage-guard.yml` enforces separation of
+duties. A priority set by a login outside its `TRIAGE_LOGINS` list is
+stripped, and the issue is re-queued as `triage`. So the drive runner must
+authenticate `gh` as a login on that list — the triage identity, or the
+maintainer holding interim triage authority. A runner on any other login
+still judges correctly, but the guard undoes its priority writes. The loop
+detects that shape — an issue carrying its own `size/` label with no rung —
+as *placed, then stripped*. It escalates the issue once to a human instead
+of re-triaging forever. The fix is operational, not code: add the runner's
+login to `TRIAGE_LOGINS`, or run the loop under a login already there. Then
+remove the escalation label to requeue.
+
+**The deploy watch.** Beside the base watch, each poll may also read the
+release workflow's latest completed run, through the same forge pathway. On
+a red conclusion with no open report, the loop files one and adopts it. The
+`release-red` label dedups it, exactly as base breakage dedups on
+`main-red`. `deploy_watch = "off"` under `[self_driving]` in `stella.toml`
+stands the watch down. This is only the watch half of shipping. The
+autonomous release verb stays deferred, as §6.4 argues it should.
+
 ### 3.2 `work` — one unit of backlog, through Stella's own loop
 
 | Call | Returns | What it does |
