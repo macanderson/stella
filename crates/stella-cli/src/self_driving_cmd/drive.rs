@@ -117,8 +117,8 @@ pub(super) fn drive(
     let doctrine = cfg.doctrine;
     let provider = crate::issue_provider::GhIssueProvider;
 
-    // Answered before the session record, the label installs and the claims —
-    // a caller checking the loop's aim must not move its hand.
+    // Answered before the session record, the label installs and the
+    // claims. Checking the loop's aim must not move its hand.
     if dry_run {
         return super::ready::dry_run(&provider, &cfg, backlog, max_issues);
     }
@@ -428,10 +428,10 @@ pub(super) fn drive(
                 // operator whose clone is full of their own leftovers wants
                 // `ContentionPolicy::ClaimsOnly`, which is what that policy
                 // is for (`stella_autonomy::ContentionPolicy`).
-                // The backlog generator runs no triage pass: readiness is
-                // decided by labels and `Blocked by:` lines rather than by a
-                // model classifying kinds, and the queue it drains includes
-                // work triage would exclude.
+                // The backlog generator runs no triage pass. Labels and
+                // `Blocked by:` lines decide readiness, not a model
+                // classifying kinds. The queue it drains includes work
+                // triage would exclude.
                 if !backlog
                     && let Err(error) = triage::assess_one(
                         durable,
@@ -837,9 +837,9 @@ pub(super) fn drive(
                         ),
                     }
 
-                    // The delivered issue lands in the same cycle ledger the
-                    // audit cycles write, so `state`, `metrics` and the
-                    // dashboard fold delivered work with no second reader.
+                    // The delivered issue lands in the cycle ledger the
+                    // audit cycles write. `state`, `metrics` and the
+                    // dashboard then fold it with no second reader.
                     if backlog
                         && let Err(error) =
                             super::ready::record_delivery_cycle(durable, &issue.0, &pr.0)
