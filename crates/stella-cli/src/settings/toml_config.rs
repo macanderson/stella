@@ -384,6 +384,9 @@ pub struct SelfDrivingSection {
     /// `[self_driving.verify]` — how to prove a change when CI cannot.
     #[serde(default)]
     pub verify: VerifySection,
+    /// `[self_driving.worker]` — which coding agent executes one issue.
+    #[serde(default)]
+    pub worker: WorkerSection,
     /// `[self_driving.doctrine]` — how the loop decides, where two operators
     /// would decide differently.
     ///
@@ -460,6 +463,59 @@ impl DeployWatch {
     pub fn enabled(self) -> bool {
         self == Self::On
     }
+}
+
+/// `[self_driving.worker]` — which coding agent does the work on one issue.
+///
+/// The worker is the one part of the loop that writes code, and it is a seam
+/// rather than a hardcoded child process because the surrounding machinery —
+/// ranking, claiming, worktree isolation, the pull request, the merge — is
+/// agent-agnostic already. Only the turn itself ever knew it was stella.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkerSection {
+    /// Which agent runs the turn.
+    pub kind: WorkerKind,
+    /// The Claude Code executable, by name on `PATH` or as an absolute path.
+    /// Read only when `kind = "claude"`.
+    pub command: String,
+    /// A model alias or full model id. Absent means Claude Code's own default.
+    pub model: Option<String>,
+    /// A ceiling on how many turns Claude may take on one issue. Absent means
+    /// Claude Code's own default.
+    pub max_turns: Option<u32>,
+    /// Whether the worker may write files and run commands without asking.
+    pub dangerously_skip_permissions: bool,
+}
+
+impl Default for WorkerSection {
+    fn default() -> Self {
+        Self {
+            kind: WorkerKind::default(),
+            command: "claude".to_owned(),
+            model: None,
+            max_turns: None,
+            dangerously_skip_permissions: false,
+        }
+    }
+}
+
+/// Which agent performs autonomous issue work.
+///
+/// A named two-value choice rather than a free-form string so a typo is
+/// rejected where it is written, naming both spellings it accepts. A string
+/// would defer that to the work path, where an unreadable name has no good
+/// answer left: refusing one issue at a time walks the whole queue into the
+/// same wall, and falling back to stella silently runs an agent the operator
+/// did not choose.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkerKind {
+    /// stella's own turn loop, run as a child process. The default.
+    #[default]
+    Stella,
+    /// Claude Code, run non-interactively in the same isolated worktree.
+    Claude,
 }
 
 /// `[self_driving.merge]` — which checks may block a merge.

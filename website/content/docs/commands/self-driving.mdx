@@ -94,7 +94,7 @@ A run covers many cycles: one `/loop` session, or one daemon's whole lifetime. I
 
 ### metrics, state, queue
 
-`metrics` turns the ledger into evidence about how the loop itself is doing, flagging specific problems: `STUCK`, `STARVED`, `NOISY`, and `FRAGILE`. `state` shows the current counters and the last five cycles. `queue` ranks open problems by priority — P0, then P1, then P2, then untriaged, oldest first within each rank. Feature requests are left out, because this loop only closes defects.
+`metrics` turns the ledger into evidence about how the loop itself is doing, flagging specific problems: `STUCK`, `STARVED`, `NOISY`, and `FRAGILE`. `state` shows the current counters and the last five cycles. `queue` ranks open problems by priority — P0, then P1, then P2, then untriaged, oldest first within each rank. Feature requests are left out, because this loop only closes defects. Ranking reads up to 1,000 open issues, which has to be more than your repository has: your tracker hands back the newest issues first, and the priority order is applied afterwards to whatever arrived. If the read stops before the end of your backlog, an old P0 never reaches the ranker at all.
 
 ### file
 
@@ -117,6 +117,21 @@ Issue text is never a command: anyone who can file an issue could write anything
 **The outcome is measured from the actual files, never from what the turn says.** If a turn exits cleanly and claims success but changes nothing, stella reports `no_change` and releases the worktree. This matters exactly when a turn's own summary and the real result disagree — a loop that trusted the summary instead would open empty pull requests.
 
 Worktrees for this command live under `.stella/private/self-driving/`, on `self-driving/` branches. This is outside the fleet's namespace, because `stella fleet gc` cleans up by namespace, and it should never be allowed to delete checkouts it didn't create.
+
+By default, stella does the coding work itself. You can point it at Claude Code instead:
+
+```toml
+[self_driving.worker]
+kind = "claude"
+command = "claude"
+model = "opus"       # optional
+max_turns = 40       # optional limit per issue
+dangerously_skip_permissions = false
+```
+
+Claude runs as `claude -p --output-format json` inside the same isolated worktree, so your normal project and user settings still apply. Skipping permission prompts is a separate setting you have to turn on yourself, because it lets the worker write files and run commands without asking first.
+
+A Claude worker will not accept `--spend-limit`. Claude does not report what a run cost in the form stella measures, so stella cannot hold it to a dollar cap. Use `max_turns`, or your provider's own spending controls, instead.
 
 ### drive
 

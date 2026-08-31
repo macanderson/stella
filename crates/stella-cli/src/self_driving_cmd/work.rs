@@ -1,24 +1,38 @@
-//! `work` — one issue through Stella's own turn loop, in an isolated worktree.
+//! `work` — one issue through a coding agent's turn loop, in an isolated
+//! worktree.
 //!
 //! `doc:backlog-self-driving` §3.2 (#3599 B2). This is the verb that does not
 //! exist in any other form, and it is the whole autonomous half: everything
 //! else in the loop ranks, decides, or reports.
 //!
-//! # Stella is started, not embedded
+//! # The worker is started, not embedded
 //!
-//! `work start` **spawns `stella run`** in the worktree rather than dispatching
-//! a turn in-process. That is the design's shape, not a convenience:
-//! `doc:pipeline-as-plugins` §10 settles that self-driving is a *host*, not a
-//! wrapper — *"Stella never starts this program — a person does, and then it
-//! starts Stella"* — and `plugins/stella-selfdriving/plugin.toml` already
-//! declares exactly this capability, so a human has read and granted it.
+//! `work start` **spawns a coding agent** in the worktree rather than
+//! dispatching a turn in-process. That is the design's shape, not a
+//! convenience: `doc:pipeline-as-plugins` §10 settles that self-driving is a
+//! *host*, not a wrapper — *"Stella never starts this program — a person does,
+//! and then it starts Stella"* — and `plugins/stella-selfdriving/plugin.toml`
+//! already declares exactly this capability, so a human has read and granted
+//! it.
 //!
-//! It also gets the definition of done right for free. There is no built-in
-//! verification pipeline any more (`stella-pipeline` was deleted, #3852/#3865),
-//! so a unit of work gets **the turn loop plus whatever plugins are installed**
-//! and nothing else. Spawning the real binary is what makes that true by
-//! construction rather than by a claim in a doc comment: whatever a `stella
-//! run` gets on this machine, a work unit gets.
+//! Which agent is [`WorkerKind`], and `stella run` is the default. The seam is
+//! here and nowhere else: ranking, claiming, worktree isolation, the pull
+//! request and the merge never learn which agent wrote the diff, because the
+//! outcome is measured from the tree rather than reported by the worker. That
+//! is what makes a second worker a setting rather than a second loop.
+//!
+//! Spawning also gets the definition of done right for free. There is no
+//! built-in verification pipeline any more (`stella-pipeline` was deleted,
+//! #3852/#3865), so a unit of work gets **the turn loop plus whatever plugins
+//! are installed** and nothing else. Spawning the real binary is what makes
+//! that true by construction rather than by a claim in a doc comment: whatever
+//! a `stella run` gets on this machine, a work unit gets.
+//!
+//! A claude worker is held to the same bar by the same mechanism, with one
+//! exception it is refused rather than allowed to ignore: `--spend-limit`.
+//! Claude Code reports no cost this loop can read, so the ceiling could never
+//! be reached, and a cap that is silently infinite is worse than one the
+//! operator was told to remove.
 //!
 //! What that is worth is stated plainly in §3.2 and repeated here because it is
 //! easy to over-read: with no verification plugin installed, a completed work
@@ -70,6 +84,7 @@ use stella_protocol::issue::Issue;
 
 use super::budget::RunBudget;
 use super::turn_flags::TurnFlags;
+use crate::settings::toml_config::WorkerKind;
 
 /// Where this verb's worktrees live — gitignored, and outside the fleet's
 /// namespace so `stella fleet gc` cannot see them.
@@ -608,6 +623,7 @@ pub(super) fn start(
     issue: &Issue,
     budget: &mut RunBudget,
     attribution: &stella_autonomy::Attribution,
+    worker: &crate::settings::toml_config::WorkerSection,
 ) -> Result<WorkOutcome, String> {
     use stella_fleet::git::{SystemGitCli, WorktreeManager};
 
@@ -656,12 +672,18 @@ pub(super) fn start(
         path: created.path.clone(),
     };
 
-    let turn = run_turn(
-        &created.path,
-        root,
-        &prompt_for(issue, &attribution.commit),
-        budget,
-    );
+    let prompt = prompt_for(issue, &attribution.commit);
+    let turn = match worker.kind {
+        WorkerKind::Stella => run_turn(&created.path, root, &prompt, budget),
+        // A spend limit is refused rather than ignored. Claude Code reports no
+        // number this loop can read, so `RunBudget` would charge every turn
+        // nothing and the ceiling would never be reached — a cap that is
+        // silently infinite is worse than one the operator was told to remove.
+        WorkerKind::Claude if budget.cap().is_some() => Err(super::claude_worker::uncappable(
+            budget.cap().unwrap_or_default(),
+        )),
+        WorkerKind::Claude => super::claude_worker::run_claude(&created.path, &prompt, worker),
+    };
     let change = tree_change(&created.path, &base);
     let outcome = classify(turn, change, &wt);
 
@@ -918,7 +940,6 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect()
     }
-
     /// **Witness (#4362).** The turn the loop spawns does not inherit the
     /// reflection opt-out.
     ///

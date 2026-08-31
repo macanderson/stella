@@ -343,11 +343,18 @@ pub trait IssueProvider: Send + Sync {
     /// Every issue currently in [`IssueState::Open`], newest-first or in
     /// whatever order the tracker returns them.
     ///
-    /// **Ordering is not part of the contract**: ranking is the loop's job and
-    /// is deterministic (`stella_autonomy::rank_defects`), so a provider that
-    /// sorted differently could not change which issues a cycle picks. `limit`
-    /// bounds the read, because a tracker with ten thousand open issues should
-    /// not have all of them cross this boundary to produce a batch of five.
+    /// **Order decides membership as soon as a backlog outgrows `limit`.**
+    /// Ranking is the loop's job and is deterministic
+    /// (`stella_autonomy::rank_defects`). It runs after this read, though, over
+    /// whatever arrived. A full page is picked by the tracker's own order and
+    /// ranked only inside that set. A tracker that hands back the newest issues
+    /// first therefore hides the oldest ones from the ranker. An old P0 is the
+    /// issue such a read drops, and the one the loop most needs.
+    ///
+    /// So `limit` is a page size to set above a backlog. A caller that fills it
+    /// has read part of the open set, and must not treat that as the whole of
+    /// it. Where a partial read cannot be acted on safely, say so and stop: a
+    /// blocker just off the page reads as closed.
     async fn list_open(&self, limit: usize) -> Result<Vec<Issue>, IssueError>;
 
     /// File a new issue and return the key the tracker assigned it.

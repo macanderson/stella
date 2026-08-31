@@ -649,6 +649,24 @@ command = "make gate"
 # overnight.
 timeout_secs = 1800
 
+[self_driving.worker]
+# Which coding agent does the work on one issue. stella (default) runs the
+# built-in turn loop; claude runs Claude Code non-interactively in the same
+# isolated worktree.
+kind = "stella"
+# The Claude Code executable, by name on PATH or as an absolute path. Read only
+# when kind = "claude".
+command = "claude"
+# An optional model alias or full model id. Absent = Claude Code's own default.
+model = "opus"
+# An optional ceiling on how many turns Claude may take on one issue. Absent =
+# Claude Code's own default.
+max_turns = 40
+# Let the worker write files and run commands without asking. Off by default,
+# and turning it on is a separate decision from choosing Claude: selecting a
+# worker must never quietly widen what that worker may do.
+dangerously_skip_permissions = false
+
 [self_driving.doctrine]
 # How the loop decides, where two operators would decide differently. These are
 # judgement calls about YOUR team's norms, not facts about the code.

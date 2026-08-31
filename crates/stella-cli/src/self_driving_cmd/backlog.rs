@@ -30,12 +30,43 @@ use super::state::LoopState;
 
 /// How many open issues cross the port to produce one cycle's batch.
 ///
-/// A ceiling rather than "all of them": ranking is deterministic and a batch is
-/// single digits, so reading a ten-thousand-issue backlog to pick five is spend
-/// with no effect on the answer. 200 is what the shell driver asked `gh` for,
-/// kept unchanged so the picked batch cannot move in the change that relocates
-/// the read.
-pub(super) const QUEUE_READ_LIMIT: usize = 200;
+/// This is a page size, and a page the backlog outgrows silently changes the
+/// answer. The tracker orders what it returns; the ladder is applied here,
+/// afterwards, to whatever arrived. `gh issue list` hands back the newest
+/// first, so once a backlog is longer than this number the oldest issues stop
+/// crossing the port at all — and the loop takes work in ladder order from a
+/// set that was chosen by filing date. A P0 filed last year is then invisible
+/// to a ranker whose whole job is to find it, with nothing anywhere reporting
+/// a truncated read.
+///
+/// So this is sized to be larger than a backlog rather than smaller than one.
+/// Reading a page nobody outgrows costs a few paginated calls per claim pass;
+/// the alternative costs the ordering guarantee the ladder exists to provide.
+/// A repository that outgrows *this* number has the same defect again, which
+/// is what `a_backlog_larger_than_one_page_still_surfaces_its_oldest_p0`
+/// pins.
+pub(super) const QUEUE_READ_LIMIT: usize = 1_000;
+
+/// What an operator is told when the queue read filled its page.
+///
+/// A full page means the tracker held at least this many open issues, so the
+/// ranking covers only the ones that crossed. The loop reports and carries on
+/// rather than refusing, because it can still work the issues it can see and a
+/// queue that stops dead on a large backlog helps nobody. Silence is the one
+/// option ruled out: a truncated read that looks like a complete one is the
+/// whole defect.
+///
+/// A function rather than an inline print, so what an operator is told can be
+/// asserted without running a loop.
+fn truncation_notice(total: usize, provider: &str) -> Option<String> {
+    (total >= QUEUE_READ_LIMIT).then(|| {
+        format!(
+            "warning: `{provider}` returned {total} open issues, which fills this read. \
+             The ladder ranks that page alone, and the tracker chose it by its own order. \
+             Issues behind the page did not reach the ranker."
+        )
+    })
+}
 
 /// Read the tracker once and rank it, or explain why it could not be read.
 ///
@@ -55,6 +86,9 @@ pub(super) fn ranked(
         .block_on(provider.list_open(QUEUE_READ_LIMIT))
         .map_err(|error| error.to_string())?;
     let total = issues.len();
+    if let Some(notice) = truncation_notice(total, provider.id()) {
+        eprintln!("{notice}");
+    }
     let queue = stella_autonomy::priority::triage(
         issues
             .iter()
@@ -1078,6 +1112,80 @@ mod tests {
             "P0 first, then P1 aged-before-fresh — and no feature"
         );
         assert_eq!(total, 5, "the total counts every open issue, defect or not");
+    }
+
+    /// **Witness.** The ladder must not be applied to a set the tracker chose
+    /// by filing date.
+    ///
+    /// The tracker returns the newest issues first and the ladder is applied
+    /// here, to whatever arrived. So a page smaller than the backlog does not
+    /// merely cost a few stale issues at the bottom: it decides membership by
+    /// date and then ranks by urgency inside that, which is how the oldest P0
+    /// in a repository becomes the one issue the ranker cannot see.
+    ///
+    /// The fixture is the shape that breaks it — a page of fresh P2s, then one
+    /// old P0 behind them — sized to 200, so the test fails against a port
+    /// asking for that many and passes against a page the backlog has not
+    /// outgrown.
+    #[test]
+    fn a_backlog_larger_than_one_page_still_surfaces_its_oldest_p0() {
+        const OLD_PAGE: usize = 200;
+
+        let mut open: Vec<Issue> = (0..OLD_PAGE)
+            .map(|n| {
+                issue(
+                    &format!("{}", n + 100),
+                    &["bug", "P2"],
+                    "2026-08-01T00:00:00Z",
+                )
+            })
+            .collect();
+        // Last, because the tracker hands back the newest first and this is the
+        // oldest thing in the repository.
+        open.push(issue("7", &["bug", "P0"], "2020-01-01T00:00:00Z"));
+
+        let provider = FixtureProvider::with(open);
+        let policy = stella_autonomy::priority::TriagePolicy::default();
+        let (queue, total) = ranked(&provider, &policy).expect("fixture read");
+
+        assert_eq!(
+            queue.ranked.first().map(|issue| issue.number),
+            Some(7),
+            "the oldest P0 must outrank a whole page of fresher P2s, which it \
+             cannot do while the read stops before reaching it"
+        );
+        assert_eq!(
+            total,
+            OLD_PAGE + 1,
+            "the reported backlog size counts every open issue, not one page \
+             of them"
+        );
+    }
+
+    /// **Witness.** A read that fills its page says so.
+    ///
+    /// The page is sized to exceed a backlog, and a repository that outgrows it
+    /// has the ordering defect back. What must not come back with it is the
+    /// silence. The queue is then ranked over a page the tracker chose by date,
+    /// and the ranking alone gives an operator no way to see that.
+    #[test]
+    fn a_read_that_fills_its_page_reports_the_truncation() {
+        assert_eq!(
+            truncation_notice(QUEUE_READ_LIMIT - 1, "github"),
+            None,
+            "a read the backlog has not filled is a complete one and says nothing"
+        );
+
+        let notice = truncation_notice(QUEUE_READ_LIMIT, "github")
+            .expect("a filled page is a truncated read and has to be reported");
+        assert!(
+            notice.contains("github"),
+            "the notice names the tracker it read: {notice}"
+        );
+        assert!(
+            notice.contains(&QUEUE_READ_LIMIT.to_string()),
+            "the notice names how many issues crossed: {notice}"
+        );
     }
 
     /// A defect nobody gave a rung is a question, not the bottom of the queue.

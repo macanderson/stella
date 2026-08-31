@@ -63,6 +63,8 @@ pub(crate) struct LoopConfig {
     /// Whether the drive loop also watches the release workflow's latest run
     /// and files on red. On unless `stella.toml` says `deploy_watch = "off"`.
     pub deploy_watch: bool,
+    /// Which coding agent performs issue work.
+    pub worker: crate::settings::toml_config::WorkerSection,
 }
 
 impl Default for LoopConfig {
@@ -77,6 +79,7 @@ impl Default for LoopConfig {
             verify_timeout_secs: 1800,
             residue_gate: true,
             deploy_watch: true,
+            worker: crate::settings::toml_config::WorkerSection::default(),
         }
     }
 }
@@ -103,6 +106,7 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         verify_timeout_secs: parsed.self_driving.verify.timeout_secs.unwrap_or(1800),
         residue_gate: parsed.self_driving.residue_gate.enabled(),
         deploy_watch: parsed.self_driving.deploy_watch.enabled(),
+        worker: parsed.self_driving.worker,
     }
 }
 
@@ -223,6 +227,63 @@ branch_prefix = "oxagen/"
         assert_eq!(cfg.attribution.branch_prefix(), "oxagen/");
         // Unmentioned surfaces keep identifying the loop rather than blanking.
         assert_eq!(cfg.attribution.issue, stella_autonomy::SIGNATURE);
+    }
+
+    /// The witness for the worker seam: choosing claude, and the controls that
+    /// bound it, survive parsing into the configuration the work path reads.
+    /// Before this seam the worker was unconditionally a child `stella run`.
+    #[test]
+    fn claude_code_can_be_selected_as_the_issue_worker() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            r#"
+[meta]
+schema_version = 1
+scope = "project"
+
+[self_driving.worker]
+kind = "claude"
+command = "/opt/bin/claude"
+model = "opus"
+max_turns = 40
+dangerously_skip_permissions = true
+"#,
+        );
+
+        let worker = load(ws.path()).worker;
+        assert_eq!(
+            worker.kind,
+            crate::settings::toml_config::WorkerKind::Claude
+        );
+        assert_eq!(worker.command, "/opt/bin/claude");
+        assert_eq!(worker.model.as_deref(), Some("opus"));
+        assert_eq!(worker.max_turns, Some(40));
+        assert!(worker.dangerously_skip_permissions);
+    }
+
+    /// The default is unchanged by the seam existing: a workspace that says
+    /// nothing about a worker still runs stella's own turn loop.
+    #[test]
+    fn the_worker_defaults_to_stella() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            r#"
+[meta]
+schema_version = 1
+scope = "project"
+"#,
+        );
+
+        let worker = load(ws.path()).worker;
+        assert_eq!(
+            worker.kind,
+            crate::settings::toml_config::WorkerKind::Stella
+        );
+        assert!(!worker.dangerously_skip_permissions);
     }
 
     /// **The portability witness.** `stella.toml` says *which* tracker; the
