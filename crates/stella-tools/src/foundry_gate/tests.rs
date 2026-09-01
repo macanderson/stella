@@ -59,6 +59,7 @@ fn record(name: &str, enabled: bool) -> AdoptedTool {
         enabled,
         adopted_at: "2026-08-04 00:00:00".into(),
         disabled_reason: String::new(),
+        enabled_authority: None,
     }
 }
 

@@ -109,11 +109,11 @@ fn a_tool_is_unreachable_until_it_is_both_proven_and_approved() {
     );
 
     // 3. enabled → now, and only now, the model can reach it.
-    set_enabled_in(root, &store, &name, true).expect("enable");
+    set_enabled_in(root, &store, &name, Some(EnableAuthority::InteractiveHuman)).expect("enable");
     assert_eq!(session_tools(root), vec![name.clone()]);
 
     // ...and disabling takes it away again without discarding the proof.
-    set_enabled_in(root, &store, &name, false).expect("disable");
+    set_enabled_in(root, &store, &name, None).expect("disable");
     assert!(session_tools(root).is_empty());
     assert!(
         store
@@ -188,7 +188,8 @@ fn enabling_a_tool_whose_script_changed_is_refused() {
     let (_, script) = adopted_paths(root, &name);
     std::fs::write(&script, "#!/bin/sh\necho pwned\n").unwrap();
 
-    let err = set_enabled_in(root, &store, &name, true).expect_err("must refuse");
+    let err = set_enabled_in(root, &store, &name, Some(EnableAuthority::InteractiveHuman))
+        .expect_err("must refuse");
     assert!(err.contains("changed after adoption"), "{err}");
     assert!(session_tools(root).is_empty());
 }
@@ -202,7 +203,7 @@ fn re_adoption_proves_the_new_bytes_and_needs_a_new_approval() {
     let _home = crate::paths::test_user_home(root.to_path_buf());
     let name = author_cat(root, &store);
     adopt_in(root, &store, &name).expect("adopt");
-    set_enabled_in(root, &store, &name, true).expect("enable");
+    set_enabled_in(root, &store, &name, Some(EnableAuthority::InteractiveHuman)).expect("enable");
     assert_eq!(session_tools(root), vec![name.clone()]);
 
     // A reviewer edits the STAGED script and re-adopts.
@@ -342,7 +343,13 @@ fn adopting_an_unstaged_name_points_at_the_staging_step() {
 fn enabling_an_unadopted_name_points_at_the_adopt_command() {
     let ws = tempfile::tempdir().expect("tmp");
     let store = Store::open(ws.path()).expect("store");
-    let err = set_enabled_in(ws.path(), &store, "ghost", true).expect_err("not adopted");
+    let err = set_enabled_in(
+        ws.path(),
+        &store,
+        "ghost",
+        Some(EnableAuthority::InteractiveHuman),
+    )
+    .expect_err("not adopted");
     assert!(err.contains("stella tools --adopt ghost"), "{err}");
 }
 
@@ -419,12 +426,69 @@ fn an_explicit_yes_still_enables_without_a_terminal() {
 
     run_tools_enable_in(ws.path(), &store, &name, true, true).expect("--yes grants it");
 
+    let row = store
+        .adopted_foundry_tool(&name)
+        .expect("read")
+        .expect("adopted");
+    assert!(row.enabled);
+    assert_eq!(
+        row.enabled_authority,
+        Some(stella_store::EnableAuthority::FlagAssertion),
+        "--yes is recorded as the claim it is, not as a person the CLI saw"
+    );
+}
+
+/// **Witness.** The row records *how* the tool got turned on, and the two
+/// consent paths read back as distinct claims: a typed yes is a person the
+/// CLI saw at a terminal, `--yes` is a claim by whatever process passed
+/// the flag. One `approved_by_human` flag would erase that.
+///
+/// The prompt cannot run here — a test process has no terminal — so the
+/// typed-yes half goes through [`set_enabled_in`], the only write the
+/// prompt path makes after its yes.
+#[test]
+fn the_two_consent_paths_record_different_authorities() {
+    use stella_store::EnableAuthority;
+
+    let (ws, store) = workspace();
+    let name = author_cat(ws.path(), &store);
+    adopt_in(ws.path(), &store, &name).expect("adopt");
+
+    run_tools_enable_in(ws.path(), &store, &name, true, true).expect("--yes");
+    let by_flag = store
+        .adopted_foundry_tool(&name)
+        .expect("read")
+        .expect("adopted")
+        .enabled_authority;
+
+    set_enabled_in(ws.path(), &store, &name, None).expect("disable");
+    set_enabled_in(
+        ws.path(),
+        &store,
+        &name,
+        Some(EnableAuthority::InteractiveHuman),
+    )
+    .expect("enable interactively");
+    let interactive = store
+        .adopted_foundry_tool(&name)
+        .expect("read")
+        .expect("adopted")
+        .enabled_authority;
+
+    assert_eq!(by_flag, Some(EnableAuthority::FlagAssertion));
+    assert_eq!(interactive, Some(EnableAuthority::InteractiveHuman));
+    assert_ne!(by_flag, interactive, "the distinction is the field's point");
+
+    // And the report shows the answer, so nobody has to open the
+    // database.
+    let report = render_report(&store).expect("render");
     assert!(
-        store
-            .adopted_foundry_tool(&name)
-            .expect("read")
-            .expect("adopted")
-            .enabled
+        report.contains("a person answered the prompt at a terminal"),
+        "{report}"
+    );
+    assert!(
+        report.contains("proves local_human"),
+        "the provenance reading rides along: {report}"
     );
 }
 
