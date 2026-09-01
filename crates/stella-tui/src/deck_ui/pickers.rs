@@ -19,6 +19,7 @@
 //! same list.
 //!
 //! [`ListPicker::key`]: crate::views::picker::ListPicker::key
+//! [`PickerAction::Choose`]: crate::views::picker::PickerAction::Choose
 
 use crossterm::event::KeyEvent;
 
