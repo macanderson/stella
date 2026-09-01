@@ -296,6 +296,58 @@ fn slash_model_opens_the_session_picker_and_enter_overrides() {
     assert!(!ui.model_picker.open);
 }
 
+/// **The witness for filtering the `/model` picker.** The list holds a
+/// model from every provider with a key. One gateway adds hundreds. So
+/// typing narrows it, and `⏎` sends the row the filter left under the
+/// highlight.
+#[test]
+fn typing_in_the_model_picker_narrows_it_and_enter_sends_the_matching_row() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.engine.state = Some(crate::envelope::EngineConfigState {
+        catalog_models: vec![
+            "anthropic/claude-fable-5".to_string(),
+            "anthropic/claude-haiku-4-5".to_string(),
+            "openrouter/qwen/qwen3-max".to_string(),
+            "zai/glm-5.2".to_string(),
+        ],
+        ..Default::default()
+    });
+    super::super::local::deck_local_command("/model", &mut ui);
+    assert!(ui.model_picker.open);
+
+    // `q` is the first letter of what the reader wants, not a close key.
+    for c in "qwen".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    assert!(ui.model_picker.open, "typing does not dismiss the picker");
+    assert_eq!(ui.model_picker.query(), "qwen");
+    assert_eq!(
+        crate::views::picker::model_matches(&ui),
+        vec!["openrouter/qwen/qwen3-max".to_string()],
+        "the filter is what makes the rows a list"
+    );
+
+    // ⏎ sends the one match. No arrowing, and it is row 2 in the full list.
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::ModelOverride {
+            spec: "openrouter/qwen/qwen3-max".to_string()
+        })
+    );
+    assert!(!ui.model_picker.open, "choosing closes the picker");
+
+    // A filter that matches nothing sends nothing, not row 0.
+    super::super::local::deck_local_command("/model", &mut ui);
+    for c in "zzz".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    assert!(crate::views::picker::model_matches(&ui).is_empty());
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "an empty match set sends none");
+}
+
 /// **The witness for the `/agent` picker.** `/agent` opens the modal
 /// installed-agents picker (asking the driver for a fresh list), and `⏎`
 /// leaves as the same `WorkspaceInput::AgentAssume` the AGENTS pane's `a`
