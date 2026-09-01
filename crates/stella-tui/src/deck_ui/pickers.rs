@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Key routing for the session-override pickers (`/model`, `/agent`) —
-//! modal like the SESSIONS/INBOX overlays beside it in the routing chain,
-//! and in its own module for the same god-file reason as `super::parked`
-//! (not a link: that module is private).
+//! Key routing for the session-override pickers (`/model`, `/agent`).
+//! They are modal, like the SESSIONS/INBOX overlays beside them in the
+//! routing chain. They sit in their own module for the same god-file
+//! reason as `super::parked` (not a link: that module is private).
 //!
-//! The pickers' rows are read live off the deck state here, once per
-//! keystroke (see [`crate::views::picker`] on why they are never held in the
-//! picker), so `⏎` maps the highlighted index onto whatever the list holds
-//! NOW — a list that moved under the highlight sends the row the user is
-//! looking at, not the one they opened on.
+//! The rows are read live off the deck state here, once per keystroke.
+//! See [`crate::views::picker`] for why the picker never holds them.
+//! So `⏎` maps the highlighted index onto the list as it stands now. A
+//! list that moved under the highlight sends the row the user sees, not
+//! the row they opened on.
 //!
-//! "Now" means *before* the key is folded, because folding it may edit the
-//! filter and move the list out from under the index the same keystroke is
-//! about. Reading the matches first is what keeps the bounds handed to
-//! [`ListPicker::key`] and the row a [`PickerAction::Choose`] resolves to the
-//! same list.
+//! "Now" means *before* the key is folded. Folding it may edit the
+//! filter, which moves the list out from under the index that same
+//! keystroke is about. So the matches are read first. That keeps two
+//! things on one list: the bounds handed to [`ListPicker::key`], and the
+//! row a [`PickerAction::Choose`] lands on.
 //!
 //! [`ListPicker::key`]: crate::views::picker::ListPicker::key
 //! [`PickerAction::Choose`]: crate::views::picker::PickerAction::Choose
@@ -34,9 +34,9 @@ use super::{DeckAction, DeckUi};
 /// which the other, being modal, would have swallowed.
 pub(super) fn handle_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction> {
     if ui.model_picker.open {
-        // Snapshot the matches before the key is folded, the way the SETTINGS
-        // picker does: the keystroke may edit the filter, and a choice must
-        // land on the list the reader was looking at when they pressed `⏎`.
+        // Read the matches before the key is folded, as the SETTINGS picker
+        // does. The keystroke may edit the filter. A choice must land on the
+        // list the reader saw when they pressed `⏎`.
         let matching = picker::model_matches(ui);
         return Some(match ui.model_picker.key(key, matching.len()) {
             PickerAction::Ignored => return None,
