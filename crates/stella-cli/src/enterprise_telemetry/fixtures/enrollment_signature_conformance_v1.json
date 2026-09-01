@@ -1,0 +1,23 @@
+{
+  "$comment": "Cross-language conformance vector for the enterprise enrollment signature (canonical_enrollment_bytes + HMAC-SHA256, domain 'stella.enterprise.telemetry.enrollment-signature.v1'). The Rust test beside this file pins this repository's implementation to it; oxagen vendors a byte-identical copy and pins its TypeScript signer (the enrollment-provisioning capability) to the same bytes. Change the encoding and BOTH tests go red — which is the point. secret_utf8 is the HMAC key as UTF-8 text.",
+  "secret_utf8": "conformance-secret-0123456789abcdef",
+  "claims": {
+    "schema": "stella.enterprise.telemetry.enrollment.v1",
+    "issuer": "oxagen-enterprise",
+    "audience": "stella-cli",
+    "enrollment_id": "sten_conformance0001",
+    "organization_id": "org_conformance",
+    "workspace_id": "ws_conformance",
+    "endpoint": "https://api.oxagen.sh/v1/telemetry/stella/operational",
+    "credential_env": "STELLA_ENTERPRISE_TELEMETRY_TOKEN",
+    "event_classes": ["execution_rollup"],
+    "host_data_isolation": "process_free",
+    "model_catalog": [
+      { "provider": "anthropic", "model": "anthropic/claude-fable-5" },
+      { "provider": "openai", "model": "openai/gpt-5" }
+    ],
+    "issued_at_unix_s": 1756600000,
+    "expires_at_unix_s": 1764376000
+  },
+  "signature_hex": "1b9950855f3680b1af313826aa99dfc853c2fafd4da90f233ca9f8365452f68e"
+}

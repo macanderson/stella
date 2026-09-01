@@ -1210,3 +1210,34 @@ fn finalization_stays_successful_when_telemetry_host_state_is_rejected() {
         std::env::remove_var("STELLA_TEST_TELEMETRY_TOKEN");
     }
 }
+
+/// Cross-language conformance: the committed fixture pins the canonical
+/// enrollment encoding and its HMAC to exact bytes. Oxagen's
+/// enrollment-provisioning capability vendors the same fixture and pins its
+/// TypeScript signer to it, so the two implementations cannot drift apart
+/// silently — a change to `canonical_enrollment_bytes` turns this red here
+/// and the TS twin red there.
+#[test]
+fn enrollment_signature_matches_the_committed_conformance_vector() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "fixtures/enrollment_signature_conformance_v1.json"
+    ))
+    .unwrap();
+    let secret = fixture["secret_utf8"].as_str().unwrap().as_bytes().to_vec();
+    let bytes = canonical_enrollment_bytes(&fixture["claims"]).unwrap();
+    let mut mac = Hmac::<Sha256>::new_from_slice(&secret).unwrap();
+    mac.update(&bytes);
+    let signature_hex: String = mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        signature_hex,
+        fixture["signature_hex"].as_str().unwrap(),
+        "the enrollment signature does not match the conformance vector — an \
+         encoding change must update the fixture here AND the vendored copy in \
+         macanderson/oxagen in the same change"
+    );
+}
