@@ -36,6 +36,21 @@
 # finding only when the formula names an OLDER version. A formula newer than
 # the newest settled release is normal. It happens for a few minutes after
 # every release, while the new one ages past the window.
+#
+# ── Why this only ever fetches one page ──────────────────────────────────────
+#
+# This check does not need the whole release history the way
+# check-releases-published.sh does. It needs the newest settled release, and
+# GitHub returns releases newest first. One page of 100 is plenty: at this
+# repo's real pace, a hundred releases span days, and the grace window is 90
+# minutes. So the newest settled release always sits near the top of the
+# page.
+#
+# One page cannot always say *how far behind* a very stale tap is. If every
+# release on the page is newer than the formula, more could be hiding past
+# the page. The count then reports as "at least N", not a guess at an exact
+# number. A fetch that might be short can only report more trouble than it
+# can prove, never less, and never a clean pass.
 set -euo pipefail
 
 # shellcheck source=scripts/lib/help-header.sh
@@ -64,7 +79,8 @@ done
 # Reads one JSON document on stdin:
 #
 #   { "releases":        [ { "tag": "v0.9.292", "published_unix": 1234567890 }, … ],
-#     "formula_version": "0.9.235" }
+#     "formula_version": "0.9.235",
+#     "page_full": false }
 #
 # and prints one tab-separated line when the tap is behind:
 #
@@ -84,6 +100,18 @@ done
 # something `brew install` can serve. So it is skipped. It must not become the
 # newest release and the standard the tap is held to.
 #
+# `page_full` says whether `.releases` is a whole page (see "Why this only
+# ever fetches one page" above). When it is full, more settled releases could
+# sit past what this document carries. The behind-count then reports as "at
+# least N" instead of an exact count. It defaults to false, so an old fixture
+# that never sets it still reports an exact count.
+#
+# One case a single page cannot answer at all: `page_full` is true and not
+# one release settled — every one was a draft or still inside the grace
+# window. That should not happen at this repo's real pace. But a page that
+# could not answer the question must not read as a clean pass, so the I/O
+# half below turns the sentinel `__UNDETERMINED__` into an error instead.
+#
 # No I/O here, so scripts/test-tap-current.sh can drive every rule from a
 # fixture. A suite that asked GitHub would pass or fail for reasons outside
 # the rule under test. The rules that matter here are the boundary ones. An
@@ -101,13 +129,15 @@ select_stale() {
 
     ( .formula_version // null ) as $formula
     | ( if $formula == null then null else ($formula | parts) end ) as $formula_parts
+    | ( .page_full // false ) as $page_full
     | [ .releases[]
         | select(.published_unix != null)
         | select(($now - .published_unix) > $grace)
         | . + { parts: (.tag | parts) }
         | select(.parts != null)
       ] as $settled
-    | if ($settled | length) == 0 then empty
+    | if ($settled | length) == 0 then
+        if $page_full then "__UNDETERMINED__" else empty end
       else
         ( $settled | sort_by(.parts) | last ) as $newest
         | ( if $formula_parts == null then $settled
@@ -115,7 +145,9 @@ select_stale() {
             end ) as $behind
         | if ($behind | length) == 0 then empty
           else
-            "\($formula // "(none)")\t\($newest.tag | ltrimstr("v"))\t\($behind | length)\t\($now - $newest.published_unix)"
+            ( if $page_full and (($behind | length) == ($settled | length))
+              then "at least " else "" end ) as $qualifier
+            | "\($formula // "(none)")\t\($newest.tag | ltrimstr("v"))\t\($qualifier)\($behind | length)\t\($now - $newest.published_unix)"
           end
       end
   '
@@ -135,25 +167,23 @@ command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed" >&2; exit
 # makes the result invalid JSON. Turning it off costs nothing on a runner. By
 # hand it is the difference between working and not.
 #
-# The limit is set above the real count and then CHECKED. This is the reason
-# check-releases-published.sh checks its own: a cut-off release list changes
-# the answer and says nothing. Here it would hide the newest release and call
-# a stale tap current.
-releases_limit=1000
+# One page, and no more (see "Why this only ever fetches one page" above) —
+# no `--paginate`. `gh api`'s default order for this endpoint is newest
+# first, the order the pure rule needs to see the settled boundary early.
 #
 # A draft carries no publish date. `gh` renders it as `0001-01-01T00:00:00Z`,
 # which `fromdateiso8601` refuses. So it is carried through as a null that the
 # rule skips. Dropping it here would move the reason for ignoring drafts into
 # the half of the script no fixture can reach.
+per_page=100
 releases_json="$(
-  CLICOLOR_FORCE=0 NO_COLOR=1 gh release list --limit "$releases_limit" --json tagName,publishedAt,isDraft \
-    --jq '[ .[] | { tag: .tagName,
-                    published_unix: (if .isDraft then null else (.publishedAt | try fromdateiso8601 catch null) end) } ]'
+  CLICOLOR_FORCE=0 NO_COLOR=1 gh api "repos/{owner}/{repo}/releases?per_page=${per_page}" \
+    --jq '[ .[] | { tag: .tag_name,
+                    published_unix: (if .draft then null else (.published_at | try fromdateiso8601 catch null) end) } ]'
 )"
-if [ "$(printf '%s' "$releases_json" | jq 'length')" -ge "$releases_limit" ]; then
-  echo "::error::the release list hit the ${releases_limit} page limit, so it may be truncated and the newest release may be missing from it. Raise releases_limit in $0." >&2
-  exit 1
-fi
+release_count="$(printf '%s' "$releases_json" | jq 'length')"
+page_full=false
+[ "$release_count" -ge "$per_page" ] && page_full=true
 
 # The formula, straight from the tap. A missing FILE is the finding this
 # script exists for: the tap was never written, or the formula was renamed out
@@ -174,12 +204,16 @@ elif ! gh api "repos/${tap_repo}" >/dev/null 2>&1; then
   exit 1
 fi
 
-doc="$(jq -n --argjson releases "$releases_json" --argjson formula "$formula_version" \
-  '{ releases: $releases, formula_version: $formula }')"
+doc="$(jq -n --argjson releases "$releases_json" --argjson formula "$formula_version" --argjson page_full "$page_full" \
+  '{ releases: $releases, formula_version: $formula, page_full: $page_full }')"
 
 report="$(printf '%s' "$doc" | select_stale)"
 
-release_count="$(printf '%s' "$releases_json" | jq 'length')"
+if [ "$report" = "__UNDETERMINED__" ]; then
+  echo "::error::none of the ${release_count} releases just fetched (the newest ${per_page}) has settled past the $((grace_secs / 60))m grace window, and the fetch filled a full page — there may be an even newer settled release this single-page fetch could not see. This should not happen at the repository's normal release rate; investigate before trusting a green run here." >&2
+  exit 1
+fi
+
 shown="$(printf '%s' "$formula_version" | jq -r '. // "(none)"')"
 if [ -z "$report" ]; then
   echo "check-tap-current: OK — ${tap_repo}/${formula_path} is at ${shown}, which is not behind any release older than $((grace_secs / 60))m (${release_count} release(s) checked)."
