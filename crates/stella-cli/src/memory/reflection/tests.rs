@@ -857,7 +857,11 @@ async fn a_goal_arcs_rounds_reflect_separately_and_never_borrow_each_others_fric
 /// compile too.
 #[test]
 fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
-    const AGENT: &str = include_str!("../../agent/turn.rs");
+    // Two files, because the split left this test's two subjects on either
+    // side of it: `run_turn` moved to `agent/turn.rs`, while the interactive
+    // `/goal` handler stayed behind in `agent.rs`.
+    const AGENT: &str = include_str!("../../agent.rs");
+    const AGENT_TURN: &str = include_str!("../../agent/turn.rs");
     const GOAL: &str = include_str!("../../agent/goal.rs");
     const REFLECT: &str = include_str!("../../agent/reflect.rs");
     const DECK: &str = include_str!("../../command_deck/authoring.rs");
@@ -866,7 +870,7 @@ fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
     const WRAPPED_GOAL: &str = include_str!("../../agent/goal/goal_wrapped.rs");
 
     assert!(
-        AGENT.contains("TurnFriction::from_events(&collected)"),
+        AGENT_TURN.contains("TurnFriction::from_events(&collected)"),
         "run_turn must fold the journal its renderer drained; without a producer \
          every digest's friction section is empty, which is the #3946 regression"
     );
