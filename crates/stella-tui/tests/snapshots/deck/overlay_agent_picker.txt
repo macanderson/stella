@@ -34,11 +34,11 @@
 
  │ ◐ model worker · 428 tok/s                                                                                                                           ⚡ 2100ms
  │   irreducible generation
-
-☰  plan  5/7  ·  Workflows canvas               ╭ agent · 1/2 · this session only ─────────────────────────────╮
+                                                ╭ agent · 1/2 · this session only ─────────────────────────────╮
+☰  plan  5/7  ·  Workflows canvas               │  filter ▏                                                    │
                                                 │▸ reviewer  project  reviews a diff against the house rules   │
 ⏸ plan  Refactor the automations store into a sh│  release-captain  user  cuts a release: bump, changelog, tag │
-                                                ╰──────────────────────────────────── ↑↓ move · ⏎ assume · esc ╯
+                                                ╰─────────────────── type to filter · ↑↓ move · ⏎ assume · esc ╯
  ✓ plan ▸ execute ████░░░░ 50% · verify
 >>>
  ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands

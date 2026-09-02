@@ -6,22 +6,33 @@
 //!
 //! ```text
 //! ╭ model · 1/3 · this session only ─────────────────────────────╮
-//! │▸ zai/glm-5.2-air  · current                                  │
-//! │  anthropic/claude-fable-5                                    │
-//! │  openrouter/openai/gpt-5.5                                   │
-//! ╰─────────────────────────────────────── ↑↓ move · ⏎ use · esc ╯
+//! │  filter gpt▏                                                 │
+//! │▸ openrouter/openai/gpt-5.5                                   │
+//! │  openrouter/openai/gpt-5.5-mini                              │
+//! ╰────────────────── type to filter · ↑↓ move · ⏎ use · esc ────╯
 //! ```
 //!
-//! One state machine ([`ListPicker`]) serves both overlays — a modal
-//! scrollable list, `↑`/`↓` (the deck's one list vocabulary,
-//! [`crate::deck_ui::list_nav`]) to move, `⏎` to choose, Esc to cancel —
-//! because the two differ only in what their rows are and what a choice
-//! sends. The rows are read LIVE at key/render time from state the deck
-//! already holds (the driver's [`EngineConfigState`] snapshot for models,
-//! the INSTALLED AGENTS entries for agents), never copied into the picker:
-//! both snapshots can arrive *after* the picker opens (opening sends the
-//! refresh), and a copy taken at open time would pin the overlay to an
-//! empty list.
+//! One state machine ([`ListPicker`]) serves both overlays. It is a modal
+//! list: `↑`/`↓` move (the deck's one list vocabulary,
+//! [`crate::deck_ui::list_nav`]), typing narrows, `⏎` chooses, Esc cancels.
+//! The two differ only in their rows and in what a choice sends.
+//!
+//! The rows are read LIVE at key and render time, off state the deck already
+//! holds: the driver's [`EngineConfigState`] snapshot for models, the
+//! INSTALLED AGENTS entries for agents. They are never copied into the
+//! picker. Both snapshots can land *after* it opens, since opening sends the
+//! refresh, and a copy taken then would pin it to an empty list.
+//!
+//! # Why it filters
+//!
+//! The list holds a model from every provider with a key. One gateway adds
+//! hundreds. With OpenRouter set up it runs past four hundred rows, and the
+//! window shows twelve. You cannot pick from that. The filter is what makes
+//! it a list.
+//!
+//! It uses the same word and the same rule as the SETTINGS tab's model
+//! picker ([`crate::views::engine_panel`] and its `picker_matches`). One
+//! list, so one way to search it.
 //!
 //! Both render into the deck's **content band**, not the whole frame, and the
 //! card sits on its last row — over the transcript, a row above the prompt it
@@ -64,31 +75,41 @@ pub enum PickerAction {
     Ignored,
     /// Consumed; the picker stays up.
     Handled,
-    /// `⏎` on row `i` of the caller's candidate list.
+    /// `⏎` on row `i` of the caller's **matching** list — the rows left after
+    /// [`ListPicker::query`] narrows them, not the unfiltered candidates.
     Choose(usize),
-    /// Esc/`q` — cancel, choosing nothing.
+    /// Esc — cancel, choosing nothing.
     Close,
 }
 
-/// The modal list state both pickers share. Rows live with the caller;
-/// this holds only whether the picker is up and where the highlight is.
+/// The modal list state both pickers share. Rows live with the caller. This
+/// holds whether the picker is up, where the highlight is, and the filter.
+///
+/// The caller owns the filtering. It passes the **matching** row count to
+/// [`ListPicker::key`], and resolves [`PickerAction::Choose`] against the
+/// same list it drew. So the bounds and the picked row always agree with
+/// what the reader saw.
 #[derive(Debug, Clone, Default)]
 pub struct ListPicker {
     pub open: bool,
     sel: usize,
+    query: String,
 }
 
 impl ListPicker {
-    /// Raise the picker with the highlight on the first row.
+    /// Raise the picker with the highlight on the first row and no filter.
     pub fn raise(&mut self) {
         self.open = true;
         self.sel = 0;
+        self.query.clear();
     }
 
-    /// Take the picker down.
+    /// Take the picker down, forgetting the filter — a picker reopened later
+    /// is one the reader is opening fresh, not resuming.
     pub fn close(&mut self) {
         self.open = false;
         self.sel = 0;
+        self.query.clear();
     }
 
     /// The highlighted row.
@@ -97,7 +118,18 @@ impl ListPicker {
         self.sel
     }
 
-    /// Fold one keystroke against a candidate list `count` rows long.
+    /// What the reader has typed to narrow the list.
+    #[must_use]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Fold one keystroke against a matching list `count` rows long.
+    ///
+    /// Typing edits the filter, so no letter is free for anything else. Esc
+    /// is the way out. The arrows move, with `⇞`/`⇟`/`Home`/`End`. The
+    /// SETTINGS tab's model picker uses that same vocabulary
+    /// ([`crate::views::engine_panel`]), so one habit carries between them.
     pub fn key(&mut self, key: KeyEvent, count: usize) -> PickerAction {
         if !self.open {
             return PickerAction::Ignored;
@@ -105,21 +137,49 @@ impl ListPicker {
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
             return PickerAction::Ignored;
         }
-        // The list can shrink between frames (a fresh snapshot landed) —
-        // clamp before navigating so the highlight never points past it.
+        // The list can shrink between frames (a fresh snapshot landed, or the
+        // filter narrowed it) — clamp before navigating so the highlight never
+        // points past it.
         self.sel = self.sel.min(count.saturating_sub(1));
-        if crate::deck_ui::list_nav::closes(key) {
-            return PickerAction::Close;
-        }
-        // Modal, so `letters` is true (#4370).
-        if crate::deck_ui::list_nav::select(key, &mut self.sel, count, true) {
+        // `letters` is false: they belong to the filter now.
+        if crate::deck_ui::list_nav::select(key, &mut self.sel, count, false) {
             return PickerAction::Handled;
         }
         match key.code {
+            KeyCode::Esc => PickerAction::Close,
             KeyCode::Enter if count > 0 => PickerAction::Choose(self.sel),
+            KeyCode::Backspace => {
+                self.query.pop();
+                self.sel = 0; // the match set changed — re-anchor
+                PickerAction::Handled
+            }
+            // ALT is allowed through, as it is on the SETTINGS picker: a
+            // composed character arrives with it set on some layouts.
+            KeyCode::Char(c)
+                if !key.modifiers.intersects(
+                    KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META,
+                ) =>
+            {
+                self.query.push(c);
+                self.sel = 0; // the match set changed — re-anchor
+                PickerAction::Handled
+            }
             _ => PickerAction::Handled,
         }
     }
+}
+
+/// Case-insensitive substring match. The same rule as the SETTINGS tab's
+/// `picker_matches` ([`crate::views::engine_panel`]), so a filter narrows
+/// both pickers the same way. The caller trims and lowercases `needle`
+/// once, not per row.
+fn hits(haystack: &str, needle: &str) -> bool {
+    needle.is_empty() || haystack.to_lowercase().contains(needle)
+}
+
+/// A query normalized for [`hits`]: trimmed, lowercased, once.
+fn needle(query: &str) -> String {
+    query.trim().to_lowercase()
 }
 
 /// The `/model` picker's vocabulary: what the SETTINGS tab's model picker
@@ -134,6 +194,34 @@ pub(crate) fn model_candidates(ui: &DeckUi) -> &[String] {
         .as_ref()
         .map(crate::views::engine_panel::picker_candidates)
         .unwrap_or(&[])
+}
+
+/// [`model_candidates`] narrowed by what the reader has typed. The module
+/// header says why the list needs a filter at all.
+pub(crate) fn model_matches(ui: &DeckUi) -> Vec<String> {
+    let needle = needle(ui.model_picker.query());
+    model_candidates(ui)
+        .iter()
+        .filter(|spec| hits(spec, &needle))
+        .cloned()
+        .collect()
+}
+
+/// The `/agent` picker's matching rows, as indices into
+/// `ui.installed.entries`. The caller needs each entry's scope as well as
+/// its name, so an index serves it better than a copy.
+///
+/// Matched on the name *and* the description. A reader looks for an agent by
+/// what it does as often as by what it is called.
+pub(crate) fn agent_matches(ui: &DeckUi) -> Vec<usize> {
+    let needle = needle(ui.agent_picker.query());
+    ui.installed
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| hits(&entry.name, &needle) || hits(&entry.description, &needle))
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// The `/model` **argument menu's** vocabulary ([`crate::composer::args`]):
@@ -291,12 +379,24 @@ fn name_style(selected: bool) -> Style {
     }
 }
 
+/// The card's first row: what has been typed, with the caret after it. The
+/// word `filter` is the SETTINGS picker's, so the affordance reads the same
+/// on both.
+fn filter_row(query: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("  filter ", Style::new().fg(token::MUTED)),
+        Span::styled(query.to_string(), Style::new().fg(token::TEXT)),
+        Span::styled("▏", Style::new().fg(token::GOLD)),
+    ])
+}
+
 /// Paint the `/model` picker. A no-op while closed.
 pub fn render_model(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if !ui.model_picker.open {
         return;
     }
-    let candidates = model_candidates(ui);
+    let offered = model_candidates(ui).len();
+    let candidates = model_matches(ui);
     let current = model
         .role_pins
         .get(&PipelineRole::Worker)
@@ -309,9 +409,9 @@ pub fn render_model(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut B
         .min(candidates.len().saturating_sub(1));
     let inner_w = usize::from(card_w(area, ui.accessible)).saturating_sub(2);
 
-    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut rows: Vec<Line<'static>> = vec![filter_row(ui.model_picker.query())];
     let mut selected_row = None;
-    if candidates.is_empty() {
+    if offered == 0 {
         rows.push(Line::from(Span::styled(
             "no models to offer yet — waiting for the provider snapshot",
             muted,
@@ -319,6 +419,13 @@ pub fn render_model(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut B
         rows.push(Line::from(Span::styled(
             "(`/info` lists providers; `/info refresh` re-syncs the catalog)",
             dim,
+        )));
+    } else if candidates.is_empty() {
+        // Which nothing this is. The snapshot has models; the filter hides
+        // them.
+        rows.push(Line::from(Span::styled(
+            "no models match — Backspace to widen",
+            muted,
         )));
     } else {
         let window = window(sel, candidates.len());
@@ -342,19 +449,21 @@ pub fn render_model(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut B
                 spans.push(Span::styled("  · current", muted));
             }
             if is_sel {
-                selected_row = Some(i - window.start);
+                // Offset by the filter row this list sits under.
+                selected_row = Some(i - window.start + 1);
             }
             rows.push(Line::from(spans));
         }
     }
 
+    // Counted over the matches: that is the list the highlight walks.
     let position = (!candidates.is_empty())
         .then(|| format!("{}/{} · this session only", sel + 1, candidates.len()));
     render_card(
         Labels {
             name: "model",
             position,
-            hints: "↑↓ move · ⏎ use · esc",
+            hints: "type to filter · ↑↓ move · ⏎ use · esc",
         },
         rows,
         selected_row,
@@ -370,14 +479,15 @@ pub fn render_agent(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         return;
     }
     let entries = &ui.installed.entries;
+    let matching = agent_matches(ui);
     let muted = Style::new().fg(token::MUTED);
     let sel = ui
         .agent_picker
         .selected()
-        .min(entries.len().saturating_sub(1));
+        .min(matching.len().saturating_sub(1));
     let inner_w = usize::from(card_w(area, ui.accessible)).saturating_sub(2);
 
-    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut rows: Vec<Line<'static>> = vec![filter_row(ui.agent_picker.query())];
     let mut selected_row = None;
     if entries.is_empty() {
         rows.push(Line::from(Span::styled(
@@ -388,15 +498,21 @@ pub fn render_agent(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
             },
             muted,
         )));
+    } else if matching.is_empty() {
+        rows.push(Line::from(Span::styled(
+            "no agents match — Backspace to widen",
+            muted,
+        )));
     } else {
-        let window = window(sel, entries.len());
-        for (i, entry) in entries
+        let window = window(sel, matching.len());
+        for (row, &i) in matching
             .iter()
             .enumerate()
             .skip(window.start)
             .take(window.len())
         {
-            let is_sel = i == sel;
+            let entry = &entries[i];
+            let is_sel = row == sel;
             let used = 2 + entry.name.chars().count() + 2 + entry.scope.label().len() + 2;
             let spans = vec![
                 cursor(is_sel),
@@ -411,19 +527,20 @@ pub fn render_agent(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
                 ),
             ];
             if is_sel {
-                selected_row = Some(i - window.start);
+                // Offset by the filter row this list sits under.
+                selected_row = Some(row - window.start + 1);
             }
             rows.push(Line::from(spans));
         }
     }
 
-    let position =
-        (!entries.is_empty()).then(|| format!("{}/{} · this session only", sel + 1, entries.len()));
+    let position = (!matching.is_empty())
+        .then(|| format!("{}/{} · this session only", sel + 1, matching.len()));
     render_card(
         Labels {
             name: "agent",
             position,
-            hints: "↑↓ move · ⏎ assume · esc",
+            hints: "type to filter · ↑↓ move · ⏎ assume · esc",
         },
         rows,
         selected_row,
@@ -467,8 +584,8 @@ mod tests {
             .join("\n")
     }
 
-    /// The shared vocabulary: arrows and `j`/`k` move, Esc/`q` cancel, `⏎`
-    /// chooses the highlighted row, and a closed picker claims nothing.
+    /// The shared vocabulary: arrows move, Esc cancels, `⏎` chooses the
+    /// highlighted row, and a closed picker claims nothing.
     #[test]
     fn the_picker_moves_chooses_and_cancels() {
         let mut picker = ListPicker::default();
@@ -476,10 +593,7 @@ mod tests {
 
         picker.raise();
         assert_eq!(picker.key(key(KeyCode::Down), 3), PickerAction::Handled);
-        assert_eq!(
-            picker.key(key(KeyCode::Char('j')), 3),
-            PickerAction::Handled
-        );
+        assert_eq!(picker.key(key(KeyCode::Down), 3), PickerAction::Handled);
         assert_eq!(picker.key(key(KeyCode::Enter), 3), PickerAction::Choose(2));
         // `Home`/`End` come with the shared vocabulary (#4370), not a
         // hand-rolled arrow pair.
@@ -493,6 +607,62 @@ mod tests {
             PickerAction::Ignored,
             "a picker must not be the one state you cannot quit from"
         );
+    }
+
+    /// **The witness.** Typing narrows the list. It does not move in it. So
+    /// every letter reaches the filter: `q` starts `qwen` instead of closing
+    /// the card, and `j`/`k` type instead of moving. Esc is the way out. The
+    /// arrows are the way around.
+    #[test]
+    fn letters_type_into_the_filter_rather_than_moving_or_quitting() {
+        let mut picker = ListPicker::default();
+        picker.raise();
+        assert_eq!(picker.query(), "");
+
+        for c in "qwen".chars() {
+            assert_eq!(picker.key(key(KeyCode::Char(c)), 3), PickerAction::Handled);
+        }
+        assert_eq!(
+            picker.query(),
+            "qwen",
+            "`q` belongs to the filter now, not to closing the card"
+        );
+
+        // `j`/`k` are letters like any other here.
+        picker.key(key(KeyCode::Char('j')), 3);
+        assert_eq!(picker.query(), "qwenj");
+        assert_eq!(
+            picker.key(key(KeyCode::Backspace), 3),
+            PickerAction::Handled
+        );
+        assert_eq!(picker.query(), "qwen");
+
+        // Esc still closes, and closing forgets the filter — a picker
+        // reopened later is one being opened fresh.
+        assert_eq!(picker.key(key(KeyCode::Esc), 3), PickerAction::Close);
+        picker.close();
+        picker.raise();
+        assert_eq!(picker.query(), "");
+    }
+
+    /// Editing the filter re-anchors the highlight to the top: the index it
+    /// held counts rows in the match set the edit just replaced, so carrying
+    /// it over would land on an unrelated model.
+    #[test]
+    fn editing_the_filter_re_anchors_the_highlight() {
+        let mut picker = ListPicker::default();
+        picker.raise();
+        picker.key(key(KeyCode::Down), 9);
+        picker.key(key(KeyCode::Down), 9);
+        assert_eq!(picker.selected(), 2);
+
+        picker.key(key(KeyCode::Char('g')), 9);
+        assert_eq!(picker.selected(), 0, "a typed letter re-anchors");
+
+        picker.key(key(KeyCode::Down), 9);
+        assert_eq!(picker.selected(), 1);
+        picker.key(key(KeyCode::Backspace), 9);
+        assert_eq!(picker.selected(), 0, "a Backspace re-anchors too");
     }
 
     /// A list that shrank between frames clamps the highlight, and `⏎` on
@@ -518,6 +688,69 @@ mod tests {
         assert_eq!(end.len(), VISIBLE_ROWS);
         let mid = window(20, 40);
         assert!(mid.contains(&20));
+    }
+
+    /// **The witness for the drawn filter.** The card puts the typed query
+    /// on its own row. It draws only the rows that match. It counts the
+    /// position over those: `1/1` where a filter kept one of three, not
+    /// `1/3`. A filter that matches nothing says which nothing it is.
+    #[test]
+    fn the_card_draws_the_filter_and_only_the_rows_it_admits() {
+        let model = WorkspaceModel::new();
+        let mut ui = DeckUi::default();
+        ui.engine.state = Some(EngineConfigState {
+            catalog_models: vec![
+                "zai/glm-5.2-air".to_string(),
+                "anthropic/claude-fable-5".to_string(),
+                "openrouter/qwen/qwen3-max".to_string(),
+            ],
+            ..Default::default()
+        });
+        ui.model_picker.raise();
+        let area = Rect::new(0, 0, 100, 20);
+
+        // Unfiltered: all three, counted over three.
+        let mut buf = Buffer::empty(area);
+        render_model(&model, &ui, area, &mut buf);
+        let frame = text(&buf);
+        assert!(
+            frame.contains("filter ▏"),
+            "the caret sits after it: {frame}"
+        );
+        assert!(frame.contains("· 1/3 ·"), "{frame}");
+
+        // Typing `qwen` leaves one row, and the count follows the matches.
+        for c in "qwen".chars() {
+            ui.model_picker.key(key(KeyCode::Char(c)), 3);
+        }
+        let mut buf = Buffer::empty(area);
+        render_model(&model, &ui, area, &mut buf);
+        let frame = text(&buf);
+        assert!(frame.contains("filter qwen▏"), "{frame}");
+        assert!(frame.contains("▸ openrouter/qwen/qwen3-max"), "{frame}");
+        assert!(
+            !frame.contains("anthropic/claude-fable-5"),
+            "a row the filter rejected must not be drawn: {frame}"
+        );
+        assert!(
+            frame.contains("· 1/1 ·"),
+            "counted over the matches: {frame}"
+        );
+        assert!(frame.contains("type to filter"), "{frame}");
+
+        // A filter matching nothing names the filter as the cause, rather
+        // than reading as "this workspace has no models".
+        for c in "zzz".chars() {
+            ui.model_picker.key(key(KeyCode::Char(c)), 1);
+        }
+        let mut buf = Buffer::empty(area);
+        render_model(&model, &ui, area, &mut buf);
+        let frame = text(&buf);
+        assert!(frame.contains("no models match"), "{frame}");
+        assert!(
+            !frame.contains("waiting for the provider snapshot"),
+            "that is the other nothing — an empty snapshot: {frame}"
+        );
     }
 
     /// **The witness for the SPEC 5 card.** The `/model` picker draws the
