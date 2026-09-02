@@ -264,9 +264,13 @@ impl Ledger {
     /// `attempts` update tells a first close from a retry by its
     /// affected-row count, and a retry returns before touching `commits` or
     /// `spend`. `spend.attempt_id`'s `UNIQUE` constraint plus
-    /// `INSERT OR IGNORE` back that up for any other caller of the insert —
-    /// a worker's stop/timeout race can settle one attempt twice, and
-    /// neither close may double the recorded spend.
+    /// `ON CONFLICT (attempt_id) DO NOTHING` back that up for any other
+    /// caller of the insert — a worker's stop/timeout race can settle one
+    /// attempt twice, and neither close may double the recorded spend.
+    /// `INSERT OR IGNORE` would ignore *every* constraint on the row: it
+    /// swallows the `CHECK` a negative cost raises and the `NOT NULL` a
+    /// bound `NaN` becomes, dropping the spend row and returning `Ok`.
+    /// Hence the named conflict target.
     pub fn finish_attempt(&self, finish: &AttemptFinish) -> Result<(), LedgerError> {
         // `unchecked_transaction` (rather than `&mut self` + `transaction()`)
         // keeps every ledger method on `&self`, so the fleet can hold the whole
@@ -309,8 +313,8 @@ impl Ledger {
             )?;
         }
         tx.execute(
-            "INSERT OR IGNORE INTO spend (run_id, task_id, attempt_id, cost_usd, recorded_at_ms) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO spend (run_id, task_id, attempt_id, cost_usd, recorded_at_ms) \
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (attempt_id) DO NOTHING",
             params![
                 finish.run_id,
                 finish.task_id,
@@ -797,11 +801,11 @@ CREATE INDEX IF NOT EXISTS dispatch_claims_by_expiry ON dispatch_claims (expires
 
 /// v4 — a validated `spend` table. `CHECK (cost_usd >= 0)` stops a negative
 /// cost from reaching storage, even if a future caller skips the Rust-side
-/// guard in `crate::fleet::Fleet::dispatch_claimed`. That Rust guard is the
-/// real stop for a NaN report, not this constraint: SQLite turns a bound
-/// NaN into NULL before a CHECK ever sees it. `UNIQUE (attempt_id)` is what
-/// makes `Ledger::finish_attempt`'s `INSERT OR IGNORE` an idempotent no-op
-/// on a retried close, instead of a second spend row.
+/// guard in `crate::fleet::Fleet::dispatch_claimed`. A NaN report is caught
+/// by `cost_usd REAL NOT NULL` rather than by this `CHECK`, since SQLite
+/// binds a NaN as NULL before a CHECK ever sees it. `UNIQUE (attempt_id)`
+/// is what makes `Ledger::finish_attempt`'s `ON CONFLICT (attempt_id) DO
+/// NOTHING` an idempotent no-op on a retried close, not a second spend row.
 ///
 /// Both constraints need a table rebuild — the same as `MIGRATION_V2`'s
 /// `lineage` fix, since SQLite has no `ALTER TABLE ADD CONSTRAINT`. An old
@@ -1112,29 +1116,34 @@ mod tests {
         assert_eq!(ledger.total_spend("run1").unwrap(), 0.0);
     }
 
-    /// SQLite turns a bound `NaN` into `NULL` before a `CHECK` sees it, so
-    /// `Fleet::dispatch_claimed`'s `is_finite()` guard is the real defense
-    /// against a NaN report, not this table. A direct caller stays safe
-    /// too: `SUM` skips a NULL row, so `total_spend` never breaks.
+    /// A NaN never reaches the `CHECK`: SQLite binds it as NULL, and
+    /// `cost_usd REAL NOT NULL` rejects that. A direct caller of `Ledger` —
+    /// it is `pub`, and `Fleet::dispatch_claimed`'s `is_finite()` guard sits
+    /// one layer above — gets a rejected close, not a poisoned total.
     #[test]
     fn finish_attempt_with_a_nan_cost_leaves_total_spend_finite() {
         let ledger = Ledger::open_in_memory().unwrap();
         let attempt_id = seeded_attempt(&ledger);
-        // A NaN cost_usd passes the CHECK (SQLite stores it as NULL).
-        ledger
-            .finish_attempt(&AttemptFinish {
-                attempt_id,
-                run_id: "run1".into(),
-                task_id: "t1".into(),
-                finished_at_ms: 20,
-                success: true,
-                summary: "done".into(),
-                commits: vec![],
-                cost_usd: f64::NAN,
-                spend_at_ms: 21,
-            })
-            .unwrap();
+        let err = ledger.finish_attempt(&AttemptFinish {
+            attempt_id,
+            run_id: "run1".into(),
+            task_id: "t1".into(),
+            finished_at_ms: 20,
+            success: true,
+            summary: "done".into(),
+            commits: vec![],
+            cost_usd: f64::NAN,
+            spend_at_ms: 21,
+        });
 
+        assert!(
+            err.is_err(),
+            "a NaN cost_usd binds as NULL and must violate cost_usd REAL NOT NULL"
+        );
+        assert!(
+            !ledger.attempt_is_finished(attempt_id).unwrap(),
+            "a rejected finish must roll back the attempt's own close, not half-apply"
+        );
         assert!(
             ledger.total_spend("run1").unwrap().is_finite(),
             "a NaN spend row must never make the run's authoritative total unusable"
