@@ -635,7 +635,7 @@ impl Engine<'_> {
         budget: &mut BudgetGuard,
         events: &EventSender,
     ) -> SubAgentOutcome {
-        let carve = budget.carve(spec.budget_usd);
+        let mut carve = budget.carve(spec.budget_usd);
         let _ = events.send(AgentEvent::SubAgent {
             phase: SubAgentPhase::Started {
                 agent_id: spec.agent_id.clone(),
@@ -681,7 +681,11 @@ impl Engine<'_> {
                 let deadline = deadline.expect(
                     "refusal() returns Some for every Err case above; reaching here means Ok",
                 );
-                self.run_child_turn(host, spec, carve, budget, events, &tally, deadline)
+                // Set here, on the carve the caller still owns, rather than
+                // adding a parameter to `run_child_turn` for one field of a
+                // struct it already receives.
+                carve.set_task_deadline(deadline);
+                self.run_child_turn(host, spec, carve, budget, events, &tally)
                     .await
             }
         };
@@ -715,7 +719,6 @@ impl Engine<'_> {
         budget: &mut BudgetGuard,
         events: &EventSender,
         tally: &Arc<CommittedTally>,
-        deadline: Option<std::time::Instant>,
     ) -> SubAgentOutcome {
         // Attribution is entered before anything the child could emit and
         // released by drop, so an unwind cannot leave the parent's later
@@ -852,11 +855,9 @@ impl Engine<'_> {
         let seeded = messages.len();
 
         let child_events = child_sender(events.clone(), spec.agent_id.clone(), tally.clone());
-        // A call may never be granted more than what is left of the ceiling the
-        // whole child runs under (#4488). The caller already derived this
-        // deadline, before the child's engine was even built. Recomputing it
-        // here would be a second seam reading the same config field.
-        carve.set_task_deadline(deadline);
+        // `carve` already carries its task deadline: the caller derived it
+        // from the ceiling and set it before this turn's engine was even
+        // built (#4488), so a too-short ceiling never reaches this far.
         // The carve is handed to the turn through a guard that settles it on
         // DROP, not on return (#1850). `settle_child` used to be a statement
         // after the await, so any exit that was not a return skipped it: a
