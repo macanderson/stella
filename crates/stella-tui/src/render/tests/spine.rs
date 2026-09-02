@@ -20,7 +20,7 @@
 use super::*;
 use crate::tool_class::ToolClass;
 use crate::views::transcript::{EventKind, Extent};
-use stella_protocol::{MemoryClass, ModelCallRole, SkillTrigger, ToolCall};
+use stella_protocol::{MemoryClass, ModelCallRole, SkillTrigger, TaskId, ToolCall};
 
 /// What draws one head kind.
 enum Producer {
@@ -233,7 +233,9 @@ fn live() -> Vec<Row> {
                 tokens_per_sec: Some(84),
             },
             event: step_usage(),
-            marks: &["worker", "84 tok/s"],
+            // The rate, the call's own wall clock, and the footer — the three
+            // head fields beyond the glyph and the word, all from the fold.
+            marks: &["worker", "84 tok/s", "⚡5000ms", "irreducible generation"],
         },
         Row {
             kind: EventKind::Compaction {
@@ -297,6 +299,38 @@ fn every_live_head_kind_is_drawn_from_the_wire() {
             );
         }
     }
+}
+
+/// A live head carries the board tag the wire stamped on the call — SPEC
+/// 6.2's `→ task 3`.
+///
+/// `AgentEvent::ToolStart` carries `task_id`, the fold reads it onto
+/// `TranscriptEntry::ToolStart`, and the metric group draws it. The other
+/// tests for the tag hand `head_rows` a number they made up, so this is the
+/// one that starts where the engine does. An untagged call beside it, because
+/// a tag that always draws is as wrong as one that never does.
+#[test]
+fn a_live_tool_head_carries_the_task_tag_the_wire_stamped() {
+    let tagged = AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c1".into(),
+            name: "edit_file".into(),
+            input: serde_json::json!({ "path": "src/lib.rs" }),
+        },
+        sub_agent_id: None,
+        task_id: Some(TaskId::new("3")),
+    };
+    let drawn = rendered(&tagged);
+    assert!(drawn.contains("→ task 3"), "the tag was dropped: {drawn}");
+
+    let plain = rendered(&tool_start(
+        "edit_file",
+        serde_json::json!({ "path": "src/lib.rs" }),
+    ));
+    assert!(
+        !plain.contains("→ task"),
+        "an untagged call drew a tag the board cannot jump to: {plain}"
+    );
 }
 
 /// The one head nothing sends stays out of the table above and names the
