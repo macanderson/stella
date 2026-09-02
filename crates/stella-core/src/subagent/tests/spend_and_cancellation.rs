@@ -392,8 +392,9 @@ fn a_childs_deadline_is_the_tighter_of_what_it_inherited_and_the_ceiling() {
     let now = std::time::Instant::now();
     let ceiling = Duration::from_secs(900);
 
-    let from_ceiling =
-        crate::subagent::bounded_by_ceiling(None, Some(ceiling), now).expect("a ceiling bounds it");
+    let from_ceiling = crate::subagent::bounded_by_ceiling(None, Some(ceiling), now)
+        .expect("a ceiling well above the reserve must not refuse")
+        .expect("a ceiling bounds it");
     assert!(
         from_ceiling < now + ceiling,
         "a deadline at the ceiling is a coin flip against the dispatch timeout"
@@ -402,17 +403,103 @@ fn a_childs_deadline_is_the_tighter_of_what_it_inherited_and_the_ceiling() {
     let sooner = now + Duration::from_secs(10);
     assert_eq!(
         crate::subagent::bounded_by_ceiling(Some(sooner), Some(ceiling), now),
-        Some(sooner),
+        Ok(Some(sooner)),
         "the parent's own deadline is not widened by having a child"
     );
     assert_eq!(
         crate::subagent::bounded_by_ceiling(Some(sooner), None, now),
-        Some(sooner),
+        Ok(Some(sooner)),
         "no ceiling leaves what was inherited exactly as it was"
     );
     assert_eq!(
         crate::subagent::bounded_by_ceiling(None, None, now),
-        None,
+        Ok(None),
         "and an unbounded parent with no ceiling stays unbounded"
     );
+}
+
+/// **Loud refusal, half one.** `bounded_by_ceiling` is the single seam
+/// reading the configured ceiling; it must refuse rather than floor at "now"
+/// on both sides of the boundary. Thirty seconds — exactly the reserve — is
+/// refused; one second more is not.
+#[test]
+fn a_ceiling_at_or_under_the_reserve_is_refused_not_floored() {
+    use std::time::Duration;
+    let now = std::time::Instant::now();
+
+    let at_the_reserve =
+        crate::subagent::bounded_by_ceiling(None, Some(crate::subagent::CEILING_RESERVE), now);
+    assert!(
+        matches!(
+            at_the_reserve,
+            Err(SubAgentRefusal::CeilingTooShort { ceiling, reserve })
+                if ceiling == crate::subagent::CEILING_RESERVE
+                    && reserve == crate::subagent::CEILING_RESERVE
+        ),
+        "a ceiling exactly at the reserve leaves zero working time and must refuse: \
+         {at_the_reserve:?}"
+    );
+
+    let one_second_of_headroom = crate::subagent::CEILING_RESERVE + Duration::from_secs(1);
+    let just_over = crate::subagent::bounded_by_ceiling(None, Some(one_second_of_headroom), now);
+    assert_eq!(
+        just_over,
+        Ok(Some(now + Duration::from_secs(1))),
+        "one second above the reserve is one second of working time, not a refusal"
+    );
+}
+
+/// **Loud refusal, half two.** The refusal is not just the seam function —
+/// it has to reach the parent as a [`SubAgentOutcome::Refused`] with zero
+/// model calls and zero cost, the same contract every other refusal keeps.
+#[tokio::test]
+async fn a_ceiling_too_short_refuses_the_whole_spawn_loudly() {
+    use std::time::Duration;
+
+    let parent_provider = ScriptedProvider::new(vec![]);
+    // Would answer happily if it were ever asked. It must not be.
+    let child_provider = ScriptedProvider::new(vec![Ok(text_result("hello", 0.01))]);
+    let tools = MixedTools::default();
+    let parent = Engine::with_sleeper(
+        &parent_provider,
+        &tools,
+        EngineConfig {
+            tool_timeout: Some(Duration::from_secs(30)),
+            ..EngineConfig::default()
+        },
+        &NoSleep,
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("too-tight", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+
+    match &outcome {
+        SubAgentOutcome::Refused { reason } => {
+            assert!(
+                reason.contains("30s") || reason.contains("30"),
+                "the parent must see the ceiling that tripped it: {reason}"
+            );
+        }
+        other => panic!("expected Refused, got {other:?}"),
+    }
+    assert_eq!(
+        child_provider.calls.load(Ordering::SeqCst),
+        0,
+        "a ceiling refusal must cost exactly zero model calls, like every other refusal"
+    );
+    assert_eq!(outcome.cost_usd(), 0.0);
+
+    let events = drain(&mut rx);
+    assert!(matches!(
+        finished(&events),
+        SubAgentPhase::Finished { status, .. } if status == SubAgentStatus::Refused
+    ));
 }
