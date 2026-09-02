@@ -44,7 +44,7 @@
 //!
 //! In a file of its own under the god-file rule — `deck_ui.rs` pays only
 //! the two state fields; key routing is `deck_ui/pickers.rs`, which
-//! `render_model`'s provider headings ([`grouped_rows`]) never reach.
+//! `render_model`'s provider headings (`grouped_rows`) never reach.
 //!
 //! [`EngineConfigState`]: crate::envelope::EngineConfigState
 
@@ -898,10 +898,13 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_model(&model, &ui, area, &mut buf);
         let frame = text(&buf);
+        // A heading row's own interior text — between the card's left and
+        // right border, trimmed — rather than the whole screen line, which
+        // still carries the border and the surrounding centering padding.
         let headings: Vec<&str> = frame
             .lines()
-            .map(str::trim)
-            .filter(|line| *line == "zai" || *line == "anthropic")
+            .filter_map(|line| line.split('│').nth(1).map(str::trim))
+            .filter(|inner| *inner == "zai" || *inner == "anthropic")
             .collect();
         assert_eq!(headings, vec!["zai", "anthropic"], "{frame}");
 
@@ -920,7 +923,7 @@ mod tests {
         );
         let heading_line = frame
             .lines()
-            .find(|line| line.trim() == "anthropic")
+            .find(|line| line.split('│').nth(1).map(str::trim) == Some("anthropic"))
             .expect("the heading is still drawn");
         assert!(
             !heading_line.contains('▸'),
