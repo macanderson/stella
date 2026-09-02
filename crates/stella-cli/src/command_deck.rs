@@ -2463,7 +2463,7 @@ pub async fn run_deck_session(
                 // `needs input` with a `?` where `done`/`✓` would have been,
                 // and — unlike `Done` — is not `is_terminal()`, so nothing
                 // downstream reads the session as finished. See [`settle`].
-                if outcome.is_ok() && settle::ends_with_a_question(&messages[reflect_start..]) {
+                if outcome.is_ok() && settle::ends_with_an_ask(&messages[reflect_start..]) {
                     let _ = in_tx.send(Inbound::Status {
                         agent: LEAD.to_string(),
                         status: AgentStatus::WaitingInput,

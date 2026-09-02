@@ -14,7 +14,7 @@
 //!    It has left its `select!` and is doing post-turn bookkeeping, one item of
 //!    which is a live model call. Anything typed in that window went unread.
 //!
-//! 2. [`ends_with_a_question`] — the turn may not be over at all. If it closed
+//! 2. [`ends_with_an_ask`] — the turn may not be over at all. If it closed
 //!    by asking the user something, `done` is the opposite of the truth.
 //!
 //! ## Telling "the work is finished" apart from "the agent asked you something"
@@ -148,10 +148,10 @@ where
 /// Whether `messages` ends with the agent putting the ball in the user's
 /// court.
 ///
-/// Reads the LAST assistant message with prose in it (an assistant message
-/// that only made tool calls carries an empty `content` and says nothing about
-/// how the turn closed), and asks whether its **final paragraph** contains a
-/// sentence ending in `?`.
+/// Reads the LAST assistant message with prose in it. (A tool-only message
+/// carries an empty `content` and says nothing about how the turn closed.)
+/// Asks whether its **final paragraph** ends in `?`, or reads as an ask in
+/// plain words — see [`ASK_PHRASES`].
 ///
 /// Final paragraph, not final character: models very rarely end on the
 /// question mark. The shape that prompted this — and the one in the report —
@@ -165,7 +165,22 @@ where
 ///
 /// A `ends_with('?')` test answers "no" there, which is precisely wrong. The
 /// closing paragraph is the unit that carries the ask.
-pub(super) fn ends_with_a_question(messages: &[CompletionMessage]) -> bool {
+///
+/// A `?` is not the only shape an ask takes. Here is a real closing paragraph
+/// with no `?` in it at all:
+///
+/// ```text
+/// If you want, I can dig into the turn-loop implementation and the crash
+/// log you mentioned earlier, and come back with concrete findings and a
+/// proposed refactor plan. Just point me at the entry point (or say "go
+/// find it") and I'll start there.
+/// ```
+///
+/// [`ASK_PHRASES`] catches that shape too. It is a small, case-insensitive
+/// phrase list, checked against the closing paragraph only. Same bias as the
+/// `?` check: catch, do not be careful. A miss here costs one `?` glyph on a
+/// closing that was rhetorical. A miss the other way is this bug.
+pub(super) fn ends_with_an_ask(messages: &[CompletionMessage]) -> bool {
     let Some(closing) = messages
         .iter()
         .rev()
@@ -173,8 +188,37 @@ pub(super) fn ends_with_a_question(messages: &[CompletionMessage]) -> bool {
     else {
         return false;
     };
-    last_paragraph(&strip_code(&closing.content)).is_some_and(|p| p.contains('?'))
+    let stripped = strip_code(&closing.content);
+    let Some(paragraph) = last_paragraph(&stripped) else {
+        return false;
+    };
+    if paragraph.contains('?') {
+        return true;
+    }
+    let lower = paragraph.to_lowercase();
+    ASK_PHRASES.iter().any(|phrase| lower.contains(phrase))
 }
+
+/// Closing-paragraph phrases that mark an ask stated as a command, not a
+/// question. "Just point me at the entry point" is a real ask with no `?`
+/// in it.
+///
+/// Checked as a plain substring of the lower-cased closing paragraph, so
+/// every entry here is lower case. Kept short and literal on purpose. This
+/// is a bias-toward-catching check on one paragraph, not a mood detector.
+const ASK_PHRASES: &[&str] = &[
+    "let me know",
+    "just point me",
+    "point me at",
+    "tell me which",
+    "say the word",
+    "give me",
+    "send me",
+    "if you want, i can",
+    "shall i",
+    "want me to",
+    "would you like",
+];
 
 /// `text` with fenced blocks and inline spans removed.
 ///
@@ -271,7 +315,79 @@ mod tests {
              pipeline.rs's evidence assembly. I can trace exactly where the diff \
              is built and why it ignored the file-change events.",
         )];
-        assert!(ends_with_a_question(&turn));
+        assert!(ends_with_an_ask(&turn));
+    }
+
+    /// The reported miss. This closing paragraph is a clear ask, but has NOT
+    /// ONE `?` in it. A `?`-only check answers "no" here, which paints the
+    /// lane `✓ done` while the user is still waiting. This test fails on a
+    /// `?`-only body and passes once `ASK_PHRASES` exists.
+    #[test]
+    fn an_imperative_ask_with_no_question_mark_still_counts() {
+        let turn = [assistant(
+            "If you want, I can dig into the turn-loop implementation and the \
+             crash log you mentioned earlier, and come back with concrete \
+             findings and a proposed refactor plan. Just point me at the entry \
+             point (or say \"go find it\") and I'll start there.",
+        )];
+        assert!(ends_with_an_ask(&turn));
+    }
+
+    /// Each `ASK_PHRASES` entry gets its own closing line here. If one
+    /// phrase breaks — a typo, a case bug — this test names the entry that
+    /// broke, instead of hiding it behind the others.
+    #[test]
+    fn every_ask_phrase_is_caught_in_its_own_closing_paragraph() {
+        let closings = [
+            "Let me know if you'd like me to proceed.",
+            "Give me a moment and I'll pull the full log.",
+            "Send me the crash report when you have it.",
+            "Shall I open a PR for this one.",
+            "Would you like the full trace instead.",
+            "Tell me which of these you'd like fixed first.",
+            "Say the word and I'll start the migration.",
+        ];
+        for closing in closings {
+            let turn = [assistant(closing)];
+            assert!(ends_with_an_ask(&turn), "missed phrase in: {closing:?}");
+        }
+    }
+
+    /// Matching ignores case. A model that opens a sentence with the phrase
+    /// writes it capitalised; the table is all lower case.
+    #[test]
+    fn ask_phrase_matching_is_case_insensitive() {
+        let turn = [assistant("WANT ME TO build the fix and run the suite.")];
+        assert!(ends_with_an_ask(&turn));
+    }
+
+    /// A plain finished report, no question and no ask phrase, still
+    /// paints `done`.
+    #[test]
+    fn a_plain_completion_report_is_done() {
+        let turn = [assistant("Done. I fixed X and Y.")];
+        assert!(!ends_with_an_ask(&turn));
+    }
+
+    /// A change-summary closing, no ask anywhere in it.
+    #[test]
+    fn a_change_summary_closing_is_done() {
+        let turn = [assistant(
+            "Here is what I changed: renamed the function and added tests.",
+        )];
+        assert!(!ends_with_an_ask(&turn));
+    }
+
+    /// An ask phrase can sit in an earlier paragraph, already resolved by
+    /// the time the agent stops talking. Only the CLOSING paragraph counts.
+    #[test]
+    fn an_ask_phrase_mid_message_does_not_count() {
+        let turn = [assistant(
+            "Let me know if the CI run looks off — I checked and it doesn't.\n\n\
+             I traced the failure to a stale fixture and regenerated it.\n\n\
+             The suite is green now: 88 passed, 0 failed.",
+        )];
+        assert!(!ends_with_an_ask(&turn));
     }
 
     #[test]
@@ -280,7 +396,7 @@ mod tests {
             "Fixed the diff baseline and added a regression test.\n\n\
              The gate is green: 412 passed, 0 failed.",
         )];
-        assert!(!ends_with_a_question(&turn));
+        assert!(!ends_with_an_ask(&turn));
     }
 
     /// A question in an EARLIER paragraph the agent then answered itself is not
@@ -293,7 +409,7 @@ mod tests {
              I fell back to the file_change stream and the ladder now agrees \
              with its own counters.",
         )];
-        assert!(!ends_with_a_question(&turn));
+        assert!(!ends_with_an_ask(&turn));
     }
 
     /// The whole reason `strip_code` exists.
@@ -308,7 +424,7 @@ mod tests {
              cargo test -p stella-cli\n\
              ```",
         )];
-        assert!(!ends_with_a_question(&turn));
+        assert!(!ends_with_an_ask(&turn));
     }
 
     #[test]
@@ -316,7 +432,7 @@ mod tests {
         let turn = [assistant(
             "Set the flag with `stella --ask?=on` to enable it.",
         )];
-        assert!(!ends_with_a_question(&turn));
+        assert!(!ends_with_an_ask(&turn));
     }
 
     /// Prose either side of a fence must not be welded into one paragraph by
@@ -330,7 +446,7 @@ mod tests {
              ```\n\
              Done — the build is clean.",
         )];
-        assert!(!ends_with_a_question(&turn));
+        assert!(!ends_with_an_ask(&turn));
     }
 
     /// The closing message is the last assistant message with PROSE. A
@@ -345,7 +461,7 @@ mod tests {
                 ..assistant("")
             },
         ];
-        assert!(ends_with_a_question(&turn));
+        assert!(ends_with_an_ask(&turn));
     }
 
     /// A user message can end in `?` on every turn — reading it as the
@@ -356,7 +472,7 @@ mod tests {
             user("why is the verifier diff empty?"),
             assistant("Fixed it."),
         ];
-        assert!(!ends_with_a_question(&turn));
+        assert!(!ends_with_an_ask(&turn));
     }
 
     /// The bug: `AgentEvent::TurnComplete` leaves the turn and the deck instantly
@@ -520,7 +636,7 @@ mod tests {
 
     #[test]
     fn a_turn_with_no_assistant_prose_is_not_a_question() {
-        assert!(!ends_with_a_question(&[user("go")]));
-        assert!(!ends_with_a_question(&[]));
+        assert!(!ends_with_an_ask(&[user("go")]));
+        assert!(!ends_with_an_ask(&[]));
     }
 }
