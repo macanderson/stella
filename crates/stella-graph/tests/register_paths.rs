@@ -56,6 +56,43 @@ fn a_path_spelled_through_a_symlinked_root_still_lands_where_queries_look() {
     assert_eq!(graph.all_files().unwrap(), vec!["fresh.rs".to_string()]);
 }
 
+/// A symlink in the workspace must never get its target's content
+/// indexed under the link's own path. `register_paths` calls
+/// `store::apply_changes` directly, skipping the walk's own symlink
+/// check, so it needs its own guard. Without that guard,
+/// `Path::is_file()` and `std::fs::read` both follow a symlink, so
+/// `apply_changes` and `index_one` read the outside file's bytes and
+/// file its symbols under `notes.rs`.
+#[test]
+fn a_symlinked_path_never_indexes_its_target() {
+    let outside = tempfile::tempdir().unwrap();
+    let secret_dir = outside.path().join("outside");
+    std::fs::create_dir(&secret_dir).unwrap();
+    std::fs::write(
+        secret_dir.join("secret.rs"),
+        "pub fn leaked_outside_the_workspace() {}\n",
+    )
+    .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let link = root.join("notes.rs");
+    std::os::unix::fs::symlink(secret_dir.join("secret.rs"), &link).unwrap();
+
+    let graph = opened(root);
+    graph.register_paths(std::slice::from_ref(&link)).unwrap();
+
+    assert!(!graph.indexes_file(&link).unwrap());
+    assert!(
+        graph
+            .definitions("leaked_outside_the_workspace")
+            .unwrap()
+            .is_empty(),
+        "no symbol from outside the workspace may enter the graph"
+    );
+    assert_eq!(graph.all_files().unwrap(), Vec::<String>::new());
+}
+
 /// A path that has vanished is pruned, exactly as a watcher event for a
 /// removed file is — the two callers share one pass.
 #[test]

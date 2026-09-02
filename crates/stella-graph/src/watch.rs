@@ -116,6 +116,15 @@ fn is_watch_relevant(root: &Path, path: &Path, ignore: &WorkspaceIgnore) -> bool
     if walk::rel_is_ignored(root, path, ignore) {
         return false;
     }
+    // A symlink is never relevant. The walk already skips one, using
+    // lstat semantics. This filter guards the other path that can queue a
+    // re-index, so it needs the same rule. `Path::exists` below follows
+    // the link, which would treat a live symlink to a source file as a
+    // normal create or modify event. `symlink_metadata` never follows the
+    // link, so a symlink whose target is gone is still caught here.
+    if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return false;
+    }
     if !path.exists() {
         return true;
     }
