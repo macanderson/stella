@@ -462,6 +462,21 @@ pub enum FleetError {
     /// budget skip, not a task failure.
     #[error("task `{task}` skipped: fleet budget exhausted before it could start")]
     BudgetExhausted { task: TaskId },
+    /// A worker reported a cost that fails `is_finite() && cost_usd >= 0.0`.
+    /// It is rejected, not trusted.
+    ///
+    /// A negative cost would shrink the running budget total. A later task
+    /// could then slip past an `Enforced` limit that real spend has already
+    /// crossed. A NaN cost is worse: it poisons every later sum against that
+    /// total for good.
+    ///
+    /// `Fleet::dispatch_claimed` records the attempt as failed, with zero
+    /// spend, and returns this error. `Fleet::run_plan` treats it like any
+    /// other dispatch failure.
+    #[error(
+        "task `{task}` reported an invalid cost ({reported}); recorded as failed with zero spend"
+    )]
+    InvalidWorkerCost { task: TaskId, reported: f64 },
 }
 
 /// The fleet orchestrator. Owns the worker, the worktree manager, the ledger,
@@ -802,7 +817,7 @@ where
         //    pause/stop. Re-dispatch a task after its previous attempt
         //    settles, not alongside it.
         let (controls, control_guard) = self.register_controls(task);
-        let outcome = match self.config.task_timeout {
+        let mut outcome = match self.config.task_timeout {
             None => self.worker.run(task, &workspace_root, controls).await,
             Some(limit) => {
                 let run = self.worker.run(task, &workspace_root, controls);
@@ -857,6 +872,35 @@ where
         // panicking or this future being cancelled mid-run.
         drop(control_guard);
 
+        // 3.5. A worker's reported cost is untrusted input, like its commits
+        //    or its summary. It feeds two running totals: the in-memory
+        //    `BudgetGuard` and the ledger's `spend` table. Neither survives a
+        //    value outside `is_finite() && >= 0.0`.
+        //
+        //    A negative cost SHRINKS the running total on the next
+        //    `record_spend`. A later task can then pass an `Enforced` limit
+        //    that real spend has already crossed — the budget gate never
+        //    trips `AbortTurn`. A NaN cost is worse:
+        //    `x + f64::NAN` is `NaN` for every `x`, so one bad report poisons
+        //    the total for the rest of the run. Every later check against a
+        //    `NaN` total reads `false`, which is not `Continue`.
+        //
+        //    Both are caught here, once, before either total ever sees the
+        //    number.
+        let reported_cost = outcome.cost_usd;
+        let invalid_cost = !reported_cost.is_finite() || reported_cost < 0.0;
+        if invalid_cost {
+            // Recorded as a failed attempt with ZERO spend, never the
+            // untrustworthy number.
+            outcome.success = false;
+            outcome.cost_usd = 0.0;
+            outcome.summary = format!(
+                "rejected: worker reported an invalid cost ({reported_cost}); recorded as \
+                 failed with zero spend. original summary: {}",
+                outcome.summary
+            );
+        }
+
         // 4. Meter the child's cost into the parent budget (L-E9), then stamp
         //    the outcome (attempt close + commits + spend) atomically.
         //
@@ -899,6 +943,16 @@ where
                 .err()
                 .map(|e| e.to_string())
         };
+
+        if invalid_cost {
+            // The attempt is already stored above, failed, with zero spend.
+            // This is just the signal to the caller: treat the dispatch as
+            // a failure, the same as a worktree or claim error.
+            return Err(FleetError::InvalidWorkerCost {
+                task: task.id.clone(),
+                reported: reported_cost,
+            });
+        }
 
         Ok(TaskHandle {
             task_id: task.id.clone(),

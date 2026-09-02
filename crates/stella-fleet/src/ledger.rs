@@ -257,6 +257,16 @@ impl Ledger {
     /// Close an attempt and stamp everything it produced — its commits and
     /// its spend row — in a single transaction (all-or-nothing). This is the
     /// durable half of the dispatch seam (`crate::fleet::Fleet::dispatch`).
+    ///
+    /// **Idempotent**, like [`record_lineage`](Self::record_lineage). A
+    /// second call for an attempt already closed is a no-op, not a second
+    /// commit/spend row: the `WHERE finished_at_ms IS NULL` guard on the
+    /// `attempts` update tells a first close from a retry by its
+    /// affected-row count, and a retry returns before touching `commits` or
+    /// `spend`. `spend.attempt_id`'s `UNIQUE` constraint plus
+    /// `INSERT OR IGNORE` back that up for any other caller of the insert —
+    /// a worker's stop/timeout race can settle one attempt twice, and
+    /// neither close may double the recorded spend.
     pub fn finish_attempt(&self, finish: &AttemptFinish) -> Result<(), LedgerError> {
         // `unchecked_transaction` (rather than `&mut self` + `transaction()`)
         // keeps every ledger method on `&self`, so the fleet can hold the whole
@@ -265,8 +275,9 @@ impl Ledger {
         // lock, and this is the only place that opens a transaction — so a
         // nested/interleaved transaction on this connection cannot arise.
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "UPDATE attempts SET finished_at_ms = ?2, success = ?3, summary = ?4 WHERE id = ?1",
+        let closed = tx.execute(
+            "UPDATE attempts SET finished_at_ms = ?2, success = ?3, summary = ?4 \
+             WHERE id = ?1 AND finished_at_ms IS NULL",
             params![
                 finish.attempt_id,
                 finish.finished_at_ms as i64,
@@ -274,6 +285,13 @@ impl Ledger {
                 finish.summary,
             ],
         )?;
+        if closed == 0 {
+            // Already closed by an earlier call — commit the (no-op) update
+            // and stop, rather than appending a second set of commits and a
+            // second spend row for the same attempt.
+            tx.commit()?;
+            return Ok(());
+        }
         for commit in &finish.commits {
             tx.execute(
                 "INSERT INTO commits \
@@ -291,7 +309,7 @@ impl Ledger {
             )?;
         }
         tx.execute(
-            "INSERT INTO spend (run_id, task_id, attempt_id, cost_usd, recorded_at_ms) \
+            "INSERT OR IGNORE INTO spend (run_id, task_id, attempt_id, cost_usd, recorded_at_ms) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 finish.run_id,
@@ -484,7 +502,7 @@ impl Ledger {
 
 /// The schema version `migrate` brings a `fleet.db` up to. Bump it in the
 /// same commit that adds a `MIGRATION_V<n>` step and its `version < n` arm.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Apply pending migration steps inside ONE transaction that stamps
 /// `user_version` atomically with the DDL — the same shape `stella-store`'s
@@ -541,6 +559,9 @@ fn migrate(conn: &Connection) -> Result<(), LedgerError> {
     }
     if version < 3 {
         tx.execute_batch(MIGRATION_V3)?;
+    }
+    if version < 4 {
+        tx.execute_batch(MIGRATION_V4)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -652,8 +673,9 @@ CREATE TABLE spend (
     run_id         TEXT NOT NULL REFERENCES runs (id),
     task_id        TEXT NOT NULL,
     attempt_id     INTEGER NOT NULL REFERENCES attempts (id),
-    cost_usd       REAL NOT NULL,
-    recorded_at_ms INTEGER NOT NULL
+    cost_usd       REAL NOT NULL CHECK (cost_usd >= 0),
+    recorded_at_ms INTEGER NOT NULL,
+    UNIQUE (attempt_id)
 );
 CREATE INDEX spend_by_run ON spend (run_id);
 CREATE TABLE dispatch_claims (
@@ -773,12 +795,47 @@ CREATE TABLE IF NOT EXISTS dispatch_claims (
 CREATE INDEX IF NOT EXISTS dispatch_claims_by_expiry ON dispatch_claims (expires_at_ms);
 ";
 
+/// v4 — a validated `spend` table. `CHECK (cost_usd >= 0)` stops a negative
+/// cost from reaching storage, even if a future caller skips the Rust-side
+/// guard in `crate::fleet::Fleet::dispatch_claimed`. That Rust guard is the
+/// real stop for a NaN report, not this constraint: SQLite turns a bound
+/// NaN into NULL before a CHECK ever sees it. `UNIQUE (attempt_id)` is what
+/// makes `Ledger::finish_attempt`'s `INSERT OR IGNORE` an idempotent no-op
+/// on a retried close, instead of a second spend row.
+///
+/// Both constraints need a table rebuild — the same as `MIGRATION_V2`'s
+/// `lineage` fix, since SQLite has no `ALTER TABLE ADD CONSTRAINT`. An old
+/// row with a negative `cost_usd`, or `NULL` (what a bound NaN becomes on
+/// disk), is clamped to zero rather than left to fail the rebuild: it was
+/// already wrong money, and refusing to open the ledger over it would only
+/// trade a bad number for a locked-out one. A duplicate `attempt_id` from
+/// before this fix collapses to its earliest row (lowest `id`), matching
+/// `finish_attempt`'s "first close wins" rule.
+const MIGRATION_V4: &str = "\
+CREATE TABLE spend_v4 (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id         TEXT NOT NULL,
+    task_id        TEXT NOT NULL,
+    attempt_id     INTEGER NOT NULL REFERENCES attempts (id),
+    cost_usd       REAL NOT NULL CHECK (cost_usd >= 0),
+    recorded_at_ms INTEGER NOT NULL,
+    UNIQUE (attempt_id)
+);
+INSERT INTO spend_v4 (run_id, task_id, attempt_id, cost_usd, recorded_at_ms)
+    SELECT run_id, task_id, attempt_id, MAX(COALESCE(cost_usd, 0.0), 0.0), recorded_at_ms
+    FROM spend
+    WHERE id IN (SELECT MIN(id) FROM spend GROUP BY attempt_id);
+DROP TABLE spend;
+ALTER TABLE spend_v4 RENAME TO spend;
+CREATE INDEX IF NOT EXISTS spend_by_run ON spend (run_id);
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// #617 item 5: a brand-new ledger enforces the run references, so no new
-    /// orphan can ever be created.
+    /// A brand-new ledger enforces the run references, so no new orphan can
+    /// ever be created.
     #[test]
     fn a_fresh_ledger_enforces_run_references_and_rejects_an_unknown_run() {
         let ledger = Ledger::open_in_memory().expect("open");
@@ -802,7 +859,8 @@ mod tests {
     /// orphan history it already holds. It is reported instead.
     #[test]
     fn a_legacy_ledger_keeps_its_orphans_and_reports_them() {
-        // Build a v0 file the old way, with an orphan row already in it.
+        // Build a v0 file with the unversioned schema, with an orphan row
+        // already in it.
         let conn = Connection::open_in_memory().expect("conn");
         conn.execute_batch(MIGRATION_V1).expect("legacy schema");
         conn.execute(
@@ -904,6 +962,20 @@ mod tests {
         ledger.record_task(run_id, &task("t1")).unwrap();
     }
 
+    /// Seed `run1`/`t1` and open one attempt on it.
+    fn seeded_attempt(ledger: &Ledger) -> AttemptId {
+        seed_run(ledger, "run1");
+        ledger
+            .start_attempt(&AttemptStart {
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                worktree_path: "/tmp/wt/t1".into(),
+                branch: "fleet/t1".into(),
+                started_at_ms: 10,
+            })
+            .unwrap()
+    }
+
     #[test]
     fn open_in_memory_applies_schema_and_is_empty() {
         let ledger = Ledger::open_in_memory().unwrap();
@@ -912,9 +984,9 @@ mod tests {
         assert!(ledger.lineage_children("run").unwrap().is_empty());
     }
 
-    /// The GC's ledger half (#1217): a worktree whose attempt never finished
-    /// must report as in flight, and a finished one must carry the finish
-    /// time the `--age` arithmetic reads.
+    /// The GC's ledger half: a worktree whose attempt never finished must
+    /// report as in flight, and a finished one must carry the finish time the
+    /// `--age` arithmetic reads.
     #[test]
     fn worktree_activity_separates_in_flight_from_finished() {
         let ledger = Ledger::open_in_memory().unwrap();
@@ -1008,6 +1080,100 @@ mod tests {
         assert_eq!(commits[1].sha, "bbb");
         assert!((ledger.total_spend("run1").unwrap() - 0.25).abs() < 1e-9);
         assert!((ledger.task_spend("run1", "t1").unwrap() - 0.25).abs() < 1e-9);
+    }
+
+    /// `MIGRATION_V4`'s own `CHECK (cost_usd >= 0)` rejects a negative cost
+    /// even if a caller skips `Fleet::dispatch_claimed`'s Rust-side guard.
+    /// The rejection happens inside the transaction, so the attempt's own
+    /// close rolls back too — a rejected finish must not half-apply.
+    #[test]
+    fn finish_attempt_rejects_a_negative_cost_at_the_storage_layer() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let attempt_id = seeded_attempt(&ledger);
+        let err = ledger.finish_attempt(&AttemptFinish {
+            attempt_id,
+            run_id: "run1".into(),
+            task_id: "t1".into(),
+            finished_at_ms: 20,
+            success: true,
+            summary: "done".into(),
+            commits: vec![],
+            cost_usd: -5.0,
+            spend_at_ms: 21,
+        });
+        assert!(
+            err.is_err(),
+            "a negative cost_usd must violate the spend table's CHECK constraint"
+        );
+        assert!(
+            !ledger.attempt_is_finished(attempt_id).unwrap(),
+            "a rejected finish must roll back the attempt's own close, not half-apply"
+        );
+        assert_eq!(ledger.total_spend("run1").unwrap(), 0.0);
+    }
+
+    /// SQLite turns a bound `NaN` into `NULL` before a `CHECK` sees it, so
+    /// `Fleet::dispatch_claimed`'s `is_finite()` guard is the real defense
+    /// against a NaN report, not this table. A direct caller stays safe
+    /// too: `SUM` skips a NULL row, so `total_spend` never breaks.
+    #[test]
+    fn finish_attempt_with_a_nan_cost_leaves_total_spend_finite() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let attempt_id = seeded_attempt(&ledger);
+        // A NaN cost_usd passes the CHECK (SQLite stores it as NULL).
+        ledger
+            .finish_attempt(&AttemptFinish {
+                attempt_id,
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                finished_at_ms: 20,
+                success: true,
+                summary: "done".into(),
+                commits: vec![],
+                cost_usd: f64::NAN,
+                spend_at_ms: 21,
+            })
+            .unwrap();
+
+        assert!(
+            ledger.total_spend("run1").unwrap().is_finite(),
+            "a NaN spend row must never make the run's authoritative total unusable"
+        );
+    }
+
+    /// A second `finish_attempt` for the SAME attempt must not double the
+    /// ledger's commits or spend — a retried dispatch can settle twice, and
+    /// the `WHERE finished_at_ms IS NULL` guard on the first close makes the
+    /// second call a no-op.
+    #[test]
+    fn a_second_finish_attempt_for_the_same_attempt_does_not_double_spend() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let attempt_id = seeded_attempt(&ledger);
+        let finish = AttemptFinish {
+            attempt_id,
+            run_id: "run1".into(),
+            task_id: "t1".into(),
+            finished_at_ms: 20,
+            success: true,
+            summary: "done".into(),
+            commits: vec![commit("t1", "aaa")],
+            cost_usd: 0.5,
+            spend_at_ms: 21,
+        };
+
+        ledger.finish_attempt(&finish).unwrap();
+        // A retried close for the same attempt, real spend unchanged.
+        ledger.finish_attempt(&finish).unwrap();
+
+        assert!(
+            (ledger.total_spend("run1").unwrap() - 0.5).abs() < 1e-9,
+            "spend must not double on a repeated finish_attempt"
+        );
+        assert_eq!(
+            ledger.commits_for_task("run1", "t1").unwrap().len(),
+            1,
+            "commits must not double on a repeated finish_attempt"
+        );
     }
 
     #[test]
@@ -1209,7 +1375,7 @@ mod tests {
         );
     }
 
-    // the warmth-signal reads (issue #1222)
+    // the warmth-signal reads
 
     /// Record one finished attempt for `task_id` in `run_id`, minimal shape.
     fn finished_attempt(ledger: &Ledger, run_id: &str, task_id: &str, finished_at_ms: u64) {
