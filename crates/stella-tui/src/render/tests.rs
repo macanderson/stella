@@ -33,6 +33,8 @@ mod result_row;
 // #5031: SPEC 6.3's skill event, from the wire event to the rendered row.
 mod skill;
 mod slash;
+// Every head SPEC 6.3 draws, from the wire event that draws it.
+mod spine;
 mod steering;
 mod thinking;
 mod tool_output;
