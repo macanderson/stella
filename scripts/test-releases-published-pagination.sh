@@ -28,11 +28,17 @@ work="$(mktemp -d)"
 cleanup() { rm -rf "$work"; rm -f "$MAIN_SCRIPT"; }
 trap cleanup EXIT
 
+# CI checks out one ref with no history, so `origin/main` may not exist yet.
+# One shallow, on-demand fetch of just that branch tip fixes that without
+# touching the shared checkout step every other guard self-test also runs
+# under. It only ever reads; nothing here can move a real branch.
+git -C "$repo_root" fetch --depth=1 -q origin main 2>/dev/null || true
+
 # `dirname "$0"` in each script must find a folder with lib/help-header.sh.
 # So main's copy is placed next to the real script, not in the scratch dir.
 # It is a sibling file, deleted by the trap above, never staged or committed.
 if ! git -C "$repo_root" show origin/main:scripts/check-releases-published.sh >"$MAIN_SCRIPT" 2>/dev/null; then
-  echo "SKIP — could not read origin/main's copy of check-releases-published.sh (no origin/main ref here); the fail-side of the witness cannot run, but this branch's own fetch is still exercised below." >&2
+  echo "SKIP — could not read origin/main's copy of check-releases-published.sh (no network or no origin/main ref here); the fail-side of the witness cannot run, but this branch's own fetch is still exercised below." >&2
 else
   chmod +x "$MAIN_SCRIPT"
 fi
