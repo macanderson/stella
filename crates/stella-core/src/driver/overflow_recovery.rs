@@ -71,6 +71,17 @@ use crate::step::{AbortKind, StepOutcome, TurnState};
 /// window, which compaction cannot fix.
 pub(crate) const MAX_RECOVERY_RUNGS: u8 = 2;
 
+/// The `ToolOutput::Error` that closes a `tool_use` left open when a model
+/// call ends the turn instead of committing — the retry ladder exhausted, or
+/// a recovery ladder spent.
+///
+/// The failed call appended nothing, so the open call belongs to history the
+/// caller handed in. It is closed for the reason the `SoftStopped` arm beside
+/// it closes one: the caller's `messages` is reused on the next turn, and a
+/// provider rejects an unanswered `tool_use` outright.
+const MODEL_CALL_FAILED_TOOL_RESULT: &str =
+    "not executed — turn aborted after the model call could not complete";
+
 /// Per-turn latch and budget clamp for reactive overflow recovery. Pure data,
 /// no I/O (AGENTS.md #2); lives on [`TurnState`] and dies with the turn.
 #[derive(Debug, Default)]
@@ -222,7 +233,15 @@ impl<'a> Engine<'a> {
                 ) {
                     return None;
                 }
-                // No fallback: surface the pre-#2679 terminal shape.
+                // No fallback: surface the pre-#2679 terminal shape. The
+                // pairing repair comes first so the synthetic results reach
+                // the stream ahead of the terminal events, matching the order
+                // `Engine::handle_committed_result` emits them in.
+                crate::step::close_open_tool_calls(
+                    &mut state.messages,
+                    MODEL_CALL_FAILED_TOOL_RESULT,
+                    events,
+                );
                 let _ = events.send(AgentEvent::RetriesExhausted {
                     turn_instance: self.config.turn_instance,
                     attempts: attempt_reasons.len() as u32,
@@ -351,13 +370,21 @@ impl<'a> Engine<'a> {
     /// The terminal shape a spent recovery ladder produces — shared by both
     /// ladders so an exhausted recovery is indistinguishable downstream from
     /// a failure that never had a recovery to spend.
+    ///
+    /// `state` is taken mutably to close any `tool_use` the caller's history
+    /// left open, the same repair the arms above perform.
     fn surface_unrecovered(
         &self,
         message: String,
         attempt_reasons: Vec<String>,
-        state: &TurnState,
+        state: &mut TurnState,
         events: &EventSender,
     ) -> StepOutcome {
+        crate::step::close_open_tool_calls(
+            &mut state.messages,
+            MODEL_CALL_FAILED_TOOL_RESULT,
+            events,
+        );
         let retryable = false;
         let _ = events.send(AgentEvent::RetriesExhausted {
             turn_instance: self.config.turn_instance,

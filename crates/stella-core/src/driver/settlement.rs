@@ -1,4 +1,4 @@
-use stella_protocol::{AgentEvent, MessageRole};
+use stella_protocol::{AgentEvent, CompletionMessage, MessageRole};
 
 use super::TurnOutcome;
 use crate::TurnState;
@@ -29,6 +29,14 @@ impl BudgetWarnings {
         !std::mem::replace(slot, true)
     }
 }
+
+/// The `ToolOutput::Error` that closes a `tool_use` left open when the task
+/// deadline stops the turn.
+///
+/// Its own wording, not [`super::BUDGET_ABORT_TOOL_RESULT`]'s. A turn out of
+/// clock is not a turn out of money, and this text is where a reader looks to
+/// find out why the call never ran.
+const DEADLINE_ABORT_TOOL_RESULT: &str = "not executed — turn stopped at the task deadline";
 
 pub(super) fn axis_label(axis: BudgetAxis) -> &'static str {
     match axis {
@@ -146,6 +154,7 @@ impl super::Engine<'_> {
             state.total_cost_usd += child_spend;
         }
         check_budget(
+            &mut state.messages,
             &state.budget,
             state.total_cost_usd,
             state.last_step,
@@ -164,7 +173,15 @@ impl super::Engine<'_> {
 /// `run_step_inner`, so a task already out of wall clock stops here just
 /// like an already-over-cap dollar budget does, before the next provider
 /// call is dispatched.
+///
+/// `messages` is taken mutably for the abort arms. Both fire at the top of a
+/// step. The transcript there is still the caller's own, and a caller can hand
+/// one in whose last `tool_use` nothing answered. Each arm closes that pairing
+/// before it returns, the way `Engine::handle_committed_result` does one
+/// boundary later. Hand back an open call and the caller's next provider call
+/// is rejected.
 fn check_budget(
+    messages: &mut Vec<CompletionMessage>,
     budget: &BudgetGuard,
     total_cost_usd: f64,
     last_step: Option<std::time::Duration>,
@@ -203,6 +220,7 @@ fn check_budget(
         DeadlineOutcome::Continue => None,
     };
     if let Some(reason) = reason {
+        crate::step::close_open_tool_calls(messages, DEADLINE_ABORT_TOOL_RESULT, events);
         let _ = events.send(AgentEvent::Error {
             message: reason.clone(),
             retryable: false,
@@ -227,6 +245,7 @@ fn check_budget(
     let axis = axis_label(axis);
     let reason =
         format!("budget exceeded: spent ${spent_usd:.4} against a ${limit_usd:.2} {axis} limit");
+    crate::step::close_open_tool_calls(messages, super::BUDGET_ABORT_TOOL_RESULT, events);
     let _ = events.send(AgentEvent::Error {
         message: reason.clone(),
         retryable: false,
@@ -405,7 +424,16 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let events = EventSender::new(tx);
         let mut warnings = BudgetWarnings::default();
-        let outcome = check_budget(&budget, 0.0, last_step, &mut warnings, &events, now);
+        let mut transcript = Vec::new();
+        let outcome = check_budget(
+            &mut transcript,
+            &budget,
+            0.0,
+            last_step,
+            &mut warnings,
+            &events,
+            now,
+        );
         let mut messages = Vec::new();
         while let Ok(event) = rx.try_recv() {
             if let AgentEvent::Error { message, .. } = event {
@@ -477,6 +505,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut warnings = BudgetWarnings::default();
         let outcome = check_budget(
+            &mut Vec::new(),
             &budget,
             0.0,
             Some(Duration::from_secs(600)),
