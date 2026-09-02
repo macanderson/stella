@@ -97,6 +97,7 @@ pub use vectors::chunks::{
     ScoredChunk, render_chunk_text,
 };
 pub use vectors::{FileVector, MAX_FILES_PER_PASS, PendingEmbed, PendingScan, render_file_text};
+pub use walk::DENY_DIRS;
 #[doc(hidden)]
 pub use watch::WatchInjector;
 
