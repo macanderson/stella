@@ -557,6 +557,18 @@ pub(crate) fn apply_changes(
     };
     let tx = conn.transaction()?;
     for abs in changed {
+        // A symlink is never indexed here. The walk already skips one,
+        // using lstat semantics. But the watcher and `register_paths` call
+        // this function directly and skip the walk. `Path::is_file()`
+        // below follows the link. Without this check, a symlink to a real
+        // file would go straight into `index_one` and read the target's
+        // bytes under the link's own path. `symlink_metadata` never
+        // follows the link, so this also catches a symlink whose target is
+        // gone. This skip matches the unrecognised-extension skip below:
+        // no stat changes, no row is touched.
+        if std::fs::symlink_metadata(abs).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            continue;
+        }
         if abs.is_file() {
             if Language::from_path(abs).is_none() && !storage::indexes_without_language(abs) {
                 continue;

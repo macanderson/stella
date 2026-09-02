@@ -314,6 +314,43 @@ async fn irrelevant_paths_are_filtered_at_injection() {
     fx.graph.shutdown();
 }
 
+/// A symlink placed in the workspace during a live session must never
+/// enter the debounce pipeline. Its extension and the ignore rules alone
+/// would let it through. This test checks that path on its own, apart
+/// from the store-level guard `store::apply_changes` adds, so either
+/// guard can regress and this still catches it. It fails on the old
+/// code: the link's extension is `.rs`, and `Path::exists()` follows the
+/// link to a real target, so `is_watch_relevant` accepted it and
+/// `inject` returned `true`.
+#[tokio::test(start_paused = true)]
+async fn injected_symlink_never_enters_the_pipeline() {
+    let outside = TempDir::new().unwrap();
+    let secret_dir = outside.path().join("outside");
+    fs::create_dir(&secret_dir).unwrap();
+    fs::write(
+        secret_dir.join("secret.rs"),
+        "pub fn leaked_outside_the_workspace() {}\n",
+    )
+    .unwrap();
+
+    let fx = Live::build(&[("keep.rs", "pub fn kept() {}\n")]);
+    let link = fx.abs("notes.rs");
+    std::os::unix::fs::symlink(secret_dir.join("secret.rs"), &link).unwrap();
+
+    assert!(
+        !fx.injector.inject(&link),
+        "a symlink must never enter the debounce pipeline"
+    );
+    assert_eq!(fx.injector.batches_applied(), 0, "nothing was enqueued");
+    assert_eq!(
+        fx.graph.file_count().unwrap(),
+        1,
+        "the symlink is not a node"
+    );
+
+    fx.graph.shutdown();
+}
+
 /// Markdown is source to this crate (#3095): `AGENTS.md`, `CLAUDE.md` and
 /// every crate README are documents the agent has to be able to search. Live
 /// indexing has to agree with `Language::from_path`, so this asserts the flip
