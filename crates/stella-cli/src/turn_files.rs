@@ -666,7 +666,9 @@ mod tests {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         for (file, driver, seam) in [
             // The raw engine turn: `stella run`, the plain REPL.
-            ("agent.rs", "run_turn", &closing),
+            // In `agent/turn.rs` since the split moved `run_turn` out of
+            // `agent.rs`, the same way the deck's row below moved.
+            ("agent/turn.rs", "run_turn", &closing),
             // The interactive deck's lead turn — the driver that had the hole.
             // In `command_deck/lead_turn.rs` since #4775 split the deck's
             // driver loop into sibling modules.
@@ -879,7 +881,7 @@ mod tests {
         // `stella run` and the plain chat loop. Reaches the opening seam
         // through `persistence::attach_run_streams`, which is why
         // `STREAM_OWNERS` names that file and this one names the driver's own.
-        ("agent.rs", DriverPosture::Owns),
+        ("agent/turn.rs", DriverPosture::Owns),
         ("command_deck/lead_turn.rs", DriverPosture::Owns),
         ("agent/goal.rs", DriverPosture::Owns),
         ("agent/goal/goal_wrapped.rs", DriverPosture::Owns),

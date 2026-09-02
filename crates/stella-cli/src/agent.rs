@@ -93,7 +93,14 @@ use reflect::reflect_on_interactive_turn;
 pub(crate) use reflect::surface_reflection;
 pub(crate) use skill_usage::stamp_and_record_skill_usage;
 pub(crate) use tools::*;
-pub(crate) use turn::{mirror_task_board, run_turn};
+pub(crate) use turn::run_turn;
+// Only `agent::tests` calls this; it reaches it through this module's
+// `use super::*`. Re-exported under `cfg(test)` so the bin build does not
+// carry an import nothing in it uses — AGENTS.md prefers `#[cfg(test)]` over
+// an `#[allow(unused_imports)]` asserting the lint is wrong, because here it
+// is not.
+#[cfg(test)]
+pub(crate) use turn::mirror_task_board;
 
 /// Whether this process may touch durable workspace state, as the
 /// [`stella_runtime::Persistence`] switch the runtime crate takes explicitly.

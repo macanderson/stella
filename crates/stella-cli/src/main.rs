@@ -170,8 +170,13 @@ pub(crate) use cli::{
 // like `cli::` above, so every `crate::OutputFormat` call site still works.
 pub use output_envelope::OutputFormat;
 pub(crate) use output_envelope::{
-    SUMMARY_SCHEMA_VERSION, emit_error_summary, error_summary_json, note_json_summary_emitted,
+    SUMMARY_SCHEMA_VERSION, emit_error_summary, note_json_summary_emitted,
 };
+// Only `crate::tests` calls this directly (`emit_error_summary` is what the
+// binary itself goes through). Re-exported under `cfg(test)` for the same
+// reason as `agent::mirror_task_board`.
+#[cfg(test)]
+pub(crate) use output_envelope::error_summary_json;
 
 /// How this invocation meets the supervisor (#1552, #1607).
 ///

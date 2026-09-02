@@ -857,7 +857,7 @@ async fn a_goal_arcs_rounds_reflect_separately_and_never_borrow_each_others_fric
 /// compile too.
 #[test]
 fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
-    const AGENT: &str = include_str!("../../agent.rs");
+    const AGENT: &str = include_str!("../../agent/turn.rs");
     const GOAL: &str = include_str!("../../agent/goal.rs");
     const REFLECT: &str = include_str!("../../agent/reflect.rs");
     const DECK: &str = include_str!("../../command_deck/authoring.rs");
