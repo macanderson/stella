@@ -28,6 +28,17 @@
 //! * **`edit_file` is untouched.** It replaces a needle it had to know to
 //!   name, and it is the escape hatch the refusal points at.
 //!
+//! # The stale-snapshot guard
+//!
+//! Coverage answers "was the model shown this file", which is a fact about the
+//! session and not about the disk. The read that earned the coverage can be
+//! many turns old, and everything written to the file since is replaced by
+//! content composed before it existed. So an overwrite is also refused when
+//! the ledger's hash of what the model last saw stops matching the bytes on
+//! disk, checked through the descriptor the write is about to walk by the
+//! crate's `recheck` module. A file the ledger has no hash for is one this
+//! session never saw whole, which the coverage guard has already refused.
+//!
 //! # Registering what was created (#5034)
 //!
 //! A write that creates a file registers it in the workspace code graph and
@@ -50,6 +61,10 @@ pub struct WriteFile {
     /// The index a created file is registered in. Injected for the same
     /// reason `delete_file`'s is — see [`crate::graph_fact`]'s header.
     graph: Arc<dyn crate::graph_fact::WorkspaceGraph>,
+    /// A test's window before the overwrite — see the `recheck` module's `Seam`.
+    /// Nothing outside `cfg(test)` can install one.
+    #[cfg(test)]
+    seam: Option<crate::recheck::Seam>,
 }
 
 impl Default for WriteFile {
@@ -64,6 +79,8 @@ impl WriteFile {
         Self {
             ledger,
             graph: Arc::new(crate::graph_fact::Codegraph),
+            #[cfg(test)]
+            seam: None,
         }
     }
 
@@ -73,6 +90,26 @@ impl WriteFile {
         Self {
             ledger: Arc::default(),
             graph,
+            seam: None,
+        }
+    }
+
+    /// Construct with `seam` running in the window before the overwrite, so a
+    /// test can put a concurrent writer there.
+    #[cfg(test)]
+    pub(crate) fn with_seam(ledger: Arc<ReadLedger>, seam: crate::recheck::Seam) -> Self {
+        Self {
+            ledger,
+            graph: Arc::new(crate::graph_fact::Codegraph),
+            seam: Some(seam),
+        }
+    }
+
+    /// Hand a test its window. Compiles to nothing in a shipped build.
+    fn run_seam(&self) {
+        #[cfg(test)]
+        if let Some(seam) = &self.seam {
+            seam();
         }
     }
 
@@ -218,7 +255,8 @@ impl WriteFile {
                     );
                 }
             };
-            if handle.stat(&path).is_ok() && !self.ledger.saw_whole_file(&scope_root, &path) {
+            let exists = handle.stat(&path).is_ok();
+            if exists && !self.ledger.saw_whole_file(&scope_root, &path) {
                 return ToolOutput::classified_error(
                     stella_protocol::ErrorClass::RefusedByPolicy,
                     format!(
@@ -226,6 +264,24 @@ impl WriteFile {
                          not been shown the whole file, and `write_file` replaces all of it. Read \
                          it first (`read_file` with no offset/limit), then write — or use \
                          `edit_file` to change part of it in place. Nothing was written."
+                    ),
+                );
+            }
+            // The stale-snapshot guard (module header), asked in this pass so a
+            // batch refused on its third file has written neither of the first
+            // two.
+            self.run_seam();
+            if exists
+                && let Some(seen) = self.ledger.last_seen_sha(&scope_root, &path)
+                && let Err(drift) = crate::recheck::confirm(&handle, &path, &seen).await
+            {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!(
+                        "`{FILES_KEY}`[{index}]: refusing to overwrite `{path}` — {} since you \
+                         read it, so this content was composed from bytes disk does not hold. \
+                         Nothing was written — read it again, then write.",
+                        drift.because()
                     ),
                 );
             }
@@ -340,13 +396,33 @@ impl WriteFile {
         // reason — absent, unreadable, an escape — is not evidence that
         // something is there to destroy, and the write below answers it
         // properly.
-        if handle.stat(path).is_ok() && !self.ledger.saw_whole_file(&scope_root, path) {
+        let exists = handle.stat(path).is_ok();
+        if exists && !self.ledger.saw_whole_file(&scope_root, path) {
             return ToolOutput::classified_error(
                 stella_protocol::ErrorClass::RefusedByPolicy,
                 format!(
                     "refusing to overwrite `{path}`: this session has not been shown the whole file, \
                  and `write_file` replaces all of it. Read it first (`read_file` with no \
                  offset/limit), then write — or use `edit_file` to change part of it in place."
+                ),
+            );
+        }
+
+        // The stale-snapshot guard (module header). A creation has nothing to
+        // clobber, and a path the ledger has no hash for is a file this session
+        // never saw whole — the guard above already refused it.
+        self.run_seam();
+        if exists
+            && let Some(seen) = self.ledger.last_seen_sha(&scope_root, path)
+            && let Err(drift) = crate::recheck::confirm(&handle, path, &seen).await
+        {
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!(
+                    "refusing to overwrite `{path}` — {} since you read it, so this content was \
+                     composed from bytes disk does not hold and writing it would destroy that \
+                     change. Nothing was written — read it again, then write.",
+                    drift.because()
                 ),
             );
         }
