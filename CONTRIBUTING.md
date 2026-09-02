@@ -103,7 +103,6 @@ python3 ./scripts/check-light-clamp.py
 python3 ./scripts/check-transcript-surfaces.py
 python3 ./scripts/check-line-citations.py
 python3 ./scripts/check-prose.py
-python3 ./scripts/check-module-layout.py
 ./scripts/test-deck-fit-all.sh
 python3 ./scripts/check-deck-paths.py
 python3 ./scripts/check-css-vars.py
