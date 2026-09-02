@@ -761,6 +761,48 @@ mod tests {
         );
     }
 
+    /// A batched call must leave the board exactly as four separate calls
+    /// would. The store's `tasks` mirror only ever sees
+    /// `TaskBoard::items()`, so a wrong id or a dropped description would
+    /// corrupt it. Every other batch test here checks one board against its
+    /// own output; this one checks two boards, built two ways, against each
+    /// other.
+    #[tokio::test]
+    async fn a_batched_plan_leaves_the_board_identical_to_four_sequential_calls() {
+        let (sequential, _) = handles();
+        for input in [
+            serde_json::json!({ "subject": "Install the toolchain" }),
+            serde_json::json!({
+                "subject": "Extract the vendored tarball",
+                "description": "into /app"
+            }),
+            serde_json::json!({ "subject": "Compile with coverage" }),
+            serde_json::json!({ "subject": "Prove coverage data is produced" }),
+        ] {
+            exec(&TaskCreate(sequential.clone()), input).await;
+        }
+
+        let (batched, _) = handles();
+        exec(
+            &TaskCreate(batched.clone()),
+            serde_json::json!({
+                "tasks": [
+                    "Install the toolchain",
+                    { "subject": "Extract the vendored tarball", "description": "into /app" },
+                    "Compile with coverage",
+                    "Prove coverage data is produced",
+                ]
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            sequential.lock().expect("sequential board").items(),
+            batched.lock().expect("batched board").items(),
+            "a batched plan must mirror to the same rows four separate calls would"
+        );
+    }
+
     /// An empty batch is a caller mistake worth naming, not a silent no-op:
     /// silently succeeding would let a model believe it had filed a plan.
     #[tokio::test]
