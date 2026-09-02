@@ -316,6 +316,18 @@ existed. `reserved-paths` (`scripts/check-reserved-paths.sh`) is the fast
 half of that finding, because a failed checkout reports one bad path per run
 and there were two.
 
+`windows-check.yml`'s other leg is `macos-check.yml`, same shape and the
+same reason: `crates/stella-cli/Cargo.toml` carries a
+`cfg(any(target_os = "macos", target_os = "windows"))` dependency table for
+`cpal`, the microphone-capture crate `command_deck::voice` needs (ADR 0020),
+and `ci.yml`'s `ubuntu-latest` job never resolves it. `release.yml` does
+build macOS targets, but only on a tag push, well after a PR has already
+merged — so a dependabot bump to `cpal` merged with `main` broken on macOS,
+with nothing in the required check having ever compiled it. This job runs
+`cargo check -p stella-cli --all-targets --locked` on `macos-14`,
+path-triggered on `crates/stella-cli/**`, `Cargo.lock` and the workspace
+`Cargo.toml`. Not a required check.
+
 A ninth, `rebase-replay.yml`, is the only check here that reads a branch's
 **history** rather than its tree, and it exists for a composition hazard the
 shared-cell paragraph above does not cover: **rebasing a stale branch can

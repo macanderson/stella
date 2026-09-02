@@ -1,0 +1,81 @@
+name: macos-check
+
+# windows-check.yml's other leg: the only compiler in this project that ever
+# looks at a `cfg(target_os = "macos")` dependency table.
+#
+# `ci.yml` runs on `ubuntu-latest`, so it never resolves
+# `[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]`
+# in `crates/stella-cli/Cargo.toml` — the `cpal` microphone-capture dependency
+# `command_deck::voice` (ADR 0020) needs on those two platforms. `release.yml`
+# does build macOS targets, but only on a tag push, long after a PR has
+# already merged; a PR gate that never touches this table can go green on a
+# change that does not build there at all. That happened for real: a
+# dependabot bump merged with `main` broken on macOS, because nothing in the
+# required check ever compiled `cpal` (#5542, filed as the general gap #5543).
+#
+# So this compiles `stella-cli` itself on a real macOS runner, on the paths
+# that can move the target table: the crate's own sources, the workspace
+# `Cargo.toml` `cpal` is declared against, and the resolved `Cargo.lock`.
+#
+# `cargo check`, not `clippy` or `build`: the question this job answers is
+# narrower than windows-check.yml's — does the macOS-only dependency table
+# still resolve and typecheck — not whether the macOS arms are lint-clean or
+# link a working binary. `--all-targets` so the target-scoped `[dev-dependencies]`
+# and test bodies are checked too, not just the library and bin crates; unlike
+# windows-check.yml, stella-cli carries no `#[cfg(unix)]`-only test fixture
+# that would fail here for a reason unrelated to the platform split.
+# `--locked` so a `Cargo.lock` drift fails here the same way it fails
+# `lockfile-sync` in `make gate`.
+#
+# Its own file rather than a job in `ci.yml`, for the same reason
+# `windows-check.yml` has one: a macOS runner is minutes of wall clock a diff
+# touching neither `stella-cli` nor the lockfile has no use for. Not a
+# required check.
+on:
+  pull_request:
+    paths:
+      - "crates/stella-cli/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - ".github/workflows/macos-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/stella-cli/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - ".github/workflows/macos-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: the macOS-only dependency table still compiles
+    runs-on: macos-14
+    # The bundled C in the dependency graph (rusqlite's SQLite, the
+    # tree-sitter grammars, cpal's CoreAudio bindings) is the expensive part
+    # on a cold cache.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Despite the action's name this does not build on `stable`:
+      # rust-toolchain.toml pins the repo to a concrete toolchain and rustup
+      # honors it for every cargo invocation inside the checkout. This step
+      # exists to put *a* rustup on PATH.
+      - name: Install Rust (rustup; the build uses the rust-toolchain.toml pin)
+        id: rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+
+      - name: cargo check stella-cli, all targets, on macOS
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: cargo check -p stella-cli --all-targets --locked
