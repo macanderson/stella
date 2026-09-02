@@ -544,6 +544,7 @@ crates/stella-cli/src/agent/tool_stack.rs rust-jargon 1
 crates/stella-cli/src/agent/tools.rs historical-reference 2
 crates/stella-cli/src/agent/tools.rs issue-reference 4
 crates/stella-cli/src/agent/tools/tests.rs issue-reference 3
+crates/stella-cli/src/agent/turn.rs rust-jargon 1
 crates/stella-cli/src/agent/turn_close.rs interface-jargon 2
 crates/stella-cli/src/agent/turn_close.rs issue-reference 2
 crates/stella-cli/src/agents_installed.rs issue-reference 2
