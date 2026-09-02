@@ -133,6 +133,16 @@ pub struct SessionStats {
     pub turns_run: u32,
     /// Turns that stopped because they hit their spend ceiling.
     pub turns_over_budget: u32,
+
+    // -- what the record lost -----------------------------------------------
+    /// Audit writes the session gave up on. This many turns have a hole in
+    /// their record.
+    ///
+    /// It is counted because the record is the proof for the rest of this
+    /// list. A store that turns a write away does not stop the work. The loop
+    /// runs on and the hole is quiet, so the count is what makes it a number
+    /// a person can see.
+    pub audit_records_incomplete: u32,
 }
 
 impl SessionStats {

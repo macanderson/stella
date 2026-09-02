@@ -25,9 +25,48 @@
 
 use stella_protocol::event::AgentEvent;
 
-use super::RawRunSummary;
+use super::audit_writes::dropped_audit_writes;
 use crate::config::Config;
 use stella_core::TurnOutcome;
+
+/// The `--output-format json` summary of a raw (`--no-pipeline`) step-loop run.
+/// A struct rather than `serde_json::json!` so the version leads the object
+/// (`json!` builds a sorted map and would bury it mid-envelope); key order is
+/// not contractual either way — this is for whoever reads the output by eye.
+///
+/// It lives here, beside the code that fills it, rather than in `agent.rs`,
+/// which is a few lines under the 1500-line ceiling `make file-size` enforces
+/// and carries no baseline entry (AGENTS.md § *God files*).
+///
+/// [`schema_version`](Self::schema_version) is governed by the bump rule on
+/// [`crate::SUMMARY_SCHEMA_VERSION`].
+#[derive(serde::Serialize)]
+pub(crate) struct RawRunSummary {
+    pub(crate) schema_version: u32,
+    pub(crate) status: &'static str,
+    pub(crate) text: Option<String>,
+    pub(crate) cost_usd: Option<f64>,
+    pub(crate) reason: Option<String>,
+    pub(crate) model: String,
+    pub(crate) events: Vec<AgentEvent>,
+    /// The file-touch telemetry envelope. Filled from the turn's own measured
+    /// `FileChange` events (`agent::summary::files_touched`) — the key stays
+    /// even on a quiet turn because the envelope's key set is the versioned
+    /// contract.
+    pub(crate) files_touched: serde_json::Value,
+    /// What this checkout's trust gate held back, or `null`. Folded
+    /// from the turn's own `SteeringWithheld` event, so this and the
+    /// `stream-json` carrier of the same fact are one event read twice.
+    /// Present on every raw summary for the same reason `files_touched` is.
+    pub(crate) withheld: serde_json::Value,
+    /// Audit writes this turn gave up on — usually 0
+    /// ([`crate::agent::audit_writes`]).
+    ///
+    /// Carried because a self-driving loop runs its turns in child processes,
+    /// so the count only reaches the loop if the child says it. The loop reads
+    /// this key and folds it into `stella self-driving stats`.
+    pub(crate) audit_records_incomplete: u32,
+}
 
 /// Print the one-object JSON summary for a finished raw turn and record that
 /// the machine-readable contract has been satisfied, so `main`'s catch-all
@@ -55,6 +94,9 @@ pub(super) fn print_json_summary(cfg: &Config, outcome: &TurnOutcome, events: Ve
         model: format!("{}/{}", cfg.provider.id, cfg.model_id),
         files_touched: files_touched(&events),
         withheld: withheld(&events),
+        // Read after the execution has been closed out, which is where the
+        // count is moved (`agent::turn_close::close_turn`).
+        audit_records_incomplete: dropped_audit_writes(),
         events,
     };
     println!(

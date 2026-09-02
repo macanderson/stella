@@ -44,7 +44,31 @@ use super::work::WorkOutcome;
 /// caller's: `drive` escalates a failed issue and the `work` verb hands the
 /// failure straight back to whoever typed the command.
 pub(super) fn record_work(st: &LoopState, learned: LearningTally, outcome: &WorkOutcome) {
+    // Taken rather than read, so the same dropped write cannot be folded into
+    // the durable tally twice. Both producers land in that one counter: this
+    // process's own close-outs, and what the child turn reported.
+    fold_work(
+        st,
+        learned,
+        outcome,
+        crate::agent::take_dropped_audit_writes(),
+    );
+}
+
+/// The fold itself, over the dropped-write *count* rather than the process
+/// counter it comes from.
+///
+/// Split so these counters can be exercised without touching that counter: a
+/// test that reset it would race every other test in this binary, and the one
+/// test that does own it needs an exact number.
+fn fold_work(
+    st: &LoopState,
+    learned: LearningTally,
+    outcome: &WorkOutcome,
+    audit_records_incomplete: u32,
+) {
     st.update_stats(|s| {
+        s.audit_records_incomplete += audit_records_incomplete;
         // Both, for every outcome: the turn ran and the issue was attempted
         // whatever the turn then left behind. A one-shot invocation is a
         // session of one unit, not a unit outside every session — the `file`
@@ -142,6 +166,17 @@ pub(super) fn session_stats(st: &LoopState, format: QueryFormat) -> Result<(), S
     println!("  turns run       {:>5}", stats.turns_run);
     println!("  over budget     {:>5}", stats.turns_over_budget);
 
+    // Printed only when there is something to report. A zero here every run
+    // would train a reader to skip the line, and this is the line that says
+    // the rest of the numbers are missing a piece.
+    if stats.audit_records_incomplete > 0 {
+        println!(
+            "\nrecord\n  {} audit records incomplete this run — a store write was refused; \
+             the turn's own warning names the SQLite code and the file",
+            stats.audit_records_incomplete
+        );
+    }
+
     println!("\nyield");
     println!(
         "  inflation       {:>5}   created per closed; above 1.00 is losing ground",
@@ -194,7 +229,7 @@ mod tests {
         let st = loop_state(&dir);
         assert_eq!(st.stats(), stella_autonomy::SessionStats::default());
 
-        record_work(
+        fold_work(
             &st,
             LearningTally {
                 reflections: Some(3),
@@ -202,6 +237,7 @@ mod tests {
                 proposals: Some(2),
             },
             &changed(),
+            0,
         );
 
         let stats = st.stats();
@@ -211,6 +247,24 @@ mod tests {
         assert_eq!(stats.reflections_logged, 3);
         assert_eq!(stats.memories_created, 1);
         assert_eq!(stats.proposals_made, 2);
+    }
+
+    /// **Witness.** Audit writes the session gave up on reach the
+    /// session's counters, so `stella self-driving stats` can say how much of
+    /// the record is missing.
+    ///
+    /// Before this the count existed nowhere: each failed write was collapsed
+    /// to `.is_ok()`, warned about once, and forgotten.
+    #[test]
+    fn dropped_audit_writes_reach_the_session_counters() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let st = loop_state(&dir);
+        assert_eq!(st.stats().audit_records_incomplete, 0);
+
+        fold_work(&st, LearningTally::default(), &changed(), 2);
+        fold_work(&st, LearningTally::default(), &changed(), 1);
+
+        assert_eq!(st.stats().audit_records_incomplete, 3);
     }
 
     /// The three outcomes are three different counters, and the two that are
@@ -225,20 +279,22 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let st = loop_state(&dir);
 
-        record_work(&st, LearningTally::default(), &changed());
-        record_work(
+        fold_work(&st, LearningTally::default(), &changed(), 0);
+        fold_work(
             &st,
             LearningTally::default(),
             &WorkOutcome::NoChange {
                 why: "nothing to do".to_owned(),
             },
+            0,
         );
-        record_work(
+        fold_work(
             &st,
             LearningTally::default(),
             &WorkOutcome::Failed {
                 reason: "the turn exited 1".to_owned(),
             },
+            0,
         );
 
         let stats = st.stats();
@@ -260,12 +316,13 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let st = loop_state(&dir);
 
-        record_work(
+        fold_work(
             &st,
             LearningTally::default(),
             &WorkOutcome::Failed {
                 reason: "the turn exited 2 — budget exceeded".to_owned(),
             },
+            0,
         );
 
         let stats = st.stats();
@@ -284,7 +341,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let st = loop_state(&dir);
 
-        record_work(&st, LearningTally::default(), &changed());
+        fold_work(&st, LearningTally::default(), &changed(), 0);
 
         let stats = st.stats();
         assert_eq!(stats.issues_claimed, 0);
