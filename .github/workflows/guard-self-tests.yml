@@ -257,6 +257,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-tap-current.sh
 
+      - name: the release fetch has no fixed count cap
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-releases-published-pagination.sh
+
       - name: rebase-replay guard directions, and the hazard itself
         if: ${{ !cancelled() }}
         run: ./scripts/test-rebase-replay.sh
