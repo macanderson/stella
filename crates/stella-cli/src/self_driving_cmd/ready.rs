@@ -10,7 +10,6 @@
 use std::collections::BTreeSet;
 
 use stella_autonomy::CycleRecord;
-use stella_autonomy::priority::PriorityLadder;
 use stella_protocol::issue::IssueProvider;
 
 use crate::timefmt::{now_unix, rfc3339_utc_now};
@@ -32,10 +31,10 @@ use super::state::LoopState;
 /// a hit on the ceiling fails loud instead of guessing.
 fn ready_issues(
     provider: &dyn IssueProvider,
-    ladder: &PriorityLadder,
+    cfg: &LoopConfig,
 ) -> Result<Vec<stella_autonomy::QueueIssue>, String> {
     let issues = open_page(provider)?;
-    Ok(fold_ready(&issues, ladder))
+    Ok(fold_ready(&issues, cfg))
 }
 
 /// The ready backlog with the tracker's full records attached, in the order
@@ -49,10 +48,10 @@ fn ready_issues(
 /// another moment's body.
 pub(super) fn ready_full(
     provider: &dyn IssueProvider,
-    ladder: &PriorityLadder,
+    cfg: &LoopConfig,
 ) -> Result<Vec<stella_protocol::issue::Issue>, String> {
     let issues = open_page(provider)?;
-    let ready = fold_ready(&issues, ladder);
+    let ready = fold_ready(&issues, cfg);
     Ok(ready
         .iter()
         .filter_map(|queued| {
@@ -86,9 +85,14 @@ fn open_page(provider: &dyn IssueProvider) -> Result<Vec<stella_protocol::issue:
 }
 
 /// The readiness fold over one read's records.
+///
+/// The escalation record sits in the body, so this read carries it too.
+/// The queue can hold a cooldown with no second call to the tracker. The
+/// clock is read here: `stella-autonomy` does no I/O and takes the time as
+/// an argument.
 fn fold_ready(
     issues: &[stella_protocol::issue::Issue],
-    ladder: &PriorityLadder,
+    cfg: &LoopConfig,
 ) -> Vec<stella_autonomy::QueueIssue> {
     let open: BTreeSet<u64> = issues
         .iter()
@@ -99,9 +103,16 @@ fn fold_ready(
         .map(|issue| stella_autonomy::ready::BacklogItem {
             issue: crate::issue_provider::to_queue_issue(issue),
             blocked_by: stella_autonomy::ready::blocker_refs(&issue.body),
+            escalation: stella_autonomy::escalation::parse(&issue.body),
         })
         .collect();
-    stella_autonomy::ready::ready_queue(items, &open, ladder)
+    stella_autonomy::ready::ready_queue(
+        items,
+        &open,
+        &cfg.triage.ladder,
+        &cfg.escalation,
+        now_unix(),
+    )
 }
 
 /// The ready backlog as bare keys, in the order the loop takes them.
@@ -110,9 +121,9 @@ fn fold_ready(
 /// shape, a different meaning of "next" — ready, not defect rank.
 pub(super) fn ready_keys(
     provider: &dyn IssueProvider,
-    ladder: &PriorityLadder,
+    cfg: &LoopConfig,
 ) -> Result<Vec<String>, String> {
-    Ok(ready_issues(provider, ladder)?
+    Ok(ready_issues(provider, cfg)?
         .into_iter()
         .map(|issue| issue.number.to_string())
         .collect())
@@ -130,7 +141,7 @@ pub(super) fn dry_run(
     bound: u32,
 ) -> Result<(), String> {
     let queue = if backlog {
-        ready_issues(provider, &cfg.triage.ladder)?
+        ready_issues(provider, cfg)?
     } else {
         super::backlog::ranked(provider, &cfg.triage)?.0.ranked
     };
@@ -322,7 +333,7 @@ mod tests {
             issue("6", &["feature", "P0"], "Blocked by: #9"),
         ]);
 
-        let keys = ready_keys(&provider, &PriorityLadder::default()).expect("fixture read");
+        let keys = ready_keys(&provider, &LoopConfig::default()).expect("fixture read");
         assert_eq!(
             keys,
             vec!["6".to_owned(), "4".to_owned()],
@@ -378,10 +389,63 @@ mod tests {
             .collect();
         let provider = FixtureProvider::with(issues);
 
-        let result = ready_keys(&provider, &PriorityLadder::default());
+        let result = ready_keys(&provider, &LoopConfig::default());
         assert!(
             result.is_err(),
             "a page-bounded read must refuse rather than guess at readiness"
+        );
+    }
+
+    /// **The end-to-end cooldown witness.** An issue escalated because the
+    /// box broke keeps its record in its body. The generator reads that
+    /// body, sees the wait is over, and offers the issue again. The
+    /// `agent-escalated` label is still on it. Nothing was written.
+    ///
+    /// An issue that used up its tries is offered by nothing.
+    #[test]
+    fn the_backlog_generator_offers_an_escalated_issue_again_once_its_cooldown_is_over() {
+        use stella_autonomy::escalation::{
+            EnvCause, EscalationPolicy, EscalationReason, EscalationRecord, stamp,
+        };
+
+        let policy = EscalationPolicy::default();
+        let long_ago =
+            now_unix() - i64::try_from(policy.environmental_cooldown_secs).expect("fits") - 60;
+        let cooled = EscalationRecord {
+            attempts: 1,
+            last_reason: EscalationReason::Environmental(EnvCause::StuckLoop),
+            last_at: "2026-09-02T00:00:00Z".to_owned(),
+            last_at_unix: long_ago,
+        };
+        let spent = EscalationRecord {
+            attempts: policy.park_after,
+            ..cooled.clone()
+        };
+
+        let body = "## What happens\nThe environment was stale.\n";
+        let provider = FixtureProvider::with(vec![
+            issue(
+                "17",
+                &["feature", "P1", stella_autonomy::ESCALATION_LABEL],
+                &stamp(body, &cooled),
+            ),
+            issue(
+                "18",
+                &["feature", "P1", stella_autonomy::ESCALATION_LABEL],
+                &stamp(body, &spent),
+            ),
+        ]);
+
+        let keys = ready_keys(&provider, &LoopConfig::default()).expect("fixture read");
+        assert_eq!(
+            keys,
+            vec!["17".to_owned()],
+            "a cooled environmental escalation returns; one out of attempts stays parked"
+        );
+        assert_eq!(
+            provider.writes(),
+            0,
+            "requeueing must cost no label surgery and no tracker write"
         );
     }
 

@@ -51,6 +51,9 @@ pub(crate) struct LoopConfig {
     pub triage: stella_autonomy::priority::TriagePolicy,
     /// How the loop decides where two operators would decide differently.
     pub doctrine: stella_autonomy::Doctrine,
+    /// How long an escalated issue waits before the loop may take it again,
+    /// and how many escalations end in it being parked for good.
+    pub escalation: stella_autonomy::escalation::EscalationPolicy,
     /// Which checks are allowed to block a merge.
     pub merge: stella_autonomy::BlockingPolicy,
     /// The command that proves a change when CI cannot, and its ceiling.
@@ -74,6 +77,7 @@ impl Default for LoopConfig {
             vocabulary: Vocabulary::default(),
             triage: stella_autonomy::priority::TriagePolicy::default(),
             doctrine: stella_autonomy::Doctrine::default(),
+            escalation: stella_autonomy::escalation::EscalationPolicy::default(),
             merge: stella_autonomy::BlockingPolicy::default(),
             verify_command: None,
             verify_timeout_secs: 1800,
@@ -101,6 +105,7 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         vocabulary: vocabulary_for(root, &parsed.issues),
         triage: parsed.self_driving.triage.policy(),
         doctrine: parsed.self_driving.doctrine,
+        escalation: parsed.self_driving.escalation,
         merge: parsed.self_driving.merge.policy(),
         verify_command: parsed.self_driving.verify.command.clone(),
         verify_timeout_secs: parsed.self_driving.verify.timeout_secs.unwrap_or(1800),

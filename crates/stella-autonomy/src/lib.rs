@@ -56,6 +56,7 @@ mod closure;
 mod convention;
 mod deliver;
 mod doctrine;
+pub mod escalation;
 pub mod gate;
 pub mod priority;
 pub mod ready;

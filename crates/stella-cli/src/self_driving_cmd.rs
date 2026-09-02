@@ -287,6 +287,10 @@ pub(crate) enum SelfDrivingCmd {
     ///
     /// Written after every step rather than at the end, because a perpetual
     /// loop that only reported on exit would never report at all.
+    ///
+    /// `escalated` and `parked` are different news. An escalated issue is on
+    /// a cooldown and comes back on its own; a parked one has used up its
+    /// attempts and is waiting on a person.
     Stats {
         /// Output format.
         #[arg(long, value_enum, default_value = "text")]

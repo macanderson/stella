@@ -99,6 +99,10 @@ pub(super) fn session_stats(st: &LoopState, format: QueryFormat) -> Result<(), S
     println!("  no change       {:>5}", stats.issues_no_change);
     println!("  failed          {:>5}", stats.issues_failed);
     println!("  escalated       {:>5}", stats.issues_escalated);
+    println!(
+        "  parked          {:>5}   out of attempts; the loop will not take them again",
+        stats.issues_parked
+    );
     println!("  deferred        {:>5}", stats.issues_deferred);
 
     println!("\nfiled");
@@ -290,6 +294,7 @@ mod tests {
         assert_eq!(stats.issues_claimed, 0);
         assert_eq!(stats.issues_deferred, 0);
         assert_eq!(stats.issues_escalated, 0);
+        assert_eq!(stats.issues_parked, 0);
         assert_eq!(stats.verified_locally, 0);
         assert_eq!(stats.prs_opened, 0);
     }

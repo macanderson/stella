@@ -163,7 +163,9 @@ Asking a loop to stop when it's already stopping is not an error. The output tel
 
 ### stats
 
-`stella self-driving stats` shows what a session has done so far: issues claimed, attempted, changed, failed, escalated, and deferred; issues created, refused, and marked as duplicates; issues closed, broken down by how they were closed; pull requests opened, merged, and escalated; fixes, rebases, and time spent waiting on a broken base branch; reflections, memories, and proposals written; and turns run, including turns stopped by their limit.
+`stella self-driving stats` shows what a session has done so far: issues claimed, attempted, changed, failed, escalated, parked, and deferred; issues created, refused, and marked as duplicates; issues closed, broken down by how they were closed; pull requests opened, merged, and escalated; fixes, rebases, and time spent waiting on a broken base branch; reflections, memories, and proposals written; and turns run, including turns stopped by their limit.
+
+**Escalated and parked are different news.** An escalated issue is on a cooldown: the loop could not finish it this time, wrote down why, and will take it again by itself once enough time has passed. Nobody has to remove the `agent-escalated` label. A parked issue has used up its attempts, and the loop will never take it again — that one is waiting on a person. A break in the machine (a stale checkout, a provider outage, a failed install) comes back in minutes; work the loop genuinely could not do waits hours. Set all three numbers under `[self_driving.escalation]` in `stella.toml`.
 
 stella writes these stats after **every step**, not just at the end. Since the loop never stops on its own, a report written only on exit would never get written at all — the point is a record you can read while the loop is still running. Each write is atomic, so a dashboard reading the file mid-write always sees the last complete version, never a half-written one.
 

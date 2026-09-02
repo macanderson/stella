@@ -55,6 +55,14 @@ pub struct SessionStats {
     pub issues_failed: u32,
     /// Issues marked `agent-escalated` — tried, unresolved, handed back.
     pub issues_escalated: u32,
+    /// Escalations that used up the last attempt, so the issue is parked
+    /// and the loop will not take it again.
+    ///
+    /// A subset of `issues_escalated`, counted apart because the two are
+    /// different news: an escalation is a pause, and this is the end of
+    /// one. Without it a reader cannot tell a backlog the loop is still
+    /// working through from one it has permanently given up on.
+    pub issues_parked: u32,
     /// Issues skipped because something else appeared to be working them.
     pub issues_deferred: u32,
 
@@ -258,6 +266,10 @@ mod tests {
         ("issues_no_change", "drive.rs — WorkOutcome::NoChange"),
         ("issues_failed", "drive.rs — WorkOutcome::Failed"),
         ("issues_escalated", "drive.rs — handed back to a human"),
+        (
+            "issues_parked",
+            "drive/triage.rs — the last attempt was spent",
+        ),
         (
             "issues_deferred",
             "drive.rs — a peer had it, or it would not start",

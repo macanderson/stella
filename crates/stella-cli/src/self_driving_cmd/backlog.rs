@@ -21,6 +21,7 @@
 //! backlog one cycle drew its batch from. One read, one definition, folded two
 //! ways.
 
+use stella_autonomy::escalation::{self, EscalationPolicy, EscalationRecord};
 use stella_autonomy::{BacklogConvention, Conformance, Demand, Violation, conform, finding_digest};
 use stella_protocol::issue::{IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider};
 
@@ -507,13 +508,6 @@ pub(super) fn file_deploy_breakage(
         .map_err(|error| error.to_string())
 }
 
-/// Mark an issue as one the loop tried and could not resolve, and say why.
-///
-/// Both halves matter. The label is what the next run reads, so it stops
-/// spending on a wall it has already hit; the comment is what a **human**
-/// reads, and without it the label is an accusation with no evidence — an
-/// issue sitting there marked unresolvable by a machine that did not say what
-/// went wrong is worse than one that was never attempted.
 /// [`escalate`] for a synchronous caller.
 ///
 /// The driver's arms are synchronous and each awaited port call would
@@ -523,37 +517,85 @@ pub(super) fn escalate_blocking(
     provider: &dyn IssueProvider,
     key: &str,
     why: &str,
+    body: &str,
+    policy: &EscalationPolicy,
     signature: &str,
-) -> Result<(), String> {
+) -> Result<EscalationRecord, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
     runtime
-        .block_on(escalate(provider, &IssueKey::from(key), why, signature))
+        .block_on(escalate(
+            provider,
+            &IssueKey::from(key),
+            why,
+            body,
+            policy,
+            signature,
+        ))
         .map_err(|error| error.to_string())
 }
 
+/// Mark an issue as one the loop tried and could not resolve, and say why.
+///
+/// Three writes, each for a different reader. The label is the marker a
+/// **person** scans for. The comment is what that person reads to learn what
+/// went wrong — without it the label is an accusation with no evidence. The
+/// record stamped into the body is what the **next run** reads: how many
+/// times this has happened, why the last one did, and when.
+///
+/// The record goes in the body rather than in a comment because the queue
+/// read already carries every body (`ready::fold_ready`), so a cooldown
+/// costs no extra call to the tracker. It is an HTML comment, so nobody
+/// reading the rendered issue sees it.
+///
+/// Returns the record it wrote, so the caller can count an issue that has
+/// just used up its last attempt.
 pub(super) async fn escalate(
     provider: &dyn IssueProvider,
     key: &IssueKey,
     why: &str,
+    body: &str,
+    policy: &EscalationPolicy,
     signature: &str,
-) -> Result<(), IssueError> {
+) -> Result<EscalationRecord, IssueError> {
+    let record = escalation::next(
+        escalation::parse(body).as_ref(),
+        escalation::classify(why),
+        &crate::timefmt::rfc3339_utc_now(),
+        crate::timefmt::now_unix(),
+    );
+
     provider
         .relabel(key, &[stella_autonomy::ESCALATION_LABEL.to_owned()], &[])
         .await?;
+    provider
+        .edit(key, None, Some(&escalation::stamp(body, &record)))
+        .await?;
 
-    let body = format!(
+    let next_step = match escalation::retry_after(&record, policy) {
+        Some(wait) => format!(
+            "The loop will take it again by itself in about {} minutes, once \
+             the cooldown is over. Nobody has to remove the label.",
+            wait.as_secs() / 60
+        ),
+        None => format!(
+            "That was attempt {} of {}, so the loop will not take it again. \
+             It is waiting on a person now.",
+            record.attempts, policy.park_after
+        ),
+    };
+    let note = format!(
         "This loop attempted this issue and could not resolve it, so it is \
-         labelled `{}` and will be skipped by later runs.\n\n\
+         labelled `{}`.\n\n\
          What happened: {why}\n\n\
-         The work is still wanted — this is not a closure. Remove the label to \
-         put it back in the queue, once whatever stopped the attempt has \
-         changed.",
+         {next_step}\n\n\
+         The work is still wanted — this is not a closure.",
         stella_autonomy::ESCALATION_LABEL
     );
-    comment(provider, key, &body, signature).await
+    comment(provider, key, &note, signature).await?;
+    Ok(record)
 }
 
 /// Close an issue with a receipt naming the evidence, signed.
@@ -756,18 +798,28 @@ mod tests {
     struct FixtureProvider {
         open: Vec<Issue>,
         filed: std::sync::Mutex<Vec<IssueDraft>>,
+        edited: std::sync::Mutex<Vec<String>>,
+        labelled: std::sync::Mutex<Vec<String>>,
     }
 
     impl FixtureProvider {
         fn with(open: Vec<Issue>) -> Self {
             Self {
                 open,
-                filed: std::sync::Mutex::new(Vec::new()),
+                ..Self::default()
             }
         }
 
         fn filed(&self) -> Vec<IssueDraft> {
             self.filed.lock().expect("fixture lock").clone()
+        }
+
+        fn edited(&self) -> Vec<String> {
+            self.edited.lock().expect("fixture lock").clone()
+        }
+
+        fn labelled(&self) -> Vec<String> {
+            self.labelled.lock().expect("fixture lock").clone()
         }
     }
 
@@ -803,9 +855,13 @@ mod tests {
         async fn relabel(
             &self,
             _key: &IssueKey,
-            _add: &[String],
+            add: &[String],
             _remove: &[String],
         ) -> Result<(), IssueError> {
+            self.labelled
+                .lock()
+                .expect("fixture lock")
+                .extend(add.iter().cloned());
             Ok(())
         }
 
@@ -813,8 +869,14 @@ mod tests {
             &self,
             _key: &IssueKey,
             _title: Option<&str>,
-            _body: Option<&str>,
+            body: Option<&str>,
         ) -> Result<(), IssueError> {
+            if let Some(body) = body {
+                self.edited
+                    .lock()
+                    .expect("fixture lock")
+                    .push(body.to_owned());
+            }
             Ok(())
         }
     }
@@ -1310,6 +1372,67 @@ mod tests {
             &stella_autonomy::Attribution::default(),
         );
         assert!(outcome.is_err(), "{outcome:?}");
+    }
+
+    /// **The escalation-record witness.** Escalating writes the label a
+    /// person reads *and* a record the next run reads: the count,
+    /// the reason, and the moment. A second escalation on the stamped body
+    /// carries the count forward rather than starting over, which is what
+    /// makes parking reachable.
+    #[test]
+    fn escalating_stamps_a_record_the_next_run_can_read() {
+        let provider = FixtureProvider::default();
+        let policy = stella_autonomy::escalation::EscalationPolicy::default();
+
+        let first = escalate_blocking(
+            &provider,
+            "17",
+            "the turn exited 1 — the same `bash` call with identical arguments \
+             produced byte-identical output every time",
+            "## What happens\nThe environment was stale.\n",
+            &policy,
+            "created by stella*",
+        )
+        .expect("the fixture accepts writes");
+
+        assert_eq!(first.attempts, 1);
+        assert_eq!(
+            first.last_reason,
+            stella_autonomy::escalation::EscalationReason::Environmental(
+                stella_autonomy::escalation::EnvCause::StuckLoop
+            ),
+            "a stuck-loop abort is a broken machine, and it is retried eagerly"
+        );
+        assert_eq!(
+            provider.labelled(),
+            vec![stella_autonomy::ESCALATION_LABEL.to_owned()],
+            "the label stays as the marker a person scans for"
+        );
+
+        let stamped = provider.edited().pop().expect("the body was stamped");
+        assert!(
+            stamped.starts_with("## What happens"),
+            "the issue's own text is kept: {stamped}"
+        );
+        assert_eq!(
+            stella_autonomy::escalation::parse(&stamped).as_ref(),
+            Some(&first),
+            "the record must survive a read of the body it was written into"
+        );
+
+        let second = escalate_blocking(
+            &provider,
+            "17",
+            "the turn ran and could not work out what the issue asks for",
+            &stamped,
+            &policy,
+            "created by stella*",
+        )
+        .expect("the fixture accepts writes");
+        assert_eq!(
+            second.attempts, 2,
+            "the count carries forward, or parking is never reached"
+        );
     }
 
     /// The limit bounds what crosses the port, not what the ranker discards
