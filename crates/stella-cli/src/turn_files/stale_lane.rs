@@ -173,7 +173,8 @@ mod tests {
     fn note_stale_lane_emits_only_for_the_walked_past_shape() {
         let registry = stella_tools::ToolRegistry::new(std::env::temp_dir());
         {
-            let mut board = registry.task_board().lock().unwrap();
+            let handle = registry.task_board();
+            let mut board = handle.lock().unwrap();
             board.create("investigate", None, None);
             board.create("rewrite the chunker", None, None);
             board.set_status("1", TaskStatus::InProgress).unwrap();
