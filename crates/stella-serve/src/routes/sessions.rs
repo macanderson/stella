@@ -14,6 +14,12 @@
 
 use super::*;
 
+// `handle_session_delete`'s only use of the checkpoint port beyond the wire
+// types `super::*` already carries. It routes a failed discard through the
+// same sink the engine's own persist and discard calls use, so the failure
+// gets reported instead of dropped.
+use stella_engine::CheckpointSink;
+
 // ── /v1/sessions: server-owned conversations (#931) ──────────────────────────
 //
 // The handlers are the thin part; the state machine (checkout, settle-back,
@@ -357,10 +363,11 @@ pub(crate) async fn handle_session_delete(
             .json("404 Not Found", &error_body("unknown session"))
             .await;
     };
-    if let Some(turn_id) = sess.live_turn_id() {
+    let live_turn_id = sess.live_turn_id();
+    if let Some(turn_id) = &live_turn_id {
         // Scoped so the registry guard drops before the awaits below; the
         // session's own locks are not held here (`live_turn_id` returned).
-        let removed = { state.turns().remove(&turn_id) };
+        let removed = { state.turns().remove(turn_id) };
         if let Some(entry) = removed {
             // Same three signals as `handle_cancel`: without the step-boundary
             // latch (#1129), a turn deleted mid-compaction kept computing until
@@ -374,10 +381,22 @@ pub(crate) async fn handle_session_delete(
     // The conversation is gone, so its resume point is unreachable work: the
     // key is the session id, and that id now answers `404` everywhere else.
     // Leaving it would make `DELETE` the one operation that grows the store.
-    if let Some(store) = state.checkpoints()
-        && let Ok(key) = crate::checkpoint::CheckpointKey::new(id)
-    {
-        let _ = store.remove(&key);
+    //
+    // This routes the discard through the same `TurnCheckpoint::sink` the
+    // engine's own persist and discard calls use, instead of dropping the
+    // `Result` on the floor. A failing store now reports itself the same
+    // way any other checkpoint failure does: a `CheckpointFailed` event and
+    // a `checkpoints_failed_total` bump. The response still says
+    // `"deleted"`, because the session itself is gone either way. The
+    // reference id is the turn that was live at delete time, if any —
+    // otherwise the session id, stripped of its prefix.
+    if let Some(checkpoint) = state.checkpoint_for(id) {
+        let reference = live_turn_id
+            .as_deref()
+            .unwrap_or_else(|| id.strip_prefix("session-").unwrap_or(id));
+        checkpoint
+            .sink(state.observer().clone(), TurnRef::new(reference))
+            .discard();
     }
     res.json("200 OK", br#"{"status":"deleted"}"#).await
 }
