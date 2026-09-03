@@ -172,7 +172,9 @@ ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
 `prose` exists to judge — alongside the hermetic suites that prove a guard can
 still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
 one does is checked, by `gate-parity` against every `run:` in
-`.github/workflows/`.
+`.github/workflows/`. That workflow's `gate-steps` job — named `gate steps no
+other workflow runs` — is now one of `main`'s required status checks too,
+added after a red run of it merged into `main` and reddened every open PR.
 
 A fifth workflow, `deck-fit.yml`, owns the decks under
 `website/public/presentations/`. Its measurement — every slide against the
@@ -235,8 +237,10 @@ way through, so the hold never blocks its own repair, and an unreachable
 tracker fails **open** because this is the second line of defence and the
 canary's issue is the first. Compiles nothing. `make main-red-hold` asks by
 hand; `make main-red-hold-test` covers it, blocking branch included. Reporting
-becomes holding only when a maintainer adds it to main's required checks —
-a repository setting, not a file in this tree.
+became holding on 2026-09-02, when `main is not known-broken` joined `main`'s
+required status checks: a throwaway PR went red and unmergeable while a
+hand-filed, `main-red`-labelled issue stood, and green again once
+`unblocks-main` landed on it.
 
 The chain has a third link, and it is not a workflow: **before you repair a
 red `main`, check whether somebody already is.** On 2026-08-24 three sessions
@@ -433,12 +437,15 @@ and aborts the push if it fails. The point is *when* it fails: on your machine,
 in thirty seconds, instead of an hour into `ci.yml` and a review round-trip.
 It is advisory and per-clone (bypassable with `SKIP_GATE=1 git push` or
 `git push --no-verify`), so it complements the required server-side checks
-rather than replacing them — with `enforce_admins` off, an admin or auto-merge
-can still land gate-failing code, and the hook is what catches that on the
-author's push. `main-red-hold.yml` catches the *next* merge rather than that
-one, and only once a maintainer adds it to main's required checks; nothing in
-this tree can stop the first (#3887). It is also the only place some guards run
-for long stretches:
+rather than replacing them. Before 2026-09-02, `enforce_admins` was off, so an
+admin or auto-merge could still land gate-failing code, and the hook was the
+only thing that caught that on the author's push. That gap is closed:
+`enforce_admins` is on, an admin cannot merge past a red required check, and
+branch protection is the backstop rather than the hook. `main-red-hold.yml`
+now blocks the merge it once only reported, because `main is not
+known-broken` and `gate steps no other workflow runs` both joined the
+required contexts in the same change. It is also the only place some guards
+run for long stretches:
 `wire-schema` lived only in `make gate` until #1185 merged with stale generated
 artifacts. When Actions is unavailable entirely (an org billing hold has
 happened before — see RELEASING.md's local-release path), it is the only gate
@@ -450,9 +457,10 @@ nothing and says nothing. So every rung of the ladder below ends by checking
 `core.hooksPath` and printing a notice when it is not `.githooks`
 (`scripts/check-hooks-installed.sh`) — silent when installed, and never a
 failure, because it is a fact about the clone rather than about the change.
-That is the cheap half of #3887, whose expensive half — whether an admin merge
-past a red required check is permitted at all — is a repository setting and a
-maintainer's decision, not a file in this tree.
+That is the cheap half of #3887 (#3932, #5587): the expensive half — whether
+an admin merge past a red required check is permitted at all — is decided
+now. `enforce_admins` is on, so it is not permitted, and branch protection
+enforces that rather than any file in this tree.
 
 The hook derives `CARGO_SCOPE` from the pushed diff via
 `scripts/impacted-crates.sh`, so a change confined to one crate compiles and
