@@ -111,7 +111,7 @@ mod tests {
     fn head_spends_its_budget_in_columns() {
         // Eight columns of CJK cut to five. Two glyphs fit, plus the `…`.
         // A char count would keep four glyphs and draw nine columns.
-        assert_eq!(head("符号符号", 5), "符符…");
+        assert_eq!(head("符号符号", 5), "符号…");
         assert_eq!(width(&head("符号符号", 5)), 5);
         assert_eq!(head("符号", 4), "符号");
         assert_eq!(head("abcdef", 4), "abc…");
