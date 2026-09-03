@@ -134,6 +134,14 @@ name, in under a second, naming which task is holding it. Paths you didn't
 declare get claimed automatically on first write, so you're protected even
 for files you didn't think to list.
 
+Shell commands count as writes too. A command line does not say which files
+it will write, so stella looks at the folder before the command runs and
+again after, and claims whatever changed. That covers a
+`sed -i`, a redirect, a formatter, or an install that rewrites a lock file.
+It never blocks the command itself — by then it has already run — so what
+you get is a warning for the next worker. One gap: a folder that is not a
+git repository has nothing to compare, so nothing is claimed there.
+
 <ClaimLockDiagram />
 
 <Callout type="warn">

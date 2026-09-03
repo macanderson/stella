@@ -958,7 +958,10 @@ async fn run_task(
     // Claim-on-first-write (crate::claims): tool-level write claims + the
     // transient build and commit lanes, coordinated across every writer in
     // the workspace. Same holder as the fleet's declared claims — re-entrant.
-    let claims = crate::claims::ClaimTap::new(&committed, claims_store, claim_holder);
+    let claims =
+        crate::claims::ClaimTap::new(&committed, claims_store, claim_holder).with_shell_watch(
+            crate::claims::ShellWatch::for_attempt(task.isolation, SystemGitCli, root),
+        );
     // A fleet worker runs the operator's tool policy and the authorization
     // gate, same as every other driver — an isolated worktree is not a
     // different trust posture. Deliberately NOT `session_stack`:

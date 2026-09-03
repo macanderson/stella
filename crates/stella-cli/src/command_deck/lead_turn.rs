@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use stella_core::ports::{Principal, ToolExecutor};
 use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
+use stella_fleet::SystemGitCli;
 use stella_model::provider::Provider;
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_store::Store;
@@ -22,7 +23,7 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 
 use super::task_tap::{PlanSetup, TaskTap};
 use super::{LEAD, agent, close_turn_stream, forwarder, lead_control, spawn_forwarder};
-use crate::claims::ClaimTap;
+use crate::claims::{ClaimTap, ShellWatch};
 use crate::config::Config;
 use crate::memory::{SessionMemory, TurnFriction};
 use crate::runtime::TokioSleeper;
@@ -102,12 +103,15 @@ pub(super) async fn run_lead_turn(
 
     // Claim-on-first-write over the shared tree (crate::claims): wraps the
     // base executor, so a refused write surfaces as the tool's own error.
-    // Released after the turn settles, cancel included.
+    // Released after the turn settles, cancel included. The lead shares one
+    // tree with every worker lane and with any other process in the
+    // workspace, so its shell writes are watched too.
     let claims = ClaimTap::new(
         base_tools,
         execution.as_ref().map(|(store, _)| store.clone()),
         claim_holder,
-    );
+    )
+    .with_shell_watch(Some(ShellWatch::new(SystemGitCli, &cfg.workspace_root)));
     // Registry-born events (task board, sub-agent lifecycle) and this turn's
     // per-call work-tree measurement both ride this turn's channel. The sender
     // it hands back is the one the engine runs through below, so the board tag
