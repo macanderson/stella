@@ -398,7 +398,7 @@ pub struct TurnState {
     /// How long this turn's steps have been taking: the last model call, and
     /// the last whole step. The deadline reserve reads the whole step, and
     /// the length-continuation forecast reads the call
-    /// ([`StepPace`](crate::driver::step_pace::StepPace)).
+    /// ([`StepPace`]).
     pub(crate) pace: StepPace,
     /// Steps since the [`SteeringRequery`](crate::ports::SteeringRequery)
     /// port last answered — the `since_last_query` half of the hysteresis
