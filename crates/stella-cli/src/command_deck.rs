@@ -1588,7 +1588,7 @@ pub async fn run_deck_session(
                             )
                             && !service_undo_delete(&other, &workspace_path, &in_tx)
                             && !service_reject_memory(&other, &workspace_path, &in_tx)
-                            && !service_edit_memory(&other, &workspace_path, &in_tx)
+                            && !service_edit_memory(&other, &workspace_path, &in_tx).await
                             && !inspect_service::service_inspect_action(
                                 &other,
                                 &store,
@@ -2292,7 +2292,7 @@ pub async fn run_deck_session(
                         // edit that waited would be recalled in its old words
                         // by the very turn the reader is watching.
                         Some(input @ WorkspaceInput::EditMemory { .. }) => {
-                            service_edit_memory(&input, &workspace_path, &in_tx);
+                            service_edit_memory(&input, &workspace_path, &in_tx).await;
                         }
                         // `r rerun gate` likewise: it answers in words rather
                         // than running anything (`service_rerun_gate`), so

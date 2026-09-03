@@ -183,20 +183,7 @@ pub(super) fn service_undo_delete(
     true
 }
 
-/// Service `x reject` on a memory row: tombstone that memory so it stops
-/// being recalled and the reflection loop stops re-learning it. Returns `true`
-/// if `input` was the reject verb (so the caller skips its own dispatch). A
-/// cheap local SQLite write, serviced identically idle or mid-turn — and
-/// answered either way with an [`Inbound::Notice`], because a rejection that
-/// says nothing leaves the reader unsure whether the key registered.
-///
-/// The tombstone is written with the memory's **text** as well as its id, and
-/// that is the half that makes the rejection durable: the reflection loop
-/// re-mines paraphrases of lessons it already learned, so a tombstone keyed on
-/// the id alone would be undone by the next turn that re-learned the same
-/// lesson under a fresh one. `Store::forget` compares candidates against the
-/// content copied in here.
-/// `e edit` on a memory row: replace its words, keeping the lineage (#5231).
+/// Service `e edit` on a memory row: replace its words, keeping the lineage.
 ///
 /// Drives the same path `stella memory edit <id> <text>` does — a new revision
 /// on the same lineage, so the old words stop being served and the id does not
@@ -206,7 +193,12 @@ pub(super) fn service_undo_delete(
 /// Reports its failure for the reason `service_reject_memory` does: an edit
 /// that did not land leaves the OLD words steering later turns, and a silent
 /// failure would leave the reader believing the opposite.
-pub(super) fn service_edit_memory(
+///
+/// Alone among the services here it is async. The write goes through the
+/// context store, and that store's write is async. The loop this runs on
+/// already drives a runtime, so a `block_on` here would panic and end the
+/// session.
+pub(super) async fn service_edit_memory(
     input: &WorkspaceInput,
     workspace: &str,
     in_tx: &UnboundedSender<Inbound>,
@@ -216,6 +208,7 @@ pub(super) fn service_edit_memory(
     };
     let notice =
         match crate::memory_cmd::edit_memory_text(std::path::Path::new(workspace), memory_id, text)
+            .await
         {
             Ok(_) => format!("edited {memory_id} — later turns recall the new words"),
             Err(why) => format!("could not edit {memory_id}: {why}"),
@@ -224,6 +217,18 @@ pub(super) fn service_edit_memory(
     true
 }
 
+/// Service `x reject` on a memory row: tombstone that memory so it stops
+/// being recalled and the reflection loop stops re-learning it. Returns `true`
+/// if `input` was the reject verb (so the caller skips its own dispatch). A
+/// cheap local SQLite write, serviced identically idle or mid-turn — and
+/// answered either way with an [`Inbound::Notice`], because a rejection that
+/// says nothing leaves the reader unsure whether the key registered.
+///
+/// The tombstone carries the memory's **text** as well as its id. That is what
+/// makes a rejection stick. The reflection loop re-mines lessons it has
+/// already learned, so a tombstone keyed on the id alone would be undone by
+/// the next turn that learned the same lesson under a new id. `Store::forget`
+/// compares each candidate against the text copied in here.
 pub(super) fn service_reject_memory(
     input: &WorkspaceInput,
     workspace: &str,

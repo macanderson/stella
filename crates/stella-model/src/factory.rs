@@ -159,11 +159,11 @@ pub fn check_seed_floor(spec: &ProviderSpec<'_>, model_id: &str) -> Result<(), S
 /// arms consume (they build region/project-scoped URLs themselves).
 ///
 /// `aux` carries the values a provider needs *beyond* `api_key`, already
-/// resolved through whatever chain the host owns — Bedrock's AWS secret
-/// access key, optional session token, and region today; empty for every
-/// other dialect. An empty set is not an error: the Bedrock arm falls back to
-/// the standard AWS environment variables, which is exactly what it did
-/// before hosts could resolve them.
+/// resolved through whatever chain the host owns — Bedrock's AWS secret access
+/// key, optional session token and region, and Vertex's GCP project and
+/// location; empty for every other dialect. An empty set is not an error: both
+/// arms fall back to the standard environment variables, which is exactly what
+/// they did before hosts could resolve them.
 ///
 /// Runs [`check_seed_floor`] first — no caller can skip the anti-phantom-slug
 /// floor by going through this function.
@@ -199,9 +199,12 @@ pub fn build_provider(
             // credential chain); project and location are Vertex-specific
             // addressing, owned by `crate::credential` so a second host of the
             // engine gets the same variable names, the same fallback order,
-            // and the same named errors without copying them.
-            let addressing =
-                crate::credential::VertexAddressing::resolve().map_err(|e| e.to_string())?;
+            // and the same named errors without copying them. They arrive in
+            // `aux` when the host resolved them through that chain and fall
+            // back to the environment when it did not, so two sessions in one
+            // process can name two GCP projects.
+            let addressing = crate::credential::VertexAddressing::resolve_with(aux)
+                .map_err(|e| e.to_string())?;
             let mut provider = crate::vertex::VertexProvider::new(
                 api_key,
                 model_id.to_string(),
@@ -274,6 +277,13 @@ pub fn build_provider(
 mod tests {
     use super::*;
     use crate::credential::AuxCredentials;
+    use stella_protocol::{CompletionMessage, CompletionRequest};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Two tenants whose project ids appear nowhere in this process's
+    /// environment, so only a host-supplied value can produce them.
+    const TENANTS: &[&str] = &["tenant-a", "tenant-b"];
 
     fn spec(id: &'static str, dialect: Dialect, seeded: bool) -> ProviderSpec<'static> {
         ProviderSpec {
@@ -402,6 +412,68 @@ mod tests {
             err.contains("AWS_SECRET_ACCESS_KEY"),
             "the error must name the missing variable, got: {err}"
         );
+    }
+
+    /// Two sessions in one process, two GCP projects.
+    ///
+    /// Which project an adapter addresses is visible only on the wire — a
+    /// `Box<dyn Provider>` reports its id and nothing about its addressing — so
+    /// each adapter is pointed at one mock that answers its own project-scoped
+    /// path and nothing else. Neither tenant name exists anywhere in this
+    /// process's environment, so an adapter reading the project from
+    /// `std::env` misses both mocks and the call fails.
+    #[tokio::test]
+    async fn two_vertex_sessions_in_one_process_address_two_projects() {
+        let server = MockServer::start().await;
+        for tenant in TENANTS {
+            let body = format!(
+                "data: {{\"candidates\":[{{\"finishReason\":\"STOP\",\
+                 \"content\":{{\"parts\":[{{\"text\":\"{tenant}\"}}]}}}}],\
+                 \"usageMetadata\":{{\"promptTokenCount\":1,\"candidatesTokenCount\":1}}}}\n\n"
+            );
+            Mock::given(method("POST"))
+                .and(path(format!(
+                    "/v1/projects/{tenant}/locations/global/publishers/google/models/\
+                     gemini-3-pro:streamGenerateContent"
+                )))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+                .mount(&server)
+                .await;
+        }
+
+        for tenant in TENANTS {
+            let mut aux = AuxCredentials::new();
+            aux.insert("VERTEX_PROJECT_ID", *tenant);
+            aux.insert("VERTEX_LOCATION", "global");
+            let provider = build_provider(
+                &spec("vertex", Dialect::Vertex, true),
+                "gemini-3-pro",
+                key(),
+                server.uri(),
+                // The Vertex arm builds its own project-scoped URL, so the
+                // raw override is what it reads.
+                Some(&server.uri()),
+                &aux,
+            )
+            .unwrap_or_else(|e| panic!("vertex constructs for {tenant}: {e}"));
+
+            let result = provider
+                .complete(CompletionRequest {
+                    messages: vec![CompletionMessage::user("hi")],
+                    max_output_tokens: None,
+                    temperature: None,
+                    effort: None,
+                    tools: vec![],
+                    reasoning: None,
+                    params: None,
+                })
+                .await
+                .unwrap_or_else(|e| panic!("{tenant} must reach its own project's path: {e}"));
+            assert_eq!(
+                result.text, *tenant,
+                "the adapter answered from the wrong project's mock"
+            );
+        }
     }
 
     #[test]

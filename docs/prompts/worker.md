@@ -37,7 +37,7 @@ runs on the worker's resolved provider.
 ```
 base persona            SYSTEM_PROMPT | PIPELINE_SYSTEM_PROMPT | agents.<kind>.prompt
 + session environment   append_session_environment
-+ workspace memories    append_workspace_memories     ≤ 16,000 chars
++ workspace memories    session_workspace_memories    ≤ 16,000 chars
 + rules section         Channel::Cached render
 ```
 
