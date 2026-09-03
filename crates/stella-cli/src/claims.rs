@@ -36,20 +36,56 @@
 //! the same observability-loss-not-work-stoppage contract as every other
 //! store write.
 //!
-//! Coverage note: the tap sees a mutation only where a tool's schema names
-//! one ([`mutating_path`] / [`transient_lane`] key on tool names). No
-//! built-in declares a per-path mutation or a lane, and an MCP tool can
-//! never match (its wire name carries the `mcp__<server>__` prefix), so this
-//! coverage today reaches only workspace custom tools that adopt those
-//! conventional names; everything else writes outside claim tracking, and
-//! the witness/verify ladder is what covers it.
+//! ## What a claim is taken on
+//!
+//! Two routes, because a tool's writes are knowable at two different moments.
+//!
+//! **Declared**, before the call: [`mutating_path`] reads the path out of the
+//! call's own arguments, and the tap claims it or refuses. It keys on the tool
+//! NAME, so it covers the shipped file tools `write_file`, `edit_file`,
+//! `delete_file` and the conventional `apply_edits`, plus any workspace custom
+//! tool adopting one of those names. An MCP tool can never match — its wire
+//! name carries the `mcp__<server>__` prefix.
+//!
+//! **Observed**, after the call: a shell command's writes cannot be read out
+//! of its arguments, and guessing them from a command line would refuse work
+//! that was safe. So [`ShellWatch`] reads the work tree either side of a
+//! `bash` call (`git status --porcelain -z`) and claims every path that
+//! changed, exactly as the file tools would have. It NEVER refuses — by the
+//! time anything is known the command has already run — so what it buys is the
+//! warning the NEXT writer gets. A path a live rival already holds stays that
+//! rival's.
+//!
+//! The observed route is armed only where writes land in the tree the
+//! coordination store guards: the deck's lead and worker lanes, and a fleet
+//! worker under [`Isolation::SharedTree`]. A worker in its own isolated
+//! worktree has one writer and its own paths, so claiming them in the shared
+//! table would refuse a sibling an edit to a file it cannot even see.
+//!
+//! Three gaps the observed route has, stated so nobody reads more into it:
+//!
+//! - **A workspace that is not a git repository takes no shell claim.** So
+//!   does one where `git` is absent or its index is locked by a concurrent
+//!   command. The snapshot fails, nothing is claimed, and the command runs.
+//! - **Git's own view is the resolution.** An ignored path is invisible, and a
+//!   write that changes neither a file's size nor its modification time reads
+//!   as no write. A command that only moves a path in or out of the dirty set
+//!   — a commit — claims it too; over-claiming costs a rival a wait, and
+//!   under-claiming costs it an overwritten edit.
+//! - **Two `git status` runs are spent per shell call**, tens of milliseconds
+//!   on a repository of a few thousand files.
+//!
+//! [`Isolation::SharedTree`]: stella_fleet::Isolation::SharedTree
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::ports::ToolExecutor;
+use stella_fleet::{GitCli, Isolation};
 use stella_protocol::{ToolOutput, ToolSchema};
 use stella_store::Store;
 
@@ -164,6 +200,140 @@ fn mutating_path<'i>(name: &str, input: &'i Value) -> Option<&'i str> {
     }
 }
 
+/// The tool whose writes are observed after the call rather than declared in
+/// its arguments — the one shell on the built-in surface.
+const SHELL_TOOL: &str = "bash";
+
+/// Watches the work tree across one shell call so what the command turns out
+/// to have written is claimed for its caller.
+pub(crate) struct ShellWatch {
+    git: Box<dyn GitCli>,
+    /// The tree the snapshots are taken in, and the root a claim key is
+    /// relative to.
+    root: PathBuf,
+}
+
+impl ShellWatch {
+    pub(crate) fn new(git: impl GitCli + 'static, root: impl Into<PathBuf>) -> Self {
+        Self {
+            git: Box::new(git),
+            root: root.into(),
+        }
+    }
+
+    /// The watch a fleet attempt gets. A shared-tree worker writes into the
+    /// very tree the coordination store guards, so what its shell turns out
+    /// to have written is claimed for it; an isolated worktree has one writer
+    /// and paths of its own, and claiming those in the shared table would
+    /// refuse a sibling an edit to a file it cannot see.
+    pub(crate) fn for_attempt(
+        isolation: Isolation,
+        git: impl GitCli + 'static,
+        root: impl Into<PathBuf>,
+    ) -> Option<Self> {
+        match isolation {
+            Isolation::SharedTree => Some(Self::new(git, root)),
+            Isolation::Isolated => None,
+        }
+    }
+
+    /// Every path git calls dirty, with the mark that dates it. `None` when
+    /// git could not answer — no `git` on `PATH`, a workspace that is not a
+    /// repository, an index another command holds — and the caller then
+    /// claims nothing rather than guessing.
+    async fn snapshot(&self) -> Option<BTreeMap<String, Mark>> {
+        let out = self
+            .git
+            .run(&self.root, &["status", "--porcelain", "-z"])
+            .await
+            .ok()?;
+        if !out.success {
+            return None;
+        }
+        Some(
+            dirty_paths(&out.stdout)
+                .into_iter()
+                .map(|(status, path)| {
+                    let stamp = stamp(&self.root.join(&path));
+                    (path, Mark { status, stamp })
+                })
+                .collect(),
+        )
+    }
+}
+
+/// One dirty path as of a snapshot: git's two status letters, and the file's
+/// own size and modification time.
+///
+/// The letters alone cannot see the SECOND write to a path — a file already
+/// modified reads ` M` before and after the call — so the stamp is read
+/// beside them. A write that leaves both size and modification time untouched
+/// is still invisible; seeing it would mean hashing the tree on every shell
+/// call, which costs more than the guarantee is worth.
+#[derive(PartialEq, Eq)]
+struct Mark {
+    status: String,
+    stamp: Option<(u64, SystemTime)>,
+}
+
+/// A path's size and modification time, or `None` where it cannot be read — a
+/// deletion, or a root that is not the repository root. The status letters
+/// carry a deletion on their own.
+fn stamp(path: &Path) -> Option<(u64, SystemTime)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
+/// The paths in `git status --porcelain -z` output, each with the two status
+/// letters git gave it.
+///
+/// The `-z` form is `XY <path>` terminated by NUL, and a rename or copy
+/// carries the path it came from as a second NUL-terminated field — `-z`
+/// reverses the arrow form's order, so the entry reads `R  <new>\0<old>\0`.
+/// Both ends are returned: the command wrote one and unwrote the other. An
+/// entry too short to hold `XY ` is skipped rather than guessed at.
+fn dirty_paths(status: &str) -> Vec<(String, String)> {
+    let mut fields = status.split('\0').filter(|field| !field.is_empty());
+    let mut out = Vec::new();
+    while let Some(entry) = fields.next() {
+        let Some((marks, path)) = entry
+            .split_at_checked(2)
+            .and_then(|(marks, rest)| Some((marks, rest.strip_prefix(' ')?)))
+        else {
+            continue;
+        };
+        out.push((marks.to_string(), path.to_string()));
+        if marks.contains(['R', 'C'])
+            && let Some(origin) = fields.next()
+        {
+            out.push((marks.to_string(), origin.to_string()));
+        }
+    }
+    out
+}
+
+/// The paths whose dirty state moved across the call — written, created,
+/// deleted, renamed, or committed. A path in one snapshot and not the other
+/// counts, and so does one whose [`Mark`] changed.
+fn changed(before: &BTreeMap<String, Mark>, after: &BTreeMap<String, Mark>) -> BTreeSet<String> {
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|path| before.get(*path) != after.get(*path))
+        .cloned()
+        .collect()
+}
+
+/// What one acquire settled.
+enum Claimed {
+    /// The path is this tap's.
+    Mine,
+    /// A live rival holds it.
+    Rival,
+    /// The store could not say — coordination degrades, the work continues.
+    Unknown,
+}
+
 /// Wraps a tool executor with claim-on-first-write (see the module doc).
 pub(crate) struct ClaimTap<'a> {
     pub(crate) inner: &'a dyn ToolExecutor,
@@ -176,6 +346,9 @@ pub(crate) struct ClaimTap<'a> {
     /// Paths this tap already claimed (skip the store round-trip on the
     /// second write to the same file).
     held: std::sync::Mutex<HashSet<String>>,
+    /// Set where this writer's shell writes land in the tree the store
+    /// guards; `None` leaves the shell outside claim tracking.
+    shell_watch: Option<ShellWatch>,
 }
 
 impl<'a> ClaimTap<'a> {
@@ -189,6 +362,55 @@ impl<'a> ClaimTap<'a> {
             store,
             holder: holder.into(),
             held: std::sync::Mutex::new(HashSet::new()),
+            shell_watch: None,
+        }
+    }
+
+    /// Claim what a shell call turns out to have written (see the module
+    /// doc). `None` leaves `bash` outside claim tracking.
+    #[must_use]
+    pub(crate) fn with_shell_watch(mut self, watch: Option<ShellWatch>) -> Self {
+        self.shell_watch = watch;
+        self
+    }
+
+    /// The key a path is claimed under: relative to the watched root, so a
+    /// tool naming `<root>/src/lib.rs` and a shell whose write git reports as
+    /// `src/lib.rs` claim one file rather than two.
+    ///
+    /// Git reports a work-tree path relative to the REPOSITORY root, which is
+    /// the workspace root in every layout Stella normally runs in. A workspace
+    /// root nested inside a larger repository keys the two sides differently,
+    /// and only asking git for its top level would settle that.
+    fn claim_key(&self, path: &str) -> String {
+        let trimmed = path.strip_prefix("./").unwrap_or(path);
+        let Some(watch) = &self.shell_watch else {
+            return trimmed.to_string();
+        };
+        match Path::new(trimmed).strip_prefix(&watch.root) {
+            Ok(relative) => relative.to_string_lossy().into_owned(),
+            Err(_) => trimmed.to_string(),
+        }
+    }
+
+    /// Acquire `path` for this tap, reaping a dead holder once and retrying.
+    /// Records the path as held on success, so a second write to the same
+    /// file skips the store entirely.
+    fn claim(&self, store: &Store, path: &str) -> Claimed {
+        if self.already_held(path) {
+            return Claimed::Mine;
+        }
+        let mut acquired = store.acquire_file_lock(path, &self.holder);
+        if matches!(acquired, Ok(false)) && self.reap_dead_holder(store, path) {
+            acquired = store.acquire_file_lock(path, &self.holder);
+        }
+        match acquired {
+            Ok(true) => {
+                self.mark_held(path);
+                Claimed::Mine
+            }
+            Ok(false) => Claimed::Rival,
+            Err(_) => Claimed::Unknown,
         }
     }
 
@@ -257,35 +479,47 @@ impl ToolExecutor for ClaimTap<'_> {
         // Lock on first write: refuse (naming the holder) instead of
         // clobbering a sibling's in-flight work. A conflict is only honored
         // while its holder's process is alive — a dead process's leftover
-        // claim is reaped and the acquire retried once.
-        if let Some(path) = mutating_path(name, input)
-            && !self.already_held(path)
+        // claim is reaped and the acquire retried once. Store trouble is
+        // observability loss, never a work stoppage: it proceeds
+        // uncoordinated.
+        if let Some(path) = mutating_path(name, input) {
+            let path = self.claim_key(path);
+            if matches!(self.claim(store, &path), Claimed::Rival) {
+                let rival = store
+                    .file_lock_holder(&path)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "(released meanwhile)".to_string());
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!(
+                        "`{path}` is currently claimed by `{rival}` — another agent is \
+                         editing it right now. Work on a different file, or retry in a \
+                         moment; the claim releases when that agent's turn ends."
+                    ),
+                );
+            }
+        }
+
+        // Claim on observed write: a shell command's writes are read off the
+        // tree either side of the call, because they cannot be read out of
+        // its arguments. Never a refusal — the command has already run by the
+        // time anything is known — so a path a live rival holds stays that
+        // rival's, and this call's own writes are what the NEXT writer is
+        // warned about.
+        if name == SHELL_TOOL
+            && let Some(watch) = &self.shell_watch
         {
-            let mut acquired = store.acquire_file_lock(path, &self.holder);
-            if matches!(acquired, Ok(false)) && self.reap_dead_holder(store, path) {
-                acquired = store.acquire_file_lock(path, &self.holder);
-            }
-            match acquired {
-                Ok(true) => self.mark_held(path),
-                Ok(false) => {
-                    let rival = store
-                        .file_lock_holder(path)
-                        .ok()
-                        .flatten()
-                        .unwrap_or_else(|| "(released meanwhile)".to_string());
-                    return ToolOutput::classified_error(
-                        stella_protocol::ErrorClass::RefusedByPolicy,
-                        format!(
-                            "`{path}` is currently claimed by `{rival}` — another agent is \
-                             editing it right now. Work on a different file, or retry in a \
-                             moment; the claim releases when that agent's turn ends."
-                        ),
-                    );
+            let before = watch.snapshot().await;
+            let output = self.inner.execute(name, input).await;
+            if let Some(before) = before
+                && let Some(after) = watch.snapshot().await
+            {
+                for path in changed(&before, &after) {
+                    let _ = self.claim(store, &path);
                 }
-                // Store trouble is observability loss, never a work
-                // stoppage — proceed uncoordinated.
-                Err(_) => {}
             }
+            return output;
         }
 
         // A transient lane: bounded-wait serialization so a test run never
@@ -387,6 +621,8 @@ impl ToolExecutor for ClaimTap<'_> {
 
 #[cfg(test)]
 mod tests {
+    use stella_fleet::{GitError, GitOutput};
+
     use super::*;
 
     /// A recording fake: succeeds every call and remembers what ran.
@@ -612,6 +848,310 @@ mod tests {
         );
         // Transient as ever: released again after the call.
         assert!(store.acquire_file_lock(BUILD_CLAIM, "ses-3/lead").unwrap());
+    }
+
+    /// A `git status --porcelain -z` transcript: one scripted answer per
+    /// call, the last repeating once the script runs out — so a two-entry
+    /// script says "the tree before the command, then after it", and a
+    /// one-entry script says "the command changed nothing".
+    struct ScriptedGit(std::sync::Mutex<Vec<GitOutput>>);
+
+    impl ScriptedGit {
+        fn statuses(script: &[&str]) -> Self {
+            Self(std::sync::Mutex::new(
+                script.iter().map(|out| GitOutput::ok(*out)).collect(),
+            ))
+        }
+
+        fn refusing(stderr: &str) -> Self {
+            Self(std::sync::Mutex::new(vec![GitOutput::failed(128, stderr)]))
+        }
+    }
+
+    #[async_trait]
+    impl GitCli for ScriptedGit {
+        async fn run(&self, _repo: &Path, args: &[&str]) -> Result<GitOutput, GitError> {
+            assert_eq!(
+                args,
+                ["status", "--porcelain", "-z"].as_slice(),
+                "the watch spends one git command per snapshot"
+            );
+            let mut script = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            Ok(if script.len() > 1 {
+                script.remove(0)
+            } else {
+                script
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| GitOutput::ok(String::new()))
+            })
+        }
+    }
+
+    /// A shell stand-in that rewrites a file, the way a redirect would.
+    struct RewritesAFile(PathBuf);
+
+    #[async_trait]
+    impl ToolExecutor for RewritesAFile {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            std::fs::write(&self.0, "one line and then another").unwrap();
+            ToolOutput::Ok {
+                content: "ok".into(),
+                data: None,
+            }
+        }
+    }
+
+    /// The witness for claim-on-observed-write. Session A edits a path through
+    /// the shell — the call's arguments name no path, so nothing could be
+    /// claimed up front — and the tree says what happened afterwards. Session
+    /// B's `edit_file` on that path is then refused, naming A. Without the
+    /// observed route the shell takes no claim at all: `file_locks` stays
+    /// empty and B writes straight over A.
+    #[tokio::test]
+    async fn a_shell_write_is_claimed_and_the_next_writer_is_refused_by_name() {
+        let store = store();
+        let inner_a = Passthrough(Default::default());
+        let inner_b = Passthrough(Default::default());
+        let a = ClaimTap::new(&inner_a, Some(store.clone()), "ses-1/lead").with_shell_watch(Some(
+            ShellWatch::new(ScriptedGit::statuses(&["", " M src/x.rs\0"]), "/repo"),
+        ));
+        let b = ClaimTap::new(&inner_b, Some(store.clone()), "ses-2/lead");
+
+        let shell = a
+            .execute(
+                "bash",
+                &serde_json::json!({ "command": "echo x >> src/x.rs" }),
+            )
+            .await;
+        assert!(!shell.is_error(), "the shell is never refused by the tap");
+        assert_eq!(
+            store.file_lock_holder("src/x.rs").unwrap(),
+            Some("ses-1/lead".to_string()),
+            "the path the command turned out to write is claimed for its caller"
+        );
+
+        match b
+            .execute("edit_file", &serde_json::json!({ "path": "src/x.rs" }))
+            .await
+        {
+            ToolOutput::Error { message, .. } => {
+                assert!(message.contains("ses-1/lead"), "{message}");
+                assert!(message.contains("src/x.rs"), "{message}");
+            }
+            other => panic!("the next writer must be refused, got {other:?}"),
+        }
+    }
+
+    /// A read-only command claims nothing — including a path that was already
+    /// dirty when it ran.
+    #[tokio::test]
+    async fn a_shell_command_that_writes_nothing_claims_nothing() {
+        let store = store();
+        let inner = Passthrough(Default::default());
+        let tap = ClaimTap::new(&inner, Some(store.clone()), "ses-1/lead").with_shell_watch(Some(
+            ShellWatch::new(ScriptedGit::statuses(&[" M src/x.rs\0"]), "/repo"),
+        ));
+
+        assert!(
+            !tap.execute("bash", &serde_json::json!({ "command": "ls" }))
+                .await
+                .is_error()
+        );
+        assert_eq!(store.file_lock_holder("src/x.rs").unwrap(), None);
+    }
+
+    /// A command that takes a path back OUT of the dirty set — `git checkout
+    /// -- x` — wrote it too, and is claimed on the way out.
+    #[tokio::test]
+    async fn a_path_leaving_the_dirty_set_is_claimed_as_a_write() {
+        let store = store();
+        let inner = Passthrough(Default::default());
+        let tap = ClaimTap::new(&inner, Some(store.clone()), "ses-1/lead").with_shell_watch(Some(
+            ShellWatch::new(ScriptedGit::statuses(&[" M src/x.rs\0", ""]), "/repo"),
+        ));
+
+        assert!(
+            !tap.execute(
+                "bash",
+                &serde_json::json!({ "command": "git checkout -- src/x.rs" })
+            )
+            .await
+            .is_error()
+        );
+        assert_eq!(
+            store.file_lock_holder("src/x.rs").unwrap(),
+            Some("ses-1/lead".to_string())
+        );
+    }
+
+    /// The false-refusal direction, which the design makes structurally
+    /// impossible: the command has already run, so a rival's claim can be
+    /// reported but never enforced. The shell is not refused, and the rival
+    /// keeps the path.
+    #[tokio::test]
+    async fn a_shell_write_onto_a_rivals_claim_is_never_refused() {
+        let store = store();
+        let live_rival = format!("ses-1753-{}/lead", std::process::id());
+        store.acquire_file_lock("src/x.rs", &live_rival).unwrap();
+        let inner = Passthrough(Default::default());
+        let tap = ClaimTap::new(&inner, Some(store.clone()), "ses-2/lead").with_shell_watch(Some(
+            ShellWatch::new(ScriptedGit::statuses(&["", " M src/x.rs\0"]), "/repo"),
+        ));
+
+        assert!(
+            !tap.execute(
+                "bash",
+                &serde_json::json!({ "command": "sed -i s/a/b/ src/x.rs" })
+            )
+            .await
+            .is_error()
+        );
+        assert_eq!(
+            inner.0.lock().unwrap().join(","),
+            "bash",
+            "the command reached the shell"
+        );
+        assert_eq!(
+            store.file_lock_holder("src/x.rs").unwrap(),
+            Some(live_rival),
+            "first claim wins: the rival keeps the path it holds"
+        );
+    }
+
+    /// A workspace that is not a git repository — or a git that will not
+    /// answer — claims nothing and loses no work.
+    #[tokio::test]
+    async fn a_workspace_git_cannot_read_claims_nothing_and_still_runs_the_command() {
+        let store = store();
+        let inner = Passthrough(Default::default());
+        let tap = ClaimTap::new(&inner, Some(store.clone()), "ses-1/lead").with_shell_watch(Some(
+            ShellWatch::new(
+                ScriptedGit::refusing("fatal: not a git repository"),
+                "/tmp/plain",
+            ),
+        ));
+
+        assert!(
+            !tap.execute("bash", &serde_json::json!({ "command": "echo x > x.rs" }))
+                .await
+                .is_error()
+        );
+        assert_eq!(inner.0.lock().unwrap().join(","), "bash");
+        assert_eq!(store.file_lock_holder("x.rs").unwrap(), None);
+    }
+
+    /// An unwatched tap — a fleet worker in its own isolated worktree — leaves
+    /// the shell outside claim tracking, as every tap did before this route.
+    #[tokio::test]
+    async fn an_unwatched_shell_claims_nothing() {
+        let store = store();
+        let inner = Passthrough(Default::default());
+        let tap = ClaimTap::new(&inner, Some(store.clone()), "ses-1/lead");
+
+        assert!(
+            !tap.execute(
+                "bash",
+                &serde_json::json!({ "command": "echo x > src/x.rs" })
+            )
+            .await
+            .is_error()
+        );
+        assert_eq!(store.file_lock_holder("src/x.rs").unwrap(), None);
+    }
+
+    /// The second write to a path that was ALREADY modified: git's status
+    /// letters read ` M` on both sides of the call, so the file's own size
+    /// and modification time are what carry the change.
+    #[tokio::test]
+    async fn a_second_write_to_an_already_dirty_path_is_still_claimed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("x.rs"), "one line").unwrap();
+        let store = store();
+        let inner = RewritesAFile(dir.path().join("x.rs"));
+        let tap = ClaimTap::new(&inner, Some(store.clone()), "ses-1/lead").with_shell_watch(Some(
+            ShellWatch::new(ScriptedGit::statuses(&[" M x.rs\0"]), dir.path()),
+        ));
+
+        assert!(
+            !tap.execute(
+                "bash",
+                &serde_json::json!({ "command": "sed -i s/a/b/ x.rs" })
+            )
+            .await
+            .is_error()
+        );
+        assert_eq!(
+            store.file_lock_holder("x.rs").unwrap(),
+            Some("ses-1/lead".to_string())
+        );
+    }
+
+    /// Both routes key one file the same way: git reports a work-tree path
+    /// relative to the repository root, and a tool naming the same file
+    /// absolutely must meet that claim rather than open a second one.
+    #[tokio::test]
+    async fn an_absolute_tool_path_meets_the_shells_repo_relative_claim() {
+        let store = store();
+        let inner_a = Passthrough(Default::default());
+        let inner_b = Passthrough(Default::default());
+        let a = ClaimTap::new(&inner_a, Some(store.clone()), "ses-1/lead").with_shell_watch(Some(
+            ShellWatch::new(ScriptedGit::statuses(&["", " M src/x.rs\0"]), "/repo"),
+        ));
+        let b = ClaimTap::new(&inner_b, Some(store.clone()), "ses-2/lead")
+            .with_shell_watch(Some(ShellWatch::new(ScriptedGit::statuses(&[""]), "/repo")));
+
+        assert!(
+            !a.execute(
+                "bash",
+                &serde_json::json!({ "command": "echo x > /repo/src/x.rs" })
+            )
+            .await
+            .is_error()
+        );
+        match b
+            .execute(
+                "edit_file",
+                &serde_json::json!({ "path": "/repo/src/x.rs" }),
+            )
+            .await
+        {
+            ToolOutput::Error { message, .. } => {
+                assert!(message.contains("ses-1/lead"), "{message}")
+            }
+            other => panic!("the absolute spelling must meet the claim, got {other:?}"),
+        }
+    }
+
+    /// The exact shape git writes, captured from `git status --porcelain -z`
+    /// on this repository: two status letters, a space, the path, a NUL — and
+    /// a rename carrying the path it came from as a second field, new before
+    /// old.
+    #[test]
+    fn the_z_status_form_is_parsed_including_both_ends_of_a_rename() {
+        let raw = " M crates/stella-cli/src/claims.rs\0?? new.txt\0R  README2.md\0README.md\0";
+        assert_eq!(
+            dirty_paths(raw),
+            vec![
+                (
+                    " M".to_string(),
+                    "crates/stella-cli/src/claims.rs".to_string()
+                ),
+                ("??".to_string(), "new.txt".to_string()),
+                ("R ".to_string(), "README2.md".to_string()),
+                ("R ".to_string(), "README.md".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_entry_too_short_to_carry_a_path_is_skipped_not_guessed() {
+        assert!(dirty_paths("M\0").is_empty());
+        assert!(dirty_paths(" M\0").is_empty());
+        assert!(dirty_paths("").is_empty());
     }
 
     #[tokio::test]

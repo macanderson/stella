@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use stella_core::Engine;
 use stella_core::tasks::SpawnRequest;
+use stella_fleet::SystemGitCli;
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -1089,7 +1090,11 @@ async fn run_worker(
         &*registry,
         execution.as_ref().map(|(store, _)| store.clone()),
         format!("{session_id}/{}", spec.lane),
-    );
+    )
+    .with_shell_watch(Some(crate::claims::ShellWatch::new(
+        SystemGitCli,
+        &cfg.workspace_root,
+    )));
     // A worker's tool surface is the session's built-in/MCP surface, so the
     // operator's switches and the authorization gate apply to it identically
     // — a sub-agent must not be a way to reach a tool the lead was denied.
