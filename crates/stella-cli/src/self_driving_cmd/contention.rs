@@ -149,8 +149,11 @@ fn names_issue(text: &str, key: &str) -> bool {
 /// Remote only at both call sites: a *local* branch of the loop's own is not
 /// another actor, and the branch-collision guard in `work::start` is what
 /// speaks for those.
+///
+/// It is also the only cheap signal that reaches another machine. So the deck
+/// pushes the branch its start-work opens, and its test reads this function.
 #[must_use]
-pub(super) fn branches_naming(ls_remote: &str, key: &str) -> Vec<String> {
+pub(crate) fn branches_naming(ls_remote: &str, key: &str) -> Vec<String> {
     ls_remote
         .lines()
         // The ref first, then the test. `git ls-remote` prints

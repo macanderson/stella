@@ -367,6 +367,8 @@ The single best demo moment: an issue becomes a plan while the user watches, and
 6. Action row: `a approve and start · e edit tasks · x cancel`. Footer states plainly: `nothing runs before approval`.
 7. On approval, stella creates the branch, the plan becomes r1 with `[:NEXT]` edges, and the breadcrumb strip updates.
 
+   **Amended.** The approval also pushes that branch to `origin`. A local branch is a claim only this clone can see, and the `issue:<n>` lease the approval takes lives in this workspace's own `.stella/private/fleet.db`, so nothing else it writes reaches a teammate on another machine. A remote branch is the cheapest signal `self_driving_cmd::contention` reads that crosses one. A push that fails leaves the branch and the plan standing and says on the summary line that the branch is local only. `publish_branch` in `crates/stella-cli/src/command_deck/start_work.rs` carries the argument beside the code.
+
 ### 8.3 Other specced scenarios
 
 Turn begin, turn end receipt, skill auto-trigger, memory log and promotion, compaction, delete with pre-execution graph check, and queued-steer consumption are all defined by section 6 and shown in renderings `01` and `02`.
