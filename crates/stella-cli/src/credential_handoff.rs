@@ -377,8 +377,8 @@ mod tests {
     /// spawn child processes. A plain `libc::pipe()` fd is open to any child.
     /// A child forked and exec'd on another thread, while a test here still
     /// holds the pipe open, can keep it alive past this thread's own close.
-    /// `cloexec_pipe_closes_a_concurrent_childs_inherited_copy` below
-    /// reproduces that exact shape on demand.
+    /// `cloexec_pipe_sets_close_on_exec_on_both_ends` below asserts the flag
+    /// that makes the child's `exec` drop its copy.
     ///
     /// `pipe2(O_CLOEXEC)` sets the flag in the same call that makes the
     /// pipe, so there is no gap where a fork could see it unset. Linux is
@@ -410,50 +410,47 @@ mod tests {
         fds
     }
 
-    /// Reproduces the fd-inheritance race on demand, instead of waiting for
-    /// the parallel test harness to hit it. Rust marks `CLOEXEC` only on fds
-    /// it made itself. A raw `libc` fd is invisible to that bookkeeping. So
-    /// a plain `libc::pipe()` fd is open to any child `std::process::Command`
-    /// spawns while the pipe is open. This test's write, after it closes its
-    /// own read end, then finds the child's copy still open and succeeds —
-    /// returning `1` rather than `-1`. `cloexec_pipe` makes the child's
-    /// `exec` close its copy too, so the write reliably has no reader left.
+    /// `cloexec_pipe`'s promise, read back off the descriptors themselves.
+    /// Rust marks `CLOEXEC` only on fds it made itself, and a raw `libc` fd
+    /// is invisible to that bookkeeping — so a plain `libc::pipe()` leaves
+    /// the flag clear and hands every child a live copy of the read end.
+    /// That is the fd-inheritance race #2603 reports, and this assertion
+    /// fails against a tree whose `cloexec_pipe` is a bare `pipe()`.
+    ///
+    /// It asks only about this process's own descriptor table, which is what
+    /// makes it reliable under `cargo test`'s parallel harness.
+    ///
+    /// The probe this replaces asked a wider question and could not get a
+    /// stable answer: it spawned a child, closed the read end, and required
+    /// the following write to fail with `EPIPE`. That holds only if no
+    /// process anywhere holds the read end — and a concurrent test can make
+    /// it false without `FD_CLOEXEC` being wrong. `fork` copies every open
+    /// descriptor, the flag included; the copy is dropped when that child
+    /// reaches `execve`, so a spawner on another thread inside its own
+    /// fork-to-exec window is a live reader and the write returns `1`. The
+    /// probe read that as a missing flag and turned `main` red on `b29e934`
+    /// (#5804), having passed on the 14-test filter its author ran.
     #[test]
-    fn cloexec_pipe_closes_a_concurrent_childs_inherited_copy() {
+    fn cloexec_pipe_sets_close_on_exec_on_both_ends() {
         let fds = cloexec_pipe();
-        let (read_fd, write_fd) = (fds[0], fds[1]);
 
-        // `Command::spawn()` waits for the child's `execve()` to finish
-        // before it returns. Rust does this with its own close-on-exec pipe:
-        // the parent blocks on a read that only ends when that pipe closes,
-        // which only happens once exec succeeds. So by the time `spawn()`
-        // returns, `/bin/sh` already either kept a copy of `read_fd` (no
-        // `CLOEXEC`) or lost it (`CLOEXEC`, from `cloexec_pipe`). `sleep 5`
-        // then keeps `sh` alive well past the probe below, so a kept copy
-        // cannot exit early and hide the race.
-        let mut child = std::process::Command::new("/bin/sh")
-            .args(["-c", "sleep 5"])
-            .spawn()
-            .expect("spawn a child while the pipe is open");
+        for fd in fds {
+            // SAFETY: `fd` is one of the two descriptors `cloexec_pipe` just
+            // returned open and owned by this test.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert_ne!(flags, -1, "F_GETFD failed on fd {fd}");
+            assert_ne!(
+                flags & libc::FD_CLOEXEC,
+                0,
+                "cloexec_pipe returned fd {fd} without FD_CLOEXEC — a child's \
+                 copy of it would survive that child's exec"
+            );
+        }
 
-        // SAFETY: `read_fd` is still owned by this test.
-        assert_eq!(unsafe { libc::close(read_fd) }, 0);
-        // SAFETY: one-byte source buffer, matching count, still-owned fd.
-        assert_eq!(
-            unsafe { libc::write(write_fd, [0_u8].as_ptr().cast(), 1) },
-            -1,
-            "a child spawned while the pipe was open still held a live copy \
-             of the read end"
-        );
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::EPIPE)
-        );
-
-        // SAFETY: still-owned write fd.
-        assert_eq!(unsafe { libc::close(write_fd) }, 0);
-        let _ = child.kill();
-        let _ = child.wait();
+        for fd in fds {
+            // SAFETY: both descriptors are still owned by this test.
+            assert_eq!(unsafe { libc::close(fd) }, 0);
+        }
     }
 
     #[test]
