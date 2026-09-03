@@ -9,9 +9,16 @@
 # fetch end to end with a fake `gh` on PATH, so a fake list of 1001 releases
 # runs with no network at all.
 #
-# It runs two scripts against that same list: the one `main` ships today,
-# and the one in this working tree. Main's script hits its old cap and
-# errors. This branch's script pages through all 1001 and reports clean.
+# One question is asked twice. Does the script page past 1000 and report no
+# truncation? The shipped script must pass. A stand-in that stops at a fixed
+# cap must fail. The second arm is what gives the first its meaning. A check
+# that passes a capped fetcher too would measure nothing.
+#
+# An earlier version put main's copy of the script in that second arm. It
+# asserted main still had the cap. The fix then merged to main, so the arm
+# was wrong, and every new pull request went red on it. A self-test that
+# compares against main lasts exactly one merge. This one builds its own
+# stand-in, so it does not expire.
 #
 # bash 3.2 compatible.
 
@@ -19,29 +26,13 @@ set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd -P)"
 NEW_SCRIPT="$repo_root/scripts/check-releases-published.sh"
-MAIN_SCRIPT="$repo_root/scripts/.check-releases-published.main-copy.sh"
 
 pass=0
 fail=0
 
 work="$(mktemp -d)"
-cleanup() { rm -rf "$work"; rm -f "$MAIN_SCRIPT"; }
+cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
-
-# CI checks out one ref with no history, so `origin/main` may not exist yet.
-# One shallow, on-demand fetch of just that branch tip fixes that without
-# touching the shared checkout step every other guard self-test also runs
-# under. It only ever reads; nothing here can move a real branch.
-git -C "$repo_root" fetch --depth=1 -q origin main 2>/dev/null || true
-
-# `dirname "$0"` in each script must find a folder with lib/help-header.sh.
-# So main's copy is placed next to the real script, not in the scratch dir.
-# It is a sibling file, deleted by the trap above, never staged or committed.
-if ! git -C "$repo_root" show origin/main:scripts/check-releases-published.sh >"$MAIN_SCRIPT" 2>/dev/null; then
-  echo "SKIP — could not read origin/main's copy of check-releases-published.sh (no network or no origin/main ref here); the fail-side of the witness cannot run, but this branch's own fetch is still exercised below." >&2
-else
-  chmod +x "$MAIN_SCRIPT"
-fi
 
 # A grace window wide enough that every real tag in this checkout falls
 # inside it and is skipped. So the only thing either script can report is
@@ -49,11 +40,14 @@ fi
 grace_secs=315360000 # 10 years
 now="$(date -u +%s)"
 
-# The fake `gh`. Each script makes one call:
-#   main's version: `gh release list --limit 1000 ...`
-#   this branch:    `gh api --paginate --slurp .../releases?per_page=100`
-# Both get 1001 fake releases, one past the old cap. The shape matches real
-# `gh` output: 11 pages of up to 100 each, the last one holding 1.
+# The fake `gh`. Two call shapes are served:
+#   the shipped script: `gh api --paginate --slurp .../releases?per_page=100`
+#   the capped stand-in: `gh release list --limit N ...`
+# Both get 1001 fake releases, one past the old cap. The `api` shape matches
+# real `gh --slurp` output: 11 pages of up to 100 each, the last holding 1.
+# The `release list` shape ignores the `--limit` and serves all 1001. So a
+# caller that trusts a fixed cap gets more than it asked for and trips its
+# own ceiling. That trip is what the capped arm below has to observe.
 cat >"$work/gh" <<'SHIM'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -75,35 +69,51 @@ exit 3
 SHIM
 chmod +x "$work/gh"
 
-run_with_fake_gh() {
-  PATH="$work:$PATH" "$@" --now "$now" --grace-secs "$grace_secs" 2>&1
+# The stand-in for the shape this guard rejects: one fetch behind a fixed
+# cap, plus the ceiling check that fetch needs. It is written here, not read
+# from a branch. So nothing outside this file can change what the capped arm
+# means.
+cat >"$work/capped-fetch.sh" <<'CAPPED'
+#!/usr/bin/env bash
+set -uo pipefail
+limit=1000
+count="$(gh release list --limit "$limit" | jq 'length')"
+if [ "$count" -ge "$limit" ]; then
+  echo "::error::the release list hit its ${limit}-item page limit, so this run cannot see every release." >&2
+  exit 1
+fi
+echo "check-releases-published: OK — nothing to report (${count} release(s) seen)."
+CAPPED
+chmod +x "$work/capped-fetch.sh"
+
+# The one assertion, applied to both arms. A script passes when it exits 0,
+# says OK, and names no truncation or sanity ceiling. It returns a status
+# instead of tallying. That lets the capped arm assert the same check must
+# fail, which is how the check is shown to tell the two apart.
+pages_cleanly() {
+  local out status
+  out="$(PATH="$work:$PATH" "$1" --now "$now" --grace-secs "$grace_secs" 2>&1)"
+  status=$?
+  LAST_OUT="$out"
+  [ "$status" -eq 0 ] || return 1
+  printf '%s' "$out" | grep -q "^check-releases-published: OK" || return 1
+  ! printf '%s' "$out" | grep -qi "page limit\|sanity ceiling"
 }
 
-if [ -x "$MAIN_SCRIPT" ]; then
-  main_out="$(run_with_fake_gh "$MAIN_SCRIPT")"
-  main_status=$?
-  if [ "$main_status" -ne 0 ] && printf '%s' "$main_out" | grep -q "page limit"; then
-    pass=$((pass + 1)); echo "ok   MAIN main's script hits its 1000-item cap on 1001 releases and errors"
-  else
-    fail=$((fail + 1))
-    echo "FAIL MAIN main's script hits its 1000-item cap on 1001 releases and errors — exit ${main_status}, got: ${main_out}"
-  fi
-fi
-
-new_out="$(run_with_fake_gh "$NEW_SCRIPT")"
-new_status=$?
-if [ "$new_status" -eq 0 ] && printf '%s' "$new_out" | grep -q "^check-releases-published: OK"; then
-  pass=$((pass + 1)); echo "ok   NEW this branch's script pages through all 1001 releases and reports clean"
+if pages_cleanly "$NEW_SCRIPT"; then
+  pass=$((pass + 1))
+  echo "ok   NEW the shipped script pages through all 1001 releases with no truncation"
 else
   fail=$((fail + 1))
-  echo "FAIL NEW this branch's script pages through all 1001 releases and reports clean — exit ${new_status}, got: ${new_out}"
+  echo "FAIL NEW the shipped script pages through all 1001 releases with no truncation — got: ${LAST_OUT}"
 fi
 
-if printf '%s' "$new_out" | grep -qi "page limit\|sanity ceiling"; then
+if pages_cleanly "$work/capped-fetch.sh"; then
   fail=$((fail + 1))
-  echo "FAIL NEW must not report a truncation/sanity error on 1001 releases — got: ${new_out}"
+  echo "FAIL CAPPED a fixed-cap fetcher must be caught, but the check above passed it — the NEW arm is vacuous"
 else
-  pass=$((pass + 1)); echo "ok   NEW reports no truncation or page-sanity error on 1001 releases"
+  pass=$((pass + 1))
+  echo "ok   CAPPED a fixed-cap fetcher is caught, so the NEW arm is measuring something"
 fi
 
 echo
