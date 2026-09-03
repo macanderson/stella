@@ -81,7 +81,7 @@
 //! on the frames they are actually up — including the startup notice, whose
 //! visibility is asked at the call site rather than inside its renderer.
 //!
-//! [`crate::term::PanelBoundary`] is a `thread_local!`, and tokio tasks can
+//! `crate::term::PanelBoundary` is a `thread_local!`, and tokio tasks can
 //! migrate between workers — but `terminal.draw(..)` is fully synchronous with
 //! no `await` inside it, so the marker is entered and dropped on the same
 //! thread. Nesting is safe: the guard restores the previous flag rather than
