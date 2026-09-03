@@ -159,9 +159,37 @@ fn a_malformed_or_obsolete_date_yields_no_hint_rather_than_a_wrong_one() {
         "Sun, 32 Nov 1994 08:49:37 GMT", // day out of range
         "Sunday, 06-Nov-94 08:49:37 GMT", // obsolete RFC 850 form
         "Sun Nov  6 08:49:37 1994",      // obsolete asctime form
+        // A year of any length overflows `i64` at `era * 146_097` in the
+        // calendar math: a panic in a debug build, a wrapped
+        // `retry_after_ms` in a release one. The grammar says four digits,
+        // so this one is unreadable rather than huge.
+        "Mon, 01 Mar 99999999999999999 00:00:00 GMT",
+        "Mon, 01 Mar 20260 00:00:00 GMT", // five digits is not a year either
+        "Sun, 06 Nov 994 08:49:37 GMT",   // nor is three
+        // The other fields carry stated widths too, and `str::parse` accepts
+        // spellings the grammar does not.
+        "Sun, 6 Nov 1994 08:49:37 GMT",
+        "Sun, +6 Nov 1994 08:49:37 GMT",
+        "Sun, 06 Nov +994 08:49:37 GMT",
+        "Sun, 06 Nov 1994 8:49:37 GMT",
     ] {
         assert_eq!(retry_after_ms_at(header, 0), None, "{header:?}");
     }
+}
+
+/// The overflow above is reachable through the header path too, not just
+/// the pure helper. The hint is read off whatever endpoint a provider spec
+/// names, `local` and any gateway a `settings.json` defines included.
+#[test]
+fn an_absurd_year_on_the_header_map_path_drops_the_hint_rather_than_overflowing() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::RETRY_AFTER,
+        "Mon, 01 Mar 99999999999999999 00:00:00 GMT"
+            .parse()
+            .unwrap(),
+    );
+    assert_eq!(parse_retry_after_ms(&headers), None);
 }
 
 #[test]
