@@ -502,12 +502,16 @@ pub fn boot_notices(cfg: &crate::config::Config) -> Vec<String> {
 /// not TTL expiry: median idle before a miss was 0.3s against 0.2s before a
 /// hit, and calls alternated hit/miss inside the same second.
 ///
-/// The default stays unpinned, because routing is the gateway's choice until
-/// an operator says otherwise and only a measured comparison needs it fixed
-/// (see `config::providers::ProviderConfig::upstream_pin`). What changes is
-/// that the choice stops being invisible — the same honest-degradation
-/// contract [`unsupported_effort_notice`] applies to a dropped reasoning
-/// effort. A silent default nobody can see is not a default anyone chose.
+/// The adapter narrows this on its own: from the first answer on it asks the
+/// gateway for whichever upstream served it, with fallbacks still allowed. So
+/// this line is about what that cannot do — the first call of every session
+/// is routed by the gateway, and a fallback may still move the rest. Only
+/// `upstream_pin` refuses one (see
+/// `config::providers::ProviderConfig::upstream_pin`), which is what a
+/// measured comparison needs. What the line buys is that the choice stops
+/// being invisible — the same honest-degradation contract
+/// [`unsupported_effort_notice`] applies to a dropped reasoning effort. A
+/// silent default nobody can see is not a default anyone chose.
 ///
 /// [`CACHE_POSTURE`]: stella_model::provider_parity::CACHE_POSTURE
 pub fn unpinned_gateway_notice(
@@ -526,9 +530,10 @@ pub fn unpinned_gateway_notice(
         return None;
     }
     Some(format!(
-        "{provider_label} is a gateway and no upstream is pinned — it may route two turns of \
-         this session to different upstreams, and a prompt cached on one is a full-price miss \
-         on the next. Set `upstream_pin` in settings.json to fix the route."
+        "{provider_label} is a gateway and no upstream is pinned. Stella asks it to keep this \
+         session on whoever serves the first call, but it may still fall back, and a prompt \
+         cached on one upstream is a full-price miss on the next. Set `upstream_pin` in \
+         settings.json to refuse the fallback."
     ))
 }
 

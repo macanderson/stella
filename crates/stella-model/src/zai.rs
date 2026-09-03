@@ -26,7 +26,9 @@ use crate::stream_recovery::StreamRecovery;
 pub(crate) mod effort;
 mod stream;
 mod unary;
+mod upstream;
 use effort::{xai_reasoning_effort, xai_supports_reasoning_effort, zai_reasoning_effort};
+use upstream::{OpenRouterProviderPin, ServedUpstream};
 // `map_zai_effort` is asserted on directly by the wire tests, which reach it
 // through this module's namespace like every other helper here. Its xAI sibling
 // is absent: nothing outside `effort.rs` calls it, and re-exporting
@@ -66,19 +68,27 @@ pub struct ZaiProvider {
     /// carries a cost, it overrides catalog list pricing — the gateway
     /// routed the call, only it knows what the call cost.
     usage_accounting: bool,
-    /// Upstreams this provider is pinned to, in preference order, sent as
-    /// OpenRouter's `provider.order` with fallbacks refused. Empty means
-    /// unpinned — the gateway routes wherever it likes, which is the shipped
-    /// default and is only safe when nobody is comparing two runs.
+    /// Upstreams the operator pinned this provider to, in preference order,
+    /// sent as OpenRouter's `provider.order` with fallbacks refused. Empty
+    /// is the shipped default and does not mean unrouted: the adapter then
+    /// asks for whichever upstream served the session's first answer, with
+    /// fallbacks allowed. See [`upstream`] for why the two shapes differ.
     upstream_pin: Vec<String>,
+    /// The upstream that served this session's first answer, learned off the
+    /// response and re-requested on every later call. Empty until an answer
+    /// names one, which is every call on a direct endpoint. See [`upstream`].
+    served_upstream: ServedUpstream,
     /// Session-stable sticky-routing key, sent as OpenRouter's top-level
     /// `session_id` (only for the `openrouter` identity — see the field on
     /// [`ZaiRequest`]). One id per provider construction = one id per agent
-    /// run, so every turn of a session pins to the same upstream provider and
-    /// reuses the prompt cache the previous turn paid to write; distinct per
-    /// construction, so fleet siblings don't serialize on one shard. Mirrors
-    /// the OpenAI adapter's `prompt_cache_key` lifecycle. Volatile by design:
-    /// it rides as a request parameter and never enters the cached bytes.
+    /// run, asking the gateway to keep the session on one upstream provider
+    /// and reuse the prompt cache the previous turn paid to write; distinct
+    /// per construction, so fleet siblings don't serialize on one shard.
+    /// Mirrors the OpenAI adapter's `prompt_cache_key` lifecycle. Volatile by
+    /// design: it rides as a request parameter and never enters the cached
+    /// bytes. The gateway treats it as a hint and drops it under load — a
+    /// 174-call turn on one slug was served by three upstreams with this id
+    /// on every request, which is why [`ServedUpstream`] exists.
     session_id: String,
     /// The streaming→non-streaming fallback latch (#2686): armed when a
     /// stream hangs before its first byte or comes back empty, consulted per
@@ -170,6 +180,7 @@ impl ZaiProvider {
             extra_headers: Vec::new(),
             usage_accounting: false,
             upstream_pin: Vec::new(),
+            served_upstream: ServedUpstream::default(),
             session_id: new_session_id(),
             recovery: StreamRecovery::default(),
             unary_client: http::unary_client(),
@@ -268,7 +279,10 @@ impl ZaiProvider {
     /// is chosen per app identity and can differ between two runs — or between
     /// two trials of the same run — while both record the same provider id, so
     /// a head-to-head silently varies the model provider it claims to hold
-    /// fixed. Empty order leaves routing to the gateway, which is the default.
+    /// fixed. An empty order is the default and leaves the choice of upstream
+    /// to the gateway for the session's first call only; from the answer on,
+    /// the adapter asks for whoever served it, and lets the gateway fall back
+    /// (the `upstream` module).
     #[must_use]
     pub fn with_upstream_pin(mut self, order: Vec<String>) -> Self {
         self.upstream_pin = order;
@@ -386,29 +400,14 @@ struct ZaiRequest<'a> {
     /// risk a hard 400. See [`xai_reasoning_effort`] for the shape rules.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
-    /// OpenRouter's routing preferences — sent only when the operator pinned
-    /// an upstream, and only when this adapter is actually addressing the
-    /// gateway. Absent means "let the gateway choose", which is the right
-    /// default for interactive use and the wrong one for a measured run.
+    /// OpenRouter's routing preferences — sent only when this adapter is
+    /// actually addressing the gateway, and only once an upstream is known:
+    /// the operator's pin, or the one that served this session's first
+    /// answer. Absent on a session's first call, which is the only call that
+    /// has nothing to ask for. [`ZaiProvider::routing_pin`] builds it and
+    /// [`upstream`] carries the reasoning.
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<OpenRouterProviderPin<'a>>,
-}
-
-/// OpenRouter's `provider` routing object, in the one shape this adapter
-/// sends: an explicit upstream order with fallbacks refused.
-///
-/// `allow_fallbacks: false` is the whole point and is not configurable. A pin
-/// that silently falls back to a second vendor when the first is busy is not
-/// a pin — it is a preference, and it would reintroduce exactly the
-/// uncontrolled variable the caller asked to remove, at the least convenient
-/// moment (under load, mid-run, on some trials and not others). Refusing the
-/// call is the honest failure: a 404 from the gateway is a measurable, fixable
-/// event, while a quietly re-routed trial is a corrupted data point that looks
-/// identical to a clean one.
-#[derive(Serialize)]
-struct OpenRouterProviderPin<'a> {
-    order: &'a [String],
-    allow_fallbacks: bool,
 }
 
 /// GLM's request-level thinking object: `{"type": "enabled"}` /
@@ -1181,9 +1180,15 @@ impl ZaiProvider {
         force_default_reasoning: bool,
     ) -> Result<CompletionResult, ProviderError> {
         if self.recovery.use_unary() {
-            return self
+            let result = self
                 .complete_unary_attempt(req, force_default_reasoning)
-                .await;
+                .await?;
+            // Both delivery paths learn, because the stream→unary fallback
+            // can serve part of a session through this one without anybody
+            // choosing it.
+            self.served_upstream
+                .learn(result.upstream_provider.as_deref());
+            return Ok(result);
         }
         let body = self.build_body(req, force_default_reasoning, true);
         let response = self.dispatch(&self.client, &body, false).await?;
@@ -1204,6 +1209,11 @@ impl ZaiProvider {
                 .map(|p| p.cost_usd(&outcome.usage))
                 .unwrap_or(0.0)
         });
+        // Learned from a successful answer only. A failed attempt names no
+        // upstream to ask for, and asking for one that just failed is how a
+        // pin turns a bad minute into a bad session.
+        self.served_upstream
+            .learn(outcome.upstream_provider.as_deref());
         Ok(CompletionResult {
             text: outcome.text,
             tool_calls: outcome.tool_calls,
@@ -1295,17 +1305,7 @@ impl ZaiProvider {
                 .serves_openrouter()
                 .then_some(ZaiCacheControl { kind: "ephemeral" }),
             session_id: self.serves_openrouter().then_some(self.session_id.as_str()),
-            // Same "actually talking to OpenRouter" gate as the cache opt-in,
-            // and additionally silent unless an upstream was pinned: no other
-            // Chat Completions server speaks `provider`, and an unpinned
-            // request must keep its pre-field bytes so the prompt cache is
-            // unaffected for everyone who never asked for a pin.
-            provider: (self.serves_openrouter() && !self.upstream_pin.is_empty()).then_some(
-                OpenRouterProviderPin {
-                    order: &self.upstream_pin,
-                    allow_fallbacks: false,
-                },
-            ),
+            provider: self.routing_pin(),
         }
     }
 

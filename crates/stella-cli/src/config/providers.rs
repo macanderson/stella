@@ -29,9 +29,12 @@ pub struct ProviderConfig {
     /// whose models are whatever the user's endpoint actually serves.
     pub seeded: bool,
     /// Upstreams a *gateway* provider is pinned to, in preference order, from
-    /// settings.json's `upstream_pin`. Empty for every built-in row: routing
-    /// is the gateway's choice until an operator says otherwise, and only a
-    /// measured comparison needs it fixed.
+    /// settings.json's `upstream_pin`. Empty for every built-in row, which
+    /// does not mean unrouted: the shared adapter then asks for whichever
+    /// upstream served the session's first answer and still lets the gateway
+    /// fall back (`stella_model::zai`'s `upstream` module). Setting this is
+    /// the stronger ask — one upstream or a refused call — which is what a
+    /// measured comparison needs and what an interactive session does not.
     pub upstream_pin: &'static [String],
 }
 
