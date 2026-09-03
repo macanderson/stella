@@ -20,9 +20,9 @@
 //!
 //! - **Files read inside the summarized span** ([`collect_working_set`]):
 //!   the most recent read per path, most-recent-first, capped at
-//!   [`RESTORE_MAX_FILES`]. Content is re-read fresh from disk at restore
-//!   time —, so an external edit between read and restore
-//!   surfaces the *current* bytes rather than resurrecting a stale copy.
+//!   [`RESTORE_MAX_FILES`]. One call names one file or a list of files and
+//!   ranges ([`READ_FILES_PARAM`]), and every file counts. Content is re-read
+//!   fresh at restore time, so an edit in between surfaces the current bytes.
 //! - **The full body of any active invoked skill**
 //!   ([`crate::skills::invoke::ActiveSkillInvocations`] is the tracking
 //!   half): procedure text the model is executing must survive verbatim,
@@ -108,6 +108,42 @@ pub const READ_TOOL: &str = "read_file";
 /// span's recorded calls and to synthesize the replay input for a path
 /// re-collected from a prior restoration message.
 pub const READ_PATH_PARAM: &str = "path";
+
+/// The read tool's plural key: an array of `{path, offset?, limit?}` objects,
+/// one per file or range, sent instead of the single-target fields.
+///
+/// A batched call carries no path of its own, so [`READ_PATH_PARAM`] alone
+/// finds none of the files it read. Both keys are therefore read, or the
+/// splice destroys a batch's content with nothing to put back. Tied to the
+/// tool's own spelling by a pin test in `stella_tools::read`, the same way
+/// [`READ_TOOL`] is.
+pub const READ_FILES_PARAM: &str = "files";
+
+/// Every file one recorded read call asked for, each paired with the input
+/// that re-reads that file on its own.
+///
+/// A batched call yields one entry per element, carrying that element's own
+/// `offset`/`limit`, so the replay restores the window the model was looking
+/// at. Replaying the whole batch under each path instead would read every
+/// file once per path and render all of them under each heading.
+///
+/// Borrowed rather than owned: the tail walk only wants the paths, and the
+/// span walk clones the input it keeps.
+fn read_targets(input: &serde_json::Value) -> Vec<(&str, &serde_json::Value)> {
+    if let Some(items) = input.get(READ_FILES_PARAM).and_then(|v| v.as_array()) {
+        return items
+            .iter()
+            .filter_map(|item| {
+                let path = item.get(READ_PATH_PARAM)?.as_str()?;
+                Some((path, item))
+            })
+            .collect();
+    }
+    match input.get(READ_PATH_PARAM).and_then(|v| v.as_str()) {
+        Some(path) => vec![(path, input)],
+        None => Vec::new(),
+    }
+}
 
 /// Ceiling on restored files per round. Eight matches the workspace's
 /// standing notion of "the recent work the model is actively reasoning over"
@@ -278,23 +314,25 @@ pub fn collect_working_set(
                     if call.name != READ_TOOL || failed_calls.contains(call.call_id.as_str()) {
                         continue;
                     }
-                    let Some(path) = call.input.get(READ_PATH_PARAM).and_then(|v| v.as_str())
-                    else {
-                        continue;
-                    };
-                    seq += 1;
-                    match reads.iter_mut().find(|t| t.path == path) {
-                        // A later read of the same path is the fresher view:
-                        // its input (offset/limit included) wins outright.
-                        Some(tracked) => {
-                            tracked.input = call.input.clone();
-                            tracked.seq = seq;
+                    // One call names one file or several; a batch's elements
+                    // are ordered, so a later range of the same file inside
+                    // one call wins the same way a later call does.
+                    for (path, input) in read_targets(&call.input) {
+                        seq += 1;
+                        match reads.iter_mut().find(|t| t.path == path) {
+                            // A later read of the same path is the fresher
+                            // view: its input (offset/limit included) wins
+                            // outright.
+                            Some(tracked) => {
+                                tracked.input = input.clone();
+                                tracked.seq = seq;
+                            }
+                            None => reads.push(TrackedRead {
+                                path: path.to_string(),
+                                input: input.clone(),
+                                seq,
+                            }),
                         }
-                        None => reads.push(TrackedRead {
-                            path: path.to_string(),
-                            input: call.input.clone(),
-                            seq,
-                        }),
                     }
                 }
             }
@@ -336,10 +374,12 @@ pub fn collect_working_set(
     let mut tail_slugs: HashSet<String> = HashSet::new();
     for message in kept_tail {
         for call in &message.tool_calls {
-            if call.name == READ_TOOL
-                && let Some(path) = call.input.get(READ_PATH_PARAM).and_then(|v| v.as_str())
-            {
-                tail_paths.insert(path.to_string());
+            if call.name == READ_TOOL {
+                tail_paths.extend(
+                    read_targets(&call.input)
+                        .into_iter()
+                        .map(|(path, _)| path.to_string()),
+                );
             }
         }
         if message.role == MessageRole::User {
@@ -724,6 +764,122 @@ mod tests {
             vec!["lost.rs"],
             "an errored read produced nothing to lose, a tail re-read is still present"
         );
+    }
+
+    /// One batched read call, three ranges across two files.
+    ///
+    /// The batch key is what stops a model reaching for
+    /// `sed -n 'A,Bp'; echo ===; sed -n …`, and a batched call carries no
+    /// top-level `path`: a walk that reads only that field finds nothing in
+    /// this span, and the splice then destroys both files' content with
+    /// nothing to put back.
+    ///
+    /// Each restored file replays on its own, carrying its own window: the
+    /// second range of `a.rs` is the fresher view of that file and wins, the
+    /// way a second call would.
+    #[test]
+    fn every_file_a_batched_read_named_is_working_set() {
+        let span = vec![
+            CompletionMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    call_id: "batch".into(),
+                    name: READ_TOOL.into(),
+                    input: serde_json::json!({
+                        READ_FILES_PARAM: [
+                            { READ_PATH_PARAM: "a.rs", "offset": 1, "limit": 40 },
+                            { READ_PATH_PARAM: "b.rs", "offset": 10, "limit": 20 },
+                            { READ_PATH_PARAM: "a.rs", "offset": 200, "limit": 40 },
+                        ]
+                    }),
+                }],
+                tool_results: vec![],
+                attachments: Vec::new(),
+            },
+            read_result("batch", ok("three sections")),
+        ];
+
+        let set = collect_working_set(&span, &[], &[]);
+        assert_eq!(
+            set.reads
+                .iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a.rs", "b.rs"],
+            "both files are restored, freshest first"
+        );
+        assert_eq!(
+            set.reads[0].input,
+            serde_json::json!({ READ_PATH_PARAM: "a.rs", "offset": 200, "limit": 40 }),
+            "a batched element replays alone, carrying the window it asked for"
+        );
+        assert_eq!(
+            set.reads[1].input,
+            serde_json::json!({ READ_PATH_PARAM: "b.rs", "offset": 10, "limit": 20 })
+        );
+    }
+
+    /// A file the kept tail re-read in a batch was never lost, so restoring it
+    /// would spend headroom another file needs and hand the model a second
+    /// copy of bytes it already has.
+    #[test]
+    fn a_batched_tail_reread_is_not_restored() {
+        let span = vec![
+            read_call("c1", "kept.rs"),
+            read_result("c1", ok("kept content")),
+            read_call("c2", "lost.rs"),
+            read_result("c2", ok("lost content")),
+        ];
+        let tail = vec![CompletionMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                call_id: "t1".into(),
+                name: READ_TOOL.into(),
+                input: serde_json::json!({
+                    READ_FILES_PARAM: [
+                        { READ_PATH_PARAM: "kept.rs" },
+                        { READ_PATH_PARAM: "other.rs" },
+                    ]
+                }),
+            }],
+            tool_results: vec![],
+            attachments: Vec::new(),
+        }];
+
+        let set = collect_working_set(&span, &tail, &[]);
+        assert_eq!(
+            set.reads
+                .iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["lost.rs"],
+            "a batched tail read still counts as present"
+        );
+    }
+
+    /// A batch whose recorded result was an error produced no content for the
+    /// splice to lose — for every file it named, not just the first.
+    #[test]
+    fn a_failed_batched_read_contributes_nothing() {
+        let span = vec![
+            CompletionMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_calls: vec![ToolCall {
+                    call_id: "bad".into(),
+                    name: READ_TOOL.into(),
+                    input: serde_json::json!({
+                        READ_FILES_PARAM: [{ READ_PATH_PARAM: "a.rs" }, { READ_PATH_PARAM: "b.rs" }]
+                    }),
+                }],
+                tool_results: vec![],
+                attachments: Vec::new(),
+            },
+            read_result("bad", ToolOutput::error("`files` is empty")),
+        ];
+        assert!(collect_working_set(&span, &[], &[]).is_empty());
     }
 
     #[test]

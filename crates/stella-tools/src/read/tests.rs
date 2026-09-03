@@ -685,6 +685,16 @@ fn the_read_tool_is_the_one_the_engines_restoration_replays() {
             .is_some(),
         "the path parameter must keep the spelling the engine replays"
     );
+    // The batch key too: restoration reads a recorded call's elements out of
+    // it, and each element by its own path.
+    let plural = &schema.input_schema["properties"][stella_core::restore::READ_FILES_PARAM];
+    assert!(
+        plural["items"]["properties"]
+            .get(stella_core::restore::READ_PATH_PARAM)
+            .is_some(),
+        "the batch key and its per-element path must keep the spellings the \
+             engine replays; got {plural}"
+    );
 }
 
 /// A binary file used to come back as "stream did not contain valid
@@ -970,6 +980,65 @@ async fn a_failed_target_does_not_discard_the_rest_of_the_batch() {
     };
     assert!(content.contains("not read:"), "{content}");
     assert!(content.contains("fn real() {}"), "{content}");
+}
+
+/// Three ranges across two files in one call, then a failed edit against one
+/// of them.
+///
+/// A `sed -n 'A,Bp'; echo ===; sed -n …` chain reads the same bytes and
+/// records nothing, so a later failed `edit_file` is attributed "no read of
+/// this file is recorded this session" — false, and unactionable, because the
+/// model did read it. Every element of a batch earns its ledger entry, so the
+/// oracle reaches the real answer instead.
+#[tokio::test]
+async fn a_batch_read_leaves_the_drift_oracle_able_to_attribute_a_miss() {
+    let dir = tempfile::tempdir().unwrap();
+    let a: String = (1..=300).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.path().join("a.rs"), &a).unwrap();
+    std::fs::write(dir.path().join("b.rs"), "fn b() {}\n").unwrap();
+    let ledger = Arc::new(ReadLedger::default());
+
+    let out = ReadFile::with_ledger(ledger.clone())
+        .execute(
+            &serde_json::json!({"files": [
+                {"path": "a.rs", "offset": 1, "limit": 40},
+                {"path": "b.rs"},
+                {"path": "a.rs", "offset": 200, "limit": 40}
+            ]}),
+            &cx(dir.path()),
+        )
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+
+    for (name, bytes) in [("a.rs", a.as_bytes()), ("b.rs", b"fn b() {}\n".as_slice())] {
+        assert_eq!(
+            ledger.last_seen_sha(dir.path(), name),
+            Some(crate::staleness::hex_sha256(bytes)),
+            "{name} was read in this batch and must be recorded"
+        );
+    }
+
+    // A needle that is not in the file, against bytes nothing changed.
+    let missed = crate::edit::EditFile::with_ledger(ledger)
+        .execute(
+            &serde_json::json!({
+                "path": "a.rs", "old_string": "not present anywhere", "new_string": "x"
+            }),
+            &cx(dir.path()),
+        )
+        .await;
+    let ToolOutput::Error { message, .. } = missed else {
+        panic!("expected the edit to miss, got: {missed:?}");
+    };
+    assert!(
+        !message.contains("no read of this file is recorded"),
+        "a batch-read file has a baseline, so the miss must not be blamed on \
+         a missing read: {message}"
+    );
+    assert!(
+        message.contains("unchanged since you last saw it"),
+        "the file did not move, so that is what the oracle must say: {message}"
+    );
 }
 
 /// Both spellings at once is refused rather than resolved by precedence:

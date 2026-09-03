@@ -27,7 +27,7 @@ available_for_speculation = true
 risk_level = "low"
 
 description = '''
-Read a file from the workspace. Returns content with 1-based line numbers. Use offset and limit for ranges. To read several files — or several ranges — read them in ONE call with `files` rather than one call each.
+Read one or more files or ranges in a single call. Returns content with 1-based line numbers. Use offset and limit for one range; use `files` to read several files — or several ranges — in ONE call rather than one call each.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.
