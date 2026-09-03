@@ -133,11 +133,24 @@ fn truncate(text: &str, max: usize) -> String {
 /// hint" rather than "this command has no hint", and the two mean different
 /// things to both a reader and the parser.
 ///
-/// `prompt` always uses a multi-line basic string. A body containing `"""` is
-/// the one shape that would break out of it, so those are escaped; everything
-/// else is passed through byte-for-byte, because a converted prompt that is
-/// not the original prompt is a silently changed command.
-pub fn to_toml(cmd: &CommandDef) -> String {
+/// `prompt` always uses a multi-line **literal** string (`'''…'''`). It
+/// applies no escape processing, so the body lands byte-for-byte. A basic
+/// (`"""…"""`) string is not safe here. It reads a trailing backslash as a
+/// line continuation and eats the newline after it, so a multi-line shell
+/// example joins onto one line. It also treats `\(` — the start of an
+/// ordinary jq expression like `"#\(.number)"` — as an invalid escape, so
+/// the file fails to parse. A literal string has neither problem. Its only
+/// limit is the sequence `'''`, which it cannot carry. A body with that
+/// sequence is rejected, the same way the loader already rejects a body
+/// that will not round-trip.
+pub fn to_toml(cmd: &CommandDef) -> Result<String, String> {
+    if cmd.body.contains("'''") {
+        return Err(format!(
+            "{}: the prompt body contains `'''`, which a TOML literal string \
+             cannot carry — rewrite the body to avoid that sequence",
+            cmd.name
+        ));
+    }
     let mut out = String::new();
     out.push_str(&format!("name = {}\n", quote(&cmd.name)));
     out.push_str(&format!("description = {}\n", quote(&cmd.description)));
@@ -154,10 +167,10 @@ pub fn to_toml(cmd: &CommandDef) -> String {
     if !cmd.model_invocable {
         out.push_str("disable-model-invocation = true\n");
     }
-    out.push_str("\nprompt = \"\"\"\n");
-    out.push_str(&cmd.body.replace("\"\"\"", "\\\"\\\"\\\""));
-    out.push_str("\n\"\"\"\n");
-    out
+    out.push_str("\nprompt = '''\n");
+    out.push_str(&cmd.body);
+    out.push_str("\n'''\n");
+    Ok(out)
 }
 
 /// A TOML basic string. Backslashes first, or the escapes added after would
@@ -223,7 +236,21 @@ pub fn convert_dir(dir: &Path, dry_run: bool, force: bool) -> Result<Vec<Convert
             });
             continue;
         }
-        if !dry_run && let Err(e) = std::fs::write(&target, to_toml(&cmd)) {
+        // A body the renderer cannot carry (see `to_toml`) is reported the
+        // same way a body the loader cannot parse is, above — never written
+        // as a silently wrong file.
+        let toml_src = match to_toml(&cmd) {
+            Ok(toml_src) => toml_src,
+            Err(e) => {
+                out.push(Converted {
+                    target,
+                    skipped: Some(e),
+                    source,
+                });
+                continue;
+            }
+        };
+        if !dry_run && let Err(e) = std::fs::write(&target, toml_src) {
             out.push(Converted {
                 target,
                 skipped: Some(format!("could not write: {e}")),
@@ -299,8 +326,9 @@ mod tests {
              ---\n\
              Review PR $1.\n\nBe thorough about \"quoted\" things.";
         let from_md = command_from_file("/ws/.stella/commands/review-pr.md", md).unwrap();
+        let toml_src = to_toml(&from_md).unwrap();
         let round_tripped =
-            command_from_toml("/ws/.stella/commands/review-pr.toml", &to_toml(&from_md)).unwrap();
+            command_from_toml("/ws/.stella/commands/review-pr.toml", &toml_src).unwrap();
 
         assert_eq!(round_tripped.name, from_md.name);
         assert_eq!(round_tripped.description, from_md.description);
@@ -320,11 +348,55 @@ mod tests {
     #[test]
     fn absent_fields_are_absent_in_the_output() {
         let cmd = command_from_file("/ws/.stella/commands/ship.md", "Ship it.").unwrap();
-        let toml_src = to_toml(&cmd);
+        let toml_src = to_toml(&cmd).unwrap();
         assert!(!toml_src.contains("argument-hint"), "{toml_src}");
         assert!(!toml_src.contains("allowed-tools"), "{toml_src}");
         assert!(!toml_src.contains("model"), "{toml_src}");
         assert!(!toml_src.contains("disable-model-invocation"), "{toml_src}");
+    }
+
+    /// A basic string reads a trailing backslash as a line continuation. It
+    /// eats the newline and joins a multi-line shell example onto one line.
+    /// A literal string applies no escape processing, so the line break
+    /// survives.
+    #[test]
+    fn a_trailing_backslash_line_continuation_survives_conversion() {
+        let body = "gh issue list \\\n  --json number,title\n\nline three";
+        let cmd = command_from_file("/ws/.stella/commands/list-issues.md", body).unwrap();
+        let toml_src = to_toml(&cmd).unwrap();
+        let round_tripped =
+            command_from_toml("/ws/.stella/commands/list-issues.toml", &toml_src).unwrap();
+        assert_eq!(
+            round_tripped.body, cmd.body,
+            "a trailing backslash must not become a line continuation: {toml_src}"
+        );
+        assert!(
+            toml_src.contains("gh issue list \\\n"),
+            "the backslash itself must reach the file untouched: {toml_src}"
+        );
+    }
+
+    /// `\(` is not a valid basic-string escape. A jq expression like
+    /// `"#\(.number)"` makes a basic string fail to parse. A literal string
+    /// passes it through untouched.
+    #[test]
+    fn a_jq_interpolation_escape_survives_conversion() {
+        let body = r##"gh issue list --json number | jq -r '"#\(.number)"'"##;
+        let cmd = command_from_file("/ws/.stella/commands/list-issues.md", body).unwrap();
+        let toml_src = to_toml(&cmd).unwrap();
+        let round_tripped =
+            command_from_toml("/ws/.stella/commands/list-issues.toml", &toml_src).unwrap();
+        assert_eq!(round_tripped.body, cmd.body, "{toml_src}");
+    }
+
+    /// A literal string is the one TOML shape that cannot carry `'''` inside
+    /// it. A prompt containing that sequence must be reported, not silently
+    /// truncated or written as a file that fails to parse.
+    #[test]
+    fn a_body_containing_triple_single_quotes_is_rejected() {
+        let cmd = command_from_file("/ws/.stella/commands/quote.md", "before '''after").unwrap();
+        let err = to_toml(&cmd).unwrap_err();
+        assert!(err.contains("'''"), "{err}");
     }
 
     #[test]
@@ -391,5 +463,22 @@ mod tests {
         let done = convert_dir(&dir, false, false).unwrap();
         assert!(done[0].skipped.is_some(), "{done:?}");
         assert!(!dir.join("empty.toml").exists());
+    }
+
+    /// A body the literal-string renderer cannot carry (`'''`) is reported
+    /// the same way, on a real `dry_run` and a real write, rather than
+    /// writing a `.toml` that fails to parse.
+    #[test]
+    fn a_command_whose_body_cannot_render_is_not_converted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("commands");
+        write(&dir.join("quote.md"), "before '''after");
+
+        let done = convert_dir(&dir, false, false).unwrap();
+        assert!(done[0].skipped.is_some(), "{done:?}");
+        assert!(!dir.join("quote.toml").exists());
+
+        let dry = convert_dir(&dir, true, false).unwrap();
+        assert!(dry[0].skipped.is_some(), "{dry:?}");
     }
 }
