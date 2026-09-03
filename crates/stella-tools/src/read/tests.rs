@@ -1041,6 +1041,67 @@ async fn a_batch_read_leaves_the_drift_oracle_able_to_attribute_a_miss() {
     );
 }
 
+/// A capped batch section says whose cap stopped it.
+///
+/// One `MAX_RENDER_BYTES` budget is spent across every section of a batch, so
+/// a section can stop after a fraction of it. The single form's sentence is
+/// then true about the number and wrong about the cause, and it points the
+/// model at a repair that cannot work: narrowing the range does not buy back
+/// budget another file in the same call is holding. The batch says the cap is
+/// shared and names the call that gets the file back.
+#[tokio::test]
+async fn a_capped_batch_section_names_the_cap_as_the_calls_own() {
+    let dir = tempfile::tempdir().unwrap();
+    // One file is already past the whole-call budget on its own.
+    let body = std::iter::repeat_n("y".repeat(4096), 800)
+        .collect::<Vec<_>>()
+        .join("\n");
+    for name in ["one.sql", "two.sql"] {
+        std::fs::write(dir.path().join(name), &body).unwrap();
+    }
+
+    let out = ReadFile::default()
+        .execute(
+            &serde_json::json!({"files": [{"path": "one.sql"}, {"path": "two.sql"}]}),
+            &cx(dir.path()),
+        )
+        .await;
+    let ToolOutput::Ok { content, .. } = out else {
+        panic!("expected ok, got: {out:?}");
+    };
+    assert!(
+        content.contains("payload cap this call shares across its files"),
+        "a batch section's cap belongs to the call, not to the file: {content}"
+    );
+    assert!(
+        content.contains("asking for this file on its own"),
+        "the remedy for a shared cap is a call of its own: {content}"
+    );
+
+    // The single form's footer is what loop comparison strips and what the
+    // tests above assert verbatim, so it must stay exactly what it was.
+    let single = ReadFile::default()
+        .execute(&serde_json::json!({"path": "one.sql"}), &cx(dir.path()))
+        .await;
+    let ToolOutput::Ok {
+        content: single, ..
+    } = single
+    else {
+        panic!("expected ok, got: {single:?}");
+    };
+    assert!(
+        single.contains(&format!(
+            "stopped at the {} KB payload cap — continue with offset=",
+            MAX_RENDER_BYTES / 1024
+        )),
+        "the single form keeps its wording: {single}"
+    );
+    assert!(
+        !single.contains("shares across its files"),
+        "one file spends the whole budget, so nothing is shared: {single}"
+    );
+}
+
 /// Both spellings at once is refused rather than resolved by precedence:
 /// either choice silently drops work, and the model cannot tell which half
 /// ran.

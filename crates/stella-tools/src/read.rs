@@ -363,6 +363,23 @@ fn normalized_key(root: &std::path::Path, path: &str) -> String {
 /// anything a batch read.
 const FILES_KEY: &str = "files";
 
+/// How many bytes one section may render, and whether the call it belongs to
+/// spends that ceiling across several files.
+///
+/// `shared` exists for the footer alone. A batch spends one
+/// [`MAX_RENDER_BYTES`] budget across every section, so a later section can
+/// stop after a few hundred bytes of it; told only "stopped at the 64 KB
+/// payload cap", a model reads that as a file too big to show and narrows its
+/// range, when the move that works is to ask for that file in a call of its
+/// own.
+#[derive(Clone, Copy)]
+struct RenderBudget {
+    /// Bytes this section may render into.
+    bytes: usize,
+    /// Whether the ceiling belongs to the whole call rather than to this file.
+    shared: bool,
+}
+
 /// One file and which slice of it — the unit both spellings of a `read_file`
 /// call reduce to.
 struct ReadTarget {
@@ -434,7 +451,11 @@ impl Tool for ReadFile {
             // Byte-identical to what the single form has always emitted. The
             // footer is what loop comparison strips and what this module's
             // tests assert verbatim, so the batch path must not reshape it.
-            return self.read_one(&targets[0], ctx, MAX_RENDER_BYTES).await.0;
+            let budget = RenderBudget {
+                bytes: MAX_RENDER_BYTES,
+                shared: false,
+            };
+            return self.read_one(&targets[0], ctx, budget).await.0;
         }
 
         // The payload cap is a BATCH budget, not a per-file one. Ten files at
@@ -449,7 +470,11 @@ impl Tool for ReadFile {
                 unread.push(target.path.as_str());
                 continue;
             }
-            let (out, used) = self.read_one(target, ctx, MAX_RENDER_BYTES - spent).await;
+            let budget = RenderBudget {
+                bytes: MAX_RENDER_BYTES - spent,
+                shared: true,
+            };
+            let (out, used) = self.read_one(target, ctx, budget).await;
             spent += used;
             if !rendered.is_empty() {
                 rendered.push_str("\n\n");
@@ -496,7 +521,7 @@ impl ReadFile {
         &self,
         target: &ReadTarget,
         ctx: &crate::ctx::ToolCtx,
-        budget: usize,
+        budget: RenderBudget,
     ) -> (ToolOutput, usize) {
         let out = self.read_section(target, ctx, budget).await;
         // A refusal costs the batch nothing: it is a sentence, and charging
@@ -514,7 +539,7 @@ impl ReadFile {
         &self,
         target: &ReadTarget,
         ctx: &crate::ctx::ToolCtx,
-        budget: usize,
+        budget: RenderBudget,
     ) -> ToolOutput {
         let root = ctx.root();
         let path = target.path.as_str();
@@ -721,14 +746,14 @@ impl ReadFile {
                         .iter()
                         .map(|l| l.len().min(MAX_LINE_BYTES) + 32)
                         .sum::<usize>()
-                        .min(budget + 1024)
+                        .min(budget.bytes + 1024)
                         + 64,
                 );
                 let mut clipped_lines = 0usize;
                 let mut shown = 0usize;
                 let mut payload_capped = false;
                 for (i, line) in lines[start..end].iter().enumerate() {
-                    if numbered.len() >= budget {
+                    if numbered.len() >= budget.bytes {
                         payload_capped = true;
                         break;
                     }
@@ -767,13 +792,28 @@ impl ReadFile {
                     // line count it can see, because `start` may be non-zero
                     // and clipped lines still count as shown. A paging note
                     // that costs a guess is a note that costs another read.
-                    let _ = write!(
-                        numbered,
-                        "{READ_FOOTER_CLAUSE_SEP}stopped at the {} KB payload cap — \
-                         continue with offset={}",
-                        MAX_RENDER_BYTES / 1024,
-                        start + shown + 1
-                    );
+                    //
+                    // Name whose cap it was, too. A batch section can stop
+                    // after a fraction of the ceiling because its siblings
+                    // already spent the rest, and the single form's sentence
+                    // points such a read at the wrong repair: narrowing the
+                    // range does not buy back budget another file is holding.
+                    let cap_kb = MAX_RENDER_BYTES / 1024;
+                    let resume = start + shown + 1;
+                    let _ = if budget.shared {
+                        write!(
+                            numbered,
+                            "{READ_FOOTER_CLAUSE_SEP}stopped at the {cap_kb} KB payload cap \
+                             this call shares across its files — continue with \
+                             offset={resume}, asking for this file on its own"
+                        )
+                    } else {
+                        write!(
+                            numbered,
+                            "{READ_FOOTER_CLAUSE_SEP}stopped at the {cap_kb} KB payload cap — \
+                             continue with offset={resume}"
+                        )
+                    };
                 }
                 numbered.push_str(READ_FOOTER_CLOSE);
                 // Every line, and every line whole. `shown == total` alone is

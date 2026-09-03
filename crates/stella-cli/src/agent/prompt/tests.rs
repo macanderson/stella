@@ -75,6 +75,14 @@ fn both_prompts_keep_the_steering_the_schemas_cannot_carry() {
             // other one", and reaching for grep when `search` would answer
             // is the round trip the steering exists to prevent.
             "To find code, call search first",
+            // The read side, which leaked for as long as it was only a
+            // suggestion: one execution ran 24 `sed -n` range reads against 2
+            // `read_file` calls, and a shell read leaves the ledger no
+            // baseline for the drift oracle to attribute a later edit against.
+            "To read a file, use read_file rather than the shell",
+            // The round trip that made the shell cheaper. No schema can say
+            // "several files are still one call".
+            "pass files to ONE read_file call",
             // The file tools are not interchangeable with shell equivalents:
             // their edits are what the diff and verification are computed from.
             "use the file tools rather than the shell",
