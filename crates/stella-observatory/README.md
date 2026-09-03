@@ -289,12 +289,15 @@ naming it (`{"api_keys": ["sk-live-…"]}`), and redacting only the direct strin
 child leaked that. Keys ending `_env` are exempt — they name a variable, not
 its value. `mcp_servers` never reads env or header *values* at all.
 
-The one hole left in that claim is `mcp_servers`' `target`: it is `cmd` plus
-`args` for a stdio server and `url` for an HTTP one, both served verbatim and
-neither routed through `redact`. A token passed on the command line
-(`--token=…`) or in a query string (`https://mcp.example/sse?key=…`) is a
-credential sitting in a field the scrubber does not look at. Anything new that
-reaches the browser must be audited the same way before it lands.
+`mcp_servers`' `target` uses a narrower rule than `redact`. A stdio server's
+args (`--token=…`) and an HTTP server's query string
+(`https://mcp.example/sse?key=…`) often carry credentials, in fields
+`sensitive_key` never checks. So a stdio target shows only its command name
+and an argument count. An HTTP target's `url` goes through `redacted_url`,
+which strips userinfo, query, and fragment. `redact` applies that same rule
+to any `_url`/`_uri` key in settings — `base_url`, say — so a value like
+`https://user:secret@host/v1` never reaches the browser whole. Anything new
+that reaches the browser must be audited the same way before it lands.
 
 ### The palette is a mirror, and one data-mark step is unused
 

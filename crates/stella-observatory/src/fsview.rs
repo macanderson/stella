@@ -11,8 +11,8 @@
 //!    ledger rows are states, rendered as empty sections.
 //! 2. **Secrets never reach the browser.** `settings.json` and `mcp.toml`
 //!    may carry credentials; [`redact`] scrubs any value under a
-//!    sensitive-looking key (and every value under `env`/`headers` maps)
-//!    before the JSON is serialized into a response.
+//!    sensitive-looking key or a URL-shaped one (`base_url`), and every
+//!    value under `env`/`headers` maps, before the JSON is serialized.
 
 mod contributions;
 
@@ -761,10 +761,24 @@ fn sensitive_key(key: &str) -> bool {
         || k == "authorization"
 }
 
+/// Does this (lowercased) key name a URL-valued field — `base_url`,
+/// `proxy_uri`, and so on? `ProviderSettings::base_url` can hold an
+/// authenticating proxy's URL, so its value can carry userinfo
+/// (`https://user:secret@host/v1`). That is a credential in the value, and
+/// [`sensitive_key`] never matches a key named like this.
+fn url_like_key(key: &str) -> bool {
+    let k = key.to_ascii_lowercase();
+    k.ends_with("_url") || k.ends_with("_uri")
+}
+
 /// Recursively scrub credentials from parsed settings before serving them.
 /// A sensitive key — or an `env`/`headers` map, whose values are credentials
 /// by position — opens a *credential scope*, and every string at or below it
-/// is replaced.
+/// is replaced. A URL-shaped key outside that scope is not wiped out — its
+/// host and path help tell providers apart — but it still goes through
+/// [`redacted_url`], because the credential in a URL lives in its userinfo
+/// or query, not under a key name `sensitive_key` would ever match
+/// (`base_url: "https://user:secret@host/v1"`).
 ///
 /// The scope has to be inherited, not recomputed per level: settings are
 /// arbitrary user JSON, so a secret can sit one container deeper than the
@@ -781,6 +795,12 @@ fn redact(value: &mut Value, in_credential_scope: bool) {
                     || matches!(key.as_str(), "env" | "headers");
                 if scoped && v.is_string() {
                     *v = Value::String("<redacted>".into());
+                } else if !scoped && url_like_key(key) {
+                    if let Value::String(s) = v {
+                        *s = redacted_url(s);
+                    } else {
+                        redact(v, scoped);
+                    }
                 } else {
                     redact(v, scoped);
                 }
@@ -1277,6 +1297,40 @@ tags       = ["testing", "pins"]
             "STELLA_HOME does move the loader's root (#2178), so a dashboard \
              that ignored it would name a settings file the CLI never opens"
         );
+    }
+
+    /// A `base_url` carrying userinfo — the shape an authenticating proxy
+    /// needs — holds a credential in the value, under a key name
+    /// `sensitive_key` never matches. Before this fix `redact` left the
+    /// string alone, so the password reached `/api/config`'s response body.
+    #[test]
+    fn redact_strips_userinfo_from_a_url_shaped_key() {
+        let mut v = serde_json::json!({
+            "providers": {
+                "custom": { "base_url": "https://svc:s3cr3t@proxy.internal/v1" }
+            },
+        });
+        redact(&mut v, false);
+        let s = v.to_string();
+        assert!(
+            !s.contains("s3cr3t"),
+            "password must not reach the browser: {s}"
+        );
+        assert!(
+            s.contains("proxy.internal/v1"),
+            "host and path stay, so providers stay distinguishable: {s}"
+        );
+    }
+
+    /// A URL-shaped key already inside a credential scope (nested under a
+    /// key `sensitive_key` matches, like `api_key_url`) still gets the
+    /// blunt `<redacted>` treatment, not the narrower [`redacted_url`] one.
+    /// The stricter rule wins.
+    #[test]
+    fn a_sensitive_key_wins_over_the_narrower_url_redaction() {
+        let mut v = serde_json::json!({ "secret_url": "https://user:pw@host/v1?x=1" });
+        redact(&mut v, false);
+        assert_eq!(v["secret_url"], "<redacted>");
     }
 
     /// A secret one container below the key that names it used to survive:
