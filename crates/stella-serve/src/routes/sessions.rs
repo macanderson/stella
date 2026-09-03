@@ -14,12 +14,6 @@
 
 use super::*;
 
-// `handle_session_delete`'s only use of the checkpoint port beyond the wire
-// types `super::*` already carries. It routes a failed discard through the
-// same sink the engine's own persist and discard calls use, so the failure
-// gets reported instead of dropped.
-use stella_engine::CheckpointSink;
-
 // ── /v1/sessions: server-owned conversations (#931) ──────────────────────────
 //
 // The handlers are the thin part; the state machine (checkout, settle-back,
