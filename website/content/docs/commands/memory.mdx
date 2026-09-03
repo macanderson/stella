@@ -200,6 +200,13 @@ This writes a **tombstone**. It does not delete the memory, and that difference 
 
 `--reason` is optional, and `stella memory forgotten` shows it later. Write one anyway. Months from now, you'll probably be the one deciding whether to `restore` it.
 
+<Callout type="warn">
+`forget` hides a memory. It does not remove the text from your disk. The original row stays
+in `.stella/private/context.db`. `forget` also copies the full text into the tombstone
+record, and keeps that copy forever. If a memory holds something you want gone, not just
+hidden, `forget` alone will not do that. You would need to edit `context.db` by hand.
+</Callout>
+
 ### `stella memory restore <id>`
 
 Remove a tombstone. The memory can be recalled again, and stella can learn it again too.

@@ -54,7 +54,7 @@
 //! the real trap; audit them by hand:
 //!   - `stella-tui` `deck::event_intensity` and `deck::status_from_event`: give
 //!     the case an intensity / agent status if it should register on the
-//!     fleet deck.
+//!     fleet deck; `transcript_build::note_kind` gives it a `NoteKind` tier.
 //!
 //! The same duty applies to the other exhaustively-matched cross-crate enums
 //! this pattern warns about (`ToolOutput`, `BudgetOutcome`).

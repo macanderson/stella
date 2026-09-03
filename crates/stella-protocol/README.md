@@ -105,22 +105,27 @@ This crate has no god files: no file exceeds the gate's 1500-line ratchet
 accepts no new entries. When a file here approaches the limit, split it before
 it crosses.
 
-[`src/event.rs`](src/event.rs) was grandfathered here for a long time and now
-sits just under the limit, so its split discipline still applies: new
-supporting vocabulary goes in a new module re-exported from
-[`src/lib.rs`](src/lib.rs) — the crate's precedent is
-[`src/ladder.rs`](src/ladder.rs), split out of `event.rs` when the ladder rung
-joined it (#1043), with the re-export keeping `stella_protocol::LadderSnapshot`
-at its old path — and a genuinely new `AgentEvent` case offsets its lines
-by extracting the case's supporting types, taking their inline round-trip
-tests with them.
+[`src/event/kind.rs`](src/event/kind.rs) — the `AgentEvent` enum itself, one
+arm per wire case — is the file that sits near the limit today.
+[`src/event.rs`](src/event.rs) is 284 lines, nowhere close. `kind.rs` is not
+in `scripts/file-size-baseline.txt`, so it is held to the strict 1500-line
+ceiling rather than a grandfathered one; a first-time crossing gets no
+baseline entry (see AGENTS.md § "God files"). Split discipline therefore
+applies **there**: a genuinely new `AgentEvent` case lands its arm in
+`kind.rs`, but any supporting type it needs goes in a new module re-exported
+from [`src/event.rs`](src/event.rs) — the crate's precedent is
+[`src/ladder.rs`](src/ladder.rs), split out when the ladder rung joined the
+vocabulary (#1043), with the re-export keeping
+`stella_protocol::LadderSnapshot` at its old path — and a case's inline
+round-trip tests travel with its supporting type, not with `kind.rs`.
 
 ## Layout
 
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate's flat re-export surface, and the statement of the one-directional wire-compatibility rule. Read it first. |
-| [`src/event.rs`](src/event.rs) | `AgentEvent` and its supporting types — the stream-json vocabulary: every wire case plus the tagless `Unknown` fallback. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
+| [`src/event.rs`](src/event.rs) | The module's re-export surface and its `serde(default = "...")` helper functions. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
+| [`src/event/kind.rs`](src/event/kind.rs) | `AgentEvent` itself — the stream-json vocabulary: every wire case plus the tagless `Unknown` fallback. The file near the 1500-line ceiling; see "God files" above. |
 | [`src/journal.rs`](src/journal.rs) | `StampedEvent` / `stamped_line` — one *line* of the event stream: an `AgentEvent` plus the optional wall-clock `ts` its sink stamps at the write boundary (#2111). Not a field of the enum: a stamp is a fact about a write, the same event reaches more than one sink, and this crate owns no clock. |
 | [`src/context_event.rs`](src/context_event.rs) | `CompiledContextFrameBuilt` — the compiled-frame identity the step manifest carries, and its golden JCS vector. The `LifecycleEventEnvelope` channel that used to live here was deleted unwired (#3135). |
 | [`src/completion.rs`](src/completion.rs) | `CompletionRequest` / `CompletionResult` / `CompletionUsage`, `GenerationParams`, `FinishReason`. The one envelope every provider adapter translates to and from. |
@@ -224,11 +229,14 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
   fields crossed (`text` carried `delta`, `text_delta` carried `text`); the
   serde aliases keep those parsing, and raw-JSONL readers must stay bilingual
   the same way.
-- **The golden JCS vector in `context_event.rs` is meant to break.** Renaming,
-  retyping, adding, or reordering a field of `CompiledContextFrameBuilt` breaks
-  the golden line, because those canonical bytes are the preimage
-  `stella_core::context_record::hash` builds `record_hash` from. The dev-dep
-  pins the same canonicalizer crate *and version* core hashes with.
+- **The golden JCS vector in `context_event.rs` is meant to break — on three
+  of the four edits, not all four.** Renaming, retyping, or adding a
+  field of `CompiledContextFrameBuilt` breaks the golden line, because those
+  canonical bytes are the preimage `stella_core::context_record::hash` builds
+  `record_hash` from. **Reordering does not**: RFC 8785 (JCS) sorts object
+  keys lexicographically, so two structurally-identical values serialize to
+  the same bytes regardless of field declaration order. The dev-dep pins the
+  same canonicalizer crate *and version* core hashes with.
 - **`ToolSchema::read_only` defaults to `false`** — the safe direction. An MCP
   tool or an older schema that doesn't know about the field is treated as
   mutating and never speculated on.
@@ -281,12 +289,26 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
   drops line/column from the resulting error message. Both are the price of the
   forward-compat fallback (#672), and both narrow the "a known tag with a bad
   body stays loud" guarantee slightly.
-- **`AgentEvent::UsageIncomplete::retries` serializes as `null` when absent.**
-  It is the one `Option` on the event vocabulary without
-  `skip_serializing_if`, so it costs a key on every incomplete-usage line while
-  its neighbours (`Pr::number`, `Pr::ci`, `ContextFrameRef::uri`, …) omit
-  theirs. Changing it now would be a wire change, so it is documented rather
-  than fixed; do not copy the pattern onto a new field.
+- **Six `Option` fields on the event vocabulary serialize `null` when
+  absent, because they skip `skip_serializing_if`** — six, not the single
+  field this section once named alone. `AgentEvent::UsageIncomplete::retries`
+  was first; the pattern was then copied onto `BudgetTick`'s `limit_usd`,
+  `session_spent_usd`, `session_limit_usd` and `deadline_remaining_ms`, and
+  onto `FileChange::diff`. `budget_tick` is one of the highest-volume events
+  in `stella-events.jsonl`, so four of the six now cost a `null` key on every
+  tick after every paid call. Their neighbours (`Pr::number`, `Pr::ci`,
+  `ContextFrameRef::uri`, …) omit theirs.
+
+  Fixing this is not a one-line change on three of the six:
+  `UsageIncomplete::retries`, `BudgetTick::limit_usd` and `FileChange::diff`
+  carry no `#[serde(default)]` either, so adding `skip_serializing_if` to one
+  of those three *alone* would make a newly-written event with the field
+  absent fail to decode — the key would simply be missing, not present-as-
+  `null`. Any fix has to add both attributes together, on all three, and
+  re-verify every round-trip test in this crate against the smaller wire
+  shape. That is a wire-format change to a shape already written into
+  replayable journals, so all six stay documented rather than fixed here;
+  **do not copy the pattern onto a new field.**
 
 ## Testing
 
@@ -294,16 +316,28 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
 make test-protocol        # = cargo test -p stella-protocol
 ```
 
-There is no `tests/` directory — every test is an inline `#[cfg(test)] mod
-tests` at the bottom of the module it covers, and the suite needs no fixtures,
-network, or env vars. The dominant shape is the serde round-trip (AGENTS.md
-"Serde-first": every type crossing a crate boundary round-trips byte-for-byte),
-paired with a "legacy stream still parses" test for each `serde(default)` field
-— e.g. `completion_usage_without_cache_write_tokens_still_parses`,
+Most tests are inline `#[cfg(test)] mod tests` at the bottom of the module
+they cover, and need no fixtures, network, or env vars. The dominant shape is
+the serde round-trip (AGENTS.md "Serde-first": every type crossing a crate
+boundary round-trips byte-for-byte), paired with a "legacy stream still
+parses" test for each `serde(default)` field — e.g.
+`completion_usage_without_cache_write_tokens_still_parses`,
 `step_usage_from_a_pre_drift_stream_still_parses`,
 `legacy_compaction_without_identities_still_parses`. The other shape is the
 golden-bytes test in `context_event.rs`, which needs the
 `serde_json_canonicalizer` dev-dependency.
+
+There is also a `tests/` directory, for the one kind of test an inline module
+cannot host: an integration test compiles against the crate's public API
+only, which is what proves *consumers* can build and validate what this crate
+emits, not just that the crate compiles itself.
+[`tests/wire_contract.rs`](tests/wire_contract.rs) (plus its sample table,
+[`tests/wire_contract/samples.rs`](tests/wire_contract/samples.rs)) is the
+one every `AgentEvent` case must feed — see "Adding an `AgentEvent` case"
+below. [`tests/journal_stamp_wire.rs`](tests/journal_stamp_wire.rs) and
+[`tests/text_event_wire.rs`](tests/text_event_wire.rs) cover
+`journal.rs`'s wire shape and the `Text`/`TextDelta` legacy-alias parsing
+called out above.
 
 ## Extending it
 
@@ -316,11 +350,19 @@ default. Every `serde(default)` in this crate has one; match the neighborhood.
 the new case on `AgentEvent::Unknown`, so backwards readability is not a
 reason to invent a side channel. Then:
 
-1. Add the case to `AgentEvent` in [`src/event.rs`](src/event.rs).
+1. Add the case to `AgentEvent` in
+   [`src/event/kind.rs`](src/event/kind.rs).
 2. Add its arm to `type_tag` — `cargo build -p stella-protocol` fails with
    `E0004` until you do.
 3. Add a round-trip test asserting the `"type"` tag serializes as you expect.
-4. Work the checklist in `type_tag`'s doc comment: the compile-enforced
+4. Add a sample to `sample_events()` in
+   [`tests/wire_contract/samples.rs`](tests/wire_contract/samples.rs) —
+   `cargo test -p stella-protocol` fails
+   `every_known_tag_has_a_sample` until you do. This is the integration test
+   named above, run against the crate's public API rather than the module's
+   own `#[cfg(test)]`, so skip it and the inline round-trip test in step 3
+   passes while `make test` (which does run `tests/`) still fails.
+5. Work the checklist in `type_tag`'s doc comment: the compile-enforced
    matchers in `stella-tui` will stop you one crate at a time, then hand-audit
    the wildcard matchers the compiler cannot catch. This step is not optional
    bookkeeping — a case landed on `main` past the compile-enforced half and

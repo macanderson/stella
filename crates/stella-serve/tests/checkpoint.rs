@@ -30,7 +30,8 @@ use std::time::Duration;
 
 use common::{TOKEN, model_result, model_wants_echo, next_event, open_sse, post_json};
 use serde_json::json;
-use stella_serve::{CheckpointKey, CheckpointStore, MemoryCheckpointStore};
+use stella_serve::observe::ServeEvent;
+use stella_serve::{CheckpointKey, CheckpointStore, CheckpointStoreError, MemoryCheckpointStore};
 
 /// A server whose checkpoints land in a store the test can also read directly.
 ///
@@ -409,6 +410,65 @@ async fn deleting_a_session_takes_its_resume_point_with_it() {
         store.get(&key).unwrap(),
         None,
         "a destroyed conversation must not leave its resume point behind"
+    );
+}
+
+/// A store whose every operation fails. It covers the one failure mode
+/// `deleting_a_session_takes_its_resume_point_with_it` cannot: what a
+/// caller and an operator are told when a removal does not succeed.
+#[derive(Debug)]
+struct BrokenStore;
+
+impl CheckpointStore for BrokenStore {
+    fn put(&self, _key: &CheckpointKey, _json: &str) -> Result<(), CheckpointStoreError> {
+        Err(CheckpointStoreError::Backend("no room".to_string()))
+    }
+    fn get(&self, _key: &CheckpointKey) -> Result<Option<String>, CheckpointStoreError> {
+        Err(CheckpointStoreError::Backend("no room".to_string()))
+    }
+    fn remove(&self, _key: &CheckpointKey) -> Result<(), CheckpointStoreError> {
+        Err(CheckpointStoreError::Backend("no room".to_string()))
+    }
+}
+
+/// A bare `let _ = store.remove(&key);` drops the error on the floor. The
+/// response still says `{"status":"deleted"}`. Nothing else — not a
+/// `CheckpointFailed` event, not `checkpoints_failed_total` — hears about
+/// it. This test fails on that discarded `Result` by construction: a store
+/// whose `remove` always errs leaves `Capture` holding no `CheckpointFailed`
+/// event, because the error never reached anything that could observe it.
+///
+/// The session itself is gone either way, so the response staying `200` is
+/// correct. What changes is that the failing discard now gets reported the
+/// same way a failing persist already does.
+#[tokio::test]
+async fn a_failed_checkpoint_removal_at_session_delete_is_reported() {
+    let store: Arc<dyn CheckpointStore> = Arc::new(BrokenStore);
+    let (addr, capture, shutdown) = common::start_drainable_server_with_checkpoints(
+        common::TEST_RESUME_GRACE,
+        stella_serve::DEFAULT_SHUTDOWN_GRACE,
+        Some(store),
+    )
+    .await;
+    drop(shutdown);
+
+    let session_id = create_session(addr).await;
+
+    let (status, body) = delete_checkpoint(addr, &format!("/v1/sessions/{session_id}")).await;
+    assert!(
+        status.contains("200"),
+        "the session itself is genuinely gone: {status} {body}"
+    );
+
+    assert!(
+        capture
+            .events()
+            .iter()
+            .any(|event| matches!(event, ServeEvent::CheckpointFailed { .. })),
+        "a discard failure at session-delete time must be reported like \
+         every other checkpoint-store failure, not swallowed behind a \
+         response that says nothing about whether the checkpoint was \
+         actually cleared"
     );
 }
 

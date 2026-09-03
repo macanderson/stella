@@ -999,6 +999,13 @@ impl Store {
     /// content and the reason rather than erroring, so forgetting a memory
     /// that was re-learned under a new id behaves the way a user expects.
     ///
+    /// This suppresses; it does not delete. The item's original row is left
+    /// exactly where it was, and `content` is written into a second, durable
+    /// copy in the `forgotten` table that carries no age or GC coverage of
+    /// its own — so a forgotten item ends up with two live copies of its
+    /// text, not zero. A caller that needs the text gone, not just hidden,
+    /// has to remove both rows itself.
+    ///
     /// `content` is what makes this survive re-learning — the reflection
     /// recorder and the skill miner compare candidates against it, so a
     /// paraphrase with a fresh id is still caught. Pass the item's text, not

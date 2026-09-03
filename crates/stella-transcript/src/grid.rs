@@ -180,17 +180,23 @@ impl Cell {
     /// A cell is one styled run of one row, so a control character in it can
     /// only corrupt the frame: a `\n` splits the row when the encoders join
     /// lines, and the rest of the class is zero columns to [`cells`] and
-    /// something real to the terminal — `\t` a stop, `\r` a return — so the
-    /// width contract breaks exactly where nothing measures it. Wire text
-    /// reaches this constructor unsanitised (a bash `header_object` is
-    /// routinely multi-line; a diff row of a Makefile carries tabs), so the
-    /// boundary is here: tabs expand from the cell's own origin — body lines
-    /// arrive already expanded against their true column
-    /// (`push_output_text`), so this is the fallback stop, not a second
-    /// opinion — and every other control character becomes a space.
+    /// something real to the terminal — `\t` a stop, `\r` a return. Wire text
+    /// reaches this constructor unsanitised. A bash `header_object` is
+    /// routinely multi-line; a diff row of a Makefile carries tabs; raw ANSI
+    /// colour codes reach `Output::lines` whenever a tool's own capture keeps
+    /// them. So the boundary is here. `strip_csi` drops a whole ANSI CSI
+    /// sequence first — swapping only its leading `ESC` for a space would
+    /// leave `[31m` behind as literal text, a different corruption than the
+    /// one this constructor exists to stop. Tabs expand next, from the
+    /// cell's own origin (body lines arrive already expanded against their
+    /// true column, `push_output_text`, so this is the fallback stop, not a
+    /// second opinion). Every remaining control character becomes a space.
     #[must_use]
     pub fn new(text: impl Into<String>, fg: Color) -> Self {
         let mut text = text.into();
+        if text.contains('\u{1b}') {
+            text = strip_csi(&text);
+        }
         if text.chars().any(char::is_control) {
             text = crate::tabs::expand(&text, 0)
                 .chars()
@@ -224,6 +230,35 @@ impl Cell {
     pub fn width(&self) -> usize {
         cells(&self.text)
     }
+}
+
+/// Remove every ANSI CSI sequence (`ESC '[' <parameters> <final byte>`) from
+/// `text`, dropping the whole run rather than the lone `ESC` byte.
+///
+/// `0x40..=0x7E` is CSI's final-byte range (ECMA-48 §5.4) — the range a real
+/// terminal reads to know a sequence has ended. A sequence with no final
+/// byte before the string runs out is malformed, so everything from its
+/// `ESC` onward is dropped; there is no legible text left to recover. A lone
+/// `ESC`, or any other escape kind (`ESC ']'` OSC, `ESC` alone), is left for
+/// [`Cell::new`]'s per-character fallback to turn into a space. Only a real
+/// CSI sequence is a run of otherwise-printable bytes, which is what a
+/// per-character substitution would leave behind as literal noise.
+fn strip_csi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' || chars.peek() != Some(&'[') {
+            out.push(c);
+            continue;
+        }
+        chars.next(); // the '[' that confirmed this is CSI, not some other escape
+        for final_byte in chars.by_ref() {
+            if ('\u{40}'..='\u{7e}').contains(&final_byte) {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// One rendered row.
@@ -785,6 +820,21 @@ fn diff_lines(
     header.push(Cell::new(" ", Color::Faint));
     header.push(Cell::new(fold_mark(open), Color::Blue));
     out.push(header);
+    // `FileDiff::minimal` is false only when the producer's own differ
+    // tripped `stella_diff::LCS_AREA_CAP` and fell back to a blunt
+    // replace-everything rendering. The HTML renderer says so with a
+    // `.blunt` banner; the grid must say it too, not present the fallback
+    // hunks as a precise diff. Pushed ahead of the fold check, so a
+    // collapsed file still carries the marker.
+    if !diff.minimal {
+        out.push(vec![
+            body_gutter(),
+            Cell::new(
+                "diff exceeded the exact-comparison bound — shown as replace-everything",
+                Color::Amber,
+            ),
+        ]);
+    }
     if !open {
         return;
     }

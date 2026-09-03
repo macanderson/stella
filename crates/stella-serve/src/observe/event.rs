@@ -403,6 +403,15 @@ pub enum SettledOutcome {
 pub enum StreamEndReason {
     /// The terminal `turn_complete` frame was written. The healthy ending.
     TurnComplete,
+    /// A reconnect asked for frames older than the retention window keeps.
+    /// The server wrote a `replay_truncated` error frame and stopped there.
+    /// The turn is still live. It gets parked for resume right after this
+    /// event, by the same call that reports it — not through
+    /// [`Self::leaves_the_turn_resumable`], which only covers a subscriber
+    /// that hangs up. [`Self::TurnComplete`] is the healthy ending; this is
+    /// not that. A dashboard built on that field would wrongly count this
+    /// live turn as done.
+    ReplayTruncated,
     /// The subscriber hung up. The turn is parked for the resume window rather
     /// than cancelled outright — see `ServerState::park_for_resume`.
     PeerDisconnected,
@@ -1007,6 +1016,11 @@ mod tests {
             // The peer is emphatically still there — it is talking, just
             // wrongly. Nothing to wait for.
             StreamEndReason::StrayBytes,
+            // Not a hang-up either — the peer is still there and the turn is
+            // still live, but this predicate is not what parks it: its one
+            // call site does that itself, unconditionally, right after
+            // emitting the event — see `ReplayTruncated`'s own doc comment.
+            StreamEndReason::ReplayTruncated,
         ] {
             assert!(
                 !reason.leaves_the_turn_resumable(),

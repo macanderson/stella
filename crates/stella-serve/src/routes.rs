@@ -677,7 +677,7 @@ async fn write_replay(
                 Ok(written) => {
                     *frames_sent += 1;
                     *bytes_out = bytes_out.saturating_add(written);
-                    Some(StreamEndReason::TurnComplete)
+                    Some(StreamEndReason::ReplayTruncated)
                 }
                 Err(_) => Some(StreamEndReason::WriteFailed),
             };
@@ -1274,5 +1274,53 @@ mod tests {
         assert_eq!(contracts[1].name(), "peek");
         assert_eq!(contracts[1].risk, stella_protocol::RiskLevel::Low);
         assert_eq!(contracts[1].version, 1);
+    }
+
+    /// A reconnect whose resume point has fallen out of the retention ring
+    /// is `Replay::Truncated`, for a turn that has not ended. Reporting
+    /// that as `StreamEndReason::TurnComplete` reads, in the log, as a turn
+    /// that finished — it did not. A ring of size one always evicts, so it
+    /// drives this path without a real race.
+    #[tokio::test]
+    async fn a_truncated_replay_reports_a_reason_distinct_from_a_healthy_completion() {
+        // A ring of one: recording a second frame evicts the first, so a
+        // reconnect asking for everything after 0 finds its resume point
+        // already gone.
+        let history = FrameHistory::with_capacity(1);
+        history.record(|seq| format!(r#"{{"seq":{seq}}}"#));
+        history.record(|seq| format!(r#"{{"seq":{seq}}}"#));
+
+        // `Responder` writes to a real `TcpStream` by construction — see
+        // `observe::record` — so the seam under test needs a loopback pair
+        // rather than an in-memory buffer.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback bind");
+        let addr = listener.local_addr().expect("bound address");
+        let client = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("loopback connect");
+        let (mut server_stream, _) = listener.accept().await.expect("loopback accept");
+        let mut res = Responder::new(
+            &mut server_stream,
+            crate::observe::event::RequestId::generate(),
+        );
+
+        let mut frames_sent = 0_u64;
+        let mut bytes_out = 0_u64;
+        let reason = write_replay(&mut res, &history, 0, &mut frames_sent, &mut bytes_out).await;
+
+        assert_eq!(
+            reason,
+            Some(StreamEndReason::ReplayTruncated),
+            "a still-live turn whose reconnect fell out of the retention \
+             window must not read, in the operator's log, as indistinguishable \
+             from one that actually finished"
+        );
+        assert_eq!(
+            frames_sent, 1,
+            "the replay_truncated error frame was written"
+        );
+        drop(client);
     }
 }
