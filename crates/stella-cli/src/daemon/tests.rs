@@ -443,13 +443,24 @@ fn the_liveness_fallback_takes_a_lock_that_does_not_exist_yet() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The grace this test passes to [`stop_after`], in place of the real
+/// [`STOP_GRACE`]. Long enough to run several [`POLL`] iterations even under
+/// load. Short enough that this one test runs in milliseconds, not the
+/// real eight seconds.
+const TEST_GRACE: Duration = Duration::from_millis(300);
+
 /// The escalation rung. A run that ignores `SIGTERM` — a shell script with a
 /// `trap`, or an engine wedged below its own handler — must still end, and
 /// must still be recorded as stopped rather than left to age into a crash.
 ///
-/// Deliberately slow: it waits out the real [`STOP_GRACE`], because a test
-/// that shortened the grace would be testing a different constant than the one
-/// that ships.
+/// Calls [`stop_after`] with [`TEST_GRACE`], not [`stop`] with the real
+/// [`STOP_GRACE`]. The real grace is eight real seconds. It is sized for a
+/// live turn's shutdown handler, not for a shell a test just spawned. The
+/// escalation itself does not change: signal the group, poll the flock,
+/// kill once the deadline passes. Only the deadline's length changes. There
+/// is no way to observe that a grace period has passed except the clock, so
+/// shrinking the clock is the fix — the same one [`watch`]'s `ceiling`
+/// parameter already uses below, for its own test.
 ///
 /// # The script must not block in a forked child (#1721)
 ///
@@ -499,7 +510,7 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     //
     //     if lock_is_held(&sidecar) != Some(true) { … "was already finished"; return }
     //
-    // Entering that branch returns in microseconds, and the `took >= STOP_GRACE`
+    // Entering that branch returns in microseconds, and the `took >= TEST_GRACE`
     // assertion below then fails against a run that was never signalled at all.
     // Under full-suite load, with ~1400 tests and several sibling cases
     // spawning their own children, that window is exactly what widens (#1721).
@@ -517,7 +528,7 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     // first command. In the window between the two, `TERM` still carries its
     // default disposition and kills `sh` outright — the group signal takes the
     // `sleep` with it, `stop` observes a process that shut down "cleanly", and
-    // it returns in ~81ms against an 8s grace.
+    // it returns in ~81ms against what was then the real 8s grace.
     //
     // That is the same ~81ms deterministic path #1721 diagnosed and fixed for
     // the *fixture* (a bare `sleep` that never ignored anything); this is the
@@ -532,12 +543,12 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     );
 
     let started = Instant::now();
-    stop(&registry, &id).expect("stop");
+    stop_after(&registry, &id, TEST_GRACE).expect("stop");
     let took = started.elapsed();
 
     assert!(
-        took >= STOP_GRACE,
-        "the child was killed after {took:?}, before its {STOP_GRACE:?} to shut down cleanly"
+        took >= TEST_GRACE,
+        "the child was killed after {took:?}, before its {TEST_GRACE:?} to shut down cleanly"
     );
     // Bounded, because `stop` returns as soon as it has ISSUED the SIGKILL —
     // unlike `Supervisor::interrupt_and_drain`, which reaps with `child.wait()`

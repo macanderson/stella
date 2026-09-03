@@ -1084,6 +1084,25 @@ fn resume_point(record: &SessionRecord) -> Result<stella_core::step::Checkpoint,
 
 /// Stop a supervised run from another process — `stella daemon stop`.
 pub(crate) fn stop(registry: &SessionRegistry, id: &str) -> Result<(), String> {
+    stop_after(registry, id, STOP_GRACE)
+}
+
+/// [`stop`]'s escalation loop, parameterized on the grace period.
+///
+/// Production always calls this through [`stop`], which passes the real
+/// [`STOP_GRACE`]. That is eight real seconds, sized for a live turn's
+/// shutdown handler, not for a test. A test passes a much shorter grace
+/// instead. [`watch`]'s `ceiling` parameter already does the same thing for
+/// the test below that spawns a real ceiling.
+///
+/// The escalation itself does not change: signal the group, poll the flock,
+/// kill once the deadline passes. Only the deadline's length changes. A
+/// short grace turns an eight-second test into a millisecond one, and
+/// proves the same thing. The property under test is that a real process
+/// group ignoring a real `SIGTERM` is still gone after its grace. There is
+/// no way to observe that grace has passed except the clock, so shrinking
+/// the clock is the fix.
+fn stop_after(registry: &SessionRegistry, id: &str, grace: Duration) -> Result<(), String> {
     let record = resolve(registry, Some(id))?;
     let Some(supervisor) = record.supervisor.as_ref() else {
         return Err(format!(
@@ -1103,7 +1122,7 @@ pub(crate) fn stop(registry: &SessionRegistry, id: &str) -> Result<(), String> {
     }
 
     signal_group(supervisor.pgid, SIGTERM);
-    let deadline = Instant::now() + STOP_GRACE;
+    let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
         if lock_is_held(&sidecar) != Some(true) {
             mark_stopped(registry, &record.id);
@@ -1114,10 +1133,9 @@ pub(crate) fn stop(registry: &SessionRegistry, id: &str) -> Result<(), String> {
     }
 
     eprintln!(
-        "{} {} did not stop within {}s; killing it",
+        "{} {} did not stop within its {grace:?} grace period; killing it",
         "⚠".yellow(),
         record.id,
-        STOP_GRACE.as_secs()
     );
     signal_group(supervisor.pgid, SIGKILL);
     // Written here as well as on the graceful path, because on this one the
