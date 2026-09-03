@@ -454,9 +454,17 @@ fn slug(prompt: &str) -> String {
 }
 
 /// Which visual class an event's note belongs to.
+///
+/// This match holds no arm for `Stage`, `Proof`, `BudgetDenied` or
+/// `RetriesExhausted`. [`crate::textline::event_line`] returns `None` for all
+/// four, so `RunBuilder::note` returns before this function ever sees one of
+/// them. An arm for any of the four would be dead code — coverage that never
+/// runs. That is the exact shape that hid `GateBoard`'s missing arm: the
+/// match *looked* exhaustive. The compiler cannot catch a live arm going
+/// missing here either — `_ => NoteKind::Other` still compiles — so add one
+/// only after reading `event_line` and this function side by side.
 fn note_kind(event: &AgentEvent) -> NoteKind {
     match event {
-        AgentEvent::Stage { .. } => NoteKind::Stage,
         AgentEvent::ContextRecall { .. }
         | AgentEvent::ContextWrite { .. }
         | AgentEvent::MemoryLogged { .. }
@@ -464,10 +472,8 @@ fn note_kind(event: &AgentEvent) -> NoteKind {
         | AgentEvent::SkillInjected { .. }
         | AgentEvent::Compaction { .. } => NoteKind::Context,
         AgentEvent::BudgetTick { .. }
-        | AgentEvent::BudgetDenied { .. }
         | AgentEvent::ProviderFallback { .. }
-        | AgentEvent::Retry { .. }
-        | AgentEvent::RetriesExhausted { .. } => NoteKind::Meter,
+        | AgentEvent::Retry { .. } => NoteKind::Meter,
         AgentEvent::TurnParked { .. }
         | AgentEvent::TurnWoken { .. }
         | AgentEvent::AskUser { .. } => NoteKind::Wait,
@@ -476,7 +482,10 @@ fn note_kind(event: &AgentEvent) -> NoteKind {
         | AgentEvent::ScopeReview { .. }
         | AgentEvent::HunkReview { .. }
         | AgentEvent::TaskUpdate { .. }
-        | AgentEvent::Proof { .. } => NoteKind::Verdict,
+        // `deck/classify.rs` classifies this event as `TraceKind::Verdict`
+        // too; this arm keeps the plain, non-TTY transcript agreeing with
+        // the deck about it.
+        | AgentEvent::GateBoard { .. } => NoteKind::Verdict,
         AgentEvent::SubAgent { .. }
         | AgentEvent::Commit { .. }
         | AgentEvent::Pr { .. }

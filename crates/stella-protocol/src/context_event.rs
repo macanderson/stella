@@ -25,8 +25,8 @@
 //!
 //! The golden JCS vector below is the reason the body is pinned here: those
 //! canonical bytes are the preimage `stella-core::context_record::hash` builds
-//! `record_hash` values from, so renaming, retyping, or reordering a field
-//! must break a test rather than silently change a hash across replays.
+//! `record_hash` values from. Renaming, retyping, or adding a field breaks
+//! this golden line; reordering one does not — JCS already sorts the keys.
 
 use serde::{Deserialize, Serialize};
 
@@ -54,9 +54,10 @@ mod tests {
     #[test]
     fn golden_jcs_vector_for_compiled_context_frame_built() {
         // The exact canonical bytes of the event body. Keys are sorted and
-        // whitespace minimal, so the vector is hand-verifiable. Renaming,
-        // retyping, adding, or reordering a field breaks this line — which is
-        // the point: the body is a wire contract across replays.
+        // whitespace minimal, so the vector is hand-verifiable. A reordered
+        // field cannot break this line — JCS already sorted the keys.
+        // Renaming, retyping, or adding one does break it, which is the
+        // point: the body is a wire contract across replays.
         assert_eq!(
             jcs(&CompiledContextFrameBuilt {
                 compiled_frame_id: "cf_1".into(),
