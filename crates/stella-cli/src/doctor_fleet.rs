@@ -266,6 +266,10 @@ mod tests {
     /// Above [`SPLIT_THRESHOLD`], `doctor` reports count and size only. It
     /// must not spawn `git` for a sweep. This test needs no real
     /// repository — just enough directories to cross the gate.
+    ///
+    /// It is also where the reported size is pinned to an exact number.
+    /// Every worktree it builds holds one 1-byte file, so the total is the
+    /// worktree count and nothing else.
     #[test]
     fn above_the_threshold_reports_count_and_size_without_a_sweep() {
         let dir = tempfile::tempdir().unwrap();
@@ -278,7 +282,16 @@ mod tests {
 
         let report = report(dir.path());
         assert_eq!(report.count, SPLIT_THRESHOLD + 1);
-        assert!(report.total_bytes > 0, "{report:?}");
+        // The total is exact here: `path_size` sums file lengths and never
+        // counts the directory inodes holding them, so one 1-byte file per
+        // worktree makes the byte total equal the count. A floor (`> 0`)
+        // would survive a double-counted directory, a followed symlink, or
+        // a dropped file; this does not.
+        assert_eq!(
+            usize::try_from(report.total_bytes).unwrap(),
+            SPLIT_THRESHOLD + 1,
+            "one 1-byte file per worktree: {report:?}"
+        );
         assert_eq!(
             report.split, None,
             "above the threshold the split must not run: {report:?}"
@@ -319,6 +332,11 @@ mod tests {
 
         let report = report(repo);
         assert_eq!(report.count, 2, "{report:?}");
+        // A real worktree's `.git` file records an absolute path into the
+        // tempdir, and that path's length changes on every run, so there is
+        // no fixed byte total to assert against here. The exact size lives
+        // in `above_the_threshold_reports_count_and_size_without_a_sweep`,
+        // which builds its worktrees by hand.
         assert!(report.total_bytes > 0, "{report:?}");
         assert_eq!(report.sweep_error, None, "{report:?}");
         assert_eq!(
