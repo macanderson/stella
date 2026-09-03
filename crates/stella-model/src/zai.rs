@@ -944,9 +944,13 @@ struct ZaiStreamDelta {
 /// failed to deserialize, and the frame was then dropped whole. A dropped
 /// frame carrying tool calls is indistinguishable from a turn that simply had
 /// none, and the driver ends a turn on `tool_calls.is_empty()`: the run would
-/// report a clean, successful completion having executed nothing. Falling back
-/// to the fragment's position in the chunk keeps the sequential-index contract
-/// that `announce_completed_below` relies on.
+/// report a clean, successful completion having executed nothing. A part that
+/// leaves it out is filed under a counter that runs for the whole stream (see
+/// `stream::aggregate_zai_stream`). That keeps the by-index order
+/// `announce_completed_below` needs. The counter has to span the stream. A
+/// part's place inside its own chunk starts again at 0 for every frame, so a
+/// server sending one call per chunk with no `index` would file them all
+/// under 0 and merge them into one call.
 #[derive(Deserialize, Debug)]
 struct ZaiStreamToolCallDelta {
     #[serde(default)]
@@ -1379,6 +1383,8 @@ impl ZaiProvider {
     }
 }
 
+#[cfg(test)]
+mod malformed_tool_calls;
 #[cfg(test)]
 mod parallel_tool_calls;
 #[cfg(test)]
