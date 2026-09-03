@@ -447,12 +447,11 @@ impl<G: GitCli> Gc<G> {
     /// delete a branch that is still checked out somewhere). Returns whether
     /// the branch went with it.
     ///
-    /// Calls `remove_worktree_and_branch`, the same routine
+    /// Calls `remove_worktree_and_branch`, the routine
     /// [`WorktreeManager::remove`](crate::git::WorktreeManager::remove)
-    /// calls, instead of issuing its own `git` commands.
-    /// `judge_worktree` already checked that `branch` is fleet-prefixed
-    /// before a `Reclaim` verdict is reachable, so this never sees a
-    /// foreign or absent branch.
+    /// calls too. `judge_worktree` already checked that `branch` is
+    /// fleet-prefixed. The prefix is passed again here, so the delete
+    /// itself enforces the namespace rule, not just the earlier verdict.
     async fn remove_worktree(
         &self,
         path: &Path,
@@ -460,9 +459,16 @@ impl<G: GitCli> Gc<G> {
         force: bool,
         base_ref: &str,
     ) -> Result<bool, WorktreeError> {
-        let RemoveOutcome { branch_deleted, .. } =
-            remove_worktree_and_branch(&self.git, &self.repo_root, path, branch, force, base_ref)
-                .await?;
+        let RemoveOutcome { branch_deleted, .. } = remove_worktree_and_branch(
+            &self.git,
+            &self.repo_root,
+            path,
+            branch,
+            force,
+            base_ref,
+            Some(&self.branch_prefix),
+        )
+        .await?;
         Ok(branch_deleted)
     }
 

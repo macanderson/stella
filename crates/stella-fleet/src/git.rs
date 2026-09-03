@@ -443,6 +443,7 @@ impl<G: GitCli> WorktreeManager<G> {
             &worktree.branch,
             opts.force,
             contained_in,
+            None,
         )
         .await
     }
@@ -574,6 +575,14 @@ pub(crate) async fn is_contained_in(
 /// <path>`, then `git branch -D <branch>` when `force` or
 /// [`is_contained_in`] says it is safe. [`WorktreeManager::remove`] and
 /// [`Gc`](crate::gc::Gc)'s sweep are its only two callers.
+///
+/// `allowed_branch_prefix` is [`Gc`](crate::gc::Gc)'s namespace rule, kept
+/// here rather than trusted to the caller: even though `Gc::judge_worktree`
+/// already refuses a foreign branch before a removal is ever reached, the
+/// branch delete happens here, so the check belongs here too. `None` (what
+/// [`WorktreeManager::remove`] passes) skips it — a manager's own branch
+/// prefix is a configuration choice, not a namespace this routine can judge,
+/// so a manager may delete whatever branch its own `Worktree` value names.
 pub(crate) async fn remove_worktree_and_branch(
     git: &dyn GitCli,
     repo_root: &Path,
@@ -581,6 +590,7 @@ pub(crate) async fn remove_worktree_and_branch(
     branch: &str,
     force: bool,
     contained_in: &str,
+    allowed_branch_prefix: Option<&str>,
 ) -> Result<RemoveOutcome, WorktreeError> {
     let path_str = path_arg(path)?;
     let mut args: Vec<&str> = vec!["worktree", "remove"];
@@ -590,6 +600,17 @@ pub(crate) async fn remove_worktree_and_branch(
     args.push(path_str);
     let out = git.run(repo_root, &args).await?;
     ensure_ok(out, &args.join(" "))?;
+
+    // A branch outside the caller's own namespace is never a delete
+    // candidate, `force` included. Reported as "had commits" (kept) rather
+    // than a third outcome, so the two fields stay complementary for every
+    // caller reading them.
+    if allowed_branch_prefix.is_some_and(|prefix| !branch.starts_with(prefix)) {
+        return Ok(RemoveOutcome {
+            branch_deleted: false,
+            branch_had_commits: true,
+        });
+    }
 
     let branch_had_commits = if force {
         false
