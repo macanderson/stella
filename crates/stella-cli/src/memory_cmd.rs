@@ -24,8 +24,10 @@ use crate::query_format::{QueryFormat, Rows};
 use stella_core::rules::{self, PromoteStatus, RuleCandidate};
 use stella_store::{ContextSurface, MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
 
+mod edit;
 mod restore;
 
+pub use edit::{edit_memory_text, run_memory_edit};
 pub use restore::run_memory_restore;
 
 /// `stella memory` subcommands — the inspection and promotion surface of the
@@ -606,14 +608,13 @@ pub fn run_memory_forget(id: &str, reason: &str) -> Result<(), String> {
         .forget(ContextSurface::Memory, id, &content, reason)
         .map_err(|e| format!("cannot record tombstone: {e}"))?;
 
-    // Project the tombstone into the plane that owns the memory, so recall
-    // stops offering it at the SQL boundary instead of at the CLI after a
-    // budget has already been spent on it (#712 deliverable 4). The tombstone
-    // in `store.db` stays canonical — it is surface-aware, carries the reason,
-    // and outlives the row — so this is a projection, not a second source of
-    // truth, and it is written second: a failure here leaves the tombstone
-    // recorded and the memory merely still visible, which is recoverable, where
-    // the opposite order could hide a memory with no record of why.
+    // Copy the tombstone into the plane that owns the memory. Recall then
+    // stops offering it in SQL, not at the CLI after the budget is spent. The
+    // one in `store.db` is still the source of truth: it knows the surface, it
+    // carries the reason, and it outlives the row. This copy is written
+    // second, on purpose. A failure here leaves the tombstone on record and
+    // the memory merely still in view, which a rerun fixes. The other order
+    // could hide a memory with no record of why.
     if let Some(context) = open_context(&workspace_root)? {
         context
             .supersede_node(id)
@@ -633,123 +634,6 @@ pub fn run_memory_forget(id: &str, reason: &str) -> Result<(), String> {
         format!("undo: stella memory restore {id}").dimmed()
     );
     Ok(())
-}
-
-/// Entry point for `stella memory edit <id> <text>` — #712 deliverable 5.
-///
-/// Writes a new revision of the memory's lineage. The mirror node is keyed by
-/// lineage, so it is updated in place: one live record, the same `nod_…` id,
-/// and the old text kept as history rather than left competing for recall
-/// slots.
-///
-/// Before lineage, this operation did not exist and could not be built. A
-/// memory's identity was the hash of its content, so "the same memory with
-/// different words" was a contradiction — you got a second memory, and the
-/// first went on being recalled with its old text and its own vector.
-pub fn run_memory_edit(id: &str, text: &str) -> Result<(), String> {
-    let workspace_root =
-        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    let previous = edit_memory_text(&workspace_root, id, text)?;
-
-    println!("  {} revised {id}", "✓".green());
-    println!(
-        "    {} {}",
-        "was:".dimmed(),
-        clip(previous.trim(), 68).dimmed()
-    );
-    println!("    {} {}", "now:".dimmed(), clip(text.trim(), 68).dimmed());
-
-    // The lineage tally is this verb's reporting rather than the edit's work,
-    // so it reads the store again after the revision landed. The deck's `e`
-    // path (#5231) answers with one notice line and has no use for it.
-    let Some(context) = open_context(&workspace_root)? else {
-        return Ok(());
-    };
-    let stats = context
-        .memory_lineage_stats()
-        .map_err(|e| format!("cannot read lineage stats: {e}"))?;
-    println!(
-        "    {}",
-        format!(
-            "{} live {}, {} superseded revision{} kept as history",
-            stats.live,
-            if stats.live == 1 {
-                "memory"
-            } else {
-                "memories"
-            },
-            stats.superseded,
-            if stats.superseded == 1 { "" } else { "s" }
-        )
-        .dimmed()
-    );
-    Ok(())
-}
-
-/// [`run_memory_edit`]'s work, over an explicit root and printing nothing.
-///
-/// Split out for the deck's `e edit` (#5231), which drives the same revision
-/// from a transcript row: a reader who edits a memory from the deck and a
-/// reader who runs `stella memory edit` must get the same thing, and two
-/// implementations of "revise on the lineage" would be free to disagree about
-/// the one part that matters — carrying the classification forward.
-///
-/// Returns the text it replaced, which is what the CLI verb prints as `was:`.
-pub fn edit_memory_text(
-    workspace_root: &std::path::Path,
-    id: &str,
-    text: &str,
-) -> Result<String, String> {
-    if text.trim().is_empty() {
-        return Err(
-            "the replacement text must not be empty — use `stella memory forget` to \
-                    remove a memory"
-                .to_string(),
-        );
-    }
-    let Some(context) = open_context(workspace_root)? else {
-        return Err("this workspace has no context store yet — nothing to edit".to_string());
-    };
-    let Some(node) = context
-        .node_by_public_id(id)
-        .map_err(|e| format!("cannot read memory `{id}`: {e}"))?
-    else {
-        return Err(format!(
-            "`{id}` is not a live memory — check the id against `stella memory list`"
-        ));
-    };
-    let Some(lineage) = context
-        .memory_lineage(id)
-        .map_err(|e| format!("cannot resolve the lineage of `{id}`: {e}"))?
-    else {
-        return Err(format!(
-            "`{id}` is not a memory — only memories have revisions (episodes are a record \
-             of what happened and are not rewritten)"
-        ));
-    };
-    let previous = node.content.clone();
-    // Carry the lineage's classification forward. Defaulting here would
-    // silently reclassify a mined reflection as an authored note, which changes
-    // whether the restatement filter treats it as regenerable.
-    let kind = context
-        .memory_kind(&lineage)
-        .map_err(|e| format!("cannot read the kind of `{id}`: {e}"))?
-        .and_then(|k| stella_context::MemoryKind::parse(&k))
-        .unwrap_or(stella_context::MemoryKind::Note);
-
-    let runtime = tokio::runtime::Runtime::new()
-        .map_err(|e| format!("cannot start the async runtime: {e}"))?;
-    runtime
-        .block_on(async {
-            context
-                .upsert(stella_context::ContextDelta::new().with_memory(
-                    stella_context::MemoryInput::new(kind, text.trim()).revises(&lineage),
-                ))
-                .await
-        })
-        .map_err(|e| format!("cannot write the revision: {e}"))?;
-
-    Ok(previous)
 }
 
 /// Entry point for `stella memory forgotten` — the tombstones in this

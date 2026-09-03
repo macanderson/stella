@@ -94,6 +94,21 @@ impl ContextStore {
     /// which frames and how many tokens a recall returns, so they belong in a
     /// deliberate change with its own tests, not in a silent tightening here.
     ///
+    /// A third field is turned down rather than unbuilt:
+    ///
+    /// - `embedding` — a query vector the caller made. The store embeds the
+    ///   query text itself instead, always. `ContextQuery::embedding` is a
+    ///   bare `Option<Vec<f32>>` and names no embedder. Length is the only
+    ///   thing this plane could check, and two embedders can share `dims`
+    ///   and differ in fingerprint. The crate's own tests pair two such
+    ///   (`HashEmbedder::with_revision`). Scoring a vector from one space
+    ///   against vectors stored in another gives cosines that mean nothing.
+    ///   Those cosines drive ranking, the coverage gate, MMR seeding and
+    ///   semantic-evidence admission. `L-C2` says retrieval never mixes
+    ///   fingerprints. SQL holds the stored half; this is the query half.
+    ///   To take a caller's vector again, the wire would have to name its
+    ///   fingerprint, and those types live in their own repository.
+    ///
     /// # Suppression happens before packing
     ///
     /// A forgotten memory is marked `node.superseded_at` in this plane, so it is
@@ -139,23 +154,23 @@ impl ContextStore {
         scope: &RecallScope,
         excluded_ids: &HashSet<String>,
     ) -> Result<RecallResult, ContextError> {
-        // 1. Query vector: reuse the caller's if it matches our dims, else
-        //    embed the query text ourselves. This is the ONLY embedding recall
-        //    ever does — it never embeds stored content inline; that is warm's
-        //    job (`L-C1`). So a cold store degrades to lexical, it never blocks.
+        // 1. Query vector: embed the query text with this store's own
+        //    embedder, the one vector source whose fingerprint matches the
+        //    stored rows. `q.embedding` is not read at all — see the doc
+        //    block above for why a length check is not an identity check.
+        //    This is the ONLY embedding recall ever does — it never embeds
+        //    stored content inline; that is warm's job (`L-C1`). So a cold
+        //    store degrades to lexical, it never blocks.
         let dims = self.fingerprint().dims;
-        let query_vec = match &q.embedding {
-            Some(v) if v.len() == dims => v.clone(),
-            _ => {
-                let text = q.query_text.clone().unwrap_or_else(|| q.goal.clone());
-                self.embedder()
-                    .embed(&[text])
-                    .await?
-                    .into_iter()
-                    .next()
-                    .map(|e| e.vector)
-                    .unwrap_or_else(|| vec![0.0; dims])
-            }
+        let query_vec = {
+            let text = q.query_text.clone().unwrap_or_else(|| q.goal.clone());
+            self.embedder()
+                .embed(&[text])
+                .await?
+                .into_iter()
+                .next()
+                .map(|e| e.vector)
+                .unwrap_or_else(|| vec![0.0; dims])
         };
 
         // Steps 2-5 are synchronous SQLite plus scoring with no `.await` in
@@ -233,9 +248,9 @@ impl ContextStore {
 ///
 /// Every field is bounded by the QUERY — a handful of anchors, a timestamp, two
 /// budgets, the lexical terms, the active scope — so building it is a fixed small
-/// cost per turn and never scales with the corpus. Notably absent: the caller's
-/// embedding, which is already owned separately as the query vector, and
-/// `goal`/`query_text`, whose only use downstream was producing `terms`.
+/// cost per turn and never scales with the corpus. Absent: the query vector,
+/// which travels beside this rather than inside it, and `goal`/`query_text`,
+/// whose only use downstream was producing `terms`.
 struct RecallInputs {
     /// Uris to resolve to anchor node ids for the graph expansion.
     anchors: Vec<String>,

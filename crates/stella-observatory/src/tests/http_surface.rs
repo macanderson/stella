@@ -428,3 +428,89 @@ async fn unterminated_request_head_is_refused_not_routed() {
     assert!(!body.contains("\"runs\""), "no telemetry may leak");
     server.abort();
 }
+
+/// A live stream must release its one-shot connection permit the moment its
+/// route is known. It must not hold that permit until the tab closes.
+///
+/// `serve_with_capacity` shrinks the pool to a single permit. That keeps the
+/// proof cheap: one live connection and one ordinary request, not the
+/// `MAX_LIVE_CONNECTIONS` sockets the real pool would need. With the bug,
+/// the live stream below holds that lone permit for as long as its socket
+/// stays open. The accept loop then wedges at the second connection's
+/// `acquire_owned`, so an ordinary `GET /api/meta` — which would otherwise
+/// answer in microseconds — never gets a response. The bounded read below
+/// turns that hang into a failing assertion instead of a stuck test.
+#[tokio::test]
+async fn a_live_stream_releases_its_permit_before_its_long_life_begins() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    let ws = TempDir::new().unwrap();
+    let root = ws.path().to_path_buf();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let _ = serve_with_capacity(
+            root,
+            0,
+            std::sync::Arc::new(crate::NoContributions),
+            move |addr| {
+                let _ = tx.send(addr);
+            },
+            1, // one permit: a single leaked one is enough to wedge the loop
+        )
+        .await;
+    });
+    let addr = rx.await.unwrap();
+
+    // Open the live stream and read its response head. By the time that
+    // head arrives, `respond_to_head` has already dropped the permit — it
+    // does so before ever calling `live::serve_stream`, which is what
+    // writes this head. The socket is then left open, unread, for the rest
+    // of the test: what matters is that the *server* still treats it as a
+    // live subscription, not that this client does anything with it.
+    let live_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut live_reader = BufReader::new(live_stream);
+    live_reader
+        .get_mut()
+        .write_all(b"GET /api/v1/live HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .await
+        .unwrap();
+    let mut status = String::new();
+    live_reader.read_line(&mut status).await.unwrap();
+    assert!(
+        status.starts_with("HTTP/1.1 200"),
+        "stream refused: {status}"
+    );
+    loop {
+        let mut line = String::new();
+        live_reader.read_line(&mut line).await.unwrap();
+        if line.trim().is_empty() {
+            break; // end of the response head; the stream body follows
+        }
+    }
+
+    // The single permit is now either free (fixed) or gone for good (bug).
+    // This connection is reachable at all only if the accept loop is still
+    // calling `accept()`, and answered only if a permit was free to take —
+    // both fail together the moment the live stream above leaks its own.
+    let mut plain = tokio::net::TcpStream::connect(addr).await.unwrap();
+    plain
+        .write_all(b"GET /api/meta HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = String::new();
+    let answered =
+        tokio::time::timeout(Duration::from_secs(2), plain.read_to_string(&mut response)).await;
+    assert!(
+        answered.is_ok(),
+        "an ordinary request hung behind the live stream's permit, which \
+         must be released before the stream's long life begins rather than \
+         held for it"
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK"),
+        "head was: {response}"
+    );
+
+    drop(live_reader);
+    server.abort();
+}

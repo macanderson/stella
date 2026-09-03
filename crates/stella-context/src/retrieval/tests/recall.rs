@@ -8,11 +8,14 @@
 use crate::retrieval::*;
 
 use crate::clock::FixedClock;
-use crate::embed::HashEmbedder;
+use crate::embed::{
+    EmbedError, Embedder, EmbedderFingerprint, Embedding, HashEmbedder, SimilarityPosture,
+};
 use crate::store::{ContextStore, NodeInput, NodeKind};
 use crate::writeback::ContextDelta;
 use contextgraph_types::ContextQuery;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 
 fn base_query(goal: &str, query_text: &str) -> ContextQuery {
@@ -930,5 +933,84 @@ async fn recall_seeded_at_a_file_reaches_the_episode_that_touched_it() {
             .iter()
             .map(|f| f.content.clone())
             .collect::<Vec<_>>()
+    );
+}
+
+/// An embedder that answers like the offline default and counts the batches
+/// it was asked for. A test can then check *that* the store embedded the
+/// query, rather than guess it from a ranking.
+struct CountingEmbedder {
+    inner: HashEmbedder,
+    batches: Arc<AtomicUsize>,
+}
+
+impl CountingEmbedder {
+    fn new() -> (Arc<Self>, Arc<AtomicUsize>) {
+        let batches = Arc::new(AtomicUsize::new(0));
+        let embedder = Arc::new(Self {
+            inner: HashEmbedder::default(),
+            batches: batches.clone(),
+        });
+        (embedder, batches)
+    }
+}
+
+#[async_trait::async_trait]
+impl Embedder for CountingEmbedder {
+    fn fingerprint(&self) -> EmbedderFingerprint {
+        self.inner.fingerprint()
+    }
+
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError> {
+        self.batches.fetch_add(1, Ordering::SeqCst);
+        self.inner.embed(texts).await
+    }
+
+    fn similarity_posture(&self) -> SimilarityPosture {
+        self.inner.similarity_posture()
+    }
+}
+
+/// A vector the caller hands in is never scored against the stored ones.
+///
+/// `ContextQuery::embedding` names no embedder. Length is the only check
+/// this plane can make, and two embedders can share `dims` and differ in
+/// fingerprint. Take any vector of the right length and `L-C2`'s query half
+/// is unheld: the cosines mean nothing across spaces, and they drive
+/// ranking, the coverage gate, MMR seeding and semantic-evidence admission.
+///
+/// The embed call is the witness. Take the vector and the store embeds
+/// nothing, so the count stays zero. Embedding the query text is the only
+/// way it reaches one.
+#[tokio::test]
+async fn a_caller_supplied_query_vector_is_ignored_and_the_query_text_is_embedded() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let (embedder, batches) = CountingEmbedder::new();
+    let dims = embedder.fingerprint().dims;
+    let store = ContextStore::open_with(&path, embedder, FixedClock::shared(1_000)).unwrap();
+    store
+        .upsert(
+            ContextDelta::new().with_node(
+                NodeInput::new(NodeKind::Artifact, "notes")
+                    .with_content("pack context frames to the token budget and report drops"),
+            ),
+        )
+        .await
+        .unwrap();
+    let embeds_after_write = batches.load(Ordering::SeqCst);
+
+    let mut q = base_query("pack the frames", "pack context frames to the token budget");
+    // Right length, wrong space. This is what an outside host sends when it
+    // runs a different embedder at the same width.
+    q.embedding = Some(vec![0.0; dims]);
+
+    store.recall(&q).await.unwrap();
+
+    assert_eq!(
+        batches.load(Ordering::SeqCst) - embeds_after_write,
+        1,
+        "recall must embed the query text itself, never score a vector whose \
+         fingerprint it cannot know"
     );
 }

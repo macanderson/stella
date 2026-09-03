@@ -26,6 +26,14 @@ const FORBIDDEN: &[&str] = &[
     "current_dir",
     "std::env::vars",
     "set_current_dir",
+    // Three more ways to reach the same process-global state through a
+    // different name: the temp directory (`TMPDIR`), the home directory
+    // (`HOME`), and the `dirs` crate, which reads both. A caller that needs a
+    // scratch or config path takes it as a `RuntimeSpec` field, and a test
+    // takes a `TempDir`.
+    "std::env::temp_dir",
+    "home_dir",
+    "dirs::",
 ];
 
 fn source_files(dir: &Path, out: &mut Vec<PathBuf>) {

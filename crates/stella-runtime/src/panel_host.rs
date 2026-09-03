@@ -380,8 +380,10 @@ mod tests {
     /// grandchild per tick forever.
     #[tokio::test]
     async fn a_panels_grandchild_does_not_outlive_its_tick() {
-        let dir = std::env::temp_dir().join(format!("stella-panel-reap-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        // `TempDir`, not a name under the process temp dir: the scan in
+        // `tests/no_ambient_reads.rs` reads this file too.
+        let scratch = tempfile::TempDir::new().expect("a scratch directory");
+        let dir = scratch.path();
 
         for (label, script, answers) in [
             ("timeout", "sleep 30 & echo $! > PIDFILE; sleep 30", false),
@@ -435,7 +437,6 @@ mod tests {
                 "{label}: the panel's backgrounded helper (pid {pid}) outlived its tick"
             );
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A plugin that writes rubbish is named, not silently ignored.

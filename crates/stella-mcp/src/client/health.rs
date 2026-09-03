@@ -21,7 +21,7 @@ const RECONNECT_CAP: Duration = Duration::from_secs(30);
 /// a mid-session drop is a *visible, non-fatal* diagnostic rather than a
 /// silent degradation.
 ///
-/// # What these three states promise the deck
+/// # What these states promise the deck
 ///
 /// They answer exactly one question: *would a `tools/call` issued right now be
 /// expected to reach this server and come back?*
@@ -34,6 +34,8 @@ const RECONNECT_CAP: Duration = Duration::from_secs(30);
 ///   [`ServerHealth::last_error`] says how, and nothing has proven otherwise
 ///   since. `Down` is never terminal — the next call retries (immediately, or
 ///   once [`ServerHealth::retry_in`] elapses).
+/// - [`HealthState::AuthRequired`] — **no, and dialling again will not help.**
+///   The server wants a login the user has not granted.
 ///
 /// The decisive rule (#638): **a successful reconnect proves *connect*
 /// health, not *call* health.** Re-establishing the transport clears
@@ -63,13 +65,20 @@ pub enum HealthState {
     /// [`ServerHealth::retry_in`]) or it reconnects fine and its *calls* keep
     /// failing.
     Down,
-    /// The server requires authentication the user has not granted (#2687):
-    /// its connect was suppressed — or answered HTTP 401 — so no transport
-    /// exists at all. Never produced by the connection state machine in this
-    /// module: only [`crate::McpToolSet::health`] synthesizes it, for servers
-    /// it skipped before connect. No backoff clock is armed because a redial
-    /// cannot fix it — `stella mcp login <server>` can, after which the next
-    /// session connects normally ([`crate::suppress`]).
+    /// The server requires authentication the user has not granted (#2687).
+    ///
+    /// Two paths reach it. Before connect, [`crate::McpToolSet::health`]
+    /// synthesizes it for a server it skipped or that answered HTTP 401, and
+    /// no transport exists at all. Mid-session, a live call can be refused
+    /// the same way — the user revokes the grant and the refresh comes back
+    /// `invalid_grant` — and then this module's `note_auth_failure` sets it
+    /// with the transport left in place: the connection works, the
+    /// credential does not.
+    ///
+    /// No reconnect backoff is armed on either path, because a redial cannot
+    /// fix it. `stella mcp login <server>` can, and until it happens the
+    /// hold-off window `auth_blocked_for` reports keeps the client
+    /// off the token endpoint ([`crate::suppress`]).
     AuthRequired,
 }
 
@@ -149,6 +158,12 @@ pub(super) struct Health {
     /// holds only `&self`, and a stale number there would be the one thing
     /// this field must never report.
     pub(super) latency: Option<Duration>,
+    /// Earliest instant a request may be sent again after the server refused
+    /// one for want of authorization. Its own clock rather than a second use
+    /// of `next_retry_at`: that one says when a *reconnect* is allowed, and
+    /// an auth refusal tears down nothing, so folding the two would make
+    /// [`ServerHealth::retry_in`] report a redial that is not pending.
+    pub(super) auth_blocked_until: Option<Instant>,
 }
 
 impl Default for Health {
@@ -160,6 +175,7 @@ impl Default for Health {
             last_error: None,
             next_retry_at: None,
             latency: None,
+            auth_blocked_until: None,
         }
     }
 }
@@ -192,6 +208,7 @@ impl Connection {
         self.health.connect_failures = 0;
         self.health.last_error = None;
         self.health.next_retry_at = None;
+        self.health.auth_blocked_until = None;
     }
 
     /// A reconnect completed its handshake. The transport is trustworthy
@@ -202,6 +219,11 @@ impl Connection {
     pub(super) fn mark_connected(&mut self) {
         self.health.connect_failures = 0;
         self.health.next_retry_at = None;
+        // A handshake is itself an authenticated round trip, so completing
+        // one disproves an earlier auth refusal — the login has since
+        // happened, or the token refreshed. Holding the window past that
+        // would refuse calls a working credential can serve.
+        self.health.auth_blocked_until = None;
         if self.health.call_failures == 0 {
             self.health.state = HealthState::Live;
             self.health.last_error = None;
@@ -216,6 +238,40 @@ impl Connection {
     pub(super) fn note_call_failure(&mut self, err: &McpError) {
         self.health.call_failures = self.health.call_failures.saturating_add(1);
         self.tear_down(err);
+    }
+
+    /// A live request was refused for want of authorization — the user
+    /// revoked the grant mid-session, or the stored login expired and the
+    /// refresh came back `invalid_grant`.
+    ///
+    /// Counted like any other failed call, so the deck stops claiming
+    /// [`HealthState::Live`] for a server that cannot serve anything. Two
+    /// things it does *not* do: it keeps the transport, because the
+    /// connection is fine and only the credential is stale; and it arms no
+    /// reconnect, because a fresh dial carries the same dead credential.
+    ///
+    /// What it arms instead is the hold-off window. Each refused call retries
+    /// the refresh against a third-party token endpoint, so an agent that
+    /// tries a tool a few times in one turn POSTs there a few times for
+    /// nothing. [`crate::suppress`] already holds the connect-time 401 off
+    /// for [`crate::suppress::AUTH_PROBE_TTL`]; this is the same window for
+    /// the post-connect one, in memory for the life of the client, and
+    /// cleared the moment a request returns.
+    pub(super) fn note_auth_failure(&mut self, err: &McpError) {
+        self.health.call_failures = self.health.call_failures.saturating_add(1);
+        self.health.last_error = Some(err.user_message());
+        self.health.state = HealthState::AuthRequired;
+        self.health.auth_blocked_until = Some(Instant::now() + crate::suppress::AUTH_PROBE_TTL);
+    }
+
+    /// How much of the auth hold-off window is left, or `None` when a request
+    /// may be sent. Reported rather than enforced here: the caller is the one
+    /// holding the message it would have to answer with.
+    pub(super) fn auth_blocked_for(&self) -> Option<Duration> {
+        self.health
+            .auth_blocked_until
+            .map(|until| until.saturating_duration_since(Instant::now()))
+            .filter(|left| !left.is_zero())
     }
 
     /// A reconnect attempt failed (spawn or handshake): same teardown, but the

@@ -7,7 +7,7 @@
 //! for the reason stated there: `macro_rules!` scope is textual, so the
 //! contracts have to be in scope before either module is declared.
 
-use super::append_workspace_memories;
+use super::workspace_memories_span;
 
 // Every static prompt, labelled. Lives in `parity`, where it is
 // cross-checked against this file's own source, so a third prompt cannot
@@ -615,8 +615,7 @@ fn a_forgotten_workspace_memory_does_not_reach_the_system_prompt() {
     std::fs::write(memories.join("kept.md"), "KEEP_THIS_LESSON").unwrap();
     std::fs::write(memories.join("dropped.md"), "FORGET_THIS_LESSON").unwrap();
 
-    let mut before = String::new();
-    append_workspace_memories(&mut before, root);
+    let before = workspace_memories_span(root);
     assert!(
         before.contains("KEEP_THIS_LESSON") && before.contains("FORGET_THIS_LESSON"),
         "both ship before anything is forgotten: {before}"
@@ -632,8 +631,7 @@ fn a_forgotten_workspace_memory_does_not_reach_the_system_prompt() {
         )
         .expect("forget");
 
-    let mut after = String::new();
-    append_workspace_memories(&mut after, root);
+    let after = workspace_memories_span(root);
     assert!(
         after.contains("KEEP_THIS_LESSON"),
         "forgetting one memory must not withhold the others: {after}"
@@ -648,8 +646,7 @@ fn a_forgotten_workspace_memory_does_not_reach_the_system_prompt() {
             .restore(stella_store::ContextSurface::WorkspaceMemory, "dropped")
             .expect("restore")
     );
-    let mut restored = String::new();
-    append_workspace_memories(&mut restored, root);
+    let restored = workspace_memories_span(root);
     assert!(
         restored.contains("FORGET_THIS_LESSON"),
         "restore brings it back: {restored}"
@@ -683,8 +680,7 @@ fn forgetting_one_authored_memory_does_not_suppress_a_similar_one() {
         )
         .expect("forget");
 
-    let mut prompt = String::new();
-    append_workspace_memories(&mut prompt, root);
+    let prompt = workspace_memories_span(root);
     assert!(
         prompt.contains("### rewritten"),
         "an identical authored memory under a different name still ships: {prompt}"
@@ -743,8 +739,7 @@ fn the_provenance_markers_are_what_this_assembler_emits() {
     let memories = root.join(".stella/memories");
     std::fs::create_dir_all(&memories).expect("memories dir");
     std::fs::write(memories.join("one.md"), "A_REAL_LESSON").expect("memory file");
-    let mut appended = String::new();
-    append_workspace_memories(&mut appended, root);
+    let appended = workspace_memories_span(root);
     assert!(
         appended.starts_with(super::MEMORIES_HEADER),
         "the memories marker must be the bytes the appender pushes: {appended}"
@@ -994,4 +989,119 @@ fn a_worktree_turn_is_steered_by_this_repositorys_records() {
             "retiring one record must leave the rest steering: {statement:?}"
         );
     }
+}
+
+/// **The witness for the byte-stable prefix across a rebuild.** A prompt
+/// rebuilt mid-session carries the memories the session opened with, whatever
+/// the directory says now.
+///
+/// The deck rebuilds `messages[0]` whenever `/model` or `/agent` moves the
+/// session's wiring (`command_deck::session_override`'s `refresh_prompts`). A
+/// rebuild that reads `.stella/memories/` again lets a file edited on disk
+/// change the prefix the provider is caching, which drops the cache for every
+/// remaining call of the session and breaks the guarantee
+/// `assemble_system_prompt` states.
+///
+/// It fails against that shape by construction: a second assembly that reads
+/// the edited directory cannot produce the same bytes.
+#[test]
+fn a_rebuilt_prompt_carries_the_memories_the_session_opened_with() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let root = workspace.path();
+    let memories = root.join(".stella/memories");
+    std::fs::create_dir_all(&memories).expect("memories dir");
+    std::fs::write(memories.join("lesson.md"), "LESSON_AT_SESSION_OPEN").expect("memory file");
+
+    let authority = crate::settings::AuthorityPolicy {
+        project_prompts_allowed: true,
+        ..Default::default()
+    };
+    let rules = crate::rules::ResolvedRules::default();
+    let opened =
+        super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules, None);
+    assert!(
+        opened.contains("LESSON_AT_SESSION_OPEN"),
+        "the fixture must reach the prefix or this guard is vacuous: {opened}"
+    );
+
+    std::fs::write(memories.join("lesson.md"), "LESSON_EDITED_MID_SESSION").expect("edit");
+    std::fs::write(memories.join("added.md"), "MEMORY_ADDED_MID_SESSION").expect("add");
+
+    let rebuilt =
+        super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &rules, None);
+    assert_eq!(
+        opened, rebuilt,
+        "a mid-session rebuild must re-send the same prefix bytes (AGENTS.md #7)"
+    );
+    for edited in ["LESSON_EDITED_MID_SESSION", "MEMORY_ADDED_MID_SESSION"] {
+        assert!(
+            !rebuilt.contains(edited),
+            "a memory written mid-session appears in the NEXT session, never this one: {edited}"
+        );
+    }
+}
+
+/// **The witness for naming an unreadable memory.** A file that cannot be
+/// read as text is named in the prompt rather than dropped in silence.
+///
+/// Every other omission from this span reports itself — the budget drop, the
+/// unreadable suppression state. A file that picks up invalid bytes must not
+/// be the exception, vanishing from every future prompt with nothing to say
+/// so.
+#[test]
+fn an_unreadable_memory_is_named_in_the_prompt() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let root = workspace.path();
+    let memories = root.join(".stella/memories");
+    std::fs::create_dir_all(&memories).expect("memories dir");
+    std::fs::write(memories.join("good.md"), "A_READABLE_LESSON").expect("memory file");
+    // Not valid UTF-8, which is what `read_to_string` refuses.
+    std::fs::write(memories.join("corrupt.md"), [0xffu8, 0xfe, 0xfd]).expect("corrupt file");
+
+    let span = workspace_memories_span(root);
+    assert!(
+        span.contains("A_READABLE_LESSON"),
+        "one unreadable file must not withhold the others: {span}"
+    );
+    assert!(
+        span.contains("could not be read and were omitted: corrupt"),
+        "the omission must name the file: {span}"
+    );
+}
+
+/// **The witness for workspace containment.** A memory file that points
+/// outside the workspace is refused, and says so.
+///
+/// `.stella/memories/` is neither private-tier nor gitignored, so a cloned
+/// repository can ship one as a symlink to any readable path. `read_dir` lists
+/// it and `read_to_string` follows it, which is enough to paste the target's
+/// content into the next session's system prompt and send it to the configured
+/// provider.
+#[cfg(unix)]
+#[test]
+fn a_memory_symlinked_outside_the_workspace_is_refused() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let elsewhere = tempfile::tempdir().expect("elsewhere");
+    let root = workspace.path();
+    let secret = elsewhere.path().join("secret.md");
+    std::fs::write(&secret, "CONTENT_OUTSIDE_THE_WORKSPACE").expect("secret file");
+
+    let memories = root.join(".stella/memories");
+    std::fs::create_dir_all(&memories).expect("memories dir");
+    std::fs::write(memories.join("mine.md"), "A_LOCAL_LESSON").expect("memory file");
+    std::os::unix::fs::symlink(&secret, memories.join("leak.md")).expect("symlink");
+
+    let span = workspace_memories_span(root);
+    assert!(
+        !span.contains("CONTENT_OUTSIDE_THE_WORKSPACE"),
+        "a memory may not read outside the workspace root: {span}"
+    );
+    assert!(
+        span.contains("A_LOCAL_LESSON"),
+        "refusing one entry must not withhold the rest: {span}"
+    );
+    assert!(
+        span.contains("resolve outside the workspace and were omitted: leak"),
+        "the refusal must name the file: {span}"
+    );
 }
