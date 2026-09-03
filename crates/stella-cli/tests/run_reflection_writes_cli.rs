@@ -47,6 +47,17 @@
 //! answers — and because the child's environment is the thing #4362 was
 //! about.
 //!
+//! # Why the reflecting turn fails a tool call
+//!
+//! A turn reflects when it did not succeed, or when its event ledger recorded
+//! friction — a retry, a loop-detector firing, or a failed tool call. So the
+//! fixture's one tool call reads a file the seeded workspace does not have,
+//! which is the cheapest friction a turn can carry.
+//! [`a_clean_successful_turn_buys_no_reflection_call`] runs the identical
+//! shape with a call that works and asserts the opposite, and the two together
+//! are what pin the gate: neither a build that always reflects nor one that
+//! never does can pass both.
+//!
 //! # Routing by body, never by call order
 //!
 //! The three calls a passing run makes (worker tool call, worker answer,
@@ -104,25 +115,49 @@ fn sse_completion(text: &str) -> String {
 /// One SSE completion carrying a single tool call and no text, in the
 /// index-keyed fragment dialect the shared chat-completions adapter parses.
 ///
-/// The turn has to dispatch a tool for this test to mean anything:
+/// The turn has to dispatch a tool for any of this to mean anything:
 /// `memory::turn_warrants_reflection` is `true` only when some message in the
 /// turn carries a tool call, so a text-only turn would take the gate's
-/// "nothing to mine" arm and write no line — and the test would then be
+/// "nothing to mine" arm and write no line — and every test here would then be
 /// asserting the absence of a lesson in both directions.
-///
-/// `get_environment` is chosen for what it is *not*: it takes no arguments,
-/// changes nothing, and its `Always` authority means no approval gate stands
-/// between this fixture and a dispatched call — a run in non-interactive mode
-/// has no human to answer one.
-fn sse_tool_call() -> String {
-    concat!(
-        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_env\",\
-         \"function\":{\"name\":\"get_environment\",\"arguments\":\"{}\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":8,\
-         \"completion_tokens\":3}}\n\n",
-        "data: [DONE]\n\n",
+fn sse_tool_call(call_id: &str, name: &str, arguments: serde_json::Value) -> String {
+    let frame = serde_json::json!({
+        "choices": [{"delta": {"tool_calls": [{
+            "index": 0,
+            "id": call_id,
+            "function": {"name": name, "arguments": arguments.to_string()},
+        }]}}]
+    });
+    format!(
+        "data: {frame}\n\n\
+         data: {{\"choices\":[{{\"delta\":{{}}}}],\"usage\":{{\"prompt_tokens\":8,\
+         \"completion_tokens\":3}}}}\n\n\
+         data: [DONE]\n\n"
     )
-    .to_string()
+}
+
+/// A call that works. `get_environment` is chosen for what it is *not*: it
+/// takes no arguments, changes nothing, and its `Always` authority means no
+/// approval gate stands between this fixture and a dispatched call — a run in
+/// non-interactive mode has no human to answer one.
+fn sse_clean_tool_call() -> String {
+    sse_tool_call("call_env", "get_environment", serde_json::json!({}))
+}
+
+/// A call that fails, on a file the seeded workspace does not have.
+///
+/// `read_file` is read-only with the same `Always` authority, so it dispatches
+/// without an approval prompt and comes back a `ToolOutput::Error`. That error
+/// is the friction the reflection gate looks for: a turn that goes
+/// straight through buys no reflection call at all, which is what
+/// [`a_clean_successful_turn_buys_no_reflection_call`] pins from the other
+/// side.
+fn sse_failing_tool_call() -> String {
+    sse_tool_call(
+        "call_read",
+        "read_file",
+        serde_json::json!({"path": "missing.rs"}),
+    )
 }
 
 /// The reflection response, in the object shape
@@ -151,7 +186,7 @@ fn sse_reflection() -> String {
 
 /// The mocked provider a reflecting run talks to: a tool call, then an
 /// answer, then the reflection — each selected by request body.
-async fn mock_reflecting_provider() -> MockServer {
+async fn mock_reflecting_provider(first_call: String) -> MockServer {
     let server = MockServer::start().await;
 
     // Higher priority (a lower number) than the general worker mock below,
@@ -160,7 +195,7 @@ async fn mock_reflecting_provider() -> MockServer {
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .and(NotContains(REFLECTION_SYSTEM_PROMPT))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_tool_call(), "text/event-stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(first_call, "text/event-stream"))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&server)
@@ -223,6 +258,7 @@ fn run_one_shot(
     data: &Path,
     server_uri: &str,
     opt_out: bool,
+    prompt: &str,
 ) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
@@ -239,7 +275,7 @@ fn run_one_shot(
             "run",
             "--output-format",
             "json",
-            "read the environment, then stop",
+            prompt,
         ])
         .current_dir(workspace)
         .env("STELLA_HOME", data)
@@ -294,13 +330,13 @@ async fn a_non_interactive_json_run_writes_its_lesson_to_the_mining_log() {
     let workspace = tempfile::tempdir().expect("workspace");
     let data = tempfile::tempdir().expect("data dir");
     seed_workspace(workspace.path());
-    let server = mock_reflecting_provider().await;
+    let server = mock_reflecting_provider(sse_failing_tool_call()).await;
 
     let output = tokio::task::spawn_blocking({
         let workspace = workspace.path().to_path_buf();
         let data = data.path().to_path_buf();
         let uri = server.uri();
-        move || run_one_shot(&workspace, &data, &uri, false)
+        move || run_one_shot(&workspace, &data, &uri, false, "read missing.rs, then stop")
     })
     .await
     .expect("join");
@@ -344,13 +380,13 @@ async fn the_opt_out_stops_the_lesson_being_written() {
     let workspace = tempfile::tempdir().expect("workspace");
     let data = tempfile::tempdir().expect("data dir");
     seed_workspace(workspace.path());
-    let server = mock_reflecting_provider().await;
+    let server = mock_reflecting_provider(sse_failing_tool_call()).await;
 
     let output = tokio::task::spawn_blocking({
         let workspace = workspace.path().to_path_buf();
         let data = data.path().to_path_buf();
         let uri = server.uri();
-        move || run_one_shot(&workspace, &data, &uri, true)
+        move || run_one_shot(&workspace, &data, &uri, true, "read missing.rs, then stop")
     })
     .await
     .expect("join");
@@ -369,6 +405,62 @@ async fn the_opt_out_stops_the_lesson_being_written() {
     assert!(
         logged_lessons(workspace.path()).is_empty(),
         "the opted-out run wrote to the mining log: {:?}",
+        logged_lessons(workspace.path())
+    );
+}
+
+/// **The witness.** The same run, with a tool call that works, spends no
+/// reflection call.
+///
+/// Fails on base, where any tool-using turn reflects: the run above and this
+/// one differ only in whether the turn's one tool call succeeded, and on base
+/// both of them buy a model call. Three trivial turns measured on 2026-08-08
+/// spent 320-507 reflection output tokens each — one of them 8.8x the price of
+/// the turn it described — to be told there was nothing to learn.
+///
+/// The pairing is what makes it evidence. A build that never reflects passes
+/// this and fails the run above; a build that always reflects passes that and
+/// fails this.
+#[tokio::test]
+async fn a_clean_successful_turn_buys_no_reflection_call() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let data = tempfile::tempdir().expect("data dir");
+    seed_workspace(workspace.path());
+    let server = mock_reflecting_provider(sse_clean_tool_call()).await;
+
+    let output = tokio::task::spawn_blocking({
+        let workspace = workspace.path().to_path_buf();
+        let data = data.path().to_path_buf();
+        let uri = server.uri();
+        move || {
+            run_one_shot(
+                &workspace,
+                &data,
+                &uri,
+                false,
+                "read the environment, then stop",
+            )
+        }
+    })
+    .await
+    .expect("join");
+    assert!(
+        output.status.success(),
+        "the clean run did not exit 0 — stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    assert_eq!(
+        reflection_calls(&server).await,
+        0,
+        "a turn whose every tool call worked has only its own success to \
+         report, and must not pay a model to say so — stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        logged_lessons(workspace.path()).is_empty(),
+        "the clean run wrote to the mining log: {:?}",
         logged_lessons(workspace.path())
     );
 }
