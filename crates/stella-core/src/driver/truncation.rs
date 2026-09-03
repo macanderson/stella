@@ -128,10 +128,12 @@ pub(super) const TIME_EXHAUSTED_PARTIAL: &str = "[no answer produced: this step'
 /// The history copy of a length-truncated assistant text: middle-elided when
 /// large, verbatim when small.
 ///
-/// [`plan_continuation`] applies this shape on the continuation path; this
-/// helper is the same policy for the paths that *end* the turn with a
-/// truncated partial — the spent allowance, the out-of-time stop, the
-/// budget abort, and a truncated step that still carried tool calls. All of
+/// The one producer of that shape, so what the model re-reads after a
+/// continuation and what it re-reads after a stop cannot diverge.
+/// [`plan_continuation`] calls it on the continuation path; the driver calls
+/// it on the paths that *end* the turn with a truncated partial — the spent
+/// allowance, the out-of-time stop, the budget abort, and a truncated step
+/// that still carried tool calls. All of
 /// them used to push `result.text` verbatim, so a 64k-token cut-off
 /// scratchpad landed in history as protected assistant text no compaction
 /// pass may touch, and every later step of the session re-sent it
@@ -283,8 +285,7 @@ pub(super) fn plan_continuation(
         });
     }
     ContinuationPlan::Continue(Continuation {
-        retained: crate::compaction::elide_truncated_partial(text)
-            .unwrap_or_else(|| text.to_string()),
+        retained: retained_partial(text),
         note: format!(
             "\n\n⚠ Output-token limit reached ({output_tokens} tokens) before any tool call; \
              continuing ({attempt}/{MAX_LENGTH_CONTINUATIONS})."

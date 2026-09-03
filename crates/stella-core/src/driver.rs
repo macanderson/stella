@@ -96,10 +96,10 @@ use crate::loop_detect::LoopDetectionConfig;
 use crate::retry::RetryPolicy;
 use lifecycle::step_outcome_label;
 
-mod confident_zero;
+pub(crate) mod confident_zero;
 mod config;
 pub mod lifecycle;
-mod live_services;
+pub(crate) mod live_services;
 pub(crate) mod loop_escalation;
 pub mod loop_evidence;
 mod truncation;

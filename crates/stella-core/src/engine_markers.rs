@@ -1,11 +1,11 @@
-//! The closed table of engine-injected message markers (#2722).
+//! The closed tables of engine-injected message text (#2722).
 //!
 //! The engine and the CLI write messages that ride the wire as `User`-role
 //! turns but are not the user speaking — the overflow summary, the stuck-loop
-//! steer, an invoked skill's body, a parked wait's wake report. Each opens
-//! with a recognizable marker prefix, and [`ENGINE_MARKERS`] below is the
-//! enumeration; three independent consumers depend on knowing the complete
-//! set:
+//! steer, an invoked skill's body, a parked wait's wake report. Most open with
+//! a bracketed marker prefix, enumerated in [`ENGINE_MARKERS`]; the two
+//! completion nudges are plain English and are enumerated in
+//! [`ENGINE_NUDGE_PREFIXES`]. Three consumers depend on the complete set:
 //!
 //! - `receipts::user_block_kind` classifies `User`-role content by these
 //!   prefixes so a receipt never attributes engine text to the person;
@@ -20,9 +20,8 @@
 //!
 //! Before this table existed the prompt hand-wrote that list in prose and had
 //! already drifted: the continuation nudge — itself instruction-shaped — was
-//! absent entirely, so the engine's own steering failed the prompt's own test,
-//! and the recall marker was described but never spelled. A prose list has no
-//! failure mode; this table does.
+//! absent entirely, and the recall marker was described but never spelled. A
+//! prose list has no failure mode; a table does.
 //!
 //! # The tie, in both directions
 //!
@@ -36,8 +35,8 @@
 //! by name until it teaches the new marker, instead of silently narrowing the
 //! model's injection test.
 //!
-//! This module is a leaf: one `pub` table, no logic, declared
-//! outside `driver.rs` because that file is closed to growth
+//! This module is a leaf: two `pub` tables and one predicate over them,
+//! declared outside `driver.rs` because that file is closed to growth
 //! (`scripts/file-size-baseline.txt`).
 
 /// Every marker prefix the engine or the CLI puts on a `User`-role message it
@@ -67,9 +66,49 @@ pub const ENGINE_MARKERS: &[&str] = &[
     crate::driver::deadline_notice::DEADLINE_MARKER_PREFIX,
 ];
 
+/// The engine-authored `User`-role openings that carry **no** bracketed
+/// marker: the once-per-turn completion nudges — the prove-it ask
+/// (`driver::confident_zero`) and the live-service assertion
+/// (`driver::live_services`).
+///
+/// They are addressed to the model as plain English, so a bracketed tag would
+/// read as noise in the one message whose whole job is to be answered. That
+/// makes them invisible to [`ENGINE_MARKERS`] and to anything matching on its
+/// shape, which is why they get a table of their own instead of an entry
+/// there.
+///
+/// A new completion gate adds its prefix here in the same change that adds
+/// the gate, exactly as a new marker joins [`ENGINE_MARKERS`].
+pub const ENGINE_NUDGE_PREFIXES: &[&str] = &[
+    crate::driver::confident_zero::PROVE_IT_PREFIX,
+    crate::driver::live_services::SERVICES_PREFIX,
+];
+
+/// Whether `content` opens with one of [`ENGINE_NUDGE_PREFIXES`] — a user-role
+/// message the engine wrote rather than one the user (or host) sent.
+///
+/// Read by `driver::loop_evidence::turn_start_index` alongside
+/// [`ENGINE_MARKERS`]: a nudge bounds no turn window. A window that reset on
+/// one erased the turn's pre-nudge activity — the prove-it ask on an
+/// edited-then-tested turn erased the edit from the tally, and the turn was
+/// then abortable as a confident zero for the read-only test run the nudge
+/// itself requested. Measured on the prove-it gate's first field trial (run
+/// `gate-ab`, task pypi-server): three nudges in one turn, each re-armed by
+/// that reset, riding a refuted `verify_done` into the 900s ceiling.
+///
+/// Read by `receipts::user_block_kind` for the reason it reads
+/// [`ENGINE_MARKERS`]: a nudge is engine text, and filing it as the person's
+/// own goal is the misattribution that classifier exists to prevent.
+#[must_use]
+pub fn is_engine_nudge(content: &str) -> bool {
+    ENGINE_NUDGE_PREFIXES
+        .iter()
+        .any(|prefix| content.starts_with(prefix))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ENGINE_MARKERS;
+    use super::{ENGINE_MARKERS, ENGINE_NUDGE_PREFIXES};
 
     /// Anti-vacuity for every downstream `contains`/`starts_with` check: an
     /// empty or near-empty entry would make the prompt-parity and receipts
@@ -117,6 +156,71 @@ mod tests {
                     std::ptr::eq(a, b) || !a.starts_with(b),
                     "{a:?} starts with {b:?}: prefix-matching consumers could \
                      never distinguish them"
+                );
+            }
+        }
+    }
+
+    /// The nudge table's own anti-vacuity, and the line that keeps the two
+    /// tables apart: a bracketed opening belongs in [`ENGINE_MARKERS`], where
+    /// every consumer matching on marker shape already sees it. An entry that
+    /// drifted across would be classified twice and enumerated twice.
+    #[test]
+    fn every_nudge_is_distinctive_and_unmarked() {
+        assert!(
+            ENGINE_NUDGE_PREFIXES.len() >= 2,
+            "an entry left the table; a nudge is retired by deleting the gate \
+             that writes it, never by shrinking this list"
+        );
+        for nudge in ENGINE_NUDGE_PREFIXES {
+            assert!(
+                !nudge.starts_with('['),
+                "{nudge:?} opens a bracketed tag, so it belongs in \
+                 ENGINE_MARKERS rather than here"
+            );
+            assert!(
+                nudge.len() >= 12,
+                "{nudge:?} is too short for a `starts_with` check against it to \
+                 prove anything"
+            );
+        }
+    }
+
+    /// The nudge table is a set, and no entry shadows another — the same two
+    /// properties [`ENGINE_MARKERS`] holds, for the same reason: consumers
+    /// match with `starts_with`.
+    #[test]
+    fn no_nudge_repeats_or_shadows_another() {
+        let mut seen = std::collections::BTreeSet::new();
+        for nudge in ENGINE_NUDGE_PREFIXES {
+            assert!(seen.insert(nudge), "duplicate engine nudge {nudge:?}");
+        }
+        for a in ENGINE_NUDGE_PREFIXES {
+            for b in ENGINE_NUDGE_PREFIXES {
+                assert!(
+                    std::ptr::eq(a, b) || !a.starts_with(b),
+                    "{a:?} starts with {b:?}: prefix-matching consumers could \
+                     never distinguish them"
+                );
+            }
+        }
+    }
+
+    /// A marked message is never also a nudge, in either direction: the two
+    /// tables partition the engine's user-role writing, and an overlap would
+    /// give one message two classifications depending on which table a
+    /// consumer read first.
+    #[test]
+    fn the_two_tables_do_not_overlap() {
+        for marker in ENGINE_MARKERS {
+            assert!(
+                !super::is_engine_nudge(marker),
+                "{marker:?} is in ENGINE_MARKERS and also reads as a nudge"
+            );
+            for nudge in ENGINE_NUDGE_PREFIXES {
+                assert!(
+                    !nudge.starts_with(marker),
+                    "{nudge:?} starts with the marker {marker:?}"
                 );
             }
         }
