@@ -771,8 +771,26 @@ struct AnthropicMessageStart {
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AnthropicStartBlock {
+    /// Both fields default. An empty one is a terminal error at assembly,
+    /// not a frame to skip.
+    ///
+    /// Serde reads the `type` tag first. It then fails the whole event when
+    /// the matched case is missing a field. Without these defaults, a
+    /// `tool_use` block with no `id` lands in
+    /// [`stream::aggregate_anthropic_stream`]'s `Err(_)` arm — the arm that
+    /// skips an event type this adapter does not model. The block goes with
+    /// it. Its `input_json_delta` parts miss the map. The turn ends `Ok`
+    /// with no tool calls, next to a finish reason of `ToolCalls`: the
+    /// model's own stop reason says it called a tool, and the adapter says
+    /// it called none.
+    ///
+    /// The defaults keep the frame readable, so the loss is visible.
+    /// [`stream::aggregate_anthropic_stream`] then refuses to commit a call
+    /// it cannot dispatch.
     ToolUse {
+        #[serde(default)]
         id: String,
+        #[serde(default)]
         name: String,
     },
     #[serde(other)]
@@ -1203,6 +1221,8 @@ fn map_stop_reason(stop_reason: Option<&str>) -> Option<FinishReason> {
     }
 }
 
+#[cfg(test)]
+mod malformed_tool_use;
 #[cfg(test)]
 mod parallel_tool_calls;
 #[cfg(test)]
