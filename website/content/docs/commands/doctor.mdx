@@ -15,12 +15,13 @@ stella doctor --last-failure                     # print the newest crash dump
 
 ## What it does
 
-Four checks run today:
+Five checks run today:
 
 - **`store integrity`** — checks the soundness of this workspace's session store at `<workspace>/.stella/private/store.db`, using SQLite's own `quick_check` and `integrity_check` checks.
 - **`fleet ledger`** — finds rows in `.stella/private/fleet.db` that name a run no longer recorded. This check only reports; it never deletes, because removing these rows would delete fleet history.
 - **`session sidecars`** — finds sidecar directories whose session record is gone. `--repair` removes them. A damaged record is never treated as an orphan.
 - **`model config`** — checks the model your next run would actually use, and the address it would send it to. See below.
+- **`managed settings`** — checks the spelling of your org-managed settings file, if one is configured. This is where you catch a typo in a root key (like `toosl` for `tools`) before it reaches a whole fleet of machines. Always a pass: a typo in an org file is not your workspace's fault, just news you need.
 
 Every check is a pass or a fail. There is no "warning" state: if a check can't say a thing is fine, it counts as failed.
 
@@ -80,7 +81,7 @@ Checking never writes anything. The check opens the database in a read-only mode
 
 ## Exit codes
 
-`0` when every check passed, including a `--repair` that fixed something. `1` when any check failed, with `stella: 1 of 4 doctor checks failed` printed to stderr. That's the whole rule, which is what makes the command work as a gate:
+`0` when every check passed, including a `--repair` that fixed something. `1` when any check failed, with `stella: 1 of 5 doctor checks failed` printed to stderr. That's the whole rule, which is what makes the command work as a gate:
 
 ```bash
 stella doctor || echo "local state needs attention"

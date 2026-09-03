@@ -601,6 +601,36 @@ pub(super) fn unknown_toml_keys_in(path: &Path) -> Vec<String> {
     found
 }
 
+/// Unknown keys in the org-managed settings file.
+///
+/// Always computed, whether or not `STELLA_MANAGED_SETTINGS` is set and
+/// whether or not [`super::Settings::load`] has run yet. `stella doctor`
+/// and `stella config` call it directly so an admin can catch a root-key
+/// typo (`"toosl"` for `"tools"`) while checking a candidate file, before
+/// it reaches a fleet. [`super::merge`]'s own stderr copy of these lines
+/// stays quiet unless `STELLA_MANAGED_SETTINGS` is set — a plain `stella
+/// run` against a fleet's real managed file must not print it.
+///
+/// Reads the file with a plain read, not the hardened
+/// [`super::managed::read_managed_settings`] the real load uses — this is
+/// only advisory text about key names, never a value. A missing or
+/// unreadable file yields no notices.
+///
+/// Skips the read under [`super::filesystem_settings_disabled`], so a
+/// frozen benchmark run never touches a host path.
+pub(crate) fn managed_advisory() -> Vec<String> {
+    if super::filesystem_settings_disabled() {
+        return Vec::new();
+    }
+    let path = super::managed::resolve_managed_path();
+    let found = if super::toml_config::path_is_toml(&path) {
+        unknown_toml_keys_in(&path)
+    } else {
+        unknown_keys_in(&path)
+    };
+    notices(&path.display().to_string(), found)
+}
+
 fn scan_toml_root(root: &Value, found: &mut Vec<String>) {
     let Some(object) = root.as_object() else {
         return;
