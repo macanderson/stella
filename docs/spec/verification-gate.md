@@ -14,12 +14,15 @@ what each one can honestly claim, and what none of them can.
 
 > **Read this first: two of the three layers no longer exist.** Layers 1 and 2
 > were tests inside `crates/stella-pipeline`, deleted from the workspace in
-> #3865. Nothing replaced them, so **no per-PR gate observes what the agent
-> decides or spends today** — only the wire-contract half of Layer 2 survives.
-> They are described below in the past tense because they are the shape a
-> verification plugin is asked to port (`doc:pipeline-as-plugins` §8) and
-> because the hole they left is the thing a reader most needs to know about.
-> Tracked in #3901 alongside the rest of the sweep.
+> #3865. One piece of Layer 1 has been rebuilt: **the spend gate** below pins
+> what a turn buys over the raw step loop, so a per-PR check fails again when
+> a loop change moves the price. What is still missing is Layer 1's other
+> half, the decision policy, which was the staged pipeline's own and is now a
+> verification plugin's. Only the wire-contract half of Layer 2 survives.
+> Layers 1 and 2 are described below in the past tense because they are the
+> shape a verification plugin is asked to port (`doc:pipeline-as-plugins` §8)
+> and because the hole they left is the thing a reader most needs to know
+> about. Tracked in #3901 alongside the rest of the sweep.
 
 ## Layer 1 — the degradation gate (**gone**; was blocking, per-PR)
 
@@ -56,6 +59,30 @@ are its decision policy, and pinning them against scripted doubles is work on th
 plugin's own side of the wrapper socket — a host that neither runs the check nor
 re-checks the evidence (#3511) cannot gate on either.
 
+## The spend gate — Layer 1's price half, rebuilt (blocking, per-PR)
+
+`crates/stella-core/tests/spend_gate.rs` drives the raw step loop over a
+scripted `Provider` and a scripted `ToolExecutor`, one turn per scenario, and
+pins what the turn bought: the model calls, the tool runs, and the reported
+cost. The scenarios are a one-step answer, a two-tool step, a retry after a
+429, and a turn the loop detector stops. A failure names the scenario, the
+pinned numbers and the new ones.
+
+It needs no verification machinery, which is why it could be rebuilt here at
+all. The engine does no I/O, so scripted ports are the whole harness
+(architecture rule 2 in AGENTS.md), and `cargo test -p stella-core` runs it in
+the required check with every other test.
+
+Layer 1's operating rule carries over word for word. A red run means one of
+two things. Either the change is a bug, and the fix is in the code. Or the
+new price is what you meant, and you edit the pin in the same pull request,
+where a reviewer reads it as a diff line. Never widen a pin to whatever the
+loop does now.
+
+What it does not prove: that the price is *right*, or that the agent still
+decides well. It pins the scenarios above over doubles this repository wrote.
+Real capability is still Layer 3's question.
+
 ## Layer 2 — golden trajectories (**mostly gone**; the wire half survives)
 
 `pipeline/tests/golden.rs` recorded full `AgentEvent` streams from fixed runs and
@@ -90,18 +117,20 @@ per-PR. What keeps them honest is protocol, not frequency:
   from "plausibly fine"; it does not rank models or prove a 3% improvement.
   Claims must match the N.
 
-This is the only layer still standing at full strength, which raises its price:
-a change to the loop, prompts, routing or a wrapper plugin now has no cheap
-per-PR observation between it and a benchmark run.
+This is the only layer still standing at full strength. A change to the loop,
+prompts, routing or a wrapper plugin has one cheap per-PR observation between
+it and a benchmark run — the spend gate, which reads price and nothing else.
 
 ## How to read the layers together
 
 - Wire schema red → your change altered what the agent *emits*. Consumers (TUI,
   serve, store projections) are affected; review the schema diff.
+- Spend gate red → your change moved what a turn buys. Fix it, or edit the pin
+  in the same pull request and say in the PR why the new price is right.
 - Green but you touched the loop, prompts, routing, or a verification plugin:
-  the change is *unobserved*, not *safe*. With Layers 1 and 2 gone there is no
-  per-PR signal for what the agent decides or spends, so "the tests pass" now
-  carries strictly less information than this document was written to describe.
+  what the agent *decides* is still unobserved. The spend gate reads price over
+  scripted turns; nothing per-PR reads decision quality, so "the tests pass"
+  carries less than this document was first written to describe.
 - If a change claims to make the agent better, it earns a preregistered Layer 3
   run before that claim appears anywhere.
 
