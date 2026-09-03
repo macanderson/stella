@@ -259,20 +259,27 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   matching `version < n` arm; `migrate` ([`migrate`](src/ledger.rs))
   stamps `PRAGMA user_version` in the same transaction as the DDL it applies,
   the way `MIGRATION_V2` rebuilt `lineage` to add its uniqueness constraint.
-- **A run never removes its own worktree or branch.** Neither `Fleet` nor
-  `fleet_cmd` calls `WorktreeManager::remove`; isolated worktrees under
-  `.stella/worktrees/<slug>` and their `fleet/<slug>-<hash>` branches are left
-  for review. The slug hashes the run scope *and* the task id, so re-running a
-  plan with the same task ids does not collide with what the last run kept.
-  Reclaiming them is an explicit, separate act: [`src/gc.rs`](src/gc.rs)'s
-  `Gc::sweep`, driven by `stella fleet clean`
+- **A `stella fleet` run never removes its own worktree or branch.** Neither
+  `Fleet` nor `fleet_cmd` calls `WorktreeManager::remove`; isolated worktrees
+  under `.stella/worktrees/<slug>` and their `fleet/<slug>-<hash>` branches are
+  left for review. The slug hashes the run scope *and* the task id, so
+  re-running a plan with the same task ids does not collide with what the
+  last run kept. Reclaiming them is an explicit, separate act:
+  [`src/gc.rs`](src/gc.rs)'s `Gc::sweep`, driven by `stella fleet clean`
   (`crates/stella-cli/src/fleet_gc.rs`) — never automatic, and it removes only
   a worktree with no unfinished attempt in the ledger, a clean tree, and a
-  branch the base ref already contains (#1217). `Gc` does its own
-  `worktree remove` rather than calling `WorktreeManager::remove`: the manager
-  judges a branch against the `base_ref` its `Worktree` value carries, which
-  the ledger does not record, and it has no `--force` rung. Consolidating the
-  two is tracked separately.
+  branch the base ref already contains (#1217).
+
+  `self_driving_cmd::work::start` is a different caller with a different
+  reason to remove: a per-issue worktree whose turn changed nothing has
+  nothing worth reviewing, so it is released right away instead of left for
+  a later sweep. `WorktreeManager::remove` and `Gc::remove_worktree` share
+  one routine — `is_contained_in` and `remove_worktree_and_branch` in
+  [`src/git.rs`](src/git.rs) — through `remove`'s own
+  `RemoveOptions { force, contained_in }`. `Gc` passes its resolved
+  integration ref as `contained_in`, since it has no `Worktree` value to
+  read a `base_ref` from. Every other caller leaves `contained_in` at its
+  default, which falls back to `Worktree::base_ref`.
 - **`WorktreeManager::commit_paths` has no product caller yet.** It is
   exercised only by this crate's own tests, and it ships anyway because it is
   the only place here that encodes the pathspec discipline — `git add --
@@ -283,10 +290,10 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   `git worktree list --porcelain` itself, and both parse the result through the
   same `parse_worktree_list`.
 
-  `WorktreeManager::remove` has left this list: `stella-cli`'s
-  `candidate_workspaces` and `self_driving_cmd::work` both call it. So has the
-  warmest-first path — `Fleet::with_cache_warmth`, `cache_schedule` — is live
-  since #1222: `stella fleet` installs a ledger-backed warmth lookup, keyed by
+  `WorktreeManager::remove` has a production caller: `stella-cli`'s
+  `self_driving_cmd::work::start` (see above). The warmest-first path —
+  `Fleet::with_cache_warmth`, `cache_schedule` — is live since #1222: `stella
+  fleet` installs a ledger-backed warmth lookup, keyed by
   `Ledger::last_attempt_finish_ms` and projected through the provider cache TTL
   in `crates/stella-cli/src/fleet_warmth.rs`.
 - **`WatchConfig::run_list_limit` (default 50) is a truncation point.** A

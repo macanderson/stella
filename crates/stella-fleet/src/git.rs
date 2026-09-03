@@ -158,12 +158,28 @@ pub struct WorktreeEntry {
 /// What [`WorktreeManager::remove`] did with the task's branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoveOutcome {
-    /// The branch was deleted because it carried no commits beyond its base
-    /// (nothing to keep).
+    /// The branch was deleted because it was already contained in the
+    /// containment ref (nothing to keep).
     pub branch_deleted: bool,
-    /// The branch had commits beyond its base, so it was preserved (the
-    /// worker's work is not thrown away on cleanup).
+    /// The branch carried commits the containment ref does not have, so it
+    /// was preserved (the worker's work is not thrown away on cleanup).
     pub branch_had_commits: bool,
+}
+
+/// Options for [`WorktreeManager::remove`]. [`Gc`](crate::gc::Gc)'s sweep
+/// uses the same struct, so both callers judge a branch the same way.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RemoveOptions<'a> {
+    /// Skip the containment check. Force the worktree removal
+    /// (`git worktree remove --force`) and the branch delete. A caller
+    /// still owns its own in-flight or namespace rule; apply that first.
+    pub force: bool,
+    /// The ref the branch must already be an ancestor of
+    /// (`git merge-base --is-ancestor <branch> <ref>`). `None` falls back
+    /// to [`Worktree::base_ref`] — the right default for a lone task.
+    /// [`Gc`](crate::gc::Gc) passes one explicitly: it lists worktrees from
+    /// `git worktree list` and has no [`Worktree`] value to read.
+    pub contained_in: Option<&'a str>,
 }
 
 /// Typed worktree/commit failures.
@@ -405,41 +421,31 @@ impl<G: GitCli> WorktreeManager<G> {
         })
     }
 
-    /// Remove a worktree (`git worktree remove`), then clean up its branch
-    /// **only if unchanged** — a branch with commits beyond its base is
-    /// preserved so a worker's committed work is never discarded on cleanup.
-    /// Fails (does not force) if the worktree has uncommitted changes.
-    pub async fn remove(&self, worktree: &Worktree) -> Result<RemoveOutcome, WorktreeError> {
-        let path_str = path_arg(&worktree.path)?;
-        let out = self
-            .git
-            .run(&self.repo_root, &["worktree", "remove", path_str])
-            .await?;
-        ensure_ok(out, &format!("worktree remove {path_str}"))?;
-
-        let has_commits = self
-            .branch_has_commits_beyond_base(&worktree.branch, &worktree.base_ref)
-            .await?;
-        let branch_deleted = if has_commits {
-            false
-        } else {
-            // Branch is at base with no new commits → safe to delete. `-D`
-            // (not `-d`) because "merged" is judged by us via rev-list, not
-            // by git's HEAD-relative check.
-            let out = self
-                .git
-                .run(&self.repo_root, &["branch", "-D", &worktree.branch])
-                .await?;
-            // Surface a failed delete (e.g. the branch is checked out
-            // elsewhere) rather than silently reporting a clean no-delete,
-            // which would hide a leaked branch and the real git error.
-            ensure_ok(out, &format!("branch -D {}", worktree.branch))?;
-            true
-        };
-        Ok(RemoveOutcome {
-            branch_deleted,
-            branch_had_commits: has_commits,
-        })
+    /// Remove a worktree (`git worktree remove`, forced when
+    /// [`RemoveOptions::force`] is set). Then clean up its branch **only if
+    /// it is already contained in the containment ref**. A branch carrying
+    /// commits the ref does not have is kept, so a worker's committed work
+    /// is never thrown away on cleanup. Fails on a dirty worktree unless
+    /// `opts.force` is set.
+    ///
+    /// [`Gc`](crate::gc::Gc)'s sweep drives this same routine, so the
+    /// containment check lives in one place, not two.
+    pub async fn remove(
+        &self,
+        worktree: &Worktree,
+        opts: &RemoveOptions<'_>,
+    ) -> Result<RemoveOutcome, WorktreeError> {
+        let contained_in = opts.contained_in.unwrap_or(worktree.base_ref.as_str());
+        remove_worktree_and_branch(
+            &self.git,
+            &self.repo_root,
+            &worktree.path,
+            &worktree.branch,
+            opts.force,
+            contained_in,
+            None,
+        )
+        .await
     }
 
     /// Throw a worktree away whether or not it is dirty: `git worktree remove
@@ -543,27 +549,90 @@ impl<G: GitCli> WorktreeManager<G> {
         let out = ensure_ok(out, "status --porcelain")?;
         Ok(out.stdout)
     }
+}
 
-    /// Whether `branch` has any commit beyond `base_ref` (`git rev-list
-    /// --count base..branch > 0`). On any error resolving the range, err
-    /// conservative — report `true` so the branch is kept, never silently
-    /// deleted.
-    async fn branch_has_commits_beyond_base(
-        &self,
-        branch: &str,
-        base_ref: &str,
-    ) -> Result<bool, WorktreeError> {
-        let range = format!("{base_ref}..{branch}");
-        let out = self
-            .git
-            .run(&self.repo_root, &["rev-list", "--count", &range])
-            .await?;
-        if !out.success {
-            return Ok(true);
-        }
-        let count: u64 = out.stdout.trim().parse().unwrap_or(1);
-        Ok(count > 0)
+/// Whether every commit on `branch` is already reachable from `ref_name`
+/// (`git merge-base --is-ancestor branch ref_name`). [`remove_worktree_and_branch`]
+/// and [`Gc`](crate::gc::Gc)'s loose-branch sweep both judge a branch this
+/// way. Exit 1 is git's real "no". Any other failure means git could not
+/// answer, and an unanswered question keeps the branch.
+pub(crate) async fn is_contained_in(
+    git: &dyn GitCli,
+    repo_root: &Path,
+    branch: &str,
+    ref_name: &str,
+) -> Result<bool, WorktreeError> {
+    let out = git
+        .run(
+            repo_root,
+            &["merge-base", "--is-ancestor", branch, ref_name],
+        )
+        .await?;
+    Ok(out.success)
+}
+
+/// The one worktree/branch removal routine: `git worktree remove [--force]
+/// <path>`, then `git branch -D <branch>` when `force` or
+/// [`is_contained_in`] says it is safe. [`WorktreeManager::remove`] and
+/// [`Gc`](crate::gc::Gc)'s sweep are its only two callers.
+///
+/// `allowed_branch_prefix` is [`Gc`](crate::gc::Gc)'s namespace rule, kept
+/// here rather than trusted to the caller: even though `Gc::judge_worktree`
+/// already refuses a foreign branch before a removal is ever reached, the
+/// branch delete happens here, so the check belongs here too. `None` (what
+/// [`WorktreeManager::remove`] passes) skips it — a manager's own branch
+/// prefix is a configuration choice, not a namespace this routine can judge,
+/// so a manager may delete whatever branch its own `Worktree` value names.
+pub(crate) async fn remove_worktree_and_branch(
+    git: &dyn GitCli,
+    repo_root: &Path,
+    path: &Path,
+    branch: &str,
+    force: bool,
+    contained_in: &str,
+    allowed_branch_prefix: Option<&str>,
+) -> Result<RemoveOutcome, WorktreeError> {
+    let path_str = path_arg(path)?;
+    let mut args: Vec<&str> = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
     }
+    args.push(path_str);
+    let out = git.run(repo_root, &args).await?;
+    ensure_ok(out, &args.join(" "))?;
+
+    // A branch outside the caller's own namespace is never a delete
+    // candidate, `force` included. Reported as "had commits" (kept) rather
+    // than a third outcome, so the two fields stay complementary for every
+    // caller reading them.
+    if allowed_branch_prefix.is_some_and(|prefix| !branch.starts_with(prefix)) {
+        return Ok(RemoveOutcome {
+            branch_deleted: false,
+            branch_had_commits: true,
+        });
+    }
+
+    let branch_had_commits = if force {
+        false
+    } else {
+        !is_contained_in(git, repo_root, branch, contained_in).await?
+    };
+    let branch_deleted = if branch_had_commits {
+        false
+    } else {
+        // `-D` (not `-d`) because "merged" is judged by us via
+        // `is_contained_in`, not by git's HEAD-relative check.
+        let out = git.run(repo_root, &["branch", "-D", branch]).await?;
+        // Surface a failed delete (e.g. the branch is checked out elsewhere)
+        // rather than silently reporting a clean no-delete, which would hide
+        // a leaked branch and the real git error.
+        ensure_ok(out, &format!("branch -D {branch}"))?;
+        true
+    };
+    Ok(RemoveOutcome {
+        branch_deleted,
+        branch_had_commits,
+    })
 }
 
 /// Parse `git worktree list --porcelain` into entries. Records are
@@ -846,12 +915,12 @@ mod tests {
         assert!(mgr.git.calls().is_empty());
     }
 
-    // remove: branch cleanup only on unchanged
+    // remove: branch cleanup only when contained in the containment ref
 
     #[tokio::test]
-    async fn remove_deletes_the_branch_when_it_has_no_commits_beyond_base() {
+    async fn remove_deletes_the_branch_when_it_is_contained_in_the_base_ref() {
         let git = ScriptedGit::new(|args| match args.first().map(String::as_str) {
-            Some("rev-list") => GitOutput::ok("0\n"), // unchanged
+            Some("merge-base") => GitOutput::ok(""), // ancestor: contained
             _ => GitOutput::ok(""),
         });
         let mgr = manager(git);
@@ -860,7 +929,7 @@ mod tests {
             branch: "fleet/t".into(),
             base_ref: "HEAD".into(),
         };
-        let outcome = mgr.remove(&wt).await.unwrap();
+        let outcome = mgr.remove(&wt, &RemoveOptions::default()).await.unwrap();
         assert!(outcome.branch_deleted);
         assert!(!outcome.branch_had_commits);
         let calls = mgr.git.calls();
@@ -874,7 +943,7 @@ mod tests {
     #[tokio::test]
     async fn remove_preserves_a_branch_that_has_commits() {
         let git = ScriptedGit::new(|args| match args.first().map(String::as_str) {
-            Some("rev-list") => GitOutput::ok("3\n"), // three commits beyond base
+            Some("merge-base") => GitOutput::failed(1, ""), // not an ancestor: unmerged
             _ => GitOutput::ok(""),
         });
         let mgr = manager(git);
@@ -883,11 +952,78 @@ mod tests {
             branch: "fleet/t".into(),
             base_ref: "HEAD".into(),
         };
-        let outcome = mgr.remove(&wt).await.unwrap();
+        let outcome = mgr.remove(&wt, &RemoveOptions::default()).await.unwrap();
         assert!(!outcome.branch_deleted);
         assert!(outcome.branch_had_commits);
         // Never issued a branch delete.
         assert!(!mgr.git.calls().iter().any(|c| c[0] == "branch"));
+    }
+
+    #[tokio::test]
+    async fn remove_judges_against_an_explicit_contained_in_ref_over_base_ref() {
+        // `base_ref` says "unmerged" (a failed merge-base), but the caller
+        // passes an explicit `contained_in` that says "merged" — the
+        // explicit ref wins, which is the whole point of the field: `Gc`
+        // has no `Worktree::base_ref` to fall back to.
+        let git = ScriptedGit::new(|args| match args.first().map(String::as_str) {
+            Some("merge-base") if args.get(3).map(String::as_str) == Some("origin/main") => {
+                GitOutput::ok("")
+            }
+            Some("merge-base") => GitOutput::failed(1, ""),
+            _ => GitOutput::ok(""),
+        });
+        let mgr = manager(git);
+        let wt = Worktree {
+            path: PathBuf::from("/repo/.stella/worktrees/t"),
+            branch: "fleet/t".into(),
+            base_ref: "HEAD".into(),
+        };
+        let outcome = mgr
+            .remove(
+                &wt,
+                &RemoveOptions {
+                    force: false,
+                    contained_in: Some("origin/main"),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(outcome.branch_deleted);
+        assert!(!outcome.branch_had_commits);
+    }
+
+    #[tokio::test]
+    async fn remove_force_skips_the_containment_check_and_forces_both_removals() {
+        let git = ScriptedGit::new(|_| GitOutput::ok(""));
+        let mgr = manager(git);
+        let wt = Worktree {
+            path: PathBuf::from("/repo/.stella/worktrees/t"),
+            branch: "fleet/t".into(),
+            base_ref: "HEAD".into(),
+        };
+        let outcome = mgr
+            .remove(
+                &wt,
+                &RemoveOptions {
+                    force: true,
+                    contained_in: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(outcome.branch_deleted);
+        assert!(!outcome.branch_had_commits);
+        let calls = mgr.git.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c[..3] == ["worktree", "remove", "--force"]),
+            "{calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|c| c[0] == "merge-base"),
+            "force must skip the containment check entirely: {calls:?}"
+        );
     }
 
     // list parsing
@@ -1022,7 +1158,7 @@ detached
 
         // An untouched worktree → branch deleted on removal.
         let clean = mgr.create("clean", &base).await.unwrap();
-        let outcome = mgr.remove(&clean).await.unwrap();
+        let outcome = mgr.remove(&clean, &RemoveOptions::default()).await.unwrap();
         assert!(outcome.branch_deleted, "an unchanged branch is cleaned up");
 
         // A worktree with a commit → branch preserved on removal.
@@ -1031,7 +1167,10 @@ detached
         mgr.commit_paths(&worked.path, &[Path::new("f.txt")], "work")
             .await
             .unwrap();
-        let outcome = mgr.remove(&worked).await.unwrap();
+        let outcome = mgr
+            .remove(&worked, &RemoveOptions::default())
+            .await
+            .unwrap();
         assert!(!outcome.branch_deleted, "a committed branch is preserved");
         assert!(outcome.branch_had_commits);
     }

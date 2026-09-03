@@ -89,8 +89,8 @@ pub use gc::{
     WorktreeActivity, WorktreeVerdict,
 };
 pub use git::{
-    GitCli, GitError, GitOutput, RemoveOutcome, SystemGitCli, Worktree, WorktreeEntry,
-    WorktreeError, WorktreeManager,
+    GitCli, GitError, GitOutput, RemoveOptions, RemoveOutcome, SystemGitCli, Worktree,
+    WorktreeEntry, WorktreeError, WorktreeManager,
 };
 pub use ledger::{
     AttemptFinish, AttemptId, AttemptStart, CommitRecord, Ledger, LedgerError, RunRecord,

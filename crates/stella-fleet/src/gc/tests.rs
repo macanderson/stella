@@ -74,6 +74,27 @@ async fn the_main_checkout_and_foreign_worktrees_are_never_candidates() {
     }
 }
 
+/// `sweep` never reaches this case: `judge_worktree` refuses a foreign
+/// branch first. Drives `remove_worktree` directly to prove the extra
+/// guard `allowed_branch_prefix` adds still holds on its own.
+#[tokio::test]
+async fn remove_worktree_refuses_a_branch_outside_its_own_namespace_even_direct() {
+    let gc = scripted(|_| GitOutput::ok(""));
+    let deleted = gc
+        .remove_worktree(Path::new("/repo/hand-made"), "my-feature", true, "main")
+        .await
+        .expect("remove_worktree");
+    assert!(
+        !deleted,
+        "a branch outside fleet/ must never be deleted, force included"
+    );
+    assert!(
+        !gc.git.calls().iter().any(|c| c[0] == "branch"),
+        "no branch -D was even attempted: {:?}",
+        gc.git.calls()
+    );
+}
+
 #[tokio::test]
 async fn a_dry_run_mutates_nothing() {
     let gc = scripted(|args| match arg(args, 0) {
