@@ -224,5 +224,13 @@ install-updater = false
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
+# Unwind, so that `catch_unwind` works in the binary a user runs. Two shipped
+# promises rest on it: a panel that panics paints an error card and the rest of
+# the screen keeps working (`stella_tui::panel_guard`), and a panic in one
+# `stella-serve` connection ends that connection rather than the server. Under
+# `panic = "abort"` a catch never runs and both promises are void. The trade is
+# code size and a little speed, and `doc:adr/0024-release-builds-unwind` records
+# it. `crates/stella-tui/examples/panic_guard_probe.rs` runs under this profile
+# in CI and fails if this line ever says "abort" again.
+panic = "unwind"
 strip = true

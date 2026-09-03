@@ -90,6 +90,7 @@ open; nothing before Phase 3 forces it.
 | [0021](0021-a-memory-event-names-one-memory.md) | A Memory Event Names One Memory | Implemented — landed with #5032 |
 | [0022](0022-adopt-standing-decisions-scr-corpus.md) | Adopt Org Standing Decisions as a Steering Context Record Corpus | Accepted |
 | [0023](0023-autonomous-tool-foundry.md) | Reconnect the Gap Detector; the Foundry Runs Autonomously Behind Standing Controls | Accepted |
+| [0024](0024-release-builds-unwind.md) | Release Builds Unwind on Panic | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -122,3 +123,10 @@ editing `mcp.toml`. Only the middle one withholds, and `CapabilityGrants` then
 keeps an ungranted server out of `schemas()` and refuses its calls before the
 transport — on both hosts, so the property does not depend on which surface is
 driving.
+
+ADR 0024 sets `panic = "unwind"` for the release profile. Every panic boundary
+in the workspace was inert in shipped binaries, including the two that are
+promises to a person: a panel that panics paints an error card instead of
+killing the process, and a panic in one server connection ends that connection
+rather than the server. An example binary run with `--release` in CI is what
+holds the profile there.

@@ -33,9 +33,8 @@
 //! - **A child runs on a fresh OS thread with a current-thread runtime**,
 //!   because an engine turn's future is not `Send` and every tool-call path
 //!   above it requires one. `catch_unwind` around the child turn contains a
-//!   panic **only where builds unwind**: the workspace sets `panic = "abort"`,
-//!   so in release a child panic takes the process, and only a process
-//!   boundary could contain it.
+//!   panic **only where builds unwind**. Both profiles here do. So a child
+//!   panic costs the child, and its spend is settled, in a shipped build too.
 //!
 //! A hard cancel is the dropping of a future, which cannot reach a thread, so
 //! the intent cascades instead of the mechanism. [`ParentGone`] drops with the
@@ -656,10 +655,10 @@ impl SessionSubAgents {
                 // budget carve — is exactly what is read afterwards, on
                 // purpose. A partially-billed carve is the number to settle.
                 //
-                // Only unwinds are catchable. Release builds set
-                // `panic = "abort"` (workspace Cargo.toml), so there a child
-                // panic takes the process down and nothing below runs — see
-                // this module's header, which no longer claims otherwise.
+                // Only an unwind can be caught. Every profile in the
+                // workspace Cargo.toml unwinds, release too. So the settle
+                // below runs on the panic path in a shipped build, and not
+                // just under `cargo test`.
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     runtime.block_on(engine.run_sub_agent_with_sender(
                         SubAgentHost::new(&*provider),

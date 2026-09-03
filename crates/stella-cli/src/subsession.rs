@@ -736,10 +736,9 @@ const PANIC_FAILURE_PREFIX: &str = "worker panicked: ";
 
 /// Run one worker body, converting a panic into a `Failed` ending so the
 /// supervisor ALWAYS receives `Ended` — a panicking tool must cost one
-/// failed worker, not a lane stuck "Running" and a leaked slot. Effective
-/// in unwind builds; under `panic = "abort"` (release) the process dies in
-/// the panic hook before any catch — stella-tui's hook restores the
-/// terminal there, and the deck's journal hook flushes the session journal.
+/// failed worker, not a lane stuck "Running" and a leaked slot. Effective in
+/// unwind builds, which is every profile here — the release one included, so
+/// a worker panic costs a lane rather than the session in a shipped binary.
 fn run_caught<F>(body: F) -> (Option<i64>, f64, WorkerEnd)
 where
     F: FnOnce() -> (Option<i64>, f64, WorkerEnd),

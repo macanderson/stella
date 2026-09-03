@@ -120,6 +120,11 @@
       "status": "implemented",
       "title": "ADR 0023: Reconnect the gap detector and let the foundry run autonomously behind standing controls"
     },
+    "adr/0024-release-builds-unwind": {
+      "path": "docs/adr/0024-release-builds-unwind.md",
+      "status": "implemented",
+      "title": "ADR 0024: Release builds unwind on panic"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

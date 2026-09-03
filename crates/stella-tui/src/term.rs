@@ -1,16 +1,16 @@
 //! Terminal enter/restore shared by both shells (single-session and deck).
 //!
-//! Restoration must not rely on `Drop` alone: release builds abort on panic
-//! (`[profile.release] panic = "abort"`), so destructors never run on a
-//! panicking process and a Drop-only guard leaves the user's terminal
-//! stranded in raw mode on the alternate screen. The panic hook installed by
-//! [`PanicHookGuard`] therefore restores the terminal *directly* in abort
-//! builds — sharing the guard's acquired-state flags — and then delegates to
-//! the previously installed hook, so the standard panic message (and any
-//! `RUST_BACKTRACE` output) lands on the user's real screen, not the
-//! alternate one.
+//! Restoration must not rely on `Drop` alone. A build made with
+//! `panic = "abort"` runs no destructor on a panicking process, so a
+//! Drop-only guard leaves the user's terminal stranded in raw mode on the
+//! alternate screen. The panic hook installed by [`PanicHookGuard`] therefore
+//! restores the terminal *directly* in an aborting build — sharing the
+//! guard's acquired-state flags — and then delegates to the previously
+//! installed hook, so the standard panic message (and any `RUST_BACKTRACE`
+//! output) lands on the user's real screen, not the alternate one.
 //!
-//! In unwind (dev) builds the hook never restores. The hook fires for EVERY
+//! Every profile here unwinds, release included, so the branch below is what
+//! ships. In an unwinding build the hook never restores. It fires for EVERY
 //! panic on ANY thread or tokio task, and a session can outlive a panic in
 //! two ways that make hook-time restoration actively harmful: band panics are
 //! caught by [`crate::panel_guard`] and rendered as an error card in place
@@ -23,7 +23,7 @@
 //! so the unwind-build hook instead writes the debug log and STASHES the
 //! panic report (message + backtrace) on the shared state; the restore
 //! replays it on stderr once the real screen is back. Without that replay a
-//! fatal dev panic exits silently. Under abort none of that machinery gets a
+//! fatal panic exits silently. Under abort none of that machinery gets a
 //! chance to run — the process dies inside the hook — so the hook is the
 //! only restoration point and restoring (then delegating to the previous
 //! hook for the message) is always right, even mid-panel-draw.
@@ -298,8 +298,9 @@ type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'sta
 /// survives (caught band draws, background tasks), and real teardown
 /// restores via [`TerminalGuard`]'s `Drop` instead. What an unwind build
 /// does instead is stash the report (unless a [`crate::panel_guard`] catch
-/// renders it in place) so the restore can replay it on stderr — a fatal dev
-/// panic must not exit silently (see the module docs).
+/// renders it in place) so the restore can replay it on stderr — a fatal
+/// panic must not exit silently (see the module docs). Every profile in this
+/// workspace unwinds, so that is the branch a shipped binary takes.
 pub(crate) struct PanicHookGuard {
     prev: Arc<PanicHook>,
 }

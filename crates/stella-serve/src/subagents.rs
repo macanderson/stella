@@ -139,8 +139,9 @@ impl SubAgentPolicy {
         // the floor here is a literal while the ceiling is a `pub` field no
         // constructor validates. `max_child_steps: 0` — a plausible reading of
         // "cap children at nothing" — panicked on any request that named
-        // `max_steps`, and the release profile builds with `panic = "abort"`,
-        // so that ends the whole server rather than the one request.
+        // `max_steps`. The floor is the fix; the release profile unwinds, so
+        // a panic here would now cost the one connection rather than the
+        // server, which is a smaller blast radius and still the wrong answer.
         let child_ceiling = self.max_child_steps.max(1);
         Some(EffectiveSubAgents {
             pool_usd: requested
@@ -1057,10 +1058,9 @@ mod tests {
     /// `max_child_steps` is a `pub` field no constructor validates, so an
     /// operator reading it as "cap children at nothing" can set it to zero.
     /// The ceiling reached `clamp(1, 0)`, which asserts `min <= max` and
-    /// panicked on any request naming `max_steps` — and the release profile
-    /// sets `panic = "abort"`, so that ended the server rather than the
-    /// request. Both branches answer the floored ceiling, so an unasked
-    /// request and an asked one cannot disagree.
+    /// panicked on any request naming `max_steps`. Both branches answer the
+    /// floored ceiling, so an unasked request and an asked one cannot
+    /// disagree.
     #[test]
     fn a_zero_operator_ceiling_floors_at_one_instead_of_panicking() {
         let zeroed = SubAgentPolicy {
