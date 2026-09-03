@@ -317,6 +317,10 @@ mod tests {
             "turns_over_budget",
             "drive.rs — a turn hit its spend ceiling",
         ),
+        (
+            "audit_records_incomplete",
+            "self_driving_cmd/stats.rs — a store write the close-out lost",
+        ),
     ];
 
     /// **The witness.** Every field the report renders names the code that

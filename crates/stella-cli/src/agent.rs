@@ -68,8 +68,8 @@ mod turn_close;
 // close-out sets the count. The run summary prints it. The self-driving loop
 // adds it up over a run.
 pub(crate) use audit_writes::{
-    dropped_audit_writes, note_child_dropped_audit_writes, take_dropped_audit_writes,
-    warn_dropped_audit_writes, warn_store_write_failed,
+    note_child_dropped_audit_writes, take_dropped_audit_writes, warn_dropped_audit_writes,
+    warn_store_write_failed,
 };
 pub(crate) use budget::{build_budget_guard, remaining_budget, settle_reflection_budget};
 pub(crate) use graph_view::{graph_query_snapshot, graph_snapshot, graph_snapshot_focus};
@@ -99,7 +99,6 @@ pub(crate) use prompt::*;
 use reflect::reflect_on_interactive_turn;
 pub(crate) use reflect::surface_reflection;
 pub(crate) use skill_usage::stamp_and_record_skill_usage;
-pub(crate) use summary::RawRunSummary;
 pub(crate) use tools::*;
 
 /// Whether this process may touch durable workspace state, as the
