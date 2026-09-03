@@ -747,6 +747,16 @@ pub(super) fn start(
 /// has no steering to miss, and demanding a trust flag from it would be
 /// ceremony.
 pub(super) fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
+    refuse_unless_trusted(root, crate::settings::project_code_execution_trusted())
+}
+
+/// The rule of [`refuse_if_unsteered`], with the process it reads taken out.
+///
+/// Separated for the reason [`classify`] is: `project_code_execution_trusted`
+/// answers from the process environment, which this test suite shares with
+/// every other test running beside it. A pure function takes the answer as an
+/// argument, so both directions of the rule can be pinned without a race.
+fn refuse_unless_trusted(root: &Path, trusted: bool) -> Result<(), String> {
     let records = root.join(".stella").join("rules");
     let count = std::fs::read_dir(&records)
         .map(|entries| {
@@ -761,7 +771,7 @@ pub(super) fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
         })
         .unwrap_or(0);
 
-    if count == 0 || crate::settings::project_code_execution_trusted() {
+    if count == 0 || trusted {
         return Ok(());
     }
 
@@ -1313,6 +1323,62 @@ mod tests {
         assert!(
             budget.exhausted().is_some(),
             "which is the condition `drive` reports as *budget reached*"
+        );
+    }
+
+    /// **Witness.** The loop refuses to work an issue when the workspace's
+    /// records would not reach the turn, and runs when they would.
+    ///
+    /// The failure this guards is silent. An untrusted checkout loads none of
+    /// its records, so the turn writes plausible code under nobody's standards
+    /// and the pull request looks like every other one. Both directions are
+    /// asserted, because a check that only ever refused would be satisfied by
+    /// a function that always refuses.
+    ///
+    /// A workspace with no records is the third cell: there is no steering to
+    /// miss, so asking it for a trust flag would be ceremony.
+    #[test]
+    fn the_loop_will_not_work_an_issue_that_its_records_cannot_steer() {
+        let bare = tempfile::tempdir().expect("workspace");
+        assert!(
+            refuse_unless_trusted(bare.path(), false).is_ok(),
+            "a workspace with no records has no steering to miss"
+        );
+
+        let steered = tempfile::tempdir().expect("workspace");
+        let rules = steered.path().join(".stella").join("rules");
+        std::fs::create_dir_all(&rules).expect("rules directory");
+        std::fs::write(rules.join("ctx.example.one.toml"), "").expect("a record file");
+
+        let refusal = refuse_unless_trusted(steered.path(), false)
+            .expect_err("records that cannot steer must stop the work");
+        assert!(
+            refusal.contains("STELLA_TRUST_PROJECT"),
+            "the refusal must name the remedy: {refusal}"
+        );
+        assert!(
+            refuse_unless_trusted(steered.path(), true).is_ok(),
+            "a trusted workspace steers the turn, so the work proceeds"
+        );
+    }
+
+    /// **Witness.** The child turn keeps the trust that lets this repository
+    /// steer it.
+    ///
+    /// `refuse_if_unsteered` asks whether *this* process trusts the project;
+    /// the turn runs in a child. Inheriting the environment is the only thing
+    /// joining those two answers, so a later `env_remove` here would unsteer
+    /// every loop turn while the parent's check went on passing.
+    #[test]
+    fn the_turn_keeps_the_trust_that_lets_this_repository_steer_it() {
+        let removed: Vec<String> = turn_cmd(&TurnFlags::default())
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !removed.iter().any(|key| key == "STELLA_TRUST_PROJECT"),
+            "the child turn must inherit the project trust: {removed:?}"
         );
     }
 }
