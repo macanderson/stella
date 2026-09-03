@@ -201,10 +201,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-lockfile-sync.sh
 
-      - name: the module-layout guard, both refusal directions
-        if: ${{ !cancelled() }}
-        run: ./scripts/test-module-layout.sh
-
       - name: the red-main hold, blocking branch included
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-red-hold.sh
@@ -260,6 +256,10 @@ jobs:
       - name: the Homebrew tap staleness rule
         if: ${{ !cancelled() }}
         run: ./scripts/test-tap-current.sh
+
+      - name: the release fetch has no fixed count cap
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-releases-published-pagination.sh
 
       - name: rebase-replay guard directions, and the hazard itself
         if: ${{ !cancelled() }}

@@ -129,10 +129,10 @@ pub(crate) fn initialize_store_pragmas(
              PRAGMA foreign_keys=ON;"
         ));
         match result {
-            Err(error)
-                if attempts < BUSY_ATTEMPTS
-                    && error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy) =>
-            {
+            // The predicate is [`crate::busy::is_busy`] rather than a code
+            // compared here, so this opener and every retried write agree on
+            // what counts as a held lock.
+            Err(error) if attempts < BUSY_ATTEMPTS && crate::busy::is_busy(&error) => {
                 attempts += 1;
                 std::thread::sleep(BUSY_BACKOFF);
             }

@@ -5,10 +5,10 @@
 //! `/agent` (run as an installed agent this session).
 //!
 //! ```text
-//! ╭ model · 1/3 · this session only ─────────────────────────────╮
-//! │  filter gpt▏                                                 │
+//! ╭ model · 1/1 · this session only ─────────────────────────────╮
+//! │  filter gpt-5.5▏                                             │
+//! │ openrouter                                                   │
 //! │▸ openrouter/openai/gpt-5.5                                   │
-//! │  openrouter/openai/gpt-5.5-mini                              │
 //! ╰────────────────── type to filter · ↑↓ move · ⏎ use · esc ────╯
 //! ```
 //!
@@ -43,7 +43,8 @@
 //! where it ends.
 //!
 //! In a file of its own under the god-file rule — `deck_ui.rs` pays only
-//! the two state fields; key routing is `deck_ui/pickers.rs`.
+//! the two state fields; key routing is `deck_ui/pickers.rs`, which
+//! `render_model`'s provider headings (`grouped_rows`) never reach.
 //!
 //! [`EngineConfigState`]: crate::envelope::EngineConfigState
 
@@ -263,12 +264,58 @@ pub(crate) fn typeahead_candidates(model: &WorkspaceModel, ui: &DeckUi) -> Vec<S
 
 /// The window of `count` rows that keeps `sel` visible: at most
 /// [`VISIBLE_ROWS`], slid so the highlight never leaves it.
+///
+/// `sel` and `count` are indices into whatever row space the caller is
+/// windowing — the flat candidate list for [`render_agent`], or the
+/// heading-interleaved painted rows [`grouped_rows`] builds for
+/// [`render_model`]. The math does not care which; only the caller does.
 fn window(sel: usize, count: usize) -> std::ops::Range<usize> {
     let visible = count.min(VISIBLE_ROWS);
     let start = (sel + 1)
         .saturating_sub(visible)
         .min(count.saturating_sub(visible));
     start..start + visible
+}
+
+/// One row the `/model` picker paints: a candidate at its flat index — the
+/// same index [`PickerAction::Choose`] resolves against — or a
+/// non-selectable provider heading. Mirrors the command palette's own
+/// `PopupRow` (`render::display_rows`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PickerRow {
+    Heading(String),
+    Candidate(usize),
+}
+
+/// The provider a `provider/slug` spec names: the text before the first
+/// `/`. The same split [`typeahead_candidates`] and
+/// `command_deck/model_cmd.rs` already depend on — a gateway spec is
+/// `openrouter/openai/gpt-5.5`, and the provider is `openrouter`, not
+/// `openai`. A spec with no `/` at all (malformed input the catalog should
+/// never produce) is its own provider rather than a panic.
+fn provider_of(spec: &str) -> &str {
+    spec.split_once('/').map_or(spec, |(provider, _)| provider)
+}
+
+/// `candidates` — already filtered and ordered by the caller — as painted
+/// rows: a heading inserted wherever the provider changes from the row
+/// before it. This only marks the seams already present in the caller's
+/// order; it does not re-sort, so two runs of the same provider split by a
+/// different one draw that heading twice, the same seam-detection
+/// [`crate::composer::SlashMenu::filter_with`] uses for its own domain
+/// groups.
+fn grouped_rows(candidates: &[String]) -> Vec<PickerRow> {
+    let mut rows = Vec::with_capacity(candidates.len());
+    let mut current: Option<&str> = None;
+    for (i, spec) in candidates.iter().enumerate() {
+        let provider = provider_of(spec);
+        if current != Some(provider) {
+            rows.push(PickerRow::Heading(provider.to_string()));
+            current = Some(provider);
+        }
+        rows.push(PickerRow::Candidate(i));
+    }
+    rows
 }
 
 /// The card's outer width: the whole frame in accessible mode, else capped
@@ -428,31 +475,51 @@ pub fn render_model(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut B
             muted,
         )));
     } else {
-        let window = window(sel, candidates.len());
-        for (i, spec) in candidates
+        // Windowed over the painted rows (headings included), not the
+        // candidates — VISIBLE_ROWS caps what is drawn, and a heading takes
+        // a row of its own. `window` itself is agnostic to which; only the
+        // index space passed in differs from render_agent's below.
+        let painted = grouped_rows(&candidates);
+        let selected_painted = painted
+            .iter()
+            .position(|row| *row == PickerRow::Candidate(sel))
+            .unwrap_or(0);
+        let window = window(selected_painted, painted.len());
+        for (row_i, row) in painted
             .iter()
             .enumerate()
             .skip(window.start)
             .take(window.len())
         {
-            let is_sel = i == sel;
-            let mut spans = vec![
-                cursor(is_sel),
-                Span::styled(
-                    truncate_cols(spec, inner_w.saturating_sub(12)),
-                    name_style(is_sel),
-                ),
-            ];
-            // The session's live pin, as a WORD — the golden suite strips
-            // style, and this is the row a reader orients on.
-            if current.as_deref() == Some(spec.as_str()) {
-                spans.push(Span::styled("  · current", muted));
+            match row {
+                PickerRow::Heading(provider) => {
+                    // Chrome, not a candidate: no cursor column, dim like
+                    // the palette's own section headings — never the row a
+                    // `⏎` can land on.
+                    rows.push(Line::from(Span::styled(format!(" {provider}"), dim)));
+                }
+                PickerRow::Candidate(i) => {
+                    let spec = &candidates[*i];
+                    let is_sel = *i == sel;
+                    let mut spans = vec![
+                        cursor(is_sel),
+                        Span::styled(
+                            truncate_cols(spec, inner_w.saturating_sub(12)),
+                            name_style(is_sel),
+                        ),
+                    ];
+                    // The session's live pin, as a WORD — the golden suite
+                    // strips style, and this is the row a reader orients on.
+                    if current.as_deref() == Some(spec.as_str()) {
+                        spans.push(Span::styled("  · current", muted));
+                    }
+                    if is_sel {
+                        // Offset by the filter row this list sits under.
+                        selected_row = Some(row_i - window.start + 1);
+                    }
+                    rows.push(Line::from(spans));
+                }
             }
-            if is_sel {
-                // Offset by the filter row this list sits under.
-                selected_row = Some(i - window.start + 1);
-            }
-            rows.push(Line::from(spans));
         }
     }
 
@@ -750,6 +817,117 @@ mod tests {
         assert!(
             !frame.contains("waiting for the provider snapshot"),
             "that is the other nothing — an empty snapshot: {frame}"
+        );
+    }
+
+    /// **The witness.** Five candidates split 3-and-2 across two providers
+    /// paint seven rows — a heading before each run — and painted row 4
+    /// (1-indexed: heading, candidate 0, candidate 1, *this one*) is
+    /// candidate 2, the same flat index `PickerAction::Choose` resolves
+    /// against (`crate::deck_ui::pickers`). Getting this mapping right is
+    /// `grouped_rows`'s whole job; the render loop only walks it.
+    #[test]
+    fn grouped_rows_paint_a_heading_before_each_provider_run() {
+        let candidates: Vec<String> = [
+            "zai/glm-5.2-air",
+            "zai/glm-4.7",
+            "zai/glm-4.6-air",
+            "anthropic/claude-fable-5",
+            "anthropic/claude-fable-5-mini",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+
+        let rows = grouped_rows(&candidates);
+        assert_eq!(
+            rows.len(),
+            7,
+            "5 candidates across 2 providers paint 7 rows: {rows:?}"
+        );
+        let headings = rows
+            .iter()
+            .filter(|row| matches!(row, PickerRow::Heading(_)))
+            .count();
+        assert_eq!(headings, 2, "{rows:?}");
+        assert_eq!(
+            rows[3],
+            PickerRow::Candidate(2),
+            "painted row 4 (1-indexed) is candidate 2: {rows:?}"
+        );
+    }
+
+    /// A filter narrowed to one provider draws that provider's heading
+    /// once — `grouped_rows` sees the already-filtered list, so a seam the
+    /// filter removed cannot resurface in it.
+    #[test]
+    fn a_filter_narrowed_to_one_provider_draws_one_heading() {
+        let candidates: Vec<String> = ["zai/glm-5.2-air", "zai/glm-4.7"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            grouped_rows(&candidates),
+            vec![
+                PickerRow::Heading("zai".to_string()),
+                PickerRow::Candidate(0),
+                PickerRow::Candidate(1),
+            ]
+        );
+    }
+
+    /// **The witness for the drawn headings.** Two providers draw two
+    /// headings on screen, arrowing past one still lands the highlight on
+    /// the candidate the reader arrowed to, and a heading never carries the
+    /// cursor marker — the row `⏎` could choose is a heading in no case.
+    #[test]
+    fn the_model_card_draws_a_heading_between_provider_runs() {
+        let model = WorkspaceModel::new();
+        let mut ui = DeckUi::default();
+        ui.engine.state = Some(EngineConfigState {
+            catalog_models: vec![
+                "zai/glm-5.2-air".to_string(),
+                "zai/glm-4.7".to_string(),
+                "anthropic/claude-fable-5".to_string(),
+            ],
+            ..Default::default()
+        });
+        ui.model_picker.raise();
+        let area = Rect::new(0, 0, 100, 20);
+
+        let mut buf = Buffer::empty(area);
+        render_model(&model, &ui, area, &mut buf);
+        let frame = text(&buf);
+        // A heading row's own interior text — between the card's left and
+        // right border, trimmed — rather than the whole screen line, which
+        // still carries the border and the surrounding centering padding.
+        let headings: Vec<&str> = frame
+            .lines()
+            .filter_map(|line| line.split('│').nth(1).map(str::trim))
+            .filter(|inner| *inner == "zai" || *inner == "anthropic")
+            .collect();
+        assert_eq!(headings, vec!["zai", "anthropic"], "{frame}");
+
+        // Arrow past the heading between the two runs onto the last
+        // candidate (flat index 2) and confirm the highlight followed the
+        // candidates, not the painted rows.
+        ui.model_picker.key(key(KeyCode::Down), 3);
+        ui.model_picker.key(key(KeyCode::Down), 3);
+        assert_eq!(ui.model_picker.selected(), 2);
+        let mut buf = Buffer::empty(area);
+        render_model(&model, &ui, area, &mut buf);
+        let frame = text(&buf);
+        assert!(
+            frame.contains("▸ anthropic/claude-fable-5"),
+            "the highlight followed the arrows onto the candidate: {frame}"
+        );
+        let heading_line = frame
+            .lines()
+            .find(|line| line.split('│').nth(1).map(str::trim) == Some("anthropic"))
+            .expect("the heading is still drawn");
+        assert!(
+            !heading_line.contains('▸'),
+            "a heading never carries the cursor: {heading_line:?}"
         );
     }
 

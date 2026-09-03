@@ -62,6 +62,21 @@ impl Config {
             println!("  Env files:  {}", summary.dimmed());
         }
         self.print_role_wiring();
+        Self::print_managed_advisory();
+    }
+
+    /// Unknown keys in the org-managed settings file, always shown here.
+    /// This is where an admin can catch a typo before it reaches a fleet.
+    /// Silent when there is nothing to say.
+    fn print_managed_advisory() {
+        let notices = crate::settings::Settings::managed_advisory();
+        if notices.is_empty() {
+            return;
+        }
+        println!("\n  {}", "Managed settings".bright_cyan().bold());
+        for line in notices {
+            println!("    {}", line.dimmed());
+        }
     }
 
     /// The four engine roles, what each will actually send, and which setting

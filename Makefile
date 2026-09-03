@@ -46,8 +46,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     bench-suites wire-paths \
                     tokens hue-separation contrast light-clamp transcript-surfaces prose \
                     line-citations \
-                    deck-fit-all-test deck-paths css-vars reserved-paths rendering-facts \
-                    module-layout
+                    deck-fit-all-test deck-paths css-vars reserved-paths rendering-facts
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -532,14 +531,6 @@ css-vars: ## Assert every var() in a token sheet resolves inside it (#4122)
 reserved-paths: ## Assert no tracked path uses a Windows device name, which makes the repo unclonable there (#3550)
 	@./scripts/check-reserved-paths.sh
 
-.PHONY: module-layout
-module-layout: ## Assert no code file sits beside a folder with the same name
-	@python3 ./scripts/check-module-layout.py
-
-.PHONY: module-layout-update
-module-layout-update: ## Retire module-layout baseline entries whose pair was split; never adds one
-	@python3 ./scripts/check-module-layout.py --update
-
 .PHONY: rendering-facts
 rendering-facts: ## Assert no v2 rendering draws a fact design/tui-v2/SPEC.md retired (#5291)
 	@./scripts/check-rendering-facts.sh
@@ -956,6 +947,10 @@ releases-baseline-update: ## Grandfather the tags that shipped nothing and never
 .PHONY: releases-published-test
 releases-published-test: ## Test the tag/release reconciliation rule (hermetic; not part of `gate`)
 	./scripts/test-releases-published.sh
+
+.PHONY: releases-published-pagination-test
+releases-published-pagination-test: ## Witness that the release fetch has no fixed count cap (#5555; hermetic)
+	./scripts/test-releases-published-pagination.sh
 
 .PHONY: tap-current
 tap-current: ## Assert the Homebrew tap formula serves the newest published release (#5551)

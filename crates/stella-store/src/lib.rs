@@ -99,6 +99,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //   ddl         (crate-private) every table/index DDL at the CURRENT schema
 //   dispatch    which turn dispatched which execution (#4628)
 //   migrations  (crate-private) versioned upgrades + the fresh-file bootstrap
+//   busy        the held-lock test and the retry built on it
 //   cache_gaps  per-call facts behind the `cache_expired_rewrite` counter
 //   cache_trend per-session cache trend — telemetry already persists these
 //               facts; this groups them by session for `stella stats`
@@ -122,6 +123,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //   integrity   `PRAGMA quick_check`/`integrity_check` verdicts plus the
 //               opt-in, never-deleting quarantine behind `stella doctor`
 //   journal     append-only per-session sidecar journal (crash-safe resume)
+//   mcp_usage   the MCP call log and its fold
 //   notify      persist-until-read cross-session notifications
 //   prune       retention/deletion for `store.db`: the explicit
 //               execution-cascade delete `stella stats prune` drives (#616)
@@ -144,6 +146,7 @@ mod tests;
 mod tool_calls;
 
 pub mod agent_uses;
+pub mod busy;
 pub mod cache_gaps;
 pub mod cache_trend;
 pub mod catalog;
@@ -159,6 +162,7 @@ pub mod home;
 pub mod identity;
 pub mod integrity;
 pub mod journal;
+pub mod mcp_usage;
 pub mod notify;
 pub mod plan_graph;
 pub mod prune;
@@ -185,6 +189,7 @@ use migrations::{
 };
 
 pub use agent_uses::{AgentUseRow, KIND_DEFINITION, KIND_DELEGATION};
+pub use busy::{BusyRetry, is_busy, retry_busy};
 pub use cache_gaps::CacheCallGap;
 pub use catalog::CatalogStore;
 pub use drain::{
@@ -206,6 +211,7 @@ pub use session_stats::{PROMPT_SAMPLE, SessionStats};
 // live-session durability — two different artifacts that happen to share a
 // natural name. Reach the writer through its module.
 pub use journal::JournalRecord;
+pub use mcp_usage::{McpUsageRow, McpUsageStat, fold_mcp_usage_stats};
 pub use notify::{Notification, NotificationStore};
 pub use private::{
     WORKSPACE_PRIVATE_DIR, append_workspace_private_line, existing_workspace_private_sqlite_path,
@@ -360,32 +366,6 @@ pub struct MemoryCitationStats {
     /// harm to surface a memory multiple agents verified as wrong. Only
     /// `stella memory unquarantine` clears it.
     pub quarantined: bool,
-}
-
-/// One MCP tool call, ready to persist: which server + tool, an optional
-/// reason (best-effort — external MCP tools rarely carry one), and the call
-/// time in epoch millis. Unlike a file-touch (aggregated per path), this is a
-/// per-call log row, so repeat calls to the same tool are distinct rows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct McpUsageRow {
-    pub server: String,
-    pub tool: String,
-    pub reason: String,
-    pub called_at_ms: i64,
-}
-
-/// Per-(server, tool) MCP usage aggregate — the data behind the MCP tab's
-/// "N calls" column and `stella mcp usage`. Ordered most-used first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct McpUsageStat {
-    pub server: String,
-    pub tool: String,
-    /// How many times this tool was called (all executions).
-    pub calls: i64,
-    /// The most recent non-empty reason recorded, or empty if none ever was.
-    pub last_reason: String,
-    /// Epoch millis of the most recent call.
-    pub last_called_at_ms: i64,
 }
 
 /// One extension-authored workspace rule, as stored: the full rule markdown
@@ -613,6 +593,10 @@ pub struct Store {
     /// path-derived) without threading the root through every call site.
     /// `None` for in-memory/ephemeral stores.
     root: Option<PathBuf>,
+    /// The file this connection is open on. `None` in memory. It is kept so
+    /// that a write which fails can name the file to go and look at. That is
+    /// the one part of the failure a person can act on.
+    db_path: Option<PathBuf>,
 }
 
 impl Store {
@@ -669,6 +653,13 @@ impl Store {
         self.root.as_deref()
     }
 
+    /// The file this store writes to. `None` when it is in memory. It is the
+    /// same path the store was opened on, and it does not change.
+    #[must_use]
+    pub fn db_path(&self) -> Option<&Path> {
+        self.db_path.as_deref()
+    }
+
     /// `db_path` is the on-disk file behind `conn` (`None` for in-memory), and
     /// exists only so an unreadable file can be named in the error — see
     /// [`corrupt_store_error`], and [`Store::migrate_and_prepare_exports`] for
@@ -697,6 +688,7 @@ impl Store {
         let store = Self {
             conn: Mutex::new(conn),
             root,
+            db_path: db_path.map(Path::to_path_buf),
         };
         store.migrate_and_prepare_exports(db_path)?;
         Ok(store)
@@ -1091,58 +1083,6 @@ impl Store {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
-    }
-
-    /// Persist the MCP tool calls recorded during an execution: one row per
-    /// call, in drain order. `seq` (the batch index) with UNIQUE
-    /// (execution_id, seq) makes re-persisting the same drained batch an error
-    /// rather than a silent double-count. One transaction — see
-    /// [`Self::record_files_touched`] — so a collision partway through leaves
-    /// no partial batch behind, and a corrected retry is possible.
-    pub fn record_mcp_usage(&self, execution_id: i64, calls: &[McpUsageRow]) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for (seq, row) in calls.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO mcp_usage \
-                 (execution_id, seq, server, tool, reason, called_at_ms) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    seq as i64,
-                    row.server,
-                    row.tool,
-                    row.reason,
-                    row.called_at_ms,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// Per-(server, tool) MCP usage aggregates ([`McpUsageStat`]) — the data
-    /// behind the MCP tab's call counts and `stella mcp usage`. Most-used
-    /// first (ties broken by server then tool, so output is deterministic).
-    pub fn mcp_usage_stats(&self) -> Result<Vec<McpUsageStat>> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT server, tool, reason, called_at_ms FROM mcp_usage \
-             ORDER BY called_at_ms ASC, rowid ASC",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(McpUsageRow {
-                server: row.get(0)?,
-                tool: row.get(1)?,
-                reason: row.get(2)?,
-                called_at_ms: row.get(3)?,
-            })
-        })?;
-        let mut calls = Vec::new();
-        for row in rows {
-            calls.push(row?);
-        }
-        Ok(fold_mcp_usage_stats(&calls))
     }
 
     /// Append a durable reflection/lesson, returning its row id.
@@ -1616,42 +1556,6 @@ impl Store {
                 })?;
         Ok(count)
     }
-}
-
-/// Fold chronologically-ordered MCP usage rows into per-(server, tool)
-/// aggregates: a call count, the most recent non-empty reason, and the latest
-/// call time. Input is expected in ascending call-time order (the shape
-/// [`Store::mcp_usage_stats`]'s query produces); output is most-used first,
-/// ties broken by server then tool for determinism.
-pub fn fold_mcp_usage_stats(rows: &[McpUsageRow]) -> Vec<McpUsageStat> {
-    use std::collections::BTreeMap;
-    let mut by_key: BTreeMap<(String, String), McpUsageStat> = BTreeMap::new();
-    for row in rows {
-        let entry = by_key
-            .entry((row.server.clone(), row.tool.clone()))
-            .or_insert_with(|| McpUsageStat {
-                server: row.server.clone(),
-                tool: row.tool.clone(),
-                calls: 0,
-                last_reason: String::new(),
-                last_called_at_ms: 0,
-            });
-        entry.calls += 1;
-        // Rows arrive in ascending time order, so the last non-empty reason
-        // seen is the most recent one.
-        if !row.reason.is_empty() {
-            entry.last_reason = row.reason.clone();
-        }
-        entry.last_called_at_ms = entry.last_called_at_ms.max(row.called_at_ms);
-    }
-    let mut stats: Vec<McpUsageStat> = by_key.into_values().collect();
-    stats.sort_by(|a, b| {
-        b.calls
-            .cmp(&a.calls)
-            .then_with(|| a.server.cmp(&b.server))
-            .then_with(|| a.tool.cmp(&b.tool))
-    });
-    stats
 }
 
 /// Fold chronologically-ordered citations (grouped by `memory_id` — the shape

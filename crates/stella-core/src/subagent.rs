@@ -635,7 +635,7 @@ impl Engine<'_> {
         budget: &mut BudgetGuard,
         events: &EventSender,
     ) -> SubAgentOutcome {
-        let carve = budget.carve(spec.budget_usd);
+        let mut carve = budget.carve(spec.budget_usd);
         let _ = events.send(AgentEvent::SubAgent {
             phase: SubAgentPhase::Started {
                 agent_id: spec.agent_id.clone(),
@@ -665,9 +665,26 @@ impl Engine<'_> {
             armed: true,
         };
 
-        let outcome = match refusal(spec, &carve) {
-            Some(reason) => SubAgentOutcome::Refused { reason },
+        // The one seam that reads `self.config.tool_timeout`. Its result
+        // feeds `refusal()` first, then the child's own carve on every
+        // other path.
+        let deadline = bounded_by_ceiling(
+            carve.task_deadline(),
+            self.config.tool_timeout,
+            std::time::Instant::now(),
+        );
+        let outcome = match refusal(spec, &carve, &deadline) {
+            Some(refusal) => SubAgentOutcome::Refused {
+                reason: refusal.to_string(),
+            },
             None => {
+                let deadline = deadline.expect(
+                    "refusal() returns Some for every Err case above; reaching here means Ok",
+                );
+                // Set here, on the carve the caller still owns, rather than
+                // adding a parameter to `run_child_turn` for one field of a
+                // struct it already receives.
+                carve.set_task_deadline(deadline);
                 self.run_child_turn(host, spec, carve, budget, events, &tally)
                     .await
             }
@@ -838,13 +855,9 @@ impl Engine<'_> {
         let seeded = messages.len();
 
         let child_events = child_sender(events.clone(), spec.agent_id.clone(), tally.clone());
-        // A call may never be granted more than what is left of the ceiling the
-        // whole child runs under (#4488).
-        carve.set_task_deadline(bounded_by_ceiling(
-            carve.task_deadline(),
-            self.config.tool_timeout,
-            std::time::Instant::now(),
-        ));
+        // `carve` already carries its task deadline: the caller derived it
+        // from the ceiling and set it before this turn's engine was even
+        // built (#4488), so a too-short ceiling never reaches this far.
         // The carve is handed to the turn through a guard that settles it on
         // DROP, not on return (#1850). `settle_child` used to be a statement
         // after the await, so any exit that was not a return skipped it: a
@@ -925,20 +938,68 @@ impl Drop for SettleChildOnDrop<'_, '_> {
     }
 }
 
+/// Why a sub-agent spawn is refused. A typed value, not a hand-built
+/// `String`, per AGENTS.md's typed-errors rule. Every option here is
+/// checked before the child's engine is built, so a refusal costs exactly
+/// zero (see [`SubAgentOutcome::Refused`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubAgentRefusal {
+    /// [`SubAgentSpec::depth`] exceeds [`MAX_SUB_AGENT_DEPTH`].
+    DepthExceeded { depth: u8, max: u8 },
+    /// The parent's enforced budget cap has no headroom left to carve a
+    /// child from.
+    NoBudgetHeadroom,
+    /// `ceiling` leaves no working time once [`CEILING_RESERVE`] is
+    /// subtracted. [`bounded_by_ceiling`] refuses rather than clamp the
+    /// deadline to "now".
+    CeilingTooShort {
+        ceiling: std::time::Duration,
+        reserve: std::time::Duration,
+    },
+}
+
+impl std::fmt::Display for SubAgentRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubAgentRefusal::DepthExceeded { depth, max } => {
+                write!(f, "nesting depth {depth} exceeds the maximum of {max}")
+            }
+            SubAgentRefusal::NoBudgetHeadroom => write!(
+                f,
+                "no budget headroom left in the parent's enforced cap — refused before spending"
+            ),
+            SubAgentRefusal::CeilingTooShort { ceiling, reserve } => write!(
+                f,
+                "ceiling {ceiling:?} leaves no working time once its {reserve:?} reserve is \
+                 subtracted — refused rather than handing the child a deadline of \"now\""
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SubAgentRefusal {}
+
 /// Why this spawn must not start, if it must not. Checked before the first
 /// model call so a refusal costs exactly nothing.
-fn refusal(spec: &SubAgentSpec, carve: &BudgetGuard) -> Option<String> {
+///
+/// `deadline` is [`bounded_by_ceiling`]'s result. The caller computes it
+/// once and hands it in; this function only decides whether to refuse.
+fn refusal(
+    spec: &SubAgentSpec,
+    carve: &BudgetGuard,
+    deadline: &Result<Option<std::time::Instant>, SubAgentRefusal>,
+) -> Option<SubAgentRefusal> {
     if spec.depth > MAX_SUB_AGENT_DEPTH {
-        return Some(format!(
-            "nesting depth {} exceeds the maximum of {MAX_SUB_AGENT_DEPTH}",
-            spec.depth
-        ));
+        return Some(SubAgentRefusal::DepthExceeded {
+            depth: spec.depth,
+            max: MAX_SUB_AGENT_DEPTH,
+        });
+    }
+    if let Err(refusal) = deadline {
+        return Some(*refusal);
     }
     if !carve.is_viable_carve() {
-        return Some(
-            "no budget headroom left in the parent's enforced cap — refused before spending"
-                .to_string(),
-        );
+        return Some(SubAgentRefusal::NoBudgetHeadroom);
     }
     None
 }
@@ -981,6 +1042,9 @@ impl CommittedTally {
 /// against the ceiling, so the child always reaches its own deadline before
 /// the engine's dispatch ceiling reaches the tool. Thirty seconds is generous
 /// for work that is pure local computation with no model call left in it.
+///
+/// A ceiling at or under this reserve is refused outright, not clamped to
+/// a deadline of "now". See [`bounded_by_ceiling`].
 const CEILING_RESERVE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The wall clock this child may spend, given what it inherited and the
@@ -1004,16 +1068,34 @@ const CEILING_RESERVE: std::time::Duration = std::time::Duration::from_secs(30);
 ///
 /// The tighter of the two always wins, so a parent already racing a deadline
 /// never hands a child more time than the parent itself has.
+///
+/// # Refusing a too-short ceiling
+///
+/// On its own, `now + ceiling.saturating_sub(CEILING_RESERVE)` floors at
+/// exactly `now` once `ceiling` falls to or below the reserve. A child
+/// given that deadline aborts having done no work. Nothing then tells that
+/// apart from a model that just declined to answer. `ceiling <=
+/// CEILING_RESERVE` is refused instead — the one way this function can
+/// fail — so the parent sees a one-line reason before any child spawns.
 fn bounded_by_ceiling(
     inherited: Option<std::time::Instant>,
     ceiling: Option<std::time::Duration>,
     now: std::time::Instant,
-) -> Option<std::time::Instant> {
-    let from_ceiling = ceiling.map(|ceiling| now + ceiling.saturating_sub(CEILING_RESERVE));
-    match (inherited, from_ceiling) {
+) -> Result<Option<std::time::Instant>, SubAgentRefusal> {
+    let from_ceiling = match ceiling {
+        Some(ceiling) if ceiling <= CEILING_RESERVE => {
+            return Err(SubAgentRefusal::CeilingTooShort {
+                ceiling,
+                reserve: CEILING_RESERVE,
+            });
+        }
+        Some(ceiling) => Some(now + ceiling.saturating_sub(CEILING_RESERVE)),
+        None => None,
+    };
+    Ok(match (inherited, from_ceiling) {
         (Some(inherited), Some(from_ceiling)) => Some(inherited.min(from_ceiling)),
         (only, None) | (None, only) => only,
-    }
+    })
 }
 
 /// The child's event sender: drops what must not cross ([`forwards_to_parent`]),
