@@ -1,36 +1,43 @@
-//! Project re-key (#408): merge one hub project identity into another.
+//! Project re-key: merge one hub project identity into another.
 //!
 //! `project_id` began as the FNV hash of the checkout path, so a `mv` forked
 //! the identity: the cursor reset, the whole store re-replicated, and the hub
 //! showed two projects for one repo. A *registered* workspace now replicates
 //! under its stable `workspace_id`-derived id
-//! ([`crate::identity::replication_project_id`]) — and this module is the
-//! migration for rows that landed under the old path hash: registration and
-//! every sync call [`UsageStore::adopt_project_identity`], which idempotently
-//! re-keys the six tables carrying a `project_id`.
+//! ([`crate::identity::replication_project_id`]). This module moves rows
+//! that landed under the old path hash to the new id. Registration, and
+//! every sync call, run [`UsageStore::adopt_project_identity`], which
+//! idempotently re-keys every table in [`PROJECT_KEYED_TABLES`], plus the
+//! summed tool-usage tables and the replication cursor.
 //!
-//! Merge semantics, per table: rows move to the new id; a row that already
-//! exists under the new id wins and the old duplicate is dropped (`telemetry`
-//! and `cloud_quarantine` rows are identical under both ids by construction —
-//! they came from the same source rowids); the replication cursor merges by
-//! `MAX`, so it continues instead of rewinding. One transaction: the hub is
-//! never observable half-migrated.
+//! Merge rule, per table: a [`PROJECT_KEYED_TABLES`] row is identical under
+//! both ids by construction — it came from the same source row — so on a
+//! key conflict the new-id copy wins and the old duplicate is dropped. The
+//! tool-usage tables hold counts instead, so a conflict there sums both
+//! sides. The replication cursor merges by `MAX`, so it keeps going rather
+//! than starting over. One transaction: the hub is never observed half
+//! migrated.
 
 use rusqlite::params;
 
 use super::{Result, UsageStore};
 
 /// The hub tables with a `project_id` column whose rows are *identical*
-/// under both identities by construction (they came from the same source
-/// rowids), so a key conflict resolves by keeping the new-id copy. A new
-/// project-keyed table must be added here or handled explicitly like
-/// `tool_usage_rollup` — whose buckets are additive counts and merge by
-/// summing instead.
+/// under both identities by construction — they came from the same source
+/// row — so a key conflict resolves by keeping the new-id copy. A new
+/// project-keyed table goes here, unless its rows are counts like
+/// `tool_usage_rollup`, which must sum on conflict instead and is merged by
+/// hand below.
 const PROJECT_KEYED_TABLES: &[&str] = &[
     "projects",
     "execution_rollup",
     "telemetry",
     "cloud_quarantine",
+    // One claim per execution, not a count: an execution claimed under
+    // either id has claimed once, so the new-id row winning is already the
+    // right merge — the same rule as the rows above, not the summing rule
+    // below.
+    "tool_fold_ledger",
 ];
 
 impl UsageStore {
@@ -112,7 +119,8 @@ impl UsageStore {
 
 #[cfg(test)]
 mod tests {
-    use super::super::UsageStore;
+    use super::super::tests::rollup;
+    use super::super::{ToolBucket, UsageStore};
     use crate::identity::TelemetryScope;
 
     fn scope(project_id: &str) -> TelemetryScope {
@@ -236,6 +244,43 @@ mod tests {
             hub.telemetry_cursor("new").unwrap(),
             3,
             "the cursor is the MAX of the two"
+        );
+    }
+
+    /// `tool_fold_ledger` needs an entry in `PROJECT_KEYED_TABLES` too.
+    /// Without one, a re-sync after a rekey finds no claim under the new
+    /// id, folds the histogram again, and double-counts it.
+    #[test]
+    fn rekey_carries_the_tool_fold_claim_so_a_resync_does_not_double_count() {
+        let usage = UsageStore::in_memory().unwrap();
+        let mut r = rollup(
+            7,
+            vec![ToolBucket {
+                tool: "grep".into(),
+                surface: "native".into(),
+                calls: 2,
+                errors: 0,
+            }],
+        );
+        r.project_id = "old".into();
+        usage.sync_execution(&r).unwrap();
+
+        usage.adopt_project_identity("old", "new").unwrap();
+
+        // Re-sync the same execution under its new id. This is what a
+        // retry, backfill, or replay of `sync_execution` would do.
+        r.project_id = "new".into();
+        usage.sync_execution(&r).unwrap();
+
+        let grep_calls = usage
+            .tool_report()
+            .unwrap()
+            .into_iter()
+            .find(|row| row.tool == "grep")
+            .map_or(0, |row| row.calls);
+        assert_eq!(
+            grep_calls, 2,
+            "the tool-day fold must not double-count after a rekey"
         );
     }
 }

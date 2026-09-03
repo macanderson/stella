@@ -70,11 +70,13 @@ pub enum MemoryCmd {
     /// Forget a memory: stop it steering the agent, and stop the reflection
     /// loop re-learning it. Reversible with `stella memory restore <id>`.
     ///
-    /// This is a tombstone, not a delete. The reflection loop re-mines
-    /// paraphrases of lessons it has already learned, so removing the row
-    /// alone does not hold — the tombstone also suppresses restatements at
-    /// the point new lessons are recorded and at the point the log is mined
-    /// into skills.
+    /// This is a tombstone, not a delete. The memory's row stays in
+    /// `.stella/private/context.db`. Its text is also copied into a second,
+    /// permanent record. Forgetting hides a memory; it does not erase the
+    /// text. The reflection loop re-mines lessons it already learned, so
+    /// removing the row alone would not hold — the tombstone also blocks
+    /// restatements, both when a new lesson is recorded and when the log
+    /// is mined into skills.
     Forget {
         /// The memory's stable id (nod_…) as shown by `stella memory list`
         id: String,

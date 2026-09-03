@@ -276,6 +276,66 @@ fn spool_is_idempotent_bounded_and_evicts_oldest_with_durable_drop_count() {
 }
 
 #[test]
+fn abandoned_lease_does_not_block_eviction_of_stale_rows() {
+    // A worker leases a sink's whole backlog, then dies before `ack` or
+    // `retry` runs. `leased_by` never clears. A dead lease must not count
+    // as a live one: `claim_batch` already treats an expired lease as free,
+    // and eviction must agree.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("enterprise-telemetry.db");
+    let spool = EnterpriseTelemetrySpool::open_at(
+        &path,
+        SpoolLimits {
+            max_rows: 2,
+            max_bytes: 64 * 1024,
+        },
+    )
+    .unwrap();
+    let first = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(1)).unwrap();
+    let second = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(2)).unwrap();
+    let third = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(3)).unwrap();
+
+    spool.enqueue(SINK_A, &first, 10).unwrap();
+    spool.enqueue(SINK_A, &second, 20).unwrap();
+
+    // Lease the whole backlog, then abandon it. The lease expires at
+    // 30 + 5 = 35, but `leased_by` stays set forever.
+    let claimed = spool
+        .claim_batch_at(SINK_A, "worker", 30, 5, 10, 64 * 1024)
+        .unwrap();
+    assert_eq!(claimed.len(), 2, "both rows are leased and then abandoned");
+
+    // The lease is long expired. A new event now arrives for this sink.
+    // It must survive. The old row gets dropped instead.
+    let outcome = spool.enqueue(SINK_A, &third, 1_000).unwrap();
+    assert_eq!(
+        outcome,
+        EnqueueOutcome::Retained,
+        "an abandoned lease must not make the fresh event the only eviction \
+         candidate and force it to be dropped in place of stale data"
+    );
+
+    let status = spool.status().unwrap();
+    assert_eq!(status.pending_rows, 2);
+    assert_eq!(status.dropped_rows, 1);
+
+    // Check which row was evicted: it must be the old one (`first`), not
+    // the new one (`third`).
+    let recovered = spool
+        .claim_batch_at(SINK_A, "worker-2", 2_000, 1_000, 10, 64 * 1024)
+        .unwrap();
+    let ids: Vec<_> = recovered.iter().map(|item| item.event.event_id()).collect();
+    assert!(
+        !ids.contains(&first.event_id()),
+        "the stale, abandoned-lease row was evicted"
+    );
+    assert!(
+        ids.contains(&third.event_id()),
+        "the fresh event was retained"
+    );
+}
+
+#[test]
 fn claims_are_transactional_retryable_and_expired_leases_recover() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("enterprise-telemetry.db");
