@@ -709,8 +709,9 @@ impl ContextStore {
     /// writes commit together (`L-L1`).
     ///
     /// A record that cannot be written is rejected before anything is embedded
-    /// or written — see [`unwritable_record`] for why the whole batch is the
-    /// thing at stake.
+    /// or written. The whole batch is what is at stake: a refusal from inside
+    /// the transaction rolls every good record back with the bad one, and says
+    /// nothing about which one was at fault.
     pub async fn upsert(&self, delta: ContextDelta) -> Result<UpsertReceipt, ContextError> {
         if let Some(what) = unwritable_record(&delta) {
             return Err(ContextError::InvalidInput(format!(

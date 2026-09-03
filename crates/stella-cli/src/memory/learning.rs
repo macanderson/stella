@@ -48,6 +48,30 @@ mod skill_lifecycle;
 #[cfg(test)]
 mod dedupe;
 
+/// Drop the lessons the store cannot write, keeping every one it can.
+///
+/// A memory's mirror node takes its display name from the memory's own text,
+/// and a node with a blank name is refused — a node has to be humanly citable
+/// (`L-C4`). A lesson with no words in either half is therefore unwritable, and
+/// the whole delta is one transaction, so handing the store one of them throws
+/// away every good lesson of the same turn. The model writes the text, so an
+/// empty one is model output like any other rather than a case that cannot
+/// arise.
+///
+/// The check is `recall_text`'s output, not the lesson alone: a lesson with no
+/// body but a real trigger still has words, and it is that composed string the
+/// store labels the node from.
+fn writable_lessons(lessons: Vec<ReflectionLesson>) -> Vec<ReflectionLesson> {
+    lessons
+        .into_iter()
+        .filter(|l| {
+            !applicability::recall_text(&l.lesson, &l.trigger)
+                .trim()
+                .is_empty()
+        })
+        .collect()
+}
+
 /// One SPEC 6.3 `memory` (log) event per lesson the store just wrote.
 ///
 /// Paired positionally with [`stella_context::UpsertReceipt::memory_node_ids`],
@@ -74,30 +98,6 @@ mod dedupe;
 ///   evidently of the next; a domain lesson is still true on a task the agent
 ///   has never seen. That is the distinction [`LessonKind`] draws, and the one
 ///   [`LessonKind::recall_tier`] already spends the recall budget on.
-/// Drop the lessons the store cannot write, keeping every one it can.
-///
-/// A memory's mirror node takes its display name from the memory's own text,
-/// and a node with a blank name is refused — a node has to be humanly citable
-/// (`L-C4`). A lesson with no words in either half is therefore unwritable, and
-/// the whole delta is one transaction, so handing the store one of them throws
-/// away every good lesson of the same turn. The model writes the text, so an
-/// empty one is model output like any other rather than a case that cannot
-/// arise.
-///
-/// The check is `recall_text`'s output, not the lesson alone: a lesson with no
-/// body but a real trigger still has words, and it is that composed string the
-/// store labels the node from.
-fn writable_lessons(lessons: Vec<ReflectionLesson>) -> Vec<ReflectionLesson> {
-    lessons
-        .into_iter()
-        .filter(|l| {
-            !applicability::recall_text(&l.lesson, &l.trigger)
-                .trim()
-                .is_empty()
-        })
-        .collect()
-}
-
 fn memory_logged_events(
     novel: &[ReflectionLesson],
     memory_node_ids: &[String],
