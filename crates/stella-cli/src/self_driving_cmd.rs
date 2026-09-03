@@ -24,7 +24,11 @@ mod claude_worker;
 // a key written to the right path that nothing loads would pass every other
 // assertion. Read-only, so the wider visibility grants no authority.
 pub(crate) mod config;
-mod contention;
+// `pub(crate)` rather than private, for the reason `claim` is: the deck's
+// start-work approval is a third dispatcher on this issue's claim, and its
+// witness has to read what a *peer* reads rather than a copy of it.
+// Only `branches_naming` is widened inside; the rest stays `pub(super)`.
+pub(crate) mod contention;
 mod convention;
 mod deliver;
 mod drive;

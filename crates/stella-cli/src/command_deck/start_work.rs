@@ -35,16 +35,36 @@
 //! layering the loop already uses: the lease closes the race (two claimants in
 //! the same instant, decided by one conditional write), and the branch carries
 //! the duration. `contention::for_issue` weighs a remote branch, an open pull
-//! request, a worktree and the ledger together — so once the branch is pushed
-//! it is the branch that says the issue is taken, and the lease never has to
-//! be held for the length of a human's afternoon.
+//! request, a worktree and the ledger together, so the branch is what says the
+//! issue is taken and the lease never has to be held for the length of a
+//! human's afternoon.
 //!
-//! What that leaves open: between the approval and the first push,
-//! the branch is local and only this clone can see it. A self-driving loop on
-//! the *same* clone still defers, because `worktrees_naming` and the ledger
-//! both see it; a loop on a different clone does not. Closing that means the
-//! deck pushing the branch on approval, which would be a network write before
-//! any work exists.
+//! # Why the branch is pushed before any work exists
+//!
+//! A branch only carries the duration for a peer that can see it, and a local
+//! branch is seen by one clone. Of the four signals `contention::gather`
+//! reads, two cross a machine boundary: a remote branch and an open pull
+//! request. So `approve` pushes the branch it opens, while the lease is still
+//! held — `--set-upstream`, the same `git push` the loop's own
+//! `deliver::open` runs.
+//!
+//! The two alternatives cannot reach a second clone at all. Holding
+//! the lease for the whole deck session does not, because `dispatch_claims`
+//! lives in this workspace's own `.stella/private/fleet.db`. Teaching the
+//! probe to read local branches does not either. Both close the same-clone
+//! case, which already defers on the worktree and the ledger.
+//!
+//! The price is an empty `stella/issue-<n>-<slug>` branch on the remote for
+//! every start-work a human abandons, removed with `git push -d origin`. What
+//! it buys is that two people on two machines cannot both start the same
+//! issue.
+//!
+//! A push that fails — no `origin`, no network, no write access — does not
+//! fail the approval: the branch and the plan exist, and refusing to start
+//! work because a network write failed is the worse failure, on the same
+//! fail-open rule every probe over this table follows. The summary line then
+//! says the branch is local only and names git's reason, because a card that
+//! stayed quiet would claim a protection this workspace does not have.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -144,20 +164,23 @@ pub(super) fn draft_plan<P: IssueProvider + ?Sized>(
 }
 
 /// Approve a drafted plan: take the issue's claim, open the branch under it,
-/// and author the plan's first revision.
+/// publish that branch, and author the plan's first revision.
 ///
 /// Ordered so that nothing is left behind by a failure. The claim comes first
 /// because it is the only step a peer can lose a race on; the branch second,
-/// so a lost race leaves no branch; the plan last, because it is derived from
-/// the tasks and cannot fail for a reason the first two would not have caught.
+/// so a lost race leaves no branch; the push third, so nothing reaches the
+/// remote that a lost race would have to clean up; the plan last, because it
+/// is derived from the tasks and cannot fail for a reason the first two would
+/// not have caught.
 pub(super) fn approve(root: &Path, display_key: &str, tasks: &[String]) -> Result<String, String> {
     if tasks.is_empty() {
         return Err("nothing to approve — the plan has no tasks".to_string());
     }
     let key = display_key.trim_start_matches('#').to_string();
     let owner = format!("deck:{}", std::process::id());
-    // Held only across the branch write. The branch is what a peer's
-    // contention probe reads afterwards — see the module docs.
+    // Held across the branch write and its publication. The published branch
+    // is what a peer's contention probe reads afterwards, on this clone and on
+    // any other — see the module docs.
     let _lease = match crate::self_driving_cmd::claim::acquire_as(root, &key, &owner) {
         crate::self_driving_cmd::claim::Claim::Granted(lease) => Some(lease),
         crate::self_driving_cmd::claim::Claim::HeldBy(who) => {
@@ -170,6 +193,10 @@ pub(super) fn approve(root: &Path, display_key: &str, tasks: &[String]) -> Resul
     };
     let branch = branch_name(&key, tasks);
     create_branch(root, &branch)?;
+    let reach = match publish_branch(root, &branch) {
+        Ok(()) => "pushed to origin".to_string(),
+        Err(reason) => format!("local only — a peer on another clone cannot see it: {reason}"),
+    };
     let graph = PlanGraph::approve(
         tasks
             .iter()
@@ -179,7 +206,7 @@ pub(super) fn approve(root: &Path, display_key: &str, tasks: &[String]) -> Resul
     )
     .map_err(|error| format!("the plan could not be authored: {error}"))?;
     Ok(format!(
-        "#{key}: branch {branch} · plan r{} · {} tasks · {} [:NEXT] edges",
+        "#{key}: branch {branch} {reach} · plan r{} · {} tasks · {} [:NEXT] edges",
         graph.revision().get(),
         tasks.len(),
         graph.edges().len()
@@ -233,6 +260,48 @@ fn create_branch(root: &Path, branch: &str) -> Result<(), String> {
     } else {
         reason
     })
+}
+
+/// Push `branch` to `origin` and track it, so a peer on any clone can see
+/// that this issue is taken.
+///
+/// `--set-upstream` rather than a bare push: the human who approved this is
+/// about to work on the branch, and an upstream is what makes their next
+/// `git push` need no arguments.
+///
+/// The error is git's own first refusal, for the summary line to quote. It is
+/// never fatal to the approval — see the module docs on why a failed network
+/// write must not take the branch and the plan with it.
+fn publish_branch(root: &Path, branch: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["push", "--set-upstream", "origin", branch])
+        .output()
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(refusal(&String::from_utf8_lossy(&output.stderr)))
+}
+
+/// The one line of a git failure worth showing a human.
+///
+/// git writes its whole conversation to stderr, so the first line is often
+/// `To <url>` and the last is a hint. The refusal is the line git marks as
+/// one — `fatal:`, `error:`, or the `!` of a rejected ref — and the first
+/// non-empty line is the fallback for a refusal git marked in some other way.
+fn refusal(stderr: &str) -> String {
+    let mut first: Option<&str> = None;
+    for line in stderr.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if line.starts_with("fatal:") || line.starts_with("error:") || line.starts_with('!') {
+            return line.to_string();
+        }
+        first.get_or_insert(line);
+    }
+    first
+        .unwrap_or("git refused the push and said nothing")
+        .to_string()
 }
 
 /// How many gate steps block a merge in this workspace, from the Makefile's
