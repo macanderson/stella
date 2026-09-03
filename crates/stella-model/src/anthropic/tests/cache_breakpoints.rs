@@ -200,3 +200,92 @@ async fn the_default_window_sends_no_ttl_field_and_no_beta_header() {
         "no ttl field on the default window: {body}"
     );
 }
+
+/// Every message-level breakpoint in a built body, as `(message, block)`.
+fn stamped_positions(body: &AnthropicRequest<'_>) -> Vec<(usize, usize)> {
+    body.messages
+        .iter()
+        .enumerate()
+        .flat_map(|(mi, m)| {
+            m.content.iter().enumerate().filter_map(move |(bi, b)| {
+                let marked = matches!(
+                    b,
+                    AnthropicContentBlock::Text {
+                        cache_control: Some(_),
+                        ..
+                    } | AnthropicContentBlock::ToolResult {
+                        cache_control: Some(_),
+                        ..
+                    }
+                );
+                marked.then_some((mi, bi))
+            })
+        })
+        .collect()
+}
+
+/// A conversation with `system` as its hoisted prefix and one exchange per
+/// entry in `turns`.
+fn conversation(system: &str, turns: &[(&str, &str)]) -> CompletionRequest {
+    let mut messages = vec![CompletionMessage::system(system)];
+    for (ask, answer) in turns {
+        messages.push(CompletionMessage::user(*ask));
+        messages.push(CompletionMessage::assistant(*answer));
+    }
+    CompletionRequest {
+        messages,
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    }
+}
+
+/// **Witness.** One adapter serves the turn and the overflow summarizer, and
+/// the summarizer sends a short conversation of its own. Under a shared slot
+/// its tail becomes the turn's remembered anchor, so the turn's next request
+/// spends its second breakpoint on a block its own cache was never written
+/// at. Keying the slot by conversation is what carries the anchor across the
+/// interleave.
+///
+/// Fails before this change: the last body's first breakpoint lands at
+/// `(0, 0)`, the summarizer's tail, instead of at the turn's own previous
+/// write position.
+#[test]
+fn an_interleaved_conversation_leaves_the_turns_anchor_alone() {
+    let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5");
+
+    // The turn's first request. Its tail lands on the newest block: two
+    // messages, once the system prefix is hoisted out.
+    let first = conversation("the agent system prompt", &[("ask", "answer one")]);
+    let body = provider.build_body(first.as_borrowed(), true);
+    assert_eq!(stamped_positions(&body), vec![(1, 0)], "the first tail");
+
+    // The overflow summarizer, through the same adapter: a different system
+    // prefix, and one message under it.
+    let mut summary = conversation("summarize the span below", &[]);
+    summary
+        .messages
+        .push(CompletionMessage::user("the span to summarize"));
+    let body = provider.build_body(summary.as_borrowed(), true);
+    assert_eq!(
+        stamped_positions(&body),
+        vec![(0, 0)],
+        "the summarizer's own tail, in its own conversation"
+    );
+
+    // The turn again, one exchange further on.
+    let second = conversation(
+        "the agent system prompt",
+        &[("ask", "answer one"), ("ask again", "answer two")],
+    );
+    let body = provider.build_body(second.as_borrowed(), true);
+    assert_eq!(
+        stamped_positions(&body),
+        vec![(1, 0), (3, 0)],
+        "the turn's own previous write position, plus its new tail — the \
+         summarizer's tail must not appear here"
+    );
+}

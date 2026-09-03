@@ -35,16 +35,17 @@ pub struct AnthropicProvider {
     /// List pricing for `model`, resolved from the catalog at construction so
     /// `cost_usd` is computed on the real request path (see `zai.rs`).
     pricing: Option<Pricing>,
-    /// Where the PREVIOUS request's conversation-tail breakpoint landed, so
-    /// this one can re-stamp it and keep an anchor at a position the cache was
-    /// actually written to (#1837). See [`stamp_remembered_tail`].
+    /// Where each conversation's PREVIOUS tail breakpoint landed, so the next
+    /// request in that conversation can re-stamp it and keep an anchor at a
+    /// position the cache was actually written to (#1837). See
+    /// [`stamp_remembered_tail`] and [`RememberedTail`].
     ///
     /// Session-scoped because the adapter is constructed once per session. A
     /// `Mutex` rather than a cell: `complete_ref` takes `&self` and concurrent
-    /// calls through one provider are ordinary (sibling sub-agents, the
-    /// pipeline's management roles). Contention is one pointer write per
-    /// request.
-    previous_tail: std::sync::Mutex<Option<TailPosition>>,
+    /// calls through one provider are ordinary — the turn's own calls and the
+    /// overflow summarizer's share this instance. Contention is one short
+    /// vector write per request.
+    previous_tails: std::sync::Mutex<Vec<RememberedTail>>,
     /// The session's context-editing policy, or `None` to send no
     /// `context_management` and behave exactly as before the feature existed.
     ///
@@ -55,7 +56,7 @@ pub struct AnthropicProvider {
     /// The prompt-cache window this session asks for (#1839): the default
     /// 5-minute window sends today's exact bytes; the 1-hour opt-in adds
     /// `ttl: "1h"` to every breakpoint plus the [`EXTENDED_CACHE_TTL_BETA`]
-    /// header. Session-scoped like `previous_tail` — mixing windows within a
+    /// header. Session-scoped like `previous_tails` — mixing windows within a
     /// session would pay the 2x write premium for a prefix the next turn
     /// re-anchors on the short window anyway.
     cache_ttl: CacheTtl,
@@ -99,7 +100,7 @@ impl AnthropicProvider {
             base_url: DEFAULT_BASE_URL.to_string(),
             model,
             pricing,
-            previous_tail: std::sync::Mutex::new(None),
+            previous_tails: std::sync::Mutex::new(Vec::new()),
             cache_ttl: CacheTtl::default(),
             // Off by default. Context editing trades prompt cache for context
             // room, and a session that never outgrows its window would pay the
@@ -450,6 +451,41 @@ const fn ephemeral_cache(ttl: CacheTtl) -> AnthropicCacheControl {
 /// Carried on the provider so the NEXT request can re-stamp it — see
 /// [`stamp_tail_cache_breakpoint`] for why one breakpoint is not enough.
 type TailPosition = (usize, usize);
+
+/// A remembered tail position, and which conversation it was taken from.
+///
+/// One adapter serves more than one conversation. A turn's own model calls
+/// and the overflow summarizer's go through the same instance, and the
+/// summarizer sends a short conversation of its own. A single shared slot
+/// therefore hands each conversation the other's position: the re-stamped
+/// anchor lands on a block this conversation never wrote the cache at, and
+/// the second breakpoint buys nothing.
+///
+/// The key is the system prefix. Anthropic keys its own cache on that same
+/// prefix, so two requests whose system blocks differ share no cached prefix
+/// at all, and a tail from one can never be a useful anchor in the other.
+/// One hash of one string per request — not the hash of every block that
+/// [`stamp_remembered_tail`] rules out on cost.
+#[derive(Clone, Copy)]
+struct RememberedTail {
+    /// [`conversation_key`] of the system prefix this position came from.
+    conversation: u64,
+    at: TailPosition,
+}
+
+/// How many conversations keep a remembered tail. Two are live today — the
+/// turn and the overflow summarizer — and the spare room means a third role
+/// arriving does not evict either of them.
+const REMEMBERED_TAILS: usize = 4;
+
+/// Which conversation a request belongs to, as far as the prompt cache is
+/// concerned.
+fn conversation_key(system: Option<&str>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    system.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Re-stamp the position the PREVIOUS request's tail breakpoint landed on.
 ///
@@ -1014,6 +1050,35 @@ impl AnthropicProvider {
         })
     }
 
+    /// Where this conversation's last request put its tail breakpoint, if the
+    /// adapter still holds it.
+    fn remembered_tail(&self, conversation: u64) -> Option<TailPosition> {
+        let tails = self
+            .previous_tails
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        tails
+            .iter()
+            .find(|t| t.conversation == conversation)
+            .map(|t| t.at)
+    }
+
+    /// Record where this request put its tail breakpoint.
+    ///
+    /// Newest first, oldest dropped past [`REMEMBERED_TAILS`]. A dropped
+    /// entry costs one cache write on that conversation's next request and
+    /// nothing else — the same worst case [`stamp_remembered_tail`] already
+    /// accepts for a position history moved under.
+    fn remember_tail(&self, conversation: u64, at: TailPosition) {
+        let mut tails = self
+            .previous_tails
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        tails.retain(|t| t.conversation != conversation);
+        tails.insert(0, RememberedTail { conversation, at });
+        tails.truncate(REMEMBERED_TAILS);
+    }
+
     /// The one request body both delivery paths serialize — `stream` is the
     /// only field on which they differ, so the unary fallback re-issues the
     /// byte-identical payload minus the stream flag.
@@ -1031,13 +1096,18 @@ impl AnthropicProvider {
         // Previous first: `stamp_tail_cache_breakpoint` walks backward to the
         // newest stampable block, and re-stamping the old position afterwards
         // could otherwise land on the same block and spend both on one anchor.
+        //
+        // The remembered tail is read and written under this conversation's
+        // own key, so an interleaved call on another conversation — the
+        // overflow summarizer's, through this same adapter — neither steals
+        // this anchor nor leaves its own behind for this request to stamp.
         let marker = ephemeral_cache(self.cache_ttl);
-        let previous = *self.previous_tail.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(at) = previous {
-            stamp_remembered_tail(&mut messages, at, marker);
+        let conversation = conversation_key(system.as_deref());
+        if let Some(previous) = self.remembered_tail(conversation) {
+            stamp_remembered_tail(&mut messages, previous, marker);
         }
         if let Some(tail) = stamp_tail_cache_breakpoint(&mut messages, marker) {
-            *self.previous_tail.lock().unwrap_or_else(|p| p.into_inner()) = Some(tail);
+            self.remember_tail(conversation, tail);
         }
         let reasoning_on = req.reasoning == Some(true);
         let params = req.params.unwrap_or_default();
