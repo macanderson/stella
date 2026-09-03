@@ -43,6 +43,7 @@ use crate::runtime::{SystemClock, TokioSleeper};
 use crate::{OutputFormat, config::Config};
 use stella_context::EpisodeOutcome;
 
+pub(crate) mod audit_writes;
 mod budget;
 mod engine;
 mod goal;
@@ -62,6 +63,14 @@ mod summary;
 pub(crate) mod tool_stack;
 pub(crate) mod tools;
 mod turn_close;
+// The count of audit writes that were lost, and the warnings that name them.
+// A turn that could not write its own record says so through these. The turn
+// close-out sets the count. The run summary prints it. The self-driving loop
+// adds it up over a run.
+pub(crate) use audit_writes::{
+    note_child_dropped_audit_writes, take_dropped_audit_writes, warn_dropped_audit_writes,
+    warn_store_write_failed,
+};
 pub(crate) use budget::{build_budget_guard, remaining_budget, settle_reflection_budget};
 pub(crate) use graph_view::{graph_query_snapshot, graph_snapshot, graph_snapshot_focus};
 
@@ -84,7 +93,6 @@ pub(crate) use output::{
 pub(crate) use persistence::{
     PersistOutcome, ReasoningRun, begin_execution, close_event_stream, flush_reasoning_tail,
     persist_event, persist_owed, record_execution_end, seed_calibration, spawn_renderer,
-    warn_store_write_failed,
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
@@ -155,34 +163,6 @@ pub async fn run_one_shot(
         invoked_skill,
     )
     .await
-}
-
-/// The `--output-format json` summary of a raw (`--no-pipeline`) step-loop run.
-/// A struct rather than `serde_json::json!` so the version leads the object
-/// (`json!` builds a sorted map and would bury it mid-envelope); key order is
-/// not contractual either way — this is for whoever reads the output by eye.
-///
-/// [`schema_version`](Self::schema_version) is governed by the bump rule on
-/// [`crate::SUMMARY_SCHEMA_VERSION`].
-#[derive(serde::Serialize)]
-pub(crate) struct RawRunSummary {
-    pub(crate) schema_version: u32,
-    pub(crate) status: &'static str,
-    pub(crate) text: Option<String>,
-    pub(crate) cost_usd: Option<f64>,
-    pub(crate) reason: Option<String>,
-    pub(crate) model: String,
-    pub(crate) events: Vec<AgentEvent>,
-    /// The file-touch telemetry envelope. Filled from the turn's own measured
-    /// `FileChange` events (`agent::summary::files_touched`) — the key stays
-    /// even on a quiet turn because the envelope's key set is the versioned
-    /// contract.
-    pub(crate) files_touched: serde_json::Value,
-    /// What this checkout's trust gate held back, or `null` (#4465). Folded
-    /// from the turn's own `SteeringWithheld` event, so this and the
-    /// `stream-json` carrier of the same fact are one event read twice.
-    /// Present on every raw summary for the same reason `files_touched` is.
-    pub(crate) withheld: serde_json::Value,
 }
 
 /// The REPL's productized command names — reserved: a custom definition can

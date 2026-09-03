@@ -165,6 +165,41 @@ want "V5 0.10.0 is newer than 0.9.292" \
   "0.9.292 0.10.0 1 86400" \
   "{\"formula_version\":\"0.9.292\",\"releases\":[$(rel v0.9.292 $((2 * day))),$(rel v0.10.0 $day)]}"
 
+# ── One page, and what it cannot see past ────────────────────────────────────
+# check-tap-current.sh fetches exactly one page (100 releases). This is that
+# boundary, driven through `page_full` rather than through a live fetch.
+
+# A hundred settled releases, all newer than a very old formula. The page
+# ran out before it caught up to the formula, so the true count could be
+# more than the 100 seen here. Each is at least 3 hours old, past the
+# 90-minute grace window. i=0 is the oldest, so v0.9.299 is the newest.
+hundred_settled="$(i=0; while [ "$i" -lt 100 ]; do [ "$i" -gt 0 ] && printf ','; printf '%s' "$(rel "v0.9.$((200 + i))" $(((102 - i) * hour)))"; i=$((i + 1)); done)"
+
+want "P1 a full page entirely ahead of the formula reports 'at least', not a guessed exact count" \
+  "0.9.100 0.9.299 at least 100 10800" \
+  "{\"formula_version\":\"0.9.100\",\"page_full\":true,\"releases\":[${hundred_settled}]}"
+
+want "P2 a full page that still contains the formula's own version reports an exact count" \
+  "0.9.298 0.9.299 1 10800" \
+  "{\"formula_version\":\"0.9.298\",\"page_full\":true,\"releases\":[${hundred_settled}]}"
+
+want "P3 the same page short of a full fetch reports an exact count, not 'at least'" \
+  "0.9.100 0.9.299 100 10800" \
+  "{\"formula_version\":\"0.9.100\",\"page_full\":false,\"releases\":[${hundred_settled}]}"
+
+# A full page where nothing has settled — every release on it is either a
+# draft or still inside the grace window. One page could not answer the
+# question at all, so it must say so rather than pass as "nothing to report".
+hundred_unsettled="$(i=0; while [ "$i" -lt 100 ]; do [ "$i" -gt 0 ] && printf ','; printf '%s' "$(rel "v0.9.$((300 + i))" $((10 * 60)))"; i=$((i + 1)); done)"
+
+want "P4 a full page with nothing settled is undetermined, not a clean pass" \
+  "__UNDETERMINED__" \
+  "{\"formula_version\":\"0.9.100\",\"page_full\":true,\"releases\":[${hundred_unsettled}]}"
+
+want "P5 the same nothing-settled page short of a full fetch reports nothing, same as C4" \
+  "" \
+  "{\"formula_version\":\"0.9.100\",\"page_full\":false,\"releases\":[${hundred_unsettled}]}"
+
 echo
 echo "passed ${pass}, failed ${fail}"
 [ "$fail" -eq 0 ]

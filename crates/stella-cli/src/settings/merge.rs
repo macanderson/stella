@@ -617,10 +617,7 @@ impl Settings {
         // thing standing between `"provider"` and a settings file that
         // configures nothing at all. Advisory, never a gate, and latched with
         // the notices above so the several loads one launch performs cannot
-        // turn one finding into four. The managed scope is deliberately
-        // excluded: it is administrator-owned, its reader is a hardened
-        // O_NOFOLLOW path, and an operator cannot act on a warning printed on
-        // somebody else's machine.
+        // turn one finding into four.
         // Format-level notices (a shadowed JSON file, an inert [mcp.servers]).
         // Latched with everything else below so the several loads one launch
         // performs cannot turn one finding into four.
@@ -650,6 +647,20 @@ impl Settings {
                 for line in super::unknown::notices(&path.display().to_string(), found) {
                     eprintln!("{line}");
                 }
+            }
+        }
+
+        // The managed scope's own advisory. Withheld from every OTHER
+        // launch's stderr — a deployed employee cannot act on a warning about
+        // their org's file — but `STELLA_MANAGED_SETTINGS` being set at all
+        // IS the local-testing case: an administrator validating a candidate
+        // file runs `STELLA_MANAGED_SETTINGS=candidate.json stella run` (or
+        // `doctor`, or `config`, both of which show this advisory
+        // unconditionally — see `unknown::managed_advisory`) and that is the
+        // one moment the typo is cheap to find.
+        if announce && std::env::var_os("STELLA_MANAGED_SETTINGS").is_some() {
+            for line in super::unknown::managed_advisory() {
+                eprintln!("{line}");
             }
         }
 

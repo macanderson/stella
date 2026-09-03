@@ -208,7 +208,9 @@ Three checks now catch it, each on a different failure:
   or a revoked token freezes the formula while every other surface still reports
   success. Before this job, nothing anywhere could answer that question — which
   is its own hazard: a report that the tap is stale could be neither confirmed
-  nor refuted without reading the tap by hand.
+  nor refuted without reading the tap by hand. It only ever fetches the newest
+  100 releases, so a tap stale enough to be behind every one of them is
+  reported as "at least N releases behind" rather than a guessed exact count.
 
 Run them yourself at any time:
 

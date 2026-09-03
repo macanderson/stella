@@ -133,6 +133,27 @@ pub enum StoreError {
 }
 
 impl StoreError {
+    /// The SQLite result code behind this failure, when it has one.
+    ///
+    /// A caller reporting a dropped write needs the code, not the sentence:
+    /// `DatabaseBusy` sends an operator to whatever else is writing the file,
+    /// `ReadOnly` to its permissions, `Full` to the disk. Rendering it is the
+    /// caller's job; naming it is this crate's.
+    #[must_use]
+    pub fn sqlite_code(&self) -> Option<rusqlite::ErrorCode> {
+        match self {
+            Self::Sqlite(error) | Self::Corrupt { source: error, .. } => error.sqlite_error_code(),
+            _ => None,
+        }
+    }
+
+    /// Whether SQLite refused because a lock was held — see [`crate::busy`],
+    /// which owns the predicate and the retry built on it.
+    #[must_use]
+    pub fn is_busy(&self) -> bool {
+        matches!(self, Self::Sqlite(error) if crate::busy::is_busy(error))
+    }
+
     /// A filesystem failure, with the operation and path as context.
     pub(crate) fn io(context: impl Into<String>, source: std::io::Error) -> Self {
         Self::Io {

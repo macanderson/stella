@@ -948,6 +948,10 @@ releases-baseline-update: ## Grandfather the tags that shipped nothing and never
 releases-published-test: ## Test the tag/release reconciliation rule (hermetic; not part of `gate`)
 	./scripts/test-releases-published.sh
 
+.PHONY: releases-published-pagination-test
+releases-published-pagination-test: ## Witness that the release fetch has no fixed count cap (#5555; hermetic)
+	./scripts/test-releases-published-pagination.sh
+
 .PHONY: tap-current
 tap-current: ## Assert the Homebrew tap formula serves the newest published release (#5551)
 	@./scripts/check-tap-current.sh

@@ -169,6 +169,19 @@ Asking a loop to stop when it's already stopping is not an error. The output tel
 
 stella writes these stats after **every step**, not just at the end. Since the loop never stops on its own, a report written only on exit would never get written at all — the point is a record you can read while the loop is still running. Each write is atomic, so a dashboard reading the file mid-write always sees the last complete version, never a half-written one.
 
+#### Audit records
+
+When the store refuses a write, the turn keeps going and the record of that turn does not. stella counts every audit write it gives up on and adds one line for them:
+
+```
+record
+  3 audit records incomplete this run — a store write was refused; the turn's own warning names the SQLite code and the file
+```
+
+The line appears only when the count is above zero. The turn that lost the write also warns at the time, and that warning names the database file, the SQLite result code (`DatabaseBusy`, `ReadOnly`, `Full`), and whether stella asked again. A busy or locked database is retried a few times, with a growing pause between tries, before a write counts as lost — so a turn that only had to wait its turn still writes its record.
+
+A turn runs in a child process, so it reports its own count in the turn summary and the loop adds that to the session's.
+
 #### Ratios
 
 A raw count only tells you how busy the loop was, which always looks good. The ratios below tell you whether the work was worth it, and each can look bad for a real reason:

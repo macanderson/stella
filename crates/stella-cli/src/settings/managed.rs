@@ -1,14 +1,25 @@
-//! Secure administrator-managed settings snapshot.
+//! Reads the managed settings file.
 
 use std::path::{Path, PathBuf};
 
 use super::Settings;
 
 impl Settings {
-    /// Capture secure managed telemetry before project dotenv processing.
+    /// Get the managed telemetry field before dotenv files load.
     pub(crate) fn load_managed_telemetry_snapshot() -> Result<Option<serde_json::Value>, String> {
         let managed = Self::load_managed_scope(&managed_settings_path())?;
         Ok(managed.enterprise_telemetry)
+    }
+
+    /// The file [`Self::load`] reads for the managed scope.
+    pub fn managed_path() -> PathBuf {
+        resolve_managed_path()
+    }
+
+    /// Unknown keys in the org-managed settings file. See
+    /// [`super::unknown::managed_advisory`].
+    pub fn managed_advisory() -> Vec<String> {
+        super::unknown::managed_advisory()
     }
 
     pub(super) fn load_managed_scope(path: &Path) -> Result<Self, String> {
@@ -49,6 +60,26 @@ pub(super) fn managed_settings_path() -> PathBuf {
     } else {
         PathBuf::from("/etc/stella/settings.json")
     }
+}
+
+/// The file the loader reads for the managed scope.
+///
+/// `STELLA_MANAGED_SETTINGS` picks one file. Otherwise the default TOML path
+/// wins if it exists; the JSON path is the fallback. This mirrors
+/// `Settings::load_managed_scope_dual`'s own choice, named here in words
+/// since that function is private to `merge.rs`.
+///
+/// A test keeps the two in step: it loads real settings and reads this
+/// advisory on the same fixture, so a mismatch fails the test.
+pub(super) fn resolve_managed_path() -> PathBuf {
+    if std::env::var_os("STELLA_MANAGED_SETTINGS").is_some() {
+        return managed_settings_path();
+    }
+    let toml_path = super::toml_config::managed_toml_path();
+    if toml_path.exists() {
+        return toml_path;
+    }
+    managed_settings_path()
 }
 
 #[cfg(unix)]

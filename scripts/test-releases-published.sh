@@ -53,17 +53,24 @@ want() {
 # tag <name> <seconds-ago>
 tag() { printf '{"name":"%s","created_unix":%s}' "$1" "$((NOW - $2))"; }
 
+# rel <tag> [draft]  — a released tag; pass "draft" to make it a draft release
+rel() {
+  local draft=false
+  [ "${2:-}" = "draft" ] && draft=true
+  printf '{"name":"%s","draft":%s}' "$1" "$draft"
+}
+
 day=86400
 
 # ── Silent: the failure this exists to catch ─────────────────────────────────
 # The #1464 shape — a run of consecutive tags, none published.
 want "S1 a run of unpublished old tags is reported, oldest first" \
   "v0.6.75 v0.6.76 v0.6.77" \
-  "{\"tags\":[$(tag v0.6.77 $((2 * day))),$(tag v0.6.75 $((4 * day))),$(tag v0.6.76 $((3 * day)))],\"releases\":[\"v0.6.74\"]}"
+  "{\"tags\":[$(tag v0.6.77 $((2 * day))),$(tag v0.6.75 $((4 * day))),$(tag v0.6.76 $((3 * day)))],\"releases\":[$(rel v0.6.74)]}"
 
 want "S2 one unpublished tag among published ones is still caught" \
   "v0.6.76" \
-  "{\"tags\":[$(tag v0.6.75 $((3 * day))),$(tag v0.6.76 $((2 * day))),$(tag v0.6.77 $day)],\"releases\":[\"v0.6.75\",\"v0.6.77\"]}"
+  "{\"tags\":[$(tag v0.6.75 $((3 * day))),$(tag v0.6.76 $((2 * day))),$(tag v0.6.77 $day)],\"releases\":[$(rel v0.6.75),$(rel v0.6.77)]}"
 
 # A release that was published and later deleted looks exactly like one that
 # never published, and is equally worth knowing about. A watcher of the
@@ -89,7 +96,7 @@ want "C3 a tag one second past the boundary is reported" \
 
 want "C4 a fully published history reports nothing" \
   "" \
-  "{\"tags\":[$(tag v0.6.75 $((3 * day))),$(tag v0.6.76 $((2 * day)))],\"releases\":[\"v0.6.75\",\"v0.6.76\"]}"
+  "{\"tags\":[$(tag v0.6.75 $((3 * day))),$(tag v0.6.76 $((2 * day)))],\"releases\":[$(rel v0.6.75),$(rel v0.6.76)]}"
 
 want "C5 no tags at all reports nothing" "" '{"tags":[],"releases":[]}'
 
@@ -98,7 +105,19 @@ want "C5 no tags at all reports nothing" "" '{"tags":[],"releases":[]}'
 # was never owed.
 want "C6 a release with no matching tag is not a finding" \
   "" \
-  "{\"tags\":[$(tag v0.6.75 $((2 * day)))],\"releases\":[\"v0.6.75\",\"v0.6.99\"]}"
+  "{\"tags\":[$(tag v0.6.75 $((2 * day)))],\"releases\":[$(rel v0.6.75),$(rel v0.6.99)]}"
+
+# ── Drafts ───────────────────────────────────────────────────────────────────
+# A draft is not a shipped build, and one can stay open for a long time. This
+# is a live case: the repo's own release list has two open drafts today, each
+# with a tag but no real release.
+want "D1 a tag with only a draft release is still reported" \
+  "v0.6.80" \
+  "{\"tags\":[$(tag v0.6.80 $((5 * day)))],\"releases\":[$(rel v0.6.80 draft)]}"
+
+want "D2 a draft does not hide a real gap among the published releases" \
+  "v0.6.76" \
+  "{\"tags\":[$(tag v0.6.75 $((3 * day))),$(tag v0.6.76 $((2 * day)))],\"releases\":[$(rel v0.6.75),$(rel v0.6.76 draft)]}"
 
 # ── Grandfathering ───────────────────────────────────────────────────────────
 # The baseline is what lets this be an alarm about NEW silence instead of a
@@ -121,7 +140,17 @@ want "K3 an absent baseline grandfathers nothing" \
 # applied in the wrong order reports the fresh one or misses the old one.
 want "M1 a mixed history reports only the old unpublished tag" \
   "v0.6.76" \
-  "{\"tags\":[$(tag v0.6.75 $((3 * day))),$(tag v0.6.76 $((2 * day))),$(tag v0.6.99 $((10 * 60)))],\"releases\":[\"v0.6.75\"]}"
+  "{\"tags\":[$(tag v0.6.75 $((3 * day))),$(tag v0.6.76 $((2 * day))),$(tag v0.6.99 $((10 * 60)))],\"releases\":[$(rel v0.6.75)]}"
+
+# ── No fixed cap ──────────────────────────────────────────────────────────────
+# The old thousand-item cap lived only in the fetch, never in this rule.
+# scripts/test-releases-published-pagination.sh proves the fetch side. This
+# case proves the rule side: a huge release list is judged the same as a
+# small one.
+big_releases="$(i=0; while [ "$i" -lt 1001 ]; do [ "$i" -gt 0 ] && printf ','; printf '%s' "$(rel "v0.6.$i")"; i=$((i + 1)); done)"
+want "N1 a release list past the old 1000-item cap still finds the one gap" \
+  "v0.6.9999" \
+  "{\"tags\":[$(tag v0.6.9999 $((2 * day)))],\"releases\":[${big_releases}]}"
 
 # The age column is what tells a reader "two days" from "twenty minutes", so it
 # has to be right, not merely present.

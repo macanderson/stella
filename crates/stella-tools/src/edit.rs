@@ -12,6 +12,13 @@
 //! byte-identical outputs, so the loop detector (which requires identical
 //! outputs to flag a loop) keeps treating it as progress.
 //!
+//! The ledger is also what the write is held to. The bytes this tool reads at
+//! the top of a call are a snapshot, and the file it writes at the end is
+//! computed from that snapshot, so anything written in between would be
+//! replaced by bytes that never contained it. The crate's `recheck` module
+//! re-reads the file through the same descriptor immediately before the write
+//! and refuses rather than clobber a change nobody would ever see again.
+//!
 //! The success path holds itself to the same contract (#3176): every success
 //! string carries the match's byte offset and a short digest of the resulting
 //! file, so N distinct edits to one file produce N distinct outputs. A
@@ -147,13 +154,39 @@ const INDENT_HINT_MAX_LINES: usize = 40;
 #[derive(Default)]
 pub struct EditFile {
     ledger: Arc<ReadLedger>,
+    /// A test's window between the read and the write — see the `recheck`
+    /// module's `Seam`. Nothing outside `cfg(test)` can install one.
+    #[cfg(test)]
+    seam: Option<crate::recheck::Seam>,
 }
 
 impl EditFile {
     /// Construct sharing the registry's read-state ledger, so match failures
     /// can be attributed against what the model last saw.
     pub fn with_ledger(ledger: Arc<ReadLedger>) -> Self {
-        Self { ledger }
+        Self {
+            ledger,
+            #[cfg(test)]
+            seam: None,
+        }
+    }
+
+    /// Construct with `seam` running in the window between the read and the
+    /// write, so a test can put a concurrent writer there.
+    #[cfg(test)]
+    pub(crate) fn with_seam(ledger: Arc<ReadLedger>, seam: crate::recheck::Seam) -> Self {
+        Self {
+            ledger,
+            seam: Some(seam),
+        }
+    }
+
+    /// Hand a test its window. Compiles to nothing in a shipped build.
+    fn run_seam(&self) {
+        #[cfg(test)]
+        if let Some(seam) = &self.seam {
+            seam();
+        }
     }
 }
 
@@ -452,6 +485,38 @@ impl EditFile {
             content.replacen(old_string, new_string, 1)
         };
 
+        // The last look. `new_content` is the whole file computed from
+        // the snapshot read at the top of this call, so a write that landed in
+        // between is about to be replaced by bytes that never contained it.
+        self.run_seam();
+        let read_sha = crate::staleness::hex_sha256(content.as_bytes());
+        if let Err(drift) = crate::recheck::confirm(&handle, path, &read_sha).await {
+            let echo = match drift.fresh() {
+                Some(fresh) => {
+                    // Recorded as seen for the reason the miss path records it:
+                    // the model has now been shown these bytes, so a later
+                    // failure against them is reported as unchanged rather than
+                    // re-attributed as drift forever.
+                    self.ledger.record_known(&scope_root, path, fresh);
+                    format!(
+                        "\n\nCurrent content follows — re-issue the edit against these \
+                         bytes.\n\n--- {path} (current) ---\n{}",
+                        drift_echo(fresh)
+                    )
+                }
+                None => String::new(),
+            };
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!(
+                    "refusing to write `{path}` — {} between the read and the write, so this \
+                     edit was computed from bytes disk does not hold and writing it would \
+                     destroy that change. Nothing was written.{echo}",
+                    drift.because()
+                ),
+            );
+        }
+
         match crate::durable_write::write_file_durably_at(
             handle,
             path.to_string(),
@@ -619,10 +684,12 @@ impl EditFile {
             pending[slot].edits += 1;
         }
 
-        // Every edit validated against the composed content. Only now does
-        // anything reach the disk.
-        let mut report = Vec::with_capacity(pending.len());
-        let mut changes = Vec::with_capacity(pending.len());
+        // Every edit validated against the composed content. Before anything
+        // reaches the disk, confirm every file still holds the bytes this batch
+        // read — all of them first, because a batch that would clobber
+        // a concurrent write to its third file must not have written its first.
+        self.run_seam();
+        let mut handles = Vec::with_capacity(pending.len());
         for file in &pending {
             let handle = match crate::rootfd::RootHandle::open(&file.scope_root) {
                 Ok(handle) => Arc::new(handle),
@@ -633,6 +700,25 @@ impl EditFile {
                     );
                 }
             };
+            let read_sha = crate::staleness::hex_sha256(file.original.as_bytes());
+            if let Err(drift) = crate::recheck::confirm(&handle, &file.path, &read_sha).await {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!(
+                        "refusing to write `{}` — {} between the read and the write, so this \
+                         batch was composed from bytes disk does not hold. Nothing was \
+                         written — re-read it and re-issue the batch.",
+                        file.path,
+                        drift.because()
+                    ),
+                );
+            }
+            handles.push(handle);
+        }
+
+        let mut report = Vec::with_capacity(pending.len());
+        let mut changes = Vec::with_capacity(pending.len());
+        for (file, handle) in pending.iter().zip(handles) {
             if let Err(e) = crate::durable_write::write_file_durably_at(
                 handle,
                 file.path.clone(),

@@ -337,6 +337,25 @@ pub(super) async fn aggregate_anthropic_stream(
 
     let mut tool_calls = Vec::with_capacity(tool_uses.len());
     for (index, acc) in tool_uses {
+        // A `content_block_start` that named itself `tool_use` and left out
+        // the id or the tool name parses, because both fields default. It
+        // arrives here, and it ends the turn. Neither field can be a
+        // casualty of the token limit: the whole start frame rides one SSE
+        // event. So this is checked ahead of the truncation arms below, and
+        // never competes with them.
+        let mut missing = Vec::new();
+        if acc.id.is_empty() {
+            missing.push("id");
+        }
+        if acc.name.is_empty() {
+            missing.push("name");
+        }
+        if !missing.is_empty() {
+            return Err(
+                http::malformed_tool_call_error("Anthropic", index, &acc.name, &missing).into(),
+            );
+        }
+
         let truncated = Some(index) == truncated_index;
         let input = if acc.input_json.is_empty() {
             if truncated {
