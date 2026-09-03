@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::clock::FixedClock;
-use crate::embed::HashEmbedder;
+use crate::embed::{Embedder, HashEmbedder};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -543,4 +543,260 @@ async fn ending_an_anchor_twice_keeps_the_first_date() {
         !store.end_anchor_validity(anchor.edge_id, &later).unwrap(),
         "a second scan reports no change rather than re-dating the deletion"
     );
+}
+
+// ── Identity, validation, and the reuse race ────────────────────────────────
+
+/// How many `episode` rows the store holds.
+fn episode_count(store: &ContextStore) -> i64 {
+    store
+        .conn()
+        .query_row("SELECT COUNT(*) FROM episode", [], |r| r.get(0))
+        .unwrap()
+}
+
+/// Two turns that share a prompt and a second are two episodes.
+///
+/// Both timestamps are second-resolution, so the summary and the window come
+/// out equal for two distinct turns often enough to matter — and the second
+/// write then landed on the first turn's row, replacing its outcome and its
+/// file list with another turn's. The occurrence key is how a caller says the
+/// two are different; without it this test writes one row.
+#[tokio::test]
+async fn two_turns_in_one_second_write_two_episodes() {
+    let clock = FixedClock::shared(1_000);
+    let (_dir, store) = store_at(clock);
+    for occurrence in ["execution:41", "execution:42"] {
+        store
+            .upsert(
+                ContextDelta::new().with_episode(
+                    EpisodeInput::new(
+                        "run the failing test",
+                        "2026-07-01T10:00:00Z",
+                        "2026-07-01T10:00:00Z",
+                    )
+                    .with_occurrence(occurrence),
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(episode_count(&store), 2, "one turn overwrote the other");
+
+    // The same key again is still the update it always was — a turn recorded
+    // twice must not double its row.
+    store
+        .upsert(
+            ContextDelta::new().with_episode(
+                EpisodeInput::new(
+                    "run the failing test",
+                    "2026-07-01T10:00:00Z",
+                    "2026-07-01T10:00:00Z",
+                )
+                .with_occurrence("execution:42"),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        episode_count(&store),
+        2,
+        "re-recording one turn added a row"
+    );
+}
+
+/// An episode written with no occurrence key keeps the identity it always had.
+#[tokio::test]
+async fn an_episode_without_an_occurrence_keeps_its_old_identity() {
+    let clock = FixedClock::shared(1_000);
+    let (_dir, store) = store_at(clock);
+    for _ in 0..2 {
+        store
+            .upsert(ContextDelta::new().with_episode(EpisodeInput::new(
+                "the same turn, recorded twice",
+                "2026-07-01T10:00:00Z",
+                "2026-07-01T10:05:00Z",
+            )))
+            .await
+            .unwrap();
+    }
+    assert_eq!(episode_count(&store), 1);
+}
+
+/// An embedder that reclaims one stored vector while it is embedding.
+///
+/// This is the `compact` race, made deterministic and single-threaded: the
+/// store holds no lock while it embeds, so anything may delete a row in that
+/// window, and the row this deletes is one the same delta was about to reuse.
+/// A real reclaim is legitimate — until this delta's nodes exist, that vector
+/// belongs to no node and is exactly what `compact` collects.
+struct ReclaimingEmbedder {
+    inner: HashEmbedder,
+    /// The store's own connection, attached after the store is built.
+    conn: std::sync::Mutex<Option<Arc<std::sync::Mutex<rusqlite::Connection>>>>,
+    /// The content hash to reclaim.
+    victim: String,
+    /// Which call reclaims it. Only one, so the retry can settle.
+    reclaim_on_call: usize,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl ReclaimingEmbedder {
+    fn new(victim: &str, reclaim_on_call: usize) -> Self {
+        Self {
+            inner: HashEmbedder::default(),
+            conn: std::sync::Mutex::new(None),
+            victim: victim.to_string(),
+            reclaim_on_call,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn attach(&self, conn: Arc<std::sync::Mutex<rusqlite::Connection>>) {
+        *self.conn.lock().expect("attach") = Some(conn);
+    }
+}
+
+impl ReclaimingEmbedder {
+    /// Delete the victim row through the store's own connection. Nothing holds
+    /// that lock while the store is embedding.
+    fn reclaim(&self) {
+        let handle = self.conn.lock().expect("reclaim").clone();
+        let Some(conn) = handle else {
+            return;
+        };
+        conn.lock()
+            .expect("reclaim conn")
+            .execute(
+                "DELETE FROM embedding WHERE content_hash = ?1",
+                [self.victim.as_str()],
+            )
+            .expect("reclaim the orphan");
+    }
+}
+
+#[async_trait::async_trait]
+impl Embedder for ReclaimingEmbedder {
+    fn fingerprint(&self) -> crate::embed::EmbedderFingerprint {
+        self.inner.fingerprint()
+    }
+
+    fn similarity_posture(&self) -> crate::embed::SimilarityPosture {
+        self.inner.similarity_posture()
+    }
+
+    async fn embed(
+        &self,
+        texts: &[String],
+    ) -> Result<Vec<crate::embed::Embedding>, crate::embed::EmbedError> {
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        if call == self.reclaim_on_call {
+            self.reclaim();
+        }
+        self.inner.embed(texts).await
+    }
+}
+
+/// A vector reclaimed mid-write is embedded again, not assumed.
+///
+/// The reuse decision is made before the embedder runs and the write happens
+/// after it, so a `compact` in that window can leave the new node with no
+/// vector at all — invisible to similarity recall until the next mount's warm
+/// indexer finds it. The write transaction re-asks, and retries the delta with
+/// the lost content in the embed set.
+#[tokio::test]
+async fn a_vector_reclaimed_while_embedding_is_written_again() {
+    let clock = FixedClock::shared(1_000);
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let reused_hash = crate::store::sha256_hex("alpha content");
+    // Reclaim on the second call: the first embeds "alpha content" itself, and
+    // the second serves the delta that plans to reuse it.
+    let embedder = Arc::new(ReclaimingEmbedder::new(&reused_hash, 2));
+    let store = ContextStore::open_with(&path, embedder.clone(), clock).unwrap();
+    embedder.attach(store.conn_handle());
+    let fingerprint = store.fingerprint().id();
+
+    store
+        .upsert(
+            ContextDelta::new().with_node(
+                NodeInput::new(NodeKind::Concept, "alpha").with_content("alpha content"),
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(embedding_exists(&store.conn(), &reused_hash, &fingerprint).unwrap());
+
+    // This delta reuses "alpha content" and embeds "beta content"; the vector
+    // it plans to reuse is reclaimed while that embedding is computed.
+    store
+        .upsert(
+            ContextDelta::new()
+                .with_node(
+                    NodeInput::new(NodeKind::Concept, "alpha again").with_content("alpha content"),
+                )
+                .with_node(NodeInput::new(NodeKind::Concept, "beta").with_content("beta content")),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        embedding_exists(&store.conn(), &reused_hash, &fingerprint).unwrap(),
+        "the reclaimed vector was never written back, so its node is unembedded"
+    );
+    assert!(
+        embedding_exists(
+            &store.conn(),
+            &crate::store::sha256_hex("beta content"),
+            &fingerprint
+        )
+        .unwrap()
+    );
+}
+
+/// One unwritable record is named before anything is written.
+///
+/// A memory's mirror node takes its label from the memory's own text, so a
+/// whitespace-only lesson mints a node with no citable name and the store
+/// refuses it (`L-C4`). A refusal half way through the transaction costs the
+/// delta its embeddings and rolls the whole batch back, so one blank lesson
+/// discards every good lesson written beside it with nothing saying which
+/// record was at fault.
+#[tokio::test]
+async fn a_blank_record_is_named_before_anything_is_written() {
+    let clock = FixedClock::shared(1_000);
+    let (_dir, store) = store_at(clock);
+    let err = store
+        .upsert(
+            ContextDelta::new()
+                .with_memory(MemoryInput::reflection(
+                    "a real lesson",
+                    Vec::<String>::new(),
+                ))
+                .with_memory(MemoryInput::reflection("   \n ", Vec::<String>::new())),
+        )
+        .await
+        .unwrap_err();
+    match err {
+        ContextError::InvalidInput(message) => {
+            assert!(message.contains("memory"), "unhelpful message: {message}");
+        }
+        other => panic!("expected InvalidInput, got {other:?}"),
+    }
+    assert_eq!(
+        store.node_count().unwrap(),
+        0,
+        "a rejected delta wrote rows"
+    );
+
+    // The good half of that batch is perfectly writable on its own, which is
+    // what makes dropping the blank record at the caller the right repair.
+    store
+        .upsert(ContextDelta::new().with_memory(MemoryInput::reflection(
+            "a real lesson",
+            Vec::<String>::new(),
+        )))
+        .await
+        .unwrap();
+    assert_eq!(store.node_count().unwrap(), 1);
 }

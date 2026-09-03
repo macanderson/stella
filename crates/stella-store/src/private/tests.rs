@@ -136,6 +136,38 @@ fn an_empty_ignore_with_no_writer_is_still_given_the_private_entry() {
     );
 }
 
+/// A record a crash left without its newline costs itself, not its neighbour.
+///
+/// The log is read one line at a time. Writing onto a fragment glues the two
+/// records into one line, and that line parses as neither. So a crash that
+/// damaged one record took out the next one too. Nothing said so: a reader
+/// cannot tell a glued line from a bad one.
+#[test]
+fn an_unterminated_record_does_not_swallow_the_next_one() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    // What a process killed mid-append leaves behind: a whole record, then a
+    // fragment with no terminator.
+    let path = append_workspace_private_line(workspace.path(), "reflections.jsonl", "{\"a\":1}")
+        .expect("first append");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("reopen")
+        .write_all(b"{\"partial\"")
+        .expect("plant the fragment");
+
+    append_workspace_private_line(workspace.path(), "reflections.jsonl", "{\"b\":2}")
+        .expect("append after a crash");
+
+    let settled = std::fs::read_to_string(&path).expect("read");
+    let lines: Vec<&str> = settled.lines().collect();
+    assert_eq!(
+        lines,
+        vec!["{\"a\":1}", "{\"partial\"", "{\"b\":2}"],
+        "the new record must be a line of its own, not glued to the fragment"
+    );
+}
+
 use std::io::Write as _;
 
 #[cfg(unix)]

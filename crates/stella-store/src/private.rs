@@ -426,17 +426,40 @@ pub fn workspace_private_state_path(workspace_root: &Path, name: &str) -> Result
 
 /// Append one line to a workspace-private log through the same no-follow,
 /// owner-only file primitive used by session state.
+///
+/// A file that does not end in a newline gets one before the new record goes
+/// down. These logs are read a line at a time, and a process killed part way
+/// through a write leaves a record with no terminator; appending straight onto
+/// it would join the fragment and the new record into one line that parses as
+/// neither, losing both instead of one. The repair costs a one-byte read per
+/// append and only ever fires after a crash.
 pub fn append_workspace_private_line(
     workspace_root: &Path,
     name: &str,
     line: &str,
 ) -> Result<PathBuf> {
-    use std::io::Write as _;
+    use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 
     let path = workspace_private_state_path(workspace_root, name)?;
     let mut options = std::fs::OpenOptions::new();
-    options.create(true).append(true);
+    // `read` so the last byte can be inspected. Appending is unaffected: every
+    // write on an `O_APPEND` handle lands at the end whatever the read offset.
+    options.create(true).append(true).read(true);
     let mut file = open_private_file(&path, options)?;
+    let len = file
+        .metadata()
+        .map_err(|e| StoreError::io(format!("cannot inspect {}", path.display()), e))?
+        .len();
+    if len > 0 {
+        let mut last = [0u8; 1];
+        file.seek(SeekFrom::Start(len - 1))
+            .and_then(|_| file.read_exact(&mut last))
+            .map_err(|e| StoreError::io(format!("cannot read {}", path.display()), e))?;
+        if last[0] != b'\n' {
+            file.write_all(b"\n")
+                .map_err(|e| StoreError::io(format!("cannot terminate {}", path.display()), e))?;
+        }
+    }
     writeln!(file, "{line}")
         .map_err(|e| StoreError::io(format!("cannot append {}", path.display()), e))?;
     Ok(path)

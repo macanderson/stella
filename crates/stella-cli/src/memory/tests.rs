@@ -9,6 +9,9 @@ mod ab_control;
 // source rather than the wall clock is the property replay rests on, and it is
 // what makes the truth sweep's TTL branch reachable from a test at all.
 mod determinism;
+// What keeps two turns' episodes apart when their prompt and their second are
+// the same — the case the timestamps alone cannot answer.
+mod episode_identity;
 // #3349: the assembled volatile block's bytes, pinned — the evidence that the
 // steering-plane migration changed the wiring and not the prompt.
 mod golden_block;
