@@ -695,6 +695,37 @@ pub(crate) fn truncated_tool_input_error(
     ))
 }
 
+/// Build the terminal error for a streamed tool call that never carried a
+/// field it cannot be dispatched without. That is the id the next turn's tool
+/// result is matched against, or the name of the tool to run.
+///
+/// Shared by every adapter that builds tool calls from stream parts.
+/// `provider` names the backend. `index` is the block or call index the parts
+/// were keyed on. `name` is the tool, when one arrived. `missing` lists the
+/// fields that did not.
+///
+/// Terminal, not dropped. The frames announce a call the model made. Drop
+/// them and the turn reports no tool calls, next to a finish reason that says
+/// a tool was called. A missing measurement then reads as a negative one.
+pub(crate) fn malformed_tool_call_error(
+    provider: &str,
+    index: usize,
+    name: &str,
+    missing: &[&str],
+) -> ProviderError {
+    let called = if name.is_empty() {
+        String::new()
+    } else {
+        format!(" `{name}`")
+    };
+    let missing = missing.join("` and `");
+    ProviderError::Malformed(format!(
+        "{provider} streamed a tool call{called} at index {index} with no `{missing}`, \
+         so the call cannot be dispatched. The turn is aborted rather than reporting \
+         no tool call at all."
+    ))
+}
+
 /// Build the retryable error for a stream whose body never delivered a first
 /// byte inside `deadline`. One wording for every dialect: the fault is a
 /// property of the streaming *path* (a proxy buffering the SSE body), not of

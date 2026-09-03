@@ -103,7 +103,11 @@ fn doctor_reports_a_healthy_store_and_exits_zero() {
         stdout.contains("model config"),
         "the model-config check is reported too: {stdout}"
     );
-    assert!(stdout.contains("4 ok, 0 failed"), "{stdout}");
+    assert!(
+        stdout.contains("managed settings"),
+        "the managed-settings check is reported too: {stdout}"
+    );
+    assert!(stdout.contains("5 ok, 0 failed"), "{stdout}");
 }
 
 #[test]

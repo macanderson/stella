@@ -194,7 +194,42 @@ fn checks(
         fleet_ledger_orphans(workspace_root),
         orphan_session_sidecars(&stella_store::SessionRegistry::open_default(), repair),
         model_config(workspace_root, model_override, base_url_override),
+        managed_settings(),
     ]
+}
+
+/// The org-managed settings file's spelling. An admin runs
+/// `STELLA_MANAGED_SETTINGS=candidate.json stella doctor` to check a
+/// candidate file before it reaches a fleet.
+///
+/// Always a **Pass**: a typo here is not this workspace's fault, only news
+/// an admin needs. The fleet-ledger check above takes the same stance on
+/// its own inert rows.
+fn managed_settings() -> Check {
+    const NAME: &str = "managed settings";
+
+    // A frozen benchmark run must never touch a host path outside its own
+    // isolation, the same rule `Settings::load` itself follows.
+    if crate::settings::filesystem_settings_disabled() {
+        return Check::pass(NAME, "skipped under filesystem isolation");
+    }
+    let path = crate::settings::Settings::managed_path();
+    if !path.exists() {
+        return Check::pass(NAME, "no org-managed settings file on this machine");
+    }
+    let notices = crate::settings::Settings::managed_advisory();
+    if notices.is_empty() {
+        return Check::pass(NAME, format!("{}: no unrecognized keys", path.display()));
+    }
+    Check::pass(
+        NAME,
+        format!(
+            "{}: {} advisory line(s) — a root-key typo parses clean and denies nothing",
+            path.display(),
+            notices.len()
+        ),
+    )
+    .with_details(notices)
 }
 
 /// #895: the model the next run would actually send, checked before it costs
@@ -639,6 +674,10 @@ mod tests {
 
     #[test]
     fn doctor_passes_on_a_healthy_workspace_store() {
+        // The managed-settings check below reads `STELLA_MANAGED_SETTINGS`;
+        // hold the same lock the settings-scope tests mutate it under so this
+        // read never races an unsynchronized `set_var` on another thread.
+        let _env = crate::test_env::lock();
         let dir = workspace_with_store();
         assert_eq!(run_doctor_at(dir.path(), false, None, None), Ok(()));
 
@@ -649,7 +688,8 @@ mod tests {
                 "store integrity",
                 "fleet ledger",
                 "session sidecars",
-                "model config"
+                "model config",
+                "managed settings",
             ],
             "the shipped checks, in report order: {checks:?}"
         );
@@ -704,6 +744,7 @@ mod tests {
     /// leaves them alone — removing them would delete fleet history.
     #[test]
     fn doctor_reports_fleet_ledger_orphans_without_repairing_them() {
+        let _env = crate::test_env::lock();
         let dir = workspace_with_store();
         let db = dir.path().join(".stella/private/fleet.db");
 
@@ -759,6 +800,7 @@ mod tests {
 
     #[test]
     fn doctor_passes_on_a_workspace_that_has_never_run_a_session() {
+        let _env = crate::test_env::lock();
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(run_doctor_at(dir.path(), false, None, None), Ok(()));
         assert!(
@@ -769,6 +811,7 @@ mod tests {
 
     #[test]
     fn doctor_reports_a_corrupted_store_and_leaves_it_alone() {
+        let _env = crate::test_env::lock();
         let dir = workspace_with_store();
         let db_path = store_db(&dir);
         corrupt(&db_path);
@@ -812,6 +855,7 @@ mod tests {
     /// The exit-code contract, at both ends of the same corrupt store.
     #[test]
     fn doctor_exits_nonzero_on_corruption_and_zero_after_a_repair() {
+        let _env = crate::test_env::lock();
         let dir = workspace_with_store();
         corrupt(&store_db(&dir));
 
@@ -829,6 +873,7 @@ mod tests {
 
     #[test]
     fn doctor_repair_quarantines_the_corrupt_store_without_deleting_it() {
+        let _env = crate::test_env::lock();
         let dir = workspace_with_store();
         let db_path = store_db(&dir);
         corrupt(&db_path);
@@ -879,6 +924,7 @@ mod tests {
 
     #[test]
     fn doctor_repair_on_a_healthy_store_moves_nothing() {
+        let _env = crate::test_env::lock();
         let dir = workspace_with_store();
         let db_path = store_db(&dir);
         let before = std::fs::read(&db_path).expect("read db");

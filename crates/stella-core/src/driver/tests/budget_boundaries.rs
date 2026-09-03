@@ -1,10 +1,135 @@
 //! Budget-boundary witnesses: an over-cap call is settled spend but the next
 //! provider call never starts, an already-breached turn never pays for
-//! compaction, and a billed completion is charged — and its usage envelope
-//! emitted — exactly once, including when the turn is cancelled with a
-//! speculation still in flight.
+//! compaction, a billed completion and its usage envelope land exactly once
+//! even when a speculation is still in flight, and both top-of-step aborts
+//! hand back a transcript the next provider call still accepts.
 
 use super::*;
+
+/// The call id the two pairing witnesses below start their transcript with and
+/// then look for an answer to.
+const DANGLING_CALL_ID: &str = "dangling-call";
+
+/// A transcript whose tail is an assistant `tool_use` nothing answered.
+///
+/// A caller reaches this shape without doing anything wrong: a hard-dropped
+/// turn hands its history back mid-step, and `Checkpoint::from_json` restores
+/// one after checking the version and never the pairing. Whatever produced it,
+/// the next provider call rejects it outright unless the abort that returned it
+/// closed the pairing first.
+fn transcript_with_an_unanswered_tool_call() -> Vec<CompletionMessage> {
+    vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("the task"),
+        CompletionMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                call_id: DANGLING_CALL_ID.into(),
+                name: "bash".into(),
+                input: serde_json::json!({}),
+            }],
+            tool_results: Vec::new(),
+            attachments: Vec::new(),
+        },
+    ]
+}
+
+/// Whether some `Tool` message answers [`DANGLING_CALL_ID`] — the pairing rule
+/// every provider enforces, asked of the vector the caller gets back.
+fn answers_the_dangling_call(messages: &[CompletionMessage]) -> bool {
+    messages.iter().any(|message| {
+        message.role == MessageRole::Tool
+            && message
+                .tool_results
+                .iter()
+                .any(|result| result.call_id == DANGLING_CALL_ID)
+    })
+}
+
+/// A provider that fails the test if the turn ever calls it — both witnesses
+/// below abort at the top of the step, before any model call.
+fn provider_that_must_not_be_called() -> ScriptedProvider {
+    ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("must never be called"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    }
+}
+
+#[tokio::test]
+async fn an_over_cap_budget_abort_hands_back_a_well_paired_transcript() {
+    // The dollar arm of `settlement::check_budget` fires at
+    // the top of the step, before any model call, on a transcript that is
+    // still exactly what the caller handed in. Every other exit at this
+    // boundary closes the pairing; this one returned the open `tool_use`
+    // untouched, and the caller's next turn was rejected by the vendor with
+    // nothing pointing back at the abort that caused it.
+    let provider = provider_that_must_not_be_called();
+    let provider_calls = provider.calls.clone();
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = transcript_with_an_unanswered_tool_call();
+    let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(0.05));
+    budget.reseed_session_spend(0.10);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Aborted { ref reason, .. } if reason.contains("budget")),
+        "expected the over-cap abort, got {outcome:?}"
+    );
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        0,
+        "the abort must land before the model call, which is what makes the transcript the \
+         caller's own"
+    );
+    assert!(
+        answers_the_dangling_call(&messages),
+        "a budget abort must answer the open tool_use it hands back, or the caller's next \
+         provider call is rejected: {messages:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_past_deadline_abort_hands_back_a_well_paired_transcript() {
+    // The same witness for the deadline arm, which is checked first and has
+    // its own reason string — and had the same missing repair.
+    let provider = provider_that_must_not_be_called();
+    let provider_calls = provider.calls.clone();
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = transcript_with_an_unanswered_tool_call();
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    budget.set_task_deadline(Some(
+        std::time::Instant::now() - std::time::Duration::from_secs(1),
+    ));
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Aborted { ref reason, .. } if reason.contains("deadline")),
+        "expected the deadline abort, got {outcome:?}"
+    );
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        0,
+        "a task past its deadline stops before the next call"
+    );
+    assert!(
+        answers_the_dangling_call(&messages),
+        "a deadline abort must answer the open tool_use it hands back: {messages:?}"
+    );
+}
 
 struct BilledResultWithBlockedSpeculation {
     provider_completed: Arc<tokio::sync::Notify>,

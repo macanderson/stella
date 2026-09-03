@@ -29,9 +29,14 @@ main and does everything — no manual steps:
    with the newest tag: a `bot/version-sync` PR bumps
    `[workspace.package].version` in `Cargo.toml` (every crate inherits it),
    the workspace-member entries in `Cargo.lock`, and
-   `packaging/homebrew/stella.rb`, then auto-merges once the required checks
-   pass. Its commit carries `[skip release]`, so the sync itself never cuts a
-   release. If a sync PR is ever left open (red check, race with another
+   `packaging/homebrew/stella.rb`, then merges once the required checks pass.
+   Nobody has to touch it. That PR is written by `github-actions[bot]`, and
+   this repository makes a first-time contributor's workflow runs wait for a
+   person to approve them, so all thirteen of its runs open parked at
+   `action_required`. The workflow approves them itself and then waits for the
+   checks, which is what lets the PR merge under branch protection rather than
+   past it. Its commit carries `[skip release]`, so the sync itself never cuts
+   a release. If a sync PR is ever left open (red check, race with another
    merge), the next release supersedes it automatically — no cleanup needed.
    Both the stamp and the merge are checked against
    `scripts/check-lockfile-sync.sh`: the script refuses to author a stamp whose
@@ -130,21 +135,20 @@ to this repo's GitHub Releases and need no extra secrets — only the Homebrew
 tap push does. If neither secret is set, the release still succeeds and
 the `homebrew` job skips with a warning.
 
-**Optional — auto-merging the version-sync PR without a manual `--admin`.**
-`auto-tag.yml`'s `bot/version-sync` PR only carries a Cargo.toml/Cargo.lock
-diff, and branch protection's required `ci` checks never run on it the normal
-way (see #275): the workflow dispatches them itself, but the PR's own
-GITHUB_TOKEN authorship also spawns an unrunnable `pull_request`-triggered
-check suite that can leave `mergeable_state` stuck on "blocked" even once the
-dispatched run is green. The workflow verifies that dispatched run itself and
-then bypasses whatever is blocking with an admin-privileged merge — for that
-bypass to actually succeed (rather than fall back to arming ordinary
-auto-merge, which will just sit there the same way `--admin` used to be
-needed), add a **classic PAT with `repo` scope, owned by an account with
-admin/bypass rights on this repository**, as the `RELEASE_ADMIN_TOKEN` secret.
-Without it, sync PRs still get merged — just by a human running
-`gh pr merge bot/version-sync --squash --admin` once checks are green, same
-as before this workflow existed.
+**Optional — `RELEASE_ADMIN_TOKEN`.** The `bot/version-sync` PR merges on its
+own with no secret set, so this is not required. `auto-tag.yml` uses the token
+in two places, both as a second try after `GITHUB_TOKEN`:
+
+- **Approving the PR's parked workflow runs.** If `GITHUB_TOKEN` cannot
+  approve them, the runs stay parked, no required check reports, and the PR
+  waits for a person. The run log names which token did the approving.
+- **Merging past branch protection.** This no longer works on `main`, because
+  `enforce_admins` is on and GitHub refuses an admin merge on the same grounds
+  it refuses any other (#5589). It is kept for a repository that still grants
+  a bypass.
+
+To set it, add a **classic PAT with `repo` scope, owned by an account with
+admin rights on this repository**, as the `RELEASE_ADMIN_TOKEN` secret.
 
 ## Cut a release
 
@@ -208,7 +212,9 @@ Three checks now catch it, each on a different failure:
   or a revoked token freezes the formula while every other surface still reports
   success. Before this job, nothing anywhere could answer that question — which
   is its own hazard: a report that the tap is stale could be neither confirmed
-  nor refuted without reading the tap by hand.
+  nor refuted without reading the tap by hand. It only ever fetches the newest
+  100 releases, so a tap stale enough to be behind every one of them is
+  reported as "at least N releases behind" rather than a guessed exact count.
 
 Run them yourself at any time:
 

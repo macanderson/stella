@@ -40,6 +40,19 @@
 # A tag younger than the grace window is therefore not evidence of anything and
 # is skipped. Too short and this cries wolf on every release; too long and the
 # silence it exists to break lasts that much longer.
+#
+# ── Why the release list has no fixed cap ────────────────────────────────────
+#
+# A fixed `--limit` is a trap that reopens itself. A cap of 200 once reported
+# 137 missing tags instead of 26 real ones, because every release past the
+# cut looked unpublished. Raising the number just buys a few weeks: this
+# repo cuts a release on almost every merge.
+#
+# `repos/{owner}/{repo}/releases` is a plain paginated list, not a search
+# endpoint, so it has no result ceiling. `gh api --paginate` walks every
+# page and gets the whole set no matter how big it grows. No cap is needed.
+# `max_pages` below is not a cap either. It is a sanity check that paging
+# itself still works. See "the fetch" further down.
 set -euo pipefail
 
 # shellcheck source=scripts/lib/help-header.sh
@@ -74,13 +87,19 @@ done
 # Reads one JSON document on stdin:
 #
 #   { "tags":     [ { "name": "v0.6.75", "created_unix": 1234567890 }, … ],
-#     "releases": [ "v0.6.74", "v0.6.109", … ] }
+#     "releases": [ { "name": "v0.6.74", "draft": false }, … ] }
 #
 # and prints one `<tag>\t<age-in-seconds>` line per tag that should have been
 # published and was not, oldest first. Kept free of I/O so
 # scripts/test-releases-published.sh can drive every rule from a fixture rather
 # than from the live repository — a suite that asked GitHub would pass or fail
 # for reasons that have nothing to do with the rule under test.
+#
+# A draft release does not count as published: `brew install` cannot serve
+# one and it can sit open indefinitely, so a tag with only a draft release
+# must still be reported. `draft` rides on each release object rather than
+# being filtered out before this function sees the data, so a fixture can
+# cover the rule directly instead of trusting the wrapper below got it right.
 #
 # Note what is NOT consulted: the outcome of any workflow run. A `release`/
 # `homebrew` job is gated on `startsWith(github.ref, 'refs/tags/')`, so
@@ -94,7 +113,7 @@ done
 # nobody can be sure still applies to what it was written for.
 select_unpublished() {
   jq -r --argjson now "$now" --argjson grace "$grace_secs" '
-    ( [ .releases[] | { (.): true } ] | add // {} ) as $published
+    ( [ .releases[] | select(.draft != true) | { (.name): true } ] | add // {} ) as $published
     | ( [ (.known // [])[] | { (.): true } ] | add // {} ) as $known
     | [ .tags[]
         | select($published[.name] | not)
@@ -135,21 +154,28 @@ tags_json="$(
     | jq -R -s 'split("\n") | map(select(length > 0) | split(" ") | { name: .[0], created_unix: (.[1] | tonumber) })'
 )"
 
-# `gh` colorizes even `--json` output when it believes it has a terminal, which
+# `gh` colorizes even plain output when it believes it has a terminal, which
 # makes the result invalid JSON. It costs nothing on a runner (never a TTY) and
 # is the difference between working and not when a maintainer runs this by hand.
 #
-# The limit is far above the real count and then CHECKED. A
-# truncated release list makes every release beyond the cut look unpublished:
-# at `--limit 200` against 313 releases this script reported 137 missing tags
-# instead of the true 26. An alarm that inflates by 5x is one nobody believes,
-# and the inflation is silent — so it is asserted rather than assumed.
-releases_limit=1000
-releases_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh release list --limit "$releases_limit" --json tagName --jq '[.[].tagName]')"
-if [ "$(printf '%s' "$releases_json" | jq 'length')" -ge "$releases_limit" ]; then
-  echo "::error::the release list hit the ${releases_limit} page limit, so it may be truncated — every release past the cut would be reported as an unpublished tag. Raise releases_limit in $0." >&2
+# ── The fetch ─────────────────────────────────────────────────────────────────
+#
+# `--paginate` walks every page until none remain, so the set below is every
+# release, not just the newest ones. `--slurp` wraps each page's array into
+# one outer array. It cannot be combined with `--jq` (gh rejects that), so
+# the flatten from pages to releases happens in the plain `jq` call after.
+#
+# `max_pages` is a sanity check, not a cap. A normal run needs single-digit
+# pages. Needing close to a thousand does not mean the repo grew that much —
+# it means paging broke, and a human should look before trusting this run.
+max_pages=1000 # 100000 releases at per_page=100 — decades past this repo's rate
+pages_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh api --paginate --slurp 'repos/{owner}/{repo}/releases?per_page=100')"
+page_count="$(printf '%s' "$pages_json" | jq 'length')"
+if [ "$page_count" -gt "$max_pages" ]; then
+  echo "::error::the release list needed ${page_count} pages to walk fully, past the ${max_pages}-page sanity ceiling. That is not plausible growth for this repository — gh's pagination itself likely misbehaved. Investigate before trusting this run's answer." >&2
   exit 1
 fi
+releases_json="$(printf '%s' "$pages_json" | jq '[ .[][] | { name: .tag_name, draft: .draft } ]')"
 
 doc="$(jq -n --argjson tags "$tags_json" --argjson releases "$releases_json" \
   --argjson known "$(known_json)" '{ tags: $tags, releases: $releases, known: $known }')"
@@ -166,7 +192,7 @@ if [ "$update" -eq 1 ]; then
     echo "# exist, so every addition should be a decision someone made, visible in"
     echo "# review — not a way to quiet the check."
     printf '%s' "$doc" | jq -r --argjson now "$now" --argjson grace "$grace_secs" '
-      ( [ .releases[] | { (.): true } ] | add // {} ) as $published
+      ( [ .releases[] | select(.draft != true) | { (.name): true } ] | add // {} ) as $published
       | [ .tags[] | select($published[.name] | not) | select(($now - .created_unix) > $grace) ]
       | sort_by(.created_unix) | .[] | .name'
   } >"$baseline.tmp"
