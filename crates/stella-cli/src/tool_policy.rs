@@ -142,6 +142,13 @@ impl ToolExecutor for PolicyToolSet<'_> {
     fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
         self.inner.get().dispatch_gate()
     }
+
+    /// Forwarded, and NOT narrowed, as the gate above is not. A tool that is
+    /// switched off cannot run again. A call it made before the switch
+    /// flipped is still in the window, and the rung still reads its origin.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        self.inner.get().tool_origin(name)
+    }
 }
 
 /// Which `"tools"` key withheld `name` — the exact name, its group, or the

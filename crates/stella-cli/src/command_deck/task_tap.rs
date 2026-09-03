@@ -187,6 +187,12 @@ impl ToolExecutor for TaskTap<'_> {
         self.inner.dispatch_gate()
     }
 
+    /// Forwarded. The tap mirrors task updates. It owns no tool name of its
+    /// own, so every origin it can give back is the base's.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        self.inner.tool_origin(name)
+    }
+
     /// Forwarded: the deck's lead lane wraps the discovery mount (which owns
     /// the invocation plane) in this tap, so a tap that let the empty default
     /// stand would silently stop active skill bodies surviving summarization

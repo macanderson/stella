@@ -510,6 +510,71 @@ mod tests {
         );
     }
 
+    /// **The tool-origin witness, through the *shipped* composition.**
+    ///
+    /// The stagnation rung exempts a tool that came from outside the binary,
+    /// and it learns that from `ToolExecutor::tool_origin`. The answer starts
+    /// three or four layers down — the registry knows its catalog rows, the
+    /// MCP set knows its namespace, the custom set knows its manifest — and
+    /// has to survive every decorator above it. The port's default is `None`,
+    /// so a layer that forgets to forward reports "unknown" and the exemption
+    /// silently stops reaching the session that needed it.
+    ///
+    /// Asserted through `session_stack_with_gate` with the skill plane on
+    /// top, which is the chain a turn driver mounts, for the same reason the
+    /// gate witness above is: a future decorator that forgets to forward
+    /// fails here, and nowhere else.
+    #[tokio::test]
+    async fn the_production_tool_stack_forwards_tool_origin() {
+        use stella_core::loop_detect::ToolOrigin;
+        use stella_tools::skill_plane::{SkillInvocationPlane, SkillScopedTools};
+
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(stella_tools::registry::ToolRegistry::new(
+            dir.path().to_path_buf(),
+        ));
+        let mut client = stella_mcp::McpClient::new(
+            "vendor",
+            Box::new(CannedTransport {
+                called: Arc::new(std::sync::Mutex::new(false)),
+            }),
+        );
+        client.initialize().await.unwrap();
+        let mcp = stella_mcp::McpToolSet::from_clients(vec![client])
+            .wrapping(registry.clone() as Arc<dyn ToolExecutor>);
+
+        let stack = session_stack_with_gate(
+            &mcp,
+            vec![script_tool(dir.path())],
+            dir.path().to_path_buf(),
+            ToolPolicy::allow_all(),
+            session_gate(dir.path()),
+            Principal::User,
+        );
+        let view = SkillScopedTools::new(&stack, SkillInvocationPlane::new());
+
+        assert_eq!(
+            view.tool_origin("task_list"),
+            Some(ToolOrigin::Builtin),
+            "a catalog row is a built-in and the rung must keep firing for it"
+        );
+        assert_eq!(
+            view.tool_origin("mcp__vendor__deploy"),
+            Some(ToolOrigin::Mcp),
+            "a server's tool, whose constant ack is its own design"
+        );
+        assert_eq!(
+            view.tool_origin("my_tool"),
+            Some(ToolOrigin::Custom),
+            "a .stella/tools script, which may print one constant line"
+        );
+        assert_eq!(
+            view.tool_origin("no_such_tool"),
+            None,
+            "a name nothing registered is unknown, not a built-in"
+        );
+    }
+
     /// **The skill-invocation witness, through the shipped composition.**
     /// The skill invocation plane composed over the assembled session chain — the
     /// position every turn driver mounts it at — is exactly the

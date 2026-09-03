@@ -333,6 +333,7 @@ pub(super) fn recent_call_records<'a>(
                     call: Cow::Borrowed(call),
                     output: None,
                     identity: None,
+                    origin: None,
                 }));
             }
             MessageRole::Tool => {
@@ -354,6 +355,27 @@ pub(super) fn recent_call_records<'a>(
         }
     }
     records
+}
+
+/// Stamp each record with where its tool came from. The answer comes from
+/// the executor that dispatches the name.
+///
+/// A second pass, not an argument to [`recent_call_records`]. That walk reads
+/// the transcript, and every caller wants it. This one needs the live tool
+/// stack, and only the loop-detection pass holds one. A caller that skips it
+/// leaves every origin `None`, and the detector reads that as "not
+/// recorded".
+///
+/// One lookup per record, not one per name. The window is a few dozen calls,
+/// and each answer is a short walk down the tool chain. A memo would cost
+/// more than it saves.
+pub(super) fn stamp_origins(
+    records: &mut [CallRecord<'_>],
+    tools: &dyn crate::ports::ToolExecutor,
+) {
+    for record in records.iter_mut() {
+        record.origin = tools.tool_origin(&record.call.name);
+    }
 }
 
 /// Identifies a tool call for the purpose of [`ResultIdentities`]: the

@@ -496,6 +496,14 @@ impl ToolExecutor for GatedToolSet<'_> {
     fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
         self.inner.get().dispatch_gate()
     }
+
+    /// Forwarded, and not narrowed by the grant: the loop detector asks about
+    /// a call that already ran, so refusing an answer here would only cost
+    /// the stagnation rung its evidence. This is the outermost layer of the
+    /// shipped chain, so a `None` here would strand every origin beneath it.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        self.inner.get().tool_origin(name)
+    }
 }
 
 #[cfg(test)]

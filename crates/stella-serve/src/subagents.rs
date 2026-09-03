@@ -546,6 +546,15 @@ impl ToolExecutor for DelegatingTools<'_> {
     fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
         self.inner.dispatch_gate()
     }
+
+    /// Forwarded for the same reason. This wrapper adds the `delegate` name
+    /// and dispatches nothing else, so every origin it gives back is the
+    /// base's. The base here is the remoted executor, and it reports none.
+    /// The host owns the registry. So what comes back is an unknown, not a
+    /// guess.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        self.inner.tool_origin(name)
+    }
 }
 
 /// Turn a child's outcome into a model-visible result.

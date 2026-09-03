@@ -628,6 +628,7 @@ mod stall {
                 }),
                 output: Some(Cow::Owned(ToolOutput::ok("done"))),
                 identity: None,
+                origin: None,
             })
             .collect()
     }

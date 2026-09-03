@@ -92,6 +92,40 @@ mod sweep;
 /// observation with a number it did not produce.
 const MAX_CYCLE_PERIOD: usize = 4;
 
+/// Where a called tool came from, and so whether byte-identical output says
+/// anything about the turn.
+///
+/// A built-in's output is content: it reports what it read, what it matched,
+/// what it wrote. The same bytes back from different arguments therefore mean
+/// the arguments are not reaching anything new, which is what the stagnation
+/// rung claims. A tool outside the binary makes no such promise. An MCP
+/// server may answer every successful call with one ack string, and a
+/// workspace script may print one constant line, so identical output there is
+/// the tool's design and says nothing about the turn.
+///
+/// Set by the caller from the executor that dispatches the name
+/// (`crate::ports::ToolExecutor::tool_origin`), never derived here: this
+/// module is a pure function over owned data, and which names a session
+/// registered is not something it can see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolOrigin {
+    /// Compiled into this binary and declared in the reviewed catalog.
+    Builtin,
+    /// Reached over an MCP server's wire, named `mcp__<server>__<tool>`.
+    Mcp,
+    /// A workspace's own script tool, declared in `.stella/tools/*.toml`.
+    Custom,
+}
+
+impl ToolOrigin {
+    /// Whether this tool's output was reviewed as content, which is the claim
+    /// `detect_stagnation` rests on.
+    #[must_use]
+    pub fn is_builtin(self) -> bool {
+        matches!(self, Self::Builtin)
+    }
+}
+
 /// One tool call paired with the output it produced — the unit the
 /// detector inspects. `output` is `None` while unresolved (the call never
 /// ran, or its result message is gone from the window); an unresolved
@@ -119,6 +153,15 @@ pub struct CallRecord<'a> {
     pub call: Cow<'a, ToolCall>,
     pub output: Option<Cow<'a, ToolOutput>>,
     pub identity: Option<String>,
+    /// Where the tool this call names came from, when the caller knows —
+    /// read by `detect_stagnation` and by nothing else.
+    ///
+    /// `None` means the origin was never recorded, not that the tool is a
+    /// built-in. A caller that leaves it unset gets what this module did
+    /// before origins existed, so the field cannot quietly disarm a rung for
+    /// anyone who has not opted in. [`Self::identity`] carries the same
+    /// three states, for the same reason.
+    pub origin: Option<ToolOrigin>,
 }
 
 /// Threshold configuration for [`detect_loop`] and for the stall rung beside
@@ -270,6 +313,11 @@ pub enum LoopVerdict {
     /// The weakest of the three verdicts and the last one checked: it makes
     /// no claim about the *shape* of the repetition, only that the tool
     /// stopped being informative.
+    ///
+    /// Reported for a built-in tool, or for one whose [`ToolOrigin`] the
+    /// caller did not record. A tool known to come from outside the binary
+    /// never reaches this verdict — its constant output may be a design
+    /// choice rather than a stalled turn.
     Stagnant { tool: String, count: usize },
     /// One identical call — same tool, same input, byte-identical output —
     /// recurring across the window with other work in between.
@@ -789,11 +837,26 @@ fn detect_short_cycle(records: &[CallRecord<'_>], repeats_threshold: usize) -> O
 /// other pairwise, or differ in any particular way. A run of `a, a, b, b, c`
 /// stagnates just as a run of `a, b, c, d, e` does — what makes it stagnation
 /// is that none of them moved the answer.
+///
+/// A tool the caller marked as coming outside the binary is exempt
+/// ([`ToolOrigin`]). This rung rests on one claim: the same bytes mean
+/// nothing was learned. That is false for a server that acks every call with
+/// one string, and killing a working turn over it is the bug.
+///
+/// The other four rungs still cover such a tool. An identical *input*
+/// repeated still trips `detect_exact_repeat`, which makes no claim about
+/// what the bytes mean.
 fn detect_stagnation(records: &[CallRecord<'_>], threshold: usize) -> Option<LoopVerdict> {
     if threshold < 2 {
         return None;
     }
     let last = records.last()?;
+    // Read off the trailing record, as every verdict here is. The run below
+    // shares this record's tool name, and an origin is a fact about a name,
+    // so one lookup settles the whole run.
+    if last.origin.is_some_and(|origin| !origin.is_builtin()) {
+        return None;
+    }
     // `same_output(last, last)` is false for an unresolved output, so a
     // trailing call whose result is not in the window yields a count of 0 and
     // never fires — the same "a loop can only be PROVEN by observed outputs"
