@@ -23,6 +23,7 @@
 //! `task_assign` requests are reported on its lane instead of spawning.
 
 mod closeout;
+mod notify;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,6 +36,7 @@ use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 
+use self::notify::worker_notification;
 use crate::agent;
 use crate::command_deck::{LEAD, close_turn_stream, now_ms, prompt_line, spawn_forwarder};
 use crate::config::Config;
@@ -50,7 +52,12 @@ pub(crate) const MAX_CONCURRENT: usize = 3;
 /// failure, must not auto-complete a task, and needs no inbox notification —
 /// the user was there).
 pub(crate) enum WorkerEnd {
-    Done,
+    /// Finished, carrying the worker's final answer —
+    /// [`stella_core::TurnOutcome::Completed`]'s text. The answer rides here
+    /// because `task_assign` tells the model that a sub-agent's results land
+    /// back in this session, and [`notify`] is where a reader who looked away
+    /// finds them. Empty when the model ended the turn with no text.
+    Done(String),
     Failed(String),
     /// Stopped by the user (Agents tab `s`, or Esc on the worker's lane).
     Stopped,
@@ -838,7 +845,7 @@ pub(crate) fn spawn(
         let _ = in_tx.send(Inbound::Status {
             agent: lane.clone(),
             status: match &end {
-                WorkerEnd::Done => AgentStatus::Done,
+                WorkerEnd::Done(_) => AgentStatus::Done,
                 WorkerEnd::Failed(_) => AgentStatus::Failed,
                 WorkerEnd::Stopped => AgentStatus::Killed,
             },
@@ -853,23 +860,7 @@ pub(crate) fn spawn(
             });
         }
 
-        // The `/inbox` flow: a worker finishing (or failing) lands a
-        // persist-until-read notification linked to this session, so the
-        // user finds the result — and can open the session, replaying it if
-        // needed — without having watched the lane. A user-initiated stop
-        // lands none: the user was there.
-        let notification = match &end {
-            WorkerEnd::Done => Some((
-                format!("{workspace_name}: {}", spec.notify_title),
-                prompt_line(&spec.prompt, 160),
-            )),
-            WorkerEnd::Failed(reason) => Some((
-                format!("{workspace_name}: {} — FAILED", spec.notify_title),
-                format!("{} — {reason}", prompt_line(&spec.prompt, 80)),
-            )),
-            WorkerEnd::Stopped => None,
-        };
-        if let Some((title, body)) = notification {
+        if let Some((title, body)) = worker_notification(&workspace_name, &spec, &end) {
             let _ = stella_store::NotificationStore::open_default().push(
                 &stella_store::Notification::new(title, body, session_id.clone())
                     .with_session_id(session_id.clone()),
@@ -1182,8 +1173,10 @@ async fn run_worker(
     }
 
     let (label, cost, end) = match raced {
-        RacedTurn::Outcome(stella_core::TurnOutcome::Completed { cost_usd, .. }) => {
-            ("completed", cost_usd, WorkerEnd::Done)
+        // `text` is the worker's answer. It rides back on `Done` so the
+        // `/inbox` note can carry it — see [`notify`].
+        RacedTurn::Outcome(stella_core::TurnOutcome::Completed { text, cost_usd }) => {
+            ("completed", cost_usd, WorkerEnd::Done(text))
         }
         RacedTurn::Outcome(stella_core::TurnOutcome::Aborted {
             reason, cost_usd, ..

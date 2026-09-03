@@ -214,7 +214,7 @@ pub(super) fn settle_worker_task(
     let board = registry.task_board();
     let items: Vec<TaskItem> = {
         let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
-        if matches!(end, subsession::WorkerEnd::Done) {
+        if matches!(end, subsession::WorkerEnd::Done(_)) {
             let _ = guard.set_status(task_id, stella_protocol::TaskStatus::Completed);
         }
         guard.items().to_vec()
@@ -269,7 +269,7 @@ impl<'a> BoardMirror<'a> {
 /// as a dropped result.
 fn stale_worker_note(task_id: &str, end: &subsession::WorkerEnd) -> String {
     let outcome = match end {
-        subsession::WorkerEnd::Done => "finished",
+        subsession::WorkerEnd::Done(_) => "finished",
         _ => "ended without finishing",
     };
     format!(
@@ -593,7 +593,7 @@ mod tests {
         settle_worker_task(
             "sub:1",
             stale,
-            &subsession::WorkerEnd::Done,
+            &subsession::WorkerEnd::Done(String::new()),
             &mut subs,
             &registry,
             None,
@@ -686,7 +686,7 @@ mod tests {
         settle_worker_task(
             "sub:1",
             fresh,
-            &subsession::WorkerEnd::Done,
+            &subsession::WorkerEnd::Done(String::new()),
             &mut subs,
             &registry,
             None,
@@ -716,7 +716,7 @@ mod tests {
     /// of the bug being fixed.
     #[test]
     fn the_quarantine_note_distinguishes_a_failure_from_a_finish() {
-        let done = stale_worker_note("3", &subsession::WorkerEnd::Done);
+        let done = stale_worker_note("3", &subsession::WorkerEnd::Done(String::new()));
         assert!(done.contains("finished"), "{done}");
         let failed = stale_worker_note("3", &subsession::WorkerEnd::Failed("boom".into()));
         assert!(failed.contains("without finishing"), "{failed}");

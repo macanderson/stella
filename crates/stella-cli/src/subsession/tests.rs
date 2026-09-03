@@ -318,10 +318,10 @@ fn a_panicking_worker_body_ends_as_failed_never_silence() {
         _ => panic!("a String panic payload must synthesize Failed too"),
     }
     // A body that returns normally passes through untouched.
-    let (id, cost, end) = run_caught(|| (Some(7), 1.25, WorkerEnd::Done));
+    let (id, cost, end) = run_caught(|| (Some(7), 1.25, WorkerEnd::Done("done".into())));
     assert_eq!(id, Some(7));
     assert_eq!(cost, 1.25);
-    assert!(matches!(end, WorkerEnd::Done));
+    assert!(matches!(end, WorkerEnd::Done(answer) if answer == "done"));
 }
 
 #[tokio::test]
