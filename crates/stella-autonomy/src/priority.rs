@@ -105,13 +105,17 @@ impl PriorityLadder {
 /// The first rung the issue carries wins, so an issue mislabelled with two
 /// rungs is treated as the more urgent of them. That is the safe direction: a
 /// contradiction should not be resolved by ignoring the alarm.
+///
+/// Returns the raw `Vec` position rather than narrowing it to a fixed-width
+/// type. A narrowing `u8::try_from` here once turned "the ladder knows this
+/// label, at rung 256" into `None` on an operator's oversized ladder — the
+/// exact confusion this module exists to remove, since `rank_of(...).is_some()`
+/// is how [`partition`] and [`triage`] decide *ranked* from *unassessed*. A
+/// `usize` matches what [`position`](Iterator::position) already returns and
+/// cannot fail to represent any ladder a `Vec` can hold.
 #[must_use]
-pub fn rank_of(issue: &QueueIssue, ladder: &PriorityLadder) -> Option<u8> {
-    ladder
-        .rungs
-        .iter()
-        .position(|rung| issue.has_label(rung))
-        .and_then(|index| u8::try_from(index).ok())
+pub fn rank_of(issue: &QueueIssue, ladder: &PriorityLadder) -> Option<usize> {
+    ladder.rungs.iter().position(|rung| issue.has_label(rung))
 }
 
 /// An issue nobody has placed on the ladder.
@@ -452,6 +456,35 @@ mod tests {
             rank_of(&issue(1, "2026-01-01T00:00:00Z", &["P2", "P0"]), &ladder),
             Some(0)
         );
+    }
+
+    /// **The witness.** A narrowing `u8::try_from` on the ladder position
+    /// turns a rung past 255 into `None` — "the ladder knows this label"
+    /// reads as "nobody judged this", the confusion this module exists to
+    /// remove. A ladder with more than 256 rungs is absurd, not impossible:
+    /// an operator's generated vocabulary is exactly this kind of input. The
+    /// issue must still be ranked, not unassessed.
+    #[test]
+    fn a_rung_past_255_is_still_ranked_not_unassessed() {
+        let rungs: Vec<String> = (0..300).map(|i| format!("rung-{i}")).collect();
+        let ladder = PriorityLadder::new(rungs);
+
+        assert_eq!(
+            rank_of(&issue(1, "2026-01-01T00:00:00Z", &["rung-260"]), &ladder),
+            Some(260),
+            "the 261st rung must resolve to its real position, not overflow to None"
+        );
+
+        let queue = partition(
+            vec![issue(1, "2026-01-01T00:00:00Z", &["rung-260"])],
+            &ladder,
+        );
+        assert_eq!(
+            queue.ranked.len(),
+            1,
+            "a label the ladder knows past position 255 is ranked work, not a question"
+        );
+        assert!(queue.unassessed.is_empty());
     }
 
     /// A brand-new unlabelled issue is a question the loop must answer.

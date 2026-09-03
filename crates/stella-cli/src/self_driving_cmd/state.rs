@@ -288,7 +288,7 @@ impl LoopState {
             .iter()
             .map(|issue| {
                 let rank = stella_autonomy::priority::rank_of(issue, ladder)
-                    .and_then(|i| ladder.rungs.get(usize::from(i)))
+                    .and_then(|i| ladder.rungs.get(i))
                     .cloned()
                     .unwrap_or_else(|| "untriaged".to_owned());
                 json!({
