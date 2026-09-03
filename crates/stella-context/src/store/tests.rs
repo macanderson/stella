@@ -849,7 +849,6 @@ fn an_episode_is_born_with_its_own_lineage() {
         "a summary",
         &serde_json::json!([]),
         "success",
-        0.5,
         T1,
         T1,
         T1,
@@ -873,9 +872,9 @@ fn an_episode_is_born_with_its_own_lineage() {
 fn a_revision_cannot_steal_another_lineages_row() {
     let (_dir, store) = tmp_store();
     let conn = store.conn();
-    insert_memory(&conn, "mem_a", "mem_a", "reflection", "the text", 0.5, T1).unwrap();
+    insert_memory(&conn, "mem_a", "mem_a", "reflection", "the text", T1).unwrap();
 
-    let err = insert_memory(&conn, "mem_a", "mem_b", "reflection", "the text", 0.5, T2)
+    let err = insert_memory(&conn, "mem_a", "mem_b", "reflection", "the text", T2)
         .expect_err("a cross-lineage identity collision must refuse");
     assert!(
         err.to_string().contains("already belongs to lineage"),

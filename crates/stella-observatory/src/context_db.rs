@@ -358,7 +358,7 @@ fn episode_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
     collect_rows(
         conn,
         &format!(
-            "SELECT summary, files_touched, outcome, salience, started_at, ended_at
+            "SELECT summary, files_touched, outcome, started_at, ended_at
              FROM episode WHERE superseded_at IS NULL
              ORDER BY ended_at DESC, id DESC LIMIT {MAX_LISTED_EPISODES}"
         ),
@@ -369,9 +369,8 @@ fn episode_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
                 "summary": truncate(&r.get::<_, String>(0)?, 240),
                 "files_touched": files,
                 "outcome": r.get::<_, String>(2)?,
-                "salience": r.get::<_, f64>(3)?,
-                "started_at": r.get::<_, String>(4)?,
-                "ended_at": r.get::<_, String>(5)?,
+                "started_at": r.get::<_, String>(3)?,
+                "ended_at": r.get::<_, String>(4)?,
             }))
         },
     )
