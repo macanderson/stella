@@ -119,6 +119,97 @@ want "D2 a draft does not hide a real gap among the published releases" \
   "v0.6.76" \
   "{\"tags\":[$(tag v0.6.75 $((3 * day))),$(tag v0.6.76 $((2 * day)))],\"releases\":[$(rel v0.6.75),$(rel v0.6.76 draft)]}"
 
+# ── Draft or absent ──────────────────────────────────────────────────────────
+# The two states cost different things to fix: a draft is built and one API
+# call from done, an absent release has to be rebuilt from the tag. Reporting
+# both as "cut but never published" sent a maintainer looking for four rebuilds
+# when two of the four already had their assets attached.
+#
+# want_state reads the third field, so both cases below fail against a report
+# that carries only a tag and an age.
+want_state() {
+  local name="$1" expect="$2" json="$3" got
+  got="$(printf '%s' "$json" | "$SCRIPT" --select --now "$NOW" --grace-secs "$GRACE" 2>&1 | cut -f3 | tr '\n' ' ')"
+  got="${got% }"
+  if [ "$got" = "$expect" ]; then
+    pass=$((pass + 1)); echo "ok   $name"
+  else
+    fail=$((fail + 1)); echo "FAIL $name — wanted '${expect}', got '${got}'"
+  fi
+}
+
+want_state "D3 a tag whose release sits in draft is reported as draft" \
+  "draft" \
+  "{\"tags\":[$(tag v0.6.80 $((5 * day)))],\"releases\":[$(rel v0.6.80 draft)]}"
+
+want_state "D4 a tag with no release object at all is reported as absent" \
+  "absent" \
+  "{\"tags\":[$(tag v0.6.80 $((5 * day)))],\"releases\":[]}"
+
+want_state "D5 the state is read per tag, not for the whole report" \
+  "absent draft" \
+  "{\"tags\":[$(tag v0.6.80 $((5 * day))),$(tag v0.6.81 $((4 * day)))],\"releases\":[$(rel v0.6.81 draft)]}"
+
+# ── Notes on a baseline entry ────────────────────────────────────────────────
+# The reason a tag was grandfathered is the only thing that makes the entry
+# reviewable, and `--update` rewrites the file from scratch. These drive the
+# rewrite's note handling against a fixture rather than the live baseline.
+notes_dir="$(mktemp -d)"
+trap 'rm -rf "$notes_dir"' EXIT
+
+# No blank line under the header, which is the shape that traps a naive read:
+# the header would otherwise be carried onto v0.1.1 as its note.
+tight="$notes_dir/tight.txt"
+cat >"$tight" <<'FIXTURE'
+# Header line one.
+# Header line two.
+v0.1.1
+# The upload never reached GitHub.
+v0.9.273
+FIXTURE
+
+# The shape the shipped baseline uses: a blank line closes the header.
+spaced="$notes_dir/spaced.txt"
+cat >"$spaced" <<'FIXTURE'
+# Header line one.
+
+v0.1.1
+# The upload never reached GitHub.
+v0.9.273
+FIXTURE
+
+# carried <name> <baseline-file> <expected-output> <tags-one-per-line>
+carried() {
+  local name="$1" file="$2" expect="$3" input="$4" got
+  got="$(printf '%s' "$input" | "$SCRIPT" --carry-notes --baseline "$file" 2>&1)"
+  if [ "$got" = "$expect" ]; then
+    pass=$((pass + 1)); echo "ok   $name"
+  else
+    fail=$((fail + 1)); echo "FAIL $name — wanted '${expect}', got '${got}'"
+  fi
+}
+
+carried "B1 a tag's note is written back above it" "$tight" \
+  "$(printf '# The upload never reached GitHub.\nv0.9.273')" \
+  "$(printf 'v0.9.273\n')"
+
+carried "B2 the file header is not pinned onto the first tag" "$tight" \
+  "v0.1.1" \
+  "$(printf 'v0.1.1\n')"
+
+carried "B3 a blank line under the header works the same way" "$spaced" \
+  "$(printf 'v0.1.1\n# The upload never reached GitHub.\nv0.9.273')" \
+  "$(printf 'v0.1.1\nv0.9.273\n')"
+
+carried "B4 a tag the baseline never held gets no note" "$tight" \
+  "v0.9.999" \
+  "$(printf 'v0.9.999\n')"
+
+carried "B5 a missing baseline carries nothing and drops no tag" \
+  "$notes_dir/absent.txt" \
+  "$(printf 'v0.1.1\nv0.9.273')" \
+  "$(printf 'v0.1.1\nv0.9.273\n')"
+
 # ── Grandfathering ───────────────────────────────────────────────────────────
 # The baseline is what lets this be an alarm about NEW silence instead of a
 # daily recital of a backlog nobody is going to republish (#1463). An exemption

@@ -4,6 +4,7 @@
 #
 #   ./scripts/check-releases-published.sh [--grace-secs N]
 #   ./scripts/check-releases-published.sh --select --now <unix> --grace-secs <n>   # pure: JSON on stdin
+#   ./scripts/check-releases-published.sh --carry-notes [--baseline PATH]          # pure: tags on stdin
 # --help text ends here.
 #
 # ── The silence ──────────────────────────────────────────────────────────────
@@ -41,6 +42,22 @@
 # is skipped. Too short and this cries wolf on every release; too long and the
 # silence it exists to break lasts that much longer.
 #
+# ── Draft or absent: two findings with two remedies ──────────────────────────
+#
+# A tag with no published release is in one of two states, and they cost
+# different things to fix:
+#
+#   draft    the build ran and its assets are attached to a release object
+#            that was never flipped out of draft. Nothing has to be rebuilt.
+#            Check the asset list, then publish or delete the draft.
+#   absent   there is no release object at all. The tag has to be built again.
+#
+# Telling them apart needs `GET /releases`, which lists drafts. The by-tag
+# endpoint cannot answer it: `GET /releases/tags/{tag}` returns 404 for a draft
+# too, because a draft is not attached to its tag. That 404 is consistent with
+# both states, so reading it as "absent" is a guess. Four orphan tags were read
+# that way once, and two of them already had their assets built.
+#
 # ── Why the release list has no fixed cap ────────────────────────────────────
 #
 # A fixed `--limit` is a trap that reopens itself. A cap of 200 once reported
@@ -60,6 +77,7 @@ set -euo pipefail
 
 grace_secs=$((90 * 60))
 select_only=0
+carry_only=0
 update=0
 now=""
 
@@ -76,6 +94,8 @@ while [ $# -gt 0 ]; do
     --grace-secs) grace_secs="${2:?--grace-secs needs a number}"; shift 2 ;;
     --now) now="${2:?--now needs a unix timestamp}"; shift 2 ;;
     --select) select_only=1; shift ;;
+    --carry-notes) carry_only=1; shift ;;
+    --baseline) baseline="${2:?--baseline needs a path}"; shift 2 ;;
     --update) update=1; shift ;;
     -h|--help) print_help_header "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -89,8 +109,9 @@ done
 #   { "tags":     [ { "name": "v0.6.75", "created_unix": 1234567890 }, … ],
 #     "releases": [ { "name": "v0.6.74", "draft": false }, … ] }
 #
-# and prints one `<tag>\t<age-in-seconds>` line per tag that should have been
-# published and was not, oldest first. Kept free of I/O so
+# and prints one `<tag>\t<age-in-seconds>\t<state>` line per tag that should
+# have been published and was not, oldest first. `state` is `draft` or
+# `absent`, the two remedies described in the header. Kept free of I/O so
 # scripts/test-releases-published.sh can drive every rule from a fixture rather
 # than from the live repository — a suite that asked GitHub would pass or fail
 # for reasons that have nothing to do with the rule under test.
@@ -99,7 +120,8 @@ done
 # one and it can sit open indefinitely, so a tag with only a draft release
 # must still be reported. `draft` rides on each release object rather than
 # being filtered out before this function sees the data, so a fixture can
-# cover the rule directly instead of trusting the wrapper below got it right.
+# cover both the reporting rule and the state directly, instead of trusting
+# the wrapper below got them right.
 #
 # Note what is NOT consulted: the outcome of any workflow run. A `release`/
 # `homebrew` job is gated on `startsWith(github.ref, 'refs/tags/')`, so
@@ -114,6 +136,7 @@ done
 select_unpublished() {
   jq -r --argjson now "$now" --argjson grace "$grace_secs" '
     ( [ .releases[] | select(.draft != true) | { (.name): true } ] | add // {} ) as $published
+    | ( [ .releases[] | select(.draft == true) | { (.name): true } ] | add // {} ) as $drafted
     | ( [ (.known // [])[] | { (.): true } ] | add // {} ) as $known
     | [ .tags[]
         | select($published[.name] | not)
@@ -122,7 +145,7 @@ select_unpublished() {
       ]
     | sort_by(.created_unix)
     | .[]
-    | "\(.name)\t\($now - .created_unix)"
+    | "\(.name)\t\($now - .created_unix)\t\(if $drafted[.name] then "draft" else "absent" end)"
   '
 }
 
@@ -135,9 +158,42 @@ known_json() {
   fi
 }
 
+# Re-attach each tag's note to it. Reads a tag per line on stdin and prints the
+# comment lines that sat directly above that tag in the current baseline, then
+# the tag. Without this, `--update` erases the reason every entry was added —
+# and the reason is the only thing that makes an entry reviewable.
+#
+# A comment block starting on line 1 is the file's own header, not a note, so
+# it is dropped rather than pinned onto whichever tag happens to be first.
+carry_notes() {
+  awk -v old="$baseline" '
+    BEGIN {
+      n = 0; block = ""; block_start = 0
+      while ((getline line < old) > 0) {
+        n++
+        if (line ~ /^[ \t]*#/) {
+          if (block == "") block_start = n
+          block = block line "\n"
+          continue
+        }
+        if (line ~ /^[ \t]*$/) { block = ""; block_start = 0; continue }
+        if (block_start != 1) note[line] = block
+        block = ""; block_start = 0
+      }
+      close(old)
+    }
+    { printf "%s%s\n", note[$0], $0 }
+  '
+}
+
 if [ "$select_only" -eq 1 ]; then
   [ -n "$now" ] || { echo "--select needs --now" >&2; exit 2; }
   select_unpublished
+  exit 0
+fi
+
+if [ "$carry_only" -eq 1 ]; then
+  carry_notes
   exit 0
 fi
 
@@ -191,13 +247,17 @@ if [ "$update" -eq 1 ]; then
     echo "# alarm about NEW silence. A tag added here is a release that will never"
     echo "# exist, so every addition should be a decision someone made, visible in"
     echo "# review — not a way to quiet the check."
+    echo "#"
+    echo "# A comment line right above a tag is that tag's note: why it shipped"
+    echo "# nothing. Regeneration keeps those notes, so writing one is safe."
+    echo ""
     printf '%s' "$doc" | jq -r --argjson now "$now" --argjson grace "$grace_secs" '
       ( [ .releases[] | select(.draft != true) | { (.name): true } ] | add // {} ) as $published
       | [ .tags[] | select($published[.name] | not) | select(($now - .created_unix) > $grace) ]
-      | sort_by(.created_unix) | .[] | .name'
+      | sort_by(.created_unix) | .[] | .name' | carry_notes
   } >"$baseline.tmp"
   mv "$baseline.tmp" "$baseline"
-  echo "check-releases-published: baseline updated — $(grep -cv '^#' "$baseline") grandfathered tag(s)."
+  echo "check-releases-published: baseline updated — $(known_json | jq 'length') grandfathered tag(s)."
   exit 0
 fi
 
@@ -213,11 +273,16 @@ fi
 count="$(printf '%s\n' "$report" | wc -l | tr -d ' ')"
 echo "::error::${count} tag(s) were cut but never published. The repository is stamping version numbers while shipping no binaries — this is the #1464 silence, live."
 echo ""
-echo "Tag                  Age"
-printf '%s\n' "$report" | while IFS="$(printf '\t')" read -r tag age; do
-  printf '  %-18s %sh\n' "$tag" "$((age / 3600))"
+echo "Tag                  Age     State"
+printf '%s\n' "$report" | while IFS="$(printf '\t')" read -r tag age state; do
+  printf '  %-18s %-6s %s\n' "$tag" "$((age / 3600))h" "$state"
 done
 echo ""
+echo "draft   the build ran and its assets are attached. Check the asset list,"
+echo "        then publish or delete the draft — nothing has to be rebuilt."
+echo "absent  no release object exists. The tag has to be built again."
+echo ""
 echo "Check what happened:  gh run list --workflow=release.yml --limit 40 --json conclusion,headBranch"
+echo "List a draft's files: gh api repos/{owner}/{repo}/releases --jq '.[] | select(.draft) | {id, tag_name, assets: [.assets[].name]}'"
 echo "Re-run one by hand:   see RELEASING.md § When a release fails"
 exit 1
