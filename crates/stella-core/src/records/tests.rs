@@ -572,6 +572,7 @@ applies_to = { paths = [".git/*"], keywords = ["fsck", "reflog"] }
             verdicts: BTreeMap::new(),
             last_checked: BTreeMap::new(),
             approved_blocking: BTreeSet::new(),
+            retired_lineages: BTreeSet::new(),
             now: "2026-08-08T00:00:00Z",
         };
         registry::load(&[], &files, &facts)
@@ -800,6 +801,7 @@ expect = "present"
             verdicts,
             last_checked: checked,
             approved_blocking: BTreeSet::new(),
+            retired_lineages: BTreeSet::new(),
             now,
         };
         registry::load(&[], &files, &facts)
@@ -950,6 +952,7 @@ guard_deny_command = "git push --force*"
         verdicts: std::collections::BTreeMap::new(),
         last_checked: std::collections::BTreeMap::new(),
         approved_blocking: std::collections::BTreeSet::new(),
+        retired_lineages: std::collections::BTreeSet::new(),
         now: "2026-08-08T00:00:00Z",
     };
     let loaded = registry::load(&[], &files, &facts);

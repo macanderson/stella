@@ -48,7 +48,7 @@
 //! (`advisory` | `blocking`); the four review-ladder labels are UI over it
 //! and never appear on the wire or in this ledger.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -348,6 +348,29 @@ pub fn blocking_grants(events: &[PromotionEvent]) -> BTreeMap<String, PromotionE
     latest
 }
 
+/// The lineages whose LATEST event closed their valid time. The render path
+/// reads this fold. So a retirement that reached the ledger, and not the record
+/// file, still stops the record steering.
+///
+/// The same latest-event fold [`blocking_grants`] uses, for the same reason. A
+/// lineage a later revision revived has a grant as its newest event, so it is
+/// not retired. Retired and superseded are one answer here. Each says the
+/// source has dropped the claim, and a superseding revision arrives as its own
+/// record under its own `lineage_id`.
+pub fn retired_lineages(events: &[PromotionEvent]) -> BTreeSet<String> {
+    let mut latest: BTreeMap<&str, LedgerAction> = BTreeMap::new();
+    for event in events {
+        latest.insert(&event.lineage_id, event.action);
+    }
+    latest
+        .into_iter()
+        .filter_map(|(lineage, action)| {
+            matches!(action, LedgerAction::Retired | LedgerAction::Superseded)
+                .then(|| lineage.to_string())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,6 +518,37 @@ mod tests {
         ]);
         let events = parse_and_verify(&text).unwrap();
         assert!(blocking_grants(&events).is_empty());
+    }
+
+    /// The retirement fold the render path reads, for `#5509`. A grant leaves the
+    /// lineage open, a retirement closes it, and a later grant on the same
+    /// lineage reopens it — the latest event decides, as it does for grants.
+    #[test]
+    fn the_retirement_fold_follows_the_latest_event() {
+        let open = ledger(&[event("^a", "blocking", "lead@example.test")]);
+        let events = parse_and_verify(&open).unwrap();
+        assert!(retired_lineages(&events).is_empty());
+
+        let closed = ledger(&[
+            event("^a", "blocking", "lead@example.test"),
+            retirement("^a"),
+        ]);
+        let events = parse_and_verify(&closed).unwrap();
+        assert_eq!(
+            retired_lineages(&events),
+            BTreeSet::from(["^a".to_string()])
+        );
+
+        let reopened = ledger(&[
+            event("^a", "blocking", "lead@example.test"),
+            retirement("^a"),
+            event("^a", "blocking", "lead@example.test"),
+        ]);
+        let events = parse_and_verify(&reopened).unwrap();
+        assert!(
+            retired_lineages(&events).is_empty(),
+            "a revision published after the retirement reopens the lineage"
+        );
     }
 
     /// **Witness (#5327).** A truncated tail passes the hash chain, and the
