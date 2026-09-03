@@ -113,6 +113,20 @@ pub(crate) struct Lease {
     beat: Option<JoinHandle<()>>,
 }
 
+impl Lease {
+    /// The grant this lease holds — owner, fence, expiry — for a caller that
+    /// wants to show a human what it is rather than only hold it.
+    ///
+    /// [`super::claim_mirror`] is the one caller today: it reads `owner` and
+    /// `ttl_ms` to build the comment it posts on the tracker when the lease
+    /// is granted. Read-only — nothing outside this module may renew or
+    /// release a lease it does not own.
+    #[must_use]
+    pub(super) fn dispatch_lease(&self) -> &DispatchLease {
+        &self.lease
+    }
+}
+
 impl Drop for Lease {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);

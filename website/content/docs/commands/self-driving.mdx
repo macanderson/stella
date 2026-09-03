@@ -137,6 +137,8 @@ A Claude worker will not accept `--spend-limit`. Claude does not report what a r
 
 `stella self-driving drive` runs on its own, without you watching it. It keeps asking what to do next, does it, and asks again: claim the next issue from the ranked queue, run it through the turn loop, open a pull request, watch CI, and merge when it's ready.
 
+Claiming an issue posts a comment on it saying who claimed it and for how long, and a second comment when the claim is given back. This is a courtesy for a human deciding what to hand out next, or for a session on a second clone — the comment can never decide who owns an issue, since GitHub has no way to check-and-set a claim. The workspace's own lease, in `.stella/private/fleet.db`, is what actually decides that; `stella fleet claims --all` shows it live. A failure to post — no `gh`, no login, a rate limit — never stops the loop from working the issue.
+
 **When it hits a block, it parks and keeps checking — it does not exit.** Nothing stays "stuck" on purpose: every block is recalculated from scratch each time, so as soon as its cause is gone, it stops being reported. If the command exited on a block instead, nothing could resume it automatically. You never need to tell this loop it can resume — raising a limit, restoring a permission, removing a stop flag, or merging an escalated pull request already says everything that needs to be said.
 
 `--max-issues` limits one run so that it eventually stops. The loop itself never stops on its own, which is why this limit is a flag you set, not a fixed number. When the loop hits this limit, it's reported as *reached the bound*, not as *finished*.
@@ -147,7 +149,7 @@ A tracking issue never counts as ready, whatever its blockers say — an epic wh
 
 `--dry-run` prints the issue the loop would take next — the generator, the queue depth, the pick, and the branch prefix it would cut — and then stops. It reads the tracker and changes nothing: no claim, no branch, no label, no session record.
 
-`--parallel N` (with `--backlog`) works N ready issues at once instead of one after another. N defaults to the governor's number: what the machine probes and the learned calibration say this box can host right now. So a wave sizes itself to the machine, with nobody choosing a width. The ready issues go out as a single-wave fleet plan. Each worker gets its own worktree and holds its own issue lease, so a second loop on the same repository defers instead of doubling up. The run's spend cap is divided across the width before any worker starts. At `--parallel 1` the loop runs exactly the serial path described above.
+`--parallel N` (with `--backlog`) works N ready issues at once instead of one after another. N defaults to the governor's number: what the machine probes and the learned calibration say this box can host right now. So a wave sizes itself to the machine, with nobody choosing a width. The ready issues go out as a single-wave fleet plan. Each worker gets its own worktree and holds its own issue lease, mirrored on GitHub the same way, so a second loop on the same repository defers instead of doubling up. The run's spend cap is divided across the width before any worker starts. At `--parallel 1` the loop runs exactly the serial path described above.
 
 If the machine asks for a step this build can't do, like sweeping an audit lens or curating a proposal, stella reports it and stops the loop, instead of silently skipping it. A driver that silently skipped steps would always look healthy, even when it wasn't doing anything.
 

@@ -108,7 +108,9 @@ pub(super) fn wave(
     // Take the issue leases first, in readiness order. An issue a live
     // peer holds is deferred by name, never contested. A ledger that will
     // not answer fails open, the same direction every claim probe takes.
-    let mut taken: Vec<(Issue, Option<super::claim::Lease>)> = Vec::new();
+    // Each grant is wrapped as a `MirroredLease`, so the `drop` below that
+    // frees the ledger rows also tells GitHub each issue is free again.
+    let mut taken: Vec<(Issue, Option<super::claim_mirror::MirroredLease<'_>>)> = Vec::new();
     for issue in ready {
         if taken.len() >= bound {
             break;
@@ -122,7 +124,13 @@ pub(super) fn wave(
                     "taken off the ready backlog for the wave",
                 );
                 durable.update_stats(|s| s.issues_claimed += 1);
-                taken.push((issue, Some(lease)));
+                let mirrored = super::claim_mirror::MirroredLease::new(
+                    lease,
+                    provider,
+                    issue.key.as_str(),
+                    &cfg.attribution.issue_comment,
+                );
+                taken.push((issue, Some(mirrored)));
             }
             super::claim::Claim::HeldBy(owner) => {
                 audit::record(
