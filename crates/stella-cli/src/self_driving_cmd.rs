@@ -17,6 +17,7 @@ mod audit;
 mod backlog;
 mod budget;
 pub(crate) mod claim;
+mod claim_mirror;
 mod claude_worker;
 // `pub(crate)` rather than private: `plugin_cmd::configure` asserts against
 // this reader directly (#3999). A package that configures attribution has to

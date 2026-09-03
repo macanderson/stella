@@ -346,8 +346,10 @@ pub(super) fn drive(
     // The ledger claims this run holds, one per issue taken and not yet
     // worked. Keyed by issue so the Work arm can take back the one it is
     // about to run; dropped wholesale if the run ends holding any, which
-    // releases them rather than leaving a peer to wait out the TTL.
-    let mut leases: HashMap<String, super::claim::Lease> = HashMap::new();
+    // releases them rather than leaving a peer to wait out the TTL. Each is
+    // a `MirroredLease` rather than a bare lease, so the drop that frees the
+    // ledger row also tells GitHub the issue is free again.
+    let mut leases: HashMap<String, super::claim_mirror::MirroredLease<'_>> = HashMap::new();
     // Issues this process already offered to triage. The escalation label is
     // the durable half; this covers the window before it lands, and stops a
     // provider that failed to accept the label costing a turn every pass.
@@ -612,7 +614,15 @@ pub(super) fn drive(
                 );
                 durable.update_stats(|s| s.issues_claimed += 1);
                 if let Some(lease) = lease {
-                    leases.insert(key.clone(), lease);
+                    leases.insert(
+                        key.clone(),
+                        super::claim_mirror::MirroredLease::new(
+                            lease,
+                            &provider,
+                            &key,
+                            &cfg.attribution.issue_comment,
+                        ),
+                    );
                 }
                 state.claimed.push(IssueRef(key));
             }
