@@ -12,6 +12,12 @@ mod determinism;
 // #3349: the assembled volatile block's bytes, pinned — the evidence that the
 // steering-plane migration changed the wiring and not the prompt.
 mod golden_block;
+// Session mount runs the anchor staleness scan on its own already-open
+// store, so a deleted file's anchor ends world validity with no manual
+// `stella memory validate --end-stale`. `anchor_scan`'s own tests cover the
+// bounded walk directly; this is the wiring witness through the real mount
+// path (`SessionMemory::open`).
+mod mount_anchor_scan;
 mod path_token;
 mod quarantine;
 // Which sessions actually receive the volatile record channel — a separate
