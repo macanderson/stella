@@ -313,8 +313,8 @@ make test-core           # cargo test -p stella-core
 make watch-core          # re-run on save (needs cargo-watch)
 ```
 
-There is no `tests/` directory: every test is an inline `#[cfg(test)]` module in
-the file it covers, which is why the engine's own suite is split across
+Nearly every test is an inline `#[cfg(test)]` module in the file it covers,
+which is why the engine's own suite is split across
 [`src/driver/tests.rs`](src/driver/tests.rs) and
 [`src/driver/tests/`](src/driver/tests) (`audit_fixes.rs` holds the 2026-07
 turn-driver audit witnesses; also `budget_boundaries.rs`,
@@ -327,6 +327,13 @@ fixture server and no network — driver tests wire scripted `Provider`s, counti
 `ToolExecutor`s and no-op `Sleeper`s, so the suite runs in seconds. Keep it that
 way: a test here that needs a file or a socket means the logic under test is in
 the wrong crate.
+
+[`tests/`](tests) holds the few that have to drive the crate the way a host
+does, through the public API alone. [`tests/spend_gate.rs`](tests/spend_gate.rs)
+is the one to read first: it pins the model calls, tool runs and cost of one
+turn per scenario, so a loop change that quietly buys an extra model call fails
+here. An intended change edits the pin in the same pull request
+(`doc:verification-gate`).
 
 ## Extending it
 
