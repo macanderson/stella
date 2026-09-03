@@ -673,14 +673,10 @@ mod tests {
 
     #[test]
     fn oversized_handoff_fails_without_echoing_bytes() {
-        let mut fds = [0_i32; 2];
-        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-        // Avoid blocking on pipe capacity: use a temporary anonymous-file FD
-        // for the pure size-boundary unit. Production Harbor uses a pipe.
-        unsafe {
-            libc::close(fds[0]);
-            libc::close(fds[1]);
-        }
+        // A temporary anonymous-file fd, not a pipe: writing 64 KiB+1 bytes
+        // to a pipe before anything reads it would block on pipe capacity.
+        // Production Harbor uses a pipe; this test only needs one fd holding
+        // an oversized payload.
         let file = tempfile::tempfile().unwrap();
         (&file)
             .write_all(&vec![b'x'; MAX_CREDENTIAL_BYTES as usize + 1])
