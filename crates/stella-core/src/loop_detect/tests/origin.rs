@@ -144,7 +144,10 @@ proptest! {
             .map(|record| from(record, origin))
             .collect();
         let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold, monotonic_sweep_threshold, stall_steer_threshold_secs: 0 };
-        prop_assert!(!matches!(detect_loop(&records, config), LoopVerdict::Stagnant { .. }));
+        prop_assert!(
+            !matches!(detect_loop(&records, config), LoopVerdict::Stagnant { .. }),
+            "a tool from outside the binary reached Stagnant"
+        );
     }
 
     /// Property: marking every record `Builtin` changes no verdict. The
