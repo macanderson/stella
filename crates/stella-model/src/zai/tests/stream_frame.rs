@@ -65,7 +65,7 @@ async fn a_tool_call_fragment_without_an_index_is_not_dropped() {
     assert_eq!(
         result.tool_calls.len(),
         1,
-        "a fragment without `index` must fall back to its position, not vanish"
+        "a fragment without `index` must fall back to the per-stream counter, not vanish"
     );
     assert_eq!(result.tool_calls[0].name, "read_file");
     assert_eq!(

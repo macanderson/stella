@@ -27,7 +27,7 @@ use std::sync::Arc;
 use stella_store::Store;
 use stella_tools::ToolRegistry;
 
-use super::{record_execution_end, warn_store_write_failed};
+use super::{record_execution_end, warn_dropped_audit_writes, warn_store_write_failed};
 use crate::config::Config;
 
 /// How one turn ended, as the `executions` row records it.
@@ -63,18 +63,27 @@ pub(crate) fn close_turn(
     session_id: Option<&str>,
     outcome: TurnOutcomeRecord<'_>,
 ) {
-    if let Some((execution_store, id)) = execution
-        && !record_execution_end(
+    if let Some((execution_store, id)) = execution {
+        let end = record_execution_end(
             execution_store,
             *id,
             registry,
             outcome.label,
             outcome.cost_usd,
             outcome.persistence_complete,
-        )
-        .fully_recorded()
-    {
-        warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
+        );
+        if end.dropped.is_empty() {
+            // No write failed, so there is no error to report. The record is
+            // short because the turn was cancelled, or because an event never
+            // reached the journal.
+            if !end.fully_recorded() {
+                warn_store_write_failed("the audit record (agent uses / MCP usage / outcome)");
+            }
+        } else {
+            // A write was turned away. That is the part a person can act on,
+            // so name the file, the result code, and whether we asked again.
+            warn_dropped_audit_writes(execution_store.db_path(), &end.dropped);
+        }
     }
     if let Some(session_id) = session_id {
         cfg.durability
