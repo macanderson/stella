@@ -141,9 +141,9 @@ impl Drop for ClaimGuard<'_> {
 /// Same reason as [`ClaimGuard`]: release must be tied to a scope, not to
 /// reaching a statement, because a panicking worker and a dropped dispatch
 /// future both skip the statement. Unlike a file lock, a leaked claim here is
-/// self-healing — it expires — but making the next session wait out
-/// [`DISPATCH_LEASE_TTL`] for work that settled seconds ago is a bad enough
-/// experience to be worth a guard.
+/// self-healing — it expires — but making the next session wait out the
+/// lease TTL for work that settled seconds ago is a bad enough experience to
+/// be worth a guard.
 ///
 /// Release is fenced (see [`Ledger::release_dispatch`]), so a guard whose
 /// lease was already reclaimed by a rival drops without touching the rival's
@@ -281,7 +281,8 @@ impl FleetConfig {
 /// grace is the cheap path and the synthesis the last resort.
 const TASK_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// How long a dispatch claim stays live without a heartbeat (#1136).
+/// How long a dispatch claim stays live without a heartbeat, unless
+/// [`Fleet::with_dispatch_lease_ttl`] sets another (#1136, #1678).
 ///
 /// It bounds only the *crash* case — a healthy attempt renews every
 /// [`DispatchLease::heartbeat_interval_ms`] (a third of this) for as long as
@@ -290,8 +291,36 @@ const TASK_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 /// beats without being dead, which is why it is minutes rather than seconds:
 /// a machine that swaps, a laptop lid, or a `SIGSTOP`ped process should not
 /// hand its work to a rival. The other direction costs a human's patience —
-/// after a hard kill, this is how long the task looks taken.
-const DISPATCH_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// after a hard kill, this is how long the task looks taken. A workspace
+/// whose workers are all short-lived can trade the first for the second.
+pub const DEFAULT_DISPATCH_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// The shortest dispatch-lease TTL a fleet uses, whatever
+/// [`Fleet::with_dispatch_lease_ttl`] is handed.
+///
+/// Under a second the lease stops being a lease: the heartbeat is a third of
+/// the TTL, so the attempt would beat against the ledger several times a
+/// second for its whole run, and any pause longer than a scheduler slice
+/// would hand a live worker's task to a rival. A shorter ask is raised to
+/// this, and [`Fleet::dispatch_lease_ttl`] reads back what took effect.
+pub const MIN_DISPATCH_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The shortest a waiting dispatch sleeps before asking for a held claim
+/// again.
+///
+/// The wait normally sleeps to the holder's own expiry, which is the earliest
+/// instant it can win. This floor covers the cases where that instant is not
+/// usable: a row that vanished between the claim and the read of who holds
+/// it, and a holder whose expiry is already in the past because it beat
+/// between the two statements. Without it either would spin.
+const CLAIM_RETRY_FLOOR: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// A duration as the milliseconds the ledger's lease API speaks, saturating:
+/// a `Duration` holds more milliseconds than a `u64` can, and a lease that
+/// outlives the epoch is the same lease either way.
+fn duration_to_ms(duration: std::time::Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
 
 /// The ledger key one fleet task is claimed under (#1136).
 ///
@@ -343,7 +372,7 @@ pub struct TaskHandle {
     pub ledger_error: Option<String>,
     /// `Some` when this attempt's dispatch lease (#1136) was lost mid-run: a
     /// heartbeat renewal came back [`RenewOutcome::Lost`] — the attempt
-    /// stalled past `DISPATCH_LEASE_TTL` and a rival session reclaimed the
+    /// stalled past its lease TTL and a rival session reclaimed the
     /// task — or the ledger became unreadable. The same "attempt succeeded
     /// but something durable failed" seam as `ledger_error`: the worker was
     /// left to finish (never killed mid-flight), so the outcome
@@ -439,8 +468,10 @@ pub enum FleetError {
     /// is the user's to act on.
     ///
     /// Terminal for that task within this run, like a claim conflict:
-    /// [`Fleet::run_plan`] records it as a dispatch failure rather than
-    /// waiting out a lease it cannot bound.
+    /// [`Fleet::run_plan`] records it as a dispatch failure. A fleet given
+    /// [`Fleet::with_dispatch_claim_wait`] waits that long for the lease to
+    /// lapse first and reports this only if it never does; the default wait
+    /// is zero, so a live claim fails the dispatch at once.
     #[error(
         "task `{task}` is already claimed by `{holder}` (lease expires at {expires_at_ms}ms); \
          another session is working it"
@@ -503,6 +534,14 @@ pub struct Fleet<W: FleetWorker, G: GitCli, C: Clock> {
     /// (issue #269) — `None` (the default) leaves every ready wave in its
     /// existing order.
     warmth: Option<CacheWarmthLookup>,
+    /// How long this fleet's dispatch claims stay live without a heartbeat —
+    /// [`DEFAULT_DISPATCH_LEASE_TTL`] unless
+    /// [`Fleet::with_dispatch_lease_ttl`] set another.
+    lease_ttl: std::time::Duration,
+    /// How long [`Fleet::dispatch`] waits for a rival's live claim to lapse
+    /// before giving up with [`FleetError::DispatchClaimed`] — zero unless
+    /// [`Fleet::with_dispatch_claim_wait`] set another.
+    claim_wait: std::time::Duration,
 }
 
 /// Seconds until a task's session prompt-cache prefix expires, `None` when
@@ -546,6 +585,8 @@ where
             claims: None,
             controls: Mutex::new(HashMap::new()),
             warmth: None,
+            lease_ttl: DEFAULT_DISPATCH_LEASE_TTL,
+            claim_wait: std::time::Duration::ZERO,
         })
     }
 
@@ -573,6 +614,56 @@ where
     pub fn with_cache_warmth(mut self, lookup: CacheWarmthLookup) -> Self {
         self.warmth = Some(lookup);
         self
+    }
+
+    /// Set how long this fleet's dispatch claims stay live without a
+    /// heartbeat (builder style), instead of
+    /// [`DEFAULT_DISPATCH_LEASE_TTL`].
+    ///
+    /// A workspace whose workers are all short-lived would rather a rival
+    /// reclaimed a dead session's task in a minute than in fifteen; one on a
+    /// laptop that sleeps wants the opposite. The heartbeat cadence follows
+    /// the TTL on its own ([`DispatchLease::heartbeat_interval_ms`] is a
+    /// third of it), so this is the only number to set.
+    ///
+    /// An ask shorter than [`MIN_DISPATCH_LEASE_TTL`] is raised to it —
+    /// [`Fleet::dispatch_lease_ttl`] reads back what took effect.
+    #[must_use]
+    pub fn with_dispatch_lease_ttl(mut self, ttl: std::time::Duration) -> Self {
+        self.lease_ttl = ttl.max(MIN_DISPATCH_LEASE_TTL);
+        self
+    }
+
+    /// The dispatch-lease TTL this fleet claims with.
+    #[must_use]
+    pub fn dispatch_lease_ttl(&self) -> std::time::Duration {
+        self.lease_ttl
+    }
+
+    /// Wait up to `wait` for a rival's live claim to lapse before failing a
+    /// dispatch with [`FleetError::DispatchClaimed`] (builder style).
+    ///
+    /// Zero — the default — is the original behaviour: a task somebody else
+    /// holds fails this run's dispatch immediately. A plan re-run behind a
+    /// finishing sibling is the case the wait exists for, where the claim is
+    /// about to be released anyway and losing the task costs more than the
+    /// pause.
+    ///
+    /// It sleeps to the holder's own expiry rather than polling, so a wait
+    /// long enough to cover the TTL costs one extra claim attempt, not
+    /// thousands. The wait is not a queue: several fleets waiting on one task
+    /// race for it when it frees, and the losers keep waiting until their own
+    /// budget runs out.
+    #[must_use]
+    pub fn with_dispatch_claim_wait(mut self, wait: std::time::Duration) -> Self {
+        self.claim_wait = wait;
+        self
+    }
+
+    /// How long this fleet waits for a held dispatch claim to lapse.
+    #[must_use]
+    pub fn dispatch_claim_wait(&self) -> std::time::Duration {
+        self.claim_wait
     }
 
     /// Reorder one ready wave warmest-first when a warmth lookup is
@@ -666,7 +757,7 @@ where
         //    used to re-dispatch a task another run was already on, and both
         //    ran to completion. This is the dispatch-level check-and-set, and
         //    it comes first because losing it means doing nothing at all.
-        let mut lease = self.acquire_dispatch_lease(task)?;
+        let mut lease = self.acquire_dispatch_lease(task).await?;
         let _claims = self.acquire_claims(task)?;
         self.dispatch_leased(task, &mut lease).await
     }
@@ -676,29 +767,58 @@ where
     /// Keyed `task:<id>` in the workspace's ledger, held under this run's id
     /// (which embeds the minting pid — see [`FleetConfig::run_id`]), so the
     /// holder in a refusal names a session a human can go look for.
-    fn acquire_dispatch_lease(&self, task: &Task) -> Result<LeaseGuard<'_>, FleetError> {
-        let now_ms = self.clock.now_ms();
-        let outcome = {
-            let ledger = self.lock_ledger();
-            ledger.claim_dispatch(
-                &dispatch_claim_key(&task.id),
-                &self.config.run_id,
-                now_ms,
-                DISPATCH_LEASE_TTL.as_millis().min(u128::from(u64::MAX)) as u64,
-            )?
-        };
-        match outcome {
-            ClaimOutcome::Granted(lease) => Ok(LeaseGuard {
-                ledger: &self.ledger,
-                lease,
-            }),
-            ClaimOutcome::Held(held) => Err(FleetError::DispatchClaimed {
-                task: task.id.clone(),
-                holder: held
-                    .as_ref()
-                    .map_or_else(|| "another session".to_string(), |c| c.owner.clone()),
-                expires_at_ms: held.as_ref().map_or(now_ms, |c| c.expires_at_ms),
-            }),
+    ///
+    /// With [`Fleet::with_dispatch_claim_wait`] set this waits for a rival's
+    /// lease instead of failing on it. Each round sleeps to the
+    /// holder's expiry — the earliest instant this fleet can win — floored by
+    /// [`CLAIM_RETRY_FLOOR`] and capped at the caller's deadline, so a wait
+    /// long enough to outlast a TTL costs a second claim attempt rather than
+    /// a poll loop. The refusal it eventually returns names the last holder
+    /// it saw, which need not be the first: a task can change hands while
+    /// this waits.
+    async fn acquire_dispatch_lease(&self, task: &Task) -> Result<LeaseGuard<'_>, FleetError> {
+        let ttl_ms = duration_to_ms(self.lease_ttl);
+        let give_up_at_ms = self
+            .clock
+            .now_ms()
+            .saturating_add(duration_to_ms(self.claim_wait));
+        loop {
+            let now_ms = self.clock.now_ms();
+            let held = {
+                let ledger = self.lock_ledger();
+                match ledger.claim_dispatch(
+                    &dispatch_claim_key(&task.id),
+                    &self.config.run_id,
+                    now_ms,
+                    ttl_ms,
+                )? {
+                    ClaimOutcome::Granted(lease) => {
+                        return Ok(LeaseGuard {
+                            ledger: &self.ledger,
+                            lease,
+                        });
+                    }
+                    ClaimOutcome::Held(held) => held,
+                }
+            };
+            if now_ms >= give_up_at_ms {
+                return Err(FleetError::DispatchClaimed {
+                    task: task.id.clone(),
+                    holder: held
+                        .as_ref()
+                        .map_or_else(|| "another session".to_string(), |c| c.owner.clone()),
+                    expires_at_ms: held.as_ref().map_or(now_ms, |c| c.expires_at_ms),
+                });
+            }
+            let wake_at_ms = held
+                .as_ref()
+                .map_or(now_ms, |c| c.expires_at_ms)
+                .max(now_ms.saturating_add(duration_to_ms(CLAIM_RETRY_FLOOR)))
+                .min(give_up_at_ms);
+            tokio::time::sleep(std::time::Duration::from_millis(
+                wake_at_ms.saturating_sub(now_ms),
+            ))
+            .await;
         }
     }
 
