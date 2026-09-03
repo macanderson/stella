@@ -646,7 +646,7 @@ pub(super) fn start(
     attribution: &stella_autonomy::Attribution,
     worker: &crate::settings::toml_config::WorkerSection,
 ) -> Result<WorkOutcome, String> {
-    use stella_fleet::git::{SystemGitCli, WorktreeManager};
+    use stella_fleet::git::{RemoveOptions, SystemGitCli, WorktreeManager};
 
     refuse_if_unsteered(root)?;
     // Asked before a worktree is cut, not after the turn refuses: a unit that
@@ -711,11 +711,12 @@ pub(super) fn start(
     // Nothing to deliver means nothing to keep. A worktree per issue that
     // changed nothing would accumulate silently until the disk noticed.
     //
-    // `remove` deletes the branch only when it carries no commits beyond its
-    // base, so this cannot discard work: a turn that committed keeps its
-    // branch even down this arm.
+    // `remove` deletes the branch only when it is already contained in its
+    // own base ref (the default `RemoveOptions::contained_in`), so this
+    // cannot discard work: a turn that committed keeps its branch even down
+    // this arm.
     if matches!(outcome, WorkOutcome::NoChange { .. })
-        && let Err(error) = runtime.block_on(manager.remove(&created))
+        && let Err(error) = runtime.block_on(manager.remove(&created, &RemoveOptions::default()))
     {
         // Reported, never swallowed. A worktree that failed to release is a
         // thing the operator has to know about — it will collide with the next

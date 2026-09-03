@@ -24,14 +24,17 @@
 //!   are not yet contained in the integration ref, is kept unless the caller
 //!   passes [`GcOptions::force`].
 //! - **Errors keep.** Every predicate answers "keep" when git cannot answer it
-//!   (an unresolvable range, a `merge-base` that failed for its own reasons),
-//!   the same direction [`WorktreeManager::remove`] already errs.
+//!   (a `merge-base` or `status` that failed), the same direction
+//!   [`WorktreeManager::remove`] errs, in the routine both share.
 //!
 //! [`WorktreeManager::remove`]: crate::git::WorktreeManager::remove
 
 use std::path::{Path, PathBuf};
 
-use crate::git::{GitCli, WorktreeError, ensure_ok, parse_worktree_list, path_arg};
+use crate::git::{
+    GitCli, RemoveOutcome, WorktreeError, ensure_ok, is_contained_in, parse_worktree_list,
+    remove_worktree_and_branch,
+};
 
 /// Milliseconds in a day — the unit [`GcOptions::min_age_days`] is expressed
 /// in.
@@ -346,7 +349,10 @@ impl<G: GitCli> Gc<G> {
                             branch_would_delete: !branch.is_empty(),
                         }
                     } else {
-                        match self.remove_worktree(&entry.path, &branch, opts.force).await {
+                        match self
+                            .remove_worktree(&entry.path, &branch, opts.force, base_ref)
+                            .await
+                        {
                             Ok(branch_deleted) => WorktreeAction::Removed { branch_deleted },
                             Err(e) => WorktreeAction::Failed(e.to_string()),
                         }
@@ -430,7 +436,7 @@ impl<G: GitCli> Gc<G> {
             if self.is_dirty(path).await? {
                 return Ok(Verdict::Keep(KeepReason::Dirty));
             }
-            if !self.is_contained_in(branch, base_ref).await? {
+            if !is_contained_in(&self.git, &self.repo_root, branch, base_ref).await? {
                 return Ok(Verdict::Keep(KeepReason::UnmergedCommits));
             }
         }
@@ -440,30 +446,24 @@ impl<G: GitCli> Gc<G> {
     /// `git worktree remove` then `branch -D`, in that order (git refuses to
     /// delete a branch that is still checked out somewhere). Returns whether
     /// the branch went with it.
+    ///
+    /// Calls `remove_worktree_and_branch`, the same routine
+    /// [`WorktreeManager::remove`](crate::git::WorktreeManager::remove)
+    /// calls, instead of issuing its own `git` commands.
+    /// `judge_worktree` already checked that `branch` is fleet-prefixed
+    /// before a `Reclaim` verdict is reachable, so this never sees a
+    /// foreign or absent branch.
     async fn remove_worktree(
         &self,
         path: &Path,
         branch: &str,
         force: bool,
+        base_ref: &str,
     ) -> Result<bool, WorktreeError> {
-        let path_str = path_arg(path)?;
-        let mut args = vec!["worktree", "remove"];
-        if force {
-            args.push("--force");
-        }
-        args.push(path_str);
-        let out = self.git.run(&self.repo_root, &args).await?;
-        ensure_ok(out, &format!("worktree remove {path_str}"))?;
-
-        if branch.is_empty() || !branch.starts_with(&self.branch_prefix) {
-            return Ok(false);
-        }
-        let out = self
-            .git
-            .run(&self.repo_root, &["branch", "-D", branch])
-            .await?;
-        ensure_ok(out, &format!("branch -D {branch}"))?;
-        Ok(true)
+        let RemoveOutcome { branch_deleted, .. } =
+            remove_worktree_and_branch(&self.git, &self.repo_root, path, branch, force, base_ref)
+                .await?;
+        Ok(branch_deleted)
     }
 
     /// The second half of the accumulation: a `fleet/*` branch whose worktree
@@ -501,7 +501,8 @@ impl<G: GitCli> Gc<G> {
             if !branch.starts_with(&self.branch_prefix) || attached.contains(&branch) {
                 continue;
             }
-            if !opts.force && !self.is_contained_in(branch, base_ref).await? {
+            if !opts.force && !is_contained_in(&self.git, &self.repo_root, branch, base_ref).await?
+            {
                 verdicts.push(BranchVerdict {
                     branch: branch.to_string(),
                     action: BranchAction::Kept(KeepReason::UnmergedCommits),
@@ -541,22 +542,6 @@ impl<G: GitCli> Gc<G> {
             return Ok(true);
         }
         Ok(!out.stdout.trim().is_empty())
-    }
-
-    /// Whether every commit on `branch` is already reachable from `base_ref`
-    /// (`git merge-base --is-ancestor`). Exit 1 is git's real "no"; any
-    /// other failure means git could not answer, and an unanswered question
-    /// keeps the branch.
-    async fn is_contained_in(&self, branch: &str, base_ref: &str) -> Result<bool, GcError> {
-        let out = self
-            .git
-            .run(
-                &self.repo_root,
-                &["merge-base", "--is-ancestor", branch, base_ref],
-            )
-            .await
-            .map_err(WorktreeError::from)?;
-        Ok(out.success)
     }
 
     /// The ref merged-ness is judged against when the caller names none:
