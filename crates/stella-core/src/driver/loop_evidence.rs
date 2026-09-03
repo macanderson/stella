@@ -35,13 +35,15 @@ use crate::receipts::TranscriptRevision;
 /// reaching this rule, so a stuck-loop scan silently reset on the exact two
 /// injections that mean the turn is still running (#2837).
 ///
-/// The once-per-turn completion nudges (`confident_zero::is_engine_nudge` —
-/// the prove-it ask and the live-service assertion) are engine-authored
-/// user-role text too, and are excluded for the same reason: they carry no
-/// bracketed marker, so the table alone cannot recognize them, and a window
-/// that reset on one erased the turn's pre-nudge activity — a mutating turn
-/// answering the prove-it ask with a read-only test run could then be
-/// aborted as a confident zero for doing exactly what the nudge asked.
+/// The once-per-turn completion nudges — the prove-it ask and the
+/// live-service assertion — are engine-authored user-role text too, and are
+/// excluded for the same reason: they carry no bracketed marker, so the
+/// marker table alone cannot recognize them, and a window that reset on one
+/// erased the turn's pre-nudge activity — a mutating turn answering the
+/// prove-it ask with a read-only test run could then be aborted as a
+/// confident zero for doing exactly what the nudge asked. They are the second
+/// table beside the markers (`engine_markers::ENGINE_NUDGE_PREFIXES`), read
+/// here through `engine_markers::is_engine_nudge`.
 ///
 /// Shared by [`recent_call_records`] (loop-detection evidence) and
 /// `driver::confident_zero` (turn-activity evidence for #1477, and both
@@ -56,7 +58,7 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
                 && !crate::engine_markers::ENGINE_MARKERS
                     .iter()
                     .any(|marker| m.content.starts_with(marker))
-                && !super::confident_zero::is_engine_nudge(&m.content)
+                && !crate::engine_markers::is_engine_nudge(&m.content)
         })
         .map(|i| i + 1)
         .unwrap_or(0)
@@ -238,13 +240,14 @@ mod tests {
     /// table loop above cannot cover them — and a window that reset on one
     /// erased the turn's pre-nudge activity from every consumer at once
     /// (loop detection and the confident-zero tally). Fails before
-    /// `turn_start_index` read `is_engine_nudge`.
+    /// `turn_start_index` read `engine_markers::is_engine_nudge`.
+    ///
+    /// Driven off the exported table rather than a hand-written pair, for the
+    /// reason the marker loop above is: a third gate's nudge that never
+    /// reached this rule fails here by name.
     #[test]
     fn an_engine_nudge_does_not_reset_the_turn_window() {
-        for nudge in [
-            super::super::confident_zero::PROVE_IT_PREFIX,
-            super::super::live_services::SERVICES_PREFIX,
-        ] {
+        for nudge in crate::engine_markers::ENGINE_NUDGE_PREFIXES {
             let messages = vec![
                 CompletionMessage::system("sys"),
                 CompletionMessage::user("fix the flaky test"),

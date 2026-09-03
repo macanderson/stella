@@ -392,6 +392,64 @@ fn every_exported_engine_marker_is_classified_as_engine_text() {
     }
 }
 
+/// **The witness.** Both completion nudges are text the engine wrote. A
+/// receipt filed each one as the person's own goal.
+///
+/// Spelled as literals, not through `ENGINE_NUDGE_PREFIXES`, on
+/// `driver/restore.rs`'s precedent: the fail half then runs against the base
+/// tree, which has no such table. `the_nudge_literals_are_the_constants` pins
+/// the spelling.
+#[test]
+fn the_completion_nudges_are_steering_not_the_users_goal() {
+    let prove_it = "Before declaring this task complete: nothing in this turn proved the work. \
+                    Run the task's own test or check command.";
+    assert_eq!(
+        user_block_kind(prove_it),
+        BlockKind::Steered,
+        "the prove-it ask is the engine redirecting the model, not the person \
+         restating the goal"
+    );
+
+    let services = "Before ending this turn: 2 processes you started are still running:\n  \
+                    - `srv1`: uvicorn";
+    assert_eq!(
+        user_block_kind(services),
+        BlockKind::Steered,
+        "the live-service assertion is the engine's own text too"
+    );
+}
+
+/// The literals above are the constants the gates actually write, so the
+/// witness cannot pass against a prefix nobody sends.
+#[test]
+fn the_nudge_literals_are_the_constants() {
+    assert_eq!(
+        crate::engine_markers::ENGINE_NUDGE_PREFIXES,
+        [
+            "Before declaring this task complete:",
+            "Before ending this turn:"
+        ]
+        .as_slice()
+    );
+}
+
+/// The classifier half of the `ENGINE_NUDGE_PREFIXES` tie, and the twin of
+/// `every_exported_engine_marker_is_classified_as_engine_text`. A nudge added
+/// to the table that never reaches this classifier fails here by name. The
+/// receipt would otherwise file the new engine message under the person.
+#[test]
+fn every_exported_engine_nudge_is_classified_as_engine_text() {
+    for nudge in crate::engine_markers::ENGINE_NUDGE_PREFIXES {
+        let content = format!("{nudge} engine-authored ask");
+        assert_eq!(
+            user_block_kind(&content),
+            BlockKind::Steered,
+            "{nudge:?} is in ENGINE_NUDGE_PREFIXES but user_block_kind does not \
+             read it as steering — add it in receipts.rs"
+        );
+    }
+}
+
 #[test]
 fn a_hydrated_attachment_never_puts_its_payload_on_the_event_stream() {
     // An at-rest attachment is metadata and rides as a gap kind. A hydrated

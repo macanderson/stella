@@ -656,20 +656,6 @@ impl TurnState {
         self
     }
 
-    /// The cancellation check `run_step` runs at its safe boundaries: `None`
-    /// when the turn may proceed, otherwise the clean abort.
-    ///
-    /// Closing any open `tool_use` before returning mirrors the budget-abort
-    /// discipline in `Engine::handle_committed_result`. At a step boundary the
-    /// engine's own path never leaves one open — `dispatch_completion` appends
-    /// the results before it returns — so this only ever fires on history a
-    /// caller handed in (or appended to) mid-turn. It is cheap, and the
-    /// alternative is a resumed session whose first provider call is rejected
-    /// outright for an unanswered `tool_use`.
-    ///
-    /// No `Error` event: a cancellation is a decision, not a failure, exactly
-    /// as the soft stop is. The `Aborted` outcome carries [`CANCELLED_REASON`]
-    /// and that is what a host renders.
     /// The per-call shape of this step: which step it is, and the output
     /// ceiling it may ask for.
     ///
@@ -700,6 +686,20 @@ impl TurnState {
         self.output_budget_recovery.apply(configured)
     }
 
+    /// The cancellation check `run_step` runs at its safe boundaries: `None`
+    /// when the turn may proceed, otherwise the clean abort.
+    ///
+    /// Closing any open `tool_use` before returning mirrors the budget-abort
+    /// discipline in `Engine::handle_committed_result`. At a step boundary the
+    /// engine's own path never leaves one open — `dispatch_completion` appends
+    /// the results before it returns — so this only ever fires on history a
+    /// caller handed in (or appended to) mid-turn. It is cheap, and the
+    /// alternative is a resumed session whose first provider call is rejected
+    /// outright for an unanswered `tool_use`.
+    ///
+    /// No `Error` event: a cancellation is a decision, not a failure, exactly
+    /// as the soft stop is. The `Aborted` outcome carries [`CANCELLED_REASON`]
+    /// and that is what a host renders.
     pub(crate) fn cancel_outcome(&mut self, events: &EventSender) -> Option<StepOutcome> {
         if !self.cancel.is_cancelled() {
             return None;
