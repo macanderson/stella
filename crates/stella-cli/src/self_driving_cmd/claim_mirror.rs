@@ -41,11 +41,14 @@ use super::claim::Lease;
 /// the codebase — the end of a scope, an early `continue`, a bulk `drop` —
 /// mirrors for free. See the module docs for why the mirroring half is
 /// best-effort.
+///
+/// The wrapped lease is read again at drop time (its `owner`, off
+/// [`Lease::dispatch_lease`]) rather than copied out at construction, so
+/// there is exactly one place this type learns who it was granted to.
 pub(super) struct MirroredLease<'p> {
     lease: Lease,
     provider: &'p dyn IssueProvider,
     key: IssueKey,
-    owner: String,
     signature: String,
 }
 
@@ -61,19 +64,20 @@ impl<'p> MirroredLease<'p> {
         number: &str,
         signature: &str,
     ) -> Self {
-        let dispatch = lease.dispatch_lease().clone();
         let key = IssueKey::from(number);
-        post(
-            provider,
-            &key,
-            &claimed_body(&dispatch.owner, dispatch.ttl_ms),
-            signature,
-        );
+        {
+            let dispatch = lease.dispatch_lease();
+            post(
+                provider,
+                &key,
+                &claimed_body(&dispatch.owner, dispatch.ttl_ms),
+                signature,
+            );
+        }
         Self {
             lease,
             provider,
             key,
-            owner: dispatch.owner,
             signature: signature.to_owned(),
         }
     }
@@ -81,10 +85,11 @@ impl<'p> MirroredLease<'p> {
 
 impl Drop for MirroredLease<'_> {
     fn drop(&mut self) {
+        let owner = self.lease.dispatch_lease().owner.clone();
         post(
             self.provider,
             &self.key,
-            &released_body(&self.owner),
+            &released_body(&owner),
             &self.signature,
         );
     }
