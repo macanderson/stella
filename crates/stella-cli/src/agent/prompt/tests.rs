@@ -879,3 +879,111 @@ fn the_observatory_marker_copy_matches_the_emitting_constants() {
         "the rules heading moved — update the Observatory MARKERS"
     );
 }
+
+/// The three statements this repository steers its own autonomous loop by,
+/// copied from `.stella/rules/` byte for byte. A record whose wording changes
+/// has to change here too, which is the point: the loop's standards are meant
+/// to be reviewed, not drifted.
+const HARDEN_CI: &str = "When a defect is fixed, the same change adds the guard that would have caught it whenever such a guard can be written.";
+const DURABLE_DESIGN: &str = "Code in this repository must meet a reference-grade Rust quality bar rather than merely working.";
+const NOTHING_LEFT_BEHIND: &str = "Work is not finished while anything noticed during the session lives only in the author's head, a chat transcript, or a worktree about to be deleted.";
+
+/// This repository's root, two levels above the crate this test compiles in.
+fn repository_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the crate sits under <repo>/crates/")
+        .to_path_buf()
+}
+
+/// A throwaway checkout carrying this repository's own published records.
+///
+/// A copy rather than the tree itself, because the test retires a record and
+/// must not edit the file a person reviews.
+fn worktree_with_this_repositorys_records() -> tempfile::TempDir {
+    let worktree = tempfile::tempdir().expect("worktree");
+    let rules = worktree.path().join(".stella").join("rules");
+    std::fs::create_dir_all(&rules).expect("rules directory");
+    let published = repository_root().join(".stella").join("rules");
+    for entry in std::fs::read_dir(&published).expect("this repository publishes records") {
+        let from = entry.expect("a directory entry").path();
+        if from.is_file() {
+            let name = from.file_name().expect("a file name");
+            std::fs::copy(&from, rules.join(name)).expect("copy one record");
+        }
+    }
+    worktree
+}
+
+/// The system prompt a turn in `root` is given, with the repository trusted to
+/// steer it.
+fn prompt_in(root: &std::path::Path) -> String {
+    let authority = crate::settings::AuthorityPolicy {
+        project_prompts_allowed: true,
+        ..Default::default()
+    };
+    let resolved = crate::rules::load_workspace_rules(root, &authority);
+    super::assemble_system_prompt(super::SYSTEM_PROMPT, root, &authority, &resolved, None)
+}
+
+/// **Witness.** The self-driving loop starts a turn by spawning `stella run`
+/// in a fresh worktree (`self_driving_cmd::work`'s `turn_command`), so the
+/// turn's prompt is assembled over that worktree's root. This drives that: a
+/// worktree holding this repository's own records, and the prompt a turn
+/// there is given.
+///
+/// The records reach the turn. All three the loop is meant to be steered by
+/// are asserted, because two of them already existed — a test that checked
+/// one would not show that the set arrives.
+///
+/// Retiring a record stops it steering. The retirement here is the edit a
+/// person makes in `.stella/rules/`: the record's status stops being active.
+/// No Rust changes in either direction.
+///
+/// It fails on the base commit. `ctx.stella.harden-ci-from-lessons` does not
+/// exist there, so the first assertion finds no such sentence in the prompt.
+#[test]
+fn a_worktree_turn_is_steered_by_this_repositorys_records() {
+    let worktree = worktree_with_this_repositorys_records();
+
+    let steered = prompt_in(worktree.path());
+    assert!(
+        steered.contains(stella_core::records::CACHED_HEADING.trim_start()),
+        "the records must render as the cached rules block: {steered}"
+    );
+    for statement in [HARDEN_CI, DURABLE_DESIGN, NOTHING_LEFT_BEHIND] {
+        assert!(
+            steered.contains(statement),
+            "a turn in a worktree of this repository must be steered by {statement:?}"
+        );
+    }
+
+    let record = worktree
+        .path()
+        .join(".stella")
+        .join("rules")
+        .join("ctx.stella.harden-ci-from-lessons.toml");
+    let published = std::fs::read_to_string(&record).expect("the record file");
+    let retired = published.replace(
+        r#"status        = "active""#,
+        r#"status        = "archived""#,
+    );
+    assert_ne!(
+        retired, published,
+        "the record must declare an active status for this to retire it"
+    );
+    std::fs::write(&record, retired).expect("retire the record");
+
+    let after = prompt_in(worktree.path());
+    assert!(
+        !after.contains(HARDEN_CI),
+        "a retired record must stop steering the turn: {after}"
+    );
+    for statement in [DURABLE_DESIGN, NOTHING_LEFT_BEHIND] {
+        assert!(
+            after.contains(statement),
+            "retiring one record must leave the rest steering: {statement:?}"
+        );
+    }
+}

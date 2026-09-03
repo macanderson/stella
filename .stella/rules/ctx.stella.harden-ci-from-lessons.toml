@@ -1,0 +1,56 @@
+# This repo's own policy, kept as a record.
+#
+# It comes from what AGENTS.md says about the gate. Most steps in the gate
+# were added after a bug slipped by. `gate-parity` came after the step list
+# drifted. `check-deleted-tests` came after a merge dropped a test.
+# `main-canary` came after two good branches broke the tree.
+#
+# So the rule is the habit, not the list. A fix with no guard behind it
+# lets the same bug come back.
+#
+# Written by hand, like the two records next to it. The id is made from
+# the text, so the loader stamps `record_id` and `record_hash` on the
+# first load. No one has to trust a typed-in hash. `stella context
+# validate` checks it on each pull request.
+#
+# It has no probe. The claim is about what a session does after a fix.
+# No file on disk can prove it wrong. A probe on a stand-in would make
+# `validate` say more than it knows.
+
+schema = "context-record/v0.1"
+set_id = "stella"
+
+[defaults]
+sharing_scope = "repository"
+status        = "active"
+origin        = "user"
+
+# `source_digest`/`commit` pin AGENTS.md at the state the claim was read
+# from, not at the current tip.
+[defaults.provenance]
+source_kind   = "document"
+source_uri    = "AGENTS.md"
+source_digest = "sha256:ccff490389b7d7537ab27c61f0ea1e08d35b7035016eeb66c4df2580f413e791"
+repo          = "git@github.com:macanderson/stella"
+commit        = "ea1dc958"
+
+
+[[record]]
+lineage_id = "ctx.stella.harden-ci-from-lessons"
+kind       = "rule"
+statement  = "When a defect is fixed, the same change adds the guard that would have caught it whenever such a guard can be written."
+tags       = ["ci", "guards", "regressions"]
+
+  [record.steering]
+  force      = "must"
+  precedence = 90
+  applies_to = { keywords = ["fix", "defect", "guard", "regression"] }
+
+  [record.enforcement]
+  mode = "none"
+
+  [record.truth]
+  basis        = "decree"
+  confidence   = 95
+  verified_at  = "2026-09-02T00:00:00Z"
+  review_every = "P180D"
