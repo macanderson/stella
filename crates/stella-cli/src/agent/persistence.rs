@@ -348,7 +348,10 @@ pub(crate) fn spawn_renderer(
                 // does, terminate before the provider loop can spend on a
                 // later unmetered call.
                 OutputFormat::StreamJson => emit_stream_json(&event, durable_pre_persisted, &clock),
-                OutputFormat::Json => outcome.events.push(event),
+                // Rendered by the envelope `run_turn` builds out of
+                // `RendererOutcome::events` below, so this arm prints nothing
+                // of its own.
+                OutputFormat::Json => {}
                 // One frame per turn, folded from the same events the cards
                 // below would each have printed. The two cannot both run: the
                 // frame restates every row, so a surface doing both prints the
@@ -412,6 +415,14 @@ pub(crate) fn spawn_renderer(
                     other => plain::render_event(other),
                 },
             }
+            // Kept for every format, not only `Json`. `run_turn` folds this
+            // vector into the turn's `TurnFriction`, and reflection reads
+            // those counts to decide whether the turn hit anything worth a
+            // model call. While the `Json` arm alone collected, that ledger
+            // came out empty in interactive mode and on every
+            // `--output-format stream-json` run — no retries, no loop firings,
+            // no failed calls, whatever the turn actually did.
+            outcome.events.push(event);
         }
         // The stream is closed, so the turn is final: print whatever frame the
         // fold accumulated. A turn that never opened prints nothing.

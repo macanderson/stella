@@ -788,7 +788,9 @@ fn attempt_task_boundary(task: &Task) -> String {
 ///
 /// **What it costs.** One model call per attempt that warrants one, on the same
 /// terms as every other door: gated by `turn_warrants_reflection` so a tool-free
-/// turn spends nothing, bounded by this child's remaining headroom, and settled
+/// turn spends nothing and by `reflect_routed`'s own friction gate so an
+/// attempt that went straight through spends nothing either, bounded
+/// by this child's remaining headroom, and settled
 /// back into its `BudgetGuard` — so the reflection lands inside the
 /// `--spend-limit` the fleet enforces twice (the child's own cap here, and the
 /// metered total the parent stops new waves on), rather than beside it.
