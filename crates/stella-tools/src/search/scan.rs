@@ -14,12 +14,24 @@
 //! deliberately does not emit `path:line: text` rows: that output shape is
 //! what `grep -n` already produces. The path is a pointer; the follow-up is
 //! opening the file.
+//!
+//! # One ignore answer, not two
+//!
+//! The walk resolves [`stella_graph::workspace_ignore::WorkspaceIgnore`]
+//! once per [`scan_hits`] call. That is the same rule set `stella-graph`'s
+//! own index walk uses — it honours `.gitignore`, negations, and
+//! `.git/info/exclude`. The walk also skips the build and vendor caches in
+//! the shared [`stella_graph::DENY_DIRS`] list, instead of keeping a second
+//! copy. A path the repository owner excludes stays out of the fallback
+//! scan, the same as it stays out of the index.
 
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use stella_graph::DENY_DIRS;
 use stella_graph::admitted::{Admits, admission};
+use stella_graph::workspace_ignore::WorkspaceIgnore;
 
 use super::engine::Hit;
 
@@ -33,34 +45,6 @@ pub const MAX_FILES_SCANNED: usize = 4_000;
 /// Bytes read from each file. Enough to cover the imports, the type
 /// declarations and the head of a typical module.
 const MAX_BYTES_PER_FILE: usize = 64 * 1024;
-
-/// Directories never descended into. Every entry is either machine-generated
-/// or another tool's private state; a term matched inside one of them points
-/// at nothing the reader can edit.
-///
-/// The one carve-out — `.stella/rules/`, the published context records — is
-/// [`stella_graph::admitted::ADMITTED_SUBTREES`], and it lives in
-/// `stella-graph` rather than here because the code-graph walk applies the
-/// same policy (#4492). Two copies of a list whose job is refusing
-/// `.stella/private/` by name is how one of them stops refusing it.
-const SKIPPED_DIRS: &[&str] = &[
-    ".git",
-    ".hg",
-    ".svn",
-    ".stella",
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    "vendor",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".next",
-    ".cargo",
-];
 
 /// A term found in a path is worth this many found in contents.
 ///
@@ -105,9 +89,14 @@ pub fn scan_hits_bounded(root: &Path, query: &str, limit: usize, max_files: usiz
         };
     }
 
+    // One `git ls-files` per scan, not per directory — resolved here and
+    // threaded down the walk, the same discipline `stella-graph`'s own
+    // build-time walk uses for its index passes.
+    let ignore = WorkspaceIgnore::resolve(root);
+
     let mut scored: Vec<(usize, usize, usize, String)> = Vec::new();
     let mut budget = max_files;
-    for file in walk(root, &mut budget) {
+    for file in walk(root, &mut budget, &ignore) {
         let Ok(relative) = file.strip_prefix(root) else {
             continue;
         };
@@ -150,8 +139,9 @@ pub fn scan_hits_bounded(root: &Path, query: &str, limit: usize, max_files: usiz
 }
 
 /// Every regular file under `root`, shallowest directories first and sorted
-/// within each, skipping [`SKIPPED_DIRS`] and dotted entries — except for the
-/// [`stella_graph::admitted::ADMITTED_SUBTREES`] carve-out — and stopping once
+/// within each. Skips [`stella_graph::DENY_DIRS`], dotted entries, and
+/// anything `ignore` excludes — except for the
+/// [`stella_graph::admitted::ADMITTED_SUBTREES`] carve-out. Stops once
 /// `budget` files have been yielded.
 ///
 /// Breadth-first deliberately, because the order decides **which** files a
@@ -163,7 +153,7 @@ pub fn scan_hits_bounded(root: &Path, query: &str, limit: usize, max_files: usiz
 ///
 /// Iterative rather than recursive: a symlink loop or a pathological tree
 /// must cost a bounded walk, never the process's stack.
-fn walk(root: &Path, budget: &mut usize) -> Vec<PathBuf> {
+fn walk(root: &Path, budget: &mut usize, ignore: &WorkspaceIgnore) -> Vec<PathBuf> {
     let mut found = Vec::new();
     // The root-relative path rides with each directory because the carve-out
     // is a fact about a *path* (`.stella/rules`) and the basename alone
@@ -198,15 +188,20 @@ fn walk(root: &Path, budget: &mut usize) -> Vec<PathBuf> {
                 continue;
             };
             if metadata.is_dir() {
-                let ordinary = admits == Admits::Files
-                    && !name.starts_with('.')
-                    && !SKIPPED_DIRS.contains(&name);
-                if ordinary {
-                    queue.push_back((child, rel, Admits::Files));
-                } else if let Some(carved) = admission(&rel) {
-                    queue.push_back((child, rel, carved));
+                let ordinary =
+                    admits == Admits::Files && !name.starts_with('.') && !DENY_DIRS.contains(&name);
+                let carved = (!ordinary).then(|| admission(&rel)).flatten();
+                // The repository's own rules win over the carve-out, exactly
+                // as they do in `stella-graph`'s build-time walk: a project
+                // that gitignores `.stella/` has no records to publish.
+                if (ordinary || carved.is_some()) && !ignore.excludes_dir(&rel) {
+                    queue.push_back((child, rel, carved.unwrap_or(Admits::Files)));
                 }
-            } else if metadata.is_file() && admits == Admits::Files && !name.starts_with('.') {
+            } else if metadata.is_file()
+                && admits == Admits::Files
+                && !name.starts_with('.')
+                && !ignore.excludes(&rel)
+            {
                 *budget -= 1;
                 found.push(child);
             }
@@ -227,4 +222,48 @@ fn read_head(path: &Path) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(head).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A workspace's `.gitignore` can exclude a directory. The fallback scan
+    /// must never show a file from it. A hit is not just a rank: it is a
+    /// path plus a claim that the path matched — enough to open the file
+    /// next.
+    #[test]
+    fn a_gitignored_directory_is_never_offered_by_the_fallback_scan() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join(".gitignore"), "secret/\n").unwrap();
+        fs::create_dir_all(root.path().join("secret")).unwrap();
+        fs::write(root.path().join("secret/token.txt"), "zqxfrobnicate9k\n").unwrap();
+
+        let outcome = scan_hits(root.path(), "zqxfrobnicate9k", 10);
+        assert!(
+            outcome.hits.is_empty(),
+            "a term unique to a gitignored file must not surface a hit: {:?}",
+            outcome.hits
+        );
+        assert_eq!(outcome.matched, 0);
+    }
+
+    /// A negated pattern proves the walk uses git's real rules. A plain
+    /// prefix check could not un-ignore one file inside a broader `*.log`
+    /// rule, but `!keep.log` can.
+    #[test]
+    fn a_negated_gitignore_pattern_still_surfaces_its_own_file() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join(".gitignore"), "*.log\n!keep.log\n").unwrap();
+        fs::write(root.path().join("keep.log"), "kept9k\n").unwrap();
+        fs::write(root.path().join("drop.log"), "kept9k\n").unwrap();
+
+        let outcome = scan_hits(root.path(), "kept9k", 10);
+        let paths: Vec<&str> = outcome.hits.iter().map(|hit| hit.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["keep.log"],
+            "the negated file surfaces and the still-ignored sibling does not"
+        );
+    }
 }

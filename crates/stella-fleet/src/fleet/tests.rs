@@ -858,6 +858,134 @@ async fn a_failed_prerequisite_skips_its_dependents() {
     assert_eq!(skipped, vec!["b".to_string(), "c".to_string()]);
 }
 
+// invalid worker cost: a worker's reported cost is untrusted input, the
+// same footing as its commits or summary.
+
+/// A negative reported cost is never trusted. Recording it would shrink the
+/// running budget total. A later task could then slip past an `Enforced`
+/// limit that real spend has already crossed.
+///
+/// `dispatch` must reject it, record the attempt as failed with ZERO spend
+/// (not -1000.0), and still keep the commits the worker actually made.
+#[tokio::test]
+async fn a_negative_reported_cost_is_rejected_and_recorded_as_zero_spend() {
+    let f = fleet(
+        FakeWorker::new(-1000.0),
+        OkGit::new(),
+        BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None),
+        FleetConfig::new("run1", "HEAD"),
+    );
+    let task = Task::new("t1", "t1", "p");
+
+    let err = f
+        .dispatch(&task)
+        .await
+        .expect_err("a negative cost must be rejected, not trusted");
+    match err {
+        FleetError::InvalidWorkerCost { task: t, reported } => {
+            assert_eq!(t, "t1");
+            assert_eq!(reported, -1000.0);
+        }
+        other => panic!("expected InvalidWorkerCost, got {other:?}"),
+    }
+
+    // Recorded as failed with ZERO spend, never the poisoned -1000.0.
+    assert_eq!(f.ledger_total_spend().unwrap(), 0.0);
+    assert_eq!(f.budget_snapshot().session_spent_usd(), 0.0);
+    // The worker's real commit still lands in the ledger — only the cost
+    // figure is distrusted, not the rest of the attempt's evidence.
+    assert_eq!(f.ledger_commits_for_task("t1").unwrap().len(), 1);
+}
+
+/// **The witness.** Without the rejection, `record_spend(-1000.0)` shrinks
+/// the running total by 1000.0. Two further $0.99 tasks (1.98 total) would
+/// then read as comfortably under an `Enforced` $1.00 cap, and neither would
+/// ever trip `AbortTurn` — the budget gate silently stops enforcing for the
+/// rest of the run. With the rejection in place, the running total is never
+/// corrupted: the second $0.99 task still trips the cap.
+///
+/// Chained across three `Fleet` instances — one worker cost per instance —
+/// carrying the same `BudgetGuard` forward via `budget_snapshot`.
+/// `BudgetGuard` is `Copy`, so the total survives the handoff unchanged.
+#[tokio::test]
+async fn a_negative_reported_cost_does_not_disable_the_enforced_budget_gate() {
+    let f1 = fleet(
+        FakeWorker::new(-1000.0),
+        OkGit::new(),
+        BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None),
+        FleetConfig::new("run1", "HEAD"),
+    );
+    f1.dispatch(&Task::new("poison", "poison", "p"))
+        .await
+        .expect_err("the negative report is rejected");
+    assert_eq!(
+        f1.budget_snapshot().session_spent_usd(),
+        0.0,
+        "the running total must not have moved"
+    );
+
+    let f2 = fleet(
+        FakeWorker::new(0.99),
+        OkGit::new(),
+        f1.budget_snapshot(),
+        FleetConfig::new("run1", "HEAD"),
+    );
+    let handle2 = f2
+        .dispatch(&Task::new("a", "a", "p"))
+        .await
+        .expect("the first legitimate 0.99 task fits under the 1.00 cap");
+    assert_eq!(handle2.budget, BudgetOutcome::Continue);
+
+    let f3 = fleet(
+        FakeWorker::new(0.99),
+        OkGit::new(),
+        f2.budget_snapshot(),
+        FleetConfig::new("run1", "HEAD"),
+    );
+    let handle3 = f3
+        .dispatch(&Task::new("b", "b", "p"))
+        .await
+        .expect("dispatch itself succeeds; the BUDGET gate trips, not the dispatch");
+    assert!(
+        matches!(handle3.budget, BudgetOutcome::AbortTurn { .. }),
+        "cumulative 1.98 must trip the enforced 1.00 cap — the gate was never disabled"
+    );
+}
+
+/// A NaN reported cost is worse than a negative one. `x + f64::NAN` is
+/// `NaN` for every `x`. Without the rejection, one bad report would poison
+/// `BudgetGuard::session_spent_usd` for the rest of the run: every later
+/// check against a NaN total reads `false`, not `Continue`, and the total
+/// never recovers. Rejected before it reaches `record_spend`, the running
+/// total stays exactly what it was.
+#[tokio::test]
+async fn a_nan_reported_cost_is_rejected_and_never_poisons_the_budget_total() {
+    let f = fleet(
+        FakeWorker::new(f64::NAN),
+        OkGit::new(),
+        BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None),
+        FleetConfig::new("run1", "HEAD"),
+    );
+    let task = Task::new("t1", "t1", "p");
+
+    let err = f
+        .dispatch(&task)
+        .await
+        .expect_err("a NaN cost must be rejected, not trusted");
+    match err {
+        FleetError::InvalidWorkerCost { reported, .. } => assert!(reported.is_nan()),
+        other => panic!("expected InvalidWorkerCost, got {other:?}"),
+    }
+
+    let total = f.budget_snapshot().session_spent_usd();
+    assert!(
+        total.is_finite(),
+        "the running total must stay finite, not be poisoned to NaN: got {total}"
+    );
+    assert_eq!(total, 0.0);
+    assert_eq!(f.ledger_total_spend().unwrap(), 0.0);
+}
+
 #[tokio::test]
 async fn a_git_worktree_failure_is_a_recorded_dispatch_failure() {
     // Two independent isolated tasks in one wave; git worktree add fails

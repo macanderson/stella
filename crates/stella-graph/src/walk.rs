@@ -44,8 +44,14 @@ use crate::workspace_ignore::WorkspaceIgnore;
 /// caches; `.next` and `dist-standalone` are generated-bundle directories
 /// specifically called out by issue #272 (a checked-in minified
 /// `dist-standalone/*.mjs` bundle was polluting recall with zero-signal
-/// frames).
-const DENY_DIRS: &[&str] = &[
+/// frames); `.mypy_cache`, `.pytest_cache` and `.cargo` are tool caches.
+/// `stella-tools`'s index-free fallback scan skips them too, by reading this
+/// list instead of keeping its own copy.
+///
+/// One list, two readers: this crate's own build-time walk
+/// (`walk_indexable`, below) and `stella-tools`'s fallback scan
+/// (`stella_tools::search::scan::walk`) both read this constant.
+pub const DENY_DIRS: &[&str] = &[
     "target",
     "node_modules",
     "dist",
@@ -58,6 +64,9 @@ const DENY_DIRS: &[&str] = &[
     ".venv",
     "coverage",
     "vendor",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".cargo",
 ];
 
 /// Whether a directory should be skipped: hidden (leading `.`) or on the
@@ -601,5 +610,15 @@ mod tests {
         }
         assert!(is_denied_dir(".next"), ".next is denied (hidden + listed)");
         assert!(!is_denied_dir("src"));
+    }
+
+    /// These three joined [`DENY_DIRS`] when `stella-tools`'s fallback scan
+    /// gave up its own copy of the list for this one. Pinned here so a later
+    /// edit cannot drop one by accident.
+    #[test]
+    fn is_denied_dir_covers_the_tool_caches_folded_in_from_the_fallback_scan() {
+        for name in [".mypy_cache", ".pytest_cache", ".cargo"] {
+            assert!(is_denied_dir(name), "{name} should be denied");
+        }
     }
 }

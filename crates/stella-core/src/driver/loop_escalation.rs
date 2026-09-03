@@ -82,6 +82,16 @@ use super::{EngineConfig, LOOP_STEER_PREFIX, TurnMemos, TurnOutcome};
 /// the number.
 pub(crate) const MAX_LOOP_STEERS: u32 = 2;
 
+/// The `ToolOutput::Error` that closes a `tool_use` left open when the ladder
+/// aborts the turn.
+///
+/// The abort fires at the top of a step, so the open call belongs to history
+/// the caller handed in — a resumed turn, or a reused transcript. Closing it
+/// is the same repair the cancel and soft-stop exits perform at this
+/// boundary, and without it the caller's next provider call is rejected for
+/// an unanswered `tool_use`.
+const LOOP_ABORT_TOOL_RESULT: &str = "not executed — turn aborted on a detected loop";
+
 /// How many stalled-turn warnings one turn may spend.
 ///
 /// The stall rung's warn-once is read off the transcript, and that is
@@ -388,6 +398,7 @@ pub(super) fn check_loop_detection(
         return None;
     };
     let reason = abort_reason(&warned, &identity, &evidence);
+    crate::step::close_open_tool_calls(messages, LOOP_ABORT_TOOL_RESULT, events);
     let _ = events.send(AgentEvent::Error {
         message: reason.clone(),
         retryable: false,
