@@ -16,13 +16,13 @@
 //! it returns. So "reclaimable" here means what it means to `stella fleet
 //! clean`.
 //!
-//! # Why the split needs enough worktrees
+//! # When the split runs
 //!
-//! A dry-run sweep runs `git` several times per worktree. Below
-//! [`SPLIT_THRESHOLD`] that cost is small. A handful of worktrees is not
-//! the pile this check looks for. Above the threshold — dozens of stale
-//! worktrees — the split earns its cost. So the sweep runs only there.
-//! Below the threshold, `doctor` reports count and size only. It points at
+//! A dry-run sweep runs `git` several times per worktree. The bigger the
+//! pile, the more that costs. And a big pile is what this check looks for.
+//! `doctor` has to stay fast. So the sweep runs at or under
+//! [`SPLIT_THRESHOLD`] worktrees, and is skipped above it. Above it,
+//! [`report`] gives the count and the size alone. `doctor` then points at
 //! `stella fleet clean --dry-run` for the rest.
 
 use std::path::Path;
