@@ -1393,7 +1393,7 @@ async fn a_lost_dispatch_lease_is_reported_on_the_settled_handle() {
         // Paused time auto-advances to the dispatch's heartbeat while every
         // task is parked; sleeping two beats guarantees the renewal has
         // failed against the moved fence before the gate opens.
-        tokio::time::sleep(DISPATCH_LEASE_TTL * 2 / 3).await;
+        tokio::time::sleep(DEFAULT_DISPATCH_LEASE_TTL * 2 / 3).await;
         gate.add_permits(1);
     });
 

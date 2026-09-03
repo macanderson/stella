@@ -165,6 +165,13 @@ TTL/3 for as long as its worker runs, and it is released the moment the attempt
 settles. So a session that is SIGKILLed cannot wedge a task — nothing has to be
 reaped, and there is no `--force` — while a session that is merely slow keeps
 its work. A lost lease never kills a running worker (see `Fleet::dispatch`).
+The TTL is [`DEFAULT_DISPATCH_LEASE_TTL`](src/fleet.rs) — fifteen minutes,
+what `stella fleet` runs with — and
+[`Fleet::with_dispatch_lease_ttl`](src/fleet.rs) is how a caller whose workers
+are all short-lived asks for a shorter one, floored at a second. A caller can
+also wait for a rival's claim rather than failing on it
+([`Fleet::with_dispatch_claim_wait`](src/fleet.rs), off by default), which is
+what a plan re-run right behind a finishing sibling wants.
 Every live claim is legible without `sqlite3` — `stella fleet claims` reads
 `live_dispatch_claims`, and `--all` adds the lapsed rows that say who died
 holding what. That surface is not decoration: #1136's collision was two
