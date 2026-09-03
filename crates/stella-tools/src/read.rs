@@ -354,6 +354,13 @@ fn normalized_key(root: &std::path::Path, path: &str) -> String {
 }
 
 /// The plural key: several files, or several ranges, in one call.
+///
+/// The engine's working-set restoration reads this key out of a recorded call
+/// to learn which files a batch put in front of the model
+/// (`stella_core::restore::READ_FILES_PARAM`), so the two spellings are pinned
+/// together by `the_read_tool_is_the_one_the_engines_restoration_replays`
+/// below. A drift there is the working set silently ceasing to restore
+/// anything a batch read.
 const FILES_KEY: &str = "files";
 
 /// One file and which slice of it — the unit both spellings of a `read_file`
@@ -392,7 +399,7 @@ impl Tool for ReadFile {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "read_file".into(),
-            description: "Read a file from the workspace. Returns content with 1-based line numbers. Use offset and limit for ranges. To read several files — or several ranges — read them in ONE call with `files` rather than one call each.".into(),
+            description: "Read one or more files or ranges in a single call. Returns content with 1-based line numbers. Use offset and limit for one range; use `files` to read several files — or several ranges — in ONE call rather than one call each.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

@@ -45,7 +45,7 @@ All 18 tools register in every session, with no setup and no prerequisites. Here
 
 <CardGrid size="md">
   <ToolCard name="read_file" access="read">
-    Read a file from the workspace. Returns its content with 1-based line numbers. `offset` and `limit` pull a range out of a large file instead of the whole thing.
+    Read a file, or several files and ranges, in one call. Returns content with 1-based line numbers. Use `offset` and `limit` to pull one range out of a big file. Use `files` to ask for several at once.
   </ToolCard>
   <ToolCard name="write_file" access="mutating">
     Create or overwrite a file, creating parent folders as needed. Overwriting an existing file is refused unless the session has already been shown all of it. The argument is the whole file, so a model working from a partial view would silently cut off the rest. Use `edit_file` instead to change part of a file you haven't read in full.
