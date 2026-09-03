@@ -191,7 +191,11 @@ impl BudgetGuard {
     /// `session_spent_usd` remain a truthful running total even when
     /// `mode` is `Off` — only *gating* is mode-dependent, accounting never
     /// is.
+    ///
+    /// An amount that is not a finite dollar figure contributes zero — see
+    /// `spendable_usd`.
     pub fn record_spend(&mut self, cost_usd: f64) -> BudgetOutcome {
+        let cost_usd = spendable_usd(cost_usd);
         self.turn_spent_usd += cost_usd;
         self.session_spent_usd += cost_usd;
         self.evaluate()
@@ -255,8 +259,13 @@ impl BudgetGuard {
     /// monotone ([`record_spend`](Self::record_spend) only ever adds);
     /// across sessions monotonicity is the caller's concern —
     /// switching to a cheaper session legitimately lowers the accumulator.
+    ///
+    /// The journal is storage this process reopens, so the figure it hands
+    /// back is runtime data like any other: it goes through `spendable_usd`
+    /// too, and a session whose recorded total is unreadable reseeds to zero
+    /// rather than wedging the gate.
     pub fn reseed_session_spend(&mut self, spent_usd: f64) {
-        self.session_spent_usd = spent_usd;
+        self.session_spent_usd = spendable_usd(spent_usd);
     }
 
     /// Retarget the session-axis cap mid-session (the deck's `/budget`
@@ -499,6 +508,34 @@ impl BudgetGuard {
     /// next step boundary rather than one call later.
     pub fn settle_child(&mut self, child: &BudgetGuard) -> BudgetOutcome {
         self.record_spend(child.session_spent_usd())
+    }
+}
+
+/// A dollar amount this guard is willing to add to a running total: the
+/// figure itself when it is finite and not negative, and zero otherwise.
+///
+/// Both refusals are about what the accumulator does next, not about taste.
+///
+/// A `NaN` poisons the axis for the rest of the session. `x + f64::NAN` is
+/// `NaN` for every `x`, and `BudgetGuard`'s `check_axis` returns early only
+/// on `spent_usd <= limit_usd`, which reads `false` against a `NaN` — so one
+/// bad figure makes every later evaluation on that axis report `Warn` or
+/// `AbortTurn` until [`BudgetGuard::begin_turn`] or a reseed clears it. An
+/// infinity does the same thing without the comparison quirk.
+///
+/// A negative amount *shrinks* the total, so a later turn can pass an
+/// enforced cap that real spend has already crossed.
+///
+/// Every producer in this workspace today traces back to a price times a
+/// token count, so nothing live sends either shape. That is exactly why the
+/// check belongs here: this is the money meter, and it takes a bare `f64`
+/// from any caller. `stella-fleet` guards the same shape one layer up, where
+/// the producer is a worker process nobody here controls.
+fn spendable_usd(cost_usd: f64) -> f64 {
+    if cost_usd.is_finite() && cost_usd >= 0.0 {
+        cost_usd
+    } else {
+        0.0
     }
 }
 
@@ -1099,6 +1136,63 @@ mod tests {
                 "{mode:?} must still report the deadline as exceeded"
             );
         }
+    }
+
+    /// One unreadable figure would otherwise wedge the gate for the rest of
+    /// the session: `NaN` poisons the total, and `NaN <= limit` is `false`,
+    /// so every later evaluation aborts a turn that has spent ten cents of a
+    /// dollar. The guard takes a bare `f64` from any caller, so refusing the
+    /// figure at the door is the only place that can hold.
+    #[test]
+    fn an_unreadable_cost_contributes_nothing_instead_of_wedging_the_gate() {
+        let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.00));
+        assert_eq!(guard.record_spend(f64::NAN), BudgetOutcome::Continue);
+        assert_eq!(guard.record_spend(0.10), BudgetOutcome::Continue);
+        assert_eq!(guard.evaluate(), BudgetOutcome::Continue);
+        assert_eq!(
+            guard.session_spent_usd(),
+            0.10,
+            "only the readable figure is accounted for"
+        );
+
+        // An infinity and a negative are the same refusal. The negative one
+        // matters on its own: it SHRINKS the total, so a later turn passes a
+        // cap real spend has already crossed.
+        for bad in [f64::INFINITY, f64::NEG_INFINITY, -5.0] {
+            let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.00));
+            guard.record_spend(0.90);
+            assert_eq!(guard.record_spend(bad), BudgetOutcome::Continue, "{bad}");
+            assert_eq!(guard.session_spent_usd(), 0.90, "{bad}");
+            // Still one dime under the cap, so real spend still trips it.
+            assert!(matches!(
+                guard.record_spend(0.20),
+                BudgetOutcome::AbortTurn { .. }
+            ));
+        }
+    }
+
+    /// The reseed door onto the same accumulator. A session's journaled
+    /// total is storage this process reopens, so it is runtime data too.
+    #[test]
+    fn an_unreadable_journaled_total_reseeds_to_zero() {
+        let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.00));
+        guard.reseed_session_spend(f64::NAN);
+        assert_eq!(guard.session_spent_usd(), 0.0);
+        assert_eq!(guard.evaluate(), BudgetOutcome::Continue);
+        // A real reseed still lands exactly.
+        guard.reseed_session_spend(0.42);
+        assert_eq!(guard.session_spent_usd(), 0.42);
+    }
+
+    /// A child settles through `record_spend`, so a poisoned child total
+    /// cannot cross into the parent either.
+    #[test]
+    fn a_child_cannot_settle_an_unreadable_total_into_its_parent() {
+        let mut parent = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.00));
+        let mut child = parent.carve(Some(0.50));
+        child.record_spend(f64::NAN);
+        assert_eq!(parent.settle_child(&child), BudgetOutcome::Continue);
+        assert_eq!(parent.session_spent_usd(), 0.0);
     }
 
     #[test]

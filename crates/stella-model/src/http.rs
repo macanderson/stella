@@ -195,29 +195,48 @@ const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+/// One numeric field of an IMF-fixdate, read at the width the grammar fixes:
+/// exactly `width` ASCII digits and nothing else.
+///
+/// The widths are what bound the calendar arithmetic below. `str::parse`
+/// accepts a year of any length, and `Mon, 01 Mar 99999999999999999
+/// 00:00:00 GMT` reaching [`days_from_civil`] overflows `i64` at
+/// `era * 146_097` — a panic in a debug build, a wrapped nonsense wait in a
+/// release one, off a header whichever endpoint the provider spec names
+/// chose to send. Four digits cannot do that. The widths also drop the
+/// spellings `str::parse` takes and the grammar does not, such as `+5` for a
+/// day.
+fn fixed_width_digits(field: &str, width: usize) -> Option<i64> {
+    if field.len() != width || !field.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    field.parse().ok()
+}
+
 /// Seconds since the Unix epoch for an IMF-fixdate — `Sun, 06 Nov 1994
 /// 08:49:37 GMT`, the one form RFC 9110 §5.6.7 allows a sender to generate.
 /// Strict by design: a header this function cannot read exactly is a header
 /// whose meaning we would be guessing at, and `None` costs only the fallback
-/// to computed backoff.
+/// to computed backoff. Every numeric field is read through
+/// [`fixed_width_digits`] at its stated width.
 fn imf_fixdate_epoch_secs(value: &str) -> Option<i64> {
     // The day-of-week is redundant with the date and is not cross-checked;
     // a sender that disagrees with itself is not a reason to drop the hint.
     let (_weekday, rest) = value.split_once(", ")?;
     let mut fields = rest.split(' ');
-    let day: i64 = fields.next()?.parse().ok()?;
+    let day = fixed_width_digits(fields.next()?, 2)?;
     let month_name = fields.next()?;
     let month = MONTHS.iter().position(|name| *name == month_name)? as i64 + 1;
-    let year: i64 = fields.next()?.parse().ok()?;
+    let year = fixed_width_digits(fields.next()?, 4)?;
     let mut clock = fields.next()?.split(':');
     // GMT is the only zone the grammar permits, so anything else is a
     // malformed header rather than another time zone to convert from.
     if fields.next()? != "GMT" || fields.next().is_some() {
         return None;
     }
-    let hour: i64 = clock.next()?.parse().ok()?;
-    let minute: i64 = clock.next()?.parse().ok()?;
-    let second: i64 = clock.next()?.parse().ok()?;
+    let hour = fixed_width_digits(clock.next()?, 2)?;
+    let minute = fixed_width_digits(clock.next()?, 2)?;
+    let second = fixed_width_digits(clock.next()?, 2)?;
     if clock.next().is_some() {
         return None;
     }
@@ -232,8 +251,10 @@ fn imf_fixdate_epoch_secs(value: &str) -> Option<i64> {
 /// Days between 1970-01-01 and a proleptic-Gregorian `y-m-d`, by Howard
 /// Hinnant's `days_from_civil`. Written out rather than pulling in a date
 /// crate for one header: this is the whole of the calendar arithmetic an
-/// IMF-fixdate needs, and it handles the leap rules exactly. `m` is 1-based
-/// and assumed in range (its caller validates).
+/// IMF-fixdate needs, and it handles the leap rules exactly. `month` is
+/// 1-based and `year` is four digits at most; both are the caller's to
+/// enforce, and the year bound is what keeps `era * 146_097` inside `i64`
+/// (see [`fixed_width_digits`]).
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let year = if month <= 2 { year - 1 } else { year };
     let era = if year >= 0 { year } else { year - 399 } / 400;

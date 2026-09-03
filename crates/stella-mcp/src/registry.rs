@@ -651,6 +651,14 @@ fn remote_to_option(remote: &RegistryRemote) -> (McpTransport, Vec<AuthField>) {
 /// Resolve the command + leading args for a package's runtime. Prefers the
 /// explicit `runtimeHint`, else maps the registry type to the conventional
 /// runner. `docker` gets `run --rm -i` unless the entry already provides it.
+///
+/// "Already provides it" is asked through [`arg_value`], the same resolution
+/// [`package_to_transport`]'s rendering loop uses. Reading `value` alone made
+/// the two disagree about one legal entry: an argument declaring
+/// `default: "run"` and no `value` is a suggested rather than fixed value, so
+/// the check missed it, the lead was prepended, and the loop then emitted
+/// `run` a second time. Docker read that one as the image name and the server
+/// never started.
 fn runtime_invocation(pkg: &RegistryPackage) -> Option<(String, Vec<String>)> {
     let cmd = pkg
         .runtime_hint
@@ -667,7 +675,7 @@ fn runtime_invocation(pkg: &RegistryPackage) -> Option<(String, Vec<String>)> {
         && !pkg
             .runtime_arguments
             .iter()
-            .any(|a| a.value.as_deref() == Some("run"))
+            .any(|a| arg_value(a).as_deref() == Some("run"))
     {
         vec!["run".to_string(), "--rm".to_string(), "-i".to_string()]
     } else {
@@ -1026,6 +1034,78 @@ mod tests {
         // The registry name alone is worth keeping: it is the join key a later
         // lookup uses to backfill everything else.
         assert_eq!(card.registry_name.as_deref(), Some("com.x/y"));
+    }
+
+    /// An OCI entry that supplies `run` as a *suggested* value rather than a
+    /// fixed one. A duplicate check reading `value` alone misses the
+    /// suggestion, prepends `run --rm -i`, and the rendering loop — which
+    /// resolves through `default` — then emits `run` again. The spawn is
+    /// `docker run --rm -i run <image>`, where docker reads the second `run`
+    /// as the image name and the server never starts.
+    #[test]
+    fn a_suggested_docker_run_is_not_duplicated_by_the_prepended_lead() {
+        let pkg = RegistryPackage {
+            registry_type: "oci".into(),
+            identifier: "ghcr.io/acme/server:1".into(),
+            version: None,
+            runtime_hint: None,
+            transport: None,
+            runtime_arguments: vec![Argument {
+                value: None,
+                kind: Some("positional".into()),
+                name: None,
+                default: Some("run".into()),
+            }],
+            package_arguments: vec![],
+            environment_variables: vec![],
+        };
+        let (transport, _auth) = package_to_transport(&pkg).unwrap();
+        match transport {
+            McpTransport::Stdio { cmd, args, .. } => {
+                assert_eq!(cmd, "docker");
+                assert_eq!(
+                    args.iter().filter(|a| *a == "run").count(),
+                    1,
+                    "exactly one `run` reaches docker: {args:?}"
+                );
+                assert_eq!(args, ["run", "ghcr.io/acme/server:1"]);
+            }
+            other => panic!("expected stdio, got {other:?}"),
+        }
+    }
+
+    /// The other two shapes of the same rule. An entry that names `run`
+    /// nowhere gets the whole `run --rm -i`, and one that fixes `run` as a
+    /// literal `value` gets no lead at all.
+    #[test]
+    fn the_docker_lead_follows_whether_the_entry_names_run_itself() {
+        let fixed_run = Argument {
+            value: Some("run".into()),
+            kind: Some("positional".into()),
+            name: None,
+            default: None,
+        };
+        let cases: [(Vec<Argument>, Vec<&str>); 2] = [
+            (vec![], vec!["run", "--rm", "-i", "ghcr.io/acme/server:1"]),
+            (vec![fixed_run], vec!["run", "ghcr.io/acme/server:1"]),
+        ];
+        for (runtime_arguments, expected) in cases {
+            let pkg = RegistryPackage {
+                registry_type: "oci".into(),
+                identifier: "ghcr.io/acme/server:1".into(),
+                version: None,
+                runtime_hint: None,
+                transport: None,
+                runtime_arguments,
+                package_arguments: vec![],
+                environment_variables: vec![],
+            };
+            let (transport, _auth) = package_to_transport(&pkg).unwrap();
+            match transport {
+                McpTransport::Stdio { args, .. } => assert_eq!(args, expected),
+                other => panic!("expected stdio, got {other:?}"),
+            }
+        }
     }
 
     #[test]

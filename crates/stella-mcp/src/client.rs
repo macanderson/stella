@@ -32,6 +32,7 @@
 //! server-initiated request or notification (sampling, roots, progress). The
 //! transport drops those silently.
 
+mod authz;
 mod health;
 pub(crate) mod ingest;
 
@@ -60,7 +61,7 @@ use crate::transport::Transport;
 use health::{Connection, Health, is_connection_death};
 use ingest::{decode_call_result, fetch_all_tools};
 
-// The two submodules above hold what `client.rs` outgrew (#629's 1500-line
+// The submodules above hold what `client.rs` outgrew (#629's 1500-line
 // ratchet). Every PUBLIC path is re-exported here, so no consumer's imports
 // move; the crate-internal ingest budgets are addressed as
 // `crate::client::ingest::*` (only `error` and tests want them).
@@ -251,6 +252,12 @@ impl McpClient {
 
         let mut conn = self.conn.lock().await;
 
+        // Turned down for want of a login a moment ago. Answer from the
+        // hold-off window rather than ask a token endpoint again.
+        if let Some(refusal) = authz::hold_off(&self.name, &conn) {
+            return Err(refusal);
+        }
+
         // Already down from an earlier failure: try to reconnect first (a
         // fast, model-visible error if the backoff window has not elapsed).
         if conn.transport.is_none() {
@@ -307,12 +314,14 @@ impl McpClient {
                         conn.note_call_failure(&e2);
                         Err(e2)
                     }
-                    RequestOutcome::Protocol(e2) => Err(e2),
+                    RequestOutcome::Protocol(e2) => Err(authz::note_protocol_error(&mut conn, e2)),
                 }
             }
             // A JSON-RPC / decode error: the server answered, just badly.
-            // Reconnecting would not help, so pass it straight through.
-            RequestOutcome::Protocol(err) => Err(err),
+            // Reconnecting would not help, so pass it straight through. Only
+            // a login refusal is counted against health, since a redial
+            // cannot fix that one either (see `authz::note_protocol_error`).
+            RequestOutcome::Protocol(err) => Err(authz::note_protocol_error(&mut conn, err)),
         }
     }
 
@@ -376,6 +385,9 @@ impl McpClient {
     /// would cost `call_tool` its no-clone property.
     async fn read_only_request(&self, method: &str, params: Value) -> Result<Value, McpError> {
         let mut conn = self.conn.lock().await;
+        if let Some(refusal) = authz::hold_off(&self.name, &conn) {
+            return Err(refusal);
+        }
         if conn.transport.is_none() {
             self.reconnect_locked(&mut conn).await?;
         }
@@ -402,10 +414,10 @@ impl McpClient {
                         conn.note_call_failure(&e2);
                         Err(e2)
                     }
-                    RequestOutcome::Protocol(e2) => Err(e2),
+                    RequestOutcome::Protocol(e2) => Err(authz::note_protocol_error(&mut conn, e2)),
                 }
             }
-            RequestOutcome::Protocol(err) => Err(err),
+            RequestOutcome::Protocol(err) => Err(authz::note_protocol_error(&mut conn, err)),
         }
     }
 
