@@ -64,7 +64,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
-use tokio::process::Command;
 
 use crate::registry::Tool;
 
@@ -536,7 +535,15 @@ impl Tool for Bash {
             command
         };
 
-        let mut cmd = Command::new("bash");
+        let mut cmd = match crate::shell_resolve::bash_command() {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("bash: {err}"),
+                );
+            }
+        };
         cmd.args(["-c", command]);
         cmd.current_dir(root);
         // Full spawn policy, not just the credential scrub: a hook-exported
