@@ -364,10 +364,8 @@ pub fn retired_lineages(events: &[PromotionEvent]) -> BTreeSet<String> {
     }
     latest
         .into_iter()
-        .filter_map(|(lineage, action)| {
-            matches!(action, LedgerAction::Retired | LedgerAction::Superseded)
-                .then(|| lineage.to_string())
-        })
+        .filter(|&(_, action)| matches!(action, LedgerAction::Retired | LedgerAction::Superseded))
+        .map(|(lineage, _)| lineage.to_string())
         .collect()
 }
 
