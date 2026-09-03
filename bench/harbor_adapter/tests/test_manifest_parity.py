@@ -83,6 +83,7 @@ import importlib.util
 import inspect
 import os
 import re
+import subprocess
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NamedTuple
@@ -350,7 +351,8 @@ _PACKAGE_PARTS = ("bench", "harbor_adapter", "stella_harbor")
 #: Directory names never descended into. Build output and virtualenvs hold
 #: vendored copies of this adapter's own dependencies, and `.claude/` holds
 #: agent worktrees — each a second checkout of this repository, which would be
-#: swept as though its files were this one's.
+#: swept as though its files were this one's. Used even when `git` is
+#: missing; `_git_files` below covers the rest of `.gitignore`.
 _PRUNED_DIRS = frozenset(
     {
         ".git",
@@ -435,12 +437,66 @@ def _adapter_package(root: Path) -> Path:
     return package
 
 
+@functools.cache
+def _git_files(root: Path) -> tuple[str, ...] | None:
+    """Every path under `root` a pull request can actually change.
+
+    `git ls-files --cached --others --exclude-standard` asks git one
+    question: is this file tracked, or untracked-but-not-ignored? That is
+    the sweep's universe now, read straight from git instead of walked by
+    hand. A cached search result under `.stella/context/packs/`, an old
+    `build/` tree, or any other gitignored file was never a caller a rename
+    has to keep working, and this list simply does not contain it. A
+    tracked file matching a `.gitignore` pattern by name still does appear:
+    `--cached` lists every tracked file no matter what `.gitignore` says.
+    Tracked-ness decides this, not a directory name.
+
+    `None` when `root` is not a git worktree at all: a source tarball, a
+    vendored checkout with no `.git` directory, or the synthetic trees
+    `TestSweepAntiVacuity` builds under `tmp_path` without a `git init`.
+    `_walk` then falls back to a plain filesystem walk pruned only by
+    `_PRUNED_DIRS` — exactly its behaviour before this function existed.
+    """
+    try:
+        result = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    return tuple(entry for entry in result.stdout.split("\0") if entry)
+
+
+def _pruned(relative: Path) -> bool:
+    """Whether any component of `relative` (its directories only) is pruned."""
+    return any(part in _PRUNED_DIRS for part in relative.parts[:-1])
+
+
 def _walk(root: Path, suffixes: frozenset[str]) -> list[Path]:
     """Every file under `root` with one of `suffixes`, pruned and sorted.
 
     Sorted so a failure list is stable across machines: the tree is walked to
     produce a diffable report, not just a boolean.
     """
+    tracked = _git_files(root)
+    if tracked is not None:
+        return sorted(
+            root / entry
+            for entry in tracked
+            if Path(entry).suffix in suffixes and not _pruned(Path(entry))
+        )
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(name for name in dirnames if name not in _PRUNED_DIRS)
@@ -942,3 +998,44 @@ class TestSweepAntiVacuity:
             "arm.sh:2" in problem and "_validated_witness_author" in problem
             for problem in problems
         ), problems
+
+    def test_a_stranded_name_is_a_failure_only_when_it_is_not_gitignored(
+        self, tmp_path: Path
+    ) -> None:
+        """Tracked-ness decides this, not a directory name.
+
+        `bench/.gitignore` ignores `build/`, `dist/` and `.egg-info/`.
+        `_PRUNED_DIRS` names none of them. A stale sdist or a cached search
+        result under `.stella/context/packs/` can carry a `stella_harbor`
+        import that no rename ever has to keep working. A real caller one
+        directory over must still fail. Both trees sit side by side here,
+        in one real `git` repository — a bare `.gitignore` file with no
+        repository around it tells git nothing.
+        """
+        self._skeleton(tmp_path)
+        subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+        (tmp_path / ".gitignore").write_text("ignored_stuff/\n", encoding="utf-8")
+
+        ignored = tmp_path / "ignored_stuff"
+        ignored.mkdir()
+        (ignored / "caller.py").write_text(
+            f"from {_ADAPTER}.no_such_ignored_module import thing\nthing()\n",
+            encoding="utf-8",
+        )
+
+        kept = tmp_path / "kept_stuff"
+        kept.mkdir()
+        (kept / "caller.py").write_text(
+            f"from {_ADAPTER}.no_such_tracked_module import thing\nthing()\n",
+            encoding="utf-8",
+        )
+        # `git add` stages the file, so it counts as tracked.
+        subprocess.run(("git", "add", "kept_stuff/caller.py"), cwd=tmp_path, check=True)
+
+        problems = _sweep(tmp_path).problems
+        assert not any("no_such_ignored_module" in problem for problem in problems), (
+            problems
+        )
+        assert any("no_such_tracked_module" in problem for problem in problems), (
+            problems
+        )
