@@ -467,6 +467,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 }
 .cmdbar .ps { color: var(--gold); font-weight: 700; flex: none; }
 .echo { padding: 4px 12px; color: var(--faint); font-size: 10.5px; font-style: italic; }
+.clip { padding: 4px 12px; color: var(--amber); font-size: 10.5px; font-style: italic; }
 .out { padding: 8px 12px; }
 .out.tail { border-top: 1px solid var(--hover-raised); }
 .out pre {

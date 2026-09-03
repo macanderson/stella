@@ -51,8 +51,11 @@ fn a_producers_patch_is_drawn_at_the_files_own_line_numbers() {
 }
 
 /// **The witness for #4696.** A producer's patch that tripped
-/// `LCS_AREA_CAP` carries `minimal: false` on the wire; the build must read
-/// that flag rather than assume every patch is exact.
+/// `LCS_AREA_CAP` carries `minimal: false` on the wire. The build must read
+/// that flag, not assume every patch is exact. Each renderer must also say
+/// so to a reader, not present the blunt fallback as a precise diff — a gap
+/// a `FileDiff::minimal`-only assertion cannot see: the HTML renderer
+/// already surfaced it with its `.blunt` banner, and the grid did not.
 #[test]
 fn a_producers_blunt_fallback_patch_stays_marked_non_minimal() {
     let change = FileChange {
@@ -69,6 +72,27 @@ fn a_producers_blunt_fallback_patch_stays_marked_non_minimal() {
     assert!(
         !FileDiff::build(&change).minimal,
         "the producer's own cap trip must survive onto the rendered diff"
+    );
+
+    let call = Call {
+        tool: ToolKind::EditFile,
+        header_object: change.path.clone(),
+        args: Vec::new(),
+        output: Output::default(),
+        files: vec![change],
+        status: Status::Ok,
+        duration_ms: 12,
+        speculated: false,
+        sub_agent_id: None,
+    };
+    let (plain, markup) = rendered(call);
+    assert!(
+        plain.contains("exceeded the exact-comparison bound"),
+        "the expanded grid presented a blunt fallback diff as precise:\n{plain}"
+    );
+    assert!(
+        markup.contains("exceeded the exact-comparison bound"),
+        "the expanded HTML page presented a blunt fallback diff as precise:\n{markup}"
     );
 }
 

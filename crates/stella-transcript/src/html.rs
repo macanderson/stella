@@ -553,6 +553,20 @@ fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: 
         emit_lines(out, &fold.tail, paint);
         out.push_str("</pre></div>");
     }
+
+    // `Output::clipped` lines never reached this crate, so no fold has
+    // anything to show for them. The `<details>` control above hides real
+    // lines this crate holds; a transport clip hides lines it never got.
+    // When every received line already fits in `head`, that hidden slice is
+    // empty even though `clipped` is not — so the marker stands outside the
+    // fold, not inside it.
+    if fold.clipped > 0 {
+        let _ = write!(
+            out,
+            "<div class=\"clip\">{}</div>",
+            escape(&fold.clip_label())
+        );
+    }
 }
 
 /// Emit result-body lines, syntax-coloured when `json`.
