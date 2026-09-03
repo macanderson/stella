@@ -30,10 +30,18 @@
 //! seconds. So [`globs_overlap`] compares literal prefixes and reports on
 //! containment, accepting the cheap false positive to make the expensive false
 //! negative impossible.
+//!
+//! Paths are half a scope. A record can also be scoped by `tasks` and
+//! `keywords`, and two records scoped that way collide on every turn that names
+//! a trigger they share — a `hard` record and an advisory one over the same
+//! task, with no path anywhere between them. So overlap falls back to
+//! [`super::select::shared_triggers`] rather than growing a second matcher, and
+//! the conflict is judged by the code that decides whether both records fire.
 
 use super::super::ingest::gate::atomicity_validation;
 use super::super::ingest::record::{AppliesTo, EnforcementMode, Record};
 use super::super::redact::redact_secrets;
+use super::select::shared_triggers;
 use super::{KNOWN_TASKS, LoadedRecord, RecordFinding};
 
 /// Glob metacharacters that are **literals** in this engine's matcher. A guard
@@ -307,7 +315,7 @@ fn conflict_between(left: &LoadedRecord, right: &LoadedRecord) -> Option<Conflic
     if left_mode == right_mode {
         return None;
     }
-    let shared = overlapping_paths(applies_to(&left.record), applies_to(&right.record))?;
+    let shared = overlapping_scope(applies_to(&left.record), applies_to(&right.record))?;
     // The less restrictive behavior wins until an owner resolves it, so the record
     // asking for more restriction is the one suspended.
     let (suspended, kept) = if restrictiveness(left_mode) > restrictiveness(right_mode) {
@@ -359,7 +367,12 @@ fn restrictiveness(mode: EnforcementMode) -> u8 {
 /// An empty `applies_to` matches everything, so a record with no scope overlaps
 /// every other record — which is correct, and is why an unscoped `hard` record
 /// beside an unscoped advisory one is a conflict worth reporting.
-fn overlapping_paths(left: Option<&AppliesTo>, right: Option<&AppliesTo>) -> Option<String> {
+///
+/// Two scoped records overlap when their path globs can reach a common path, or
+/// when they share a task or keyword trigger. The trigger half only runs when
+/// the path half found nothing, so a pair that already collides on a path keeps
+/// the more specific report.
+fn overlapping_scope(left: Option<&AppliesTo>, right: Option<&AppliesTo>) -> Option<String> {
     let unscoped = |applies: Option<&AppliesTo>| applies.is_none_or(AppliesTo::is_empty);
     if unscoped(left) && unscoped(right) {
         return Some("every path (neither record is scoped)".to_string());
@@ -374,6 +387,11 @@ fn overlapping_paths(left: Option<&AppliesTo>, right: Option<&AppliesTo>) -> Opt
         });
     }
     let (left, right) = (left?, right?);
+    overlapping_paths(left, right).or_else(|| overlapping_triggers(left, right))
+}
+
+/// The path globs two scoped records can both reach.
+fn overlapping_paths(left: &AppliesTo, right: &AppliesTo) -> Option<String> {
     let shared: Vec<String> = left
         .paths
         .iter()
@@ -392,6 +410,23 @@ fn overlapping_paths(left: Option<&AppliesTo>, right: Option<&AppliesTo>) -> Opt
         })
         .collect();
     (!shared.is_empty()).then(|| shared.join(", "))
+}
+
+/// The task and keyword triggers two scoped records share — the turns on which
+/// both of them fire, when no path connects them.
+///
+/// Asked in both directions and unioned, because
+/// [`super::select::shared_triggers`] is asymmetric: a single-word keyword
+/// matches inside a multi-word one and the reverse does not, so one direction
+/// alone would miss the pair.
+fn overlapping_triggers(left: &AppliesTo, right: &AppliesTo) -> Option<String> {
+    let mut shared = shared_triggers(left, right);
+    for term in shared_triggers(right, left) {
+        if !shared.iter().any(|seen| seen.eq_ignore_ascii_case(&term)) {
+            shared.push(term);
+        }
+    }
+    (!shared.is_empty()).then(|| format!("the triggers {}", shared.join(", ")))
 }
 
 /// Whether two globs can match a common value.
@@ -416,17 +451,59 @@ mod tests {
     use super::*;
 
     fn at(handle: &str, mode: EnforcementMode, paths: &[&str], precedence: u32) -> LoadedRecord {
-        let mut record = with_scope(
-            record_named(&format!("ctx.a.b.{handle}")),
-            paths,
+        scoped_by(
+            handle,
+            mode,
+            AppliesTo {
+                paths: paths.iter().map(|path| path.to_string()).collect(),
+                ..AppliesTo::default()
+            },
             precedence,
-        );
+        )
+    }
+
+    /// A record scoped by tasks and keywords and by no path at all — the shape
+    /// a path-only comparison cannot see.
+    fn triggered(
+        handle: &str,
+        mode: EnforcementMode,
+        tasks: &[&str],
+        keywords: &[&str],
+        precedence: u32,
+    ) -> LoadedRecord {
+        scoped_by(
+            handle,
+            mode,
+            AppliesTo {
+                paths: Vec::new(),
+                tasks: tasks.iter().map(|task| task.to_string()).collect(),
+                keywords: keywords.iter().map(|word| word.to_string()).collect(),
+            },
+            precedence,
+        )
+    }
+
+    fn scoped_by(
+        handle: &str,
+        mode: EnforcementMode,
+        applies_to: AppliesTo,
+        precedence: u32,
+    ) -> LoadedRecord {
+        let deny_path = applies_to
+            .paths
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "**".to_string());
+        let mut record = with_scope(record_named(&format!("ctx.a.b.{handle}")), &[], precedence);
+        if let Some(steering) = record.steering.as_mut() {
+            steering.applies_to = Some(applies_to);
+        }
         record.enforcement = Some(Enforcement {
             mode,
             guard_tool: Some("Edit".to_string()),
             guard_deny_command: None,
             guard_allow_command: None,
-            guard_deny_path: Some(paths.first().copied().unwrap_or("**").to_string()),
+            guard_deny_path: Some(deny_path),
             severity: None,
             on_violation: None,
             check: None,
@@ -536,6 +613,78 @@ mod tests {
         assert_eq!(conflicts.len(), 1);
         assert!(
             conflicts[0].detail.contains("unscoped"),
+            "{}",
+            conflicts[0].detail
+        );
+    }
+
+    #[test]
+    fn two_records_scoped_to_one_task_conflict_with_no_path_between_them() {
+        // Neither record names a path, so the glob comparison has nothing to
+        // compare and the trigger fallback is the only thing that can see the
+        // collision. Without it a hard record and an advisory one over the same
+        // task resolve silently.
+        let mut records = vec![
+            triggered(
+                "release-checklist",
+                EnforcementMode::Hard,
+                &["release"],
+                &[],
+                50,
+            ),
+            triggered(
+                "release-exemption",
+                EnforcementMode::None,
+                &["release"],
+                &[],
+                50,
+            ),
+        ];
+        records.iter_mut().for_each(check_record);
+        let conflicts = detect_conflicts(&mut records);
+        assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+        let conflict = &conflicts[0];
+        assert!(conflict.detail.contains("release"), "{}", conflict.detail);
+        assert_eq!(
+            conflict.suspended, "release-checklist",
+            "enforcement falls back to the LESS restrictive behavior"
+        );
+        for loaded in &records {
+            assert!(
+                loaded
+                    .findings
+                    .iter()
+                    .any(|f| matches!(f, RecordFinding::Conflict { .. })),
+                "^{} carries no conflict finding",
+                loaded.handle
+            );
+        }
+    }
+
+    #[test]
+    fn disjoint_task_scopes_do_not_conflict_however_the_enforcement_differs() {
+        let mut records = vec![
+            triggered("deploys", EnforcementMode::Hard, &["deploy"], &[], 50),
+            triggered("documentation", EnforcementMode::None, &["docs"], &[], 50),
+        ];
+        records.iter_mut().for_each(check_record);
+        assert!(detect_conflicts(&mut records).is_empty());
+    }
+
+    #[test]
+    fn a_task_on_one_record_and_the_same_word_as_a_keyword_on_the_other_conflict() {
+        // Selection matches tasks and single-word keywords the same way, so a
+        // turn that says "deploy" fires both records whichever field carries
+        // the word.
+        let mut records = vec![
+            triggered("deploy-guard", EnforcementMode::Hard, &["deploy"], &[], 50),
+            triggered("deploy-notes", EnforcementMode::None, &[], &["deploy"], 50),
+        ];
+        records.iter_mut().for_each(check_record);
+        let conflicts = detect_conflicts(&mut records);
+        assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+        assert!(
+            conflicts[0].detail.contains("deploy"),
             "{}",
             conflicts[0].detail
         );
