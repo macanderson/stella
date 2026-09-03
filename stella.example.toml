@@ -604,6 +604,14 @@ min_steps = 3       # open steps that raise a card
 # takes. Absent means "on"; filing stated follow-up work is the default.
 residue_gate = "on"
 
+# Labels marking a tracking issue — a checklist of other issues, kept open as
+# bookkeeping rather than as work. `drive --backlog` never claims one of
+# these, whatever its `Blocked by:` lines say: an epic reads as ready the
+# instant its last child closes, and claiming it then means re-doing work a
+# child issue already merged. Default `["epic"]`; declaring the list REPLACES
+# it, the same rule `self_driving.triage`'s lists follow.
+container_labels = ["epic"]
+
 [self_driving.attribution]
 # What the loop appends to what it writes. Source-tracked so it travels with the
 # repository, and rewritable by an installed plugin — a downstream distribution
@@ -722,7 +730,7 @@ park_after = 3
 # on GitHub's common conventions.
 priorities = ["P0", "P1", "P2", "P3"]           # most urgent first
 defect_kinds = ["bug", "triage"]                # "this loop works this"
-excluded_kinds = ["enhancement", "feature", "documentation", "question"]
+excluded_kinds = ["enhancement", "feature", "documentation", "question", "epic"]
 
 
 # -----------------------------------------------------------------------------

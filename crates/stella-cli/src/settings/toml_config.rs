@@ -427,6 +427,13 @@ pub struct SelfDrivingSection {
     /// that is off exactly when nobody thought about it.
     #[serde(default)]
     pub deploy_watch: DeployWatch,
+    /// `container_labels = [...]` — labels marking a tracking issue (a
+    /// checklist of other issues, not workable itself), which
+    /// `drive --backlog` must never claim. Empty means the built-in
+    /// default (`epic`); declaring the list replaces it wholesale, the
+    /// same rule `[self_driving.triage]`'s lists follow.
+    #[serde(default)]
+    pub container_labels: Vec<String>,
 }
 
 /// The end-of-turn residue gate's switch (`doc:backlog-self-driving` B5).

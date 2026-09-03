@@ -209,10 +209,20 @@ impl Default for TriagePolicy {
         Self {
             ladder: PriorityLadder::default(),
             defect_kinds: ["bug", "triage"].into_iter().map(str::to_owned).collect(),
-            excluded_kinds: ["enhancement", "feature", "documentation", "question"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
+            excluded_kinds: [
+                "enhancement",
+                "feature",
+                "documentation",
+                "question",
+                // A tracking issue — a checklist of other issues — is
+                // bookkeeping, not a defect the loop can fix. See
+                // `crate::ready::DEFAULT_CONTAINER_LABELS`, the same
+                // default for the backlog reader's own queue.
+                "epic",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
         }
     }
 }
@@ -495,6 +505,18 @@ mod tests {
             &policy,
         );
         assert!(queue.is_empty(), "somebody already answered this one");
+    }
+
+    /// The default policy treats an epic as a judged non-defect, the same
+    /// as `enhancement` above — bookkeeping, not something to fix.
+    #[test]
+    fn a_default_policy_drops_an_epic_rather_than_asking_about_it() {
+        let policy = TriagePolicy::default();
+        let queue = split(
+            vec![issue(1, "2026-01-01T00:00:00Z", &["epic", "P0"])],
+            &policy,
+        );
+        assert!(queue.is_empty(), "an epic is bookkeeping, not a defect");
     }
 
     /// An escalated issue with no record leaves the queue on either axis.
