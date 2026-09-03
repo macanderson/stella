@@ -15,14 +15,13 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
-use unicode_width::UnicodeWidthChar;
-
 use crate::cache_panel;
 use crate::composer::{ComposerLayout, PaletteState, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::composer_mode::ComposerMode;
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
+use crate::render::columns;
 use crate::render::{render_arg_popup, render_slash_popup, scroll_window_start, slash_popup_area};
 use crate::views::frame::{PROMPT_PREFIX, PROMPT_PREFIX_W};
 use crate::{notice, splash, theme};
@@ -506,7 +505,7 @@ fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &m
             Span::raw(marker),
             Span::styled(dot, dot_style),
             Span::styled(
-                truncate_chars(&n.title, (w as usize).saturating_sub(10)),
+                columns::head(&n.title, (w as usize).saturating_sub(10)),
                 title_style,
             ),
         ];
@@ -523,12 +522,12 @@ fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &m
         };
         let detail = format!(
             "      {}{} · {}",
-            truncate_chars(&n.body, (w as usize).saturating_sub(24)),
+            columns::head(&n.body, (w as usize).saturating_sub(24)),
             source,
             fmt_age(model.now_ms.saturating_sub(n.created_ms)),
         );
         lines.push(Line::from(Span::styled(
-            truncate_chars(&detail, (w as usize).saturating_sub(4)),
+            columns::head(&detail, (w as usize).saturating_sub(4)),
             theme::text_secondary(),
         )));
     }
@@ -579,7 +578,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
         } else {
             ("○", theme::text_secondary())
         };
-        let desc = truncate_chars(&skill.description, (w as usize).saturating_sub(30));
+        let desc = columns::head(&skill.description, (w as usize).saturating_sub(30));
         lines.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(glyph, glyph_style),
@@ -841,9 +840,9 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
                     call.turn_instance,
                     call.step,
                     call.call_seq,
-                    truncate_chars(&call.call_role, 14),
-                    truncate_chars(&call.provider, 10),
-                    truncate_chars(&call.model, 22),
+                    columns::head(&call.call_role, 14),
+                    columns::head(&call.provider, 10),
+                    columns::head(&call.model, 22),
                 ),
                 style,
             )));
@@ -915,37 +914,6 @@ fn wrap_chars(s: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-/// Display-width-safe prefix truncation with an ellipsis. `max_cols` is a
-/// terminal column budget, not a character count — a char-counting truncation
-/// would under-truncate double-width glyphs (CJK, emoji) by up to 2×,
-/// overflowing the caller's fixed-width row. Content here (session titles,
-/// notification bodies, skill descriptions) is agent- or user-authored text,
-/// not guaranteed ASCII.
-fn truncate_chars(s: &str, max_cols: usize) -> String {
-    if display_width(s) <= max_cols {
-        return s.to_string();
-    }
-    // Leave one column for the ellipsis glyph itself.
-    let budget = max_cols.saturating_sub(1);
-    let mut head = String::new();
-    let mut w = 0usize;
-    for ch in s.chars() {
-        let cw = ch.width().unwrap_or(0);
-        if w + cw > budget {
-            break;
-        }
-        head.push(ch);
-        w += cw;
-    }
-    format!("{head}…")
-}
-
-/// Terminal column width of `s` (unicode-width aware — CJK and most emoji are
-/// two columns wide, unlike a plain `chars().count()`).
-fn display_width(s: &str) -> usize {
-    s.chars().map(|c| c.width().unwrap_or(0)).sum()
-}
-
 /// A compact "3m ago"-style age from a millisecond delta.
 fn fmt_age(delta_ms: u64) -> String {
     let secs = delta_ms / 1000;
@@ -963,12 +931,13 @@ fn fmt_age(delta_ms: u64) -> String {
     format!("{}d ago", hours / 24)
 }
 
-/// The Graph tab's file picker: a centered overlay listing every indexed file,
-/// narrowed by a filter-as-you-type query, with the selection highlighted and
-/// windowed so it stays in view on long lists (the shared
-/// [`scroll_window_start`] the slash popup uses). Selecting a row re-roots the
-/// neighborhood on that file; the current focus opens pre-selected as the
-/// sensible default.
+/// The Graph tab's file picker. A centered overlay lists every indexed file.
+/// Typing narrows the list. The chosen row is lit, and the view scrolls to
+/// keep it in sight on long lists. That scroll is the shared
+/// [`scroll_window_start`], the one the slash popup uses.
+///
+/// Picking a row re-roots the neighborhood on that file. The file in focus
+/// opens picked, since that is the one you most likely want.
 fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let Some(graph) = ui.graph.as_ref() else {
         return;

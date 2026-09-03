@@ -69,6 +69,7 @@ use stella_tui_theme::{glyph, token};
 use crate::deck::DeckTab;
 use crate::deck_ui::{DeckAction, DeckUi, list_nav};
 use crate::envelope::{AgentScope, ToolPolicyState, ToolRow, ToolScope, WorkspaceInput};
+use crate::render::columns;
 use crate::render::scroll_window_start;
 use crate::theme;
 use crate::views::settings::SettingsPane;
@@ -588,7 +589,10 @@ fn render_row(
             let mut spans = vec![
                 caret,
                 Span::styled(
-                    format!("{:<width$}", group.to_uppercase(), width = NAME_W),
+                    // Padded in columns: an MCP server names its own group,
+                    // and `{:<width$}` pads to a `char` count, which moves the
+                    // state column under any wide glyph.
+                    columns::pad(&group.to_uppercase(), NAME_W),
                     Style::new().fg(token::TEXT).add_modifier(Modifier::BOLD),
                 ),
                 state_span(on),
@@ -606,12 +610,14 @@ fn render_row(
             let mut spans = vec![
                 caret,
                 Span::styled(
-                    // Truncated one char shorter than the column so a long
-                    // namespaced MCP name always keeps a gap before its state.
+                    // Elided one column shorter than the field so a long
+                    // namespaced MCP name always keeps a gap before its state,
+                    // then padded back out to the field so the state column
+                    // holds. Elide and pad are both in display columns: an MCP
+                    // name is whatever the server calls itself.
                     format!(
-                        "  {:<width$}",
-                        truncate_chars(&tool.name, NAME_W - 3),
-                        width = NAME_W - 2
+                        "  {}",
+                        columns::pad(&columns::head(&tool.name, NAME_W - 3), NAME_W - 2)
                     ),
                     Style::new().fg(token::SILVER),
                 ),
@@ -627,7 +633,7 @@ fn render_row(
             if let Some(tail) = tail {
                 let room = panel_w.saturating_sub(3 + 2 + NAME_W + 5 + 1).max(8);
                 spans.push(Span::styled(
-                    truncate_chars(&tail, room),
+                    columns::head(&tail, room),
                     Style::new().fg(token::DIM),
                 ));
             }
@@ -724,16 +730,6 @@ fn row_record(
             )
         }
     }
-}
-
-/// Char-safe prefix truncation with an ellipsis — a namespaced MCP tool name
-/// must never wrap the row.
-fn truncate_chars(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-    format!("{head}…")
 }
 
 #[cfg(test)]
@@ -1176,6 +1172,40 @@ mod tests {
         );
         assert!(text.contains("locked"), "an org-denied row says so");
         assert!(text.contains("org-locked"), "the header counts locked rows");
+    }
+
+    /// The state column holds under a wide-character tool name.
+    ///
+    /// An MCP server names its own tools, so the name is not ASCII by
+    /// construction. The field was elided by `char` count and padded by
+    /// `{:<width$}`, which is also a `char` count — so a CJK name rendered at
+    /// twice its budget and pushed `on`/`off` and everything after it right,
+    /// on that row alone. Measured with ratatui's own `Span::width`, not with
+    /// the helper under test.
+    #[test]
+    fn a_wide_character_tool_name_does_not_move_the_state_column() {
+        let (_model, ui) = open_ui();
+        let mut state = sample_state();
+        state
+            .tools
+            .push(tool("mcp__仓库__创建议题并附上一段很长的说明", "mcp"));
+        let ascii = state
+            .tools
+            .iter()
+            .position(|t| t.name == "mcp__gh__create_issue")
+            .unwrap();
+        let wide = state.tools.len() - 1;
+
+        // The caret and the name field are what precede the state cell.
+        let field = |i: usize| -> usize {
+            let line = render_row(&ui.tools, &state, &ToolsRow::Tool(i), false, 96);
+            line.spans[..2].iter().map(Span::width).sum()
+        };
+        assert_eq!(
+            field(ascii),
+            field(wide),
+            "a wide name moved the state column"
+        );
     }
 
     /// **The witness for the port.** The pane fills the body the frame carved
