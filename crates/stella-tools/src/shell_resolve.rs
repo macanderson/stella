@@ -16,10 +16,10 @@
 //!
 //! [`bash_command`] replaces the bare call. On unix it is exactly
 //! `Command::new("bash")`. On Windows it finds an absolute path to a real
-//! shell first ([`resolve_bash`]) and runs that path directly. An absolute
-//! path skips the search order entirely. A caller that gets back
-//! [`ShellResolutionError`] knows no real shell was found. It can say so,
-//! instead of quietly running whatever `bash` turned out to mean.
+//! shell first (`resolve_bash`, which is compiled only there) and runs that
+//! path directly. An absolute path skips the search order entirely. A caller
+//! that gets back [`ShellResolutionError`] knows no real shell was found. It
+//! can say so, instead of quietly running whatever `bash` turned out to mean.
 
 #[cfg(any(test, windows))]
 use std::path::{Path, PathBuf};
