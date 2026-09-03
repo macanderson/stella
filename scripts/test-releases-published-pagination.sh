@@ -1,109 +1,115 @@
 #!/usr/bin/env bash
 #
-# Witness test. Neither release check may depend on a fixed count cap.
+# Witness test. The release check must walk every page of the list. It must
+# also refuse a list it knows it did not finish reading.
 #
 #   ./scripts/test-releases-published-pagination.sh
 #
-# scripts/test-releases-published.sh proves the RULE has no cap. It cannot
-# reach the FETCH, where the old cap actually lived. This test drives the
-# fetch end to end with a fake `gh` on PATH, so a fake list of 1001 releases
-# runs with no network at all.
+# scripts/test-releases-published.sh proves the RULE has no cap. It does not
+# reach the FETCH. This test drives the fetch with a fake `gh` on PATH, so it
+# needs no network.
 #
-# It runs two scripts against that same list: the one `main` ships today,
-# and the one in this working tree. Main's script hits its old cap and
-# errors. This branch's script pages through all 1001 and reports clean.
+# Two arms, both against the script this tree ships:
+#
+#   PAGES — 1001 releases arrive over 11 pages. All of them are walked, and
+#           nothing reports truncation. A fixed cap fails here.
+#   CEILING — a walk needs more pages than `max_pages` allows. The script
+#           refuses. Dropping that guard fails here.
+#
+# Neither arm reads a second copy of the script out of a git ref. Say the
+# fail-side asserted that the copy on `origin/main` errors. That holds until
+# the fix merges. After that, `origin/main` has the fix too. The arm then
+# watches the fixed script pass, and the guard fails on every branch while
+# the tree is clean. Driving the shipping script's own ceiling keeps the
+# fail-side on live code. It also needs no `git fetch`, so a shallow checkout
+# and a full clone run the same test.
 #
 # bash 3.2 compatible.
 
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd -P)"
-NEW_SCRIPT="$repo_root/scripts/check-releases-published.sh"
-MAIN_SCRIPT="$repo_root/scripts/.check-releases-published.main-copy.sh"
+SCRIPT="$repo_root/scripts/check-releases-published.sh"
 
 pass=0
 fail=0
 
 work="$(mktemp -d)"
-cleanup() { rm -rf "$work"; rm -f "$MAIN_SCRIPT"; }
+cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 
-# CI checks out one ref with no history, so `origin/main` may not exist yet.
-# One shallow, on-demand fetch of just that branch tip fixes that without
-# touching the shared checkout step every other guard self-test also runs
-# under. It only ever reads; nothing here can move a real branch.
-git -C "$repo_root" fetch --depth=1 -q origin main 2>/dev/null || true
-
-# `dirname "$0"` in each script must find a folder with lib/help-header.sh.
-# So main's copy is placed next to the real script, not in the scratch dir.
-# It is a sibling file, deleted by the trap above, never staged or committed.
-if ! git -C "$repo_root" show origin/main:scripts/check-releases-published.sh >"$MAIN_SCRIPT" 2>/dev/null; then
-  echo "SKIP — could not read origin/main's copy of check-releases-published.sh (no network or no origin/main ref here); the fail-side of the witness cannot run, but this branch's own fetch is still exercised below." >&2
-else
-  chmod +x "$MAIN_SCRIPT"
-fi
-
 # A grace window wide enough that every real tag in this checkout falls
-# inside it and is skipped. So the only thing either script can report is
+# inside it and is skipped. So the only thing the script can report is
 # its own truncation guard. The fixture never has to fake a real git tag.
 grace_secs=315360000 # 10 years
 now="$(date -u +%s)"
 
-# The fake `gh`. Each script makes one call:
-#   main's version: `gh release list --limit 1000 ...`
-#   this branch:    `gh api --paginate --slurp .../releases?per_page=100`
-# Both get 1001 fake releases, one past the old cap. The shape matches real
-# `gh` output: 11 pages of up to 100 each, the last one holding 1.
-cat >"$work/gh" <<'SHIM'
+# The fake `gh`. The script under test makes one call,
+# `gh api --paginate --slurp .../releases?per_page=100`, and the shim answers
+# it with `$pages` pages of `$per_page` releases each — the shape real `gh`
+# returns under `--slurp`, an array of page arrays.
+#
+# `write_shim <dir> <pages> <per_page>` builds one in its own directory, so an
+# arm's PATH holds exactly the fixture it asked for.
+write_shim() {
+  mkdir -p "$1"
+  cat >"$1/gh" <<SHIM
 #!/usr/bin/env bash
 set -euo pipefail
-n=1001
-if [ "$1" = "api" ]; then
-  jq -n --argjson n "$n" '
-    [ range(0; $n) | { tag_name: ("v0.0." + (tostring)), draft: false } ]
-    | . as $all
-    | [ range(0; ($all | length); 100) as $i | $all[$i:$i + 100] ]
+if [ "\$1" = "api" ]; then
+  jq -n --argjson pages $2 --argjson per_page $3 '
+    [ range(0; \$pages)
+      | . as \$p
+      | [ range(0; \$per_page)
+          | { tag_name: ("v0.0." + (((\$p * \$per_page) + .) | tostring)), draft: false } ]
+    ]
   '
   exit 0
 fi
-if [ "$1" = "release" ] && [ "${2:-}" = "list" ]; then
-  jq -n --argjson n "$n" '[ range(0; $n) | ("v0.0." + (tostring)) ]'
-  exit 0
-fi
-echo "test-releases-published-pagination.sh: unhandled fake gh invocation: $*" >&2
+echo "test-releases-published-pagination.sh: unhandled fake gh invocation: \$*" >&2
 exit 3
 SHIM
-chmod +x "$work/gh"
-
-run_with_fake_gh() {
-  PATH="$work:$PATH" "$@" --now "$now" --grace-secs "$grace_secs" 2>&1
+  chmod +x "$1/gh"
 }
 
-if [ -x "$MAIN_SCRIPT" ]; then
-  main_out="$(run_with_fake_gh "$MAIN_SCRIPT")"
-  main_status=$?
-  if [ "$main_status" -ne 0 ] && printf '%s' "$main_out" | grep -q "page limit"; then
-    pass=$((pass + 1)); echo "ok   MAIN main's script hits its 1000-item cap on 1001 releases and errors"
-  else
-    fail=$((fail + 1))
-    echo "FAIL MAIN main's script hits its 1000-item cap on 1001 releases and errors — exit ${main_status}, got: ${main_out}"
-  fi
-fi
+# 1001 releases over 11 pages: one past the cap the old fetch stopped at, in
+# the page shape a real `--paginate` walk produces.
+write_shim "$work/pages" 11 91
 
-new_out="$(run_with_fake_gh "$NEW_SCRIPT")"
-new_status=$?
-if [ "$new_status" -eq 0 ] && printf '%s' "$new_out" | grep -q "^check-releases-published: OK"; then
-  pass=$((pass + 1)); echo "ok   NEW this branch's script pages through all 1001 releases and reports clean"
+# `max_pages` in check-releases-published.sh is 1000, so 1001 pages is one past
+# its sanity ceiling. One release per page keeps the fixture cheap — the script
+# refuses on the page count before it ever flattens them.
+write_shim "$work/ceiling" 1001 1
+
+run_with_fake_gh() {
+  local shim="$1"
+  shift
+  PATH="$shim:$PATH" "$@" --now "$now" --grace-secs "$grace_secs" 2>&1
+}
+
+pages_out="$(run_with_fake_gh "$work/pages" "$SCRIPT")"
+pages_status=$?
+if [ "$pages_status" -eq 0 ] && printf '%s' "$pages_out" | grep -q "^check-releases-published: OK"; then
+  pass=$((pass + 1)); echo "ok   PAGES the fetch walks all 1001 releases and reports clean"
 else
   fail=$((fail + 1))
-  echo "FAIL NEW this branch's script pages through all 1001 releases and reports clean — exit ${new_status}, got: ${new_out}"
+  echo "FAIL PAGES the fetch walks all 1001 releases and reports clean — exit ${pages_status}, got: ${pages_out}"
 fi
 
-if printf '%s' "$new_out" | grep -qi "page limit\|sanity ceiling"; then
+if printf '%s' "$pages_out" | grep -qi "page limit\|sanity ceiling"; then
   fail=$((fail + 1))
-  echo "FAIL NEW must not report a truncation/sanity error on 1001 releases — got: ${new_out}"
+  echo "FAIL PAGES must not report a truncation/sanity error on 1001 releases — got: ${pages_out}"
 else
-  pass=$((pass + 1)); echo "ok   NEW reports no truncation or page-sanity error on 1001 releases"
+  pass=$((pass + 1)); echo "ok   PAGES reports no truncation or page-sanity error on 1001 releases"
+fi
+
+ceiling_out="$(run_with_fake_gh "$work/ceiling" "$SCRIPT")"
+ceiling_status=$?
+if [ "$ceiling_status" -ne 0 ] && printf '%s' "$ceiling_out" | grep -qi "sanity ceiling"; then
+  pass=$((pass + 1)); echo "ok   CEILING a walk past the page ceiling is refused, not answered from a short list"
+else
+  fail=$((fail + 1))
+  echo "FAIL CEILING a walk past the page ceiling is refused, not answered from a short list — exit ${ceiling_status}, got: ${ceiling_out}"
 fi
 
 echo

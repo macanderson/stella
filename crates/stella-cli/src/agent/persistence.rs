@@ -1,5 +1,6 @@
 //! Event/telemetry persistence and execution closeout.
 
+use super::audit_writes::{DroppedWrite, audit_write};
 use super::*;
 use stella_core::ports::Clock;
 
@@ -478,7 +479,7 @@ fn defer_stream_terminal(
 /// cancelled execution can have the first true and the second false — every
 /// write succeeded, but the provider-side usage envelope is unknowably lost,
 /// not that anything failed to write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct ExecutionEndOutcome {
     /// The agent-use, MCP-usage and outcome writes this function performs
     /// all reached the store.
@@ -486,6 +487,10 @@ pub(crate) struct ExecutionEndOutcome {
     /// Every fact this execution needs to export is present.
     /// `false` for a cancelled execution even when `write_ok` is true.
     pub(crate) audit_complete: bool,
+    /// The writes that were given up on, each with the error that refused it.
+    /// Empty whenever `write_ok` is true. Kept rather than collapsed, because
+    /// the SQLite result code is the only part of this an operator can act on.
+    pub(crate) dropped: Vec<DroppedWrite>,
 }
 
 impl ExecutionEndOutcome {
@@ -494,7 +499,7 @@ impl ExecutionEndOutcome {
     /// must hold. Equivalent to the pre-split `audit_complete && finish_ok`,
     /// since `audit_complete` already folds in the same write checks
     /// `write_ok` does.
-    pub(crate) fn fully_recorded(self) -> bool {
+    pub(crate) fn fully_recorded(&self) -> bool {
         self.write_ok && self.audit_complete
     }
 }
@@ -523,17 +528,35 @@ pub(crate) fn record_execution_end(
             kind: u.kind.as_str().to_string(),
         })
         .collect();
-    let uses_ok = uses.is_empty() || store.record_agent_uses(execution_id, &uses).is_ok();
+    let mut dropped = Vec::new();
+    // Each write keeps its `Err`, and a write refused because another
+    // connection held the lock is asked for again before it counts as lost —
+    // see [`audit_writes`] for why `.is_ok()` here was a hole in the record.
+    let uses_dropped = if uses.is_empty() {
+        None
+    } else {
+        audit_write("agent uses", || {
+            store.record_agent_uses(execution_id, &uses)
+        })
+    };
+    let uses_ok = uses_dropped.is_none();
+    dropped.extend(uses_dropped);
     let mcp_usage = mcp_usage_rows(registry);
-    let mcp_usage_ok = store.record_mcp_usage(execution_id, &mcp_usage).is_ok();
+    let mcp_dropped = audit_write("MCP usage", || {
+        store.record_mcp_usage(execution_id, &mcp_usage)
+    });
+    let mcp_usage_ok = mcp_dropped.is_none();
+    dropped.extend(mcp_dropped);
     // Cancellation can race a provider response after dispatch. Even when all
     // local writes succeed, the provider-side usage envelope is unknowable and
     // the execution must never become exportable.
     let terminal_usage_known = outcome_label != "cancelled";
     let audit_complete = persistence_complete && uses_ok && mcp_usage_ok && terminal_usage_known;
-    let finish_ok = store
-        .finish_execution_accounted(execution_id, outcome_label, cost_usd, audit_complete)
-        .is_ok();
+    let finish_dropped = audit_write("the outcome", || {
+        store.finish_execution_accounted(execution_id, outcome_label, cost_usd, audit_complete)
+    });
+    let finish_ok = finish_dropped.is_none();
+    dropped.extend(finish_dropped);
     let _ = store.materialize_tool_calls(execution_id);
     let _ = store.finalize_execution_reflection(execution_id);
     let _ = store.sync_to_usage_default(execution_id);
@@ -541,6 +564,7 @@ pub(crate) fn record_execution_end(
     ExecutionEndOutcome {
         write_ok: uses_ok && mcp_usage_ok && finish_ok,
         audit_complete,
+        dropped,
     }
 }
 
@@ -587,13 +611,6 @@ fn token_summary(partial: &stella_protocol::PartialUsage) -> String {
     } else {
         format!("{input} input ({qualifier}) + {output} output tokens")
     }
-}
-
-pub(crate) fn warn_store_write_failed(what: &str) {
-    eprintln!(
-        "  {} store write failed — {what} for this execution is incomplete",
-        "⚠".yellow()
-    );
 }
 
 /// Why an event's accounting came out incomplete — the distinction the old

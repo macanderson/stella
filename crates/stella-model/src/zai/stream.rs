@@ -240,6 +240,15 @@ pub(super) async fn aggregate_zai_stream(
     let mut reasoning = String::new();
     let mut usage = CompletionUsage::default();
     let mut tool_calls: BTreeMap<usize, ToolCallAccumulator> = BTreeMap::new();
+    // Where a part that carries no `index` is filed. It counts across the
+    // whole stream, not inside one chunk. A part's place inside its own chunk
+    // starts again at 0 for every frame. So a server that leaves out `index`
+    // and sends one call per chunk would file every call under 0 and merge
+    // them: names glued into `read_filesearch`, arguments glued into JSON
+    // that will not parse, and both real calls lost. A fresh `id` is what
+    // opens a call in this dialect, so it is what moves the counter on. A
+    // part with no id goes on filling the call the counter points at.
+    let mut unindexed_call: usize = 0;
     // Set once any choice reports `finish_reason: "length"` — the output was
     // cut off at the token limit, so a tool call whose argument JSON didn't
     // finish streaming is truncated, not merely malformed.
@@ -390,16 +399,23 @@ pub(super) async fn aggregate_zai_stream(
                     }
                     reasoning.push_str(&r);
                 }
-                for (position, tc_delta) in choice
-                    .delta
-                    .tool_calls
-                    .unwrap_or_default()
-                    .into_iter()
-                    .enumerate()
-                {
-                    // Absent `index` falls back to the fragment's position in
-                    // this chunk — see `ZaiStreamToolCallDelta`.
-                    let index = tc_delta.index.unwrap_or(position);
+                for tc_delta in choice.delta.tool_calls.unwrap_or_default() {
+                    // Absent `index` falls back to the per-stream counter —
+                    // see `ZaiStreamToolCallDelta`.
+                    let index = match tc_delta.index {
+                        Some(index) => index,
+                        None => {
+                            let opens_a_call =
+                                tc_delta.id.as_deref().is_some_and(|id| !id.is_empty());
+                            let counter_is_taken = tool_calls
+                                .get(&unindexed_call)
+                                .is_some_and(|acc| !acc.id.is_empty());
+                            if opens_a_call && counter_is_taken {
+                                unindexed_call += 1;
+                            }
+                            unindexed_call
+                        }
+                    };
                     // A delta for index N proves every lower index finished
                     // streaming (the dialect emits calls sequentially) —
                     // the moment those calls can be announced for
@@ -501,6 +517,18 @@ pub(super) async fn aggregate_zai_stream(
 
     let mut calls = Vec::with_capacity(tool_calls.len());
     for (index, acc) in tool_calls {
+        // The id never arrived, so nothing can match the result back. Two
+        // calls in one turn both keyed `""` pair up with the wrong results in
+        // `stella-core`'s loop evidence, and a `tool_result` sent under an
+        // empty id matches nothing the provider holds.
+        // `announce_completed_below` already skips such a call for
+        // speculative execution, and committing one here would contradict
+        // it. Terminal, for the reason the anthropic adapter treats the same
+        // gap as terminal: there is no id to invent.
+        if acc.id.is_empty() {
+            return Err(http::malformed_tool_call_error(label, index, &acc.name, &["id"]).into());
+        }
+
         let truncated = Some(index) == truncated_index;
         let input = tool_call_input(label, &acc.name, &acc.arguments, truncated)?;
         calls.push(ToolCall {
