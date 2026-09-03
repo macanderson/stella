@@ -112,12 +112,14 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// deadlock a protocol against itself. 64 is far past what one dashboard page
 /// opens while keeping the blocking-pool fan-out bounded.
 ///
-/// That reasoning is exactly why the live SSE stream is **not** counted here.
-/// An SSE connection is held open for as long as a tab is, so a handful of
-/// them on this semaphore would hold permits indefinitely and starve every
-/// one-shot route behind them — the page would hang while its own stream was
-/// perfectly healthy. Streams carry their own separate, smaller budget in
-/// the `live` module. Do not merge the two.
+/// That reasoning is exactly why the live SSE stream must not stay on this
+/// semaphore past its request head. An SSE connection is held open for as
+/// long as a tab is, so a handful of them holding a permit for that whole
+/// life would starve every one-shot route behind them — the page would hang
+/// while its own stream was perfectly healthy. `respond_to_head` drops the
+/// permit the moment a request routes to `/api/v1/live`, before handing the
+/// socket to a long-lived stream; streams carry their own separate, smaller
+/// budget in the `live` module from that point on. Do not merge the two.
 const MAX_LIVE_CONNECTIONS: usize = 64;
 
 /// Sent on every response, making the dashboard's zero-external-reference
@@ -682,12 +684,34 @@ pub async fn serve(
     plugins: Arc<dyn PluginContributions>,
     on_ready: impl FnOnce(SocketAddr),
 ) -> Result<(), ServeError> {
+    serve_with_capacity(
+        workspace_root,
+        port,
+        plugins,
+        on_ready,
+        MAX_LIVE_CONNECTIONS,
+    )
+    .await
+}
+
+/// [`serve`]'s body, with the one-shot pool's size pulled out as a
+/// parameter. [`serve`] always passes [`MAX_LIVE_CONNECTIONS`]; a test asks
+/// for a single permit instead, because proving a live stream does not hold
+/// its permit for its whole life needs one stream and one ordinary request
+/// past it, not sixty-four sockets.
+async fn serve_with_capacity(
+    workspace_root: PathBuf,
+    port: u16,
+    plugins: Arc<dyn PluginContributions>,
+    on_ready: impl FnOnce(SocketAddr),
+    max_live_connections: usize,
+) -> Result<(), ServeError> {
     let listener = TcpListener::bind(("127.0.0.1", port))
         .await
         .map_err(|source| ServeError::Bind { port, source })?;
     let addr = listener.local_addr().map_err(ServeError::Accept)?;
     on_ready(addr);
-    let connections = Arc::new(tokio::sync::Semaphore::new(MAX_LIVE_CONNECTIONS));
+    let connections = Arc::new(tokio::sync::Semaphore::new(max_live_connections));
     let mut backoff = AcceptBackoff::new();
     loop {
         let stream = match listener.accept().await {
@@ -714,12 +738,18 @@ pub async fn serve(
                 AcceptAction::Fatal => return Err(ServeError::Accept(err)),
             },
         };
-        // Bounded concurrency. Unlike `stella-serve`, nothing here is a
-        // long-lived stream — every response is one shot and closes — so a
-        // permit is held for a single request and a semaphore cannot starve a
-        // protocol against itself. A connection that cannot get a permit waits
-        // rather than being refused: the dashboard is a local tool, and a brief
-        // queue is a better answer than an error the page has to render.
+        // Bounded concurrency. A permit is held for the one-shot portion of a
+        // connection — reading the request head and, for every route but the
+        // live stream, writing that route's single answer — so bounding
+        // connections cannot starve a protocol against itself the way it
+        // would in `stella-serve`. The one route that is not one-shot,
+        // `/api/v1/live`, has `respond_to_head` drop its permit the moment
+        // that route is known, before the socket is handed to a long-lived
+        // stream (see `live`'s module doc for the separate, smaller budget
+        // that governs a stream from that point on). A connection that
+        // cannot get a permit waits rather than being refused: the dashboard
+        // is a local tool, and a brief queue is a better answer than an
+        // error the page has to render.
         let permit = Arc::clone(&connections)
             .acquire_owned()
             .await
@@ -728,9 +758,11 @@ pub async fn serve(
         let plugins = Arc::clone(&plugins);
         tokio::spawn(async move {
             // Per-connection errors (bad request line, client hangup) only
-            // affect that connection; the accept loop keeps serving.
-            let _ = handle(stream, &root, plugins).await;
-            drop(permit);
+            // affect that connection; the accept loop keeps serving. `permit`
+            // travels into `handle` and is dropped there — either by
+            // `respond_to_head` early, for a live stream, or on this task's
+            // return for every other route.
+            let _ = handle(stream, &root, plugins, permit).await;
         });
     }
 }
@@ -780,15 +812,17 @@ async fn handle(
     mut stream: TcpStream,
     workspace_root: &Path,
     plugins: Arc<dyn PluginContributions>,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> std::io::Result<()> {
     let head = match tokio::time::timeout(READ_TIMEOUT, read_head(&mut stream)).await {
         Ok(result) => result?,
         // The peer never finished its head. Dropping the connection is the whole
         // remedy: there is nobody to tell, because a client that cannot send a
         // request head in ten seconds is not waiting for a status code.
+        // `permit` drops with the rest of this frame.
         Err(_elapsed) => return Ok(()),
     };
-    respond_to_head(stream, workspace_root, head, plugins).await
+    respond_to_head(stream, workspace_root, head, plugins, permit).await
 }
 
 /// One request head, and whether its terminator arrived inside the cap.
@@ -832,6 +866,7 @@ async fn respond_to_head(
     workspace_root: &Path,
     head: RequestHead,
     plugins: Arc<dyn PluginContributions>,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> std::io::Result<()> {
     let RequestHead {
         text: head,
@@ -851,6 +886,11 @@ async fn respond_to_head(
         let root = query_param(path.split_once('?').map(|(_, query)| query), "project")
             .and_then(|id| global::resolve_project_root(&id))
             .unwrap_or_else(|| workspace_root.to_path_buf());
+        // The one-shot budget above bounds reading this head, not the stream
+        // that follows: dropped here, before the socket is handed to
+        // `live::serve_stream`, so an open tab never counts against it. A
+        // stream's own admission is `live`'s separate `MAX_LIVE_STREAMS`.
+        drop(permit);
         return live::serve_stream(stream, Arc::new(Observatory::new(&root)), CSP).await;
     }
     let response = if !head_complete {
