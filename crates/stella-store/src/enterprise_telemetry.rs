@@ -772,7 +772,7 @@ impl EnterpriseTelemetrySpool {
             tx.commit()?;
             return Ok(EnqueueOutcome::Duplicate);
         }
-        enforce_limits(&tx, self.limits, sink_fingerprint)?;
+        enforce_limits(&tx, self.limits, sink_fingerprint, created_at_ms)?;
         let retained: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM operational_spool
              WHERE sink_fingerprint = ?1 AND event_id = ?2)",
@@ -1284,6 +1284,7 @@ fn enforce_limits(
     tx: &rusqlite::Transaction<'_>,
     limits: SpoolLimits,
     inserting_sink: &str,
+    now_ms: i64,
 ) -> Result<()> {
     loop {
         let (rows, bytes): (i64, i64) = tx.query_row(
@@ -1296,12 +1297,16 @@ fn enforce_limits(
         if rows <= limits.max_rows && bytes <= limits.max_bytes {
             return Ok(());
         }
+        // A dead lease must not block eviction forever. If the owner dies
+        // before `ack` or `retry`, this row still counts as free once its
+        // lease expires — the same rule `claim_batch` already uses.
         let oldest: Option<i64> = tx
             .query_row(
                 "SELECT insertion_seq FROM operational_spool
-                 WHERE sink_fingerprint = ?1 AND leased_by IS NULL
+                 WHERE sink_fingerprint = ?1
+                   AND (leased_by IS NULL OR lease_until_ms <= ?2)
                  ORDER BY insertion_seq LIMIT 1",
-                params![inserting_sink],
+                params![inserting_sink, now_ms],
                 |row| row.get(0),
             )
             .optional()?;
