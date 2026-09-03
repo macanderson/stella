@@ -33,7 +33,7 @@
 //! whichever pin is answering — so with the AGENTS tab's per-row model column
 //! gone, "which pin serves each role" is answered here or nowhere.
 
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::*;
 use crate::keymap::{self, Scope};
