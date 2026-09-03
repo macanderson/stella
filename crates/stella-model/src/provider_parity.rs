@@ -119,6 +119,7 @@ pub(crate) fn adapter_sources() -> &'static [&'static str] {
         include_str!("zai/tests/openrouter_stream.rs"),
         include_str!("zai/tests/stream_fallback.rs"),
         include_str!("zai/tests/stream_frame.rs"),
+        include_str!("zai/tests/upstream_pin.rs"),
         include_str!("zai/tests/vision.rs"),
         include_str!("zai/tests/zai_effort.rs"),
     ]
@@ -136,6 +137,17 @@ pub enum CachePosture {
         /// Name of the test function that proves the marker reaches the
         /// wire; checked for existence by this module's tests.
         witness: &'static str,
+        /// Name of the test proving this provider asks for a *particular*
+        /// cache, where sending the marker is not the whole story: a gateway
+        /// fronts several vendors holding several caches, so the marker can
+        /// reach the wire and still buy nothing.
+        ///
+        /// Two witnesses rather than one because they are two facts with two
+        /// kinds of evidence, the split `ParallelToolCallPosture` already
+        /// makes for the same reason — collapsing them would let a row claim
+        /// more than it can show. `None` for a direct vendor, which holds one
+        /// cache and has no route to choose.
+        routing_witness: Option<&'static str>,
     },
     /// The provider caches implicitly — nothing to send, but the adapter
     /// must PARSE the provider's hit telemetry or cached tokens bill at the
@@ -167,6 +179,7 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
                         the pair reaches the wire when configured, and the default window \
                         stays byte-identical",
             witness: "request_serializes_both_cache_breakpoints",
+            routing_witness: None,
         },
     ),
     (
@@ -174,6 +187,7 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
         CachePosture::OptIn {
             mechanism: "Converse cachePoint blocks, gated to supporting model families",
             witness: "complete_sends_cache_points_for_claude_models",
+            routing_witness: None,
         },
     ),
     (
@@ -186,8 +200,20 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
                         session_id is a HINT the gateway may decline, not a pin: measured \
                         over one 17-minute session it held for the last 17 calls and not \
                         the first 32, leaving 20 of 69 calls reading zero cached tokens \
-                        for 54% of the spend. Only a non-empty upstream_pin \
-                        (provider.order + allow_fallbacks:false) actually fixes the route. \
+                        for 54% of the spend; a 174-call turn on one slug in this repo's \
+                        own store was served by three vendors, the route moving 12 times, \
+                        with the id sent on every request. So the adapter reads the served \
+                        vendor off the response (top-level provider, on the stream's chunks \
+                        and on the unary body alike) and asks for it again on every later \
+                        call as provider.order with allow_fallbacks:true — a warm cache is \
+                        worth asking for and not worth failing a call over. An operator's \
+                        upstream_pin outranks it and keeps allow_fallbacks:false, which is \
+                        what a measured run needs. Whether the gateway routes on the \
+                        display name it reports, when that name is handed back in \
+                        provider.order, is a declared gap: a wiremock accepts any string, \
+                        so the round trip needs a live call to settle, and \
+                        allow_fallbacks:true is what makes an unmatched name cost the \
+                        saving rather than the call. \
                         The gateway honours the root-level placement for Anthropic routes, \
                         verified from recorded field usage rather than a live probe \
                         (#1854): of 1,684 anthropic/* calls this adapter made between \
@@ -198,6 +224,9 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
                         the gateway those reads could not occur if the root field were \
                         dropped",
             witness: "openrouter_identity_sends_root_level_cache_control",
+            routing_witness: Some(
+                "a_gateway_is_reasked_for_the_upstream_that_served_the_first_call",
+            ),
         },
     ),
     (
@@ -847,21 +876,38 @@ mod tests {
     /// Every witness named in the cache matrix must exist as a test function
     /// in the adapter sources — a row whose proof rotted (test renamed or
     /// deleted) fails here, not as a production surprise.
+    ///
+    /// A routing witness is held to the same bar. A gateway row that names
+    /// one and then loses it would keep claiming it asks for a particular
+    /// cache, which is the claim that was wrong before it was tested.
     #[test]
     fn every_witness_test_exists_in_the_adapter_sources() {
         let sources = adapter_sources();
+        let exists = |witness: &str| {
+            let needle = format!("fn {witness}(");
+            sources.iter().any(|source| source.contains(&needle))
+        };
         for (id, posture) in CACHE_POSTURE {
-            let witness = match posture {
-                CachePosture::OptIn { witness, .. } | CachePosture::Implicit { witness, .. } => {
-                    witness
-                }
+            let (witness, routing) = match posture {
+                CachePosture::OptIn {
+                    witness,
+                    routing_witness,
+                    ..
+                } => (witness, *routing_witness),
+                CachePosture::Implicit { witness, .. } => (witness, None),
                 CachePosture::NotApplicable { .. } => continue,
             };
-            let needle = format!("fn {witness}(");
             assert!(
-                sources.iter().any(|source| source.contains(&needle)),
+                exists(witness),
                 "cache-posture witness for `{id}` not found in adapter sources: {witness}"
             );
+            if let Some(routing) = routing {
+                assert!(
+                    exists(routing),
+                    "cache-posture routing witness for `{id}` not found in adapter \
+                     sources: {routing}"
+                );
+            }
         }
     }
 
