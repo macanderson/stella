@@ -423,6 +423,7 @@ pattern = "20"
                 .then_some(super::super::ingest::record::Verdict::Refuted);
             sweep::disposition(&SweepInput {
                 record: &loaded.record,
+                trust: loaded.trust,
                 verdict,
                 last_checked: None,
                 now: "2026-07-20T00:00:00Z",

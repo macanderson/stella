@@ -823,8 +823,11 @@ impl TruthBasis {
     }
 }
 
-/// What a truth probe checks. Gated kinds run a command or reach the network and
-/// are never honored on imported/inferred records — see [`ProbeKind::is_gated`].
+/// What a truth probe checks. Gated kinds run a command or reach the network.
+/// One is never honored on an imported or inferred record. On a published
+/// record it is refused as well unless the user published it — see
+/// [`ProbeKind::is_gated`], [`super::gate::probe_honored`] and
+/// `crate::records::honored_probe`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeKind {

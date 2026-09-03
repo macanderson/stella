@@ -149,11 +149,21 @@ A probe answers "does this claim still hold?" without executing arbitrary code:
 
 Gated probes are honored **only** when `basis = "decree"` and a human
 `verified_by` is recorded, and **never** on a record whose `origin` is
-`imported` or `inferred`. Ingest is the headline path here: a model extracting
-records from arbitrary markdown must not be able to mint a record that runs a
-command or fetches a URL. An `http_ok` probe pointed at an attacker-chosen host
-is an exfiltration channel — anything interesting fits in a query string. `05`
-shows a would-be shell probe quarantined rather than honored.
+`imported`, `inferred`, or missing. Ingest is the headline path here: a model
+extracting records from arbitrary markdown must not be able to mint a record
+that runs a command or fetches a URL. An `http_ok` probe pointed at an
+attacker-chosen host is an exfiltration channel — anything interesting fits in
+a query string. `05` shows a would-be shell probe quarantined rather than
+honored.
+
+Once a record is published, one more condition is added and it is the one that
+usually decides: a gated probe is honored only in the user's own
+`~/.stella/rules`. Every field above is written *inside the file being judged*,
+so in a checkout they are a stranger asserting the author's consent — which
+would make anyone who can open a pull request able to arm a command. Where the
+file was read from is the one fact it cannot claim, so that is what the sweep
+asks. A repository record that declares a gated probe still loads and still
+steers; it reports `gated probe refused` and its claim is never re-checked.
 
 ## Refutation is evidence, not a boolean
 

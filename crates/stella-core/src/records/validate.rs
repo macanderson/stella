@@ -34,7 +34,7 @@
 use super::super::ingest::gate::atomicity_validation;
 use super::super::ingest::record::{AppliesTo, EnforcementMode, Record};
 use super::super::redact::redact_secrets;
-use super::{KNOWN_TASKS, LoadedRecord, RecordFinding};
+use super::{KNOWN_TASKS, LoadedRecord, RecordFinding, Trust};
 
 /// Glob metacharacters that are **literals** in this engine's matcher. A guard
 /// written with them expresses an intent the matcher will not honor, so it silently
@@ -78,7 +78,7 @@ pub struct Conflict {
 /// months) — but it must still take part in conflict detection, because a markdown
 /// guard and a TOML record really can contradict each other.
 pub fn check_record(loaded: &mut LoadedRecord) {
-    let mut findings = check_one(&loaded.record);
+    let mut findings = check_one(&loaded.record, loaded.trust);
     loaded.findings.append(&mut findings);
 }
 
@@ -112,30 +112,34 @@ pub fn is_suspended(handle: &str, conflicts: &[Conflict]) -> bool {
 }
 
 /// Everything wrong with one record, independent of its neighbours.
-fn check_one(record: &Record) -> Vec<RecordFinding> {
+fn check_one(record: &Record, trust: Trust) -> Vec<RecordFinding> {
     let mut findings = Vec::new();
     findings.extend(forbidden_data(record));
     findings.extend(guard_lint(record));
     findings.extend(unknown_tasks(record));
     findings.extend(atomicity(record));
     findings.extend(scoped_without_trigger(record));
-    findings.extend(gated_probe_refused(record));
+    findings.extend(gated_probe_refused(record, trust));
     findings
 }
 
 /// A declared gated probe (`command_succeeds`/`http_ok`) the staleness sweep
 /// will never run: [`super::sweep::honored_probe`] refuses it for this record's
-/// origin or truth basis. Without this finding the record loads clean and its
-/// claim silently never gets re-checked — the author believes a probe is
-/// standing guard, and nothing is.
-fn gated_probe_refused(record: &Record) -> Vec<RecordFinding> {
+/// trust tier, origin or truth basis. Without this finding the record loads
+/// clean and its claim silently never gets re-checked — the author believes a
+/// probe is standing guard, and nothing is.
+///
+/// The tier is why this is the surface the refusal is said out loud on. Almost
+/// every gated probe in a repository is refused for its tier alone, and a record
+/// whose fields all look impeccable gives its author no other way to find out.
+fn gated_probe_refused(record: &Record, trust: Trust) -> Vec<RecordFinding> {
     let declared = record
         .truth
         .as_ref()
         .and_then(|truth| truth.probe.as_ref())
         .filter(|probe| probe.kind.is_gated());
     match declared {
-        Some(probe) if super::sweep::honored_probe(record).is_none() => {
+        Some(probe) if super::sweep::honored_probe(record, trust).is_none() => {
             vec![RecordFinding::GatedProbeRefused(probe.kind)]
         }
         _ => Vec::new(),
@@ -556,7 +560,7 @@ mod tests {
     fn a_glob_using_a_non_wildcard_metacharacter_is_blocking() {
         let mut record = record_named("ctx.a.b.c");
         record.enforcement = Some(hard_guard(Some("Edit"), Some("migrations/[0-9]*/**"), None));
-        let findings = check_one(&record);
+        let findings = check_one(&record, Trust::User);
         let lint = findings
             .iter()
             .find_map(|f| match f {
@@ -577,7 +581,7 @@ mod tests {
     fn a_deny_everything_guard_on_every_tool_is_refused() {
         let mut record = record_named("ctx.a.b.c");
         record.enforcement = Some(hard_guard(Some("*"), Some("**"), None));
-        let findings = check_one(&record);
+        let findings = check_one(&record, Trust::User);
         assert!(
             findings
                 .iter()
@@ -590,7 +594,7 @@ mod tests {
     fn an_unbounded_glob_on_one_tool_is_questioned_not_refused() {
         let mut record = record_named("ctx.a.b.c");
         record.enforcement = Some(hard_guard(Some("Write"), Some("*"), None));
-        let findings = check_one(&record);
+        let findings = check_one(&record, Trust::User);
         assert!(
             findings
                 .iter()
@@ -604,7 +608,7 @@ mod tests {
         let mut record = record_named("ctx.a.b.c");
         record.enforcement = Some(hard_guard(Some("Edit(migrations)"), None, None));
         assert!(
-            check_one(&record).iter().any(
+            check_one(&record, Trust::User).iter().any(
                 |f| matches!(f, RecordFinding::GuardLint(d) if d.contains("is not a tool name"))
             ),
         );
@@ -614,7 +618,11 @@ mod tests {
     fn a_well_formed_guard_lints_clean() {
         let mut record = record_named("ctx.a.b.c");
         record.enforcement = Some(hard_guard(Some("Bash"), None, Some("git push --force*")));
-        assert!(check_one(&record).is_empty(), "{:?}", check_one(&record));
+        assert!(
+            check_one(&record, Trust::User).is_empty(),
+            "{:?}",
+            check_one(&record, Trust::User)
+        );
     }
 
     // Forbidden data
@@ -625,7 +633,7 @@ mod tests {
         record.statement =
             "Authenticate with sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA."
                 .to_string();
-        let findings = check_one(&record);
+        let findings = check_one(&record, Trust::User);
         assert!(
             findings
                 .iter()
@@ -643,11 +651,11 @@ mod tests {
         let mut record = record_named("ctx.a.b.c");
         record.statement = "Run the build.\n$ pnpm build\nDone in 4.2s".to_string();
         assert!(
-            check_one(&record)
+            check_one(&record, Trust::User)
                 .iter()
                 .any(|f| matches!(f, RecordFinding::GuardLint(d) if d.contains("single \nsentence") || d.contains("single sentence"))),
             "{:?}",
-            check_one(&record)
+            check_one(&record, Trust::User)
         );
     }
 
@@ -661,7 +669,7 @@ mod tests {
         {
             applies_to.tasks = vec!["install".to_string(), "intall".to_string()];
         }
-        let findings = check_one(&record);
+        let findings = check_one(&record, Trust::User);
         assert_eq!(
             findings,
             vec![RecordFinding::UnknownTask("intall".to_string())],
@@ -701,7 +709,10 @@ mod tests {
 
     #[test]
     fn a_gated_probe_the_sweep_refuses_is_reported_not_silently_inert() {
-        let findings = check_one(&probing(ProbeKind::HttpOk, TruthBasis::Measured, None));
+        let findings = check_one(
+            &probing(ProbeKind::HttpOk, TruthBasis::Measured, None),
+            Trust::User,
+        );
         assert!(
             findings
                 .iter()
@@ -721,13 +732,36 @@ mod tests {
         // `record_named` stamps an imported origin, which the sweep refuses on
         // its own; the honored case needs the trusted one.
         record.origin = Some(super::super::super::context_record::kind::Origin::User);
-        assert!(check_one(&record).is_empty(), "{:?}", check_one(&record));
+        assert!(
+            check_one(&record, Trust::User).is_empty(),
+            "{:?}",
+            check_one(&record, Trust::User)
+        );
+    }
+
+    #[test]
+    fn the_same_record_at_project_trust_is_reported_instead() {
+        let mut record = probing(ProbeKind::CommandSucceeds, TruthBasis::Decree, Some("mac"));
+        record.origin = Some(super::super::super::context_record::kind::Origin::User);
+        let findings = check_one(&record, Trust::Project);
+        assert!(
+            findings.iter().any(|f| matches!(
+                f,
+                RecordFinding::GatedProbeRefused(ProbeKind::CommandSucceeds)
+            )),
+            "a repository record's gated probe is refused, and the author has to be \
+             told, or the claim silently stops being re-checked: {findings:?}"
+        );
     }
 
     #[test]
     fn an_ungated_probe_is_never_reported() {
         let record = probing(ProbeKind::FileContains, TruthBasis::Measured, None);
-        assert!(check_one(&record).is_empty(), "{:?}", check_one(&record));
+        assert!(
+            check_one(&record, Trust::User).is_empty(),
+            "{:?}",
+            check_one(&record, Trust::User)
+        );
     }
 
     #[test]
@@ -737,7 +771,7 @@ mod tests {
             "Deploys run from main, happen on Tuesdays, and are triggered with make ship."
                 .to_string();
         assert!(
-            check_one(&record)
+            check_one(&record, Trust::User)
                 .iter()
                 .any(|f| matches!(f, RecordFinding::GuardLint(d) if d.contains("re-extract"))),
         );

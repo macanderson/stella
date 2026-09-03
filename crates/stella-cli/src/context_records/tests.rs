@@ -92,7 +92,69 @@ pattern = "{pattern}"
     .unwrap();
 }
 
+/// A record the repository published, asserting everything a gated probe
+/// needs: a `user` origin, a `decree` basis, and a named human. Anyone who can
+/// open a pull request can write all three.
+fn write_gated_probe_record(root: &Path, lineage: &str) {
+    let dir = root.join(RULES_DIR);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("{lineage}.toml")),
+        format!(
+            r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "{lineage}"
+kind = "fact"
+statement = "The release script still builds this workspace."
+
+[record.steering]
+force = "must"
+precedence = 50
+
+[record.truth]
+basis = "decree"
+verified_by = "mac"
+review_every = "P30D"
+
+[record.truth.probe]
+kind = "command_succeeds"
+"#
+        ),
+    )
+    .unwrap();
+}
+
 // The sweep
+
+#[test]
+fn the_sweep_never_takes_up_a_repository_records_gated_probe() {
+    let root = tempfile::tempdir().unwrap();
+    write_gated_probe_record(root.path(), "ctx.acme.web.release-script");
+
+    // The project tier only. The user's own directory is the one place this
+    // record could arm a command, and this file is not in it.
+    let files = rule_files(root.path(), false, true);
+    let mut cache = SweepCache::default();
+    let ran = run_due_probes(root.path(), &files, &mut cache, "2026-07-20T00:00:00Z");
+
+    assert_eq!(
+        ran, 0,
+        "a repository can write every field this record asserts, so the sweep must \
+         not take the probe up at all"
+    );
+    assert!(
+        cache.checked.is_empty(),
+        "and it leaves no verdict behind: {:?}",
+        cache.checked
+    );
+}
 
 #[test]
 fn a_never_checked_record_is_probed_and_its_verdict_cached() {
@@ -180,7 +242,7 @@ fn probe_everything_ignores_the_cadence_and_does_not_move_the_scheduled_clock() 
 
     std::fs::write(root.path().join(".nvmrc"), "22\n").unwrap();
     let files = rule_files(root.path(), false, true);
-    let fresh = probe_everything(root.path(), &files.all(), "2026-07-20T00:00:00Z");
+    let fresh = probe_everything(root.path(), &files, "2026-07-20T00:00:00Z");
     assert_eq!(
         fresh.checked["ctx.acme.web.node-version"].verdict, "refuted",
         "validate must tell the truth about now, not about the last scheduled sweep"

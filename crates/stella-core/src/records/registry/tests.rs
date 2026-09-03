@@ -1,5 +1,6 @@
 //! The merge, over both formats, from real file contents.
 
+use super::super::super::ingest::record::ProbeKind;
 use super::*;
 
 const NOW: &str = "2026-07-20T00:00:00Z";
@@ -595,6 +596,85 @@ fn a_user_approval_does_not_transfer_to_a_project_record_of_the_same_lineage() {
     assert!(
         !registry.entries[0].is_enforced(),
         "the approval was granted to the user's record, not to this lineage as a name"
+    );
+}
+
+// Gated probes answer to the tier, not to what the file says about itself.
+
+/// A record whose own fields all argue for running a command: a `user` origin,
+/// a `decree` basis, and a named human. Only the directory it is read from
+/// tells the honored case from the refused one.
+fn gated_probe_record(lineage: &str) -> String {
+    format!(
+        r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[[record]]
+lineage_id = "{lineage}"
+kind = "rule"
+statement = "The release script still builds this workspace."
+origin = "user"
+status = "active"
+
+[record.steering]
+force = "should"
+precedence = 50
+
+[record.truth]
+basis = "decree"
+verified_by = "mac"
+
+[record.truth.probe]
+kind = "command_succeeds"
+"#
+    )
+}
+
+const PROBED: &str = "ctx.acme.web.release-script";
+
+#[test]
+fn a_repository_record_never_arms_a_gated_probe() {
+    // Anyone who can open a pull request can write every field this record
+    // asserts. So none of them may unlock a command. The refusal is said out
+    // loud: otherwise the author who wrote the probe never learns that the
+    // claim stopped being re-checked.
+    let project = vec![md(
+        ".stella/rules/release-script.toml",
+        &gated_probe_record(PROBED),
+    )];
+    let registry = load(&[], &project, &facts());
+
+    assert!(
+        registry.entries[0]
+            .record
+            .findings
+            .iter()
+            .any(|finding| matches!(
+                finding,
+                RecordFinding::GatedProbeRefused(ProbeKind::CommandSucceeds)
+            )),
+        "a repository's gated probe must be refused and reported: {:?}",
+        registry.entries[0].record.findings
+    );
+}
+
+#[test]
+fn the_same_record_in_the_users_own_directory_keeps_its_probe() {
+    let user = vec![md(
+        "/home/mac/.stella/rules/release-script.toml",
+        &gated_probe_record(PROBED),
+    )];
+    let registry = load(&user, &[], &facts());
+
+    assert!(
+        !registry.entries[0]
+            .record
+            .findings
+            .iter()
+            .any(|finding| matches!(finding, RecordFinding::GatedProbeRefused(_))),
+        "the user's own directory is the one place this record can arm a command: {:?}",
+        registry.entries[0].record.findings
     );
 }
 

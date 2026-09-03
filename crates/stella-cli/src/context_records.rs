@@ -549,12 +549,25 @@ pub(crate) struct TieredFiles {
 }
 
 impl TieredFiles {
-    /// Every file, tier forgotten — for the passes that only ask what is on disk,
-    /// like running due probes.
+    /// Every file, tier forgotten — for the passes that only ask what is on disk.
+    ///
+    /// Not for the probe pass. Running a due probe asks whether a gated probe may
+    /// run, which `stella_core::records::honored_probe` answers from the tier, so
+    /// the sweep reads `tiered` instead. Flattening there let a repository
+    /// record be swept as if the user had published it.
     pub(crate) fn all(&self) -> Vec<RuleFile> {
         let mut all = self.user.clone();
         all.extend(self.project.iter().cloned());
         all
+    }
+
+    /// Every file with the tier it was read out of, user first — the shape a pass
+    /// needs when the answer depends on who published the record.
+    fn tiered(&self) -> [(&[RuleFile], Trust); 2] {
+        [
+            (self.user.as_slice(), Trust::User),
+            (self.project.as_slice(), Trust::Project),
+        ]
     }
 }
 
@@ -595,7 +608,7 @@ fn load_registry_with(root: &Path, include_project: bool) -> Registry {
     let files = rule_files(root, true, include_project);
     let now = now_rfc3339();
     let mut cache = SweepCache::read(root);
-    let ran = run_due_probes(root, &files.all(), &mut cache, &now);
+    let ran = run_due_probes(root, &files, &mut cache, &now);
     if ran > 0 {
         cache.write(root);
     }
@@ -708,7 +721,7 @@ fn repo_owned_lineages(files: &TieredFiles) -> BTreeSet<String> {
         .filter(|file| file.contributed_by.is_none())
         .cloned()
         .collect();
-    parse_records(&repo_owned)
+    parse_records(&repo_owned, Trust::Project)
         .into_iter()
         .map(|loaded| loaded.record.lineage_id)
         .collect()
@@ -747,9 +760,9 @@ fn trust_of_published_path(path: &str) -> Trust {
 }
 
 /// Run every probe that is due, writing results into `cache`. Returns how many ran.
-fn run_due_probes(root: &Path, files: &[RuleFile], cache: &mut SweepCache, now: &str) -> usize {
+fn run_due_probes(root: &Path, files: &TieredFiles, cache: &mut SweepCache, now: &str) -> usize {
     let mut ran = 0;
-    for record in parse_records(files) {
+    for record in tiered_records(files) {
         let lineage = record.record.lineage_id.clone();
         let last = cache
             .checked
@@ -757,6 +770,7 @@ fn run_due_probes(root: &Path, files: &[RuleFile], cache: &mut SweepCache, now: 
             .map(|entry| entry.checked_at.clone());
         let input = records::SweepInput {
             record: &record.record,
+            trust: record.trust,
             verdict: None,
             last_checked: last.as_deref(),
             now,
@@ -768,7 +782,7 @@ fn run_due_probes(root: &Path, files: &[RuleFile], cache: &mut SweepCache, now: 
         if !(never_checked || records::probe_is_due(&input)) {
             continue;
         }
-        let Some(probe) = records::honored_probe(&record.record) else {
+        let Some(probe) = records::honored_probe(&record.record, record.trust) else {
             continue;
         };
         let refutation = crate::ingest_cmd::probe::evaluate(root, probe, now);
@@ -790,29 +804,48 @@ fn run_due_probes(root: &Path, files: &[RuleFile], cache: &mut SweepCache, now: 
 /// human's cadence and `none` is an admission that nothing can check the claim;
 /// firing either would produce a verdict nobody took.
 fn probe_is_runnable(record: &LoadedRecord) -> bool {
-    records::honored_probe(&record.record)
+    records::honored_probe(&record.record, record.trust)
         .is_some_and(|probe| !matches!(probe.kind, ProbeKind::Manual | ProbeKind::None))
 }
 
 /// Every `.toml` record in `files`, for the probe pass. Parse failures are ignored
 /// here — [`records::registry::load`] reports them properly, and reporting the
 /// same broken file twice reads like two problems.
-pub(crate) fn parse_records(files: &[RuleFile]) -> Vec<LoadedRecord> {
+///
+/// `trust` is the tier the caller read these files out of, and it is stamped here
+/// for the same reason [`records::registry::load`] stamps it: a record cannot
+/// establish its own publisher, and every gate that rations a capability asks who
+/// published it.
+pub(crate) fn parse_records(files: &[RuleFile], trust: Trust) -> Vec<LoadedRecord> {
     files
         .iter()
         .filter(|file| file.path.ends_with(".toml"))
         .filter_map(|file| load_context_file(&file.path, &file.contents).ok())
         .flatten()
+        .map(|mut record| {
+            record.trust = trust;
+            record
+        })
+        .collect()
+}
+
+/// Every `.toml` record in this workspace, each carrying the tier its file was
+/// read out of — the probe pass's view of the tree.
+fn tiered_records(files: &TieredFiles) -> Vec<LoadedRecord> {
+    files
+        .tiered()
+        .into_iter()
+        .flat_map(|(tier, trust)| parse_records(tier, trust))
         .collect()
 }
 
 /// Force every probe to run, ignoring cadence — what `stella context validate`
 /// does. Returns the fresh cache without writing it, so a validation run can
 /// report on demand without moving the scheduled sweep's clock forward.
-pub(crate) fn probe_everything(root: &Path, files: &[RuleFile], now: &str) -> SweepCache {
+pub(crate) fn probe_everything(root: &Path, files: &TieredFiles, now: &str) -> SweepCache {
     let mut cache = SweepCache::default();
-    for record in parse_records(files) {
-        let Some(probe) = records::honored_probe(&record.record) else {
+    for record in tiered_records(files) {
+        let Some(probe) = records::honored_probe(&record.record, record.trust) else {
             continue;
         };
         let refutation = crate::ingest_cmd::probe::evaluate(root, probe, now);

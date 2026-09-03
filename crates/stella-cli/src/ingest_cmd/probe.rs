@@ -2,11 +2,20 @@
 //!
 //! Ingest runs a probe to catch a document that was already stale when it was
 //! read (`05` node-version example: CLAUDE.md says Node 20, `.nvmrc` has said 22
-//! for months). Only **ungated** probes reach this runner: `path_exists`,
-//! `path_absent`, `file_contains`, and `manual`. Gated probes
-//! (`command_succeeds`, `http_ok`) are stripped before we get here — they are
-//! never honored on an imported record (see [`stella_core::ingest::gate`]), so a
-//! document can never make ingest run a command or reach the network.
+//! for months). This runner reads the filesystem and nothing else: `path_exists`,
+//! `path_absent`, `file_contains`, and `manual`.
+//!
+//! # A gated probe abstains here, whatever let it through
+//!
+//! `command_succeeds` and `http_ok` return `unfalsifiable` from [`evaluate`].
+//! They are not assumed to have been filtered out upstream. Two callers reach
+//! this function and they apply different rules.
+//! [`stella_core::ingest::gate`] refuses a gated kind by the proposal's origin.
+//! `stella_core::records::honored_probe` admits one on a record the user
+//! published and a human decreed. So "stripped before we get here" was a claim
+//! about the callers, and for the second one it was already false. Running a
+//! command or reaching a host is a power this runner does not have. No caller
+//! can spend it.
 //!
 //! Every path is resolved under the workspace root and every read is bounded, so
 //! a probe cannot escape the tree or be turned into a denial-of-service by a
@@ -53,8 +62,9 @@ pub fn evaluate(root: &Path, probe: &Probe, checked_at: &str) -> Refutation {
         ProbeKind::FileContains => file_contains(root, probe, checked_at),
         // A manual probe is a scheduled human recheck; no machine judged it now.
         ProbeKind::Manual => unfalsifiable(checked_at, "manual re-verification; no machine check"),
-        // Gated kinds are stripped upstream and never reach here; `none` is the
-        // explicit "nothing could judge this" case. Both abstain.
+        // A gated kind abstains here rather than relying on a caller to have
+        // filtered it (see the module docs); `none` is the explicit "nothing
+        // could judge this" case.
         ProbeKind::CommandSucceeds | ProbeKind::HttpOk | ProbeKind::None => {
             unfalsifiable(checked_at, "no probe kind could judge this claim")
         }

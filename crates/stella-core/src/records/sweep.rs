@@ -36,8 +36,9 @@
 //! disposition so the CLI can explain what happened rather than silently changing
 //! what the agent sees.
 
-use super::super::context_record::kind::Origin;
+use super::super::ingest::gate::origin_is_untrusted;
 use super::super::ingest::record::{Probe, Record, TruthBasis, Verdict};
+use super::Trust;
 use super::clock;
 
 /// What `truth.on_expiry` asks for when a claim stops being believed.
@@ -71,6 +72,11 @@ impl ExpiryAction {
 pub struct SweepInput<'a> {
     /// The record under review.
     pub record: &'a Record,
+    /// The tier the record was published at. The loader stamps it from the
+    /// directory the file was read out of. [`honored_probe`] needs it: whether
+    /// a gated probe may run is a question about the publisher, and the record
+    /// cannot answer that about itself.
+    pub trust: Trust,
     /// The verdict a probe produced this sweep, when one ran. `None` means no
     /// probe ran — either nothing is due, or nothing about this record is
     /// probeable.
@@ -138,29 +144,50 @@ impl Disposition {
     }
 }
 
-/// The probe this record's origin actually permits.
+/// The probe this record is allowed to have run for it.
 ///
 /// A gated probe (`command_succeeds`, `http_ok`) runs a command or reaches the
-/// network on content that may have come from a document nobody audited. An
-/// `http_ok` pointed at an attacker-chosen host is an exfiltration channel with a
-/// policy file's authority behind it. So a gated probe is honored **only** on a
-/// `decree` record with a human `verified_by`, and **never** on an `imported` or
-/// `inferred` one — the same gate `super::super::ingest::gate` applies at
-/// extraction, re-applied here because a record can be hand-edited after ingest
-/// and the file is the only thing the loader sees.
-pub fn honored_probe(record: &Record) -> Option<&Probe> {
+/// network. The claim it checks may have come from a document nobody read. An
+/// `http_ok` aimed at a host someone else chose leaks data, with a policy
+/// file's authority behind it. So three things must hold, and each one closes a
+/// way to fake the other two:
+///
+/// - **The loader stamped [`Trust::User`].** Every other field here is written
+///   inside the file being judged. A checkout can set a clean `origin` and a
+///   named `verified_by` as easily as it sets anything else. That would let
+///   anyone who can open a pull request arm a command. Where the file was read
+///   from is the one fact it cannot write, and [`super::registry::load`] stamps
+///   that from the directory. [`super::bridge`] asks the same question before
+///   it lets a record approve its own blocking guard.
+/// - **The origin is stamped, and is not `imported` or `inferred`.** A record
+///   with no origin is refused too. It has said nothing about where it came
+///   from, and saying nothing must not be the permissive answer.
+///   `origin_is_untrusted` belongs to `super::super::ingest::gate`, so
+///   extraction and the sweep read one rule rather than two copies.
+/// - **`truth.basis` is a `decree` with a non-empty `verified_by`.** What is
+///   being relied on is a person whose name is on the claim. A name nobody
+///   wrote is not one.
+///
+/// The gate runs here as well as at extraction because a record can be edited
+/// by hand afterwards. The file is all the loader sees.
+pub fn honored_probe(record: &Record, trust: Trust) -> Option<&Probe> {
     let truth = record.truth.as_ref()?;
     let probe = truth.probe.as_ref()?;
     if !probe.kind.is_gated() {
         return Some(probe);
     }
-    let untrusted_origin = matches!(record.origin, Some(Origin::Imported | Origin::Inferred));
+    if trust != Trust::User {
+        return None;
+    }
+    let trusted_origin = record
+        .origin
+        .is_some_and(|origin| !origin_is_untrusted(origin));
     let decreed_by_a_human = truth.basis == TruthBasis::Decree
         && truth
             .verified_by
             .as_deref()
             .is_some_and(|by| !by.is_empty());
-    (!untrusted_origin && decreed_by_a_human).then_some(probe)
+    (trusted_origin && decreed_by_a_human).then_some(probe)
 }
 
 /// Whether this record's probe should run now.
@@ -171,7 +198,7 @@ pub fn honored_probe(record: &Record) -> Option<&Probe> {
 /// timer: its cadence is a human's, and firing it automatically would produce a
 /// verdict nobody actually checked.
 pub fn probe_is_due(input: &SweepInput<'_>) -> bool {
-    let Some(probe) = honored_probe(input.record) else {
+    let Some(probe) = honored_probe(input.record, input.trust) else {
         return false;
     };
     if matches!(
@@ -248,6 +275,7 @@ pub fn disposition(input: &SweepInput<'_>) -> Disposition {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::context_record::kind::Origin;
     use super::super::super::ingest::record::{ProbeKind, Truth};
     use super::super::tests::{record_named, with_truth};
     use super::*;
@@ -257,10 +285,30 @@ mod tests {
     fn input<'a>(record: &'a Record, verdict: Option<Verdict>) -> SweepInput<'a> {
         SweepInput {
             record,
+            trust: Trust::User,
             verdict,
             last_checked: None,
             now: NOW,
         }
+    }
+
+    /// A record whose own fields all argue for a gated probe: a
+    /// `command_succeeds`, decreed, with a named human, from a `user` origin.
+    /// Only the tier the loader stamps tells the honored case from the refused
+    /// one.
+    fn gated_and_decreed(origin: Option<Origin>) -> Record {
+        let mut truth = measured(Some(Probe {
+            kind: ProbeKind::CommandSucceeds,
+            path: None,
+            pattern: None,
+            expect: None,
+            note: None,
+        }));
+        truth.basis = TruthBasis::Decree;
+        truth.verified_by = Some("platform-owner".to_string());
+        let mut record = with_truth(record_named("ctx.a.b.c"), truth);
+        record.origin = origin;
+        record
     }
 
     fn measured(probe: Option<Probe>) -> Truth {
@@ -416,6 +464,34 @@ mod tests {
     // The gated-probe boundary
 
     #[test]
+    fn no_gated_probe_is_honored_at_project_trust_ever() {
+        for origin in [
+            None,
+            Some(Origin::User),
+            Some(Origin::System),
+            Some(Origin::Observed),
+            Some(Origin::Inferred),
+            Some(Origin::Imported),
+        ] {
+            let record = gated_and_decreed(origin);
+            assert!(
+                honored_probe(&record, Trust::Project).is_none(),
+                "a repository can write every field this record asserts, so none of \
+                 them may unlock a command: origin {origin:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unstamped_origin_does_not_unlock_a_gated_probe() {
+        let record = gated_and_decreed(None);
+        assert!(
+            honored_probe(&record, Trust::User).is_none(),
+            "a record that said nothing about where it came from is not the trusted case"
+        );
+    }
+
+    #[test]
     fn a_gated_probe_is_refused_on_an_imported_record() {
         let mut record = with_truth(
             record_named("ctx.a.b.c"),
@@ -429,41 +505,21 @@ mod tests {
         );
         record.origin = Some(Origin::Imported);
         assert!(
-            honored_probe(&record).is_none(),
+            honored_probe(&record, Trust::User).is_none(),
             "an imported document must never get us to make a network call"
         );
     }
 
     #[test]
     fn a_gated_probe_is_refused_on_an_inferred_record_even_when_decreed() {
-        let mut truth = measured(Some(Probe {
-            kind: ProbeKind::CommandSucceeds,
-            path: None,
-            pattern: None,
-            expect: None,
-            note: None,
-        }));
-        truth.basis = TruthBasis::Decree;
-        truth.verified_by = Some("platform-owner".to_string());
-        let mut record = with_truth(record_named("ctx.a.b.c"), truth);
-        record.origin = Some(Origin::Inferred);
-        assert!(honored_probe(&record).is_none());
+        let record = gated_and_decreed(Some(Origin::Inferred));
+        assert!(honored_probe(&record, Trust::User).is_none());
     }
 
     #[test]
     fn a_gated_probe_is_honored_on_a_human_decreed_user_record() {
-        let mut truth = measured(Some(Probe {
-            kind: ProbeKind::CommandSucceeds,
-            path: None,
-            pattern: None,
-            expect: None,
-            note: None,
-        }));
-        truth.basis = TruthBasis::Decree;
-        truth.verified_by = Some("platform-owner".to_string());
-        let mut record = with_truth(record_named("ctx.a.b.c"), truth);
-        record.origin = Some(Origin::User);
-        assert!(honored_probe(&record).is_some());
+        let record = gated_and_decreed(Some(Origin::User));
+        assert!(honored_probe(&record, Trust::User).is_some());
     }
 
     #[test]
@@ -480,17 +536,17 @@ mod tests {
         let mut record = with_truth(record_named("ctx.a.b.c"), truth);
         record.origin = Some(Origin::User);
         assert!(
-            honored_probe(&record).is_none(),
+            honored_probe(&record, Trust::User).is_none(),
             "\"a human said so\" needs the human's name to mean anything"
         );
     }
 
     #[test]
-    fn an_ungated_probe_is_honored_on_an_imported_record() {
+    fn an_ungated_probe_is_honored_on_an_imported_project_record() {
         let mut record = with_truth(record_named("ctx.a.b.c"), measured(Some(path_probe())));
         record.origin = Some(Origin::Imported);
         assert!(
-            honored_probe(&record).is_some(),
+            honored_probe(&record, Trust::Project).is_some(),
             "reading .nvmrc is how an imported claim gets refuted at all"
         );
     }
