@@ -19,7 +19,9 @@
 //!   location and `{location}-aiplatform.googleapis.com` for a pinned
 //!   region. The project/location pair comes from
 //!   [`crate::credential::VertexAddressing`] — this crate owns the variable
-//!   names and the `global` default, so any host can construct the adapter.
+//!   names and the `global` default, so any host can construct the adapter. A
+//!   host that resolved the pair through its own chain passes it in, which is
+//!   what lets two sessions in one process address two GCP projects.
 
 use std::time::Duration;
 

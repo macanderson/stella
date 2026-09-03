@@ -16,17 +16,19 @@
 //!
 //! `config.rs` owns the one-key chain — CLI flag, env var (+aliases), the
 //! anonymous-FD handoff, `~/.stella/credentials.toml`, an interactive prompt.
-//! Bedrock is the only provider today that needs more than one value, and it
-//! needs four: an access key id (which *is* the one key, `AWS_ACCESS_KEY_ID`),
-//! a secret access key, an optional session token, and a region.
+//! Two providers need more than one value. Bedrock needs four: an access key
+//! id (which *is* the one key, `AWS_ACCESS_KEY_ID`), a secret access key, an
+//! optional session token, and a region. Vertex needs three: a bearer token
+//! (the one key, `VERTEX_ACCESS_TOKEN`), a GCP project, and a location.
 //!
-//! Those three extra values used to be read straight from the process
-//! environment inside the adapter's own construction, which made Bedrock work
-//! in exactly one situation — a shell with the standard AWS variables exported
-//! — and nowhere else. `stella auth set bedrock` stored the access key id and
-//! then the run failed on the missing secret; a sealed benchmark process, whose
+//! Those extra values used to be read straight from the process environment
+//! inside the adapter's own construction, which made each provider work in
+//! exactly one situation — a shell with the right variables exported — and
+//! nowhere else. `stella auth set bedrock` stored the access key id and then
+//! the run failed on the missing secret; a sealed benchmark process, whose
 //! whole design keeps provider secrets out of the environment, could not reach
-//! Bedrock at all (#1301).
+//! Bedrock at all (#1301). The environment is also one value per process, so a
+//! host assembling two sessions could not give them two GCP projects.
 //!
 //! This module walks the same chain for each of those names and hands the
 //! result to the adapter as an [`AuxCredentials`] set. One vocabulary
@@ -48,7 +50,9 @@
 //! to avoid — and, under a sealed launcher, would reach back out to host state
 //! the launcher spent its whole design excluding. Explicit credentials only.
 
-use stella_model::credential::{AuxCredentials, BedrockCredentials, CredentialsFile};
+use stella_model::credential::{
+    AuxCredentials, BedrockCredentials, CredentialsFile, VertexAddressing,
+};
 
 use super::{Dialect, ProviderConfig};
 
@@ -56,11 +60,11 @@ use super::{Dialect, ProviderConfig};
 /// order the one-key chain uses: the trusted handoff, then the environment,
 /// then the credentials file.
 ///
-/// Returns an empty set for every dialect that authenticates with one key —
-/// which is every dialect but Bedrock. An empty set is not an error and never
-/// blocks construction: a provider with nothing extra to resolve has nothing
-/// extra to fail on, and the Bedrock adapter reports its own named error for a
-/// value that resolved nowhere.
+/// Returns an empty set for every dialect that needs nothing beyond one key —
+/// which is every dialect but Bedrock and Vertex. An empty set is not an error
+/// and never blocks construction: a provider with nothing extra to resolve has
+/// nothing extra to fail on, and each of those two adapters reports its own
+/// named error for a value that resolved nowhere.
 ///
 /// `credentials_file` is passed in rather than loaded here so this shares the
 /// caller's decision about whether the filesystem store may be read at all —
@@ -73,6 +77,7 @@ pub(crate) fn provider_aux(
 ) -> AuxCredentials {
     let names: &[&str] = match provider.dialect {
         Dialect::Bedrock => BedrockCredentials::AUX_ENV_NAMES,
+        Dialect::Vertex => VertexAddressing::AUX_ENV_NAMES,
         _ => return AuxCredentials::new(),
     };
 
@@ -153,12 +158,12 @@ pub(crate) struct AuxField {
 }
 
 /// The auxiliary values `stella auth set <provider>` offers to store, in
-/// prompt order. Empty for every provider that authenticates with one key.
+/// prompt order. Empty for every provider that needs nothing beyond one key.
 ///
-/// `AWS_DEFAULT_REGION` is deliberately absent even though the chain reads it:
-/// it exists as a fallback for shells that already export it, and offering
-/// *two* places to write the same setting is how a stored region and an
-/// effective region end up disagreeing.
+/// `AWS_DEFAULT_REGION` and `GOOGLE_CLOUD_PROJECT` are absent even though the
+/// chain reads both: each is a fallback for shells that already export it, and
+/// offering *two* places to write one setting is how a stored value and an
+/// effective value end up disagreeing.
 pub(crate) fn settable_aux_fields(provider: &ProviderConfig) -> &'static [AuxField] {
     match provider.dialect {
         Dialect::Bedrock => &[
@@ -178,6 +183,20 @@ pub(crate) fn settable_aux_fields(provider: &ProviderConfig) -> &'static [AuxFie
                 prompt: "AWS region (blank for us-east-1)",
             },
         ],
+        // Neither is a secret: a project id and a location are addressing, and
+        // both are published in a run manifest.
+        Dialect::Vertex => &[
+            AuxField {
+                name: "VERTEX_PROJECT_ID",
+                secret: false,
+                prompt: "GCP project id (required — Vertex scopes every request to one)",
+            },
+            AuxField {
+                name: "VERTEX_LOCATION",
+                secret: false,
+                prompt: "Vertex location (blank for global)",
+            },
+        ],
         _ => &[],
     }
 }
@@ -191,6 +210,14 @@ mod tests {
             .iter()
             .find(|p| p.id == "bedrock")
             .expect("bedrock is a built-in provider")
+            .clone()
+    }
+
+    fn vertex() -> ProviderConfig {
+        super::super::PROVIDERS
+            .iter()
+            .find(|p| p.id == "vertex")
+            .expect("vertex is a built-in provider")
             .clone()
     }
 
@@ -261,15 +288,53 @@ mod tests {
     fn every_settable_field_is_a_name_the_chain_actually_reads() {
         // The failure this prevents is silent: `stella auth set` writes a field
         // name that `provider_aux` never looks up, so the value is stored,
-        // reported as stored, and never used.
-        for field in settable_aux_fields(&bedrock()) {
-            assert!(
-                BedrockCredentials::AUX_ENV_NAMES.contains(&field.name),
-                "{} is offered for storage but never resolved",
-                field.name
-            );
+        // reported as stored, and never used. Asked of the chain itself rather
+        // than of a list of names, so the test cannot drift the way the thing
+        // it guards can.
+        for provider in [bedrock(), vertex()] {
+            let mut file = CredentialsFile::empty();
+            for field in settable_aux_fields(&provider) {
+                file.set_field(provider.id, field.name, "a-stored-value");
+            }
+            let aux = provider_aux(&provider, &file);
+            for field in settable_aux_fields(&provider) {
+                assert!(
+                    aux.get(field.name).is_some(),
+                    "{}: {} is offered for storage but never resolved",
+                    provider.id,
+                    field.name
+                );
+            }
         }
         assert!(settable_aux_fields(&anthropic()).is_empty());
+    }
+
+    #[test]
+    fn vertex_resolves_its_project_and_location_through_the_same_chain() {
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            "VERTEX_PROJECT_ID",
+            "GOOGLE_CLOUD_PROJECT",
+            "VERTEX_LOCATION",
+        ]);
+        // Addressing, not a credential — and until it came through here it was
+        // read from the process environment inside the adapter, which is one
+        // value for every session in the process.
+        let mut file = CredentialsFile::empty();
+        file.set_field("vertex", "VERTEX_PROJECT_ID", "project-from-the-file");
+        file.set_field("vertex", "VERTEX_LOCATION", "europe-west4");
+
+        // SAFETY: guarded by test_env's process-wide lock.
+        unsafe {
+            std::env::remove_var("VERTEX_PROJECT_ID");
+            std::env::remove_var("GOOGLE_CLOUD_PROJECT");
+            std::env::remove_var("VERTEX_LOCATION");
+        }
+
+        let aux = provider_aux(&vertex(), &file);
+        assert_eq!(aux.get("VERTEX_PROJECT_ID"), Some("project-from-the-file"));
+        assert_eq!(aux.get("VERTEX_LOCATION"), Some("europe-west4"));
+        assert_eq!(aux.get("GOOGLE_CLOUD_PROJECT"), None);
     }
 
     #[test]
