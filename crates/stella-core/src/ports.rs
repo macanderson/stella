@@ -221,6 +221,34 @@ pub trait ToolExecutor: Send + Sync {
     fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
         None
     }
+
+    /// Where `name` came from — a reviewed built-in, an MCP server, or a
+    /// workspace script. `None` means this executor cannot say.
+    ///
+    /// The engine's stagnation rung reads it. That rung fires on a run of
+    /// same-tool calls whose output never changed. For a built-in that is
+    /// evidence, because its output reports what it saw. For a server that
+    /// acks every call with one string it is no evidence at all. So the
+    /// answer has to come from the layer that knows which names it
+    /// registered. The transcript cannot supply it.
+    ///
+    /// The layer that **dispatches** the name answers. The registry says
+    /// [`crate::loop_detect::ToolOrigin::Builtin`] for a catalog row. The
+    /// custom-script set says `Custom` for a manifest tool. The MCP set says
+    /// `Mcp` for a namespaced one. Every other decorator forwards, and
+    /// forwards **unfiltered**: the question is about a name that has already
+    /// run, so narrowing it could only lose an answer the caller needs.
+    ///
+    /// # A decorator that forgets to forward
+    ///
+    /// The default `None` reads as "unknown", and unknown is what the rung
+    /// assumed before origins existed: it fires exactly as it always did. So
+    /// a missed forward costs the fix and causes no regression, which is what
+    /// the default buys. The shipped composition is pinned end-to-end by
+    /// `stella-cli`'s `the_production_tool_stack_forwards_tool_origin`.
+    fn tool_origin(&self, _name: &str) -> Option<crate::loop_detect::ToolOrigin> {
+        None
+    }
 }
 
 /// The one entry every tool dispatch passes through before it runs: the
@@ -380,6 +408,14 @@ impl ToolExecutor for ReadOnlyTools<'_> {
         self.inner.dispatch_gate()
     }
 
+    /// Forwarded unfiltered, unlike `contracts()` above: a call already in
+    /// the loop-detection window ran somewhere, and answering `None` for it
+    /// because this view would not admit it today only costs the rung its
+    /// evidence.
+    fn tool_origin(&self, name: &str) -> Option<crate::loop_detect::ToolOrigin> {
+        self.inner.tool_origin(name)
+    }
+
     /// Forwarded, not zeroed. A sub-agent runs behind this view, so a
     /// *grandchild* it dispatched settles here first — into the child's own
     /// carve — and only then into the parent as part of the child's total.
@@ -485,6 +521,13 @@ impl ToolExecutor for GrantedTools<'_> {
     /// view would otherwise find no gate and go ungated (#2793).
     fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
         self.inner.dispatch_gate()
+    }
+
+    /// Forwarded unfiltered, for the same reason [`ReadOnlyTools`] forwards
+    /// it unfiltered: the grant decides what may run next, and this answers
+    /// where a call already in the window came from.
+    fn tool_origin(&self, name: &str) -> Option<crate::loop_detect::ToolOrigin> {
+        self.inner.tool_origin(name)
     }
 
     /// Forwarded, not zeroed, for the same reason as [`ReadOnlyTools`]: a

@@ -209,6 +209,12 @@ impl ToolExecutor for SkillScopedTools<'_> {
         self.inner.dispatch_gate()
     }
 
+    /// Forwarded unfiltered: a skill's allowed-tools grant says what may run
+    /// next, and the loop detector is asking about a call that already ran.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        self.inner.tool_origin(name)
+    }
+
     /// Forwarded, not zeroed — a grandchild dispatched behind this view
     /// still settles into the carve that bounds it (see `ReadOnlyTools`).
     fn drain_sub_agent_spend_usd(&self) -> f64 {

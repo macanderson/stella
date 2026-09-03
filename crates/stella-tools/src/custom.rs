@@ -1339,6 +1339,19 @@ impl ToolExecutor for CustomToolSet<'_> {
         self.inner.get().dispatch_gate()
     }
 
+    /// A name this set dispatches is a workspace script. Everything else is
+    /// the inner surface's to answer.
+    ///
+    /// The stamp a silent success gets covers an *empty* stdout only. A
+    /// script that prints one line still gives the same bytes every call. So
+    /// the loop detector has to be told what kind of tool it is looking at.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        if self.tools.iter().any(|tool| tool.name == name) {
+            return Some(stella_core::loop_detect::ToolOrigin::Custom);
+        }
+        self.inner.get().tool_origin(name)
+    }
+
     /// Forwarded: this is a decorator, and a decorator that let the default
     /// `0.0` stand would silently drop sub-agent spend out of the parent's
     /// budget (see the port's contract).

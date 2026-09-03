@@ -167,6 +167,12 @@ impl ToolExecutor for CommitObserver<'_> {
     fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
         self.inner.dispatch_gate()
     }
+
+    /// Forwarded. This observer watches commits. It owns no tool name of its
+    /// own, so every origin it can give back is the base's.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        self.inner.tool_origin(name)
+    }
 }
 
 /// One attempt's commits, oldest first — and the two ways of knowing which

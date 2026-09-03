@@ -2,6 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 
+mod origin;
 mod sweep;
 
 fn record(name: &str, input: serde_json::Value, output: Option<ToolOutput>) -> CallRecord<'static> {
@@ -20,7 +21,18 @@ fn record(name: &str, input: serde_json::Value, output: Option<ToolOutput>) -> C
         // comparison. The identity path has its own witness in
         // `driver::tests::audit_fixes`.
         identity: None,
+        // Unrecorded, which is what every caller said before origins existed
+        // and what these fixtures keep saying — the origin-aware witnesses
+        // set it through `from`.
+        origin: None,
     }
+}
+
+/// The same record, marked with where its tool came from. The driver stamps
+/// this once it has asked the executor.
+fn from(mut record: CallRecord<'static>, origin: ToolOrigin) -> CallRecord<'static> {
+    record.origin = Some(origin);
+    record
 }
 
 /// The same record with a caller-supplied output identity attached —

@@ -56,7 +56,7 @@ use crate::loop_detect::{CallRecord, LoopIdentity, LoopVerdict, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::step::AbortKind;
 
-use super::loop_evidence::{recent_call_records, turn_start_index};
+use super::loop_evidence::{recent_call_records, stamp_origins, turn_start_index};
 use super::{EngineConfig, LOOP_STEER_PREFIX, TurnMemos, TurnOutcome};
 
 /// How many stuck-loop steering warnings one turn may spend.
@@ -282,7 +282,10 @@ pub(super) fn check_loop_detection(
     events: &EventSender,
 ) -> Option<TurnOutcome> {
     let turn_instance = config.turn_instance;
-    let records = recent_call_records(messages, &memos.identities);
+    let mut records = recent_call_records(messages, &memos.identities);
+    // Where each call's tool came from, which the transcript cannot say and
+    // the stagnation rung needs.
+    stamp_origins(&mut records, tools);
     // Classified on every step, not only on the arm that steers on it, and
     // recorded before any of them can return: the number is the turn's, and a
     // step that also detected a loop is exactly the one a post-hoc reader most

@@ -1046,6 +1046,26 @@ impl ToolExecutor for McpToolSet {
         self.native.as_ref().and_then(|n| n.dispatch_gate())
     }
 
+    /// A namespaced name is this set's. Its origin is
+    /// [`stella_core::loop_detect::ToolOrigin::Mcp`].
+    ///
+    /// The test is the prefix, as in `execute` above. Every name this set
+    /// answers is a [`wire_name`], the synthetic resource and needs-auth
+    /// tools included. So a new synthetic family is covered the day it lands.
+    ///
+    /// A server's output is relayed word for word, so Stella cannot stamp
+    /// it. A server that acks each success with one string gives back the
+    /// same bytes for arguments that differ. The rung reads that as a stalled
+    /// turn unless it is told where the tool came from.
+    ///
+    /// Anything else is the native layer's to answer.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        if name.starts_with(NS_PREFIX) {
+            return Some(stella_core::loop_detect::ToolOrigin::Mcp);
+        }
+        self.native.as_ref().and_then(|n| n.tool_origin(name))
+    }
+
     /// Forwarded: this is a decorator, and a decorator that let the default
     /// `0.0` stand would silently drop sub-agent spend out of the parent's
     /// budget (see the port's contract).
@@ -1154,6 +1174,19 @@ impl ToolExecutor for CandidateMcpView {
     /// through `inner`, which gates it against the session's own base.
     fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
         self.native.dispatch_gate()
+    }
+
+    /// Split the way `execute` above splits. A namespaced name reaches
+    /// `inner`. Everything else reaches the candidate's own `native` layer.
+    ///
+    /// The candidate-safe filter is left out on purpose. A withheld tool
+    /// never ran, so it never sits in a window. Filtering here could only
+    /// drop an answer for a tool that did run.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        if name.starts_with(NS_PREFIX) {
+            return self.inner.tool_origin(name);
+        }
+        self.native.tool_origin(name)
     }
 
     /// Forwarded: this is a decorator, and a decorator that let the default

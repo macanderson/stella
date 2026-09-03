@@ -46,6 +46,19 @@ impl ToolExecutor for ToolRegistry {
         Some(self)
     }
 
+    /// A catalog row is a built-in. Nothing else is.
+    ///
+    /// This is the same name lookup `crate::contracts::contract_for` uses to
+    /// decide whether a tool's claims were reviewed. So the loop detector and
+    /// the authorization plane cannot disagree about what a built-in is.
+    ///
+    /// A name the catalog has never heard of answers `None`. Unknown is what
+    /// it is, and the detector treats unknown as it did before origins
+    /// existed.
+    fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
+        crate::catalog::get(name).map(|_| stella_core::loop_detect::ToolOrigin::Builtin)
+    }
+
     /// Take what the `delegate` tool's children cost since the last step
     /// boundary. Destructive by the port's contract: the engine charges
     /// whatever this returns, so reporting twice would bill twice.
