@@ -141,6 +141,27 @@ impl AnthropicProvider {
             match block {
                 AnthropicUnaryBlock::Text { text: chunk } => text.push_str(&chunk),
                 AnthropicUnaryBlock::ToolUse { id, name, input } => {
+                    // The same refusal the streaming path makes, so the two
+                    // delivery paths cannot drift on it. Every field here
+                    // defaults, so a block that leaves out the id or the tool
+                    // name parses, and a call committed with an empty id can
+                    // never be matched to its result.
+                    let mut missing = Vec::new();
+                    if id.is_empty() {
+                        missing.push("id");
+                    }
+                    if name.is_empty() {
+                        missing.push("name");
+                    }
+                    if !missing.is_empty() {
+                        return Err(crate::http::malformed_tool_call_error(
+                            "Anthropic",
+                            index,
+                            &name,
+                            &missing,
+                        ));
+                    }
+
                     let truncated = Some(index) == truncated_index;
                     // A tool call arrives with its arguments already parsed,
                     // so the streaming path's repair sentinel has no unary
