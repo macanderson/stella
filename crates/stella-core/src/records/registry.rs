@@ -232,6 +232,20 @@ pub struct Facts<'a> {
     /// otherwise transfer, silently and automatically, to any repository record that
     /// happened to name the same lineage.
     pub approved_blocking: BTreeSet<(Trust, String)>,
+    /// Lineages the promotion ledger has retired or superseded, **qualified by the
+    /// tier the retirement was recorded against**.
+    ///
+    /// A record's own `status` field is the plain way a retirement stops it
+    /// steering. The writer that retracts a record flips that field and appends
+    /// the event. Nothing here can see whether it did both. So the status field
+    /// alone leaves a half-done retraction steering: a `Retired` event with no
+    /// `.toml` edit reads as ordinary policy. This fact is the ledger's half of
+    /// the answer, folded by the caller the way `approved_blocking` is.
+    ///
+    /// Tier-qualified for the reason `approved_blocking` is. A `lineage_id`
+    /// comes from an author, so an entry that names one tier must not reach a
+    /// record of the same name in another.
+    pub retired_lineages: BTreeSet<(Trust, String)>,
     /// Now, RFC-3339.
     pub now: &'a str,
 }
@@ -240,6 +254,12 @@ impl Facts<'_> {
     /// Whether a human approved blocking for this record — at this record's own tier.
     fn approves(&self, trust: Trust, lineage: &str) -> bool {
         self.approved_blocking
+            .contains(&(trust, lineage.to_string()))
+    }
+
+    /// Whether the ledger retired this record's lineage — at this record's own tier.
+    fn retired(&self, trust: Trust, lineage: &str) -> bool {
+        self.retired_lineages
             .contains(&(trust, lineage.to_string()))
     }
 }
@@ -303,7 +323,7 @@ pub fn load(user_files: &[RuleFile], project_files: &[RuleFile], facts: &Facts<'
         // the same thing: a dropped record is invisible to `stella context validate`
         // and `explain`, which is precisely where somebody needs to be told that the
         // policy they committed is inert. It stays visible; it stops steering.
-        if let Some(reason) = blocking_reason(&record) {
+        if let Some(reason) = blocking_reason(&record, facts) {
             disposition = Disposition::Block { reason };
         }
         let guard = resolve_guard(&record, markdown.as_ref(), facts, &conflicts);
@@ -447,7 +467,13 @@ fn merge_tiers(mut user: Vec<Parsed>, project: Vec<Parsed>) -> Vec<Parsed> {
 /// A retracted or archived record is not a defect — somebody retired it, and revert
 /// relies on that taking effect — so it reads as an ordinary status rather than a
 /// finding to fix.
-fn blocking_reason(record: &LoadedRecord) -> Option<String> {
+///
+/// Two sources say a record was retired, and either one is enough. The `status`
+/// field is the one a reader sees in the file. [`Facts::retired_lineages`] is
+/// the ledger's answer. Both are read here because the two writes are separate:
+/// a `Retired` event with no `.toml` edit beside it left a closed record
+/// steering.
+fn blocking_reason(record: &LoadedRecord, facts: &Facts<'_>) -> Option<String> {
     if !matches!(record.record.status, None | Some(RecordStatus::Active)) {
         return Some(format!(
             "its status is {}",
@@ -457,6 +483,9 @@ fn blocking_reason(record: &LoadedRecord) -> Option<String> {
                 .map(|status| status.as_str())
                 .unwrap_or("unset")
         ));
+    }
+    if facts.retired(record.trust, &record.record.lineage_id) {
+        return Some("the promotion ledger retired its lineage".to_string());
     }
     let blockers: Vec<String> = record
         .findings
@@ -481,7 +510,7 @@ fn resolve_guard(
             refusal: None,
         };
     }
-    if blocking_reason(record).is_some() {
+    if blocking_reason(record, facts).is_some() {
         // A record that must not steer must certainly not deny a tool call.
         return GuardDecision {
             guard: None,

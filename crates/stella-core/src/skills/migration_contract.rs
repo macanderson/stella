@@ -277,8 +277,11 @@ fn the_eval_gate_is_checked_after_the_cap_and_the_no_clobber_guard() {
 /// `reference`. So thirty repetitions inside one task mine a candidate today.
 ///
 /// This test asserts the **current, wrong** behavior on purpose. It is the
-/// baseline the typed path is measured against, and flipping it is a deliberate
-///, visible act rather than a silent fix folded into a migration commit.
+/// baseline the typed path is measured against, and flipping it is a deliberate,
+/// visible act rather than a silent fix folded into a migration commit.
+///
+/// What bounds the gap in the meantime is the *write* step, not the mine step:
+/// see `the_shipped_default_refuses_to_write_a_single_task_candidate`.
 #[test]
 fn lexical_miner_counts_events_not_distinct_tasks() {
     let thirty_in_one_task: Vec<SkillObservation> = (0..30)
@@ -293,6 +296,53 @@ fn lexical_miner_counts_events_not_distinct_tasks() {
          observation has no task identity to count"
     );
     assert_eq!(mined[0].occurrences, 30);
+}
+
+/// The gap above reaches the mine step and stops there, per `#5509`.
+///
+/// Spec §7's anti-poisoning rule is about what gets *written*, and on the shipped
+/// defaults nothing does: `require_measured_lift` is on, so a candidate nothing
+/// has appraised is held as `AwaitingEvaluation` however many times its
+/// observations recurred. Thirty repetitions inside one task therefore mint a
+/// candidate and no file.
+///
+/// Pinned against `AutoCreateConfig::default()` rather than an armed literal,
+/// because the default is the whole claim: flipping it back to `false` would let
+/// frequency alone write a `SKILL.md` from one task's repetitions, which is
+/// exactly what the distinct-task floor exists to refuse. The floor itself still
+/// belongs to the typed path — [`crate::context_record::lifecycle`]'s
+/// `ProposalRecord::is_eligible` counts distinct tasks — because
+/// [`SkillObservation`] carries no task identity to count. `#5738` is where that
+/// floor is being built.
+#[test]
+fn the_shipped_default_refuses_to_write_a_single_task_candidate() {
+    let thirty_in_one_task: Vec<SkillObservation> = (0..30)
+        .map(|i| pinned_observation("trace:the-one-and-only-task", 100 + i))
+        .collect();
+    let mined = mine_skill_candidates(thirty_in_one_task, &[], &[], &SkillMineConfig::default());
+    let candidate = mined.first().expect("the mine step still yields one");
+
+    let config = AutoCreateConfig::default();
+    assert!(
+        config.require_measured_lift,
+        "the shipped default is what holds the distinct-task gap closed"
+    );
+    assert_eq!(
+        decide_auto_creation(
+            candidate,
+            ".stella/skills",
+            &[],
+            0,
+            super::appraisal::EvalEvidence::Unevaluated,
+            &config
+        ),
+        AutoCreateDecision::Skip {
+            reason: AutoCreateSkip::AwaitingEvaluation {
+                evidence: super::appraisal::EvalEvidence::Unevaluated
+            }
+        },
+        "thirty repetitions of one task must not write a skill file"
+    );
 }
 
 /// The threshold itself, as shipped. Three occurrences, or one salient

@@ -1212,3 +1212,26 @@ fn a_short_lesson_becomes_its_own_description() {
     let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
     assert_eq!(candidates[0].description, "use pnpm");
 }
+
+/// **Witness for `#5509`.** A lesson with no words mines no candidate.
+///
+/// One salient note clears the count floor by itself. So one bad note reached
+/// the push, and its `description` was empty. `render_skill_markdown` then
+/// writes `description: ` and nothing more.
+/// `skill_from_file_with_origin` reads that back and refuses it, with
+/// [`SkillProblem::MissingDescription`]. The file is dead, and it holds one of
+/// the two slots a session may write. The next session writes it again, because
+/// `already_captured` can only weigh a skill that loaded.
+#[test]
+fn a_wordless_lesson_mines_no_candidate() {
+    for text in ["   ", "\t\n ", "...", "?!"] {
+        let mut obs = vec![observation(text, 1)];
+        obs[0].salient = true;
+        let candidates = mine_skill_candidates(obs, &[], &[], &SkillMineConfig::default());
+        assert!(
+            candidates.is_empty(),
+            "{text:?} mined {candidates:#?}, and every one of those writes a \
+             `SKILL.md` that can never load again"
+        );
+    }
+}

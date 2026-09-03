@@ -17,6 +17,14 @@
 //! SessionStart hook context is NOT re-run for the rewrite: the caller hands
 //! in the suffix captured at startup, so a hook's side effects happen once
 //! per session no matter how often the model changes.
+//!
+//! Everything else a rebuild re-derives has to be session-constant, or the
+//! switch moves bytes the prompt cache keys on. The rules come in as the
+//! resolved set rather than being re-read; the memories span is latched per
+//! workspace root by `agent::prompt`'s `session_workspace_memories`, so a
+//! `.stella/memories/` file edited on disk cannot change `messages[0]` under a
+//! running session. What the rebuild does move is the session-environment
+//! block, which carries the model line the switch just changed.
 
 use std::sync::Arc;
 

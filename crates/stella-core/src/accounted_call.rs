@@ -172,7 +172,7 @@ pub async fn run_accounted_call(
     // estimate to anticipate with, and inventing one here would be a second,
     // invisible policy on top of the operator's — so the anticipatory rung
     // lives wherever a basis for one does. The engine's step loop forecasts
-    // from `TurnState::last_step`, which it measures; the staged pipeline's
+    // from `TurnState::pace`, which it measures; the staged pipeline's
     // `dispatch_raw` reserved each management call's own declared `timeout`
     // and refused ahead of this seam (#2432) until that crate was deleted
     // (#3865). A caller holding no such basis

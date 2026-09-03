@@ -641,11 +641,25 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
     // `plugin_first`) is necessary and not sufficient: it only settles the
     // collision when the workspace still *has* a record of that lineage, and a
     // grant outlives the file it was written for.
+    //
+    // The same ledger, read for the other question: which lineages it has
+    // *closed*. The engine decides whether a record steers from the record's own
+    // `status` field. The writer that retracts a record flips that field and
+    // appends the event in one step, and nothing in the engine can see whether it
+    // did both. So a `Retired` event with no `.toml` edit beside it left the
+    // record steering. Both filters above hold here too. An unverified ledger
+    // says nothing, and an entry may close only a lineage this repository owns.
+    let mut retired_lineages: BTreeSet<(Trust, String)> = BTreeSet::new();
     if let Ok(events) = read_promotions(root) {
         let repo_owned = repo_owned_lineages(files);
         for lineage in stella_core::records::promotion::blocking_grants(&events).into_keys() {
             if repo_owned.contains(&lineage) {
                 approved_blocking.insert((Trust::Project, lineage));
+            }
+        }
+        for lineage in stella_core::records::promotion::retired_lineages(&events) {
+            if repo_owned.contains(&lineage) {
+                retired_lineages.insert((Trust::Project, lineage));
             }
         }
     }
@@ -657,6 +671,7 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
             verdicts,
             last_checked,
             approved_blocking,
+            retired_lineages,
             now,
         },
     )
