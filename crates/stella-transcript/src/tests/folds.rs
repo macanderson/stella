@@ -143,20 +143,46 @@ fn control_characters_cannot_reach_a_grid_cell() {
     }
 }
 
+/// A real CSI sequence carries one control byte — `ESC` — ahead of printable
+/// parameter and final bytes (`\x1b[31m` is `ESC`, `[`, `3`, `1`, `m`).
+/// Mapping only that `ESC` to a space renders `"\x1b[31merror\x1b[0m"` as
+/// `" [31merror [0m"`. The width contract holds — nothing left is a control
+/// character — but the text still carries bracket-and-digit noise a reader
+/// would mistake for real content. `Cell::new` strips the whole sequence
+/// instead.
+#[test]
+fn a_csi_sequence_is_stripped_whole_not_left_as_bracket_noise() {
+    let cell = grid::Cell::new("\x1b[31merror\x1b[0m", grid::Color::Ink);
+    assert_eq!(cell.text, "error");
+    assert!(
+        !cell.text.contains("[31m"),
+        "the escape's parameter bytes survived as literal text: {:?}",
+        cell.text
+    );
+}
+
 /// `Output::clipped` promises a clipped marker "so a reader never
-/// mistakes a transport limit for the end of the output" — and an *expanded*
-/// grid body used to break that promise: the clip count only rode the closed
-/// fold's `▸ N more lines` control, so opening the output presented three
-/// surviving lines as the whole thing. The HTML renderer keeps its fold
-/// control visible when open, so only the grid needed the marker.
+/// mistakes a transport limit for the end of the output," on both
+/// renderers. An expanded grid body once carried the clip count only on the
+/// closed fold's `▸ N more lines` control, so opening the output presented
+/// three surviving lines as the whole thing. The HTML renderer had a
+/// matching gap on this exact case: three received lines fit entirely
+/// inside `head`, so the hidden slice its `<details>` control promises is
+/// empty, and nothing on the page said the other 24 were dropped in
+/// transport. This test's earlier body threw `markup` away before it ever
+/// looked, so it never saw that gap.
 #[test]
 fn an_expanded_output_still_admits_the_transport_clip() {
     let mut call = bash("cmd", &["a", "b", "c"], Status::Ok);
     call.output.clipped = 24;
-    let (plain, _) = rendered(call);
+    let (plain, markup) = rendered(call);
     assert!(
         plain.contains("clipped"),
         "the expanded grid presented a clipped body as complete:\n{plain}"
+    );
+    assert!(
+        markup.contains("clipped"),
+        "the expanded HTML page presented a clipped body as complete:\n{markup}"
     );
 }
 
