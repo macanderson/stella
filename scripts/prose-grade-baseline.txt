@@ -181,6 +181,7 @@ crates/stella-cli/src/agent/tests/engine_wiring.rs 11.34
 crates/stella-cli/src/agent/tool_stack.rs 14.07
 crates/stella-cli/src/agent/tools.rs 13.75
 crates/stella-cli/src/agent/tools/tests.rs 12.39
+crates/stella-cli/src/agent/turn.rs 11.88
 crates/stella-cli/src/agent/turn_close.rs 10.36
 crates/stella-cli/src/agents_installed.rs 10.61
 crates/stella-cli/src/approval.rs 11.86
@@ -400,6 +401,7 @@ crates/stella-cli/src/memory_index.rs 10.51
 crates/stella-cli/src/memory_retire_cmd.rs 10.28
 crates/stella-cli/src/model_catalog.rs 11.10
 crates/stella-cli/src/model_catalog/tests.rs 8.38
+crates/stella-cli/src/output_envelope.rs 10.93
 crates/stella-cli/src/paths.rs 10.41
 crates/stella-cli/src/plain.rs 10.13
 crates/stella-cli/src/plain/transcript.rs 8.60

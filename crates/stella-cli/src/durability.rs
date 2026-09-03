@@ -777,7 +777,7 @@ mod tests {
             // `turn_close::close_turn`, which cannot settle an execution row
             // without also marking the turn.
             (
-                "agent.rs",
+                "agent/turn.rs",
                 "turn_close::close_turn(",
                 "run_pipeline_one_shot / run_turn",
             ),
