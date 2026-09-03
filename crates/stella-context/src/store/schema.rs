@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 12;
+pub(crate) const SCHEMA_VERSION: i64 = 13;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -528,6 +528,45 @@ pub(crate) const MIGRATION_V12: &str = "\
 UPDATE episode SET lineage_id = public_id WHERE lineage_id IS NULL;
 ";
 
+/// V13 — **drop `episode.salience` and `memory.salience`**.
+///
+/// Both columns held a caller-set importance hint. [`crate::retrieval`]'s
+/// fusion never read it: only vector similarity, recency, and graph
+/// adjacency feed the score. No writer ever set it either. Every
+/// constructor in [`crate::writeback`] defaulted it to `0.0`, and neither
+/// `EpisodeInput` nor `MemoryInput` offered a builder to change it — unlike
+/// `with_domains`, `with_anchors`, or `with_recall_tier`. A column nothing
+/// writes and nothing reads invites a caller to set a value that changes
+/// nothing. `stella-observatory`'s episode table showed it as a fixed
+/// `0.00`.
+///
+/// Removed, not wired in: nothing in this workspace computes a real
+/// salience score, so ranking by the column would rank by a constant.
+/// Wiring it in the right way would also mean moving it onto `node` first —
+/// see `migrate_v9`'s doc for why a ranking signal lives on the row
+/// retrieval scans, not on `episode`/`memory`. That is a bigger change than
+/// a constant earns.
+///
+/// Statement-level idempotent for the same reason `migrate_v5`, `migrate_v8`,
+/// and `migrate_v9` are. A rewound `user_version` is how the migration
+/// fixtures are built, and also what a partial restore looks like, so this
+/// must re-run without failing on a column already gone. SQLite's `DROP
+/// COLUMN` has no `IF EXISTS` form, so the check is done by hand, the same
+/// as those three.
+fn migrate_v13(tx: &Connection) -> Result<(), ContextError> {
+    for (table, column) in [("episode", "salience"), ("memory", "salience")] {
+        let existing: std::collections::HashSet<String> = {
+            let mut stmt = tx.prepare(&format!("PRAGMA table_info({table})"))?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>("name"))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        if existing.contains(column) {
+            tx.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN {column};"))?;
+        }
+    }
+    Ok(())
+}
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -655,6 +694,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 12 {
         tx.execute_batch(MIGRATION_V12)?;
     }
+    if version < 13 {
+        migrate_v13(&tx)?;
+    }
     // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
     // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its
     // high-water mark. Two branches that each add "the next step" merge
@@ -676,7 +718,10 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     //
     //   v12: episode lineage repair (#5324) — TAKEN, see `MIGRATION_V12`.
     //
-    // The next free step is v13: take it and add your own line here.
+    //   v13: dropped `episode.salience`/`memory.salience` — TAKEN, see
+    //        `migrate_v13`.
+    //
+    // The next free step is v14: take it and add your own line here.
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())

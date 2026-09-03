@@ -45,6 +45,48 @@ fn vertex_addressing_without_a_project_names_both_variables() {
     assert!(message.contains("GOOGLE_CLOUD_PROJECT"), "{message}");
 }
 
+/// Two sessions in one process, two GCP projects: the host passes each one in.
+#[test]
+fn vertex_addressing_prefers_host_resolved_values_over_the_environment() {
+    let mut first = AuxCredentials::new();
+    first.insert("VERTEX_PROJECT_ID", "tenant-a");
+    first.insert("VERTEX_LOCATION", "us-central1");
+    let mut second = AuxCredentials::new();
+    second.insert("VERTEX_PROJECT_ID", "tenant-b");
+    second.insert("VERTEX_LOCATION", "europe-west4");
+
+    let first = VertexAddressing::resolve_with(&first).unwrap();
+    let second = VertexAddressing::resolve_with(&second).unwrap();
+
+    assert_eq!(first.project, "tenant-a");
+    assert_eq!(second.project, "tenant-b");
+    assert_eq!(first.location, "us-central1");
+    assert_eq!(second.location, "europe-west4");
+}
+
+/// One field, two names. Either one sets the project, so the environment is
+/// not read for the other.
+#[test]
+fn a_host_supplied_project_wins_under_either_spelling() {
+    let mut aux = AuxCredentials::new();
+    aux.insert("GOOGLE_CLOUD_PROJECT", "tenant-a");
+    assert_eq!(
+        VertexAddressing::resolve_with(&aux).unwrap().project,
+        "tenant-a"
+    );
+}
+
+/// The names a host walks are the names resolution reads.
+#[test]
+fn vertex_aux_env_names_is_every_name_resolution_reads() {
+    let reads: Vec<&str> = VertexAddressing::PROJECT_ENV_NAMES
+        .iter()
+        .copied()
+        .chain(std::iter::once(VertexAddressing::LOCATION_ENV_NAME))
+        .collect();
+    assert_eq!(VertexAddressing::AUX_ENV_NAMES, reads.as_slice());
+}
+
 #[test]
 fn bedrock_region_falls_back_then_defaults_and_the_session_token_is_optional() {
     let resolved =

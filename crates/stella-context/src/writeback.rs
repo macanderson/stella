@@ -110,10 +110,6 @@ pub struct EpisodeInput {
     /// `None` hashes exactly as before this field existed, so every `epi_` id
     /// already on disk is unchanged.
     pub occurrence: Option<String>,
-    /// Caller-assigned importance, stored on the `episode` row. Recall does not
-    /// rank by it today (scoring is similarity + recency + graph adjacency);
-    /// it is a hint for consumers and for a future salience-aware ranker.
-    pub salience: f32,
     /// Workspace domain tags carried onto the episode's mirror node.
     pub domains: Vec<String>,
 }
@@ -132,7 +128,6 @@ impl EpisodeInput {
             started_at: started_at.into(),
             ended_at: ended_at.into(),
             occurrence: None,
-            salience: 0.0,
             domains: Vec::new(),
         }
     }
@@ -302,9 +297,9 @@ impl MemoryKind {
     }
 }
 
-/// A memory to write — content, kind, domains, salience. It becomes a `memory`
-/// record and a retrievable `Memory` node, so future turns recall it by
-/// similarity + domain overlap + recency.
+/// A memory to write — content, kind, domains. It becomes a `memory` record
+/// and a retrievable `Memory` node, so future turns recall it by similarity +
+/// domain overlap + recency.
 #[derive(Debug, Clone)]
 pub struct MemoryInput {
     /// Which sort of memory this is; stored on the `memory` row.
@@ -316,9 +311,6 @@ pub struct MemoryInput {
     /// Workspace domain tags carried onto the memory's mirror node; recall
     /// scores domain overlap against them.
     pub domains: Vec<String>,
-    /// Caller-assigned importance, stored on the `memory` row. As with
-    /// [`EpisodeInput::salience`], recall does not rank by it today.
-    pub salience: f32,
     /// The lineage this memory belongs to, when it revises an existing one.
     ///
     /// `None` — the overwhelmingly common case — means "a memory in its own
@@ -367,7 +359,6 @@ impl MemoryInput {
             kind: MemoryKind::Reflection,
             content: content.into(),
             domains: domains.into_iter().map(Into::into).collect(),
-            salience: 0.0,
             lineage: None,
             recall_tier: RecallTier::Normal,
             anchors: Vec::new(),
@@ -398,7 +389,6 @@ impl MemoryInput {
             kind,
             content: content.into(),
             domains: Vec::new(),
-            salience: 0.0,
             lineage: None,
             recall_tier: RecallTier::Normal,
             anchors: Vec::new(),
@@ -501,7 +491,7 @@ pub struct ContextDelta {
     pub domains: Vec<DomainInput>,
     /// Bare content nodes to index (docs, snippets, symbols).
     pub nodes: Vec<NodeInput>,
-    /// Episodic-memory summaries.
+    /// Summaries of past turns, one per episode.
     pub episodes: Vec<EpisodeInput>,
     /// Reflection/other memories.
     pub memories: Vec<MemoryInput>,
@@ -872,7 +862,6 @@ impl ContextStore {
                 &ep.summary,
                 &files,
                 ep.outcome.as_str(),
-                ep.salience as f64,
                 &ep.started_at,
                 &ep.ended_at,
                 now,
@@ -894,8 +883,7 @@ impl ContextStore {
                 &memory.lineage_id(),
                 memory.kind.as_str(),
                 &memory.content,
-                memory.salience as f64,
-                now,
+                &now,
             )?;
             let node = memory.as_node();
             let id = upsert_node(&tx, &node, now)?;

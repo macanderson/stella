@@ -514,6 +514,13 @@ pub(crate) const MEMORIES_OMITTED_PREFIX: &str =
 /// carries durable lessons, the recall block carries turn-relevant memories
 /// and skills. The rules rendered here are the same set whose Tier-2 guards
 /// `crate::rules::enforce_workspace_rules` arms at the tool boundary.
+///
+/// "Loaded once per session" is enforced rather than described:
+/// [`session_workspace_memories`] reads `.stella/memories/` the first time a
+/// prompt is assembled for a root and hands back the same bytes afterwards.
+/// The deck rebuilds `messages[0]` on a mid-session `/model` or `/agent`
+/// (`command_deck::session_override`'s `refresh_prompts`), and a rebuild that
+/// re-read the files would move the prefix this promise covers.
 pub(crate) fn assemble_system_prompt(
     base: &str,
     workspace_root: &std::path::Path,
@@ -531,7 +538,7 @@ pub(crate) fn assemble_system_prompt(
         return prompt;
     }
     if authority.project_prompts_allowed {
-        append_workspace_memories(&mut prompt, workspace_root);
+        prompt.push_str(&session_workspace_memories(workspace_root));
     }
     // The cached channel: `must` and `should` records, grouped by force, each
     // carrying its `^handle` so the model can name what it followed. Byte-stable by
@@ -696,9 +703,9 @@ fn workspace_suppression(
         .map_err(|e| format!("suppression state unavailable: {e}"))
 }
 
-/// The memories half of [`assemble_system_prompt`]: append the workspace's
-/// saved memories (filename order, budget-capped, **tombstone-filtered**) to
-/// `prompt`, or leave it untouched when there are none.
+/// The memories half of [`assemble_system_prompt`]: the workspace's saved
+/// memories (filename order, budget-capped, **tombstone-filtered**) as the
+/// bytes the prompt carries, or an empty string when there are none.
 ///
 /// # Forgetting one has to stop it shipping
 ///
@@ -718,7 +725,28 @@ fn workspace_suppression(
 /// left for the model to not notice. Shipping a memory someone forgot is worse
 /// than shipping none: the forget is the explicit instruction, and the file is
 /// still on disk for a later turn.
-fn append_workspace_memories(prompt: &mut String, workspace_root: &std::path::Path) {
+///
+/// # Every omission but a forget is named
+///
+/// A memory the budget dropped, one that could not be read, and one that
+/// resolves outside the workspace are each reported in the span, naming the
+/// files. Skipping an unreadable memory — invalid UTF-8, a directory, a
+/// permission error — in silence costs a reader the one thing they need: a
+/// file that picks up bad bytes is gone from every future prompt, and nothing
+/// says so. A forget is the one omission that stays quiet: it is an
+/// instruction that the memory is gone, and announcing it invites the
+/// asking-about-it that forgetting exists to end.
+///
+/// # A memory file may not point outside the workspace
+///
+/// `read_dir` lists symlinks and `read_to_string` follows them, and
+/// `.stella/memories/` is neither private-tier nor gitignored — so a cloned
+/// repository could ship `.stella/memories/x.md` as a symlink to any readable
+/// path and have its content pasted into the next session's system prompt and
+/// sent to the configured provider. An entry whose canonical path escapes the
+/// workspace root is refused, matching the containment the file tools already
+/// enforce.
+fn workspace_memories_span(workspace_root: &std::path::Path) -> String {
     let dir = workspace_root.join(".stella/memories");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
         .map(|entries| {
@@ -729,39 +757,43 @@ fn append_workspace_memories(prompt: &mut String, workspace_root: &std::path::Pa
         })
         .unwrap_or_default();
     if files.is_empty() {
-        return;
+        return String::new();
     }
     files.sort();
 
     let suppression = match workspace_suppression(workspace_root) {
         Ok(suppression) => suppression,
         Err(error) => {
-            prompt.push_str(&format!(
+            return format!(
                 "{MEMORIES_OMITTED_PREFIX}{error}. They are still on disk in .stella/memories/ \
                  and will return once the suppression state is readable."
-            ));
-            return;
+            );
         }
     };
 
     let mut memories = String::new();
     let mut used = 0usize;
     let mut dropped = 0usize;
+    let mut unreadable: Vec<String> = Vec::new();
+    let mut outside: Vec<String> = Vec::new();
     for file in &files {
-        let Ok(body) = std::fs::read_to_string(file) else {
-            continue;
-        };
+        // The tombstone is keyed by filename stem, which is what
+        // `ContextSurface::WorkspaceMemory` records.
         let name = file
             .file_stem()
             .and_then(|n| n.to_str())
             .unwrap_or("memory");
-        // The tombstone is keyed by filename stem, which is what
-        // `ContextSurface::WorkspaceMemory` records.
-        // No count of these is reported. A budget omission is worth telling
-        // the model about, because it can be fixed by consolidating files; a
-        // forget is an instruction that this memory is gone, and announcing
-        // "three memories are being withheld" invites exactly the asking-about
-        // -it that forgetting exists to end.
+        if !resolves_inside(workspace_root, file) {
+            outside.push(name.to_string());
+            continue;
+        }
+        let body = match std::fs::read_to_string(file) {
+            Ok(body) => body,
+            Err(_) => {
+                unreadable.push(name.to_string());
+                continue;
+            }
+        };
         if suppression.suppresses(name, &body) {
             continue;
         }
@@ -780,16 +812,86 @@ fn append_workspace_memories(prompt: &mut String, workspace_root: &std::path::Pa
         used += cost;
         memories.push_str(&entry);
     }
-    if memories.is_empty() {
-        return;
-    }
-    prompt.push_str(&format!("{MEMORIES_HEADER}{memories}"));
+
+    // Deterministic for a given directory: the file list is sorted, so every
+    // note below is the same bytes on every assembly (L-E8).
+    let mut notes = String::new();
     if dropped > 0 {
-        prompt.push_str(&format!(
+        notes.push_str(&format!(
             "
 ({dropped} additional memories exceeded the prompt budget and were omitted — consolidate .stella/memories/ to bring them back)"
         ));
     }
+    if !unreadable.is_empty() {
+        notes.push_str(&format!(
+            "
+(these .stella/memories/ files could not be read and were omitted: {} — they are not readable text; nothing here saw their content)",
+            unreadable.join(", ")
+        ));
+    }
+    if !outside.is_empty() {
+        notes.push_str(&format!(
+            "
+(these .stella/memories/ files resolve outside the workspace and were omitted: {} — a memory must be a file inside the workspace, never a link out of it)",
+            outside.join(", ")
+        ));
+    }
+    if memories.is_empty() && notes.is_empty() {
+        return String::new();
+    }
+    format!("{MEMORIES_HEADER}{memories}{notes}")
+}
+
+/// Whether `file` resolves inside `workspace_root`.
+///
+/// Both sides are canonicalised, so a `..` component and a symlinked
+/// workspace root resolve the same way on either side of the comparison. A
+/// path that cannot be canonicalised — a broken link, a permission error — is
+/// not contained, because nothing here can say where it points.
+fn resolves_inside(workspace_root: &std::path::Path, file: &std::path::Path) -> bool {
+    match (workspace_root.canonicalize(), file.canonicalize()) {
+        (Ok(root), Ok(file)) => file.starts_with(&root),
+        _ => false,
+    }
+}
+
+/// The memories span this session sends: [`workspace_memories_span`] for a
+/// root, assembled on first use and reused for the life of the process.
+///
+/// A session's prefix has to be byte-stable for the whole of it (AGENTS.md's
+/// rule 7). The deck rebuilds `messages[0]` whenever `/model` or `/agent`
+/// moves the session's wiring; reading the directory again there would let a
+/// memory edited on disk change a prefix the provider is already caching,
+/// which is the one thing [`assemble_system_prompt`] promises cannot happen.
+/// The span is held for the life of the process, which covers the session: a
+/// session seeds `messages[0]` at open, and the deck only ever rewrites that
+/// one message in place.
+///
+/// Latched like the catalog [`knowledge_cutoff_for`] reads: a value fixed for
+/// the session, resolved the first time it is asked for. Keyed by root because
+/// one process assembles prompts for more than one — a fleet worker's
+/// worktree, a sub-agent's session — and those are different workspaces with
+/// different memories.
+fn session_workspace_memories(workspace_root: &std::path::Path) -> std::sync::Arc<str> {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::{Arc, LazyLock, Mutex};
+
+    static SPANS: LazyLock<Mutex<HashMap<PathBuf, Arc<str>>>> = LazyLock::new(Default::default);
+
+    // A poisoned lock means some other thread panicked while holding it, not
+    // that the map is unusable — what it holds is a cache of bytes already
+    // read. Recovering keeps a panic in one assembly from taking the next one
+    // down with it.
+    let mut spans = SPANS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(span) = spans.get(workspace_root) {
+        return span.clone();
+    }
+    let span: Arc<str> = Arc::from(workspace_memories_span(workspace_root));
+    spans.insert(workspace_root.to_path_buf(), span.clone());
+    span
 }
 
 /// The `agent_engine_config` custom prompt, when one is set — it replaces

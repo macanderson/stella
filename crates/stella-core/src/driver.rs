@@ -151,6 +151,7 @@ mod restore;
 // The step boundary's host consults (steering, soft stop, #3243 re-query).
 mod settlement;
 mod step_boundary;
+pub(crate) mod step_pace;
 pub(crate) mod usage_anchor;
 pub(crate) mod user_hooks;
 mod waiting;
@@ -892,7 +893,7 @@ impl<'a> Engine<'a> {
         self.emit_lifecycle(bus::names::MODEL_REQUEST_COMPLETED, || {
             lifecycle::model_request_completed_payload(state.step, &committed.result)
         });
-        state.last_step = Some(step_started.elapsed());
+        state.pace.observe_model(step_started.elapsed());
         state.calibration_model = Some(committed.result.model.clone());
         // Anchor the context measure to what the provider just attested for
         // this exact prefix — before dispatch appends the reply to it.
@@ -921,12 +922,13 @@ impl<'a> Engine<'a> {
             return aborted.into();
         }
 
-        // Only meaningful once a step has been timed and a budget configured:
-        // the forecast for one more continuation is what the last one cost.
+        // Only meaningful once a call has been timed and a budget configured:
+        // a continuation re-runs a tool-less step, so the model call is the
+        // whole forecast (`step_pace::StepPace::model`).
         let continuation_budget =
             self.config
                 .turn_budget
-                .zip(state.last_step)
+                .zip(state.pace.model())
                 .map(|(budget, last_step)| ContinuationBudget {
                     remaining: budget.saturating_sub(state.started_at.elapsed()),
                     last_step,
@@ -953,6 +955,9 @@ impl<'a> Engine<'a> {
         if let Some(cancelled) = self.maybe_park(state, events).await {
             return cancelled;
         }
+
+        // The whole step, tools and park included: the reserve (`step_pace`).
+        state.pace.observe_step(step_started.elapsed());
 
         // Advanced only by a step that committed and continued, so the index
         // a checkpoint carries is always "the step that runs next".

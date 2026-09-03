@@ -20,7 +20,10 @@
 //! [`StoreError::NegativeSchemaVersion`] and [`StoreError::SchemaTooNew`] tell
 //! "move the file aside" from "upgrade your binary", and
 //! [`StoreError::Corrupt`] tells a malformed file (run `stella doctor`) from
-//! the plain [`StoreError::Sqlite`] failure it otherwise arrives as.
+//! the plain [`StoreError::Sqlite`] failure it otherwise arrives as. Which of
+//! those two a SQLite failure becomes is decided in one place, the
+//! `From<rusqlite::Error>` conversion below, because that is the only path
+//! every `?` in the crate takes.
 //! [`StoreError::Io`] and [`StoreError::Serde`] keep the underlying
 //! `std::io::Error` / `serde_json::Error` reachable through
 //! [`std::error::Error::source`], so a caller can branch on
@@ -75,31 +78,36 @@ pub enum StoreError {
         build_version: i64,
     },
 
-    /// SQLite cannot read the file as a database at all.
+    /// SQLite cannot read a database it was given, on page 1 or anywhere
+    /// after it.
     ///
     /// Separated from [`StoreError::Sqlite`] because the remedy is different
     /// and because it is otherwise invisible: without this the failure reaches
     /// the caller as the raw rusqlite string ("database disk image is
     /// malformed"), every later session repeats the same warning, and nothing
-    /// ever tells the user to move the file aside. See
-    /// `integrity::corrupt_store_error`.
+    /// ever tells the user to move the file aside. Reached from every `?` in
+    /// the crate — see the `From<rusqlite::Error>` conversion below.
     #[error(
-        "store.db cannot be read as a SQLite database ({source}), so it is corrupt \
-         or was overwritten. Run `stella doctor` to confirm, then `stella doctor --repair` \
-         to salvage what is readable and move {path} aside (it is renamed, never deleted) \
-         — it holds local telemetry and session replay, never your source."
+        "{subject} cannot be read as a SQLite database ({source}), so it is corrupt or \
+         was overwritten. Run `stella doctor` to confirm, then `stella doctor --repair` \
+         to salvage what is readable and move the file aside (it is renamed, never \
+         deleted) — it holds local telemetry and session replay, never your source.",
+        subject = corrupt_subject(.path)
     )]
     Corrupt {
-        /// The file named in the remedy, as the caller located it.
-        path: String,
+        /// The file named in the remedy, as the caller located it. `None` when
+        /// the failure arrived through the blanket conversion, which has no
+        /// database to ask — see `corrupt_subject`.
+        path: Option<String>,
         /// The corruption SQLite reported.
         source: rusqlite::Error,
     },
 
     /// An ordinary SQLite failure — a busy database, a constraint, a query
-    /// against a schema this build did not expect.
+    /// against a schema this build did not expect. Never corruption: the
+    /// conversion below routes that to [`StoreError::Corrupt`] instead.
     #[error("{0}")]
-    Sqlite(#[from] rusqlite::Error),
+    Sqlite(#[source] rusqlite::Error),
 
     /// A filesystem operation failed. `context` names the operation and the
     /// path in the crate's established wording ("cannot read /…"); the kind is
@@ -130,6 +138,41 @@ pub enum StoreError {
     /// in a case of its own, not here.
     #[error("{0}")]
     Other(String),
+}
+
+/// How the corruption message names the database.
+///
+/// A caller that resolved the file gets the file. The blanket conversion below
+/// has none to give: SQLite raises `SQLITE_CORRUPT` from a statement, and a
+/// statement does not carry the database it ran against. This crate opens
+/// several (`store.db`, `usage.db`, `catalog.db`, `enterprise-telemetry.db`),
+/// so a guessed name would send a user to move a healthy database aside.
+/// `stella doctor`, which the remedy points at, locates and names the file it
+/// checks.
+fn corrupt_subject(path: &Option<String>) -> &str {
+    path.as_deref().unwrap_or("a stella SQLite database")
+}
+
+/// Every `?` on a SQLite failure in this crate lands here, which is why the
+/// corruption split is made here and not at the call sites.
+///
+/// A store can take damage on any page, and the statement that walks it is
+/// whichever read reaches that table next — so the split has to hold for the
+/// whole read/write surface, not for the two statements that run while opening.
+/// Wrapping call sites cannot do that: SQLite reports the damage from
+/// `Rows::next`, so [`Store::execution_events`](crate::Store::execution_events)
+/// fails inside `for row in rows { … row? }`, where there is no
+/// connection-level result to wrap. Every fallible method in the crate would
+/// also have to remember, and a new one would not. This conversion is the one
+/// path all of them already take.
+///
+/// Anything that is not corruption passes through as
+/// [`StoreError::Sqlite`] unchanged, so `SQLITE_BUSY` keeps its own retry
+/// (see [`crate::busy`]).
+impl From<rusqlite::Error> for StoreError {
+    fn from(error: rusqlite::Error) -> Self {
+        crate::integrity::corrupt_store_error(error, None)
+    }
 }
 
 impl StoreError {
@@ -262,6 +305,63 @@ mod tests {
             matches!(ordinary, StoreError::Sqlite(_)),
             "an ordinary statement failure is not corruption: {ordinary:?}"
         );
+    }
+
+    /// Corruption reaches a caller as [`StoreError::Corrupt`] however it was
+    /// raised, not only from the two statements the open sequence runs.
+    ///
+    /// This is the wire shape SQLite hands back mid-scan, put through the
+    /// conversion every `?` in the crate takes. Flattened into
+    /// [`StoreError::Sqlite`] it says "database disk image is malformed" and
+    /// nothing else: no remedy, no file, and nothing to tell it from an
+    /// ordinary `SQLITE_BUSY`.
+    #[test]
+    fn corruption_is_classified_by_the_conversion_every_query_takes() {
+        let malformed = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            Some("database disk image is malformed".to_string()),
+        );
+
+        let error = StoreError::from(malformed);
+        match &error {
+            StoreError::Corrupt { path, .. } => assert_eq!(
+                *path, None,
+                "the conversion has no database to name, and must not guess one"
+            ),
+            other => panic!(
+                "corruption from an ordinary statement must classify as Corrupt, \
+                 not as a bare SQLite failure: {other:?}"
+            ),
+        }
+        assert!(
+            error.to_string().contains("stella doctor"),
+            "the remedy travels with the error: {error}"
+        );
+        assert_eq!(
+            error.sqlite_code(),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt),
+            "the code stays reachable through the corrupt case"
+        );
+        assert!(!error.is_busy(), "corruption is not a held lock");
+    }
+
+    /// The other half of the split: a lock that is held is still an ordinary
+    /// failure, so [`crate::busy::retry_busy`] keeps asking again for it. A
+    /// conversion that classified too eagerly would turn a retryable write
+    /// into a corrupt-database report.
+    #[test]
+    fn a_held_lock_is_not_reclassified_as_corruption() {
+        let busy = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some("database is locked".to_string()),
+        );
+
+        let error = StoreError::from(busy);
+        assert!(
+            matches!(error, StoreError::Sqlite(_)),
+            "a busy database is not corruption: {error:?}"
+        );
+        assert!(error.is_busy(), "and it is still retryable: {error}");
     }
 
     /// A filesystem failure keeps its `ErrorKind` reachable through

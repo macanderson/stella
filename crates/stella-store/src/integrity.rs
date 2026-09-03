@@ -67,9 +67,14 @@ pub(crate) fn is_sqlite_corruption(error: &rusqlite::Error) -> bool {
 /// string ("database disk image is malformed"), which `open_store` prints as
 /// `local store unavailable (store: …)` — and then EVERY later session repeats
 /// the warning and runs with zero persistence, because nothing ever tells the
-/// user to move the file aside. `From<rusqlite::Error>` flattens the error to a
-/// `String`, so the code has to be inspected before that conversion happens.
-/// Anything that is not corruption is passed through unchanged.
+/// user to move the file aside. Anything that is not corruption is passed
+/// through as [`StoreError::Sqlite`].
+///
+/// This is what `From<rusqlite::Error> for StoreError` calls, with no path, so
+/// the split holds for every `?` in the crate. Callers that resolved the file
+/// pass it and get it named; the conversion cannot, and must not guess (see
+/// `error::corrupt_subject`). Returning [`StoreError::Sqlite`] here rather
+/// than going back through `From` is what keeps that from recursing.
 ///
 /// The message names `stella doctor` because a diagnosis the user cannot
 /// confirm and a repair they have to invent are what made this failure a dead
@@ -77,21 +82,22 @@ pub(crate) fn is_sqlite_corruption(error: &rusqlite::Error) -> bool {
 /// place most users ever hear about them.
 pub(crate) fn corrupt_store_error(error: rusqlite::Error, db_path: Option<&Path>) -> StoreError {
     if !is_sqlite_corruption(&error) {
-        return StoreError::from(error);
+        return StoreError::Sqlite(error);
     }
-    let path = db_path.map_or_else(
-        || ".stella/private/store.db".to_string(),
-        |path| path.display().to_string(),
-    );
     StoreError::Corrupt {
-        path,
+        path: db_path.map(|path| path.display().to_string()),
         source: error,
     }
 }
 
-/// Re-classify an error raised anywhere in the open sequence, so corruption
-/// found after page 1 carries the same remedy corruption found *on* page 1
-/// already does.
+/// Name the file on an error raised anywhere in the open sequence, so
+/// corruption found after page 1 says which database it is as well as what to
+/// do about it.
+///
+/// The blanket conversion classifies the failure but has no database to name,
+/// which is the shape almost every corruption error in the crate now arrives
+/// in. The open sequence is the one place that holds the resolved path, so it
+/// re-names what the conversion left unnamed.
 ///
 /// [`corrupt_store_error`] maps the pragma batch, which is the first statement
 /// to touch page 1 — so it catches a file whose header is gone or overwritten.
@@ -110,6 +116,12 @@ pub(crate) fn corrupt_store_error(error: rusqlite::Error, db_path: Option<&Path>
 /// healthy open to learn what the failing open is already being told.
 pub(crate) fn classify_store_corruption(error: StoreError, db_path: Option<&Path>) -> StoreError {
     match error {
+        StoreError::Corrupt { source, path: None } if db_path.is_some() => {
+            corrupt_store_error(source, db_path)
+        }
+        // An error built as `StoreError::Sqlite` by hand skipped the
+        // conversion, so classify it here too rather than depending on which
+        // door it came through.
         StoreError::Sqlite(sqlite) if is_sqlite_corruption(&sqlite) => {
             corrupt_store_error(sqlite, db_path)
         }
@@ -679,10 +691,9 @@ mod tests {
     }
 
     /// A store whose `events` table spans enough pages that damage can be put
-    /// past the header without touching it, staged so that reopening rebuilds
-    /// the `events_by_task` index — the v38 → v39 step, and the full table scan
-    /// that walked the maintainer's damaged pages in #4564.
-    fn workspace_needing_an_index_rebuild(rows: usize) -> (tempfile::TempDir, PathBuf) {
+    /// past the header without touching it. Returned open, and with the
+    /// execution the rows belong to, so each caller stages the reopen it needs.
+    fn workspace_with_padded_events(rows: usize) -> (tempfile::TempDir, Store, i64) {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = Store::open(dir.path()).expect("store");
         let id = store
@@ -703,23 +714,48 @@ mod tests {
         store
             .finish_execution(id, "completed", 0.5)
             .expect("finish");
+        (dir, store, id)
+    }
+
+    /// Every row in the main file rather than in a `-wal` the corruption a test
+    /// writes next would miss, and the file closed.
+    fn checkpoint_and_close(dir: &tempfile::TempDir, store: Store) -> PathBuf {
+        store
+            .lock()
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+            .expect("checkpoint");
+        drop(store);
+        let db_path = dir.path().join(".stella/private/store.db");
+        assert!(db_path.is_file(), "fixture store exists");
+        db_path
+    }
+
+    /// A padded store staged so that reopening rebuilds the `events_by_task`
+    /// index — the v38 → v39 step, and the full table scan that walked the
+    /// maintainer's damaged pages in #4564.
+    fn workspace_needing_an_index_rebuild(rows: usize) -> (tempfile::TempDir, PathBuf) {
+        let (dir, store, _) = workspace_with_padded_events(rows);
         {
             // Drop the index and wind the stamp back, so the reopen genuinely
             // re-runs the migration rather than skipping an index that is
-            // already there. Checkpointed so every row is in the main file and
-            // not in a `-wal` the corruption below would miss.
+            // already there.
             let conn = store.lock();
             conn.execute_batch("DROP INDEX IF EXISTS events_by_task;")
                 .expect("drop the index the migration rebuilds");
             conn.pragma_update(None, "user_version", 38i64)
                 .expect("wind the schema stamp back to v38");
-            conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-                .expect("checkpoint");
         }
-        drop(store);
-        let db_path = dir.path().join(".stella/private/store.db");
-        assert!(db_path.is_file(), "fixture store exists");
+        let db_path = checkpoint_and_close(&dir, store);
         (dir, db_path)
+    }
+
+    /// A padded store left at the schema this build already writes, so
+    /// [`Store::migrate`]'s `while version < SCHEMA_VERSION` body never runs
+    /// and no DDL walks the file while it is being opened.
+    fn workspace_at_the_current_schema(rows: usize) -> (tempfile::TempDir, PathBuf, i64) {
+        let (dir, store, id) = workspace_with_padded_events(rows);
+        let db_path = checkpoint_and_close(&dir, store);
+        (dir, db_path, id)
     }
 
     /// Overwrite a run of pages in the middle of the file, leaving page 1 — the
@@ -769,13 +805,75 @@ mod tests {
 
         match Store::open(dir.path()) {
             Ok(_) => panic!("a store with shredded pages must not open"),
-            Err(error @ StoreError::Corrupt { .. }) => assert!(
-                error.to_string().contains("stella doctor"),
-                "corruption found after page 1 carries the remedy too: {error}"
-            ),
+            Err(error @ StoreError::Corrupt { .. }) => {
+                assert!(
+                    error.to_string().contains("stella doctor"),
+                    "corruption found after page 1 carries the remedy too: {error}"
+                );
+                // The open sequence holds the resolved path, so it is the file
+                // the sentence names rather than a description of one.
+                assert!(
+                    error.to_string().contains("store.db"),
+                    "and the file it happened to: {error}"
+                );
+            }
             Err(other) => panic!(
                 "corruption below the header must classify as Corrupt, not as a \
                  bare SQLite failure: {other:?}"
+            ),
+        }
+    }
+
+    /// Corruption that no statement in the open sequence can reach must still
+    /// arrive as the error that names the repair.
+    ///
+    /// The store is already at this build's `SCHEMA_VERSION`, so `migrate`'s
+    /// step loop never runs and the pragma batch touches only page 1: opening
+    /// succeeds, which is the premise asserted below. The damage surfaces on
+    /// the first read that walks those pages, and without the split covering
+    /// that read it reaches the caller as
+    /// `Sqlite(SqliteFailure(DatabaseCorrupt, 11))` — the bare "database disk
+    /// image is malformed", with no remedy and nothing to tell it from a held
+    /// lock.
+    ///
+    /// The read is `execution_events` rather than `list_session_tasks`: the
+    /// `tasks` table is empty here and its pages sit before the damage, so
+    /// that read raises nothing. This one scans the padded `events` table, and
+    /// it fails from `Rows::next` — inside `for row in rows`, where no wrapper
+    /// around the connection could have classified it.
+    #[test]
+    fn corruption_found_by_an_ordinary_read_names_the_remedy() {
+        let (dir, db_path, execution_id) = workspace_at_the_current_schema(4_000);
+        shred_pages_past_the_header(&db_path);
+
+        // The premise: page 1 survived and the stamp already matches this
+        // build, so nothing walks the damaged pages while opening.
+        let header = Connection::open(&db_path).expect("a damaged file still opens");
+        let stamped: i64 = header
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("the header still answers its version");
+        assert_eq!(
+            stamped,
+            crate::migrations::SCHEMA_VERSION,
+            "the fixture must need no migration, or the open-time path catches this"
+        );
+        drop(header);
+
+        let store = Store::open(dir.path())
+            .expect("a store at the current schema opens even with damage past page 1");
+
+        match store.execution_events(execution_id) {
+            Ok(journal) => panic!(
+                "reading {} events off shredded pages must fail",
+                journal.events.len()
+            ),
+            Err(error @ StoreError::Corrupt { .. }) => assert!(
+                error.to_string().contains("stella doctor"),
+                "an ordinary read carries the remedy too: {error}"
+            ),
+            Err(other) => panic!(
+                "corruption raised by an ordinary read must classify as Corrupt, \
+                 not as a bare SQLite failure: {other:?}"
             ),
         }
     }

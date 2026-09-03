@@ -16,7 +16,7 @@ use stella_core::budget::{BudgetAxis, BudgetOutcome};
 use stella_protocol::{CompletionRequestRef, CompletionResult, Provider, ProviderError};
 use stella_runtime::{
     Notice, NoticeSubject, Persistence, ProviderParts, RuntimeBuilder, RuntimeError, RuntimeSpec,
-    budget_guard, open_store, seed_calibration,
+    budget_guard, build_provider, open_store, seed_calibration,
 };
 use tempfile::TempDir;
 
@@ -98,6 +98,43 @@ async fn a_file_is_not_a_workspace_root() {
     match error {
         RuntimeError::WorkspaceRoot(path) => assert_eq!(path, file),
         other => panic!("expected WorkspaceRoot, got {other:?}"),
+    }
+}
+
+/// Two sessions, two GCP projects, one process.
+///
+/// The project rides `ProviderParts::aux`, so each spec carries its own. Read
+/// from the process environment instead, it is one value for all of them. That
+/// read sits one call below the scan in `tests/no_ambient_reads.rs`.
+///
+/// The environment is still the fallback. A shell that exports a project makes
+/// this pass whatever the adapter does, so the guard below says when the test
+/// can tell. Which project each adapter *addresses* shows up only on the wire.
+/// That assertion sits beside the adapter, in `stella-model`'s
+/// `two_vertex_sessions_in_one_process_address_two_projects`.
+#[test]
+fn two_specs_can_name_two_vertex_projects_in_one_process() {
+    if std::env::var_os("VERTEX_PROJECT_ID").is_some()
+        || std::env::var_os("GOOGLE_CLOUD_PROJECT").is_some()
+    {
+        return;
+    }
+    let root = TempDir::new().expect("temp dir");
+
+    for tenant in ["tenant-a", "tenant-b"] {
+        let mut spec = spec_at(&root);
+        let mut aux = stella_model::AuxCredentials::new();
+        aux.insert("VERTEX_PROJECT_ID", tenant);
+        spec.provider.id = "vertex".to_string();
+        spec.provider.display_name = "Vertex AI".to_string();
+        spec.provider.dialect = stella_model::factory::Dialect::Vertex;
+        spec.provider.seeded = true;
+        spec.provider.model_id = "gemini-3-pro".to_string();
+        spec.provider.aux = aux;
+
+        let provider = build_provider(&spec.provider)
+            .unwrap_or_else(|e| panic!("{tenant} must assemble from its own spec: {e}"));
+        assert_eq!(provider.id(), "vertex");
     }
 }
 

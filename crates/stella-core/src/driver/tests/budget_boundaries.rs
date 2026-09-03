@@ -1,8 +1,9 @@
 //! Budget-boundary witnesses: an over-cap call is settled spend but the next
 //! provider call never starts, an already-breached turn never pays for
 //! compaction, a billed completion and its usage envelope land exactly once
-//! even when a speculation is still in flight, and both top-of-step aborts
-//! hand back a transcript the next provider call still accepts.
+//! even when a speculation is still in flight, both top-of-step aborts
+//! hand back a transcript the next provider call still accepts, and a step
+//! with a slow tool stops the turn before the deadline instead of after it.
 
 use super::*;
 
@@ -419,5 +420,87 @@ async fn a_normal_completion_charges_the_budget_exactly_once() {
             .count(),
         1,
         "the normal path must not re-emit the success envelope"
+    );
+}
+
+/// A `ToolExecutor` whose one tool sleeps, so the step around it costs far
+/// more than the model call inside it.
+///
+/// Real time, because the reserve is real time: the driver reads
+/// `Instant::now`, and a paused tokio clock would leave every step measured
+/// at zero.
+struct SlowTool {
+    took: std::time::Duration,
+}
+
+#[async_trait]
+impl ToolExecutor for SlowTool {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: "bash".into(),
+            description: "run a command".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: false,
+            speculation_safe: false,
+        }]
+    }
+
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        tokio::time::sleep(self.took).await;
+        ToolOutput::Ok {
+            content: "ok".into(),
+            data: None,
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_slow_tool_stops_the_turn_before_the_deadline() {
+    // The scripted model answers at once and its tool then runs for a
+    // second, so the step costs a second and the call inside it costs
+    // nothing. With 600ms left after that step, a reserve measured on the
+    // model call alone reads about zero and opens step two, which runs the
+    // same slow tool and crosses the deadline. A reserve measured on the
+    // whole step reads about a second, and the turn stops with what it has.
+    let tool_time = std::time::Duration::from_millis(1_000);
+    let deadline_in = std::time::Duration::from_millis(1_600);
+
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(tool_call_result("slow-call", "bash"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let provider_calls = provider.calls.clone();
+    let tools = SlowTool { took: tool_time };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("the task"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    budget.set_task_deadline(Some(std::time::Instant::now() + deadline_in));
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    let TurnOutcome::Aborted { reason, kind, .. } = outcome else {
+        panic!("expected the deadline stop, got {outcome:?}");
+    };
+    assert_eq!(
+        kind,
+        AbortKind::DeliberateStop,
+        "stopping early is the engine's own policy, not a crash"
+    );
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        1,
+        "step two must never start: its tool alone takes {tool_time:?} of a \
+         {deadline_in:?} deadline"
+    );
+    assert!(
+        reason.contains("cannot finish"),
+        "the turn must stop while the deadline is still ahead, not report an \
+         overrun after crossing it: {reason}"
     );
 }

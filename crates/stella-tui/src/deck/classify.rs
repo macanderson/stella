@@ -388,17 +388,16 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
     }
 }
 
-/// A one-line, length-capped snip of free text for a trace row.
+/// A one-line, column-capped snip of free text for a trace row.
+///
+/// The cap is display columns. Almost everything this snips is model output —
+/// assistant text, reasoning, an error message, a commit subject — so it is
+/// not ASCII by construction, and a `char` cap let a CJK message reach the
+/// trace row at twice the width the row budgets for it.
 pub(super) fn snip(text: &str) -> String {
     const MAX: usize = 80;
     let flat = text.replace(['\n', '\r'], " ");
-    let flat = flat.trim();
-    if flat.chars().count() <= MAX {
-        flat.to_string()
-    } else {
-        let head: String = flat.chars().take(MAX - 1).collect();
-        format!("{head}…")
-    }
+    crate::render::columns::head(flat.trim(), MAX)
 }
 
 /// One-line trace summary of a gate board — `4/5 green · failed: tests`.
