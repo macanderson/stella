@@ -125,7 +125,7 @@ impl super::Engine<'_> {
     /// exactly that amount.
     ///
     /// Takes the whole [`TurnState`] rather than three of its fields because
-    /// the deadline question needs a fourth — `last_step`, the pace estimate —
+    /// the deadline question needs a fourth — `pace`, the step estimate —
     /// and threading each one through by hand is what makes a call site grow
     /// every time this learns to consider something else.
     pub(super) fn check_budget(
@@ -157,7 +157,7 @@ impl super::Engine<'_> {
             &mut state.messages,
             &state.budget,
             state.total_cost_usd,
-            state.last_step,
+            state.pace.reserve(),
             &mut state.memos.warnings,
             events,
             now,
@@ -184,23 +184,26 @@ fn check_budget(
     messages: &mut Vec<CompletionMessage>,
     budget: &BudgetGuard,
     total_cost_usd: f64,
-    last_step: Option<std::time::Duration>,
+    reserve: std::time::Duration,
     warnings: &mut BudgetWarnings,
     events: &EventSender,
     now: std::time::Instant,
 ) -> Option<TurnOutcome> {
-    // The forecast for one more step is what the last one cost. Same rule,
-    // same words, as `truncation::ContinuationBudget::affords_another` — and
-    // no safety margin invented here either: the caller owns the deadline
+    // `reserve` is what one more WHOLE step needs: the model call plus the
+    // tools it asks for, measured by `driver::step_pace` and read off the
+    // turn by the wrapper above. A reserve read off the call alone keeps 8s
+    // for a step that thought for 8s and then ran `bash` for 4 minutes, and
+    // the turn then opens a step it cannot finish.
+    //
+    // No safety margin is invented here: the caller owns the deadline
     // (`runtime::one_shot_budget_guard` derives it from `--turn-timeout`, which
     // the bench adapter already sets to Harbor's timeout minus a teardown
     // reserve). A margin baked in at this level would be a second, invisible
     // policy on top of the one the operator configured.
     //
-    // `None` before any step has been timed, which reads as a zero reserve and
-    // so reproduces the reactive check exactly — there is nothing to forecast
-    // from yet, and inventing a number would be guessing at the model.
-    let reserve = last_step.unwrap_or_default();
+    // Zero before any step has been timed, which reproduces the reactive
+    // check exactly — there is nothing to forecast from yet, and inventing a
+    // number would be guessing at the model.
     let reason = match budget.check_deadline_with_reserve(now, reserve) {
         DeadlineOutcome::Exceeded { overrun } => Some(format!(
             "task deadline exceeded by {:.1}s — stopping with partial work",
@@ -414,7 +417,7 @@ mod tests {
     /// `check_budget` was split out of the `&self` wrapper in the first place.
     fn decide(
         deadline_in: Option<Duration>,
-        last_step: Option<Duration>,
+        reserve: Duration,
     ) -> (Option<TurnOutcome>, Vec<String>) {
         let now = std::time::Instant::now();
         let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -429,7 +432,7 @@ mod tests {
             &mut transcript,
             &budget,
             0.0,
-            last_step,
+            reserve,
             &mut warnings,
             &events,
             now,
@@ -448,8 +451,7 @@ mod tests {
         // #2278's witness. 20s of wall clock left and the last step took 30s:
         // starting another buys a harness SIGKILL with the work discarded,
         // which is what `sqlite-with-gcov__egbgJmd` bought at step 77.
-        let (outcome, messages) =
-            decide(Some(Duration::from_secs(20)), Some(Duration::from_secs(30)));
+        let (outcome, messages) = decide(Some(Duration::from_secs(20)), Duration::from_secs(30));
 
         let Some(TurnOutcome::Aborted { reason, kind, .. }) = outcome else {
             panic!("expected an anticipatory stop, got {outcome:?}");
@@ -474,10 +476,7 @@ mod tests {
 
     #[test]
     fn room_for_another_step_starts_it() {
-        let (outcome, messages) = decide(
-            Some(Duration::from_secs(300)),
-            Some(Duration::from_secs(30)),
-        );
+        let (outcome, messages) = decide(Some(Duration::from_secs(300)), Duration::from_secs(30));
         assert!(outcome.is_none(), "300s left, 30s steps: keep working");
         assert!(messages.is_empty(), "and say nothing");
     }
@@ -486,7 +485,7 @@ mod tests {
     fn before_the_first_timed_step_the_check_stays_reactive() {
         // No pace to forecast from yet. Inventing one would be guessing at the
         // model, so an unmeasured turn behaves exactly as it did before #2278.
-        let (outcome, _) = decide(Some(Duration::from_millis(1)), None);
+        let (outcome, _) = decide(Some(Duration::from_millis(1)), Duration::ZERO);
         assert!(
             outcome.is_none(),
             "a 1ms-from-deadline turn with no measured step must not stop early"
@@ -496,7 +495,7 @@ mod tests {
     #[test]
     fn a_crossed_deadline_still_reports_the_overrun() {
         // The anticipatory rung must not swallow the hard one.
-        let (outcome, _) = decide(None, Some(Duration::from_secs(30)));
+        let (outcome, _) = decide(None, Duration::from_secs(30));
         assert!(outcome.is_none(), "no deadline configured: never stops");
 
         let now = std::time::Instant::now();
@@ -508,7 +507,7 @@ mod tests {
             &mut Vec::new(),
             &budget,
             0.0,
-            Some(Duration::from_secs(600)),
+            Duration::from_secs(600),
             &mut warnings,
             &EventSender::new(tx),
             now,

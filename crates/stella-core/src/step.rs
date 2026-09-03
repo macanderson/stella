@@ -58,6 +58,7 @@ use crate::driver::deadline_notice::DeadlineNotices;
 use crate::driver::loop_escalation::LoopSteerBudget;
 use crate::driver::output_budget_recovery::OutputBudgetRecovery;
 use crate::driver::overflow_recovery::OverflowRecovery;
+use crate::driver::step_pace::StepPace;
 use crate::driver::usage_anchor::UsageAnchor;
 use crate::driver::{EngineConfig, SPECULATION_DISCARD_ATTEMPT_FAILED, TurnMemos, TurnOutcome};
 use crate::event_sender::EventSender;
@@ -394,11 +395,11 @@ pub struct TurnState {
     /// the original start would make the budget read as long spent before any
     /// work happened. Same reasoning as `length_continuations` starting over.
     pub(crate) started_at: std::time::Instant,
-    /// How long the most recent model call took, as the estimate of what one
-    /// more continuation would cost. A continuation re-runs the work that just
-    /// truncated, so its predecessor's duration is the honest forecast — and
-    /// the only one available without predicting the model.
-    pub(crate) last_step: Option<std::time::Duration>,
+    /// How long this turn's steps have been taking: the last model call, and
+    /// the last whole step. The deadline reserve reads the whole step, and
+    /// the length-continuation forecast reads the call
+    /// ([`StepPace`](crate::driver::step_pace::StepPace)).
+    pub(crate) pace: StepPace,
     /// Steps since the [`SteeringRequery`](crate::ports::SteeringRequery)
     /// port last answered — the `since_last_query` half of the hysteresis
     /// input (#3243 Phase 3). Reset when the port returns a block. Not
@@ -451,7 +452,7 @@ impl TurnState {
             length_continuations: 0,
             stop_hook_consults: 0,
             started_at: std::time::Instant::now(),
-            last_step: None,
+            pace: StepPace::default(),
             steps_since_requery: 0,
             cancel: CancelToken::new(),
         }
@@ -498,7 +499,7 @@ impl TurnState {
             // the same bounded-allowance reasoning as `length_continuations`.
             stop_hook_consults: 0,
             started_at: std::time::Instant::now(),
-            last_step: None,
+            pace: StepPace::default(),
             steps_since_requery: 0,
             cancel: CancelToken::new(),
         }
