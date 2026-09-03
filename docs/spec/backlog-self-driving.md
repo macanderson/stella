@@ -418,6 +418,12 @@ ones beside the escalated ones, so a backlog the loop has given up on
 cannot read as one it is still working through. All three numbers are
 operator settings under `[self_driving.escalation]` in `stella.toml`.
 
+Both work generators ask the same question, through
+`QueueIssue::escalation_holds`: the ready backlog (`ready::ready_queue`,
+behind `drive --backlog`) and the defect queue (`priority::triage`, the
+default `drive` path). One rule, two readers, so the two cannot start
+disagreeing about when an escalated issue comes back.
+
 An escalated issue with no record stays out of the queue. The label alone
 says nothing about what went wrong or when, and a person who applied it by
 hand meant it.

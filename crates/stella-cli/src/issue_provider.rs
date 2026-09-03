@@ -496,6 +496,9 @@ pub(crate) fn to_queue_issue(issue: &Issue) -> stella_autonomy::QueueIssue {
             .collect(),
         created_at: issue.created_at.clone(),
         url: issue.url.clone(),
+        // The record lives in the body. So every queue read carries it,
+        // and a cooldown costs no second call.
+        escalation: stella_autonomy::escalation::parse(&issue.body),
     }
 }
 

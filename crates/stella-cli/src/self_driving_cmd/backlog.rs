@@ -27,6 +27,7 @@ use stella_protocol::issue::{IssueDraft, IssueError, IssueKey, IssueLabel, Issue
 
 use crate::query_format::{QueryFormat, Rows};
 
+use super::config::LoopConfig;
 use super::state::LoopState;
 
 /// How many open issues cross the port to produce one cycle's batch.
@@ -77,7 +78,7 @@ fn truncation_notice(total: usize, provider: &str) -> Option<String> {
 /// a single awaited call.
 pub(super) fn ranked(
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
 ) -> Result<(stella_autonomy::priority::Queue, usize), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -95,7 +96,9 @@ pub(super) fn ranked(
             .iter()
             .map(crate::issue_provider::to_queue_issue)
             .collect(),
-        policy,
+        &cfg.triage,
+        &cfg.escalation,
+        crate::timefmt::now_unix(),
     );
 
     // Escalated issues, excluded kinds and the unassessed split all happen
@@ -109,11 +112,11 @@ pub(super) fn ranked(
 pub(super) fn render_queue(
     _st: &LoopState,
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
     limit: usize,
     format: QueryFormat,
 ) -> Result<(), String> {
-    let (queue, total_issues) = ranked(provider, policy)?;
+    let (queue, total_issues) = ranked(provider, cfg)?;
     let defects = queue.ranked;
     let picked = &defects[..limit.min(defects.len())];
 
@@ -127,7 +130,8 @@ pub(super) fn render_queue(
     for i in picked {
         // The operator's rungs, not a built-in list — a tracker spelling
         // urgency `Sev1` must render its own word.
-        let prio = policy
+        let prio = cfg
+            .triage
             .ladder
             .rungs
             .iter()
@@ -166,7 +170,7 @@ pub(super) fn render_queue(
 /// reason to wake.
 pub(super) fn demand_from(
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
 ) -> Result<Demand, String> {
     // The read's failure is reported, not flattened. `Demand::default()` is
     // zero open defects, which is the *answer to a different question* — an
@@ -174,9 +178,9 @@ pub(super) fn demand_from(
     // arrive here as the same number. `watch` then printed
     // `✓ defect queue empty` and stood the loop down, and the governor planned
     // a cycle against a demand nobody had measured.
-    let (queue, _) = ranked(provider, policy)?;
+    let (queue, _) = ranked(provider, cfg)?;
     // The most urgent rung the operator declared, whatever they call it.
-    let urgent = policy.ladder.most_urgent().unwrap_or_default();
+    let urgent = cfg.triage.ladder.most_urgent().unwrap_or_default();
     let p0 = queue
         .ranked
         .iter()
@@ -280,14 +284,14 @@ pub(super) async fn file_finding(
 pub(super) fn ranked_keys(
     st: &super::state::LoopState,
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
 ) -> Result<Vec<String>, String> {
-    let (queue, total) = ranked(provider, policy)?;
+    let (queue, total) = ranked(provider, cfg)?;
     // The driver's claim pass is the one place the queue is read on a
     // cadence, so it is the one place a snapshot stays current for the
     // observatory — still the single `ranked` read: the keys the loop claims
     // from and the items the dashboard shows are one list, folded twice.
-    st.write_queue_snapshot(&queue, &policy.ladder, total);
+    st.write_queue_snapshot(&queue, &cfg.triage.ladder, total);
     Ok(queue
         .ranked
         .into_iter()
@@ -302,9 +306,9 @@ pub(super) fn ranked_keys(
 /// its own read would be the second definition this module exists to prevent.
 pub(super) fn unassessed(
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
 ) -> Result<Vec<stella_autonomy::priority::Unassessed>, String> {
-    let (queue, _) = ranked(provider, policy)?;
+    let (queue, _) = ranked(provider, cfg)?;
     Ok(queue.unassessed)
 }
 
@@ -1165,8 +1169,8 @@ mod tests {
     /// ranking no longer requires GitHub to exist.
     #[test]
     fn a_ranked_queue_needs_no_github_at_all() {
-        let policy = stella_autonomy::priority::TriagePolicy::default();
-        let (queue, total) = ranked(&backlog(), &policy).expect("fixture read");
+        let cfg = LoopConfig::default();
+        let (queue, total) = ranked(&backlog(), &cfg).expect("fixture read");
         let order: Vec<u64> = queue.ranked.iter().map(|issue| issue.number).collect();
         assert_eq!(
             order,
@@ -1207,8 +1211,8 @@ mod tests {
         open.push(issue("7", &["bug", "P0"], "2020-01-01T00:00:00Z"));
 
         let provider = FixtureProvider::with(open);
-        let policy = stella_autonomy::priority::TriagePolicy::default();
-        let (queue, total) = ranked(&provider, &policy).expect("fixture read");
+        let cfg = LoopConfig::default();
+        let (queue, total) = ranked(&provider, &cfg).expect("fixture read");
 
         assert_eq!(
             queue.ranked.first().map(|issue| issue.number),
@@ -1260,8 +1264,8 @@ mod tests {
     /// and place it instead of burying it.
     #[test]
     fn a_defect_with_no_rung_surfaces_as_a_question() {
-        let policy = stella_autonomy::priority::TriagePolicy::default();
-        let (queue, _) = ranked(&backlog(), &policy).expect("fixture read");
+        let cfg = LoopConfig::default();
+        let (queue, _) = ranked(&backlog(), &cfg).expect("fixture read");
         assert_eq!(
             queue
                 .unassessed
@@ -1281,8 +1285,8 @@ mod tests {
     /// disagree with the batch the same cycle draws.
     #[test]
     fn demand_is_a_fold_of_the_same_ranking() {
-        let policy = stella_autonomy::priority::TriagePolicy::default();
-        let demand = demand_from(&backlog(), &policy).expect("the fake backlog reads");
+        let cfg = LoopConfig::default();
+        let demand = demand_from(&backlog(), &cfg).expect("the fake backlog reads");
         assert_eq!(
             demand.open_defects, 3,
             "the feature is not a defect, and the unranked one is not yet work"
@@ -1307,10 +1311,7 @@ mod tests {
     /// read.
     #[test]
     fn an_unreachable_tracker_is_not_a_measured_zero() {
-        let answer = demand_from(
-            &DeadProvider,
-            &stella_autonomy::priority::TriagePolicy::default(),
-        );
+        let answer = demand_from(&DeadProvider, &LoopConfig::default());
         assert!(
             answer.is_err(),
             "a tracker that could not be read reports so: {answer:?}"

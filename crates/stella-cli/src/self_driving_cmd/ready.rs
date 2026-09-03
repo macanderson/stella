@@ -86,10 +86,9 @@ fn open_page(provider: &dyn IssueProvider) -> Result<Vec<stella_protocol::issue:
 
 /// The readiness fold over one read's records.
 ///
-/// The escalation record sits in the body, so this read carries it too.
-/// The queue can hold a cooldown with no second call to the tracker. The
-/// clock is read here: `stella-autonomy` does no I/O and takes the time as
-/// an argument.
+/// The clock is read here: `stella-autonomy` does no I/O and takes the time
+/// as an argument. The escalation record rides on the issue itself, put
+/// there by `to_queue_issue` out of the body this read already carried.
 fn fold_ready(
     issues: &[stella_protocol::issue::Issue],
     cfg: &LoopConfig,
@@ -103,7 +102,6 @@ fn fold_ready(
         .map(|issue| stella_autonomy::ready::BacklogItem {
             issue: crate::issue_provider::to_queue_issue(issue),
             blocked_by: stella_autonomy::ready::blocker_refs(&issue.body),
-            escalation: stella_autonomy::escalation::parse(&issue.body),
         })
         .collect();
     stella_autonomy::ready::ready_queue(
@@ -143,7 +141,7 @@ pub(super) fn dry_run(
     let queue = if backlog {
         ready_issues(provider, cfg)?
     } else {
-        super::backlog::ranked(provider, &cfg.triage)?.0.ranked
+        super::backlog::ranked(provider, cfg)?.0.ranked
     };
 
     println!("dry run — nothing was claimed, branched, filed, or labelled");

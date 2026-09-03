@@ -778,10 +778,7 @@ fn gh_plain(args: &[&str]) -> Option<String> {
 /// which is the answer when the backlog really is empty — see
 /// [`backlog::demand_from`].
 fn demand(root: &std::path::Path) -> Result<Demand, String> {
-    backlog::demand_from(
-        &crate::issue_provider::GhIssueProvider,
-        &config::load(root).triage,
-    )
+    backlog::demand_from(&crate::issue_provider::GhIssueProvider, &config::load(root))
 }
 
 fn plan(st: &LoopState, explain: bool) -> Result<(), String> {

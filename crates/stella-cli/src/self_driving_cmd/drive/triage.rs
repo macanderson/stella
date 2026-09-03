@@ -98,7 +98,7 @@ pub(super) fn assess_one(
     budget: &mut crate::self_driving_cmd::budget::RunBudget,
     triaged: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
-    let unassessed = crate::self_driving_cmd::backlog::unassessed(provider, &cfg.triage)?;
+    let unassessed = crate::self_driving_cmd::backlog::unassessed(provider, cfg)?;
     let Some(issue) = unassessed.into_iter().find(|u| !triaged.contains(&u.key)) else {
         return Ok(());
     };

@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 
 use crate::QueueIssue;
-use crate::escalation::{EscalationPolicy, EscalationRecord, may_retry};
+use crate::escalation::EscalationPolicy;
 use crate::priority::{PriorityLadder, by_age, rank_of};
 
 /// The label a human applies to say: work this now, whatever its
@@ -28,10 +28,6 @@ pub struct BacklogItem {
     pub issue: QueueIssue,
     /// Issue numbers this one declares it is blocked by.
     pub blocked_by: Vec<u64>,
-    /// What the loop has already tried on it, read from the same body.
-    /// `None` when nobody has escalated it, or when the label was applied
-    /// by hand and says nothing about when or why.
-    pub escalation: Option<EscalationRecord>,
 }
 
 /// Whether one issue may be taken now.
@@ -134,9 +130,7 @@ pub fn ready_queue(
     let mut ranked = Vec::new();
     let mut unranked = Vec::new();
     for item in items {
-        if item.issue.has_label(crate::ESCALATION_LABEL)
-            && !may_retry(item.escalation.as_ref(), escalation, now_unix)
-        {
+        if item.issue.escalation_holds(escalation, now_unix) {
             continue;
         }
         if readiness(&item, open) != Readiness::Ready {
@@ -175,6 +169,7 @@ mod tests {
                 })
                 .collect(),
             url: String::new(),
+            escalation: None,
         }
     }
 
@@ -182,7 +177,6 @@ mod tests {
         BacklogItem {
             issue: issue(number, "2026-08-01T00:00:00Z", labels),
             blocked_by: blocked_by.to_vec(),
-            escalation: None,
         }
     }
 
@@ -190,8 +184,17 @@ mod tests {
         BacklogItem {
             issue,
             blocked_by: Vec::new(),
-            escalation: None,
         }
+    }
+
+    fn escalated(number: u64, record: crate::escalation::EscalationRecord) -> BacklogItem {
+        let mut issue = issue(
+            number,
+            "2026-08-01T00:00:00Z",
+            &["P1", crate::ESCALATION_LABEL],
+        );
+        issue.escalation = Some(record);
+        bare(issue)
     }
 
     fn queue(items: Vec<BacklogItem>, open: &BTreeSet<u64>, now_unix: i64) -> Vec<QueueIssue> {
@@ -273,7 +276,6 @@ mod tests {
             BacklogItem {
                 issue: issue(4, "2026-06-01T00:00:00Z", &["P0"]),
                 blocked_by: vec![1],
-                escalation: None,
             },
         ];
 
@@ -312,11 +314,7 @@ mod tests {
             "2026-09-02T00:00:00Z",
             escalated_at,
         );
-        let item = || BacklogItem {
-            issue: issue(17, "2026-08-01T00:00:00Z", &["P1", crate::ESCALATION_LABEL]),
-            blocked_by: Vec::new(),
-            escalation: Some(record.clone()),
-        };
+        let item = || escalated(17, record.clone());
 
         assert!(
             queue(vec![item()], &open(&[17]), escalated_at).is_empty(),
@@ -348,12 +346,6 @@ mod tests {
             last_at: "2026-09-02T00:00:00Z".to_owned(),
             last_at_unix: 0,
         };
-        let items = vec![BacklogItem {
-            issue: issue(17, "2026-08-01T00:00:00Z", &["P1", crate::ESCALATION_LABEL]),
-            blocked_by: Vec::new(),
-            escalation: Some(spent),
-        }];
-
-        assert!(queue(items, &open(&[17]), i64::MAX).is_empty());
+        assert!(queue(vec![escalated(17, spent)], &open(&[17]), i64::MAX).is_empty());
     }
 }

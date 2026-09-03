@@ -757,8 +757,11 @@ mod tests {
                     })
                     .collect(),
                 url: String::new(),
+                escalation: None,
             }],
             &policy,
+            &stella_autonomy::escalation::EscalationPolicy::default(),
+            i64::MAX,
         );
         assert!(
             escalated.is_empty(),

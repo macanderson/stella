@@ -515,7 +515,7 @@ pub(super) fn drive(
                 let read = if backlog {
                     super::ready::ready_keys(&provider, &cfg)
                 } else {
-                    super::backlog::ranked_keys(durable, &provider, &cfg.triage)
+                    super::backlog::ranked_keys(durable, &provider, &cfg)
                 };
                 let ranked = match read {
                     Ok(ranked) => ranked,

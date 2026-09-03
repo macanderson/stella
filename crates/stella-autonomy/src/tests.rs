@@ -701,7 +701,10 @@ fn rank_beats_age_across_ranks_triage_counts_and_features_do_not() {
     ]))
     .expect("fixture parses");
 
-    let ranked: Vec<u64> = rank_defects(issues).iter().map(|i| i.number).collect();
+    let ranked: Vec<u64> = rank_defects(issues, &crate::escalation::EscalationPolicy::default(), 0)
+        .iter()
+        .map(|i| i.number)
+        .collect();
     assert_eq!(ranked, [103, 102, 101, 104]);
 }
 
