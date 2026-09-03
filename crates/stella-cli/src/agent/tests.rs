@@ -1,3 +1,4 @@
+use super::summary::RawRunSummary;
 use super::*;
 use crate::config::{ConfiguredProvider, PROVIDERS, ProviderConfig};
 use stella_model::credential::ApiKey;
@@ -1170,6 +1171,7 @@ fn the_summary_envelope_leads_with_its_version() {
         events: Vec::new(),
         files_touched: serde_json::Value::Null,
         withheld: serde_json::Value::Null,
+        audit_records_incomplete: 0,
     };
 
     let encoded = serde_json::to_string(&raw).unwrap();

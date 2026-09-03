@@ -425,6 +425,10 @@ pub(super) fn run_turn(
         .map_err(|error| format!("the turn did not complete: {error}"))?;
 
     let summary = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    // A child turn counts the audit writes it gave up on, and this process is
+    // the only one that can add them up — the loop's own counter cannot see
+    // inside a child.
+    crate::agent::note_child_dropped_audit_writes(child_audit_drops(&summary));
     // Before the exit code is looked at, and deliberately: a turn that aborted
     // still spent, and its summary still carries the number. Charging only the
     // successes would let a run of failing turns spend without bound.
@@ -503,6 +507,23 @@ fn turn_command(exe: &Path, dir: &Path, state_root: &Path, flags: &TurnFlags) ->
         .arg("json");
     flags.push_onto(&mut cmd);
     cmd
+}
+
+/// How many audit writes the child turn reported giving up on.
+///
+/// Zero for a summary that cannot be parsed, or that carries no such key: an
+/// older binary reports nothing, and a number invented for it would be worse
+/// than none. The key is written by `agent::summary::print_json_summary`.
+fn child_audit_drops(summary: &str) -> u32 {
+    serde_json::from_str::<serde_json::Value>(summary)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("audit_records_incomplete")
+                .and_then(serde_json::Value::as_u64)
+        })
+        .and_then(|count| u32::try_from(count).ok())
+        .unwrap_or(0)
 }
 
 /// Pull the human-meaningful reason out of `stella run --output-format json`.
@@ -870,6 +891,22 @@ fn stale_attempt_hint(root: &Path, key: &str, error: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// **Witness.** The count of audit writes a child turn gave up on
+    /// is read out of the summary it printed.
+    ///
+    /// The turn runs in a child process, so the loop can learn this in no
+    /// other way. A summary with no such key — an older binary — is zero
+    /// rather than a guess.
+    #[test]
+    fn a_child_turns_dropped_audit_writes_are_read_from_its_summary() {
+        assert_eq!(
+            super::child_audit_drops(r#"{"status":"completed","audit_records_incomplete":2}"#),
+            2
+        );
+        assert_eq!(super::child_audit_drops(r#"{"status":"completed"}"#), 0);
+        assert_eq!(super::child_audit_drops("not json at all"), 0);
+    }
 
     /// A branch for a different issue is never mistaken for this one's.
     ///
