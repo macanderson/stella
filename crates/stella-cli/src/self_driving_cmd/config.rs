@@ -49,6 +49,12 @@ pub(crate) struct LoopConfig {
     pub vocabulary: Vocabulary,
     /// Which labels mean urgent, which mean "ours", which mean "not ours".
     pub triage: stella_autonomy::priority::TriagePolicy,
+    /// Labels marking a tracking/container issue — a checklist of other
+    /// issues, not workable itself. `drive --backlog` reads this beside
+    /// `triage.ladder`, because the ready queue is a different generator
+    /// from the defect queue `triage` feeds and needs its own copy of the
+    /// same policy. See `stella_autonomy::ready::DEFAULT_CONTAINER_LABELS`.
+    pub container_labels: Vec<String>,
     /// How the loop decides where two operators would decide differently.
     pub doctrine: stella_autonomy::Doctrine,
     /// How long an escalated issue waits before the loop may take it again,
@@ -76,6 +82,7 @@ impl Default for LoopConfig {
             attribution: Attribution::default(),
             vocabulary: Vocabulary::default(),
             triage: stella_autonomy::priority::TriagePolicy::default(),
+            container_labels: default_container_labels(),
             doctrine: stella_autonomy::Doctrine::default(),
             escalation: stella_autonomy::escalation::EscalationPolicy::default(),
             merge: stella_autonomy::BlockingPolicy::default(),
@@ -104,6 +111,11 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         attribution: parsed.self_driving.attribution.clone(),
         vocabulary: vocabulary_for(root, &parsed.issues),
         triage: parsed.self_driving.triage.policy(),
+        container_labels: if parsed.self_driving.container_labels.is_empty() {
+            default_container_labels()
+        } else {
+            parsed.self_driving.container_labels.clone()
+        },
         doctrine: parsed.self_driving.doctrine,
         escalation: parsed.self_driving.escalation,
         merge: parsed.self_driving.merge.policy(),
@@ -113,6 +125,18 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         deploy_watch: parsed.self_driving.deploy_watch.enabled(),
         worker: parsed.self_driving.worker,
     }
+}
+
+/// The built-in tracking-label set, as the config layer's owned copy.
+///
+/// `stella_autonomy::ready::DEFAULT_CONTAINER_LABELS` is `&'static [&'static
+/// str]`; `LoopConfig::container_labels` is `Vec<String>` so an operator's
+/// `stella.toml` list and the shipped default share one field and one type.
+fn default_container_labels() -> Vec<String> {
+    stella_autonomy::ready::DEFAULT_CONTAINER_LABELS
+        .iter()
+        .map(|label| (*label).to_owned())
+        .collect()
 }
 
 fn read_toml(root: &Path) -> Option<TomlConfig> {
@@ -415,6 +439,37 @@ deploy_watch = "off"
 "#,
         );
         assert!(!load(ws.path()).deploy_watch);
+    }
+
+    /// The tracking-label default is `epic` for a workspace that declares
+    /// nothing, and an operator's own list replaces it wholesale — the
+    /// same rule `[self_driving.triage]`'s lists already follow.
+    #[test]
+    fn container_labels_default_to_epic_and_can_be_overridden() {
+        assert_eq!(
+            load(workspace().path()).container_labels,
+            vec!["epic".to_owned()],
+            "an unconfigured workspace still skips the built-in tracking label"
+        );
+
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            r#"
+[meta]
+schema_version = 1
+scope = "project"
+
+[self_driving]
+container_labels = ["tracking"]
+"#,
+        );
+        assert_eq!(
+            load(ws.path()).container_labels,
+            vec!["tracking".to_owned()],
+            "a declared list replaces the built-in default rather than adding to it"
+        );
     }
 
     /// A malformed manifest falls back to a working vocabulary rather than

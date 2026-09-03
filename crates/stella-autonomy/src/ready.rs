@@ -7,6 +7,11 @@
 //! A reference outside the open set does not block. The issue it
 //! names is closed, or it never existed. Neither holds work back.
 //!
+//! A tracking issue never enters the queue at all, whatever its
+//! blockers say. [`ready_queue`] drops any item carrying a label in
+//! [`DEFAULT_CONTAINER_LABELS`] (or the caller's own set), the same
+//! way it drops an escalated one — see that function's docs.
+//!
 //! Pure over owned data, like the rest of this crate. The caller
 //! reads the tracker once and hands in the open set. Nothing here
 //! performs I/O.
@@ -20,6 +25,15 @@ use crate::priority::{PriorityLadder, by_age, rank_of};
 /// The label a human applies to say: work this now, whatever its
 /// `Blocked by:` lines say. That call outranks the parsed lines.
 pub const READY_LABEL: &str = "status:ready";
+
+/// Labels marking a tracking issue — a checklist of other issues, kept
+/// open as bookkeeping rather than as work. [`ready_queue`] excludes any
+/// item carrying one of these when the caller configures nothing else.
+///
+/// GitHub's common word for this shape is `epic`, so that is the one
+/// default entry. An operator whose tracker spells it differently
+/// (`tracking`, say) declares their own set instead of this one.
+pub const DEFAULT_CONTAINER_LABELS: &[&str] = &["epic"];
 
 /// One backlog issue with the blockers parsed out of its body.
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +128,12 @@ pub fn readiness(item: &BacklogItem, open: &BTreeSet<u64>) -> Readiness {
 /// it stays as the marker a person reads. An escalated issue with no
 /// record stays out, because nothing says what went wrong or when.
 ///
+/// A tracking/container issue is dropped unconditionally —
+/// `container_labels` names which labels mean that, and
+/// [`DEFAULT_CONTAINER_LABELS`] is the answer when a caller has
+/// configured nothing. That drop cannot be overridden by [`READY_LABEL`]:
+/// it answers "is this actually work", not "may this be taken".
+///
 /// The rest is filtered to the ready and ordered. Issues with a rung come
 /// first: most urgent rung, then oldest. The unranked follow, oldest
 /// first. The defect queue holds unranked issues for triage; this one does
@@ -124,6 +144,7 @@ pub fn ready_queue(
     items: Vec<BacklogItem>,
     open: &BTreeSet<u64>,
     ladder: &PriorityLadder,
+    container_labels: &[String],
     escalation: &EscalationPolicy,
     now_unix: i64,
 ) -> Vec<QueueIssue> {
@@ -131,6 +152,12 @@ pub fn ready_queue(
     let mut unranked = Vec::new();
     for item in items {
         if item.issue.escalation_holds(escalation, now_unix) {
+            continue;
+        }
+        if container_labels
+            .iter()
+            .any(|label| item.issue.has_label(label))
+        {
             continue;
         }
         if readiness(&item, open) != Readiness::Ready {
@@ -202,6 +229,7 @@ mod tests {
             items,
             open,
             &PriorityLadder::default(),
+            &[],
             &EscalationPolicy::default(),
             now_unix,
         )
@@ -347,5 +375,48 @@ mod tests {
             last_at_unix: 0,
         };
         assert!(queue(vec![escalated(17, spent)], &open(&[17]), i64::MAX).is_empty());
+    }
+
+    /// The witness for this issue's fix: a tracking issue is absent from
+    /// the ready queue even with no open blocker, because the loop
+    /// re-checks the label after `readiness` says yes.
+    ///
+    /// `rainforest#2` reproduced the defect this guards: the loop claimed
+    /// an epic the instant its last child closed, found nothing left to
+    /// do under it, and re-built files a child issue had already merged.
+    #[test]
+    fn an_epic_with_no_open_blocker_is_absent_from_the_ready_queue() {
+        let items = vec![bare(issue(2, "2026-08-01T00:00:00Z", &["P0", "epic"]))];
+        let container_labels: Vec<String> = DEFAULT_CONTAINER_LABELS
+            .iter()
+            .map(|label| (*label).to_owned())
+            .collect();
+
+        assert!(
+            ready_queue(
+                items,
+                &open(&[2]),
+                &PriorityLadder::default(),
+                &container_labels,
+                &EscalationPolicy::default(),
+                0,
+            )
+            .is_empty(),
+            "an epic with every blocker closed is still not workable"
+        );
+    }
+
+    /// A caller who configures no container labels at all gets none of
+    /// this behaviour — the label set is a policy the caller states, not
+    /// something the crate silently applies.
+    #[test]
+    fn an_empty_container_label_set_excludes_nothing() {
+        let items = vec![bare(issue(2, "2026-08-01T00:00:00Z", &["P0", "epic"]))];
+
+        let order: Vec<u64> = queue(items, &open(&[2]), 0)
+            .iter()
+            .map(|i| i.number)
+            .collect();
+        assert_eq!(order, vec![2]);
     }
 }

@@ -108,6 +108,7 @@ fn fold_ready(
         items,
         &open,
         &cfg.triage.ladder,
+        &cfg.container_labels,
         &cfg.escalation,
         now_unix(),
     )
@@ -444,6 +445,23 @@ mod tests {
             provider.writes(),
             0,
             "requeueing must cost no label surgery and no tracker write"
+        );
+    }
+
+    /// `LoopConfig::default()`'s container labels reach `ready_keys`.
+    /// An epic drops out, even with no open blocker.
+    #[test]
+    fn the_default_config_container_labels_drop_an_epic_from_ready_keys() {
+        let provider = FixtureProvider::with(vec![
+            issue("4", &["feature", "P2"], ""),
+            issue("7", &["P0", "epic"], ""),
+        ]);
+
+        let keys = ready_keys(&provider, &LoopConfig::default()).expect("fixture read");
+        assert_eq!(
+            keys,
+            vec!["4".to_owned()],
+            "the epic must not reach the backlog reader's output"
         );
     }
 

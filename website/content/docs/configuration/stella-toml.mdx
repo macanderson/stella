@@ -678,11 +678,17 @@ different ladders.
   <OptionCard name="self_driving.triage.defect_kinds" defaultValue='["bug", "triage"]'>
     Labels meaning "this loop works this".
   </OptionCard>
-  <OptionCard name="self_driving.triage.excluded_kinds" defaultValue='["enhancement", "feature", "documentation", "question"]'>
+  <OptionCard name="self_driving.triage.excluded_kinds" defaultValue='["enhancement", "feature", "documentation", "question", "epic"]'>
     Labels meaning "this loop does not work this". Named explicitly rather than inferred
     from "not a defect kind": an issue labelled `enhancement` has been judged and
     excluded, while an issue labelled only `P0` has been judged on one axis and not the
     other, and only the first may be dropped silently.
+  </OptionCard>
+  <OptionCard name="self_driving.container_labels" defaultValue='["epic"]'>
+    Labels for a tracking issue — a checklist of other issues, not real work.
+    [`drive --backlog`](/docs/commands/self-driving) skips these, whatever their
+    `Blocked by:` lines say. Sits under `[self_driving]`, not `[self_driving.triage]`:
+    the backlog reader is a different queue and needs its own copy of this rule.
   </OptionCard>
 </CardGrid>
 
