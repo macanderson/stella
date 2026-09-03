@@ -277,8 +277,10 @@ system message and the latest user message are never touched.
   callers that can preserve what a call really produced pass it as
   `CallRecord::identity` rather than let comparison see rewritten bytes.
 - **Bus observers must return `Err`, never panic.** `catch_unwind` contains a
-  panic only under an unwinding profile, and the workspace `release` profile sets
-  `panic = "abort"` ([`../Cargo.toml`](../Cargo.toml)).
+  panic only under an unwinding profile. The workspace `release` profile sets
+  `panic = "unwind"` ([`../Cargo.toml`](../Cargo.toml)), so the catch holds in a
+  shipped build — but a host that builds this crate with `panic = "abort"` has
+  no catch at all, and `Err` is the signal that works either way.
 - **No engine method fires `SessionStart` — it is a host obligation (#2674).**
   `SessionStart` is a session-level event and `run_turn` runs many times per
   session; the host fires [`src/hooks.rs`](src/hooks.rs)'s `run_hooks` once,

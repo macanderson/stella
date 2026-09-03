@@ -55,7 +55,7 @@ pub mod debug_log;
 pub mod input;
 pub mod keymap;
 pub mod model;
-pub(crate) mod panel_guard;
+pub mod panel_guard;
 pub mod render;
 pub mod scroll;
 pub(crate) mod term;

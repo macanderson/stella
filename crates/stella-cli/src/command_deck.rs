@@ -644,10 +644,9 @@ pub async fn run_deck_session(
                 .max(restored.spent_usd.unwrap_or(0.0)),
         );
     }
-    // A release-build panic aborts before any `Drop` or `catch_unwind` runs
-    // (the workers' panic catch included), so this hook is the journal's
-    // only flush point on that path — the terminal is restored by
-    // stella-tui's own hook the same way.
+    // The flush point for a build made with an aborting profile, where no
+    // `Drop` and no catch runs. Every profile here unwinds, so the journal is
+    // flushed by the sink's own drop instead; see the guard's own docs.
     let _journal_panic_guard =
         crate::session_persist::JournalPanicGuard::install(journal_sink.clone());
     let _tee = crate::session_persist::spawn_journal_tee(

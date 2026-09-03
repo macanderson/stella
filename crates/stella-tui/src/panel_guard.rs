@@ -81,17 +81,20 @@
 //! on the frames they are actually up — including the startup notice, whose
 //! visibility is asked at the call site rather than inside its renderer.
 //!
-//! [`crate::term::PanelBoundary`] is a `thread_local!`, and tokio tasks can
+//! `crate::term::PanelBoundary` is a `thread_local!`, and tokio tasks can
 //! migrate between workers — but `terminal.draw(..)` is fully synchronous with
 //! no `await` inside it, so the marker is entered and dropped on the same
 //! thread. Nesting is safe: the guard restores the previous flag rather than
 //! clearing it.
 //!
-//! Release builds set `panic = "abort"` (`[profile.release]`), where
-//! `catch_unwind` never runs its handler — the process dies inside the panic
-//! hook. Everything here is therefore effective in unwind (dev/test) builds
-//! only, exactly as this boundary always has been. See
-//! `crate::term` for what the hook does on each side of that split.
+//! The release profile unwinds (`[profile.release] panic = "unwind"`, root
+//! `Cargo.toml`), so this boundary holds in a shipped build and not just in a
+//! test one. A build that sets `panic = "abort"` instead loses it: a catch
+//! never runs its handler there and the process dies inside the panic hook.
+//! See `crate::term` for what the hook does on each side of that split, and
+//! `examples/panic_guard_probe.rs` for the check that the profile still
+//! unwinds. That probe is why [`guarded_band`] and [`guarded_overlay`] are
+//! public: it has to enter this boundary rather than a copy of it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -108,7 +111,7 @@ const CARD_H: u16 = 7;
 /// Draw one band under the panic boundary. On a panic the error card fills
 /// `area`, which is what a band wants: the band's whole rectangle is the thing
 /// that failed to render.
-pub(crate) fn guarded_band<F>(dst: &mut Buffer, area: Rect, label: &str, draw: F)
+pub fn guarded_band<F>(dst: &mut Buffer, area: Rect, label: &str, draw: F)
 where
     F: FnOnce(&mut Buffer),
 {
@@ -122,7 +125,7 @@ where
 /// underneath is preserved either way. On a panic the error card is a small
 /// centred card rather than a full-frame wipe — the overlay is what broke, and
 /// the deck behind it is still worth looking at while the user presses `esc`.
-pub(crate) fn guarded_overlay<F>(dst: &mut Buffer, area: Rect, label: &str, draw: F)
+pub fn guarded_overlay<F>(dst: &mut Buffer, area: Rect, label: &str, draw: F)
 where
     F: FnOnce(&mut Buffer),
 {

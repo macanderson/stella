@@ -253,13 +253,19 @@ type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'sta
 
 /// Installs a layered panic hook that flushes the session journal before an
 /// abort-build panic kills the process, and puts the previous hook back on
-/// drop — the journal's only flush point on that path, since under
-/// `[profile.release] panic = "abort"` neither `catch_unwind` nor any `Drop`
-/// runs (stella-tui's own hook restores the terminal the same way). In
-/// unwind builds the sync is skipped: panics there are either caught (panel
-/// draws, worker bodies) or unwind into the orderly teardown that already
-/// syncs. Best-effort by the store's contract — `try_lock`, because the
-/// panicking process must never deadlock on a sink another thread holds.
+/// drop. Under `panic = "abort"` neither a catch nor any `Drop` runs, so this
+/// hook is the journal's only flush point on that path; stella-tui's own hook
+/// restores the terminal the same way.
+///
+/// Every profile in this workspace unwinds, so the sync branch is asleep in
+/// the binaries built here and the flush comes from elsewhere: a caught panic
+/// (panel draws, worker bodies) leaves the session running, and a panic that
+/// ends the process unwinds until the last `SharedSink` clone drops, whose
+/// `SessionJournal` fsyncs on the way out. The branch stays for a host that
+/// builds this crate with an aborting profile of its own.
+///
+/// Best-effort by the store's contract — `try_lock`, because the panicking
+/// process must never deadlock on a sink another thread holds.
 pub struct JournalPanicGuard {
     prev: Arc<PanicHook>,
 }

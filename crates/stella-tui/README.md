@@ -254,23 +254,27 @@ enqueued as a prompt so the answer lands in the transcript.
 [`src/term.rs`](src/term.rs) before changing any of it. `TerminalGuard` is
 constructed *before* the first state is acquired and flags each one (raw, alt
 screen, bracketed paste, mouse, kitty) as it lands, so a failure partway through
-`enter` still rolls back exactly what was entered. Release builds set
-`panic = "abort"`, where destructors never run, so `PanicHookGuard::install`
+`enter` still rolls back exactly what was entered. A build made with
+`panic = "abort"` runs no destructor, so `PanicHookGuard::install`
 ([`src/term.rs`](src/term.rs)) additionally restores from inside the panic
 hook — but **only** under `cfg!(panic = "abort")`, then delegating to the
 previous hook so the panic message prints on the real screen, not the alternate
-one. In unwind builds the hook deliberately does *not* restore: it fires for
-every panic on every thread, including panel panics the session survives.
+one. In an unwinding build the hook does *not* restore: it fires for every
+panic on every thread, including panel panics the session survives. Every
+profile here unwinds, so a shipped binary restores through `TerminalGuard`'s
+`Drop`.
 
 ## Gotchas
 
-- **The panic boundary covers every band, but only in unwind builds.**
+- **The panic boundary covers every band, and the release profile unwinds so
+  it holds in a shipped binary.**
   [`src/panel_guard.rs`](src/panel_guard.rs) wraps the single-session panels,
   every deck band (tab bar, active tab, trace strip, progress bar, composer,
   footer, status band, splash, each overlay) and the fleet dashboard, so a
-  panicking view becomes an error card and the session continues. Release
-  builds set `panic = "abort"`, where `catch_unwind` never runs its handler —
-  so the shipped binary still dies on a view panic. A new draw surface is
+  panicking view becomes an error card and the session continues. A build made
+  with `panic = "abort"` loses that: no catch runs its handler there.
+  `examples/panic_guard_probe.rs`, which CI runs with `--release`, is what
+  keeps the profile from drifting back. A new draw surface is
   covered only if you route it through `guarded_band`/`guarded_overlay`, and a
   new `&mut DeckUi` write in a view has to be classified in that module's
   "what a caught panic can leave behind" list or the argument there stops

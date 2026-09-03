@@ -15,9 +15,9 @@
 //!   `extension.error` event, and skipped — the emitting operation
 //!   continues unconditionally. The **supported** failure signal is
 //!   `Err(msg)`; a panic is *also* contained via [`catch_unwind`], but only
-//!   under an unwinding profile — the workspace's `release` profile sets
-//!   `panic = "abort"`, where nothing can catch a panic, so extensions must
-//!   report failure by returning `Err`, not by panicking.
+//!   under an unwinding profile. The workspace's `release` profile unwinds,
+//!   so the catch holds in a shipped build; a host that builds this crate
+//!   with `panic = "abort"` loses it, so an extension returns `Err` instead.
 //! - **Policy hooks** ([`HookBus::on_blocking`], [`HookBus::emit_blocking`])
 //!   run *sequentially in registration order* before a policy-sensitive
 //!   operation (the [`names::BLOCKING`] set: tool execution, filesystem
@@ -396,9 +396,9 @@ impl HookBus {
     /// registration order under [`HookBus::emit_blocking`]; a handler that
     /// panics fails **closed** — the chain stops with `Deny` (a broken
     /// policy extension must never silently wave operations through). The
-    /// fail-closed-on-panic net requires an unwinding profile; under
-    /// `release`'s `panic = "abort"` a panic aborts, so a policy handler
-    /// should signal refusal by returning `Deny`, not by panicking.
+    /// fail-closed-on-panic net requires an unwinding profile; the `release`
+    /// profile is one, and a host that builds with `panic = "abort"` is not,
+    /// so a policy handler signals refusal by returning `Deny` regardless.
     pub fn on_blocking<F>(&self, pattern: &str, handler: F) -> HookSubscription
     where
         F: Fn(&HookEvent) -> HookDecision + Send + Sync + 'static,

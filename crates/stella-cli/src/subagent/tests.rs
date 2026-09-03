@@ -1023,10 +1023,8 @@ impl Provider for PanicAfterBillingProvider {
 /// `wait.await` claimed settling happened "on every path" — a panic was the
 /// path it did not.
 ///
-/// Debug profile only by nature: `panic = "abort"` in release means there is
-/// no unwind to catch, and the module header now says so instead of implying
-/// otherwise. Tests build with unwind, which is exactly where the fix is
-/// observable.
+/// Every profile here unwinds. So what this test sees is what a release
+/// build does too.
 #[tokio::test]
 async fn a_panicking_child_still_settles_the_spend_it_incurred() {
     let registry = registry();

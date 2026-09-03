@@ -531,9 +531,10 @@ impl Drainable {
 /// past `main`'s orderly [`ConsoleGuard::drain`], the process exits without
 /// joining the pump threads, and up to a pipe buffer of output — the panic
 /// message itself, most of the time — dies in the pipe. That is the one
-/// artifact a postmortem of a supervised child actually wants. Release builds
-/// run with `panic = "abort"`, so this hook is the only cleanup such a process
-/// ever gets.
+/// artifact a postmortem of a supervised child actually wants. The drain in
+/// `main` is a call, not a `Drop`. An unwind skips it. So this hook is the
+/// only cleanup such a child gets. It asks no `cfg` about the panic strategy.
+/// It is the last chance to drain under either one.
 ///
 /// The hook chains rather than replaces: whatever hook is already installed
 /// (the diagnostics dump, or the default printer) runs FIRST, so its output

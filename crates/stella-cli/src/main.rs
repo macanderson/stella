@@ -426,9 +426,8 @@ fn main() -> ExitCode {
     // before that boundary would race the env mutations it fences — and
     // drained as this function's last act so the final lines land.
     //
-    // A panic would unwind (or, under the release profile's
-    // `panic = "abort"`, not unwind at all) past that last act and strand up
-    // to a pipe buffer — usually including the panic message itself — so
+    // A panic unwinds past that last act — every profile here unwinds — and
+    // strands up to a pipe buffer, usually including the panic message, so
     // `arm_panic_drain` chains a hook that performs the same idempotent
     // drain (#1616). Whichever of the two arrives first does the one real
     // drain; the other finds the streams already taken.
