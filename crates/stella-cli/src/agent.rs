@@ -90,6 +90,7 @@ pub(crate) use output::latch_for_withheld_test;
 use output::*;
 pub(crate) use output::{
     DISABLE_REFLECTION_ENV, claim_withheld_announcement, reflection_explicitly_disabled,
+    should_reflect_on_turn,
 };
 pub(crate) use persistence::{
     PersistOutcome, ReasoningRun, begin_execution, close_event_stream, flush_reasoning_tail,
