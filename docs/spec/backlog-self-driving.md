@@ -396,8 +396,37 @@ still judges correctly, but the guard undoes its priority writes. The loop
 detects that shape — an issue carrying its own `size/` label with no rung —
 as *placed, then stripped*. It escalates the issue once to a human instead
 of re-triaging forever. The fix is operational, not code: add the runner's
-login to `TRIAGE_LOGINS`, or run the loop under a login already there. Then
-remove the escalation label to requeue.
+login to `TRIAGE_LOGINS`, or run the loop under a login already there.
+
+**Escalation is a cooldown, not a tombstone.** A flat label that only a
+person can remove costs the backlog every issue a bad hour touches. A turn
+aborts because the machine broke — a stale checkout returning the same bytes
+to every command, a provider outage, a failed install — and the issue, which
+was never the problem, leaves the queue for good. An unattended week ends
+with a queue full of parked work and no memory of why.
+
+So an escalation now writes a record into the issue body, inside an HTML
+comment (`<!-- stella-escalation {…} -->`): how many attempts there have
+been, why the last one happened, and when. The label stays as the marker a
+person scans for; the record is what the next run reads.
+`stella_autonomy::escalation` classifies the abort message and decides how
+long to wait. A broken machine waits ten minutes by default; a turn that
+ran and could not do the work waits six hours, because that one needs
+something to change first. After three attempts the issue is parked and the
+loop never takes it again. `stella self-driving stats` counts the parked
+ones beside the escalated ones, so a backlog the loop has given up on
+cannot read as one it is still working through. All three numbers are
+operator settings under `[self_driving.escalation]` in `stella.toml`.
+
+Both work generators ask the same question, through
+`QueueIssue::escalation_holds`: the ready backlog (`ready::ready_queue`,
+behind `drive --backlog`) and the defect queue (`priority::triage`, the
+default `drive` path). One rule, two readers, so the two cannot start
+disagreeing about when an escalated issue comes back.
+
+An escalated issue with no record stays out of the queue. The label alone
+says nothing about what went wrong or when, and a person who applied it by
+hand meant it.
 
 **The deploy watch.** Beside the base watch, each poll may also read the
 release workflow's latest completed run, through the same forge pathway. On

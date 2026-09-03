@@ -513,9 +513,9 @@ pub(super) fn drive(
                 // A queue read is a network call. Failing it is a reason to
                 // wait, never a reason to end a run meant to be perpetual.
                 let read = if backlog {
-                    super::ready::ready_keys(&provider, &cfg.triage.ladder)
+                    super::ready::ready_keys(&provider, &cfg)
                 } else {
-                    super::backlog::ranked_keys(durable, &provider, &cfg.triage)
+                    super::backlog::ranked_keys(durable, &provider, &cfg)
                 };
                 let ranked = match read {
                     Ok(ranked) => ranked,
@@ -840,14 +840,7 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn did not complete: {reason}"),
                         );
-                        triage::escalate(
-                            durable,
-                            &settings,
-                            &provider,
-                            &cfg,
-                            &resolved.key,
-                            &reason,
-                        );
+                        triage::escalate(durable, &settings, &provider, &cfg, &resolved, &reason);
                     }
                 }
             }

@@ -396,6 +396,15 @@ pub struct SelfDrivingSection {
     /// about the code, which is why they are declared rather than compiled in.
     #[serde(default)]
     pub doctrine: stella_autonomy::Doctrine,
+    /// `[self_driving.escalation]` — how long an issue the loop could not
+    /// finish waits before it may be taken again, and how many tries end in
+    /// it being parked.
+    ///
+    /// A judgement call about this operator's tolerance, like the doctrine
+    /// above: a team paying for a fast model wants an issue back in
+    /// minutes, and a team on a small budget wants fewer repeat attempts.
+    #[serde(default)]
+    pub escalation: stella_autonomy::escalation::EscalationPolicy,
     /// `[self_driving.triage]` — the vocabulary the loop places issues in.
     ///
     /// Here rather than in the tracker manifest because these are *this

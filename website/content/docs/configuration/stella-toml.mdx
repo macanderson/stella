@@ -638,6 +638,31 @@ it.
   </OptionCard>
 </CardGrid>
 
+#### `[self_driving.escalation]`
+
+What happens to an issue the loop tried and could not finish. It gets the
+`agent-escalated` label and a record in its body saying how many tries there have been,
+why the last one stopped, and when. The label is what a person scans for; the record is
+what the next run reads. Nobody has to remove anything to put the issue back in the
+queue — the cooldown does that.
+
+<CardGrid size="sm">
+  <OptionCard name="self_driving.escalation.environmental_cooldown_secs" defaultValue="600">
+    Seconds to wait when the machine was what broke: a stale checkout returning the same
+    bytes to every command, a provider outage, a failed install. These clear on their own
+    in minutes, and the issue itself was never the problem.
+  </OptionCard>
+  <OptionCard name="self_driving.escalation.beyond_loop_cooldown_secs" defaultValue="21600">
+    Seconds to wait when the turn ran and could not do the work. That needs something to
+    change first — a comment, a different model, a blocker that lands — so retrying in
+    minutes would buy the same failure at full price.
+  </OptionCard>
+  <OptionCard name="self_driving.escalation.park_after" defaultValue="3">
+    Tries after which the issue is parked and the loop never takes it again.
+    `stella self-driving stats` counts the parked ones apart from the escalated ones.
+  </OptionCard>
+</CardGrid>
+
 #### `[self_driving.triage]`
 
 The vocabulary the loop places issues in: which labels mean urgent, which mean "this is

@@ -14,6 +14,7 @@
 use std::collections::BTreeSet;
 
 use crate::QueueIssue;
+use crate::escalation::EscalationPolicy;
 use crate::priority::{PriorityLadder, by_age, rank_of};
 
 /// The label a human applies to say: work this now, whatever its
@@ -107,22 +108,29 @@ pub fn readiness(item: &BacklogItem, open: &BTreeSet<u64>) -> Readiness {
 
 /// The ready backlog, in the order the loop should take it.
 ///
-/// Escalated issues are dropped. The loop already tried them, and the
-/// label is how that survives a restart. The rest is filtered to the
-/// ready and ordered. Issues with a rung come first: most urgent rung,
-/// then oldest. The unranked follow, oldest first. The defect queue
-/// holds unranked issues for triage; this one does not. It drains a
-/// whole backlog, so work nobody ranked still ships in the end.
+/// An escalated issue is held back while its cooldown runs, and comes back
+/// on its own once that is over — see [`crate::escalation`] for how long
+/// each kind waits and when waiting ends. Nobody has to remove the label:
+/// it stays as the marker a person reads. An escalated issue with no
+/// record stays out, because nothing says what went wrong or when.
+///
+/// The rest is filtered to the ready and ordered. Issues with a rung come
+/// first: most urgent rung, then oldest. The unranked follow, oldest
+/// first. The defect queue holds unranked issues for triage; this one does
+/// not. It drains a whole backlog, so work nobody ranked still ships in
+/// the end.
 #[must_use]
 pub fn ready_queue(
     items: Vec<BacklogItem>,
     open: &BTreeSet<u64>,
     ladder: &PriorityLadder,
+    escalation: &EscalationPolicy,
+    now_unix: i64,
 ) -> Vec<QueueIssue> {
     let mut ranked = Vec::new();
     let mut unranked = Vec::new();
     for item in items {
-        if item.issue.has_label(crate::ESCALATION_LABEL) {
+        if item.issue.escalation_holds(escalation, now_unix) {
             continue;
         }
         if readiness(&item, open) != Readiness::Ready {
@@ -161,6 +169,7 @@ mod tests {
                 })
                 .collect(),
             url: String::new(),
+            escalation: None,
         }
     }
 
@@ -169,6 +178,33 @@ mod tests {
             issue: issue(number, "2026-08-01T00:00:00Z", labels),
             blocked_by: blocked_by.to_vec(),
         }
+    }
+
+    fn bare(issue: QueueIssue) -> BacklogItem {
+        BacklogItem {
+            issue,
+            blocked_by: Vec::new(),
+        }
+    }
+
+    fn escalated(number: u64, record: crate::escalation::EscalationRecord) -> BacklogItem {
+        let mut issue = issue(
+            number,
+            "2026-08-01T00:00:00Z",
+            &["P1", crate::ESCALATION_LABEL],
+        );
+        issue.escalation = Some(record);
+        bare(issue)
+    }
+
+    fn queue(items: Vec<BacklogItem>, open: &BTreeSet<u64>, now_unix: i64) -> Vec<QueueIssue> {
+        ready_queue(
+            items,
+            open,
+            &PriorityLadder::default(),
+            &EscalationPolicy::default(),
+            now_unix,
+        )
     }
 
     fn open(numbers: &[u64]) -> BTreeSet<u64> {
@@ -232,20 +268,10 @@ mod tests {
     /// backlog; it does not hold unranked issues for triage.
     #[test]
     fn the_ready_queue_ranks_by_rung_then_age_and_appends_the_unranked() {
-        let ladder = PriorityLadder::default();
         let items = vec![
-            BacklogItem {
-                issue: issue(1, "2026-08-10T00:00:00Z", &["P1"]),
-                blocked_by: Vec::new(),
-            },
-            BacklogItem {
-                issue: issue(2, "2026-08-01T00:00:00Z", &["P0"]),
-                blocked_by: Vec::new(),
-            },
-            BacklogItem {
-                issue: issue(3, "2026-07-01T00:00:00Z", &[]),
-                blocked_by: Vec::new(),
-            },
+            bare(issue(1, "2026-08-10T00:00:00Z", &["P1"])),
+            bare(issue(2, "2026-08-01T00:00:00Z", &["P0"])),
+            bare(issue(3, "2026-07-01T00:00:00Z", &[])),
             // Blocked by an open issue: not in the queue at all.
             BacklogItem {
                 issue: issue(4, "2026-06-01T00:00:00Z", &["P0"]),
@@ -253,21 +279,73 @@ mod tests {
             },
         ];
 
-        let order: Vec<u64> = ready_queue(items, &open(&[1, 2, 3, 4]), &ladder)
+        let order: Vec<u64> = queue(items, &open(&[1, 2, 3, 4]), 0)
             .iter()
             .map(|i| i.number)
             .collect();
         assert_eq!(order, vec![2, 1, 3]);
     }
 
-    /// An escalated issue never re-enters through the ready door.
+    /// An escalated issue with no record stays out. The label alone says
+    /// nothing about what went wrong or when, and a person who applied it
+    /// by hand meant it.
     #[test]
-    fn an_escalated_issue_never_enters_the_ready_queue() {
-        let ladder = PriorityLadder::default();
-        let items = vec![BacklogItem {
-            issue: issue(5, "2026-08-01T00:00:00Z", &["P0", crate::ESCALATION_LABEL]),
-            blocked_by: Vec::new(),
-        }];
-        assert!(ready_queue(items, &open(&[5]), &ladder).is_empty());
+    fn an_escalated_issue_with_no_record_never_enters_the_ready_queue() {
+        let items = vec![bare(issue(
+            5,
+            "2026-08-01T00:00:00Z",
+            &["P0", crate::ESCALATION_LABEL],
+        ))];
+        assert!(queue(items, &open(&[5]), i64::MAX).is_empty());
+    }
+
+    /// **The cooldown witness.** An issue escalated because the machine
+    /// broke is out of the queue while its cooldown runs and back in once
+    /// it is over — with the label still on it. Nobody removed anything.
+    #[test]
+    fn an_environmental_escalation_leaves_the_queue_and_returns_when_its_cooldown_is_over() {
+        let policy = EscalationPolicy::default();
+        let escalated_at = 10_000_i64;
+        let record = crate::escalation::next(
+            None,
+            crate::escalation::EscalationReason::Environmental(
+                crate::escalation::EnvCause::StuckLoop,
+            ),
+            "2026-09-02T00:00:00Z",
+            escalated_at,
+        );
+        let item = || escalated(17, record.clone());
+
+        assert!(
+            queue(vec![item()], &open(&[17]), escalated_at).is_empty(),
+            "the cooldown has not run out, so the loop must not take it again yet"
+        );
+
+        let over = escalated_at + i64::try_from(policy.environmental_cooldown_secs).expect("fits");
+        let back: Vec<u64> = queue(vec![item()], &open(&[17]), over)
+            .iter()
+            .map(|i| i.number)
+            .collect();
+        assert_eq!(
+            back,
+            vec![17],
+            "an environmental abort must requeue on its own, with no label surgery"
+        );
+    }
+
+    /// An issue escalated to its ceiling stays parked however long anyone
+    /// waits. The cooldown has an end.
+    #[test]
+    fn an_issue_escalated_to_the_ceiling_stays_out_of_the_ready_queue() {
+        let policy = EscalationPolicy::default();
+        let spent = crate::escalation::EscalationRecord {
+            attempts: policy.park_after,
+            last_reason: crate::escalation::EscalationReason::Environmental(
+                crate::escalation::EnvCause::ProviderError,
+            ),
+            last_at: "2026-09-02T00:00:00Z".to_owned(),
+            last_at_unix: 0,
+        };
+        assert!(queue(vec![escalated(17, spent)], &open(&[17]), i64::MAX).is_empty());
     }
 }

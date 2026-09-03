@@ -17,29 +17,49 @@
 use super::{Audit, Durable, audit, runtime};
 
 /// Mark an issue the loop tried and could not resolve.
+///
+/// The whole issue rather than its key, because the escalation record is
+/// stamped into the body and the count in the body it already has is what
+/// says whether this is the first attempt or the last.
 pub(super) fn escalate(
     durable: &Durable,
     settings: &crate::settings::Settings,
     provider: &crate::issue_provider::GhIssueProvider,
     cfg: &crate::self_driving_cmd::config::LoopConfig,
-    key: &stella_protocol::issue::IssueKey,
+    issue: &stella_protocol::issue::Issue,
     why: &str,
 ) {
+    let key = &issue.key;
     match runtime().block_on(crate::self_driving_cmd::backlog::escalate(
         provider,
         key,
         why,
+        &issue.body,
+        &cfg.escalation,
         &cfg.attribution.issue_comment,
     )) {
-        Ok(()) => {
-            durable.update_stats(|s| s.issues_escalated += 1);
+        Ok(record) => {
+            let parked = stella_autonomy::escalation::parked(&record, &cfg.escalation);
+            durable.update_stats(|s| {
+                s.issues_escalated += 1;
+                if parked {
+                    s.issues_parked += 1;
+                }
+            });
             audit::record(
                 durable,
                 Audit::Escalated,
                 Some(key.as_str()),
                 &format!(
-                    "labelled `{}` — unresolved, later runs will skip it",
-                    stella_autonomy::ESCALATION_LABEL
+                    "labelled `{}` — attempt {} of {}; {}",
+                    stella_autonomy::ESCALATION_LABEL,
+                    record.attempts,
+                    cfg.escalation.park_after,
+                    if parked {
+                        "parked, the loop will not take it again"
+                    } else {
+                        "the loop takes it again once its cooldown is over"
+                    }
                 ),
             );
             super::notify::escalated(&durable.repo_root, settings, key.as_str(), why);
@@ -65,9 +85,11 @@ pub(super) fn escalate(
 /// at all, has told us it cannot place this issue. Leaving it unplaced would
 /// mean meeting it again on the very next pass, paying for the same turn, and
 /// getting the same refusal — forever, and at the cost of never claiming any
-/// work. So it gets the escalation label, which takes it out of the queue and
-/// puts it in front of a human. `triaged` is the process-local half of the
-/// same guard, covering the window before the label lands.
+/// work. So it escalates, which takes it out of the queue for a cooldown and
+/// puts it in front of a human. A refusal is not an environmental fault, so
+/// it takes the long cooldown and is parked after a few tries
+/// (`stella_autonomy::escalation`). `triaged` is the process-local half of
+/// the same guard, covering the window before the label lands.
 pub(super) fn assess_one(
     durable: &Durable,
     root: &std::path::Path,
@@ -76,7 +98,7 @@ pub(super) fn assess_one(
     budget: &mut crate::self_driving_cmd::budget::RunBudget,
     triaged: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
-    let unassessed = crate::self_driving_cmd::backlog::unassessed(provider, &cfg.triage)?;
+    let unassessed = crate::self_driving_cmd::backlog::unassessed(provider, cfg)?;
     let Some(issue) = unassessed.into_iter().find(|u| !triaged.contains(&u.key)) else {
         return Ok(());
     };
@@ -114,8 +136,9 @@ pub(super) fn assess_one(
             "this loop placed the issue, and the triage guard stripped the \
              priority it wrote — the drive runner's login is not on the \
              guard's list. Add it to TRIAGE_LOGINS in the guard workflow, or \
-             set the priority from an allowed login. Then remove the \
-             escalation label to requeue",
+             set the priority from an allowed login",
+            &full.body,
+            &cfg.escalation,
             &cfg.attribution.issue_comment,
         )?;
         audit::record(
@@ -137,6 +160,8 @@ pub(super) fn assess_one(
             &issue.key,
             "triage could not place this issue in the configured vocabulary — \
              it needs a human to label it",
+            &body,
+            &cfg.escalation,
             &cfg.attribution.issue_comment,
         )?;
         audit::record(

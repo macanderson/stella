@@ -688,6 +688,28 @@ contention = "defer"
 # stop making more of them.
 abandon_escalated = false
 
+[self_driving.escalation]
+# What happens to an issue the loop tried and could not finish. It is labelled
+# `agent-escalated` and a record goes into its body: how many tries there have
+# been, why the last one stopped, and when. The label stays for a person to
+# see; the record is what the next run reads. Nobody has to remove anything.
+
+# Seconds to wait when the machine was what broke — a stale checkout returning
+# the same bytes to every command, a provider outage, a failed install. These
+# clear on their own in minutes, and the issue itself was never the problem.
+environmental_cooldown_secs = 600
+
+# Seconds to wait when the turn ran and could not do the work. That one needs
+# something to change first — a comment, a different model, a blocker that
+# lands — so retrying in minutes would buy the same failure at full price.
+beyond_loop_cooldown_secs = 21600
+
+# Tries after which the issue is parked and the loop never takes it again.
+# `stella self-driving stats` counts the parked ones apart from the escalated
+# ones. Two would park work on one bad afternoon; ten would spend ten turns
+# proving the same thing.
+park_after = 3
+
 [self_driving.triage]
 # The vocabulary the loop places issues in. Here rather than in the tracker
 # manifest because these are YOUR judgements about your own backlog — which
