@@ -990,6 +990,7 @@ mod tests {
             labels,
             created_at: "2026-08-01T00:00:00Z".to_owned(),
             url: format!("https://example.test/issues/{number}"),
+            escalation: None,
         };
         let policy = TriagePolicy::default();
         let queue = triage(
@@ -999,6 +1000,8 @@ mod tests {
                 issue(3, "nobody placed this", vec![]),
             ],
             &policy,
+            &stella_autonomy::escalation::EscalationPolicy::default(),
+            0,
         );
 
         st.write_queue_snapshot(&queue, &policy.ladder, 3);

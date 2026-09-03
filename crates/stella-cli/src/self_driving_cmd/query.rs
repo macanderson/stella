@@ -123,7 +123,7 @@ pub(super) fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result
     backlog::render_queue(
         st,
         &crate::issue_provider::GhIssueProvider,
-        &config::load(&st.repo_root).triage,
+        &config::load(&st.repo_root),
         limit,
         format,
     )

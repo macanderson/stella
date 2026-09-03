@@ -83,6 +83,8 @@ the CLI does — so the dashboard and the terminal cannot disagree.
 | [`src/deliver.rs`](src/deliver.rs) | The per-PR delivery machine: `PrState`/`Observation`/`deliver_next`, the fix/rebase ceilings, and the escalation reasons. |
 | [`src/doctrine.rs`](src/doctrine.rs) | The policy knobs a human sets: `Doctrine`, `ForeignBreakage`, contention policy and `contention_verdict`. |
 | [`src/priority.rs`](src/priority.rs) | `triage`: rank by the ladder the repo actually uses, with unassessed issues distinct from unrankable ones. |
+| [`src/ready.rs`](src/ready.rs) | `ready_queue`: which backlog issues may be taken next, and in what order. `Blocked by: #N` lines, the `status:ready` override, and the escalation cooldown. |
+| [`src/escalation.rs`](src/escalation.rs) | Escalation as a cooldown: `classify` reads an abort message, `retry_after` says how long to wait, `park_after` says when waiting ends. The record is written into the issue body and read back from it. |
 | [`src/gate.rs`](src/gate.rs) | Which checks are allowed to block a merge, and which have stopped earning that right. |
 | [`src/closure.rs`](src/closure.rs) | How an issue ends, and what has to be true first. |
 | [`src/convention.rs`](src/convention.rs) | How this repository writes issues, learned rather than assumed. |

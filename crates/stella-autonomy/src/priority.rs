@@ -221,9 +221,12 @@ impl Default for TriagePolicy {
 ///
 /// The order of the checks is the whole content of this function:
 ///
-/// 1. **Escalated** issues are dropped. The loop already tried and could not
-///    resolve them; re-claiming spends the same money on the same wall. The
-///    label is how that survives a restart, which process-local state cannot.
+/// 1. **Escalated** issues are dropped while their cooldown runs. The loop
+///    tried and could not finish them. Taking one again now buys the same
+///    wall at the same price. Once the wait is over it comes back on its
+///    own, and nobody removes a label ([`QueueIssue::escalation_holds`]).
+///    The record in its body is what lives through a restart. State held in
+///    this process cannot.
 /// 2. **Excluded kinds** are dropped. Somebody judged this and said it is not
 ///    a defect.
 /// 3. **A defect kind *and* a rung** is rankable work.
@@ -231,12 +234,17 @@ impl Default for TriagePolicy {
 ///    unlabelled issue filed a minute ago, and the issue carrying a rung but
 ///    no kind. See the module docs for what that mistake costs.
 #[must_use]
-pub fn triage(issues: Vec<QueueIssue>, policy: &TriagePolicy) -> Queue {
+pub fn triage(
+    issues: Vec<QueueIssue>,
+    policy: &TriagePolicy,
+    escalation: &crate::escalation::EscalationPolicy,
+    now_unix: i64,
+) -> Queue {
     let mut rankable = Vec::new();
     let mut queue = Queue::default();
 
     for issue in issues {
-        if issue.has_label(crate::ESCALATION_LABEL) {
+        if issue.escalation_holds(escalation, now_unix) {
             continue;
         }
         if policy
@@ -284,7 +292,16 @@ mod tests {
                 })
                 .collect(),
             url: String::new(),
+            escalation: None,
         }
+    }
+
+    fn policy() -> crate::escalation::EscalationPolicy {
+        crate::escalation::EscalationPolicy::default()
+    }
+
+    fn split(issues: Vec<QueueIssue>, triage_policy: &TriagePolicy) -> Queue {
+        triage(issues, triage_policy, &policy(), i64::MAX)
     }
 
     /// An unlabelled issue is a question, not the bottom of the queue.
@@ -437,7 +454,7 @@ mod tests {
     #[test]
     fn an_unlabelled_new_issue_is_a_question_not_an_omission() {
         let policy = TriagePolicy::default();
-        let queue = triage(
+        let queue = split(
             vec![
                 issue(1, "2026-01-01T00:00:00Z", &["bug", "P2"]),
                 issue(2, "2026-08-19T00:00:00Z", &[]),
@@ -461,7 +478,7 @@ mod tests {
     #[test]
     fn a_rung_with_no_kind_is_unassessed() {
         let policy = TriagePolicy::default();
-        let queue = triage(vec![issue(1, "2026-01-01T00:00:00Z", &["P0"])], &policy);
+        let queue = split(vec![issue(1, "2026-01-01T00:00:00Z", &["P0"])], &policy);
         assert!(queue.ranked.is_empty());
         assert_eq!(queue.unassessed[0].key, "1");
     }
@@ -473,18 +490,20 @@ mod tests {
     #[test]
     fn a_judged_non_defect_is_dropped_rather_than_asked_about() {
         let policy = TriagePolicy::default();
-        let queue = triage(
+        let queue = split(
             vec![issue(1, "2026-01-01T00:00:00Z", &["enhancement", "P0"])],
             &policy,
         );
         assert!(queue.is_empty(), "somebody already answered this one");
     }
 
-    /// An escalated issue leaves the queue entirely, on either axis.
+    /// An escalated issue with no record leaves the queue on either axis.
+    /// The label alone says nothing about what broke or when. A person who
+    /// set it by hand meant it.
     #[test]
     fn an_escalated_issue_is_not_re_asked() {
         let policy = TriagePolicy::default();
-        let queue = triage(
+        let queue = split(
             vec![
                 issue(
                     1,
@@ -498,6 +517,67 @@ mod tests {
         assert!(
             queue.is_empty(),
             "an escalated issue must not come back as ranked work OR as a question"
+        );
+    }
+
+    /// **The defect-queue cooldown witness.** The default `drive` path is
+    /// this queue, not the ready backlog. So a defect has to come back here
+    /// too. It is out while the wait runs. It is in once the wait is over.
+    /// It is out for good once its tries are spent. Nobody removes a label.
+    #[test]
+    fn an_environmental_escalation_returns_to_the_defect_queue_once_its_cooldown_is_over() {
+        let triage_policy = TriagePolicy::default();
+        let escalation = policy();
+        let at = 10_000_i64;
+        let cooled = crate::escalation::next(
+            None,
+            crate::escalation::EscalationReason::Environmental(
+                crate::escalation::EnvCause::StuckLoop,
+            ),
+            "2026-09-02T00:00:00Z",
+            at,
+        );
+        let over = at + i64::try_from(escalation.environmental_cooldown_secs).expect("fits");
+        let defect = |record: crate::escalation::EscalationRecord| {
+            let mut issue = issue(
+                7,
+                "2026-01-01T00:00:00Z",
+                &["bug", "P0", crate::ESCALATION_LABEL],
+            );
+            issue.escalation = Some(record);
+            issue
+        };
+
+        assert!(
+            triage(
+                vec![defect(cooled.clone())],
+                &triage_policy,
+                &escalation,
+                at
+            )
+            .is_empty(),
+            "the cooldown has not run out, so the defect queue must not offer it yet"
+        );
+
+        let back = triage(
+            vec![defect(cooled.clone())],
+            &triage_policy,
+            &escalation,
+            over,
+        );
+        assert_eq!(
+            back.ranked.iter().map(|i| i.number).collect::<Vec<_>>(),
+            vec![7],
+            "an environmental abort must requeue here on its own, with no label surgery"
+        );
+
+        let spent = crate::escalation::EscalationRecord {
+            attempts: escalation.park_after,
+            ..cooled
+        };
+        assert!(
+            triage(vec![defect(spent)], &triage_policy, &escalation, i64::MAX).is_empty(),
+            "a parked defect stays parked however long anyone waits"
         );
     }
 

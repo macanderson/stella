@@ -21,11 +21,13 @@
 //! backlog one cycle drew its batch from. One read, one definition, folded two
 //! ways.
 
+use stella_autonomy::escalation::{self, EscalationPolicy, EscalationRecord};
 use stella_autonomy::{BacklogConvention, Conformance, Demand, Violation, conform, finding_digest};
 use stella_protocol::issue::{IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider};
 
 use crate::query_format::{QueryFormat, Rows};
 
+use super::config::LoopConfig;
 use super::state::LoopState;
 
 /// How many open issues cross the port to produce one cycle's batch.
@@ -76,7 +78,7 @@ fn truncation_notice(total: usize, provider: &str) -> Option<String> {
 /// a single awaited call.
 pub(super) fn ranked(
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
 ) -> Result<(stella_autonomy::priority::Queue, usize), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -94,7 +96,9 @@ pub(super) fn ranked(
             .iter()
             .map(crate::issue_provider::to_queue_issue)
             .collect(),
-        policy,
+        &cfg.triage,
+        &cfg.escalation,
+        crate::timefmt::now_unix(),
     );
 
     // Escalated issues, excluded kinds and the unassessed split all happen
@@ -108,11 +112,11 @@ pub(super) fn ranked(
 pub(super) fn render_queue(
     _st: &LoopState,
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
     limit: usize,
     format: QueryFormat,
 ) -> Result<(), String> {
-    let (queue, total_issues) = ranked(provider, policy)?;
+    let (queue, total_issues) = ranked(provider, cfg)?;
     let defects = queue.ranked;
     let picked = &defects[..limit.min(defects.len())];
 
@@ -126,7 +130,8 @@ pub(super) fn render_queue(
     for i in picked {
         // The operator's rungs, not a built-in list — a tracker spelling
         // urgency `Sev1` must render its own word.
-        let prio = policy
+        let prio = cfg
+            .triage
             .ladder
             .rungs
             .iter()
@@ -165,7 +170,7 @@ pub(super) fn render_queue(
 /// reason to wake.
 pub(super) fn demand_from(
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
 ) -> Result<Demand, String> {
     // The read's failure is reported, not flattened. `Demand::default()` is
     // zero open defects, which is the *answer to a different question* — an
@@ -173,9 +178,9 @@ pub(super) fn demand_from(
     // arrive here as the same number. `watch` then printed
     // `✓ defect queue empty` and stood the loop down, and the governor planned
     // a cycle against a demand nobody had measured.
-    let (queue, _) = ranked(provider, policy)?;
+    let (queue, _) = ranked(provider, cfg)?;
     // The most urgent rung the operator declared, whatever they call it.
-    let urgent = policy.ladder.most_urgent().unwrap_or_default();
+    let urgent = cfg.triage.ladder.most_urgent().unwrap_or_default();
     let p0 = queue
         .ranked
         .iter()
@@ -279,14 +284,14 @@ pub(super) async fn file_finding(
 pub(super) fn ranked_keys(
     st: &super::state::LoopState,
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
 ) -> Result<Vec<String>, String> {
-    let (queue, total) = ranked(provider, policy)?;
+    let (queue, total) = ranked(provider, cfg)?;
     // The driver's claim pass is the one place the queue is read on a
     // cadence, so it is the one place a snapshot stays current for the
     // observatory — still the single `ranked` read: the keys the loop claims
     // from and the items the dashboard shows are one list, folded twice.
-    st.write_queue_snapshot(&queue, &policy.ladder, total);
+    st.write_queue_snapshot(&queue, &cfg.triage.ladder, total);
     Ok(queue
         .ranked
         .into_iter()
@@ -301,9 +306,9 @@ pub(super) fn ranked_keys(
 /// its own read would be the second definition this module exists to prevent.
 pub(super) fn unassessed(
     provider: &dyn IssueProvider,
-    policy: &stella_autonomy::priority::TriagePolicy,
+    cfg: &LoopConfig,
 ) -> Result<Vec<stella_autonomy::priority::Unassessed>, String> {
-    let (queue, _) = ranked(provider, policy)?;
+    let (queue, _) = ranked(provider, cfg)?;
     Ok(queue.unassessed)
 }
 
@@ -507,13 +512,6 @@ pub(super) fn file_deploy_breakage(
         .map_err(|error| error.to_string())
 }
 
-/// Mark an issue as one the loop tried and could not resolve, and say why.
-///
-/// Both halves matter. The label is what the next run reads, so it stops
-/// spending on a wall it has already hit; the comment is what a **human**
-/// reads, and without it the label is an accusation with no evidence — an
-/// issue sitting there marked unresolvable by a machine that did not say what
-/// went wrong is worse than one that was never attempted.
 /// [`escalate`] for a synchronous caller.
 ///
 /// The driver's arms are synchronous and each awaited port call would
@@ -523,37 +521,85 @@ pub(super) fn escalate_blocking(
     provider: &dyn IssueProvider,
     key: &str,
     why: &str,
+    body: &str,
+    policy: &EscalationPolicy,
     signature: &str,
-) -> Result<(), String> {
+) -> Result<EscalationRecord, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
     runtime
-        .block_on(escalate(provider, &IssueKey::from(key), why, signature))
+        .block_on(escalate(
+            provider,
+            &IssueKey::from(key),
+            why,
+            body,
+            policy,
+            signature,
+        ))
         .map_err(|error| error.to_string())
 }
 
+/// Mark an issue as one the loop tried and could not resolve, and say why.
+///
+/// Three writes, each for a different reader. The label is the marker a
+/// **person** scans for. The comment is what that person reads to learn what
+/// went wrong — without it the label is an accusation with no evidence. The
+/// record stamped into the body is what the **next run** reads: how many
+/// times this has happened, why the last one did, and when.
+///
+/// The record goes in the body rather than in a comment because the queue
+/// read already carries every body (`ready::fold_ready`), so a cooldown
+/// costs no extra call to the tracker. It is an HTML comment, so nobody
+/// reading the rendered issue sees it.
+///
+/// Returns the record it wrote, so the caller can count an issue that has
+/// just used up its last attempt.
 pub(super) async fn escalate(
     provider: &dyn IssueProvider,
     key: &IssueKey,
     why: &str,
+    body: &str,
+    policy: &EscalationPolicy,
     signature: &str,
-) -> Result<(), IssueError> {
+) -> Result<EscalationRecord, IssueError> {
+    let record = escalation::next(
+        escalation::parse(body).as_ref(),
+        escalation::classify(why),
+        &crate::timefmt::rfc3339_utc_now(),
+        crate::timefmt::now_unix(),
+    );
+
     provider
         .relabel(key, &[stella_autonomy::ESCALATION_LABEL.to_owned()], &[])
         .await?;
+    provider
+        .edit(key, None, Some(&escalation::stamp(body, &record)))
+        .await?;
 
-    let body = format!(
+    let next_step = match escalation::retry_after(&record, policy) {
+        Some(wait) => format!(
+            "The loop will take it again by itself in about {} minutes, once \
+             the cooldown is over. Nobody has to remove the label.",
+            wait.as_secs() / 60
+        ),
+        None => format!(
+            "That was attempt {} of {}, so the loop will not take it again. \
+             It is waiting on a person now.",
+            record.attempts, policy.park_after
+        ),
+    };
+    let note = format!(
         "This loop attempted this issue and could not resolve it, so it is \
-         labelled `{}` and will be skipped by later runs.\n\n\
+         labelled `{}`.\n\n\
          What happened: {why}\n\n\
-         The work is still wanted — this is not a closure. Remove the label to \
-         put it back in the queue, once whatever stopped the attempt has \
-         changed.",
+         {next_step}\n\n\
+         The work is still wanted — this is not a closure.",
         stella_autonomy::ESCALATION_LABEL
     );
-    comment(provider, key, &body, signature).await
+    comment(provider, key, &note, signature).await?;
+    Ok(record)
 }
 
 /// Close an issue with a receipt naming the evidence, signed.
@@ -756,18 +802,28 @@ mod tests {
     struct FixtureProvider {
         open: Vec<Issue>,
         filed: std::sync::Mutex<Vec<IssueDraft>>,
+        edited: std::sync::Mutex<Vec<String>>,
+        labelled: std::sync::Mutex<Vec<String>>,
     }
 
     impl FixtureProvider {
         fn with(open: Vec<Issue>) -> Self {
             Self {
                 open,
-                filed: std::sync::Mutex::new(Vec::new()),
+                ..Self::default()
             }
         }
 
         fn filed(&self) -> Vec<IssueDraft> {
             self.filed.lock().expect("fixture lock").clone()
+        }
+
+        fn edited(&self) -> Vec<String> {
+            self.edited.lock().expect("fixture lock").clone()
+        }
+
+        fn labelled(&self) -> Vec<String> {
+            self.labelled.lock().expect("fixture lock").clone()
         }
     }
 
@@ -803,9 +859,13 @@ mod tests {
         async fn relabel(
             &self,
             _key: &IssueKey,
-            _add: &[String],
+            add: &[String],
             _remove: &[String],
         ) -> Result<(), IssueError> {
+            self.labelled
+                .lock()
+                .expect("fixture lock")
+                .extend(add.iter().cloned());
             Ok(())
         }
 
@@ -813,8 +873,14 @@ mod tests {
             &self,
             _key: &IssueKey,
             _title: Option<&str>,
-            _body: Option<&str>,
+            body: Option<&str>,
         ) -> Result<(), IssueError> {
+            if let Some(body) = body {
+                self.edited
+                    .lock()
+                    .expect("fixture lock")
+                    .push(body.to_owned());
+            }
             Ok(())
         }
     }
@@ -1103,8 +1169,8 @@ mod tests {
     /// ranking no longer requires GitHub to exist.
     #[test]
     fn a_ranked_queue_needs_no_github_at_all() {
-        let policy = stella_autonomy::priority::TriagePolicy::default();
-        let (queue, total) = ranked(&backlog(), &policy).expect("fixture read");
+        let cfg = LoopConfig::default();
+        let (queue, total) = ranked(&backlog(), &cfg).expect("fixture read");
         let order: Vec<u64> = queue.ranked.iter().map(|issue| issue.number).collect();
         assert_eq!(
             order,
@@ -1145,8 +1211,8 @@ mod tests {
         open.push(issue("7", &["bug", "P0"], "2020-01-01T00:00:00Z"));
 
         let provider = FixtureProvider::with(open);
-        let policy = stella_autonomy::priority::TriagePolicy::default();
-        let (queue, total) = ranked(&provider, &policy).expect("fixture read");
+        let cfg = LoopConfig::default();
+        let (queue, total) = ranked(&provider, &cfg).expect("fixture read");
 
         assert_eq!(
             queue.ranked.first().map(|issue| issue.number),
@@ -1198,8 +1264,8 @@ mod tests {
     /// and place it instead of burying it.
     #[test]
     fn a_defect_with_no_rung_surfaces_as_a_question() {
-        let policy = stella_autonomy::priority::TriagePolicy::default();
-        let (queue, _) = ranked(&backlog(), &policy).expect("fixture read");
+        let cfg = LoopConfig::default();
+        let (queue, _) = ranked(&backlog(), &cfg).expect("fixture read");
         assert_eq!(
             queue
                 .unassessed
@@ -1219,8 +1285,8 @@ mod tests {
     /// disagree with the batch the same cycle draws.
     #[test]
     fn demand_is_a_fold_of_the_same_ranking() {
-        let policy = stella_autonomy::priority::TriagePolicy::default();
-        let demand = demand_from(&backlog(), &policy).expect("the fake backlog reads");
+        let cfg = LoopConfig::default();
+        let demand = demand_from(&backlog(), &cfg).expect("the fake backlog reads");
         assert_eq!(
             demand.open_defects, 3,
             "the feature is not a defect, and the unranked one is not yet work"
@@ -1245,10 +1311,7 @@ mod tests {
     /// read.
     #[test]
     fn an_unreachable_tracker_is_not_a_measured_zero() {
-        let answer = demand_from(
-            &DeadProvider,
-            &stella_autonomy::priority::TriagePolicy::default(),
-        );
+        let answer = demand_from(&DeadProvider, &LoopConfig::default());
         assert!(
             answer.is_err(),
             "a tracker that could not be read reports so: {answer:?}"
@@ -1310,6 +1373,67 @@ mod tests {
             &stella_autonomy::Attribution::default(),
         );
         assert!(outcome.is_err(), "{outcome:?}");
+    }
+
+    /// **The escalation-record witness.** Escalating writes the label a
+    /// person reads *and* a record the next run reads: the count,
+    /// the reason, and the moment. A second escalation on the stamped body
+    /// carries the count forward rather than starting over, which is what
+    /// makes parking reachable.
+    #[test]
+    fn escalating_stamps_a_record_the_next_run_can_read() {
+        let provider = FixtureProvider::default();
+        let policy = stella_autonomy::escalation::EscalationPolicy::default();
+
+        let first = escalate_blocking(
+            &provider,
+            "17",
+            "the turn exited 1 — the same `bash` call with identical arguments \
+             produced byte-identical output every time",
+            "## What happens\nThe environment was stale.\n",
+            &policy,
+            "created by stella*",
+        )
+        .expect("the fixture accepts writes");
+
+        assert_eq!(first.attempts, 1);
+        assert_eq!(
+            first.last_reason,
+            stella_autonomy::escalation::EscalationReason::Environmental(
+                stella_autonomy::escalation::EnvCause::StuckLoop
+            ),
+            "a stuck-loop abort is a broken machine, and it is retried eagerly"
+        );
+        assert_eq!(
+            provider.labelled(),
+            vec![stella_autonomy::ESCALATION_LABEL.to_owned()],
+            "the label stays as the marker a person scans for"
+        );
+
+        let stamped = provider.edited().pop().expect("the body was stamped");
+        assert!(
+            stamped.starts_with("## What happens"),
+            "the issue's own text is kept: {stamped}"
+        );
+        assert_eq!(
+            stella_autonomy::escalation::parse(&stamped).as_ref(),
+            Some(&first),
+            "the record must survive a read of the body it was written into"
+        );
+
+        let second = escalate_blocking(
+            &provider,
+            "17",
+            "the turn ran and could not work out what the issue asks for",
+            &stamped,
+            &policy,
+            "created by stella*",
+        )
+        .expect("the fixture accepts writes");
+        assert_eq!(
+            second.attempts, 2,
+            "the count carries forward, or parking is never reached"
+        );
     }
 
     /// The limit bounds what crosses the port, not what the ranker discards

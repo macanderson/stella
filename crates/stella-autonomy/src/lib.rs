@@ -56,6 +56,7 @@ mod closure;
 mod convention;
 mod deliver;
 mod doctrine;
+pub mod escalation;
 pub mod gate;
 pub mod priority;
 pub mod ready;
@@ -855,8 +856,13 @@ pub fn starved(cal: &Calibration) -> Option<Signal> {
 // The defect queue — ranked P0 > P1 > P2, oldest first inside a rank
 // ---------------------------------------------------------------------------
 
-/// One open issue as `gh issue list --json number,title,labels,createdAt,url`
-/// reports it.
+/// One open issue, in the shape every ranker here reads.
+///
+/// The field names follow `gh issue list --json
+/// number,title,labels,createdAt,url`, so a recorded page of that output
+/// still parses. The live path builds one from the issue port instead
+/// (`stella-cli`'s `to_queue_issue`), which is where `escalation` comes
+/// from: the tracker has no such field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QueueIssue {
     pub number: u64,
@@ -867,6 +873,11 @@ pub struct QueueIssue {
     pub created_at: String,
     #[serde(default)]
     pub url: String,
+    /// What the loop has already tried on this issue, read out of its body.
+    /// `None` when nobody escalated it, or when a person applied the label
+    /// by hand and left no record.
+    #[serde(default)]
+    pub escalation: Option<escalation::EscalationRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -882,6 +893,18 @@ impl QueueIssue {
     /// "does it have this label" is how two rankers start disagreeing.
     pub(crate) fn has_label(&self, name: &str) -> bool {
         self.labels.iter().any(|l| l.name == name)
+    }
+
+    /// Whether an escalation is keeping this issue out of a queue right now.
+    ///
+    /// One rule, read by every queue here — the ready backlog and the defect
+    /// queue both ask this, so the two cannot start disagreeing about when
+    /// an escalated issue comes back. `false` for an issue nobody escalated.
+    /// See [`crate::escalation`] for how long each kind waits.
+    #[must_use]
+    pub fn escalation_holds(&self, policy: &escalation::EscalationPolicy, now_unix: i64) -> bool {
+        self.has_label(ESCALATION_LABEL)
+            && !escalation::may_retry(self.escalation.as_ref(), policy, now_unix)
     }
 
     /// P0 ranks 0, P1 ranks 1, P2 ranks 2, everything else 3 — an aged P1 is
@@ -900,15 +923,21 @@ impl QueueIssue {
 /// Feature work is excluded — this loop closes defects, and
 /// mixing the two makes the batch unreviewable.
 ///
-/// Issues carrying `ESCALATION_LABEL` are dropped: the loop already attempted
-/// them and could not resolve them, so keeping them in the queue would make a
-/// later run spend on the same wall it already hit. The label is how that
-/// decision survives across processes — `spent` in the drive loop is
-/// process-local and cannot.
-pub fn rank_defects(issues: Vec<QueueIssue>) -> Vec<QueueIssue> {
+/// An escalated issue is held back while its cooldown runs, and comes back on
+/// its own once that is over ([`QueueIssue::escalation_holds`]). The record in
+/// its body is how that survives across processes — `spent` in the drive loop
+/// is process-local and cannot.
+pub fn rank_defects(
+    issues: Vec<QueueIssue>,
+    escalation: &escalation::EscalationPolicy,
+    now_unix: i64,
+) -> Vec<QueueIssue> {
     let mut defects: Vec<QueueIssue> = issues
         .into_iter()
-        .filter(|i| (i.has_label("bug") || i.has_label("triage")) && !i.has_label(ESCALATION_LABEL))
+        .filter(|i| {
+            (i.has_label("bug") || i.has_label("triage"))
+                && !i.escalation_holds(escalation, now_unix)
+        })
         .collect();
     defects.sort_by(|a, b| {
         a.priority_rank()

@@ -89,7 +89,7 @@ pub(super) fn wave(
     super::work::refuse_if_unsteered(root)?;
     refuse_unsupported_worker(&cfg.worker)?;
 
-    let ready = super::ready::ready_full(provider, &cfg.triage.ladder)?;
+    let ready = super::ready::ready_full(provider, cfg)?;
     let bound = (max_issues.max(width)) as usize;
 
     let session_id = audit::begin_session();

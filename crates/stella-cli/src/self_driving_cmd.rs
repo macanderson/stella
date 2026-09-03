@@ -287,6 +287,10 @@ pub(crate) enum SelfDrivingCmd {
     ///
     /// Written after every step rather than at the end, because a perpetual
     /// loop that only reported on exit would never report at all.
+    ///
+    /// `escalated` and `parked` are different news. An escalated issue is on
+    /// a cooldown and comes back on its own; a parked one has used up its
+    /// attempts and is waiting on a person.
     Stats {
         /// Output format.
         #[arg(long, value_enum, default_value = "text")]
@@ -774,10 +778,7 @@ fn gh_plain(args: &[&str]) -> Option<String> {
 /// which is the answer when the backlog really is empty — see
 /// [`backlog::demand_from`].
 fn demand(root: &std::path::Path) -> Result<Demand, String> {
-    backlog::demand_from(
-        &crate::issue_provider::GhIssueProvider,
-        &config::load(root).triage,
-    )
+    backlog::demand_from(&crate::issue_provider::GhIssueProvider, &config::load(root))
 }
 
 fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
