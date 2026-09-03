@@ -414,8 +414,9 @@ mod tests {
     /// Rust marks `CLOEXEC` only on fds it made itself, and a raw `libc` fd
     /// is invisible to that bookkeeping — so a plain `libc::pipe()` leaves
     /// the flag clear and hands every child a live copy of the read end.
-    /// That is the fd-inheritance race #2603 reports, and this assertion
-    /// fails against a tree whose `cloexec_pipe` is a bare `pipe()`.
+    /// That is the fd-inheritance race this helper exists to close, and the
+    /// assertion fails against a tree whose `cloexec_pipe` is a bare
+    /// `pipe()`.
     ///
     /// It asks only about this process's own descriptor table, which is what
     /// makes it reliable under `cargo test`'s parallel harness.
@@ -428,8 +429,8 @@ mod tests {
     /// descriptor, the flag included; the copy is dropped when that child
     /// reaches `execve`, so a spawner on another thread inside its own
     /// fork-to-exec window is a live reader and the write returns `1`. The
-    /// probe read that as a missing flag and turned `main` red on `b29e934`
-    /// (#5804), having passed on the 14-test filter its author ran.
+    /// probe read that as a missing flag and turned `main` red on
+    /// `b29e934`, having passed on the 14-test filter its author ran.
     #[test]
     fn cloexec_pipe_sets_close_on_exec_on_both_ends() {
         let fds = cloexec_pipe();
