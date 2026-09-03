@@ -287,13 +287,30 @@ For a behavior change or feature, your PR should include a **witness test**:
 
 You can check this the artisanal way (`git stash && cargo test -p <crate>`),
 or let Stella verify Stella — run your task through `stella run --pipeline
-classic`, whose witness stage enforces exactly this fail→pass contract (a
-plain `stella run`, with no `--pipeline` flag, is the raw step-loop and does
-not verify on its own).
+<plugin-id>`, naming an installed verification plugin whose witness stage
+enforces this fail→pass contract. A plain `stella run` is the raw step-loop
+and does not verify on its own, and the built-in `classic` pipeline this
+flag once named is gone from the workspace, so `--pipeline classic` is
+refused.
 
 Pure refactors, docs, and CI changes don't need a witness — say so in the PR
 template and move on. If a witness is genuinely impractical (e.g. TUI
 rendering), explain how you verified the change instead.
+
+### The spend gate — pin what a turn buys
+
+A change to the agent loop can leave every answer the same and still buy an
+extra model call. `crates/stella-core/tests/spend_gate.rs` is what fails when
+it does: one turn per scenario over scripted ports, with the model calls, the
+tool runs and the reported cost pinned.
+
+Read a red run one of two ways. Either the change is a bug, and the fix is in
+the code. Or the new price is the one you meant, and you edit the pin in the
+same pull request and say in the PR why. A reviewer then reads the new price
+as a diff line. Never widen a pin to whatever the loop does now.
+
+`doc:verification-gate` covers what this layer can and cannot claim, and what
+is still unobserved beside it.
 
 ## Style
 
