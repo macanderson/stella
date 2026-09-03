@@ -402,13 +402,21 @@ jobs:
           # left parked is a required context that never reports, which is the
           # failure this step exists to remove.
           approved=0
+          done_ids=" "
           for _ in $(seq 1 8); do
             parked="$(gh api \
               "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${head_sha}&per_page=100" \
               --jq '.workflow_runs[] | select(.conclusion == "action_required") | .id')"
             for run_id in ${parked}; do
+              # An approved run keeps reporting `action_required` for a few
+              # seconds. Approving it twice is a 403, so skip what already
+              # went through rather than warn about it.
+              case "${done_ids}" in
+                *" ${run_id} "*) continue ;;
+              esac
               if approve_one "${run_id}"; then
                 approved=$(( approved + 1 ))
+                done_ids="${done_ids}${run_id} "
                 echo "approved run ${run_id}"
               else
                 echo "::warning::could not approve run ${run_id}; a required check may never report"
