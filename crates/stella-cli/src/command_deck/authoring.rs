@@ -8,7 +8,7 @@ use stella_tui::{AgentScope, Inbound};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::config::Config;
-use crate::memory::{ReflectionReport, SessionMemory, turn_warrants_reflection};
+use crate::memory::{ReflectionReport, SessionMemory, should_reflect_on, turn_warrants_reflection};
 
 use super::LEAD;
 
@@ -77,6 +77,34 @@ pub(super) fn forward_reflection_events(
     }
 }
 
+/// The deck's reflection gate, pulled out of [`record_and_reflect_turn`] so
+/// it has its own witness test.
+///
+/// [`should_reflect_on`] admits a failed turn. It excludes only a user's
+/// soft stop. [`crate::agent::should_reflect_on_turn`] adds the tool-use
+/// gate, the memory check, and the operator's opt-out. `agent/reflect.rs`'s
+/// `reflect_on_interactive_turn` uses this same two-part rule for the plain
+/// prompt handler and `/goal`. Before this fix the deck used neither part:
+/// it read `outcome.is_err()` alone and returned before a failed turn ever
+/// reached reflection.
+///
+/// `opted_out` is a parameter, not an environment read, because the switch
+/// is process-global and this test module runs in parallel. A test that
+/// read the environment directly would change other tests' answers.
+fn deck_should_reflect(
+    outcome: &Result<(), crate::failure::CliFailure>,
+    turn: &[CompletionMessage],
+    has_memory: bool,
+    opted_out: bool,
+) -> bool {
+    should_reflect_on(outcome)
+        && crate::agent::should_reflect_on_turn(
+            turn_warrants_reflection(turn),
+            has_memory,
+            opted_out,
+        )
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the driver loop's own end-of-turn state at its single call site, including two \
@@ -106,7 +134,12 @@ pub(super) async fn record_and_reflect_turn(
     )
     .await;
     let turn = &messages[reflect_start..];
-    if outcome.is_err() || !turn_warrants_reflection(turn) {
+    if !deck_should_reflect(
+        outcome,
+        turn,
+        memory.is_some(),
+        crate::agent::reflection_explicitly_disabled(),
+    ) {
         return;
     }
     let Some(memory) = memory else { return };
@@ -125,7 +158,7 @@ pub(super) async fn record_and_reflect_turn(
         memory,
         cfg,
         provider,
-        crate::memory::TurnEvidence::with_friction(turn, friction, true),
+        crate::memory::TurnEvidence::with_friction(turn, friction, outcome.is_ok()),
         true,
         crate::agent::remaining_budget(budget),
     )
@@ -356,5 +389,94 @@ pub(super) fn record_agent_invocation(
         let version = crate::agents_installed::active_version_for_source(&agent.source_path);
         let reason: String = args.trim().chars().take(AGENT_USE_REASON_MAX).collect();
         registry.record_agent_use(&agent.name, version, &reason);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use stella_protocol::{CompletionMessage, MessageRole, ToolCall};
+
+    use super::deck_should_reflect;
+    use crate::failure::CliFailure;
+
+    /// One assistant message with a tool call — enough for
+    /// `turn_warrants_reflection` to admit the turn.
+    fn tool_using_turn() -> Vec<CompletionMessage> {
+        vec![CompletionMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                call_id: "call-1".to_string(),
+                name: "read_file".to_string(),
+                input: serde_json::json!({"path": "src/lib.rs"}),
+            }],
+            tool_results: Vec::new(),
+            attachments: Vec::new(),
+        }]
+    }
+
+    /// **Witness.** A failed deck turn earns a reflection call.
+    ///
+    /// Before this fix, `record_and_reflect_turn` always bailed on
+    /// `outcome.is_err()`. A failed lead turn never reached `reflect_routed`.
+    /// This test checks the gate agrees with `should_reflect_on`: a failure
+    /// that is not a soft stop passes, the same as it does for the plain
+    /// prompt handler (`agent::reflect::reflect_on_interactive_turn`).
+    #[test]
+    fn a_failed_turn_that_is_not_a_soft_stop_reflects() {
+        let outcome: Result<(), CliFailure> = Err(CliFailure::error("the tool crashed"));
+        let turn = tool_using_turn();
+
+        assert!(
+            deck_should_reflect(&outcome, &turn, true, false),
+            "a failed, non-soft-stop turn with tool use and memory present must reflect"
+        );
+    }
+
+    /// A user's soft stop is not a failure to learn from — the one exclusion
+    /// `should_reflect_on` carries, and the deck must honor it exactly as
+    /// every other reflecting door does.
+    #[test]
+    fn a_user_soft_stop_does_not_reflect() {
+        let outcome: Result<(), CliFailure> =
+            Err(CliFailure::deliberate_stop(stella_core::SOFT_STOP_REASON));
+        let turn = tool_using_turn();
+
+        assert!(
+            !deck_should_reflect(&outcome, &turn, true, false),
+            "a soft stop must not be recorded as a failure"
+        );
+    }
+
+    /// A successful turn that used a tool still reflects — the fix must not
+    /// have narrowed the success path while widening the failure one.
+    #[test]
+    fn a_successful_tool_using_turn_still_reflects() {
+        let outcome: Result<(), CliFailure> = Ok(());
+        let turn = tool_using_turn();
+
+        assert!(deck_should_reflect(&outcome, &turn, true, false));
+    }
+
+    /// A turn with no tool calls earns no reflection call regardless of
+    /// outcome — the tool-use gate `should_reflect_on_turn` folds in is
+    /// unchanged by this fix.
+    #[test]
+    fn a_turn_with_no_tool_calls_does_not_reflect() {
+        let failed: Result<(), CliFailure> = Err(CliFailure::error("boom"));
+        let turn = vec![CompletionMessage::assistant("done, no tools needed")];
+
+        assert!(!deck_should_reflect(&failed, &turn, true, false));
+    }
+
+    /// The operator's opt-out withholds the call even from a failed,
+    /// tool-using turn — the same `opted_out` plumbing every reflecting door
+    /// honors.
+    #[test]
+    fn the_opt_out_withholds_reflection_on_a_failed_turn() {
+        let outcome: Result<(), CliFailure> = Err(CliFailure::error("the tool crashed"));
+        let turn = tool_using_turn();
+
+        assert!(!deck_should_reflect(&outcome, &turn, true, true));
     }
 }
