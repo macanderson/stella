@@ -25,6 +25,7 @@ use super::tabs::{EngineTab, GLOBAL_ROWS, GlobalRow};
 use super::{AgentField, EngineOverlay, NO_SNAPSHOT_HINT, picker_matches};
 use crate::deck_ui::DeckUi;
 use crate::envelope::{EngineConfigState, EngineRole};
+use crate::render::columns;
 use crate::render::scroll_window_start;
 
 /// Label column width — fits the longest key (`repetition_penalty`, 18).
@@ -159,16 +160,17 @@ fn row(
 
     if let Some(edit) = e.edit.as_ref().filter(|edit| edit.row == i) {
         // The live buffer, tail-windowed so the caret end stays visible on
-        // long values (a prompt), with the gold caret the composer uses.
+        // long values (a prompt), with the gold caret the composer uses. One
+        // column is held back for that caret.
         spans.push(Span::styled(
-            tail_chars(&edit.buffer, value_w.saturating_sub(1)),
+            columns::tail(&edit.buffer, value_w.saturating_sub(1)),
             Style::new().fg(token::TEXT),
         ));
         spans.push(Span::styled("▏", Style::new().fg(token::GOLD)));
     } else {
         match value {
             Some(v) => spans.push(Span::styled(
-                truncate_chars(&v, value_w),
+                columns::head(&v, value_w),
                 Style::new().fg(token::TEXT),
             )),
             None => spans.push(Span::styled(
@@ -300,7 +302,7 @@ fn render_model_picker(e: &EngineOverlay, area: Rect, buf: &mut Buffer) {
                 Style::new().fg(token::GOLD),
             ),
             Span::styled(
-                truncate_chars(slug, (w as usize).saturating_sub(6)),
+                columns::head(slug, (w as usize).saturating_sub(6)),
                 Style::new().fg(token::TEXT),
             ),
         ];
@@ -341,34 +343,10 @@ fn render_model_picker(e: &EngineOverlay, area: Rect, buf: &mut Buffer) {
     Paragraph::new(lines).block(block).render(popup, buf);
 }
 
-/// Char-safe prefix truncation with an ellipsis (long prompts, long model
-/// lists must never wrap the row).
-fn truncate_chars(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-    format!("{head}…")
-}
-
-/// The last `max_chars` of a buffer (edit rendering keeps the caret end in
-/// view), with a leading ellipsis when the head is cut.
-fn tail_chars(s: &str, max_chars: usize) -> String {
-    let count = s.chars().count();
-    if count <= max_chars {
-        return s.to_string();
-    }
-    let tail: String = s
-        .chars()
-        .skip(count - max_chars.saturating_sub(1))
-        .collect();
-    format!("…{tail}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::fixtures::open_ui;
-    use super::super::{EngineTab, ModelPicker};
+    use super::super::{EngineEdit, EngineTab, ModelPicker};
     use super::*;
 
     fn text(buf: &Buffer) -> String {
@@ -454,5 +432,62 @@ mod tests {
         let dirty = text(&buf);
         let strip = dirty.lines().next().unwrap_or_default();
         assert!(strip.trim_end().ends_with("modified"), "{strip:?}");
+    }
+
+    /// A wide-character value must stay inside the row it is drawn on.
+    ///
+    /// The value field is budgeted in display columns and was spent in
+    /// `char`s, so a CJK prompt composed a row twice the width of the pane.
+    /// The row is measured before it is drawn, because the buffer clips at its
+    /// own edge and so reports every overrun as a row that exactly fits — the
+    /// oracle would agree with the bug. `Line::width` is ratatui's own
+    /// measurement, not the helper under test.
+    #[test]
+    fn a_wide_character_value_stays_inside_the_row() {
+        let (_model, mut ui) = open_ui();
+        ui.engine.tab = EngineTab::Agent(EngineRole::Default);
+        let prompt = "回忆一个符号并计算其令牌成本以便对齐列宽".repeat(4);
+        ui.engine.state.as_mut().unwrap().agents[0].prompt = Some(prompt);
+
+        // The prompt row of the agent page.
+        let i = AgentField::ALL
+            .iter()
+            .position(|f| *f == AgentField::Prompt)
+            .unwrap();
+        let width = 80usize;
+        let e = &ui.engine;
+        let state = e.state.as_ref().unwrap();
+        let line = row(e, state, i, false, width);
+        assert!(
+            line.width() <= width,
+            "the row is {} columns wide in an {width}-column pane: {:?}",
+            line.width(),
+            line
+        );
+    }
+
+    /// A wide-character edit buffer must not push the caret off the row.
+    ///
+    /// The tail window is budgeted one column short of the field so the caret
+    /// fits after it. Spent in `char`s, a CJK buffer filled the field twice
+    /// over and the caret clipped at the pane edge — it did not draw at all.
+    #[test]
+    fn a_wide_character_edit_keeps_the_caret_on_the_row() {
+        let (_model, mut ui) = open_ui();
+        ui.engine.tab = EngineTab::Agent(EngineRole::Default);
+        ui.engine.row = 0;
+        ui.engine.edit = Some(EngineEdit {
+            row: 0,
+            buffer: "回忆一个符号并计算其令牌成本以便对齐列宽".repeat(4),
+        });
+
+        let area = Rect::new(0, 0, 80, 30);
+        let mut buf = Buffer::empty(area);
+        render(&ui, area, &mut buf);
+        let frame = text(&buf);
+        assert!(
+            frame.contains('▏'),
+            "the caret was pushed off the row:\n{frame}"
+        );
     }
 }

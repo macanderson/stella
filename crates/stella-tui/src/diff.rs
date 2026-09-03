@@ -28,6 +28,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use stella_diff::view;
 
+use crate::render::columns;
 use crate::syntax::{Lang, lang_from_path, tok_style, tokenize};
 use crate::theme;
 
@@ -75,8 +76,10 @@ pub fn count_diff_lines(diff: &str) -> (u32, u32) {
 /// the panel is narrower than the path.
 pub fn header_line(path: &str, width: usize) -> Line<'static> {
     let lead = "── ";
-    let path = elide_left(path, width.saturating_sub(lead.chars().count() + 4));
-    let used = lead.chars().count() + path.chars().count() + 1; // trailing space before the fill join
+    // Columns, not chars: a path is whatever the repository calls its files,
+    // and the fill that follows it has to know how much rule is left.
+    let path = columns::tail(path, width.saturating_sub(columns::width(lead) + 4));
+    let used = columns::width(lead) + columns::width(&path) + 1; // trailing space before the fill join
     Line::from(vec![
         Span::styled(lead.to_string(), theme::rule()),
         Span::styled(path, theme::heading()),
@@ -91,12 +94,12 @@ pub fn footer_line(added: u32, removed: u32, width: usize) -> Line<'static> {
     let add_txt = format!("+{added} {}", plural(added, "addition"));
     let sep = " · ";
     let rem_txt = format!("-{removed} {}", plural(removed, "removal"));
-    // trailing space before the fill join; `sep` is measured in chars (not
-    // `.len()` bytes) since it contains the multi-byte `·` glyph.
-    let used = lead.chars().count()
-        + add_txt.chars().count()
-        + sep.chars().count()
-        + rem_txt.chars().count()
+    // trailing space before the fill join; measured in columns (not `.len()`
+    // bytes) since `sep` carries the multi-byte `·` glyph.
+    let used = columns::width(lead)
+        + columns::width(&add_txt)
+        + columns::width(sep)
+        + columns::width(&rem_txt)
         + 1;
     Line::from(vec![
         Span::styled(lead.to_string(), theme::rule()),
@@ -712,23 +715,6 @@ fn rule_fill(used: usize, width: usize) -> String {
     "─".repeat(width.saturating_sub(used))
 }
 
-/// Left-elide `text` to at most `max` chars, keeping the tail (the meaningful
-/// end of a path) and marking the cut with `…`.
-fn elide_left(text: &str, max: usize) -> String {
-    if max == 0 {
-        return String::new();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= max {
-        return text.to_string();
-    }
-    if max == 1 {
-        return "…".to_string();
-    }
-    let tail: String = chars[chars.len() - (max - 1)..].iter().collect();
-    format!("…{tail}")
-}
-
 // ── Diff-header language inference ──────────────────────────────────────────
 //
 // The lexer itself lives in [`crate::syntax`], shared with the markdown
@@ -797,6 +783,24 @@ mod tests {
         let text = line_text(&header_line("a/very/long/path/that/wont/fit.rs", 24));
         assert!(text.contains('…'), "{text}");
         assert!(text.contains("fit.rs"), "the tail survives: {text}");
+    }
+
+    /// A wide-character path must not push the rule past the panel edge.
+    ///
+    /// The lead, the path and the fill were counted in `char`s, so a CJK path
+    /// was measured at half the width it draws and the rule ran over the pane
+    /// it was given. `Line::width` is ratatui's measurement, not the helper
+    /// under test.
+    #[test]
+    fn a_wide_character_path_keeps_the_rule_inside_the_panel() {
+        let width = 60;
+        let line = header_line("源码/驱动器/上下文回忆表格渲染实现.rs", width);
+        assert_eq!(
+            line.width(),
+            width,
+            "the rule should reach the panel's right edge and stop: {}",
+            line_text(&line)
+        );
     }
 
     #[test]
@@ -1073,11 +1077,11 @@ mod tests {
     }
 
     #[test]
-    fn header_uses_char_count_not_byte_length_for_the_lead_when_eliding() {
-        // 70 chars: longer than the old byte-length-based cap (80 - 7 - 4 =
+    fn header_measures_the_lead_in_columns_not_bytes() {
+        // 70 columns: longer than the old byte-length-based cap (80 - 7 - 4 =
         // 69, since "── " is 7 bytes) but shorter than the correct
-        // char-count-based cap (80 - 3 - 4 = 73). Only survives un-elided
-        // once the lead is measured in chars, not bytes.
+        // column-based cap (80 - 3 - 4 = 73). Only survives un-elided once the
+        // lead is measured in columns, not bytes.
         let path = "a".repeat(70);
         let text = line_text(&header_line(&path, 80));
         assert!(!text.contains('…'), "path elided too early: {text}");

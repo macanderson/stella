@@ -1336,18 +1336,13 @@ fn first_line(text: &str) -> String {
         .to_string()
 }
 
-/// Truncate to `max` chars with a trailing ellipsis, never splitting a
-/// codepoint.
+/// Cut to `max` display columns, with a trailing `…`.
+///
+/// Columns, not `char`s. Every budget here is a table cell or a pane width.
+/// The text is a task title, a path, or a line of tool output. None of those
+/// is ASCII by rule. A `char` budget let any of them overrun its cell.
 fn truncate(s: &str, max: usize) -> String {
-    if max == 0 {
-        return String::new();
-    }
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let head: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{head}…")
-    }
+    crate::render::columns::head(s, max)
 }
 
 #[cfg(test)]
