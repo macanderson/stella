@@ -94,10 +94,22 @@ pub struct EpisodeInput {
     pub outcome: EpisodeOutcome,
     /// RFC-3339 start of the episode's window.
     pub started_at: String,
-    /// RFC-3339 end of the episode's window. With `summary` and `started_at`
-    /// it forms the episode's stable `epi_…` identity, so re-writing the same
-    /// summary over the same window updates one row instead of appending.
+    /// RFC-3339 end of the episode's window. With `summary`, `started_at` and
+    /// `occurrence` it forms the episode's stable `epi_…` identity, so
+    /// re-writing the same episode updates one row instead of appending.
     pub ended_at: String,
+    /// What tells two episodes apart when their summary and window are equal.
+    ///
+    /// Both timestamps are second-resolution, so two turns on the same prompt
+    /// inside one second hash to one id and the second write silently replaces
+    /// the first — a different outcome and a different file list, over the top
+    /// of the record they belong to. A caller that holds a per-turn identity
+    /// passes it here and the two stay separate; passing the same key again is
+    /// still the update it was, which is what a retry of one turn wants.
+    ///
+    /// `None` hashes exactly as before this field existed, so every `epi_` id
+    /// already on disk is unchanged.
+    pub occurrence: Option<String>,
     /// Workspace domain tags carried onto the episode's mirror node.
     pub domains: Vec<String>,
 }
@@ -115,8 +127,17 @@ impl EpisodeInput {
             outcome: EpisodeOutcome::Success,
             started_at: started_at.into(),
             ended_at: ended_at.into(),
+            occurrence: None,
             domains: Vec::new(),
         }
+    }
+
+    /// Set the key that separates this episode from another with the same
+    /// summary and window. See [`Self::occurrence`].
+    #[must_use]
+    pub fn with_occurrence(mut self, occurrence: impl Into<String>) -> Self {
+        self.occurrence = Some(occurrence.into());
+        self
     }
 
     /// Tag with one or more workspace domains.
@@ -141,7 +162,11 @@ impl EpisodeInput {
         self
     }
 
-    /// Stable identity: the summary plus its time window.
+    /// Stable identity: the summary, its time window, and the occurrence key
+    /// when the caller supplied one.
+    ///
+    /// An absent key adds no bytes, so an episode written without one keeps
+    /// the id it has always had.
     fn public_id(&self) -> String {
         let mut h = Sha256::new();
         h.update(self.summary.as_bytes());
@@ -149,6 +174,10 @@ impl EpisodeInput {
         h.update(self.started_at.as_bytes());
         h.update([0u8]);
         h.update(self.ended_at.as_bytes());
+        if let Some(occurrence) = &self.occurrence {
+            h.update([0u8]);
+            h.update(occurrence.as_bytes());
+        }
         format!("epi_{}", &to_hex(&h.finalize())[..24])
     }
 
@@ -616,14 +645,107 @@ fn truncate_label(s: &str) -> String {
     format!("{truncated}…")
 }
 
+/// How many times [`ContextStore::upsert`] re-embeds and retries when a vector
+/// it planned to reuse is gone by the time it writes.
+///
+/// Each retry embeds what went, so the reusable set only shrinks. Two reclaims
+/// in a row are already unlikely. The last try writes what it has: the other
+/// choice is to fail a write over a race the next warm index would repair.
+const REUSE_RACE_ATTEMPTS: usize = 3;
+
+/// What one attempt at a delta did.
+enum UpsertAttempt {
+    /// The transaction committed.
+    Committed(UpsertReceipt),
+    /// A vector the attempt planned to reuse was gone by the time the
+    /// transaction could see it, so nothing was written. Carries the content
+    /// hashes to embed on the retry.
+    Raced(Vec<String>),
+}
+
+/// The record in this delta that cannot be written, named for the error.
+///
+/// Every record here mints a node, and a node needs a name a person can cite
+/// (`L-C4`). An episode and a memory take that name from their own text. So a
+/// blank summary, or a lesson that is all spaces, is a record the store will
+/// not take. Left to the transaction, it says so half way through: the delta
+/// has paid for its embeddings and the whole batch rolls back. Asked first,
+/// the answer names the record. A caller that builds a batch can then drop
+/// the one bad entry and keep the rest.
+fn unwritable_record(delta: &ContextDelta) -> Option<String> {
+    if delta.domains.iter().any(|d| d.name.trim().is_empty()) {
+        return Some("a domain with a blank name".into());
+    }
+    if delta.nodes.iter().any(|n| n.display_name.trim().is_empty()) {
+        return Some("a node with a blank display name".into());
+    }
+    if delta.episodes.iter().any(|e| e.summary.trim().is_empty()) {
+        return Some("an episode with a blank summary".into());
+    }
+    if delta.memories.iter().any(|m| m.content.trim().is_empty()) {
+        return Some("a memory with blank content".into());
+    }
+    if delta.facts.iter().any(|f| {
+        f.subject.display_name.trim().is_empty() || f.object.display_name.trim().is_empty()
+    }) {
+        return Some("a fact whose subject or object has a blank display name".into());
+    }
+    None
+}
+
 impl ContextStore {
     /// Apply a delta atomically, returning a receipt. Embedding decisions
     /// happen before the transaction (async), then all node/episode/fact/vector
     /// writes commit together (`L-L1`).
+    ///
+    /// A record that cannot be written is rejected before anything is embedded
+    /// or written. The whole batch is what is at stake: a refusal from inside
+    /// the transaction rolls every good record back with the bad one, and says
+    /// nothing about which one was at fault.
     pub async fn upsert(&self, delta: ContextDelta) -> Result<UpsertReceipt, ContextError> {
+        if let Some(what) = unwritable_record(&delta) {
+            return Err(ContextError::InvalidInput(format!(
+                "delta holds {what}; every record must mint a humanly citable node (L-C4)"
+            )));
+        }
         let now = self.clock().now_rfc3339();
         let fingerprint = self.fingerprint().id();
+        // Content this delta must embed even though a vector for it exists:
+        // an earlier attempt found that vector gone once it opened the write
+        // transaction. Empty on the first attempt, which is every ordinary one.
+        let mut force_embed: HashSet<String> = HashSet::new();
+        let mut attempts = 0usize;
+        loop {
+            attempts += 1;
+            // The last attempt commits without re-checking, so this terminates.
+            let recheck = attempts < REUSE_RACE_ATTEMPTS;
+            match self
+                .upsert_attempt(&delta, &now, &fingerprint, &force_embed, recheck)
+                .await?
+            {
+                UpsertAttempt::Committed(receipt) => return Ok(receipt),
+                UpsertAttempt::Raced(vanished) => force_embed.extend(vanished),
+            }
+        }
+    }
 
+    /// One pass of [`Self::upsert`]: embed what is missing, then write.
+    ///
+    /// `recheck` asks the write transaction to confirm that every vector the
+    /// embedding pass decided to reuse is still there. It cannot be assumed:
+    /// the store holds no lock while it embeds, and until this delta's nodes
+    /// exist those vectors belong to no node, which is exactly what
+    /// [`ContextStore::compact`] reclaims. Losing that race left the new node
+    /// with no vector — invisible to similarity recall until the next mount's
+    /// warm indexer noticed.
+    async fn upsert_attempt(
+        &self,
+        delta: &ContextDelta,
+        now: &str,
+        fingerprint: &str,
+        force_embed: &HashSet<String>,
+        recheck: bool,
+    ) -> Result<UpsertAttempt, ContextError> {
         // Phase A: decide what to embed (async, no lock held).
         // Gather every distinct piece of embeddable content in this delta.
         let mut contents: Vec<(String, String)> = Vec::new();
@@ -653,12 +775,14 @@ impl ContextStore {
         }
 
         // Partition into already-embedded (reused) vs missing (`L-C2`).
+        // `force_embed` holds content an earlier attempt watched disappear, so
+        // it is embedded again rather than trusted a second time.
         let (missing, reused): (Vec<_>, Vec<_>) = {
             let conn = self.conn();
             let mut missing = Vec::new();
             let mut reused = Vec::new();
             for (hash, content) in contents {
-                if embedding_exists(&conn, &hash, &fingerprint)? {
+                if !force_embed.contains(&hash) && embedding_exists(&conn, &hash, fingerprint)? {
                     reused.push(hash);
                 } else {
                     missing.push((hash, content));
@@ -701,15 +825,32 @@ impl ContextStore {
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;
 
+        // Ask the transaction, not the earlier read, whether the reusable
+        // vectors are still there. A vector this delta plans to lean on belongs
+        // to no node until the delta lands, so `compact` may have reclaimed it
+        // as an orphan while the embedder was working. Dropping `tx` rolls the
+        // attempt back and nothing has been written yet.
+        if recheck {
+            let mut vanished = Vec::new();
+            for hash in &reused {
+                if !embedding_exists(&tx, hash, fingerprint)? {
+                    vanished.push(hash.clone());
+                }
+            }
+            if !vanished.is_empty() {
+                return Ok(UpsertAttempt::Raced(vanished));
+            }
+        }
+
         // Explicit domain definitions first, so descriptions land even if the
         // same names are also referenced as bare tags below.
         for domain in &delta.domains {
-            upsert_domain(&tx, &domain.name, domain.description.as_deref(), &now)?;
+            upsert_domain(&tx, &domain.name, domain.description.as_deref(), now)?;
         }
 
         for node in &delta.nodes {
-            let id = upsert_node(&tx, node, &now)?;
-            receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, &now)?;
+            let id = upsert_node(&tx, node, now)?;
+            receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, now)?;
             receipt.nodes_upserted += 1;
         }
 
@@ -723,16 +864,16 @@ impl ContextStore {
                 ep.outcome.as_str(),
                 &ep.started_at,
                 &ep.ended_at,
-                &now,
+                now,
             )?;
             let node = ep.as_node();
-            let id = upsert_node(&tx, &node, &now)?;
-            receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, &now)?;
+            let id = upsert_node(&tx, &node, now)?;
+            receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, now)?;
             receipt.nodes_upserted += 1;
             receipt.episodes_written += 1;
             // The files this turn touched, as edges rather than only as the
             // JSON column written above (#5338).
-            anchor_to_files(&tx, id, &ep.files_touched, &ep.domains, &now, &mut receipt)?;
+            anchor_to_files(&tx, id, &ep.files_touched, &ep.domains, now, &mut receipt)?;
         }
 
         for memory in &delta.memories {
@@ -742,11 +883,11 @@ impl ContextStore {
                 &memory.lineage_id(),
                 memory.kind.as_str(),
                 &memory.content,
-                &now,
+                now,
             )?;
             let node = memory.as_node();
-            let id = upsert_node(&tx, &node, &now)?;
-            receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, &now)?;
+            let id = upsert_node(&tx, &node, now)?;
+            receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, now)?;
             receipt.nodes_upserted += 1;
             receipt.memories_written += 1;
             receipt.memory_node_ids.push(node.public_id());
@@ -756,31 +897,24 @@ impl ContextStore {
             // node's identity is minted in this loop — a caller would have to
             // reconstruct `memory://{lineage}` by hand and would silently
             // anchor to nothing the day that spelling changed.
-            anchor_to_files(
-                &tx,
-                id,
-                &memory.anchors,
-                &memory.domains,
-                &now,
-                &mut receipt,
-            )?;
+            anchor_to_files(&tx, id, &memory.anchors, &memory.domains, now, &mut receipt)?;
         }
 
         for fact in &delta.facts {
-            let src = upsert_node(&tx, &fact.subject, &now)?;
-            let dst = upsert_node(&tx, &fact.object, &now)?;
-            receipt.domain_tags_added += tag_node_domains(&tx, src, &fact.subject.domains, &now)?;
-            receipt.domain_tags_added += tag_node_domains(&tx, dst, &fact.object.domains, &now)?;
+            let src = upsert_node(&tx, &fact.subject, now)?;
+            let dst = upsert_node(&tx, &fact.object, now)?;
+            receipt.domain_tags_added += tag_node_domains(&tx, src, &fact.subject.domains, now)?;
+            receipt.domain_tags_added += tag_node_domains(&tx, dst, &fact.object.domains, now)?;
             receipt.nodes_upserted += 2;
-            apply_fact(&tx, fact, src, dst, &now, &mut receipt)?;
+            apply_fact(&tx, fact, src, dst, now, &mut receipt)?;
         }
 
         for (hash, vector) in &new_vectors {
-            store_embedding(&tx, hash, &fingerprint, vector, &now)?;
+            store_embedding(&tx, hash, fingerprint, vector, now)?;
         }
 
         tx.commit()?;
-        Ok(receipt)
+        Ok(UpsertAttempt::Committed(receipt))
     }
 
     /// Every record→file anchor still believed and still holding in the world.

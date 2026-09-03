@@ -168,3 +168,37 @@ async fn a_batch_repeat_of_a_diverted_restatement_is_dropped_not_double_counted(
          evidence of anything but verbosity"
     );
 }
+
+/// A lesson with no words costs itself and nothing else.
+///
+/// The store labels a memory's mirror node from the memory's own text and
+/// refuses a blank label, and the whole batch is one transaction — so a
+/// whitespace-only lesson handed to the store takes every good lesson of the
+/// same turn down with it, and the caller sees only a failed write. The turn's
+/// other lessons have to survive it.
+#[test]
+fn a_blank_lesson_is_dropped_and_its_siblings_are_kept() {
+    let mut blank = lesson("   \n\t ");
+    blank.trigger = "  ".to_string();
+    let writable = super::writable_lessons(vec![
+        lesson("commands are registered in registry.py"),
+        blank,
+        lesson("the deck reads its own snapshot"),
+    ]);
+    assert_eq!(
+        texts(&writable),
+        vec![
+            "commands are registered in registry.py",
+            "the deck reads its own snapshot",
+        ]
+    );
+}
+
+/// A lesson that is blank only in its body still has words, and is kept: the
+/// store labels the node from the composed string, not from the body alone.
+#[test]
+fn a_lesson_with_only_a_trigger_is_still_writable() {
+    let mut only_trigger = lesson("");
+    only_trigger.trigger = "editing a provider adapter".to_string();
+    assert_eq!(super::writable_lessons(vec![only_trigger]).len(), 1);
+}

@@ -292,11 +292,15 @@ pub(crate) fn pack_to_budget(
     // deferred candidate is admitted only out of what the normal ones left. The
     // walk within a band is still strict rank order, and a band is not a score:
     // with budget to spare every candidate is admitted exactly as before, and
-    // the tier decides nothing until something has to be dropped. Two passes
-    // over a shortlist that `max_frames * mmr_candidate_multiple` already
-    // bounded, so the extra walk is not a cost worth avoiding.
+    // the tier decides nothing until something has to be dropped. One pass per
+    // band over a shortlist that `max_frames * mmr_candidate_multiple` already
+    // bounded, so the extra walks are not a cost worth avoiding.
+    //
+    // `RecallTier::ALL` rather than a literal band list: a tier missing from
+    // the walk is a tier whose candidates land in neither `kept` nor `dropped`,
+    // and `ALL` is derived from a total match so a new tier cannot go missing.
     let mut ranked_kept = 0usize;
-    for band in [RecallTier::Normal, RecallTier::Deferred] {
+    for &band in RecallTier::ALL {
         for (index, candidate) in candidates.iter().enumerate() {
             if candidate.is_required() || candidate.meta.recall_tier != band {
                 continue;

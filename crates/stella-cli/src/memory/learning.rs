@@ -48,6 +48,30 @@ mod skill_lifecycle;
 #[cfg(test)]
 mod dedupe;
 
+/// Drop the lessons the store cannot write, keeping every one it can.
+///
+/// A memory's mirror node takes its display name from the memory's own text,
+/// and a node with a blank name is refused — a node has to be humanly citable
+/// (`L-C4`). A lesson with no words in either half is therefore unwritable, and
+/// the whole delta is one transaction, so handing the store one of them throws
+/// away every good lesson of the same turn. The model writes the text, so an
+/// empty one is model output like any other rather than a case that cannot
+/// arise.
+///
+/// The check is `recall_text`'s output, not the lesson alone: a lesson with no
+/// body but a real trigger still has words, and it is that composed string the
+/// store labels the node from.
+fn writable_lessons(lessons: Vec<ReflectionLesson>) -> Vec<ReflectionLesson> {
+    lessons
+        .into_iter()
+        .filter(|l| {
+            !applicability::recall_text(&l.lesson, &l.trigger)
+                .trim()
+                .is_empty()
+        })
+        .collect()
+}
+
 /// One SPEC 6.3 `memory` (log) event per lesson the store just wrote.
 ///
 /// Paired positionally with [`stella_context::UpsertReceipt::memory_node_ids`],
@@ -240,6 +264,7 @@ impl SessionMemory {
         // at recall is what makes forgetting durable — an unsuppressed lesson
         // would land in the log and stay re-mineable forever.
         let lessons = self.retain_unforgotten(turn_store.as_ref(), lessons);
+        let lessons = writable_lessons(lessons);
         // Then split what survives into lessons the store should learn and
         // restatements of what it already holds. The split — rather than the
         // filter this used to be — is the #2358 fix: a restatement must skip

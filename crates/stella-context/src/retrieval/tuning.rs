@@ -197,8 +197,23 @@ impl RecallTuning {
             } else {
                 DEFAULT_RECENCY_WEIGHT
             },
-            mmr_lambda: self.mmr_lambda.clamp(0.0, 1.0),
-            min_coverage: self.min_coverage.clamp(0.0, 1.0),
+            // `clamp` asks if a value is in range, not if it is a number, so
+            // NaN goes straight through it. Both knobs take the `is_finite`
+            // guard the two `f64` knobs above have. A NaN `mmr_lambda` makes
+            // every MMR test false. A NaN `min_coverage` never falls under
+            // the coverage score, so the lexical fallback stops firing. An
+            // infinity takes the default too, as `rrf_k` does. JSON can spell
+            // neither value, so no settings file reaches this today.
+            mmr_lambda: if self.mmr_lambda.is_finite() {
+                self.mmr_lambda.clamp(0.0, 1.0)
+            } else {
+                DEFAULT_MMR_LAMBDA
+            },
+            min_coverage: if self.min_coverage.is_finite() {
+                self.min_coverage.clamp(0.0, 1.0)
+            } else {
+                DEFAULT_MIN_COVERAGE
+            },
             coverage_topk: self.coverage_topk.max(1),
             max_vector_seeds: self.max_vector_seeds,
             lexical_limit: self.lexical_limit.max(1),

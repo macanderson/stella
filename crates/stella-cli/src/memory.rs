@@ -962,6 +962,16 @@ impl SessionMemory {
             format_rfc3339(now_secs),
         )
         .with_domains(domains);
+        // The turn's own execution row is what separates two turns that share a
+        // prompt and land in the same second — both timestamps are
+        // second-resolution, so without it the second write lands on top of the
+        // first and the earlier turn's outcome and files are gone. A turn that
+        // is recorded twice passes the same id and still updates one row. A
+        // path that never adopted `set_execution_id` keeps the older identity
+        // and the collision with it, which is tracked on its own issue.
+        if let Some(execution) = self.execution_id {
+            episode = episode.with_occurrence(execution.to_string());
+        }
         episode.outcome = outcome;
         episode.files_touched = files_touched.iter().map(|(path, _)| path.clone()).collect();
 
@@ -969,6 +979,12 @@ impl SessionMemory {
             episodes: vec![episode],
             ..Default::default()
         };
+        // Ignored on purpose, and it is the weakest link on this path: a
+        // failed episode must not fail the turn it describes, the deck calls
+        // this while it owns the terminal so stderr is not available, and the
+        // workspace has no logger to route the failure to. Reporting it is
+        // tracked on its own issue. The delta holds one record, so nothing
+        // else is lost with it.
         let _ = self.store.upsert(delta).await;
     }
 

@@ -96,13 +96,16 @@ impl SelectionReason {
 /// only when, something has to be dropped. Within a tier the ranking still
 /// decides everything.
 ///
-/// The vocabulary has exactly two entries, and the asymmetry is the point.
+/// The asymmetry between the entries is the point.
 /// [`Normal`](RecallTier::Normal) is the default for every node the store has
 /// ever written, so adding this changes nothing for code symbols, episodes, or
 /// ordinary memories. [`Deferred`](RecallTier::Deferred) has to be asked for.
 /// Nothing is *promoted* by a tier — a frame can only volunteer to yield first
 /// — which is what keeps a writer from buying rank by relabeling its own
 /// content.
+///
+/// [`RecallTier::ALL`] is the whole vocabulary, in the order the budget admits
+/// it, and it is what the packer walks.
 ///
 /// Its one caller today is the reflection lifecycle: a lesson about how the
 /// agent went about its work (`LessonKind::Process`) is written `Deferred`, so
@@ -155,6 +158,51 @@ impl RecallTier {
             _ => RecallTier::Normal,
         }
     }
+}
+
+/// Declares the tier family once and derives [`RecallTier::ALL`] from it.
+///
+/// The same token list builds `ALL` and an exhaustive `match`, so a tier added
+/// to the enum but not named here fails that match with `E0004`. That matters
+/// more here than for most enumerations: `pack_to_budget` walks `ALL` one band
+/// at a time, and a band it never walks holds candidates that reach neither the
+/// kept set nor the dropped one — the partition `L-C5` forbids, and invisible
+/// until a store starts writing the new tier.
+///
+/// Modelled on `model_call_roles!` in `stella-protocol`'s
+/// `event::call_role`, which binds `ModelCallRole::ALL` to its enum the same
+/// way.
+macro_rules! recall_tiers {
+    ($($tier:ident),* $(,)?) => {
+        impl RecallTier {
+            /// Every tier, in the order the budget admits them: a later entry
+            /// is offered only what the earlier ones left.
+            ///
+            /// Unlike most `ALL` lists this order is a contract, because
+            /// `pack_to_budget` reads it as the precedence order. It is the
+            /// enum's declaration order, which is also what `Ord` gives.
+            pub const ALL: &'static [Self] = &[$(Self::$tier,)*];
+
+            /// Compile-time proof that [`Self::ALL`] names every tier.
+            ///
+            /// Never called at runtime and does nothing: its body is an
+            /// exhaustive `match`, and that is the assertion. The `const` item
+            /// below forces it to be evaluated, so it cannot rot into dead
+            /// code.
+            const fn every_tier_is_in_all(self) {
+                match self {
+                    $(Self::$tier => (),)*
+                }
+            }
+        }
+
+        const _: () = RecallTier::Normal.every_tier_is_in_all();
+    };
+}
+
+recall_tiers! {
+    Normal,
+    Deferred,
 }
 
 /// Why a candidate frame did not make it into the assembled context.

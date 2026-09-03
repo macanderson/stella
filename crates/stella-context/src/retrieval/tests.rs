@@ -329,6 +329,67 @@ fn a_deferred_item_cannot_displace_a_required_one() {
     assert_eq!(dropped[0].id, "process_note");
 }
 
+/// A knob that is not a number takes the default.
+///
+/// `f32::clamp` passes NaN straight through — it answers "is this in range",
+/// and NaN is neither in nor out — so a clamp alone leaves both float knobs
+/// NaN. A NaN `mmr_lambda` makes every MMR comparison false, and a NaN
+/// `min_coverage` never compares below the coverage score, which turns off the
+/// lexical fallback the coverage floor exists to trigger.
+#[test]
+fn a_knob_that_is_not_a_number_falls_back_to_its_default() {
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let sane = RecallTuning {
+            mmr_lambda: bad,
+            min_coverage: bad,
+            ..RecallTuning::default()
+        }
+        .sanitized();
+        assert_eq!(sane.mmr_lambda, DEFAULT_MMR_LAMBDA, "mmr_lambda from {bad}");
+        assert_eq!(
+            sane.min_coverage, DEFAULT_MIN_COVERAGE,
+            "min_coverage from {bad}"
+        );
+    }
+    // A number outside the range is still clamped, not defaulted: the guard
+    // added a validity check, it did not replace the range check.
+    let clamped = RecallTuning {
+        mmr_lambda: 5.0,
+        min_coverage: -1.0,
+        ..RecallTuning::default()
+    }
+    .sanitized();
+    assert_eq!(clamped.mmr_lambda, 1.0);
+    assert_eq!(clamped.min_coverage, 0.0);
+}
+
+/// Every tier the vocabulary holds is a tier the packer walks.
+///
+/// One candidate per entry of [`RecallTier::ALL`], with room for none of them,
+/// so a tier the band walk skips shows up as a candidate in neither `kept` nor
+/// `dropped` — the partition failure `L-C5` forbids. A hand-written band list
+/// is right today and silently wrong the day a third tier is written by
+/// anything; this test cannot be compiled against one, because
+/// [`RecallTier::ALL`] is what the fix adds.
+#[test]
+fn every_tier_reaches_the_packer() {
+    let frames: Vec<Ranked> = RecallTier::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, tier)| {
+            let mut c = candidate(tier.as_str(), 1);
+            c.meta.id = i as i64;
+            c.meta.recall_tier = *tier;
+            c
+        })
+        .collect();
+    let total = frames.len();
+    // No slots at all, so every candidate must be reported as dropped.
+    let (kept, dropped) = pack_to_budget(frames, 1000, 0);
+    assert!(kept.is_empty(), "kept: {kept:?}");
+    assert_eq!(dropped.len(), total, "dropped: {dropped:?}");
+}
+
 // ── Required items survive ranking pressure (#713 deliverable 5) ────────────
 
 #[test]
