@@ -33,28 +33,31 @@ name: auto-tag
 # `[workspace.package].version` (every crate inherits it), the workspace-member
 # entries in Cargo.lock, and the local build-from-source Homebrew formula, then
 # lands via a tiny PR. A PR (not a direct push) because branch protection
-# requires changes to arrive by PR with the required `ci` checks green; those
-# checks are dispatched onto the branch explicitly because pushes made with
-# GITHUB_TOKEN never trigger `on: push`/`on: pull_request` workflows. Despite
-# the dispatched run going green, this same GITHUB_TOKEN-authored PR still
-# ends up permanently `mergeable_state: blocked` (#264, #275) — most likely
-# because the PR also picks up a second, unrunnable `action_required` check
-# suite from ci.yml's natural `pull_request` trigger for the same reason, but
-# rather than fully disambiguate every possible blocker (conversation
-# resolution, staleness, that phantom suite), this workflow just verifies the
-# run it dispatched itself is green and then bypasses whatever is blocking
-# with an admin-privileged token (`RELEASE_ADMIN_TOKEN`, falling back to ordinary
-# auto-merge — see the last step) rather than requiring a human `--admin`
-# merge every release. The bump commit carries `[skip release]`, so its merge
-# can never cut another release — the loop terminates after exactly one sync
-# per release.
+# requires changes to arrive by PR with the required checks green.
 #
-# Because that merge bypasses branch protection, the last step re-asks the
-# lockfile question against the MERGE RESULT before merging, not just against
-# the branch ci validated: `Cargo.lock` is a shared cell, and a sync branch cut
-# before a new crate landed composes into a lock that resolves for neither side
-# (#3336). scripts/sync-versions.sh asks the same question about its own output
-# at both call sites, so the tag cannot carry an unresolvable lock either.
+# That PR's own workflow runs are created and then parked: the repository's
+# Actions approval policy is `first_time_contributors`, and its author —
+# `github-actions[bot]` — is one, so every run sits at `action_required` until
+# somebody presses "Approve and run". Three releases in ninety minutes needed
+# that click, thirteen runs at a time (#5589). This workflow approves them
+# itself, and the PR then satisfies branch protection the ordinary way instead
+# of being merged past it. The bump commit carries `[skip release]`, so its
+# merge can never cut another release — the loop terminates after exactly one
+# sync per release.
+#
+# Merging past protection is what this used to do, with a maintainer PAT
+# (`RELEASE_ADMIN_TOKEN`). That path is dead: `enforce_admins` is on for main,
+# so the admin merge is refused like any other and the step warned while
+# reporting success. It stays only as a fallback for a repository that still
+# grants a bypass.
+#
+# Nothing required asks whether the branch and main compose, because `strict`
+# is off and every check runs on the branch rather than on the merge result. So
+# the last step re-asks the lockfile question against the MERGE RESULT before
+# merging: `Cargo.lock` is a shared cell, and a sync branch cut before a new
+# crate landed composes into a lock that resolves for neither side (#3336).
+# scripts/sync-versions.sh asks the same question about its own output at both
+# call sites, so the tag cannot carry an unresolvable lock either.
 #
 # GATED ON GREEN CI. This runs via `workflow_run` after the `ci` workflow
 # finishes on main, and only tags when that run *succeeded* — a commit that
@@ -73,17 +76,18 @@ on:
 
 concurrency:
   # Serialize so rapid merges compute their version off the previous tag.
-  # Waiting out the dispatched ci run (below) stretches each queued run from
-  # ~1 minute to the length of a full ci run (~4 minutes) — on a "shared,
+  # Waiting out the sync PR's required checks (below) stretches each queued
+  # run from ~1 minute to the length of the slowest one — on a "shared,
   # contested" main this can back the auto-tag queue up under a burst of
   # merges. Not dangerous (still serialized, every failure path warns and
-  # exits 0 rather than jamming), just slower than before.
+  # exits 0 rather than jamming), just slower than before. The wait is capped
+  # at 45 minutes so a stuck check cannot hold the queue indefinitely.
   group: auto-tag
   cancel-in-progress: false
 
 permissions:
   contents: write # push the tag + the version-sync branch
-  actions: write # dispatch release.yml + ci.yml
+  actions: write # dispatch release.yml + approve the sync PR's parked runs
   pull-requests: write # open/auto-merge the version-sync PR
   issues: write # open/comment/close the version-writeback-deferred issue (#3842)
 
@@ -314,7 +318,7 @@ jobs:
             "- \`packaging/homebrew/stella.rb\` (build-from-source formula)"
             "- \`CHANGELOG.md\` — whatever was under \`[Unreleased]\` now sits under \`[${version}]\`"
             ""
-            "The workflow dispatches the required \`ci\` checks onto this branch and merges once they're green (past GitHub's phantom \`action_required\` check suite for this GITHUB_TOKEN-authored PR — see #275); no action is needed unless the dispatched run fails."
+            "The workflow approves this PR's parked workflow runs, waits for the required checks, and merges once they are green (#5589). No action is needed unless a check fails."
           )
           body="$(printf '%s\n' "${body_lines[@]}")"
 
@@ -349,22 +353,88 @@ jobs:
             echo "::warning::could not resolve the write-back PR number; no-issue not applied"
           fi
 
-      # Merging a Cargo-only bot/version-sync PR the normal way never
-      # resolves. Confirmed live on PR #287 (chore(release): sync versions to
-      # 0.4.51): its `workflow_dispatch`-triggered ci run posted both required
-      # check-runs as green, yet `mergeable_state` stayed "blocked" — most
-      # likely because a GITHUB_TOKEN-triggered event can never trigger a
-      # *new* workflow run (recursion guard), so ci.yml's *natural*
-      # `pull_request` trigger on this same GITHUB_TOKEN-authored PR still
-      # spawns a check suite that can only ever complete as a zero-job
-      # "action_required" phantom, which branch protection's required-status-
-      # check evaluation may treat as permanently unresolved. Rather than
-      # fully disambiguate every possible blocker (that phantom suite,
-      # conversation resolution, staleness), this step just verifies the run
-      # it dispatched itself actually went green and then bypasses whatever
-      # is blocking with an admin-privileged merge — every sync PR needed a
-      # manual `--admin` merge before this (#264, #275).
-      - name: Wait for the dispatched checks, then merge past the GITHUB_TOKEN phantom check suite
+      # The write-back PR's own workflow runs are created and then parked:
+      # every one lands as `status: completed, conclusion: action_required`
+      # and never starts. The repository's Actions approval policy is
+      # `first_time_contributors`, and `github-actions[bot]` — the author of
+      # this PR — is one, so the whole suite waits for a person to press
+      # "Approve and run". Thirteen runs did that on #5571, #5576 and #5588,
+      # and a maintainer cleared each set by hand (#5589).
+      #
+      # Approving them is the whole fix. Three of main's five required
+      # contexts come from workflows this job cannot dispatch instead:
+      # `harbor_adapter + analyzer pytest` (bench.yml), `main is not
+      # known-broken` (main-red-hold.yml) and `gate steps no other workflow
+      # runs` (guard-self-tests.yml). Once the parked runs start, all five
+      # report and the PR merges under branch protection rather than past it.
+      #
+      # GITHUB_TOKEN first, RELEASE_ADMIN_TOKEN second: the narrower token is
+      # the one to spend if it is enough, and the log then says which one the
+      # repository actually needs. Never fatal — an unapproved run leaves the
+      # PR blocked, which is where it was already.
+      - name: Approve the version-sync PR's parked workflow runs
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ADMIN_TOKEN: ${{ secrets.RELEASE_ADMIN_TOKEN }}
+          BRANCH: bot/version-sync
+        run: |
+          set -euo pipefail
+
+          head_sha="$(gh pr view "${BRANCH}" --json headRefOid --jq '.headRefOid // empty' 2>/dev/null || true)"
+          if [ -z "${head_sha}" ]; then
+            echo "no open ${BRANCH} PR — nothing to approve."
+            exit 0
+          fi
+          echo "approving parked runs on ${head_sha}"
+
+          approve_one() {
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/$1/approve" >/dev/null 2>&1 && return 0
+            [ -n "${ADMIN_TOKEN:-}" ] || return 1
+            GH_TOKEN="${ADMIN_TOKEN}" \
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/$1/approve" >/dev/null 2>&1
+          }
+
+          # The runs are created by the `opened`/`synchronize` event this job
+          # just caused, so some of them do not exist yet on the first pass.
+          # Poll for two minutes and approve whatever has appeared. Polling to
+          # the end rather than stopping at the first empty pass: a straggler
+          # left parked is a required context that never reports, which is the
+          # failure this step exists to remove.
+          approved=0
+          for _ in $(seq 1 8); do
+            parked="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${head_sha}&per_page=100" \
+              --jq '.workflow_runs[] | select(.conclusion == "action_required") | .id')"
+            for run_id in ${parked}; do
+              if approve_one "${run_id}"; then
+                approved=$(( approved + 1 ))
+                echo "approved run ${run_id}"
+              else
+                echo "::warning::could not approve run ${run_id}; a required check may never report"
+              fi
+            done
+            sleep 15
+          done
+          echo "approved ${approved} parked run(s) on ${head_sha}"
+
+      # Merging a Cargo-only bot/version-sync PR used to need an admin bypass.
+      # The PR's own checks were parked (see the step above), so the required
+      # contexts never reported, and the workflow dispatched ci.yml onto the
+      # branch to watch a run of its own instead. That covered two of the five
+      # contexts main requires; the other three belong to workflows with no
+      # `workflow_dispatch` trigger, so the bypass was doing the rest of the
+      # work. On 2026-09-02 the bypass stopped working — `enforce_admins` is
+      # on, so `mergePullRequest` refused the admin merge with "5 of 5
+      # required status checks are expected", the step warned, and the job
+      # still reported success (#5589, run 33666329889).
+      #
+      # Approving the parked runs makes all five contexts report, so this step
+      # no longer dispatches anything and no longer bypasses anything: it
+      # waits for the required checks, re-asks the lockfile question against
+      # the merge result, and merges the ordinary way. The admin merge stays
+      # as a fallback for a repository whose protection still permits one.
+      - name: Wait for the required checks, then merge the version-sync PR
         if: steps.ver.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -378,48 +448,44 @@ jobs:
           # The previous step exits 0 early ("manifests already at ${version};
           # nothing to sync") when the bump was a no-op — a step exiting 0 is
           # a *success*, not a skip, so it doesn't stop this step from
-          # running. Without this guard, a no-op cycle would still dispatch a
-          # full ci run and then merge whatever bot/version-sync PR happens
-          # to be open — possibly a stale one left over from an earlier
-          # cycle. Bail out here if there's nothing open to merge.
+          # running. Without this guard, a no-op cycle would merge whatever
+          # bot/version-sync PR happens to be open — possibly a stale one left
+          # over from an earlier cycle. Bail out if there's nothing open.
           if [ -z "$(gh pr list --head "${BRANCH}" --state open --json number --jq '.[0].number // empty')" ]; then
             echo "no open ${BRANCH} PR — nothing to merge."
             exit 0
           fi
 
-          latest_run_id() {
-            gh run list --workflow=ci.yml --branch="${BRANCH}" \
-              --event=workflow_dispatch --limit=1 --json databaseId \
-              --jq '.[0].databaseId // empty'
-          }
-
-          # Capture whatever was already the newest workflow_dispatch run
-          # for this branch (usually the previous sync's), so the poll below
-          # can tell a genuinely new run apart from a stale one still cached
-          # at dispatch time — the required checks must be validated against
-          # *this* commit, not a leftover run id.
-          previous_run_id="$(latest_run_id)"
-
-          # Start the required checks — a GITHUB_TOKEN push doesn't trigger
-          # ci.yml's own `on: pull_request`.
-          gh workflow run ci.yml --ref "${BRANCH}"
-
-          run_id=""
-          for _ in $(seq 1 15); do
-            candidate="$(latest_run_id)"
-            if [ -n "${candidate}" ] && [ "${candidate}" != "${previous_run_id}" ]; then
-              run_id="${candidate}"
+          # `gh pr checks --required` reports on exactly the contexts branch
+          # protection requires, so this waits for the real gate rather than
+          # for a run of its own choosing. Its exit codes: 0 every required
+          # context passed, 8 one is still pending, anything else one failed
+          # or none has reported yet.
+          #
+          # "None has reported yet" is the normal state for the first minute
+          # or two, while the approved runs create their check runs, and it is
+          # indistinguishable from a red verdict by exit code alone. So a
+          # non-pending verdict only ends the wait once the grace window is
+          # over — before that it is treated as "not yet".
+          now() { date +%s; }
+          grace_until=$(( $(now) + 300 ))
+          deadline=$(( $(now) + 2700 ))
+          checks_green=false
+          while [ "$(now)" -lt "${deadline}" ]; do
+            rc=0
+            gh pr checks "${BRANCH}" --required || rc=$?
+            if [ "${rc}" -eq 0 ]; then
+              checks_green=true
               break
             fi
-            sleep 4
+            if [ "${rc}" -ne 8 ] && [ "$(now)" -ge "${grace_until}" ]; then
+              echo "::warning::a required check on ${BRANCH} is red or never reported — NOT merging. Read the PR's checks, fix the failure, and re-run auto-tag.yml."
+              exit 0
+            fi
+            sleep 30
           done
-          if [ -z "${run_id}" ]; then
-            echo "::warning::could not find the freshly dispatched ci run for ${BRANCH} — merge it manually once checks are green (see #275)."
-            exit 0
-          fi
-
-          if ! gh run watch "${run_id}" --exit-status; then
-            echo "::warning::the dispatched ci run for ${BRANCH} failed — NOT merging. Fix the failure and re-run ci.yml on the branch."
+          if [ "${checks_green}" != true ]; then
+            echo "::warning::the required checks on ${BRANCH} did not finish within 45 minutes — NOT merging. Merge it once they are green, or re-run auto-tag.yml."
             exit 0
           fi
 
@@ -434,16 +500,17 @@ jobs:
           # shape is AGENTS.md § Gotchas' shared-cell collision, and #3332's
           # post-merge canary is the backstop for when it still gets through).
           #
-          # This step merges with an admin bypass, so no required check stands
-          # between that composition and `main` — the question has to be asked
-          # here, against the actual merge result, or it is not asked at all.
+          # No required check asks it. `strict` is off on main's protection, so
+          # a sync branch is never made to catch up before it merges, and every
+          # check above ran on the branch rather than on the merge result. The
+          # question has to be asked here or it is not asked at all.
           #
           # Refusing rather than rebuilding the branch on the new tip: a rebuilt
-          # head would be merged past branch protection with ci having run on a
-          # commit that no longer exists. Refusing costs one cycle instead —
-          # whatever merge moved main starts another auto-tag run, which
-          # force-updates this same branch from the then-current tip. The
-          # version write-back is deferred, never dropped, and main stays green.
+          # head throws away every check that just reported and parks a fresh
+          # set of runs to approve. Refusing costs one cycle instead — whatever
+          # merge moved main starts another auto-tag run, which force-updates
+          # this same branch from the then-current tip. The version write-back
+          # is deferred, never dropped, and main stays green.
           git fetch origin main
           merge_verdict=0
           if git merge --no-commit --no-ff FETCH_HEAD >/dev/null 2>&1; then
@@ -538,16 +605,35 @@ jobs:
               || echo "::warning::could not close deferral issue #${open_defer_issue}"
           fi
 
+          # The ordinary merge, with the required checks green. Retried
+          # because `gh pr checks --required` reports on the contexts that
+          # have arrived, while branch protection also counts the ones that
+          # have not: a context whose run is still spawning reads as green
+          # here and as "expected" there. Ten tries over five minutes covers
+          # that gap without turning a genuine refusal into a long wait.
+          for _ in $(seq 1 10); do
+            if gh pr merge "${BRANCH}" --squash; then
+              exit 0
+            fi
+            sleep 30
+          done
+
           # RELEASE_ADMIN_TOKEN: a maintainer PAT with bypass rights on this
-          # branch's protection (documented in RELEASING.md). Without it,
-          # fall back to arming ordinary auto-merge plus a manual-merge
-          # warning — the phantom suite will still block it, but nothing
-          # regresses for a repo that hasn't set the secret up yet.
+          # branch's protection (documented in RELEASING.md). It is a fallback
+          # now, not the path: `enforce_admins` is on for main, which makes
+          # `mergePullRequest` refuse an admin merge on the same grounds it
+          # refuses any other (#5589). Kept for a repository whose protection
+          # still grants a bypass.
           if [ -n "${ADMIN_MERGE_TOKEN:-}" ]; then
             if GH_TOKEN="${ADMIN_MERGE_TOKEN}" gh pr merge "${BRANCH}" --squash --admin; then
               exit 0
             fi
             echo "::warning::admin merge of ${BRANCH} with RELEASE_ADMIN_TOKEN failed — falling back to auto-merge."
           fi
+
+          # Last resort: arm auto-merge so a context that reports late still
+          # lands the write-back with no human action, and say so, because a
+          # step that reaches here has not merged anything.
           gh pr merge "${BRANCH}" --squash --auto \
-            || echo "::warning::could not enable auto-merge — merge the ${BRANCH} PR manually once checks are green (see #275)."
+            || echo "::warning::could not enable auto-merge — merge the ${BRANCH} PR manually once checks are green."
+          echo "::warning::${BRANCH} did not merge in this run; auto-merge is armed. If it is still open, check that its workflow runs are not parked in action_required (#5589)."
