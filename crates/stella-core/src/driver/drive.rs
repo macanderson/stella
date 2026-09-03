@@ -66,6 +66,16 @@ use super::{Engine, TurnOutcome, bus, lifecycle, settlement, step_cap_reason};
 use crate::event_sender::EventSender;
 use crate::step::{AbortKind, TurnState};
 
+/// The `ToolOutput::Error` that closes a `tool_use` left open when the step
+/// cap ends the turn.
+///
+/// A cap reached after a step lands on a well-paired transcript, so this
+/// finds nothing to close. A cap already met on entry does not: the transcript
+/// is still the caller's own, and a caller resuming at `max_steps` can hand in
+/// a tail nothing answered. Closing it is the repair every other exit at this
+/// boundary performs.
+const STEP_CAP_TOOL_RESULT: &str = "not executed — turn aborted at the step cap";
+
 impl Engine<'_> {
     /// Drive `state` to an ordinary end: a loop over [`Engine::run_step`],
     /// wrapped in the turn framing and the checkpoint and halt obligations a
@@ -117,6 +127,11 @@ impl Engine<'_> {
                 // failure: the run stopped by policy, it did not fall over
                 // (#1524).
                 let reason = step_cap_reason(self.config.max_steps);
+                crate::step::close_open_tool_calls(
+                    state.messages_mut(),
+                    STEP_CAP_TOOL_RESULT,
+                    events,
+                );
                 let _ = events.send(AgentEvent::Error {
                     message: reason.clone(),
                     retryable: false,

@@ -64,6 +64,10 @@ pub mod netdeny;
 pub mod own_change;
 pub mod policy;
 pub mod read;
+/// The last look a mutating file tool takes before it writes. Crate-internal:
+/// it is a rule the file tools hold themselves to, not a surface anything
+/// outside calls.
+mod recheck;
 pub mod registry;
 pub mod rootfd;
 pub mod scratch;

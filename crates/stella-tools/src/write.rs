@@ -28,6 +28,21 @@
 //! * **`edit_file` is untouched.** It replaces a needle it had to know to
 //!   name, and it is the escape hatch the refusal points at.
 //!
+//! # The stale-snapshot guard
+//!
+//! Coverage asks whether the model was shown this file. That is a fact about
+//! the session, not about the disk.
+//!
+//! The read that earned it can be many turns old. Anything written to the file
+//! since is wiped out by content composed before it existed.
+//!
+//! So an overwrite is refused for a second reason: the ledger's hash of what
+//! the model last saw stops matching the bytes on disk. The crate's `recheck`
+//! module asks, through the descriptor the write is about to walk.
+//!
+//! A file the ledger has no hash for is one this session never saw whole. The
+//! coverage guard has already refused it.
+//!
 //! # Registering what was created (#5034)
 //!
 //! A write that creates a file registers it in the workspace code graph and
@@ -218,7 +233,8 @@ impl WriteFile {
                     );
                 }
             };
-            if handle.stat(&path).is_ok() && !self.ledger.saw_whole_file(&scope_root, &path) {
+            let exists = handle.stat(&path).is_ok();
+            if exists && !self.ledger.saw_whole_file(&scope_root, &path) {
                 return ToolOutput::classified_error(
                     stella_protocol::ErrorClass::RefusedByPolicy,
                     format!(
@@ -226,6 +242,23 @@ impl WriteFile {
                          not been shown the whole file, and `write_file` replaces all of it. Read \
                          it first (`read_file` with no offset/limit), then write — or use \
                          `edit_file` to change part of it in place. Nothing was written."
+                    ),
+                );
+            }
+            // The stale-snapshot guard (module header), in this pass. A batch
+            // refused on its third file must have written neither of the first
+            // two.
+            if exists
+                && let Some(seen) = self.ledger.last_seen_sha(&scope_root, &path)
+                && let Err(drift) = crate::recheck::confirm(&handle, &path, &seen).await
+            {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!(
+                        "`{FILES_KEY}`[{index}]: refusing to overwrite `{path}` — {} since you \
+                         read it, so this content was composed from bytes disk does not hold. \
+                         Nothing was written — read it again, then write.",
+                        drift.because()
                     ),
                 );
             }
@@ -332,21 +365,39 @@ impl WriteFile {
             }
         };
 
-        // The no-clobber guard (module header). Asked through the descriptor
-        // already open for the write rather than by path, so the existence
-        // answer and the bytes that follow it name the same file; and asked
-        // *before* the write, because a refusal that arrives after the content
-        // is gone is a report, not a boundary. A `stat` that fails for any
-        // reason — absent, unreadable, an escape — is not evidence that
-        // something is there to destroy, and the write below answers it
-        // properly.
-        if handle.stat(path).is_ok() && !self.ledger.saw_whole_file(&scope_root, path) {
+        // The no-clobber guard (module header). It asks through the descriptor
+        // already open for the write, not by path. So the existence answer and
+        // the bytes after it name one file. It asks before the write too: a
+        // refusal that arrives after the content is gone is a report, not a
+        // boundary. A `stat` that fails for any reason — absent, unreadable,
+        // an escape — is no evidence that something is there to destroy. The
+        // write below answers that case.
+        let exists = handle.stat(path).is_ok();
+        if exists && !self.ledger.saw_whole_file(&scope_root, path) {
             return ToolOutput::classified_error(
                 stella_protocol::ErrorClass::RefusedByPolicy,
                 format!(
                     "refusing to overwrite `{path}`: this session has not been shown the whole file, \
                  and `write_file` replaces all of it. Read it first (`read_file` with no \
                  offset/limit), then write — or use `edit_file` to change part of it in place."
+                ),
+            );
+        }
+
+        // The stale-snapshot guard (module header). A creation has nothing to
+        // clobber. A path with no hash in the ledger was never seen whole, and
+        // the guard above refused it.
+        if exists
+            && let Some(seen) = self.ledger.last_seen_sha(&scope_root, path)
+            && let Err(drift) = crate::recheck::confirm(&handle, path, &seen).await
+        {
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!(
+                    "refusing to overwrite `{path}` — {} since you read it, so this content was \
+                     composed from bytes disk does not hold and writing it would destroy that \
+                     change. Nothing was written — read it again, then write.",
+                    drift.because()
                 ),
             );
         }
