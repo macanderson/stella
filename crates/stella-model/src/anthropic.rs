@@ -102,11 +102,12 @@ impl AnthropicProvider {
             pricing,
             previous_tails: std::sync::Mutex::new(Vec::new()),
             cache_ttl: CacheTtl::default(),
-            // Off by default. Context editing trades prompt cache for context
-            // room, and a session that never outgrows its window would pay the
-            // invalidation and get nothing; the caller who knows the shape of
-            // its conversation opts in.
-            context_management: None,
+            // The fleet-wide decision, read from one place rather than
+            // written as an inline `None` no test can see: context editing is
+            // declared off until its trigger is measured (ADR 0026, `#5796`). A
+            // caller that knows the shape of its own conversation still opts
+            // in with `with_context_editing`.
+            context_management: context_edit::shipped_context_management(),
             recovery: StreamRecovery::default(),
             unary_client: http::unary_client(),
             first_byte_deadline: http::FIRST_BYTE_TIMEOUT,
@@ -168,16 +169,22 @@ impl AnthropicProvider {
     /// context-management field in the chat-completions dialect first, plus a
     /// row on [`crate::provider_parity`] — neither exists.
     ///
-    /// # No caller, until the trigger is measured
+    /// # Declared off, until the trigger is measured
     ///
-    /// Nothing calls this outside its tests, because the value that decides
-    /// whether it helps or hurts — `trigger_tokens` — has not been measured.
-    /// Below the trigger nothing clears and a short conversation stays fully
-    /// cached; above it, every edit invalidates the cached prefix from the
-    /// edit point and pays a cache write. At Stella's observed cache-hit rate
-    /// that is a read at $0.30/MTok against a write at $3.75/MTok, so a
-    /// guessed trigger is a 12.5x mistake in whichever direction it is wrong.
-    /// #3756 holds the panel design that would settle it.
+    /// Nothing calls this outside its tests, and that is a decision rather
+    /// than a gap: the value that decides whether the feature helps or hurts —
+    /// `trigger_tokens` — has not been measured. Below the trigger nothing
+    /// clears and a short conversation stays fully cached; above it, every
+    /// edit invalidates the cached prefix from the edit point and pays a cache
+    /// write. At Stella's observed cache-hit rate that is a read at $0.30/MTok
+    /// against a write at $3.75/MTok, so a guessed trigger is a 12.5x mistake
+    /// in whichever direction it is wrong.
+    ///
+    /// The decision is recorded in
+    /// `doc:adr/0026-context-editing-ships-off-until-measured` and held as a
+    /// value by `context_edit::SHIPPED_TRIGGER_TOKENS`, which every fresh
+    /// provider reads. `#5796` is the panel that would replace it with a
+    /// measured number; `#3756` is where the question was raised.
     #[must_use]
     pub fn with_context_editing(
         mut self,

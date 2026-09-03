@@ -1,12 +1,12 @@
-//! Context editing reaches the wire in the shape the API accepts — and does
-//! not reach it at all unless the session asked for it.
+//! Context editing reaches the wire in the shape the API accepts. It reaches
+//! it only when a session asks, or when the build declares a trigger in
+//! `context_edit::SHIPPED_TRIGGER_TOKENS`. Today it declares none.
 //!
-//! The off-by-default half is the one worth a test. Context editing trades
-//! prompt cache for context room: clearing invalidates the cached prefix from
-//! the point of the edit, and a cache re-write is priced an order of magnitude
-//! above a cache read. A session that quietly gained this feature would get
-//! slower and dearer with no symptom, which is exactly the failure this
-//! repository keeps finding in its own benchmarks.
+//! The off half is the one worth a test. Clearing buys context room and spends
+//! prompt cache: it throws away the cached prefix from the point of the edit,
+//! and a re-write costs about ten times a read. A session that gained this
+//! feature by accident would get slower and dearer with no sign. That is the
+//! failure this repository keeps finding in its own benchmarks.
 
 use super::*;
 
@@ -32,11 +32,16 @@ fn request() -> CompletionRequest {
     }
 }
 
-/// Nothing about a request changes until a caller opts in — no field, and no
-/// beta header. Both halves matter: the header is part of the request the
-/// prompt cache is keyed on.
+/// A session that did not opt in sends what the build declares. Today
+/// `SHIPPED_TRIGGER_TOKENS` is `None`, so it sends no field and no beta
+/// header. The header counts: the prompt cache is keyed on it.
+///
+/// The test reads the constant rather than asserting the absence. So it still
+/// means something once a panel sets a trigger: set the constant, and this
+/// asks for that trigger on the wire. Without it, the value and the request
+/// could disagree and nothing would say so.
 #[tokio::test]
-async fn a_session_that_did_not_opt_in_sends_no_context_management() {
+async fn a_session_that_did_not_opt_in_sends_the_trigger_this_build_ships() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
@@ -50,14 +55,22 @@ async fn a_session_that_did_not_opt_in_sends_no_context_management() {
 
     let sent = &server.received_requests().await.unwrap()[0];
     let body: serde_json::Value = serde_json::from_slice(&sent.body).unwrap();
-    assert!(
-        body.get("context_management").is_none(),
-        "context_management must be absent by default: {body}"
-    );
-    assert!(
-        sent.headers.get("anthropic-beta").is_none(),
-        "no beta header rides on a request carrying no beta field"
-    );
+    match crate::anthropic::context_edit::SHIPPED_TRIGGER_TOKENS {
+        None => {
+            assert!(
+                body.get("context_management").is_none(),
+                "the build ships no trigger, so no session may send one: {body}"
+            );
+            assert!(
+                sent.headers.get("anthropic-beta").is_none(),
+                "no beta header rides on a request carrying no beta field"
+            );
+        }
+        Some(trigger) => assert_eq!(
+            body["context_management"]["edits"][1]["trigger"]["value"], trigger,
+            "the wire must carry the trigger the build declares: {body}"
+        ),
+    }
 }
 
 /// The opted-in shape, asserted field by field against the documented
