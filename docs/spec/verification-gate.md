@@ -64,8 +64,15 @@ re-checks the evidence (#3511) cannot gate on either.
 `crates/stella-core/tests/spend_gate.rs` drives the raw step loop over a
 scripted `Provider` and a scripted `ToolExecutor`, one turn per scenario, and
 pins what the turn bought: the model calls, the tool runs, and the reported
-cost. The scenarios are a one-step answer, a two-tool step, a retry after a
-429, and a turn the loop detector stops. A failure names the scenario, the
+cost. Four scenarios are plain, one model call per step: a one-step answer, a
+two-tool step, a retry after a 429, and a turn the loop detector stops.
+
+The rest are the paths that buy a call no step asked for, and each names the
+module it prices: the overflow summarizer, a mid-turn provider fallback, an
+output-budget clamp, a parked wait for a 429 that will not clear, a loop
+steer the model obeys, the prove-it re-ask, and a Stop hook that denies and
+holds the turn open. Several are pinned from both sides: what the arm buys,
+and the bound that stops it buying more. A failure names the scenario, the
 pinned numbers and the new ones.
 
 It needs no verification machinery, which is why it could be rebuilt here at
