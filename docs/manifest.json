@@ -125,6 +125,11 @@
       "status": "implemented",
       "title": "ADR 0024: Release builds unwind on panic"
     },
+    "adr/0025-nested-frontmatter-refusal-scope": {
+      "path": "docs/adr/0025-nested-frontmatter-refusal-scope.md",
+      "status": "implemented",
+      "title": "ADR 0025: Refuse a nested key where it widens a grant"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

@@ -904,6 +904,10 @@ const SENTENCE_MIN_CHARS: usize = 24;
 /// The provenance it replaced is not lost — [`render_skill_markdown`] writes
 /// it into the file, which is where a person reading the skill looks for it
 /// and where no scorer is charged for it.
+///
+/// Empty for a lesson that has no words: whitespace, or punctuation with no
+/// sentence in front of it. [`mine_skill_candidates`] drops such a cluster rather
+/// than minting a file the loader will refuse forever.
 fn candidate_description(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut end = flat.len();
@@ -1017,6 +1021,18 @@ pub fn mine_skill_candidates(
         if is_rejected(&text, rejected, config.min_similarity) {
             continue;
         }
+        // A lesson with no words describes nothing. `skill_from_file_with_origin`
+        // refuses an empty `description:` with `MissingDescription`. So this
+        // candidate would land a file that can never load, and it would hold one
+        // of the session's `max_per_session` slots. The next session would write
+        // the same dead file, since `already_captured` reads only skills that
+        // loaded. One odd note is enough to get here: a cluster of one is a
+        // candidate as soon as any note is salient, whatever `min_occurrences`
+        // says.
+        let description = candidate_description(&text);
+        if description.is_empty() {
+            continue;
+        }
 
         let domains = union_domains(&cluster);
         let mut sorted = cluster;
@@ -1037,7 +1053,7 @@ pub fn mine_skill_candidates(
             // subject matter (#5335). The occurrence count that used to sit
             // here is written into the file instead — see
             // `candidate_description` and `render_skill_markdown`.
-            description: candidate_description(&text),
+            description,
             domains,
             occurrences,
             salient,

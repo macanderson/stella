@@ -770,3 +770,74 @@ force = "info"
         requeried.dropped
     );
 }
+
+/// **Witness for `#5509`.** A record the promotion ledger retired stops steering, even
+/// while its own `status` field still reads `active`.
+///
+/// The two writes are separate. `stella context` retracts a record by flipping the
+/// `.toml`'s status and appending a `Retired` event, and nothing in the engine can
+/// see whether both landed. `blocking_reason` read the status field alone, so the
+/// ledger's half of a half-applied retraction went on steering the model as
+/// ordinary policy — and went on being able to deny a tool call.
+#[test]
+fn a_ledger_retirement_stops_a_still_active_record_from_steering() {
+    let corpus = toml_record(
+        "ctx.acme.web.retired-rule",
+        "Deploy from main only.",
+        "must",
+    );
+    let files = [md(".stella/rules/acme.web.toml", &corpus)];
+
+    // The control: with nothing retired, this record steers. Without it the
+    // assertions below could pass on a record that never rendered at all.
+    let steering = load(&[], &files, &facts()).render(Channel::Cached, None);
+    assert!(
+        steering.text.contains("Deploy from main only."),
+        "the control must steer or the witness proves nothing: {}",
+        steering.text
+    );
+
+    let mut retired = facts();
+    retired
+        .retired_lineages
+        .insert((Trust::Project, "ctx.acme.web.retired-rule".to_string()));
+    let registry = load(&[], &files, &retired);
+
+    let entry = registry.by_handle("retired-rule").expect("still loaded");
+    assert_eq!(
+        entry.disposition,
+        Disposition::Block {
+            reason: "the promotion ledger retired its lineage".to_string()
+        },
+        "a retired record stays visible to `explain` and stops steering"
+    );
+    let cached = registry.render(Channel::Cached, None);
+    assert!(cached.text.is_empty(), "{}", cached.text);
+    let volatile = registry.render(Channel::Volatile, None);
+    assert!(volatile.text.is_empty(), "{}", volatile.text);
+    assert!(
+        !entry.is_enforced(),
+        "and a record that must not steer must certainly not deny a tool call"
+    );
+}
+
+/// The retirement fact is qualified by tier for the reason approval is: a
+/// `lineage_id` is author-supplied, so an entry naming the project tier must not
+/// reach a user-tier record that happens to share the name.
+#[test]
+fn a_project_tier_retirement_leaves_a_user_record_of_the_same_lineage_steering() {
+    let corpus = toml_record("ctx.acme.web.shared-name", "Deploy from main only.", "must");
+    let mut retired = facts();
+    retired
+        .retired_lineages
+        .insert((Trust::Project, "ctx.acme.web.shared-name".to_string()));
+
+    let registry = load(&[md(".stella/rules/acme.web.toml", &corpus)], &[], &retired);
+    assert!(
+        registry
+            .render(Channel::Cached, None)
+            .text
+            .contains("Deploy from main only."),
+        "the user record is a different record, whatever it is called"
+    );
+}

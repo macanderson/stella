@@ -1026,6 +1026,26 @@ mod tests {
         );
     }
 
+    /// The other half of ADR 0025. A key that grants nothing may be nested, and
+    /// the file still loads. Pinned here, so a wider refusal later has to delete
+    /// a test that names the record.
+    ///
+    /// `rules.rs` refuses any record with a nested key. This loader does not.
+    /// A bad `description:` costs a label, since the first line of the body
+    /// stands in. A bad `tools:` costs the whole registry. Refusing the file
+    /// for the first would take an agent away over a key nobody reads.
+    #[test]
+    fn nesting_under_a_key_that_grants_nothing_still_loads() {
+        let raw = "---\nname: reviewer\ndescription:\n  short: s\n  long: l\n---\nReview the diff.";
+        let agent = agent_from_file("/x/reviewer.md", raw).expect("the definition still loads");
+        assert_eq!(agent.name, "reviewer");
+        assert_eq!(
+            agent.description, "Review the diff.",
+            "an unreadable description falls back to the body's first line"
+        );
+        assert_eq!(agent.tools, None, "and it asked for no restriction");
+    }
+
     #[test]
     fn toolbelt_wildcards_and_empties_mean_all_tools() {
         assert_eq!(parse_toolbelt(None), None);
