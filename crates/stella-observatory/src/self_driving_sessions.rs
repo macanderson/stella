@@ -685,16 +685,15 @@ fn episode_rows(conn: &Connection) -> Result<Vec<Value>, crate::db::DbError> {
 fn lesson_rows(conn: &Connection) -> Result<Vec<Value>, crate::db::DbError> {
     collect_rows(
         conn,
-        "SELECT public_id, kind, content, salience, recorded_at
+        "SELECT public_id, kind, content, recorded_at
          FROM memory WHERE superseded_at IS NULL
          ORDER BY recorded_at DESC LIMIT 500",
         |r| {
-            let recorded: String = r.get(4)?;
+            let recorded: String = r.get(3)?;
             Ok(json!({
                 "id": r.get::<_, String>(0)?,
                 "kind": r.get::<_, String>(1)?,
                 "text": truncate(&r.get::<_, String>(2)?, 240),
-                "salience": r.get::<_, f64>(3)?,
                 "recorded_at": recorded,
                 "recorded_unix": parse_unix(&recorded).unwrap_or(0),
             }))

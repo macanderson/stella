@@ -1,10 +1,23 @@
 //! Filesystem-backed skill discovery for session recall and extension menus.
+//!
+//! This is where a real path turns into the text `stella_core::skills` reads.
+//! That text is split on `/`. So every path that leaves here goes through
+//! [`slash_path`] first.
 
 use std::path::Path;
 
 #[cfg(test)]
 use stella_core::skills::Skill;
 use stella_core::skills::{self, LoadSkillsOptions, SkillSource};
+
+/// A real path as the text the skills module reads, split on `/`.
+///
+/// It folds the mark this platform uses and no other. So a Unix file name that
+/// holds a `\` keeps it. On Unix the call does nothing. On Windows it keeps the
+/// slug, the tier and the guard from reading a whole path as one name.
+fn slash_path(path: &Path) -> String {
+    skills::paths::to_slash(&path.display().to_string(), std::path::MAIN_SEPARATOR).into_owned()
+}
 
 /// Filesystem-backed [`SkillSource`] reading the workspace + user-global
 /// skill directories. Outside consumers use the loading functions below.
@@ -31,7 +44,7 @@ impl SkillSource for FsSkillSource {
                     if path.extension().is_some_and(|e| e == "md") {
                         if let Ok(content) = std::fs::read_to_string(&path) {
                             files.push(skills::SkillFile {
-                                path: path.display().to_string(),
+                                path: slash_path(&path),
                                 content,
                             });
                         }
@@ -40,7 +53,7 @@ impl SkillSource for FsSkillSource {
                         let nested = path.join("SKILL.md");
                         if let Ok(content) = std::fs::read_to_string(&nested) {
                             files.push(skills::SkillFile {
-                                path: nested.display().to_string(),
+                                path: slash_path(&nested),
                                 content,
                             });
                         }
@@ -54,11 +67,7 @@ impl SkillSource for FsSkillSource {
 
 /// `<workspace>/.stella/skills` — the workspace-scope skills directory.
 pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
-    workspace_root
-        .join(".stella")
-        .join("skills")
-        .display()
-        .to_string()
+    slash_path(&workspace_root.join(".stella").join("skills"))
 }
 
 /// Every `*.md` file physically present in `dir`, as the exact path strings
@@ -69,8 +78,9 @@ pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
 /// — disabled from the SKILLS tab, excluded by authority, or dropped by a load
 /// diagnostic — and the no-clobber guard has to see it anyway (#737). Paths are
 /// rebuilt from `dir` plus the entry's file name so they match the guard's own
-/// `format!("{dir}/{name}.md")` spelling exactly. Unreadable dir ⇒ empty, which
-/// is safe only because the caller unions this with the loaded paths.
+/// `format!("{dir}/{name}.md")` spelling exactly. A trailing mark is trimmed the
+/// way the guard trims it. Unreadable dir ⇒ empty, which is safe only because
+/// the caller unions this with the loaded paths.
 pub(crate) fn skill_paths_on_disk(dir: &str) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -81,7 +91,7 @@ pub(crate) fn skill_paths_on_disk(dir: &str) -> Vec<String> {
         .filter_map(|entry| {
             let name = entry.file_name();
             let name = name.to_str()?;
-            Some(format!("{}/{name}", dir.trim_end_matches('/')))
+            Some(format!("{}/{name}", dir.trim_end_matches(['/', '\\'])))
         })
         .collect()
 }
@@ -90,7 +100,7 @@ pub(crate) fn skill_paths_on_disk(dir: &str) -> Vec<String> {
 /// string without a home, which the loader skips silently).
 fn user_skills_dir() -> String {
     crate::paths::user_extension_root()
-        .map(|root| root.join("skills").display().to_string())
+        .map(|root| slash_path(&root.join("skills")))
         .unwrap_or_default()
 }
 
@@ -132,7 +142,7 @@ pub(crate) fn load_workspace_skills_with_authority(
 pub(crate) fn load_contributed_dir(dir: &Path) -> skills::LoadedSkills {
     skills::load_skills_from_dir(
         &FsSkillSource,
-        &dir.display().to_string(),
+        &slash_path(dir),
         skills::SkillOrigin::Contributed,
     )
 }

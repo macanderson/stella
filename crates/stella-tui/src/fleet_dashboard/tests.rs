@@ -577,3 +577,24 @@ fn the_header_row_carries_the_wordmark_on_its_right_edge() {
         "the wordmark holds the upper right (SPEC 3.3):\n{frame}"
     );
 }
+
+/// A wide title must not overrun the cell it was cut to fit.
+///
+/// Every budget here is a column count. It is a table column, or the pane's
+/// own width. Spent in `char`s, a CJK title draws twice as wide as its cell
+/// and pushes the rest of the row aside. The width here is `unicode_width`'s
+/// own, not the helper under test.
+#[test]
+fn a_wide_character_title_fits_the_column_it_is_cut_to() {
+    use unicode_width::UnicodeWidthStr;
+
+    let title = "重构鉴权模块并补上失败的见证测试";
+    for max in [1usize, 8, 22, 48] {
+        let cut = truncate(title, max);
+        assert!(
+            UnicodeWidthStr::width(cut.as_str()) <= max,
+            "{cut:?} is wider than its {max}-column cell"
+        );
+    }
+    assert_eq!(truncate(title, 0), "", "a zero-column cell draws nothing");
+}

@@ -26,6 +26,12 @@ use crate::composer::SlashMenu;
 use crate::model::{AskUserPrompt, FileState, InlineDiffRef};
 
 mod entry;
+// The crate's display-column vocabulary, beside `row` because it is the same
+// vocabulary for plain strings that `row` already speaks for styled spans.
+// `pub(crate)` because the surfaces that lay out fixed columns — the settings
+// panels, the deck overlays, the diff rules, the fleet table — live outside
+// `render`, and each had grown a private copy of it.
+pub(crate) mod columns;
 // `pub(crate)` for `wrap_one_indent` alone: the startup-notice dialog
 // (`crate::notice`) wraps its detail clauses with the same hanging indent the
 // transcript uses, rather than growing a second wrapper beside it.
@@ -456,15 +462,16 @@ pub(crate) fn render_slash_popup(
             for (hot, run) in highlight_runs(&name, &m.highlights) {
                 spans.push(Span::styled(run, if hot { lit } else { gold }));
             }
-            let pad = 16usize.saturating_sub(name.chars().count());
+            // Columns here, to match the `Span::width` below. A workspace
+            // names its own commands. A live value can be a model slug.
+            let pad = 16usize.saturating_sub(columns::width(&name));
             spans.push(Span::styled(" ".repeat(pad), gold));
             spans.push(Span::styled(format!(" {description}"), dim));
             if let Some(value) = live_value {
                 let used: usize = spans.iter().map(Span::width).sum();
-                if used + value.chars().count() + 1 < inner_w {
-                    spans.push(Span::raw(
-                        " ".repeat(inner_w - used - value.chars().count() - 1),
-                    ));
+                let value_w = columns::width(&value);
+                if used + value_w + 1 < inner_w {
+                    spans.push(Span::raw(" ".repeat(inner_w - used - value_w - 1)));
                     spans.push(Span::styled(value, muted));
                 }
             }

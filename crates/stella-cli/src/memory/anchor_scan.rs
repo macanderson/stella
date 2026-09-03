@@ -16,8 +16,18 @@
 //! the command merely invokes, and because `memory_cmd` sits on the repo's
 //! 1500-line file ceiling.
 
+use std::path::Path;
+use std::time::{Duration, Instant};
+
 use colored::Colorize;
 use stella_context::{Clock, ContextStore, SystemClock};
+
+/// Time cap for the auto sweep at mount. Each anchor costs one file
+/// check, and a slow disk — not a long list — is what could make that
+/// slow. So the cap is time, not a row count. Anything left unchecked
+/// just waits for the next mount; an ended anchor drops off the list,
+/// so no anchor can wait forever.
+const MOUNT_SCAN_BUDGET: Duration = Duration::from_millis(200);
 
 /// One anchor the scan found pointing at a file that is no longer there.
 struct StaleAnchor {
@@ -26,6 +36,22 @@ struct StaleAnchor {
     /// The anchoring record's text — a memory's content or an episode's
     /// summary — so the report can name what goes stale.
     source: String,
+}
+
+/// Open this workspace's context store, if it has one yet. `Ok(None)` is not
+/// an error; it means there is no `context.db` yet. Both callers below treat
+/// that the same as "a store with nothing stale" — a workspace with no
+/// memories has no anchors to end.
+fn open_context_store(workspace_root: &Path) -> Result<Option<ContextStore>, String> {
+    let Some(context_db) =
+        stella_store::existing_workspace_private_sqlite_path(workspace_root, "context.db")
+            .map_err(|e| format!("cannot resolve context store: {e}"))?
+    else {
+        return Ok(None);
+    };
+    ContextStore::open(&context_db)
+        .map(Some)
+        .map_err(|e| format!("cannot open context store: {e}"))
 }
 
 /// Walk the open `observed_in` anchors and report — or end — the ones whose
@@ -39,18 +65,10 @@ struct StaleAnchor {
 /// Read-only unless `end_stale`. Ending an anchor is a write to history, and
 /// the default for a command named `validate` must be to tell you what it
 /// found, not to change the store because you ran an inspection.
-pub(crate) fn scan_stale_anchors(
-    workspace_root: &std::path::Path,
-    end_stale: bool,
-) -> Result<(), String> {
-    let Some(context_db) =
-        stella_store::existing_workspace_private_sqlite_path(workspace_root, "context.db")
-            .map_err(|e| format!("cannot resolve context store: {e}"))?
-    else {
+pub(crate) fn scan_stale_anchors(workspace_root: &Path, end_stale: bool) -> Result<(), String> {
+    let Some(context) = open_context_store(workspace_root)? else {
         return Ok(());
     };
-    let context =
-        ContextStore::open(&context_db).map_err(|e| format!("cannot open context store: {e}"))?;
     let anchors = context
         .open_anchors()
         .map_err(|e| format!("cannot read anchors: {e}"))?;
@@ -122,6 +140,61 @@ pub(crate) fn scan_stale_anchors(
     Ok(())
 }
 
+/// Runs [`scan_stale_anchors`] on its own, at every session mount, right
+/// next to warm. It uses the store warm already opened. So a deleted
+/// file's anchor stops feeding graph links, with no need to run
+/// `stella memory validate --end-stale` by hand.
+///
+/// Stays quiet on failure and on success — this is upkeep the session
+/// does for itself, not a report. `stella memory validate` is the
+/// command for that.
+pub(crate) fn scan_stale_anchors_at_mount(context: &ContextStore, workspace_root: &Path) {
+    let deadline = Instant::now() + MOUNT_SCAN_BUDGET;
+    let _ = end_stale_anchors_within_deadline(context, workspace_root, deadline);
+}
+
+/// The bound at work: ends world validity for each open anchor whose
+/// file is gone, checked before `deadline`. Split out so a test can
+/// pass a deadline already past, and prove the cap really stops the
+/// walk.
+fn end_stale_anchors_within_deadline(
+    context: &ContextStore,
+    workspace_root: &Path,
+    deadline: Instant,
+) -> Result<usize, String> {
+    let anchors = context
+        .open_anchors()
+        .map_err(|e| format!("cannot read anchors: {e}"))?;
+    if anchors.is_empty() {
+        return Ok(0);
+    }
+
+    let stale: Vec<StaleAnchor> = anchors
+        .into_iter()
+        .take_while(|_| Instant::now() < deadline)
+        .filter(|a| !workspace_root.join(&a.path).exists())
+        .map(|a| StaleAnchor {
+            edge_id: a.edge_id,
+            path: a.path,
+            source: a.source,
+        })
+        .collect();
+    if stale.is_empty() {
+        return Ok(0);
+    }
+
+    let now = SystemClock.now_rfc3339();
+    let mut ended = 0usize;
+    for a in &stale {
+        match context.end_anchor_validity(a.edge_id, &now) {
+            Ok(true) => ended += 1,
+            Ok(false) => {}
+            Err(e) => return Err(format!("cannot end anchor {}: {e}", a.edge_id)),
+        }
+    }
+    Ok(ended)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +258,80 @@ mod tests {
                 .count()
                 == 2,
             "both anchors remain believed; only one stopped holding"
+        );
+    }
+
+    /// The mount sweep alone — no `--end-stale` command — ends world
+    /// validity for an anchor whose file is gone, using the real time
+    /// cap.
+    #[test]
+    fn mount_scan_ends_a_stale_anchor_under_the_production_budget() {
+        let root = tempdir().unwrap();
+        let context_db =
+            stella_store::workspace_private_sqlite_path(root.path(), "context.db").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let context = stella_context::ContextStore::open(&context_db).unwrap();
+        rt.block_on(async {
+            use stella_context::{ContextDelta, MemoryInput};
+            context
+                .upsert(ContextDelta {
+                    memories: vec![
+                        MemoryInput::reflection("about a file since deleted", Vec::<String>::new())
+                            .with_anchors(["src/gone.rs"]),
+                    ],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        });
+        assert_eq!(context.open_anchors().unwrap().len(), 1);
+
+        scan_stale_anchors_at_mount(&context, root.path());
+
+        assert_eq!(
+            context.open_anchors().unwrap().len(),
+            0,
+            "the mount sweep ends world validity for the gone file's anchor, unasked"
+        );
+    }
+
+    /// The time cap is real, not just assumed. A deadline already past
+    /// must stop the walk before it checks the one anchor there is. It
+    /// stays open for the next pass.
+    #[test]
+    fn mount_scan_stops_at_an_already_expired_deadline() {
+        let root = tempdir().unwrap();
+        let context_db =
+            stella_store::workspace_private_sqlite_path(root.path(), "context.db").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let context = stella_context::ContextStore::open(&context_db).unwrap();
+        rt.block_on(async {
+            use stella_context::{ContextDelta, MemoryInput};
+            context
+                .upsert(ContextDelta {
+                    memories: vec![
+                        MemoryInput::reflection("about a file since deleted", Vec::<String>::new())
+                            .with_anchors(["src/gone.rs"]),
+                    ],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        });
+
+        // Sleep past a saved `Instant` so the deadline is already past.
+        // Subtracting from `Instant::now()` could panic this early on.
+        let deadline = Instant::now();
+        std::thread::sleep(Duration::from_millis(5));
+
+        let ended = end_stale_anchors_within_deadline(&context, root.path(), deadline).unwrap();
+        assert_eq!(ended, 0, "an expired deadline must not process any anchor");
+        assert_eq!(
+            context.open_anchors().unwrap().len(),
+            1,
+            "the anchor is untouched when the budget is already spent"
         );
     }
 }

@@ -19,7 +19,6 @@ pub(crate) fn insert_episode(
     summary: &str,
     files_touched: &serde_json::Value,
     outcome: &str,
-    salience: f64,
     started_at: &str,
     ended_at: &str,
     now: &str,
@@ -31,15 +30,14 @@ pub(crate) fn insert_episode(
     // column carried NULL from the moment v8 landed, which is what
     // migrate_v12 repairs.
     let id: i64 = conn.query_row(
-        "INSERT INTO episode (public_id, lineage_id, summary, files_touched, outcome, salience, started_at, ended_at, recorded_at)
-         VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "INSERT INTO episode (public_id, lineage_id, summary, files_touched, outcome, started_at, ended_at, recorded_at)
+         VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(public_id) DO UPDATE SET
              summary = excluded.summary,
              files_touched = excluded.files_touched,
-             outcome = excluded.outcome,
-             salience = excluded.salience
+             outcome = excluded.outcome
          RETURNING id",
-        params![public_id, summary, files, outcome, salience, started_at, ended_at, now],
+        params![public_id, summary, files, outcome, started_at, ended_at, now],
         |r| r.get(0),
     )?;
     Ok(id)
@@ -60,7 +58,6 @@ pub(crate) fn insert_memory(
     lineage_id: &str,
     kind: &str,
     content: &str,
-    salience: f64,
     now: &str,
 ) -> Result<i64, ContextError> {
     // Two lineages cannot share one revision id. `public_id` is a hash of
@@ -94,16 +91,15 @@ pub(crate) fn insert_memory(
         params![lineage_id, public_id, now],
     )?;
     let id: i64 = conn.query_row(
-        "INSERT INTO memory (public_id, lineage_id, kind, content, salience, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO memory (public_id, lineage_id, kind, content, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(public_id) DO UPDATE SET
              lineage_id = excluded.lineage_id,
              kind = excluded.kind,
              content = excluded.content,
-             salience = excluded.salience,
              superseded_at = NULL
          RETURNING id",
-        params![public_id, lineage_id, kind, content, salience, now],
+        params![public_id, lineage_id, kind, content, now],
         |r| r.get(0),
     )?;
     Ok(id)

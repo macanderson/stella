@@ -399,3 +399,112 @@ fn v8_creates_the_ledger_empty() {
         "a fresh ledger holds nothing — records are born, never migrated in"
     );
 }
+
+// ── v13: drop episode.salience / memory.salience ──────────────────────────
+
+/// A store still carrying both dead `salience` columns must migrate through
+/// v13 with the columns gone and every other value untouched. This is the
+/// witness: at schema version 12, before `migrate_v13` existed, both
+/// columns are still there after `ContextStore::open` and this test fails.
+/// With the migration in place it passes.
+#[test]
+fn v13_drops_salience_and_keeps_everything_else() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    {
+        // v7 is the last shape before the episode lifecycle columns landed.
+        // Its `episode`/`memory` tables are exactly V1/V2, salience column
+        // included.
+        let conn = open_legacy(&path, 7);
+        conn.execute(
+            "INSERT INTO episode (public_id, summary, files_touched, outcome, salience,
+                                  started_at, ended_at, recorded_at)
+             VALUES ('epi_v13', 'renamed a module', '[\"src/lib.rs\"]', 'success',
+                     0.8, '2026-01-01T00:00:00Z', '2026-01-01T01:00:00Z',
+                     '2026-01-01T01:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memory (public_id, kind, content, salience, recorded_at)
+             VALUES ('mem_v13', 'note', 'prefer fd over find', 0.9,
+                     '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            table_has_column(&conn, "episode", "salience"),
+            "fixture really carries the column before open"
+        );
+        assert!(
+            table_has_column(&conn, "memory", "salience"),
+            "fixture really carries the column before open"
+        );
+    }
+
+    let store = ContextStore::open(&path).unwrap();
+    store.integrity_check().unwrap();
+    let conn = store.conn();
+
+    assert!(
+        !table_has_column(&conn, "episode", "salience"),
+        "v13 must drop episode.salience"
+    );
+    assert!(
+        !table_has_column(&conn, "memory", "salience"),
+        "v13 must drop memory.salience"
+    );
+
+    // SQLite's `DROP COLUMN` rewrites the whole table, so check that every
+    // other column on the row still holds its value.
+    let (summary, outcome): (String, String) = conn
+        .query_row(
+            "SELECT summary, outcome FROM episode WHERE public_id = 'epi_v13'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(summary, "renamed a module");
+    assert_eq!(outcome, "success");
+    let (kind, content): (String, String) = conn
+        .query_row(
+            "SELECT kind, content FROM memory WHERE public_id = 'mem_v13'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(kind, "note");
+    assert_eq!(content, "prefer fd over find");
+    drop(conn);
+
+    // Rewind `user_version` to 12 and reopen: `migrate_v13` must re-run over
+    // a column already gone without failing, the same idempotence contract
+    // every other migration in this file carries.
+    drop(store);
+    let conn = Connection::open(&path).unwrap();
+    conn.pragma_update(None, "user_version", 12i64).unwrap();
+    drop(conn);
+    let store2 = ContextStore::open(&path).unwrap();
+    let v: i64 = store2
+        .conn()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        v, SCHEMA_VERSION,
+        "re-running v13 over an already-dropped column must not fail"
+    );
+}
+
+/// Whether `table` currently has a column named `column`, via
+/// `PRAGMA table_info` — the same idempotence check `migrate_v13` itself runs.
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .unwrap();
+    let names: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>("name"))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    names.iter().any(|name| name == column)
+}
