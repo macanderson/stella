@@ -184,7 +184,7 @@ impl Cell {
     /// reaches this constructor unsanitised. A bash `header_object` is
     /// routinely multi-line; a diff row of a Makefile carries tabs; raw ANSI
     /// colour codes reach `Output::lines` whenever a tool's own capture keeps
-    /// them. So the boundary is here. [`strip_csi`] drops a whole ANSI CSI
+    /// them. So the boundary is here. `strip_csi` drops a whole ANSI CSI
     /// sequence first — swapping only its leading `ESC` for a space would
     /// leave `[31m` behind as literal text, a different corruption than the
     /// one this constructor exists to stop. Tabs expand next, from the
