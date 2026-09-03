@@ -453,3 +453,93 @@ fn a_turn_terminator_against_a_closed_turn_is_inert() {
 
     assert_eq!(b.snapshot().turns.len(), 1);
 }
+
+// --------------------------------------------------------------- note_kind
+
+/// **Witness.** Without the `GateBoard` arm on `note_kind`, this event falls
+/// through its wildcard to `NoteKind::Other` — the muted `·` glyph a
+/// plain-transcript reader cannot tell from a budget tick — while its verdict
+/// siblings (`Verdict`, `GoalVerdict`, `ScopeReview`, `HunkReview`,
+/// `TaskUpdate`) all classify as `NoteKind::Verdict`. `deck/classify.rs`
+/// classifies the same event as `TraceKind::Verdict`; this keeps the plain,
+/// non-TTY surface agreeing with the deck about it.
+#[test]
+fn gate_board_classifies_as_a_verdict_not_a_muted_other() {
+    let event = AgentEvent::GateBoard {
+        board: stella_protocol::GateBoard::default(),
+    };
+    assert_eq!(note_kind(&event), NoteKind::Verdict);
+}
+
+/// `note_kind` exercised directly, one event per family it classifies. Before
+/// this, the only assertion on its result was indirect, through
+/// `a_non_backbone_event_survives_as_a_note`'s single `ProviderFallback` case
+/// above.
+#[test]
+fn note_kind_classifies_one_event_from_every_reachable_family() {
+    let cases: Vec<(AgentEvent, NoteKind)> = vec![
+        (
+            AgentEvent::Compaction {
+                before_tokens: 10_000,
+                after_tokens: 4_000,
+                evicted: 3,
+                deduped: 1,
+                superseded: 0,
+                aged: 0,
+                summarized: 1,
+                evicted_blocks: Vec::new(),
+                deduped_blocks: Vec::new(),
+                superseded_blocks: Vec::new(),
+                aged_blocks: Vec::new(),
+                summarized_blocks: Vec::new(),
+                rewrites: Vec::new(),
+                effective_budget_tokens: 0,
+                calibration_factor: 0.0,
+            },
+            NoteKind::Context,
+        ),
+        (
+            AgentEvent::Retry {
+                attempt: 1,
+                reason: "429".to_string(),
+            },
+            NoteKind::Meter,
+        ),
+        (
+            AgentEvent::AskUser {
+                id: "q1".to_string(),
+                question: "which branch?".to_string(),
+                options: Vec::new(),
+            },
+            NoteKind::Wait,
+        ),
+        (
+            AgentEvent::TaskUpdate { tasks: Vec::new() },
+            NoteKind::Verdict,
+        ),
+        (
+            AgentEvent::Commit {
+                sha: "abc123".to_string(),
+                message: "fix: note_kind".to_string(),
+            },
+            NoteKind::Handoff,
+        ),
+        // Not in any named family: the wildcard is the correct answer here,
+        // not a gap — `TurnComplete` has its own dedicated fold path and
+        // never reaches `note()` (its own test covers that separately).
+        (
+            AgentEvent::TurnComplete {
+                model: "m".to_string(),
+                cost_usd: 0.0,
+            },
+            NoteKind::Other,
+        ),
+    ];
+    for (event, expected) in cases {
+        assert_eq!(
+            note_kind(&event),
+            expected,
+            "event {event:?} classified wrong"
+        );
+    }
+}
