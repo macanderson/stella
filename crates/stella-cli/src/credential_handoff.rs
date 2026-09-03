@@ -371,11 +371,94 @@ mod tests {
     use std::io::{Seek, Write};
     use std::os::fd::{FromRawFd, IntoRawFd};
 
-    #[test]
-    fn inherited_pipe_is_consumed_framed_and_closed() {
+    /// An anonymous pipe with `FD_CLOEXEC` already set on both ends.
+    ///
+    /// `cargo test` runs tests on many threads at once. Some of these tests
+    /// spawn child processes. A plain `libc::pipe()` fd is open to any child.
+    /// A child forked and exec'd on another thread, while a test here still
+    /// holds the pipe open, can keep it alive past this thread's own close.
+    /// `cloexec_pipe_closes_a_concurrent_childs_inherited_copy` below
+    /// reproduces that exact shape on demand.
+    ///
+    /// `pipe2(O_CLOEXEC)` sets the flag in the same call that makes the
+    /// pipe, so there is no gap where a fork could see it unset. Linux is
+    /// the only target here that has `pipe2` — the `libc` crate leaves it
+    /// out of Darwin's build. Every other Unix here falls back to `pipe()`
+    /// plus `fcntl(F_SETFD)` on each end. That leaves a small gap between
+    /// the two calls, but nothing runs between them to exploit it.
+    #[cfg(target_os = "linux")]
+    fn cloexec_pipe() -> [i32; 2] {
+        let mut fds = [0_i32; 2];
+        // SAFETY: valid two-element output buffer.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+        fds
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn cloexec_pipe() -> [i32; 2] {
         let mut fds = [0_i32; 2];
         // SAFETY: valid two-element output buffer.
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        for fd in fds {
+            // SAFETY: `fd` is one of the two descriptors `pipe` just
+            // returned open and owned by this function's caller.
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
+                0
+            );
+        }
+        fds
+    }
+
+    /// Reproduces the fd-inheritance race on demand, instead of waiting for
+    /// the parallel test harness to hit it. Rust marks `CLOEXEC` only on fds
+    /// it made itself. A raw `libc` fd is invisible to that bookkeeping. So
+    /// a plain `libc::pipe()` fd is open to any child `std::process::Command`
+    /// spawns while the pipe is open. This test's write, after it closes its
+    /// own read end, then finds the child's copy still open and succeeds —
+    /// returning `1` rather than `-1`. `cloexec_pipe` makes the child's
+    /// `exec` close its copy too, so the write reliably has no reader left.
+    #[test]
+    fn cloexec_pipe_closes_a_concurrent_childs_inherited_copy() {
+        let fds = cloexec_pipe();
+        let (read_fd, write_fd) = (fds[0], fds[1]);
+
+        // `Command::spawn()` waits for the child's `execve()` to finish
+        // before it returns. Rust does this with its own close-on-exec pipe:
+        // the parent blocks on a read that only ends when that pipe closes,
+        // which only happens once exec succeeds. So by the time `spawn()`
+        // returns, `/bin/sh` already either kept a copy of `read_fd` (no
+        // `CLOEXEC`) or lost it (`CLOEXEC`, from `cloexec_pipe`). `sleep 5`
+        // then keeps `sh` alive well past the probe below, so a kept copy
+        // cannot exit early and hide the race.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 5"])
+            .spawn()
+            .expect("spawn a child while the pipe is open");
+
+        // SAFETY: `read_fd` is still owned by this test.
+        assert_eq!(unsafe { libc::close(read_fd) }, 0);
+        // SAFETY: one-byte source buffer, matching count, still-owned fd.
+        assert_eq!(
+            unsafe { libc::write(write_fd, [0_u8].as_ptr().cast(), 1) },
+            -1,
+            "a child spawned while the pipe was open still held a live copy \
+             of the read end"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPIPE)
+        );
+
+        // SAFETY: still-owned write fd.
+        assert_eq!(unsafe { libc::close(write_fd) }, 0);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn inherited_pipe_is_consumed_framed_and_closed() {
+        let fds = cloexec_pipe();
         let mut writer = unsafe { std::fs::File::from_raw_fd(fds[1]) };
         writer.write_all(b"openrouter-test-secret\n").unwrap();
         drop(writer);
@@ -409,9 +492,7 @@ mod tests {
             EMBEDDING_CREDENTIAL_TARGET,
         ]);
 
-        let mut fds = [0_i32; 2];
-        // SAFETY: valid two-element output buffer.
-        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let fds = cloexec_pipe();
         // SAFETY: the write end is ours; the `File` closes it on drop, which
         // is what lets the read below see EOF.
         let mut writer = unsafe { std::fs::File::from_raw_fd(fds[1]) };
@@ -592,14 +673,10 @@ mod tests {
 
     #[test]
     fn oversized_handoff_fails_without_echoing_bytes() {
-        let mut fds = [0_i32; 2];
-        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-        // Avoid blocking on pipe capacity: use a temporary anonymous-file FD
-        // for the pure size-boundary unit. Production Harbor uses a pipe.
-        unsafe {
-            libc::close(fds[0]);
-            libc::close(fds[1]);
-        }
+        // A temporary anonymous-file fd, not a pipe: writing 64 KiB+1 bytes
+        // to a pipe before anything reads it would block on pipe capacity.
+        // Production Harbor uses a pipe; this test only needs one fd holding
+        // an oversized payload.
         let file = tempfile::tempfile().unwrap();
         (&file)
             .write_all(&vec![b'x'; MAX_CREDENTIAL_BYTES as usize + 1])
@@ -612,9 +689,7 @@ mod tests {
 
     #[test]
     fn memory_hardening_precedes_read_and_closes_fd_on_failure() {
-        let mut fds = [0_i32; 2];
-        // SAFETY: valid two-element output buffer.
-        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let fds = cloexec_pipe();
         let (read_fd, write_fd) = (fds[0], fds[1]);
 
         // Invalid UTF-8 waits unread in the pipe. If a credential byte were
@@ -640,6 +715,15 @@ mod tests {
         // (A raw `fcntl(read_fd, F_GETFD) == -1` check would be racy under the
         // parallel test harness — a sibling test can reuse the number the
         // instant it is freed, and `fcntl` would then report that fd's flags.)
+        //
+        // The open-file-description probe carries a second race of its own:
+        // a sibling test's `fork`+`exec`, landing in the window between this
+        // pipe's creation and the hardener's close, can inherit the read end
+        // and keep a live reader around after this test dropped its own
+        // copy — the write then returns `1` instead of `-1`, not an error.
+        // `cloexec_pipe` above closes that window by marking the fd
+        // close-on-exec at creation, so a concurrently exec'd child never
+        // holds a copy to begin with.
         // Rust ignores SIGPIPE process-wide, so the write returns EPIPE rather
         // than raising a signal.
         // SAFETY: one-byte source buffer, matching count, still-owned write fd.
