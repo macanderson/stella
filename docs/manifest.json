@@ -130,6 +130,11 @@
       "status": "implemented",
       "title": "ADR 0025: Refuse a nested key where it widens a grant"
     },
+    "adr/0026-context-editing-ships-off-until-measured": {
+      "path": "docs/adr/0026-context-editing-ships-off-until-measured.md",
+      "status": "implemented",
+      "title": "ADR 0026: Context editing ships off until its trigger is measured"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

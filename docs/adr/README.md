@@ -92,6 +92,7 @@ open; nothing before Phase 3 forces it.
 | [0023](0023-autonomous-tool-foundry.md) | Reconnect the Gap Detector; the Foundry Runs Autonomously Behind Standing Controls | Accepted |
 | [0024](0024-release-builds-unwind.md) | Release Builds Unwind on Panic | Accepted |
 | [0025](0025-nested-frontmatter-refusal-scope.md) | Refuse a Nested Key Where It Widens a Grant | Accepted |
+| [0026](0026-context-editing-ships-off-until-measured.md) | Context Editing Ships Off Until Its Trigger Is Measured | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible

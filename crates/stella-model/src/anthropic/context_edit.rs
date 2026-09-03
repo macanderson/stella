@@ -37,6 +37,38 @@ use serde::Serialize;
 /// The beta that unlocks `context_management` on the Messages API.
 pub(crate) const CONTEXT_MANAGEMENT_BETA: &str = "context-management-2025-06-27";
 
+/// The trigger every session ships with, in input tokens, or `None` while the
+/// number is undecided.
+///
+/// It is `None`: context editing is declared **off**, and this is the one
+/// place that decides it (`doc:adr/0026-context-editing-ships-off-until-measured`).
+/// The trigger has never been measured, and both wrong answers are dear — a
+/// cache read bills at $0.30/MTok against a write at $3.75/MTok, so a trigger
+/// set low enough to fire on ordinary turns costs more than the tokens it
+/// clears, and one set high enough to be safe never fires. `#5796` is the panel
+/// that would settle it.
+///
+/// Off as a value rather than as an absence, because an absence reads as an
+/// oversight to the next author. `context_editing_ships_off_until_the_trigger_is_measured`
+/// pins this constant, so setting a number has to edit the test that says why
+/// it was `None`.
+pub(crate) const SHIPPED_TRIGGER_TOKENS: Option<u32> = None;
+
+/// The thinking policy that rides with [`SHIPPED_TRIGGER_TOKENS`] once it
+/// holds a number. `None` keeps every thinking block, which is the
+/// cache-preserving setting and what a current model does anyway.
+pub(crate) const SHIPPED_THINKING_TURNS: Option<u32> = None;
+
+/// What a fresh session puts on the wire: nothing, while
+/// [`SHIPPED_TRIGGER_TOKENS`] is undecided.
+///
+/// A caller that has measured its own conversation still opts in per session
+/// with [`crate::anthropic::AnthropicProvider::with_context_editing`]; this is
+/// the fleet-wide default underneath it.
+pub(crate) fn shipped_context_management() -> Option<ContextManagement> {
+    SHIPPED_TRIGGER_TOKENS.map(|trigger| ContextManagement::new(trigger, SHIPPED_THINKING_TURNS))
+}
+
 /// How many tool uses survive an edit. The vendor default; the most recent
 /// calls are the ones the model is actually still reasoning about, and
 /// clearing them is how an agent loses the file it just read.
@@ -161,6 +193,30 @@ impl ContextManagement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The decision of `doc:adr/0026-context-editing-ships-off-until-measured`,
+    /// held as a test so that turning the feature on has to pass through the
+    /// record that says why it was off.
+    ///
+    /// Editing this test is the point. If a panel measures a trigger, set
+    /// [`SHIPPED_TRIGGER_TOKENS`], mark it `MEASURED:` with the run it came
+    /// from, and rewrite this assertion to pin that number. What must not
+    /// happen is a trigger appearing here with no measurement behind it: the
+    /// wrong number is a more-than-tenfold cost error, and it is silent.
+    #[test]
+    fn context_editing_ships_off_until_the_trigger_is_measured() {
+        assert!(
+            SHIPPED_TRIGGER_TOKENS.is_none(),
+            "context editing ships off (ADR 0026), and {SHIPPED_TRIGGER_TOKENS:?} \
+             is a trigger. `#5796` is the panel that would measure one; until it \
+             runs, a number here bills a cache write at $3.75/MTok to save a \
+             read at $0.30."
+        );
+        assert!(
+            shipped_context_management().is_none(),
+            "an undecided trigger must put nothing on the wire"
+        );
+    }
 
     #[test]
     fn thinking_is_listed_before_tool_uses() {

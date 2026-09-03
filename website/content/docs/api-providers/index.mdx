@@ -194,6 +194,15 @@ headless run's calls are seconds apart and would pay the premium for a prefix th
 never going to expire. Override either default with
 [`providers.anthropic.cache_ttl`](/docs/configuration/settings) (`"5m"` or `"1h"`).
 
+**Server-side context editing is off, and there is no setting for it.** The Messages
+API can drop old tool results and thinking blocks from a chat before the model reads
+it. stella can ask for that, and does not: the trigger that decides when clearing
+starts has never been measured, and each edit throws away the cached prefix from the
+point of the edit. A cache read bills at $0.30/Mtok against a write at $3.75/Mtok, so
+a trigger picked by taste moves the bill more than tenfold in the direction you did
+not want. The decision is recorded in ADR 0026, and it holds until a panel measures
+the number.
+
 `params.max_tokens` defaults to **32000 with thinking on, 4096 with it off**. Adaptive
 thinking spends from the same output allowance as the answer, so without this, a
 max-effort verifier could get cut off mid-verdict. A value you set is used exactly as
