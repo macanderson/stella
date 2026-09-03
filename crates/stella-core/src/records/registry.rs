@@ -310,6 +310,7 @@ pub fn load(user_files: &[RuleFile], project_files: &[RuleFile], facts: &Facts<'
     for (mut record, markdown) in records.into_iter().zip(markdown) {
         let mut disposition = super::disposition(&SweepInput {
             record: &record.record,
+            trust: record.trust,
             verdict: facts.verdicts.get(&record.record.lineage_id).copied(),
             last_checked: facts
                 .last_checked

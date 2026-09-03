@@ -164,15 +164,16 @@ fn rank(verdict: Option<&str>) -> u8 {
 ///
 /// **A gated probe is never run here, whatever the record says about itself.**
 /// The sweep's rule ([`stella_core::records::honored_probe`]) admits a
-/// `command_succeeds` or `http_ok` on a human-decreed record, and it can,
-/// because it reads a *published* file that a reviewer has already accepted.
-/// This reads a **proposal**, whose `origin` may sit in the file's `[defaults]`
-/// header rather than on the record — so the trust question this side of the
-/// review cannot be answered from the record alone, and the safe answer to a
-/// question you cannot answer is no. Review is a read of the tree; it does not
-/// become the place a document nobody has reviewed yet gets to run a command or
-/// reach a host. The remaining kinds are filesystem reads, which is what makes
-/// re-asking on every review cheap enough to be unconditional.
+/// `command_succeeds` or `http_ok` only on a record the loader stamped
+/// [`stella_core::records::Trust::User`] — a *published* file in the user's own
+/// `~/.stella/rules`, which nobody else can write. This reads a **proposal**,
+/// which has no tier at all: it is sitting in the tree awaiting a decision, and
+/// its `origin` may live in the file's `[defaults]` header rather than on the
+/// record. The safe answer to a question you cannot answer is no. Review is a
+/// read of the tree; it does not become the place a document nobody has reviewed
+/// yet gets to run a command or reach a host. The remaining kinds are filesystem
+/// reads, which is what makes re-asking on every review cheap enough to be
+/// unconditional.
 fn reprobe(root: &Path, found: &FoundProposal, now: &str) -> Probed {
     use stella_core::ingest::record::ProbeKind;
 

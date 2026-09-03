@@ -183,8 +183,12 @@ pub enum RecordFinding {
         field: &'static str,
     },
     /// The record declared a gated probe (`command_succeeds`, `http_ok`) that
-    /// [`sweep::honored_probe`] refuses for its origin or truth basis, so the
-    /// claim will never be re-checked. Reported, not honored.
+    /// [`sweep::honored_probe`] refuses. The trust tier, the origin, or the
+    /// truth basis rules it out, so the claim is never re-checked. Reported,
+    /// not honored.
+    ///
+    /// A record the repository published is refused for its tier whatever else
+    /// it says. This finding is where its author finds out.
     GatedProbeRefused(ProbeKind),
     /// The record asked to block at the tool boundary and was refused. See
     /// [`BlockingRefusal`] for which precondition failed.
@@ -244,9 +248,9 @@ impl std::fmt::Display for RecordFinding {
             ),
             Self::GatedProbeRefused(kind) => write!(
                 f,
-                "probe kind {} runs a command or reaches the network, which is honored \
-                 only on a decreed record a named human verified — this claim will \
-                 never be re-checked",
+                "probe kind {} runs a command or reaches the network. That is honored \
+                 only in your own ~/.stella/rules, on a decreed record a named human \
+                 verified — this claim will never be re-checked",
                 kind.as_str()
             ),
             Self::BlockingRefused(refusal) => write!(f, "{refusal}"),

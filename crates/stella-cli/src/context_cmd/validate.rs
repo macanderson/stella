@@ -121,7 +121,7 @@ pub fn run_validate(root: &Path, format: QueryFormat) -> Result<(), String> {
 
     let files = rule_files(root, true, true);
     let now = now_rfc3339();
-    let cache = probe_everything(root, &files.all(), &now);
+    let cache = probe_everything(root, &files, &now);
     let registry = registry_with_cache(root, &files, &cache, &now);
 
     // Regulated tier: a project record armed to block must hold a ledger

@@ -129,13 +129,13 @@ fn a_deleted_probe_target_is_not_still_reported_supported() {
 /// **This closed no live hole.** `ingest_cmd::probe::evaluate` abstains on
 /// every gated kind rather than executing it, so nothing ran before either.
 /// What the explicit refusal in `reprobe` buys is that review does not
-/// *depend* on that — a
-/// proposal's `origin` may sit in the file's `[defaults]` header rather than on
-/// the record, so the sweep's own `honored_probe` rule cannot be evaluated
-/// correctly from the record alone on this side — and that the stored verdict
-/// survives: re-running would have replaced a real recorded verdict with a
-/// fresh `unfalsifiable`, which reads as "the tree now refutes less" when
-/// nothing was checked at all.
+/// *depend* on that. The sweep's own `honored_probe` rule reads a trust tier,
+/// and a proposal has none. A proposal's `origin` can also sit in the file's
+/// `[defaults]` header rather than on the record. So that rule cannot be
+/// evaluated on this side at all. The refusal also keeps the stored verdict:
+/// re-running would have replaced a real recorded verdict with a fresh
+/// `unfalsifiable`, which reads as "the tree now refutes less" when nothing was
+/// checked at all.
 ///
 /// The canary is what makes the first half falsifiable: the probe's command
 /// writes a file, and the assertion is that the file is not there.

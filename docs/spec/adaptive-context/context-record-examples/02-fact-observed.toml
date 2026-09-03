@@ -2,9 +2,12 @@
 # the work. This is the class of record that makes ingest dangerous: a stale
 # fact from a two-year-old CLAUDE.md reads exactly like a fresh one.
 #
-# `http_ok` would be the natural probe here and is NOT used: this
-# record's origin is `imported`, and a gated probe is never honored on an
-# imported record. What is checked instead is the tracked infrastructure file
+# `http_ok` would be the natural probe here and is NOT used. Two rules each
+# rule it out on their own. This record's origin is `imported`, and a gated
+# probe is never honored on an imported record. It also lives in the
+# repository, and a gated probe is never honored there: anyone who can open a
+# pull request can write every field that would argue for one.
+# What is checked instead is the tracked infrastructure file
 # that would have to change if the endpoint moved — weaker, but safe and still
 # genuinely falsifying.
 
