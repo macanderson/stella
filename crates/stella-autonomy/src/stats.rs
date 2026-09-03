@@ -196,9 +196,18 @@ impl SessionStats {
     /// something else is worse than one showing neither, because a reader will
     /// believe whichever they looked at first. Checked rather than assumed,
     /// because the counts are incremented at different call sites.
+    ///
+    /// Summed as `u64`: `SessionStats` deserializes straight from a session's
+    /// stats file with no range check, and three adversarial or corrupted
+    /// `u32` counters near `u32::MAX` overflow a `u32` sum — a panic in debug,
+    /// a silently wrong wraparound in release. Widening first means the
+    /// comparison itself can never be the thing that panics.
     #[must_use]
     pub fn closures_balance(&self) -> bool {
-        self.closed_completed + self.closed_not_planned + self.closed_duplicate == self.closed_total
+        u64::from(self.closed_completed)
+            + u64::from(self.closed_not_planned)
+            + u64::from(self.closed_duplicate)
+            == u64::from(self.closed_total)
     }
 
     /// Record a closure by its canonical resolution.
@@ -225,11 +234,15 @@ impl SessionStats {
     /// The companion to [`SessionStats::closures_balance`], for the same
     /// reason: three outcomes rendered beside a total that disagrees with them
     /// is worse than either alone, because a reader believes whichever they
-    /// read first.
+    /// read first. Summed as `u64` for the same reason as
+    /// [`SessionStats::closures_balance`] — an adversarial or corrupted file
+    /// must not panic or silently wrap the check meant to catch it.
     #[must_use]
     pub fn filings_balance(&self) -> bool {
-        self.issues_created + self.filings_refused + self.filings_duplicate
-            == self.filings_attempted
+        u64::from(self.issues_created)
+            + u64::from(self.filings_refused)
+            + u64::from(self.filings_duplicate)
+            == u64::from(self.filings_attempted)
     }
 
     /// Record a filing by its canonical outcome.
@@ -425,6 +438,43 @@ mod tests {
         assert!(
             !stats.closures_balance(),
             "an unrecognised resolution must show up as an imbalance, not disappear"
+        );
+    }
+
+    /// **The witness.** `SessionStats` deserializes from a session's stats
+    /// file with no range check on its `u32` fields, so a corrupted or
+    /// adversarial file can carry three near-`u32::MAX` counters. Summing
+    /// them as `u32` would panic on overflow in a debug build — this must
+    /// not, and it must still report the (true) imbalance rather than
+    /// wrapping into a false balance.
+    #[test]
+    fn closures_balance_does_not_overflow_on_near_max_counters() {
+        let adversarial = SessionStats {
+            closed_completed: u32::MAX - 1,
+            closed_not_planned: u32::MAX - 1,
+            closed_duplicate: u32::MAX - 1,
+            closed_total: 3,
+            ..SessionStats::default()
+        };
+        assert!(
+            !adversarial.closures_balance(),
+            "three near-MAX counters must report as unbalanced, not wrap to a false match"
+        );
+    }
+
+    /// The `filings_balance` companion to the witness above.
+    #[test]
+    fn filings_balance_does_not_overflow_on_near_max_counters() {
+        let adversarial = SessionStats {
+            issues_created: u32::MAX - 1,
+            filings_refused: u32::MAX - 1,
+            filings_duplicate: u32::MAX - 1,
+            filings_attempted: 3,
+            ..SessionStats::default()
+        };
+        assert!(
+            !adversarial.filings_balance(),
+            "three near-MAX counters must report as unbalanced, not wrap to a false match"
         );
     }
 

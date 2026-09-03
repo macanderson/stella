@@ -458,6 +458,52 @@ fn the_supply_rungs_decide_the_tier() {
     );
 }
 
+/// **The witness.** The heavy tier's rung reads `mem_total_gb >= 32` and
+/// `disk_free_gb >= 100` — the exact boundary neither half of
+/// `the_supply_rungs_decide_the_tier` above exercises, since that test's
+/// `big` supply clears both by a wide margin. `>=` and `>` differ by exactly
+/// one machine, and only a value pinned on the line proves which one is
+/// actually written.
+#[test]
+fn heavy_tier_boundaries_are_inclusive() {
+    let d = Demand::default();
+
+    // Exactly 32 GiB total and exactly 100 GiB free: both floors met on the
+    // nose must still earn the heavy tier.
+    assert_plan(
+        Supply {
+            mem_total_gb: 32,
+            mem_free_gb: 16,
+            disk_free_gb: 100,
+            ..base_supply()
+        },
+        d,
+        ("heavy", true, 2, "workspace", "h2h", 20, "deep"),
+    );
+
+    // One GiB under either floor must not.
+    assert_plan(
+        Supply {
+            mem_total_gb: 31,
+            mem_free_gb: 16,
+            disk_free_gb: 100,
+            ..base_supply()
+        },
+        d,
+        ("normal", true, 2, "impacted", "loop", 20, "deep"),
+    );
+    assert_plan(
+        Supply {
+            mem_total_gb: 32,
+            mem_free_gb: 16,
+            disk_free_gb: 99,
+            ..base_supply()
+        },
+        d,
+        ("normal", true, 2, "impacted", "loop", 20, "deep"),
+    );
+}
+
 #[test]
 fn demand_shrinks_the_batch_and_a_p0_rescues_a_light_cycle() {
     assert_plan(
@@ -672,6 +718,26 @@ fn noisy_and_fragile_fire_on_their_exact_thresholds() {
     assert!(codes.contains(&"FRAGILE"), "got {codes:?}");
 }
 
+/// **The witness.** `metrics` guards every signal behind `n > 0` — a session's
+/// first read, before any cycle has completed, has no ledger rows at all.
+/// Pinned directly, since nothing else in this file calls `metrics` on an
+/// empty slice: every other case builds at least one row first.
+#[test]
+fn metrics_on_an_empty_ledger_reports_zeros_and_no_signals() {
+    let m = metrics(&[]);
+    assert_eq!(m.cycles, 0);
+    assert_eq!(m.fixed, 0);
+    assert_eq!(m.filed, 0);
+    assert_eq!(m.new_findings, 0);
+    assert_eq!(m.zero_fix_cycles, 0);
+    assert_eq!(m.red_gate_cycles, 0);
+    assert!(
+        m.signals.is_empty(),
+        "no cycles means no evidence for any signal, not a triggered one: {:?}",
+        m.signals
+    );
+}
+
 #[test]
 fn starved_reads_the_controller_not_the_ledger() {
     let mut cal = Calibration::seeded(&AimdLimits::default());
@@ -775,6 +841,29 @@ fn extreme_timestamps_neither_panic_the_fold_nor_the_liveness_rule() {
     assert_eq!(
         liveness("r-1", "r-1", i64::MIN, 10_000, 900),
         Liveness::Stale
+    );
+}
+
+/// **The witness.** `liveness` compares elapsed time to `stale_after_secs`
+/// with a strict `>`, so the boundary itself — elapsed exactly equal to the
+/// window — is the one input every existing case leaves untested: they are
+/// all comfortably inside or far outside the window. Exactly at the edge
+/// must still read `Live`; one second past it must flip to `Stale`.
+#[test]
+fn liveness_at_the_stale_boundary_is_live_one_second_past_is_stale() {
+    let stale_after = 900;
+    let now = 10_000;
+    let heartbeat_at_the_edge = now - stale_after;
+
+    assert_eq!(
+        liveness("r-1", "r-1", heartbeat_at_the_edge, now, stale_after),
+        Liveness::Live,
+        "elapsed exactly equal to the window is still within it"
+    );
+    assert_eq!(
+        liveness("r-1", "r-1", heartbeat_at_the_edge - 1, now, stale_after),
+        Liveness::Stale,
+        "one second past the window flips it"
     );
 }
 

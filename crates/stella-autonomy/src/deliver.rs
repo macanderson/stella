@@ -145,7 +145,11 @@ impl Default for DeliverPolicy {
 pub enum PrState {
     /// Opened, not yet pushed for checks.
     Draft,
-    /// Checks are running.
+    /// Checks are running. Also covers a second case: checks came back
+    /// green, but the forge has not yet finished computing
+    /// [`Mergeability`]. Both are "no answer yet", and both wait
+    /// ([`Action::Wait`]) — one name, not a sibling state for the same
+    /// action.
     CiPending,
     /// This PR's checks failed and the base is green, so it is this PR's fault.
     CiRed,
@@ -442,6 +446,34 @@ mod tests {
         assert_eq!(again.action, Action::Wait);
     }
 
+    /// **The witness.** `a_transition_round_trips_through_json` only proves
+    /// that [`EscalationReason::RebaseCeilingReached`] serializes. It does
+    /// not prove the machine ever reaches it. A branch conflicted once too
+    /// often must actually escalate with this reason.
+    #[test]
+    fn the_rebase_ceiling_escalates_with_its_own_reason() {
+        let conflicted = Observation {
+            mergeable: Mergeability::Conflicted,
+            ..obs()
+        };
+        let policy = DeliverPolicy::default();
+        let spent = Attempts {
+            fixes: 0,
+            rebases: policy.rebase_ceiling,
+        };
+
+        let t = deliver_next(PrState::Conflicted, &conflicted, spent, &policy);
+        assert_eq!(t.state, PrState::Escalated);
+        assert_eq!(
+            t.action,
+            Action::Escalate {
+                reason: EscalationReason::RebaseCeilingReached
+            },
+            "a spent rebase budget must name the rebase ceiling, not fall through \
+             to the fix-ceiling reason"
+        );
+    }
+
     /// A review loop that exhausts the fix ceiling escalates as
     /// `ReviewNeedsHuman`, not `FixCeilingReached` — the human's next move is
     /// to read the review, not to raise a ceiling. The plain-red case above
@@ -490,7 +522,9 @@ mod tests {
     }
 
     /// `Unknown` is the forge still computing. Reading it as clean is how a
-    /// merge is attempted into a conflict.
+    /// merge is attempted into a conflict. Also the witness for
+    /// [`PrState::CiPending`]'s doc comment: green CI plus an uncomputed
+    /// mergeability lands there too, not only a pending check.
     #[test]
     fn an_uncomputed_mergeability_waits_rather_than_merging() {
         let uncomputed = Observation {
@@ -507,6 +541,12 @@ mod tests {
         );
 
         assert_eq!(t.action, Action::Wait, "must not merge on an unknown");
+        assert_eq!(
+            t.state,
+            PrState::CiPending,
+            "green-plus-uncomputed-mergeability is the case CiPending's doc \
+             comment names, not a new state"
+        );
     }
 
     /// The only state `Merge` is ever emitted from.
