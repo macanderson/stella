@@ -31,20 +31,18 @@
 //!
 //! # Why this needs its own connection budget
 //!
-//! `lib.rs` bounds concurrent connections with a semaphore, and the comment
-//! there is an explicit warning: it is only safe because "nothing here is a
-//! long-lived stream — every response is one shot and closes". An SSE
-//! connection is exactly the long-lived stream that warning is about. Left on
-//! the same semaphore, a handful of open dashboard tabs would hold permits
-//! indefinitely and starve every one-shot route behind them, and the page
-//! would hang while its own stream was healthy.
+//! `lib.rs` bounds concurrent connections with a semaphore, sized for
+//! requests that answer once and close. An SSE connection stays open for as
+//! long as a tab is, so `respond_to_head` drops its one-shot permit the
+//! moment a request is known to be this route, before the socket ever
+//! reaches [`serve_stream`] — left on that semaphore for its whole life, a
+//! handful of open tabs would starve every one-shot route behind them.
 //!
-//! So streams get a separate, smaller budget ([`MAX_LIVE_STREAMS`]) and the
-//! one-shot semaphore is left exactly as it was. A stream that cannot get a
-//! slot is **refused** rather than queued — the opposite of the one-shot
-//! policy, and: a queued one-shot request arrives a moment late,
-//! but a queued stream would hang forever behind connections that never
-//! close, and a client told "no" can fall back to polling immediately.
+//! Streams instead get their own, smaller budget ([`MAX_LIVE_STREAMS`]). A
+//! stream past that budget is **refused** rather than queued: a queued
+//! one-shot request just arrives late, but a queued stream would hang
+//! behind connections that never close, and a refused client can fall back
+//! to polling right away.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
