@@ -464,29 +464,55 @@ jobs:
             exit 0
           fi
 
-          # `gh pr checks --required` reports on exactly the contexts branch
-          # protection requires, so this waits for the real gate rather than
-          # for a run of its own choosing. Its exit codes: 0 every required
-          # context passed, 8 one is still pending, anything else one failed
-          # or none has reported yet.
+          # Two questions, because neither one answers this on its own.
           #
-          # "None has reported yet" is the normal state for the first minute
-          # or two, while the approved runs create their check runs, and it is
-          # indistinguishable from a red verdict by exit code alone. So a
-          # non-pending verdict only ends the wait once the grace window is
-          # over — before that it is treated as "not yet".
+          # `gh pr checks --required` reports on the contexts branch protection
+          # requires, and its exit code says which way: 0 every one it can see
+          # passed, 8 one is still pending, anything else one failed or none
+          # has reported yet. It is the only signal that tells a red check from
+          # a slow one, which is what stops this waiting 45 minutes on a
+          # failure. But it can only report on check runs that EXIST, and the
+          # required contexts appear at different times: measured on #5672,
+          # it returned "all clear" listing three of the five while ci.yml had
+          # not yet created the other two. Merging on that answer alone is a
+          # merge attempt against a gate that has not finished forming.
+          #
+          # `mergeStateStatus` is the gate's own verdict and counts the
+          # contexts that have not reported, so it closes that gap — at the
+          # cost of not distinguishing "pending" from "failed", both BLOCKED.
+          # It is computed lazily and reads UNKNOWN until a query provokes it,
+          # so a run of polls that never resolves must not be able to hold the
+          # write-back shut: after five minutes of clear checks the merge
+          # attempt itself becomes the authority.
+          #
+          # "Nothing has reported yet" is the normal state for the first
+          # minute or two while the approved runs spawn, and by exit code it
+          # is indistinguishable from red. So a non-pending verdict only ends
+          # the wait once the grace window is over.
           now() { date +%s; }
           grace_until=$(( $(now) + 300 ))
           deadline=$(( $(now) + 2700 ))
           checks_green=false
+          clear_polls=0
           while [ "$(now)" -lt "${deadline}" ]; do
             rc=0
             gh pr checks "${BRANCH}" --required || rc=$?
             if [ "${rc}" -eq 0 ]; then
-              checks_green=true
-              break
-            fi
-            if [ "${rc}" -ne 8 ] && [ "$(now)" -ge "${grace_until}" ]; then
+              clear_polls=$(( clear_polls + 1 ))
+              state="$(gh pr view "${BRANCH}" --json mergeStateStatus --jq '.mergeStateStatus // empty' 2>/dev/null || true)"
+              echo "required checks clear; merge state ${state:-UNKNOWN}"
+              case "${state}" in
+                CLEAN | UNSTABLE | HAS_HOOKS)
+                  checks_green=true
+                  break
+                  ;;
+              esac
+              if [ "${clear_polls}" -ge 10 ]; then
+                echo "merge state never settled; letting the merge attempt decide."
+                checks_green=true
+                break
+              fi
+            elif [ "${rc}" -ne 8 ] && [ "$(now)" -ge "${grace_until}" ]; then
               echo "::warning::a required check on ${BRANCH} is red or never reported — NOT merging. Read the PR's checks, fix the failure, and re-run auto-tag.yml."
               exit 0
             fi
@@ -613,12 +639,11 @@ jobs:
               || echo "::warning::could not close deferral issue #${open_defer_issue}"
           fi
 
-          # The ordinary merge, with the required checks green. Retried
-          # because `gh pr checks --required` reports on the contexts that
-          # have arrived, while branch protection also counts the ones that
-          # have not: a context whose run is still spawning reads as green
-          # here and as "expected" there. Ten tries over five minutes covers
-          # that gap without turning a genuine refusal into a long wait.
+          # The ordinary merge, with the required checks green. Retried for
+          # the case the wait loop hands over on: clear checks with a merge
+          # state that never settled. Ten tries over five minutes, which is
+          # long enough for a late verdict and short enough that a genuine
+          # refusal reaches the fallbacks below rather than sitting here.
           for _ in $(seq 1 10); do
             if gh pr merge "${BRANCH}" --squash; then
               exit 0
