@@ -108,7 +108,7 @@ const ONGOING_ACTIVITY_PREFIXES: &[&str] = &[
 /// The gate has no in-turn proof channel: every gated mutating turn is asked
 /// exactly once, and the model's answer — run a check through whatever tools
 /// the session carries, or say why none can exist — is the whole exchange.
-pub(super) const PROVE_IT_PREFIX: &str = "Before declaring this task complete:";
+pub(crate) const PROVE_IT_PREFIX: &str = "Before declaring this task complete:";
 const PROVE_IT_NUDGE: &str = "Before declaring this task complete: nothing in this turn proved \
      the work. Run the task's own test or check command, read what it actually says, and fix \
      anything it reveals. If no check can exist for this change, say so explicitly and why, \
@@ -194,25 +194,6 @@ fn detect(
     } else {
         None
     }
-}
-
-/// Whether a user message is one the engine wrote rather than one the user
-/// (or host) sent. Exactly the set of once-per-turn nudge prefixes; a new
-/// gate adds its own here in the same change that adds the gate.
-///
-/// Read by [`turn_start_index`] alongside the marker table: a nudge is a
-/// user-role message the engine authored, so it bounds no window. It used to
-/// be excluded only from the nudge gates' own scans, so every nudge reset the
-/// loop-detection and confident-zero windows mid-turn — the prove-it ask on
-/// an edited-then-tested turn erased the edit from the tally, and the turn
-/// could then be aborted as a confident zero for the read-only test run the
-/// nudge itself requested. Measured once already on the prove-it gate's first
-/// field trial (run `gate-ab`, task pypi-server): three nudges in one turn,
-/// each re-armed by that reset, riding a refuted `verify_done` into the 900s
-/// ceiling.
-pub(super) fn is_engine_nudge(content: &str) -> bool {
-    content.starts_with(PROVE_IT_PREFIX)
-        || content.starts_with(super::live_services::SERVICES_PREFIX)
 }
 
 /// True when this turn did mutating work and the prove-it nudge has not

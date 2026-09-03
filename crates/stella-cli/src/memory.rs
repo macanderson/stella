@@ -13,7 +13,8 @@
 //! prompt ──> recall_block_reported(): registry-routed recall (crate::contextgraph) + select_skills()
 //!            └─ volatile message AFTER the byte-stable system prefix (L-E8)
 //! turn runs …
-//! outcome ─> reflect_routed(): one model call on the cheap (triage) tier -> 0-3 lessons
+//! outcome ─> reflect_routed(): the turn failed, or its ledger recorded friction? (#2155)
+//!            └─ if so, one model call on the cheap (triage) tier -> 0-3 lessons
 //!            ├─ MemoryInput::reflection(...) -> context.db (domain-tagged)
 //!            ├─ appended to .stella/private/reflections.jsonl (the mining log)
 //!            └─ mine_skill_candidates over the log -> decide_auto_creation

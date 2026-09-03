@@ -781,6 +781,33 @@ fn mined_transcript() -> Vec<CompletionMessage> {
     ]
 }
 
+/// The ledger that goes with it: the first `make migrate` failed, so the turn
+/// carries friction and earns its reflection call. An empty ledger beside a
+/// successful turn stands for a turn that went straight through, and
+/// `reflect_routed` declines those — so a fixture that wants a lesson mined
+/// has to say what the turn ran into.
+fn mined_friction() -> crate::memory::TurnFriction {
+    crate::memory::TurnFriction::from_events(&[
+        stella_protocol::AgentEvent::ToolStart {
+            call: stella_protocol::ToolCall {
+                call_id: "c1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"command": "make migrate"}),
+            },
+            sub_agent_id: None,
+            task_id: None,
+        },
+        stella_protocol::AgentEvent::ToolResult {
+            call_id: "c1".into(),
+            output: stella_protocol::ToolOutput::error("ledger writer still running"),
+            duration_ms: 90,
+            speculated: false,
+            sub_agent_id: None,
+            task_id: None,
+        },
+    ])
+}
+
 /// **Witness (#3956).** A lesson mined by a fleet worker is readable from the
 /// primary workspace after the run — and is not written into the disposable
 /// tree the attempt ran in.
@@ -807,7 +834,7 @@ async fn a_worker_mines_its_lesson_into_the_invocation_root_not_its_worktree() {
     let cfg = steered_config(attempt_root.clone());
 
     let messages = mined_transcript();
-    let friction = crate::memory::TurnFriction::default();
+    let friction = mined_friction();
     let mut budget = agent::build_budget_guard(Some(10.0));
     budget.begin_turn();
 
@@ -1009,7 +1036,7 @@ async fn two_attempts_at_one_task_are_one_task_to_governance() {
         "run the billing migration",
     );
     let messages = mined_transcript();
-    let friction = crate::memory::TurnFriction::default();
+    let friction = mined_friction();
     let provider = ALessonPerAttempt(std::sync::atomic::AtomicUsize::new(0));
 
     // Two attempts at the SAME task — a retry wave, which is the shape the

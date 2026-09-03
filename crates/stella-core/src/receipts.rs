@@ -346,12 +346,20 @@ pub const RECALL_MARKER: &str = "[auto-recalled context]";
 /// Which block kind a `User`-role message actually is.
 ///
 /// Not every `User` message is the user's goal. The engine and the CLI write
-/// several of their own as `CompletionMessage::user`, and
-/// [`crate::engine_markers::ENGINE_MARKERS`] is the enumeration. Before Phase 2
-/// they all collapsed onto [`BlockKind::UserGoal`], so a receipt attributed
-/// engine-generated text to the person. Every marker is a prefix on content the
-/// engine and CLI write themselves, which is why this is a prefix match and not
-/// a heuristic.
+/// several of their own as `CompletionMessage::user`. Two tables in
+/// [`crate::engine_markers`] name them all:
+/// [`ENGINE_MARKERS`](crate::engine_markers::ENGINE_MARKERS) for the bracketed
+/// ones, and
+/// [`ENGINE_NUDGE_PREFIXES`](crate::engine_markers::ENGINE_NUDGE_PREFIXES) for
+/// the two completion nudges, which are plain English and carry no bracket.
+/// Before Phase 2 they all collapsed onto [`BlockKind::UserGoal`], so a receipt
+/// attributed engine-generated text to the person. Every marker is a prefix on
+/// content the engine and CLI write themselves, which is why this is a prefix
+/// match and not a heuristic.
+///
+/// Both tables are read here. While only the markers were, both nudges were
+/// filed as the person's goal. The turn window already read the nudge table,
+/// so one message had two answers.
 ///
 /// The continuation nudge and the Stop-hook feedback file as
 /// [`BlockKind::Steered`] rather than earning kinds of their own: each is a
@@ -415,6 +423,12 @@ fn user_block_kind(content: &str) -> BlockKind {
         || content.starts_with(crate::skills::invoke::SKILL_INVOCATION_PREFIX)
         || content.starts_with(crate::waiting::WAKE_MARKER)
         || content.starts_with(crate::driver::deadline_notice::DEADLINE_MARKER_PREFIX)
+        // Both completion nudges: each is a mid-turn injected instruction that
+        // redirects the model — run the task's own check, or account for the
+        // services this turn left running — which is what `Steered` means.
+        // Read through the table so a third gate's nudge lands here the day it
+        // is written, rather than the day someone notices.
+        || crate::engine_markers::is_engine_nudge(content)
     {
         BlockKind::Steered
     } else if content.starts_with(RECALL_MARKER) {

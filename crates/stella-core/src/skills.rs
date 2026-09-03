@@ -634,15 +634,6 @@ fn floor_char_boundary(text: &str, max: usize) -> usize {
     cut
 }
 
-/// Render the selected skills into the markdown block the CLI injects as a
-/// **volatile context message after the byte-stable system prefix** — never
-/// baked into the cached system block, so prompt-cache hits on the prefix are
-/// preserved ( L-E8). Each skill contributes its name,
-/// description, and body; bodies over `SKILL_BODY_TOKEN_BUDGET` are
-/// truncated with a marker, and once the running total exceeds
-/// `SKILLS_SECTION_TOKEN_BUDGET` the remaining (lower-ranked) skills are
-/// dropped with a note. At least the top skill always renders. Empty input ⇒
-/// empty string (inject nothing).
 /// The block ONE selected skill contributes to the section: name, description,
 /// and the (budget-truncated) body.
 ///
@@ -659,6 +650,15 @@ pub fn rendered_skill_block(sel: &SelectedSkill) -> String {
     )
 }
 
+/// Render the selected skills into the markdown block the CLI injects as a
+/// **volatile context message after the byte-stable system prefix** — never
+/// baked into the cached system block, so prompt-cache hits on the prefix are
+/// preserved (L-E8). Each skill contributes its name, description, and body;
+/// bodies over `SKILL_BODY_TOKEN_BUDGET` are truncated with a marker, and once
+/// the running total exceeds `SKILLS_SECTION_TOKEN_BUDGET` the remaining
+/// (lower-ranked) skills are dropped with a note ([`section_fit`] owns that
+/// cut). At least the top skill always renders. Empty input renders the empty
+/// string, so the caller injects nothing.
 pub fn render_skills_section(selected: &[SelectedSkill]) -> String {
     if selected.is_empty() {
         return String::new();
@@ -871,14 +871,6 @@ pub struct SkillRejection {
     pub rejected_at: u64,
 }
 
-/// The deterministic `<slug>-<hash8>` identity a lesson mines to.
-///
-/// One function rather than an expression inlined per site, because this
-/// string is three things at once: the candidate's name, the `SKILL.md`
-/// filename stem on disk, and the key a [`SkillRejection`] is recorded
-/// against. Those three must agree byte-for-byte or a rejection silently
-/// misses — and `migration_contract::candidate_identity_is_pinned_to_a_literal`
-/// is the literal all three are pinned to.
 /// The longest a mined description may be. Descriptions are one-liners —
 /// rendered into a single frontmatter field, listed in a fixed-width column,
 /// and read by the scorer as a bag of words, where every extra term the
@@ -939,6 +931,14 @@ fn candidate_description(text: &str) -> String {
     }
 }
 
+/// The deterministic `<slug>-<hash8>` identity a lesson mines to.
+///
+/// One function rather than an expression inlined per site, because this
+/// string is three things at once: the candidate's name, the `SKILL.md`
+/// filename stem on disk, and the key a [`SkillRejection`] is recorded
+/// against. Those three must agree byte-for-byte or a rejection silently
+/// misses — and `migration_contract::candidate_identity_is_pinned_to_a_literal`
+/// is the literal all three are pinned to.
 pub fn candidate_id(text: &str) -> String {
     format!(
         "{}-{}",

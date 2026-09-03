@@ -59,12 +59,11 @@ use stella_protocol::{AgentEvent, CompletionMessage};
 use crate::event_sender::EventSender;
 use crate::ports::LiveService;
 
-/// The nudge's own marker, prefix-detected on the transcript. Shares the
-/// once-per-turn window with the prove-it nudge — see
-/// [`super::confident_zero::is_engine_nudge`], which the shared turn window
-/// reads: it must skip both prefixes or each gate's message reopens the
+/// The nudge's own opening, prefix-detected on the transcript. One of
+/// [`crate::engine_markers::ENGINE_NUDGE_PREFIXES`], which the shared turn
+/// window reads: it must skip both, or each gate's message reopens the
 /// other's window (the `gate-ab` regression, #2663).
-pub(super) const SERVICES_PREFIX: &str = "Before ending this turn:";
+pub(crate) const SERVICES_PREFIX: &str = "Before ending this turn:";
 
 /// One line per still-running service, in the order the executor reported
 /// them. Named by handle first: the handle is the stable identifier the

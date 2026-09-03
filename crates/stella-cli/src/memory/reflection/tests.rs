@@ -1010,3 +1010,223 @@ async fn the_prompt_names_where_the_turn_spent_itself() {
          can never recover it.\n\nprompt was:\n{prompt}"
     );
 }
+
+/// A turn that used a tool — everything the transcript gate asks for, and on
+/// its own the whole reason a clean turn buys a model call.
+fn tool_using_turn() -> Vec<CompletionMessage> {
+    let mut worked = CompletionMessage::assistant("reading it");
+    worked.tool_calls = vec![ToolCall {
+        call_id: "c0".into(),
+        name: "read_file".into(),
+        input: serde_json::json!({"path": "src/lib.rs"}),
+    }];
+    vec![
+        CompletionMessage::user("describe src/lib.rs"),
+        worked,
+        CompletionMessage::assistant("it declares one module"),
+    ]
+}
+
+/// The announcement of one tool call, and the result that closed it.
+fn tool_call_events(call_id: &str, output: ToolOutput) -> Vec<stella_protocol::AgentEvent> {
+    vec![
+        stella_protocol::AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: call_id.into(),
+                name: "read_file".into(),
+                input: serde_json::json!({"path": "src/lib.rs"}),
+            },
+            sub_agent_id: None,
+            task_id: None,
+        },
+        stella_protocol::AgentEvent::ToolResult {
+            call_id: call_id.into(),
+            output,
+            duration_ms: 12,
+            speculated: false,
+            sub_agent_id: None,
+            task_id: None,
+        },
+    ]
+}
+
+/// The ledger a door folds out of a turn whose one tool call worked.
+fn clean_ledger() -> super::TurnFriction {
+    super::TurnFriction::from_events(&tool_call_events("c0", ToolOutput::ok("pub mod money;")))
+}
+
+/// **The witness.** A successful turn that used a tool and hit nothing buys no
+/// reflection call.
+///
+/// Fails on base, where the only gate is [`super::turn_warrants_reflection`].
+/// The first assertion below is that base behaviour, and it still holds, which
+/// is what makes the second one a change rather than a rewrite. What the old
+/// answer cost, measured on three trivial turns: 320-507 reflection output
+/// tokens each against 268 worker output tokens for all six worker steps, and
+/// one reflection at 8.8x the price of the turn it described.
+#[test]
+fn a_clean_successful_turn_earns_no_reflection_call() {
+    let transcript = tool_using_turn();
+    let ledger = clean_ledger();
+    assert!(
+        super::turn_warrants_reflection(&transcript),
+        "control: the transcript gate still admits this turn, so the second \
+         assertion is about the friction gate and nothing else"
+    );
+    assert!(
+        !super::warrants_reflection(&super::TurnEvidence::with_friction(
+            &transcript,
+            &ledger,
+            true
+        )),
+        "a turn that went straight through has only its own success to report"
+    );
+}
+
+/// Each of the three engine signals earns the call on its own.
+#[test]
+fn any_one_friction_signal_earns_the_call() {
+    let transcript = tool_using_turn();
+    let cases: Vec<(&str, Vec<stella_protocol::AgentEvent>)> = vec![
+        (
+            "a retried model call",
+            vec![stella_protocol::AgentEvent::Retry {
+                attempt: 1,
+                reason: "429 from the provider".into(),
+            }],
+        ),
+        (
+            "a loop-detector firing",
+            vec![stella_protocol::AgentEvent::LoopDetected {
+                turn_instance: 0,
+                kind: "stagnation".into(),
+                pattern: vec!["bash".into()],
+                repeats: 4,
+                evidence: "same command, no progress".into(),
+                aborted: false,
+            }],
+        ),
+        (
+            "a failed tool call",
+            tool_call_events("c0", ToolOutput::error("no such file")),
+        ),
+    ];
+    for (signal, events) in cases {
+        let ledger = super::TurnFriction::from_events(&events);
+        assert!(
+            super::warrants_reflection(&super::TurnEvidence::with_friction(
+                &transcript,
+                &ledger,
+                true
+            )),
+            "{signal} is where a lesson lives, and it did not earn the call"
+        );
+    }
+}
+
+/// A failed turn reflects whatever its ledger says. The soft stop — the one
+/// outcome that is not a failure — never reaches here, because
+/// [`super::should_reflect_on`] drops it at every call site.
+#[test]
+fn a_failed_turn_reflects_on_an_empty_ledger() {
+    let transcript = tool_using_turn();
+    let ledger = clean_ledger();
+    assert!(
+        super::warrants_reflection(&super::TurnEvidence::with_friction(
+            &transcript,
+            &ledger,
+            false
+        )),
+        "a failure is the cheapest evidence there is about what the turn did \
+         not know going in"
+    );
+    let soft_stop: Result<(), String> =
+        Err(format!("goal aborted: {}", stella_core::SOFT_STOP_REASON));
+    assert!(
+        !super::should_reflect_on(&soft_stop),
+        "a user's soft stop is excluded before the evidence is even built"
+    );
+}
+
+/// `/goal` reflects once over an arc of several rounds, so the gate reads
+/// every round's ledger. A clean round cannot hide the round that struggled.
+#[test]
+fn one_rough_round_earns_the_whole_arc_its_call() {
+    let transcript = tool_using_turn();
+    let rounds = [
+        clean_ledger(),
+        super::TurnFriction::from_events(&tool_call_events(
+            "c1",
+            ToolOutput::error("the suite failed"),
+        )),
+    ];
+    assert!(
+        super::warrants_reflection(&super::TurnEvidence::with_rounds(
+            &transcript,
+            &rounds,
+            true
+        )),
+        "round 2 failed a tool call, and the arc reflects once for all of it"
+    );
+    let clean = [clean_ledger(), clean_ledger()];
+    assert!(
+        !super::warrants_reflection(&super::TurnEvidence::with_rounds(&transcript, &clean, true)),
+        "an arc where every round went straight through has nothing to mine"
+    );
+}
+
+/// A ledger that hit its entry cap cannot say it saw no errors — only that it
+/// saw none among the records it kept. Absence has to be earned.
+#[test]
+fn an_overflowed_ledger_is_never_read_as_a_clean_turn() {
+    let transcript = tool_using_turn();
+    let mut events = Vec::new();
+    for n in 0..=super::digest::FRICTION_ENTRY_CAP {
+        events.extend(tool_call_events(&format!("c{n}"), ToolOutput::ok("fine")));
+    }
+    let ledger = super::TurnFriction::from_events(&events);
+    assert!(
+        ledger.truncated(),
+        "control: the ledger must actually have turned a record away"
+    );
+    assert_eq!(
+        ledger.counts().tool_errors,
+        0,
+        "control: nothing it kept was an error, which is the trap"
+    );
+    assert!(
+        super::warrants_reflection(&super::TurnEvidence::with_friction(
+            &transcript,
+            &ledger,
+            true
+        )),
+        "the records it refused may be the failures, so it cannot claim the \
+         turn was clean"
+    );
+}
+
+/// The gate has to sit at the shared seam, and ahead of the route lookup.
+///
+/// Source-level for the reason `the_reflecting_doors_fold_a_ledger_and_reflect_with_it`
+/// above is: observing it otherwise means standing up a provider, a config, a
+/// store and a session memory to watch a call that does not happen. The
+/// end-to-end proof that no call is dispatched drives the real binary, in
+/// `tests/run_reflection_writes_cli.rs`.
+#[test]
+fn the_shared_seam_asks_the_gate_before_it_spends_anything() {
+    const SEAM: &str = include_str!("../reflection.rs");
+    let door = SEAM
+        .find("pub(crate) async fn reflect_routed(")
+        .expect("the shared reflection seam must still be named this");
+    let gate = SEAM[door..]
+        .find("if !warrants_reflection(&evidence)")
+        .expect("reflect_routed must ask whether the turn earned the call");
+    let route = SEAM[door..]
+        .find("crate::agent::reflection_route(")
+        .expect("reflect_routed must still resolve the reflection route");
+    assert!(
+        gate < route,
+        "a turn that earned nothing should not scan the machine's credentials \
+         either — the gate belongs ahead of the route lookup"
+    );
+}

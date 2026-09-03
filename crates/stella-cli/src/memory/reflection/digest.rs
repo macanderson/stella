@@ -120,7 +120,11 @@ const FRICTION_LIST_CAP: usize = 6;
 /// instead of growing. A turn cannot produce more friction than this and still
 /// have a summarizable shape, and an unbounded fold on a long-running turn is a
 /// leak in a best-effort path.
-const FRICTION_ENTRY_CAP: usize = 512;
+///
+/// Visible to the parent module because the reflection gate has to reason
+/// about the cap it enforces: a ledger that hit it cannot report absence, and
+/// the test that pins that has to be able to reach it.
+pub(super) const FRICTION_ENTRY_CAP: usize = 512;
 
 /// One model call's metering record, as [`AgentEvent::StepUsage`] reported it.
 #[derive(Debug, Clone)]
@@ -173,6 +177,31 @@ pub struct TurnFriction {
     /// where "this turn" is the whole answer and a round number would be a
     /// number invented to fill a field.
     round: Option<usize>,
+}
+
+/// What a turn's ledger holds, counted rather than quoted.
+///
+/// Three numbers, from the three engine signals that mean a turn did not go
+/// straight through: the model call was retried, the loop detector fired, or a
+/// tool came back with an error. Nothing here is new detection — the engine
+/// emits all three as events and [`TurnFriction`] already folds them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FrictionCounts {
+    /// Model calls the engine retried, plus each exhausted retry budget
+    /// (`AgentEvent::Retry`, `AgentEvent::RetriesExhausted`).
+    pub retries: usize,
+    /// Times the loop detector fired, whether it steered the turn or aborted it
+    /// (`AgentEvent::LoopDetected`).
+    pub loop_trips: usize,
+    /// Tool calls whose result was `ToolOutput::Error`.
+    pub tool_errors: usize,
+}
+
+impl FrictionCounts {
+    /// Whether the turn hit any of the three.
+    pub fn any(&self) -> bool {
+        self.retries > 0 || self.loop_trips > 0 || self.tool_errors > 0
+    }
 }
 
 impl TurnFriction {
@@ -355,18 +384,45 @@ impl TurnFriction {
         Some(self.tools.len() - 1)
     }
 
-    /// Dead only *transitively*: its two call sites are both inside
-    /// [`Self::observe`], which lost its own production caller with the staged
-    /// pipeline (#3865). It comes back the moment `observe` does, and until
-    /// then `digest/tests.rs` drives it through that same method — so this is
-    /// one suppression cascading from one decision, not a second orphan.
-    #[allow(dead_code)]
+    /// Both call sites are inside [`Self::observe`], which every raw-loop door
+    /// reaches through [`Self::from_events`]. It carried an
+    /// `#[allow(dead_code)]` for the stretch when `observe` had no production
+    /// caller at all; the wiring landed and the suppression outlived it.
     fn push_retry(&mut self, entry: String) {
         if self.retries.len() >= FRICTION_ENTRY_CAP {
             self.dropped += 1;
             return;
         }
         self.retries.push(entry);
+    }
+
+    /// This ledger's friction as three plain counts.
+    ///
+    /// The ledger keeps the *text* of every retry, loop firing and failed call,
+    /// because the digest renders it. A caller deciding whether the turn is
+    /// worth a reflection call needs none of that text — only whether there was
+    /// any — so it reads this rather than the ledger's own shape.
+    pub fn counts(&self) -> FrictionCounts {
+        FrictionCounts {
+            retries: self.retries.len(),
+            loop_trips: self.loops.len(),
+            tool_errors: self
+                .tools
+                .iter()
+                .filter(|pass| pass.error.is_some())
+                .count(),
+        }
+    }
+
+    /// Whether `FRICTION_ENTRY_CAP` turned any record away.
+    ///
+    /// A ledger that overflowed cannot say it saw no errors. It can only say it
+    /// saw none among the first `FRICTION_ENTRY_CAP` records of a kind, and the
+    /// ones it refused may be the failures. So a caller reading [`Self::counts`]
+    /// to decide on *absence* has to ask this too, or a turn that made more than
+    /// five hundred tool calls reads as a turn that went smoothly.
+    pub fn truncated(&self) -> bool {
+        self.dropped > 0
     }
 
     /// Whether this ledger has anything to say. An empty one renders no section

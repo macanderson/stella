@@ -40,6 +40,39 @@ pub fn turn_warrants_reflection(turn_messages: &[CompletionMessage]) -> bool {
         .any(|message| !message.tool_calls.is_empty())
 }
 
+/// Whether this turn has earned one reflection call.
+///
+/// The transcript gate above asks only whether the turn used a tool, and on
+/// its own that made every tool-using turn buy a model call, while the prompt
+/// itself tells the model that an empty list is a complete answer. Three
+/// trivial turns measured on 2026-08-08 spent 320-507 reflection
+/// output tokens each against 268 worker output tokens for all six worker
+/// steps combined, and one of them cost 8.8x the turn it described. That spend
+/// is structural rather than a routing problem: routing decides which model
+/// pays, and cannot decline a call the turn had no lesson to give.
+///
+/// A turn earns the call when it did not succeed, or when its event ledger
+/// recorded friction — a retry, a loop-detector firing, or a failed tool call.
+/// Those are where lessons live. A wrong attempt inside a turn that ended well
+/// is the surprise the success prompt asks about, so a failure-only gate would
+/// throw it away; a turn that went straight through has only its own success
+/// to report.
+///
+/// A user's soft stop never reaches here: [`should_reflect_on`] excludes it at
+/// every call site, before the evidence is built.
+///
+/// The counts come from the ledger the door already folded out of the turn's
+/// own event journal (`TurnFriction::from_events`), so nothing new is
+/// detected and no engine signal is plumbed a second time. `/goal` hands one
+/// ledger per round and any round's friction earns the arc its call.
+fn warrants_reflection(evidence: &TurnEvidence<'_>) -> bool {
+    !evidence.succeeded
+        || evidence
+            .friction
+            .iter()
+            .any(|round| round.counts().any() || round.truncated())
+}
+
 /// Whether a finished interactive turn should feed reflection at all.
 /// Failures ARE reflected on — a failed turn is a high-value learning
 /// signal, and the one-shot pipeline path has always treated it as one —
@@ -110,7 +143,11 @@ pub(crate) struct ReflectionPosture {
 /// This is the one seam all four reflecting surfaces (one-shot `run`, the
 /// REPL, `/goal`, the Command Deck) dispatch through, so the routing
 /// decision cannot be remembered by three drivers and forgotten by the
-/// fourth. Provider discovery runs per call rather than per session because
+/// fourth. It is also where [`warrants_reflection`] decides whether the turn
+/// has earned the call at all, so a clean successful turn returns an empty
+/// report and spends nothing.
+///
+/// Provider discovery runs per call rather than per session because
 /// reflection is already a post-turn, best-effort model call that opens the
 /// store — one credential scan is noise beside it, and it keeps this seam a
 /// drop-in for the call sites' previous direct dispatch.
@@ -122,6 +159,14 @@ pub(crate) async fn reflect_routed(
     quiet: bool,
     budget_limit: Option<f64>,
 ) -> ReflectionReport {
+    // Ahead of the route lookup, not after it: a turn that has earned nothing
+    // should not scan the machine's credentials either. The gate lives here
+    // rather than at the four call sites for the reason the routing decision
+    // does — one seam cannot be remembered by three drivers and forgotten by
+    // the fourth.
+    if !warrants_reflection(&evidence) {
+        return ReflectionReport::default();
+    }
     let routed =
         crate::agent::reflection_route(cfg, &crate::config::discover_configured_providers());
     // The posture travels with the route, not with the adapter: a triage pin
