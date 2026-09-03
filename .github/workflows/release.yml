@@ -158,7 +158,21 @@ jobs:
           echo "asset=${stem}.tar.gz" >> "$GITHUB_OUTPUT"
           echo "sums=${stem}.sha256" >> "$GITHUB_OUTPUT"
 
+      # Uploaded twice, because one unlucky DNS lookup used to throw away a
+      # finished release. v0.9.273 compiled for seven minutes, packaged its
+      # tarball, and then died here on `Failed to CreateArtifact: Unable to
+      # make request: ENOTFOUND` — an Actions endpoint the runner could not
+      # resolve. Every downstream job needs all four artifacts, so that one
+      # step took the whole tag with it (#5629).
+      #
+      # `continue-on-error` on the first step is what lets a second one run;
+      # the retry itself is a plain step, so a real upload failure still fails
+      # the job. No retry action is added: a third-party action would owe
+      # `action-pins` a pinned SHA and the licence allowlist a review, to buy
+      # one `if:` condition.
       - name: Upload build artifact
+        id: upload
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: stella-${{ matrix.target }}
@@ -167,6 +181,21 @@ jobs:
             ${{ steps.package.outputs.sums }}
           if-no-files-found: error
           retention-days: 7
+
+      # `overwrite` covers the narrower failure where the first attempt got far
+      # enough to reserve the name before it broke; without it the retry would
+      # fail on a name conflict of its own making.
+      - name: Upload build artifact (retry)
+        if: steps.upload.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: stella-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.asset }}
+            ${{ steps.package.outputs.sums }}
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
 
   # Rebuild one target on a second runner and refuse to publish if the bytes
   # differ (#910, acceptance clause). This is the check that keeps
@@ -444,6 +473,37 @@ jobs:
           } > notes.md
           echo "----- notes.md -----"; cat notes.md
 
+      # A draft release is not attached to its tag, so `GET /releases/tags/{tag}`
+      # answers 404 for one and the publish step below creates a second release
+      # instead of finishing the first. That is how v0.9.254 and v0.9.264 ended
+      # up as drafts nothing would ever touch again: the step created the
+      # release, uploaded its assets, then hit a GitHub 5xx before publishing,
+      # and a re-run would have left the half-built draft sitting beside a new
+      # one (#5629). Deleting it first is what makes a re-run finish the job.
+      #
+      # Only a draft is ever deleted. A published release for this tag is a
+      # release users can already download, and this step must never touch it.
+      - name: Delete a stale draft release for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          # `--slurp` cannot be combined with `--jq` (gh rejects that), so the
+          # filter runs in a plain jq after the fetch.
+          ids="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh api --paginate --slurp \
+            'repos/{owner}/{repo}/releases?per_page=100' \
+            | jq -r --arg tag "$tag" '.[][] | select(.draft == true and .tag_name == $tag) | .id')"
+          if [ -z "$ids" ]; then
+            echo "no draft release for ${tag}; nothing to clear."
+            exit 0
+          fi
+          for id in $ids; do
+            echo "::notice::deleting stale draft release ${id} for ${tag} so this run can publish."
+            gh api -X DELETE "repos/{owner}/{repo}/releases/${id}"
+          done
+
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
@@ -494,6 +554,41 @@ jobs:
 
           version="${GITHUB_REF_NAME#v}"
 
+          if [ -n "${HOMEBREW_TAP_DEPLOY_KEY:-}" ]; then
+            # SSH with the tap-scoped deploy key. The key file lives outside
+            # the workspace and is chmod 600, as ssh requires.
+            keyfile="${RUNNER_TEMP}/tap_deploy_key"
+            printf '%s\n' "${HOMEBREW_TAP_DEPLOY_KEY}" > "${keyfile}"
+            chmod 600 "${keyfile}"
+            export GIT_SSH_COMMAND="ssh -i ${keyfile} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+            git clone --depth 1 "git@github.com:macanderson/homebrew-tap.git" tap
+          else
+            git clone --depth 1 \
+              "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/macanderson/homebrew-tap.git" tap
+          fi
+
+          # The tap is cloned before anything is rendered so this job can read
+          # the version it currently serves and refuse to go backwards.
+          #
+          # Re-running release.yml on an old tag checks out the workflow AS OF
+          # THAT TAG and renders the formula for that version unconditionally,
+          # so retrying a months-old failed release would hand every `brew
+          # upgrade` an older stella than the one it has (#5629). The formula
+          # is the one artifact here that is a pointer rather than an addition:
+          # a stale GitHub Release is harmless beside the newer ones, and a
+          # stale Formula/stella.rb is what everybody installs.
+          tap_version=""
+          if [ -f tap/Formula/stella.rb ]; then
+            tap_version="$(sed -n 's/^[[:space:]]*version "\([^"]*\)".*/\1/p' tap/Formula/stella.rb | head -n1)"
+          fi
+          if [ -n "${tap_version}" ] && [ "${tap_version}" != "${version}" ]; then
+            older="$(printf '%s\n%s\n' "${version}" "${tap_version}" | sort -V | head -n1)"
+            if [ "${older}" = "${version}" ]; then
+              echo "::notice::the tap serves ${tap_version}; not rendering the older ${version} over it."
+              exit 0
+            fi
+          fi
+
           # SHA-256 of a given target's release tarball (same bytes uploaded to
           # the GitHub Release in the `release` job).
           sha_for() {
@@ -522,19 +617,6 @@ jobs:
 
           echo "----- rendered Formula/stella.rb -----"
           cat rendered/stella.rb
-
-          if [ -n "${HOMEBREW_TAP_DEPLOY_KEY:-}" ]; then
-            # SSH with the tap-scoped deploy key. The key file lives outside
-            # the workspace and is chmod 600, as ssh requires.
-            keyfile="${RUNNER_TEMP}/tap_deploy_key"
-            printf '%s\n' "${HOMEBREW_TAP_DEPLOY_KEY}" > "${keyfile}"
-            chmod 600 "${keyfile}"
-            export GIT_SSH_COMMAND="ssh -i ${keyfile} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-            git clone --depth 1 "git@github.com:macanderson/homebrew-tap.git" tap
-          else
-            git clone --depth 1 \
-              "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/macanderson/homebrew-tap.git" tap
-          fi
 
           mkdir -p tap/Formula
           cp rendered/stella.rb tap/Formula/stella.rb

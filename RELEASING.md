@@ -237,6 +237,41 @@ diff:
 make releases-baseline-update    # then read the diff
 ```
 
+Write the reason above the tag as a comment line. Regeneration keeps those
+notes, and the reason is what a reviewer needs to judge the entry.
+
+### The three shapes a failed release takes
+
+`make releases-published` names the state of every reported tag, because the
+work each one needs is different. Four orphan tags once turned out to be three
+different failures:
+
+| State | What happened | What to do |
+|---|---|---|
+| `draft` | The build ran and the assets are attached, but a `5xx` killed the publish step before the release left draft. | List the draft's assets. Publish it if the set is complete; delete it and re-run the tag if it is not. |
+| `absent` | No release object exists — a build job died, often in `actions/upload-artifact`. | Re-run `release.yml` on the tag, but read the version guard below first. |
+| gone | The build finished, and the run itself was killed after the fact. Build artifacts expire after 7 days, so an old one has nothing left to publish. | Grandfather the tag with a note. Rebuilding a version a hundred releases behind buys nothing. |
+
+Find a draft and see what it holds:
+
+```bash
+gh api repos/{owner}/{repo}/releases \
+  --jq '.[] | select(.draft) | {id, tag_name, assets: [.assets[].name]}'
+```
+
+A complete set is four tarballs plus `SHA256SUMS` and `SHA256SUMS.bin`.
+`install.sh` and the Homebrew formula both read `SHA256SUMS`, so a draft
+missing it is not publishable — delete it (`gh api -X DELETE
+repos/{owner}/{repo}/releases/<id>`) rather than shipping a release whose
+checksum file is absent.
+
+**Re-running an old tag runs the workflow as it stood at that tag.** That
+matters most for the `homebrew` job, which renders `Formula/stella.rb` for
+whatever version it is building. Today's job refuses to render a version lower
+than the one the tap already serves, so a re-run cannot downgrade `brew
+upgrade`. A tag old enough to predate that guard has no such protection: check
+what its own `release.yml` does before dispatching it.
+
 ## Verify a published binary yourself
 
 Release builds are reproducible: the same tag, built on the pinned toolchain,
