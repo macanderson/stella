@@ -97,13 +97,14 @@ pub fn seed_calibration(
 
 /// Construct the provider adapter for these parts.
 ///
-/// The per-dialect match itself lives in `stella_model::factory`, which also
-/// enforces the catalog seed floor, so a phantom model slug is a named error
-/// before any wire call. What this adds is nothing —. The
-/// *synced-catalog* escalation and its suggestions stay in `stella-cli`,
-/// because that layer owns the on-disk catalog; a caller that wants the
-/// richer diagnostic runs its own validation first and then calls this. That
-/// split is why this function takes resolved parts and not a `Config`.
+/// The per-dialect match lives in `stella_model::factory`. It also enforces
+/// the catalog seed floor, so a phantom model slug is a named error before any
+/// wire call.
+///
+/// The *synced-catalog* escalation and its suggestions stay in `stella-cli`.
+/// That layer owns the on-disk catalog. A caller that wants the richer
+/// diagnostic runs its own validation first, then calls this. That split is
+/// why this function takes resolved parts and not a `Config`.
 pub fn build_provider(parts: &ProviderParts) -> Result<Box<dyn Provider>, RuntimeError> {
     stella_model::factory::build_provider(
         &parts.factory_spec(),

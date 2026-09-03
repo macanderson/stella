@@ -69,6 +69,7 @@
 
 pub mod appraisal;
 pub mod invoke;
+pub mod paths;
 
 use std::collections::{HashMap, HashSet};
 
@@ -143,9 +144,14 @@ pub struct Skill {
 /// implementation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillFile {
-    /// The file's path — used both as [`Skill::source_path`] and, when no
-    /// `name:` frontmatter is present, to derive the slug (both the
-    /// `<dir>/<slug>/SKILL.md` and flat `<dir>/<slug>.md` layouts).
+    /// The file's path, **separated by `/` on every platform** — used both as
+    /// [`Skill::source_path`] and, when no `name:` frontmatter is present, to
+    /// derive the slug (both the `<dir>/<slug>/SKILL.md` and flat
+    /// `<dir>/<slug>.md` layouts).
+    ///
+    /// A source built on a platform that spells paths some other way folds them
+    /// here, with [`paths::to_slash`]: `Path::display()` alone is not this
+    /// string on Windows.
     pub path: String,
     pub content: String,
 }
@@ -197,6 +203,9 @@ pub struct LoadedSkills {
 /// Where to look for skills. Unlike a TS loader, `stella-core` never defaults
 /// these from `cwd()`/`homedir()` itself — no I/O, not even the trivial kind —
 /// so the caller always supplies both.
+///
+/// Both directories are `/`-separated, like [`SkillFile::path`] — the origin a
+/// file gets is decided by matching one against the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadSkillsOptions {
     /// `<workspace>/.stella/skills` — highest precedence.
@@ -1182,6 +1191,11 @@ pub enum AutoCreateDecision {
 /// (#737). `evidence` is what an evaluation says about this candidate; pass
 /// [`appraisal::EvalEvidence::Unevaluated`] when nothing has appraised it.
 ///
+/// The no-clobber comparison reads `\` and `/` alike ([`paths::same_skill_path`]),
+/// so a caller that spells `target_dir` or an occupied path the Windows way is
+/// still stopped. `Create` hands back the path built from `target_dir` as the
+/// caller spelled it, which is what the caller then writes.
+///
 /// Cap, then no-clobber, then the eval gate. The order of the first two is
 /// pinned by `migration_contract` and unchanged. The gate goes **last** on
 /// purpose: it is the most important check but the least *actionable* refusal,
@@ -1206,8 +1220,15 @@ pub fn decide_auto_creation(
             },
         };
     }
-    let path = format!("{}/{}.md", target_dir.trim_end_matches('/'), candidate.name);
-    if occupied_paths.iter().any(|p| p == &path) {
+    let path = format!(
+        "{}/{}.md",
+        target_dir.trim_end_matches(['/', '\\']),
+        candidate.name
+    );
+    if occupied_paths
+        .iter()
+        .any(|p| paths::same_skill_path(p, &path))
+    {
         return AutoCreateDecision::Skip {
             reason: AutoCreateSkip::FileExists { path },
         };

@@ -255,12 +255,19 @@ that prefix is what the provider's prompt cache keys on, so nondeterminism here
 is a re-billing regression, not a cosmetic one. The code enforces two rules on
 purpose:
 
-- `append_workspace_memories` reads `.stella/memories/*.md`, `files.sort()`s by
+- `workspace_memories_span` reads `.stella/memories/*.md`, `files.sort()`s by
   filename, and concatenates under a 16,000-char budget (`MEMORY_PROMPT_BUDGET_CHARS`);
-  overflow is dropped with a count, never reordered. The prompt is built **once
-  per session** and reused verbatim (including across `/clear`), so a memory
-  saved mid-session deliberately does not appear until the next session —
-  hot-injecting it would invalidate the cached prefix on every save.
+  overflow is dropped with a count, never reordered. A file that cannot be read
+  as text, and one whose canonical path escapes the workspace root, are both
+  refused and named in the span — a memory may not be a symlink out of the
+  checkout, and one that vanishes must leave a sign. The
+  prompt is built **once per session** and reused verbatim (including across
+  `/clear`), so a memory saved mid-session deliberately does not appear until
+  the next session — hot-injecting it would invalidate the cached prefix on
+  every save. `session_workspace_memories` is what holds that: it latches the
+  span per workspace root, so the deck's mid-session `/model` and `/agent`
+  rebuilds re-send the bytes the session opened with instead of re-reading the
+  directory.
 - `append_session_environment` states only session-constant facts — working
   directory, git checkout or not, platform, OS release, shell dialect (#2692).
   A process cannot change its OS mid-session, so the block is prefix-safe.

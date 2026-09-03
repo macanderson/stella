@@ -39,6 +39,7 @@ use stella_tui_theme::token;
 
 use crate::deck::{TraceRow, WorkspaceModel};
 use crate::deck_ui::DeckUi;
+use crate::render::columns;
 use crate::theme;
 
 /// Columns of air down the left edge, shared by the header and every row so
@@ -169,14 +170,16 @@ fn header_line(
 fn row_line(row: &TraceRow, now_ms: u64, width: usize) -> Line<'static> {
     let mmss = format_mmss(now_ms.saturating_sub(row.ts));
     let kind_chip = format!("[{}]", row.kind.label());
+    // Columns throughout: the summary is model text, and the agent name is a
+    // sub-agent's, so neither is ASCII by construction.
     let prefix_width = GUTTER_W
-        + mmss.chars().count()
+        + columns::width(&mmss)
         + 2
-        + row.agent.chars().count()
+        + columns::width(&row.agent)
         + 2
-        + kind_chip.chars().count()
+        + columns::width(&kind_chip)
         + 1;
-    let summary = truncate_to_width(&row.summary, width.saturating_sub(prefix_width));
+    let summary = columns::head(&row.summary, width.saturating_sub(prefix_width));
 
     Line::from(vec![
         Span::raw(" ".repeat(GUTTER_W)),
@@ -228,23 +231,6 @@ fn row_record(row: &TraceRow, now_ms: u64, width: usize) -> Line<'static> {
 fn format_mmss(elapsed_ms: u64) -> String {
     let total_secs = elapsed_ms / 1000;
     format!("{:02}:{:02}", total_secs / 60, total_secs % 60)
-}
-
-/// Truncate to at most `width` chars, adding an ellipsis when clipped. Robust
-/// to `width == 0` (empty string) — never panics on a too-narrow terminal.
-fn truncate_to_width(text: &str, width: usize) -> String {
-    let count = text.chars().count();
-    if count <= width {
-        return text.to_string();
-    }
-    if width == 0 {
-        return String::new();
-    }
-    if width == 1 {
-        return "…".to_string();
-    }
-    let head: String = text.chars().take(width - 1).collect();
-    format!("{head}…")
 }
 
 /// Centered muted hint shown when the (possibly filtered) timeline is empty.
@@ -445,9 +431,47 @@ mod tests {
     }
 
     #[test]
-    fn truncate_to_width_adds_an_ellipsis_only_when_clipped() {
-        assert_eq!(truncate_to_width("short", 10), "short");
-        assert_eq!(truncate_to_width("a very long summary line", 8), "a very …");
-        assert_eq!(truncate_to_width("anything", 0), "");
+    fn a_row_summary_gets_an_ellipsis_only_when_it_is_clipped() {
+        let row = |summary: &str| TraceRow {
+            ts: 0,
+            agent: "a".into(),
+            kind: crate::deck::TraceKind::Text,
+            summary: summary.into(),
+        };
+        assert!(!line_text(&row_line(&row("short"), 0, 60)).contains('…'));
+        assert!(
+            line_text(&row_line(&row(&"long ".repeat(40)), 0, 60)).contains('…'),
+            "a summary wider than the pane is clipped"
+        );
+    }
+
+    /// A wide-character summary must not push the row past the pane.
+    ///
+    /// The summary is model text and the budget it is cut to is the pane's own
+    /// width. Spent in `char`s, a CJK summary composed a row twice that wide —
+    /// which the transcript's line-exact scroll math (L-T4) assumes cannot
+    /// happen. `Line::width` is ratatui's measurement, not the helper under
+    /// test.
+    #[test]
+    fn a_wide_character_summary_stays_inside_the_pane() {
+        let width = 60;
+        let row = TraceRow {
+            ts: 0,
+            agent: "a".into(),
+            kind: crate::deck::TraceKind::Text,
+            summary: "重构鉴权模块并补上失败的见证测试".repeat(4),
+        };
+        let line = row_line(&row, 0, width);
+        assert!(
+            line.width() <= width,
+            "the row is {} columns wide in a {width}-column pane: {}",
+            line.width(),
+            line_text(&line)
+        );
+    }
+
+    /// Flatten one styled line back to its text.
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.clone()).collect()
     }
 }

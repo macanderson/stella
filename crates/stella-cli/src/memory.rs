@@ -601,6 +601,11 @@ impl SessionMemory {
         .map(|store| store.with_tuning(retrieval.tuning()))
         {
             Ok(store) => {
+                // Run the stale-anchor scan here too, right next to warm,
+                // on this same open store. This ends a deleted file's
+                // anchor with no manual `--end-stale` run. See
+                // `anchor_scan::scan_stale_anchors_at_mount` for the cap.
+                anchor_scan::scan_stale_anchors_at_mount(&store, workspace_root);
                 let domains = Domains::load(workspace_root)
                     .ok()
                     .flatten()

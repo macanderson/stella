@@ -14,10 +14,12 @@
 //! Most providers authenticate with exactly one secret, which is the shape
 //! [`ApiKey`] resolves. Bedrock needs a *set* — access key id, secret access
 //! key, optional session token, plus a region that is routing rather than a
-//! credential. Those extra values travel in [`AuxCredentials`] and are stored
-//! in the `[credential_fields.<provider>]` half of the credentials file, so
-//! Bedrock has a durable home for all four instead of only working when the
-//! standard AWS variables happen to be exported.
+//! credential. Vertex needs its bearer token plus a GCP project and a
+//! location, both of which are routing. Those extra values travel in
+//! [`AuxCredentials`] and are stored in the `[credential_fields.<provider>]`
+//! half of the credentials file, so each provider has a durable home for the
+//! whole set instead of only working when the right variables happen to be
+//! exported — and so a host running two sessions can address two projects.
 
 // Not `aux`: that spelling made the repository un-checkoutable on Windows.
 // `scripts/check-reserved-paths.sh` is what stops it coming back.
@@ -702,9 +704,71 @@ pub struct VertexAddressing {
 }
 
 impl VertexAddressing {
+    /// The two names that can carry the project, in fallback order. One field,
+    /// two spellings — which is why [`Self::resolve_with`] treats them as a
+    /// pair instead of falling back name by name.
+    pub const PROJECT_ENV_NAMES: &'static [&'static str] =
+        &["VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT"];
+
+    /// The name that carries the location. Absent everywhere, the location is
+    /// [`Self::DEFAULT_LOCATION`].
+    pub const LOCATION_ENV_NAME: &'static str = "VERTEX_LOCATION";
+
+    /// The location a request is scoped to when nothing names one. Google's
+    /// multi-region endpoint, `aiplatform.googleapis.com`.
+    pub const DEFAULT_LOCATION: &'static str = "global";
+
+    /// Every environment-variable name this resolves, in the order a host
+    /// should offer them. Public for the reason
+    /// [`BedrockCredentials::AUX_ENV_NAMES`] is: the host walks its own chain
+    /// (an inherited descriptor, the environment, `~/.stella/credentials.toml`)
+    /// for each name and hands the results back as an [`AuxCredentials`] set,
+    /// so it must not re-spell the list.
+    ///
+    /// There is no `SECRET_ENV_NAMES` counterpart: a project id and a location
+    /// are addressing, not credentials — they are published in a run manifest.
+    /// The bearer token is the one key, and it travels through
+    /// [`ApiKey::resolve`] as `VERTEX_ACCESS_TOKEN`.
+    pub const AUX_ENV_NAMES: &'static [&'static str] = &[
+        "VERTEX_PROJECT_ID",
+        "GOOGLE_CLOUD_PROJECT",
+        "VERTEX_LOCATION",
+    ];
+
     /// Resolve from the process environment.
     pub fn resolve() -> Result<Self, CredentialError> {
         Self::resolve_from(env_non_empty)
+    }
+
+    /// Resolve from values a host already resolved through its own chain,
+    /// falling back to the process environment for anything absent.
+    ///
+    /// This is what lets one process hold two sessions scoped to two GCP
+    /// projects. The environment is process-global, so it is the same
+    /// for all N sessions a host assembles; the only way two of them can
+    /// disagree about a project is a value passed in per session. Without it a
+    /// multi-tenant host billed both tenants to whichever project it happened
+    /// to have exported, in the wrong region, with the wrong data residency.
+    ///
+    /// The fallback keeps a library-style caller — one that builds straight off
+    /// [`crate::factory::build_provider`] with no chain of its own — working
+    /// exactly as it did when this read the environment directly.
+    pub fn resolve_with(aux: &AuxCredentials) -> Result<Self, CredentialError> {
+        // Per field, not per name: a host that named either project spelling
+        // has spoken for the project, so the environment is not consulted for
+        // the other one. Falling back name by name would let a process-global
+        // `VERTEX_PROJECT_ID` outrank a host-supplied `GOOGLE_CLOUD_PROJECT`,
+        // and the two sessions would share a project again.
+        let host_named_project = Self::PROJECT_ENV_NAMES
+            .iter()
+            .any(|name| aux.get(name).is_some());
+        Self::resolve_from(|name| {
+            let from_aux = aux.get(name).map(str::to_string);
+            if host_named_project && Self::PROJECT_ENV_NAMES.contains(&name) {
+                return from_aux;
+            }
+            from_aux.or_else(|| env_non_empty(name))
+        })
     }
 
     /// The resolution itself, over an injected lookup — pure, so the
@@ -714,10 +778,12 @@ impl VertexAddressing {
     pub(crate) fn resolve_from(
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, CredentialError> {
-        let project = lookup("VERTEX_PROJECT_ID")
-            .or_else(|| lookup("GOOGLE_CLOUD_PROJECT"))
+        let project = Self::PROJECT_ENV_NAMES
+            .iter()
+            .find_map(|name| lookup(name))
             .ok_or(CredentialError::VertexProjectMissing)?;
-        let location = lookup("VERTEX_LOCATION").unwrap_or_else(|| "global".to_string());
+        let location =
+            lookup(Self::LOCATION_ENV_NAME).unwrap_or_else(|| Self::DEFAULT_LOCATION.to_string());
         Ok(Self { project, location })
     }
 }

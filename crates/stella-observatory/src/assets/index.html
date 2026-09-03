@@ -3730,7 +3730,7 @@ function renderLifecycle(d) {
   const episodes = d.episodes ?? [];
   $("imp-episodes").innerHTML = episodes.length
     ? `<table><thead><tr><th scope="col">episode</th><th scope="col">outcome</th>
-        <th scope="col" class="num">files</th><th scope="col" class="num">salience</th>
+        <th scope="col" class="num">files</th>
         <th scope="col" class="num">ended</th></tr></thead><tbody>` +
       episodes.map(ep => {
         const files = Array.isArray(ep.files_touched) ? ep.files_touched : [];
@@ -3739,7 +3739,6 @@ function renderLifecycle(d) {
         <td class="main">${esc(ep.summary)}</td>
         <td><span class="badge ${cls}">${esc(label)}</span></td>
         <td class="num" title="${esc(files.join("\n"))}">${fmtInt(files.length)}</td>
-        <td class="num">${num(ep.salience).toFixed(2)}</td>
         <td class="num">${ago(ep.ended_at)}</td></tr>`;
       }).join("") + `</tbody></table>`
     : `<div class="empty">No episodes recorded.<br>

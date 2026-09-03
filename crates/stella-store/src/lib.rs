@@ -594,8 +594,8 @@ pub struct Store {
     /// `None` for in-memory/ephemeral stores.
     root: Option<PathBuf>,
     /// The file this connection is open on. `None` in memory. It is kept so
-    /// that a write which fails can name the file to go and look at. That is
-    /// the one part of the failure a person can act on.
+    /// that a failed open can name the file to go and look at. That is the
+    /// one part of the failure a person can act on.
     db_path: Option<PathBuf>,
 }
 
@@ -680,8 +680,8 @@ impl Store {
         // `paranoid`, which costs 180x and is therefore opt-in.
         //
         // This batch is also the first statement to touch page 1, so it is
-        // where an unreadable file announces itself — mapped here, before the
-        // blanket `From<rusqlite::Error>` flattens the error code away.
+        // where an unreadable file announces itself — mapped here with the
+        // resolved path, which the blanket conversion has none of.
         // The batch absorbs a concurrent first-open's `SQLITE_BUSY`; see
         // [`initialize_store_pragmas`].
         initialize_store_pragmas(&conn).map_err(|error| corrupt_store_error(error, db_path))?;

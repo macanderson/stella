@@ -42,6 +42,11 @@
 //!   when a labelled task plane exists it belongs in [`TurnFacts`].
 //! - Multi-word **keywords** (`"docker compose"`) match as case-insensitive
 //!   substrings, because word-splitting would never reassemble them.
+//!
+//! [`super::validate`] asks the same rules a second question — can one turn
+//! select both of these records? — through [`shared_triggers`], so a conflict
+//! between two task-scoped records is judged by the matcher that will decide
+//! whether they both fire.
 
 use super::super::glob::match_glob;
 use super::super::ingest::record::AppliesTo;
@@ -79,6 +84,36 @@ pub fn applies_this_turn(applies_to: Option<&AppliesTo>, facts: &TurnFacts<'_>) 
                 word_in_text(facts.text, keyword)
             }
         })
+}
+
+/// The tasks and keywords of `scope` that also select `other`.
+///
+/// [`super::validate`] asks this to decide whether two records can steer the
+/// same turn once their paths have told it nothing. A turn whose text is one of
+/// `scope`'s own triggers is a turn `scope` selects, so all that is left to ask
+/// is whether [`applies_this_turn`] admits `other` for it — one matcher, and a
+/// list of the terms a conflict report can name.
+///
+/// Asymmetric, so a caller wanting every shared term asks both ways: a
+/// single-word keyword matches inside a multi-word one, and the reverse cannot.
+/// A path-only scope shares nothing here, because a glob is not a turn path;
+/// globs are compared to each other by `validate`.
+pub fn shared_triggers(scope: &AppliesTo, other: &AppliesTo) -> Vec<String> {
+    scope
+        .tasks
+        .iter()
+        .chain(scope.keywords.iter())
+        .filter(|term| {
+            applies_this_turn(
+                Some(other),
+                &TurnFacts {
+                    text: term.as_str(),
+                    paths: &[],
+                },
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 /// Any pattern matching any turn path. A pattern with no literal part (`*`,
@@ -235,6 +270,36 @@ mod tests {
             Some(&phrase),
             &facts("compose a docker image name", &[])
         ));
+    }
+
+    #[test]
+    fn shared_triggers_names_the_terms_that_select_both_scopes() {
+        let task = scoped(&[], &["deploy"], &[]);
+        let keyword = scoped(&[], &[], &["deploy"]);
+        assert_eq!(shared_triggers(&task, &keyword), vec!["deploy".to_string()]);
+        assert_eq!(shared_triggers(&keyword, &task), vec!["deploy".to_string()]);
+        assert!(shared_triggers(&task, &scoped(&[], &["docs"], &[])).is_empty());
+    }
+
+    #[test]
+    fn shared_triggers_is_asymmetric_across_a_multi_word_keyword() {
+        // "docker" is a whole word of "docker compose", so a turn written for
+        // the phrase also selects the single word. A turn that says only
+        // "docker" does not select the phrase, so the caller asks both ways.
+        let phrase = scoped(&[], &[], &["docker compose"]);
+        let word = scoped(&[], &[], &["docker"]);
+        assert_eq!(
+            shared_triggers(&phrase, &word),
+            vec!["docker compose".to_string()]
+        );
+        assert!(shared_triggers(&word, &phrase).is_empty());
+    }
+
+    #[test]
+    fn a_path_only_scope_shares_no_trigger() {
+        // A glob is not a turn path, so path overlap is `validate`'s question.
+        let paths = scoped(&["src/**"], &[], &[]);
+        assert!(shared_triggers(&paths, &paths).is_empty());
     }
 
     #[test]

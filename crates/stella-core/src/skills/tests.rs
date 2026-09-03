@@ -1031,6 +1031,52 @@ fn auto_create_refuses_to_clobber_an_existing_file() {
 }
 
 #[test]
+fn auto_create_refuses_to_clobber_a_backslash_path() {
+    // The strings a Windows session hands the guard: `Path::display()` for the
+    // occupied file, and the same spelling for the target directory. The guard
+    // joins with `/`, so the path it builds is
+    // `C:\ws\.stella\skills/prefer-tables.md` — which string-equals nothing on
+    // disk. A plain `==` comparison returns `Create` here, and the write that
+    // follows destroys the user's file.
+    let existing = vec![r"C:\ws\.stella\skills\prefer-tables.md".to_string()];
+    let decision = decide_auto_creation(
+        &a_candidate(),
+        r"C:\ws\.stella\skills",
+        &existing,
+        0,
+        appraisal::EvalEvidence::MeasuredLift,
+        &AutoCreateConfig::default(),
+    );
+    assert!(matches!(
+        decision,
+        AutoCreateDecision::Skip {
+            reason: AutoCreateSkip::FileExists { .. }
+        }
+    ));
+}
+
+#[test]
+fn auto_create_still_tells_two_different_files_apart() {
+    // The fold is over separators alone: a different file name is still a
+    // different file, and auto-creation proceeds.
+    let existing = vec![r"C:\ws\.stella\skills\prefer-lists.md".to_string()];
+    let decision = decide_auto_creation(
+        &a_candidate(),
+        r"C:\ws\.stella\skills",
+        &existing,
+        0,
+        appraisal::EvalEvidence::MeasuredLift,
+        &AutoCreateConfig::default(),
+    );
+    assert_eq!(
+        decision,
+        AutoCreateDecision::Create {
+            path: r"C:\ws\.stella\skills/prefer-tables.md".to_string()
+        }
+    );
+}
+
+#[test]
 fn auto_create_stops_at_the_session_cap() {
     let decision = decide_auto_creation(
         &a_candidate(),

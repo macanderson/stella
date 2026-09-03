@@ -1212,3 +1212,24 @@ fn a_stale_park_stamp_cannot_resurrect_a_settled_park() {
         "and it is inert, because `live_park` gates on the pure fold"
     );
 }
+
+/// A trace snip is capped in display columns, not code points.
+///
+/// Almost everything `snip` cuts is model output, so it is not ASCII by
+/// construction; capped by `char` count, a CJK message reached the trace row
+/// at 160 columns against an 80-column cap. Measured with `unicode_width`
+/// directly rather than through the helper under test.
+#[test]
+fn a_wide_character_trace_snip_is_capped_in_columns() {
+    use unicode_width::UnicodeWidthStr;
+
+    let flat = super::classify::snip(&"重构鉴权模块".repeat(30));
+    assert!(
+        UnicodeWidthStr::width(flat.as_str()) <= 80,
+        "{flat:?} is wider than the 80-column cap"
+    );
+    assert!(flat.ends_with('…'), "a cut snip says it was cut: {flat:?}");
+
+    // A newline still flattens, and short ASCII passes through untouched.
+    assert_eq!(super::classify::snip("one\ntwo"), "one two");
+}
