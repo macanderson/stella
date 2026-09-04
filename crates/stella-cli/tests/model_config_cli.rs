@@ -197,7 +197,7 @@ fn doctor_reports_the_model_a_valid_config_resolves_to_and_where_it_came_from() 
         stdout.contains("zai/glm-5.2") && stdout.contains("default_model"),
         "the pass states the resolved model and its source: {stdout}"
     );
-    assert!(stdout.contains("5 ok, 0 failed"), "{stdout}");
+    assert!(stdout.contains("6 ok, 0 failed"), "{stdout}");
 }
 
 #[test]

@@ -377,8 +377,9 @@ mod tests {
     /// spawn child processes. A plain `libc::pipe()` fd is open to any child.
     /// A child forked and exec'd on another thread, while a test here still
     /// holds the pipe open, can keep it alive past this thread's own close.
-    /// `cloexec_pipe_closes_a_concurrent_childs_inherited_copy` below
-    /// reproduces that exact shape on demand.
+    /// `cloexec_pipe_closes_a_concurrent_childs_inherited_copy` below holds
+    /// this function to its side of that: the flag is set, and a child it
+    /// spawns loses its copy at `exec`.
     ///
     /// `pipe2(O_CLOEXEC)` sets the flag in the same call that makes the
     /// pipe, so there is no gap where a fork could see it unset. Linux is

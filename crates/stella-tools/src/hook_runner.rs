@@ -102,7 +102,12 @@ impl HookRunner for HostHookRunner {
         let mut command = match &action.plugin {
             Some(origin) => plugin_command(origin, |name| std::env::var(name).ok())?,
             None => {
-                let mut command = tokio::process::Command::new("bash");
+                let mut command = crate::shell_resolve::bash_command().map_err(|err| {
+                    HookExecError::SpawnFailed {
+                        command: action.command.clone(),
+                        message: err.to_string(),
+                    }
+                })?;
                 command.arg("-c").arg(&action.command);
                 // Full spawn policy: a hook running from inside a git hook
                 // must not inherit the outer repo's GIT_DIR, and its stdout
