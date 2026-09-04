@@ -411,13 +411,54 @@ mod tests {
         fds
     }
 
-    /// Whether `pid` holds `fd` open, read from its `/proc` fd directory.
+    /// Whether `pid` holds *this process's* `fd` — the same object, not merely
+    /// the same number — read from both `/proc` fd directories.
     ///
     /// Scoped to the child this test spawned, so it answers a question about
     /// one known process rather than about the whole machine.
+    ///
+    /// Comparing the link targets is what makes the number incidental. A child
+    /// holding some unrelated descriptor at that number is not holding the
+    /// pipe, and an occupancy test cannot tell those apart — it reports the
+    /// number, and the caller reads it as the pipe.
     #[cfg(target_os = "linux")]
     fn process_holds_fd(pid: u32, fd: i32) -> bool {
-        std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).is_ok()
+        match (
+            std::fs::read_link(format!("/proc/{pid}/fd/{fd}")),
+            std::fs::read_link(format!("/proc/self/fd/{fd}")),
+        ) {
+            (Ok(theirs), Ok(ours)) => theirs == ours,
+            // The number is free in the child, so it holds nothing of ours.
+            (Err(_), _) => false,
+            // This process has closed its own copy, leaving nothing to compare
+            // the child's against and so nothing to claim.
+            (_, Err(_)) => false,
+        }
+    }
+
+    /// Every descriptor `pid` holds, as `fd -> target`, for a failure message.
+    ///
+    /// A bare assertion says a number was occupied and stops there, which is
+    /// how this test's flake survived three repairs with nobody able to say
+    /// what the child was actually holding. Putting the whole table in the
+    /// panic makes the next red run carry its own evidence.
+    #[cfg(target_os = "linux")]
+    fn fd_table(pid: u32) -> Vec<(String, String)> {
+        let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+            return Vec::new();
+        };
+        let mut table: Vec<(String, String)> = entries
+            .flatten()
+            .map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let target = std::fs::read_link(e.path())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|e| format!("<unreadable: {e}>"));
+                (name, target)
+            })
+            .collect();
+        table.sort();
+        table
     }
 
     /// The `(device, inode)` pair naming the object `fd` refers to, or `None`
@@ -498,12 +539,14 @@ mod tests {
             assert!(
                 !process_holds_fd(child.id(), read_fd),
                 "a child spawned while the pipe was open still held a live \
-                 copy of the read end"
+                 copy of the read end; the child's table was {:?}",
+                fd_table(child.id())
             );
             assert!(
                 !process_holds_fd(child.id(), write_fd),
                 "a child spawned while the pipe was open still held a live \
-                 copy of the write end"
+                 copy of the write end; the child's table was {:?}",
+                fd_table(child.id())
             );
         }
 
