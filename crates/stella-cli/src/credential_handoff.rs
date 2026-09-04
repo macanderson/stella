@@ -411,8 +411,21 @@ mod tests {
         fds
     }
 
+    /// Whether `pid` holds `fd` open, read from its `/proc` fd directory.
+    ///
+    /// Scoped to the child this test spawned, so it answers a question about
+    /// one known process rather than about the whole machine.
+    #[cfg(target_os = "linux")]
+    fn process_holds_fd(pid: u32, fd: i32) -> bool {
+        std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).is_ok()
+    }
+
     /// The `(device, inode)` pair naming the object `fd` refers to, or `None`
     /// when `fd` is not open.
+    ///
+    /// Identifies the object rather than the descriptor number, so a sibling
+    /// test taking the number the instant it is freed reads as a different
+    /// pair rather than as the same pipe.
     ///
     /// Read through `MetadataExt` rather than a raw `libc::stat`, because
     /// `dev_t` is signed on macOS and unsigned on Linux, so no single
@@ -431,57 +444,74 @@ mod tests {
         Some((stat.dev(), stat.ino()))
     }
 
-    /// Reproduces the fd-inheritance race on demand, instead of waiting for
-    /// the parallel test harness to hit it. Rust marks `CLOEXEC` only on fds
-    /// it made itself. A raw `libc` fd is invisible to that bookkeeping, so a
-    /// plain `libc::pipe()` fd survives `exec` into any child
-    /// `std::process::Command` spawns while the pipe is open, and
-    /// `cloexec_pipe` is what closes it there.
+    /// A child `std::process::Command` spawns while the pipe is open must not
+    /// keep the read end alive. Rust marks `CLOEXEC` only on fds it made
+    /// itself; a raw `libc` fd is invisible to that bookkeeping, so a plain
+    /// `libc::pipe()` fd survives into any child. `cloexec_pipe` sets the flag
+    /// so the child's `exec` drops its copy.
     ///
-    /// The child is asked over `/dev/fd`, which names one process's own open
-    /// descriptors, so the assertion covers the single process this test
-    /// controls — which is the process the assertion is about. An `EPIPE`
-    /// probe on a retained write end cannot do that: `EPIPE` asks whether
-    /// *any* process still holds a read end, and `CLOEXEC` clears an inherited
-    /// copy at `exec` rather than at `fork`, so a sibling test forking
-    /// anywhere between `cloexec_pipe` and the write holds a live copy in
-    /// flight and the write finds a reader.
+    /// **Asserted on the child, not on the pipe's readability.** The obvious
+    /// probe — close the read end, write, expect `EPIPE` — asks whether *any*
+    /// process anywhere still holds the read end, and no per-fd flag can
+    /// settle that. `FD_CLOEXEC` acts at `exec`; `fork` copies the fd table
+    /// whatever the flag says. So any of the sibling tests spawning a process
+    /// on another harness thread owns a copy for the width of its own
+    /// fork→exec window, and a write landing inside that window finds a reader
+    /// and returns `1`. That is what turned this test red on `main` at
+    /// `b29e934f` after passing on its own branch at `6f6e4d84` — the same
+    /// code, decided by which thread was mid-spawn.
+    ///
+    /// `process_holds_fd` asks the question the fix is actually about: after
+    /// `exec`, does *this* child hold the read end? Nothing another thread
+    /// does can change that answer. Both assertions still fail on a plain
+    /// `libc::pipe()`: the flag is absent, and the child keeps the fd.
     #[test]
     fn cloexec_pipe_closes_a_concurrent_childs_inherited_copy() {
         let fds = cloexec_pipe();
         let (read_fd, write_fd) = (fds[0], fds[1]);
 
-        // `/dev/fd/N` resolves inside the child exactly when the child holds
-        // fd `N`: Linux points the directory at `/proc/self/fd`, Darwin
-        // provides it directly. The shell reports which way it went instead of
-        // exiting on it, so a child that died for any other reason cannot read
-        // as a pass. `read_fd` is at least 3 — stdio holds 0 through 2 in this
-        // process — and the parent cannot hand that number to anything else
-        // while it still owns the pipe, so a hit is this pipe and nothing
-        // else.
-        let probe = std::process::Command::new("/bin/sh")
-            .args([
-                "-c",
-                &format!("if [ -e /dev/fd/{read_fd} ]; then echo held; else echo closed; fi"),
-            ])
-            .output()
+        for fd in [read_fd, write_fd] {
+            // SAFETY: `fd` is one of the two descriptors this test owns.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert_ne!(flags, -1, "reading the descriptor flags failed");
+            assert_ne!(
+                flags & libc::FD_CLOEXEC,
+                0,
+                "cloexec_pipe returned a descriptor without FD_CLOEXEC, so an \
+                 exec'd child keeps its copy"
+            );
+        }
+
+        // `Command::spawn()` returns only once the child's `execve()` has
+        // finished: Rust blocks on its own close-on-exec pipe, which the exec
+        // is what closes. So by the time this returns, `/bin/sh` has already
+        // either kept `read_fd` (no `CLOEXEC`) or lost it. `sleep 5` keeps it
+        // alive past the probe below, so a kept copy cannot exit early and
+        // read as absent.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 5"])
+            .spawn()
             .expect("spawn a child while the pipe is open");
 
-        assert!(
-            probe.status.success(),
-            "the probe itself failed rather than answering: {probe:?}"
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&probe.stdout).trim(),
-            "closed",
-            "a child exec'd while the pipe was open still held a copy of the \
-             read end"
-        );
+        #[cfg(target_os = "linux")]
+        {
+            assert!(
+                !process_holds_fd(child.id(), read_fd),
+                "a child spawned while the pipe was open still held a live \
+                 copy of the read end"
+            );
+            assert!(
+                !process_holds_fd(child.id(), write_fd),
+                "a child spawned while the pipe was open still held a live \
+                 copy of the write end"
+            );
+        }
 
-        // SAFETY: both descriptors are still owned by this test.
+        // SAFETY: both ends are still owned by this test.
         assert_eq!(unsafe { libc::close(read_fd) }, 0);
-        // SAFETY: as above.
         assert_eq!(unsafe { libc::close(write_fd) }, 0);
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]
@@ -743,17 +773,19 @@ mod tests {
         // whether `read_fd` still names *this* pipe, rather than whether the
         // number is open at all: a sibling test can take the number the
         // instant it is freed, so `fcntl(read_fd, F_GETFD)` succeeding would
-        // report that fd's flags and prove nothing. The write end is still
-        // held here, so the pipe cannot be freed and its inode cannot be
-        // handed to anything else while this runs — the recorded pair can
-        // therefore only come back from a read end that was left open.
+        // report that fd's flags and prove nothing. The write end is held
+        // here, so the pipe cannot be freed and its inode cannot be handed to
+        // anything else while this runs — the recorded pair can only come back
+        // from a read end left open.
         //
-        // Identity is a fact about this process alone, which an `EPIPE` probe
-        // on the retained write end is not: that one asks whether any process
-        // still holds a read end, and `CLOEXEC` clears an inherited copy at
-        // `exec` rather than at `fork`, so a sibling forking between
-        // `cloexec_pipe` and the write keeps a live copy in flight and the
-        // write succeeds.
+        // Identity is a fact about this process alone, which the `EPIPE` probe
+        // this replaces is not: writing to the retained write end asks whether
+        // *any* process still holds a read end, and `CLOEXEC` clears an
+        // inherited copy at `exec` rather than at `fork`, so a sibling forking
+        // between `cloexec_pipe` and the write keeps a live copy in flight and
+        // the write succeeds. `cloexec_pipe_closes_a_concurrent_childs_inherited_copy`
+        // above had the same defect and was repaired the same way, by asking
+        // about one known process instead of about the machine.
         assert_ne!(
             fd_identity(read_fd),
             Some(pipe),
