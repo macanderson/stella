@@ -411,13 +411,23 @@ mod tests {
         fds
     }
 
-    /// Whether `pid` holds `fd` open, read from its `/proc` fd directory.
+    /// Whether `pid` holds *this process's* `fd` — the same open file, not
+    /// merely the same descriptor number.
     ///
-    /// Scoped to the child this test spawned, so it answers a question about
-    /// one known process rather than about the whole machine.
+    /// `/proc/<pid>/fd/<n>` is a symlink naming the object the descriptor
+    /// refers to (`pipe:[12345]` for a pipe), so comparing the child's link
+    /// target against this process's own answers identity. Presence alone does
+    /// not, and that distinction is the whole correctness of this probe: a
+    /// number this process holds is free for the child to reuse after `exec`,
+    /// so `/bin/sh` opening any file that lands on it reads as a leaked pipe
+    /// end. An `is_ok()` on the child's link was what turned this test red on
+    /// `main` at `f0201f75` — the child held the number, never the pipe.
     #[cfg(target_os = "linux")]
     fn process_holds_fd(pid: u32, fd: i32) -> bool {
-        std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).is_ok()
+        let Ok(theirs) = std::fs::read_link(format!("/proc/{pid}/fd/{fd}")) else {
+            return false;
+        };
+        std::fs::read_link(format!("/proc/self/fd/{fd}")).is_ok_and(|ours| ours == theirs)
     }
 
     /// A child `std::process::Command` spawns while the pipe is open must not
