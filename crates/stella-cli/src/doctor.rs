@@ -5,7 +5,7 @@
 //! one pass/fail line each, plus the opt-in repair for the one failure that
 //! previously had no way out.
 //!
-//! Four checks today:
+//! Five checks today:
 //!
 //! - **store integrity** — this workspace's `.stella/private/store.db`. A
 //!   corrupt store used to surface as an error at session start and nothing
@@ -15,6 +15,9 @@
 //! - **fleet ledger** — rows in `fleet.db` naming a run that is no longer
 //!   recorded. Report-only by design; see [`fleet_ledger_orphans`] for why
 //!   `--repair` must not touch them.
+//! - **fleet worktrees** — how many isolated worktrees `.stella/worktrees/`
+//!   is carrying, their on-disk size, and how many `stella fleet clean`
+//!   would reclaim; see [`fleet_worktrees`] and [`crate::doctor_fleet`].
 //! - **session sidecars** — sidecar directories whose session record is gone;
 //!   see [`orphan_session_sidecars`].
 //! - **model config** — the model the next run would actually send, and the
@@ -192,6 +195,7 @@ fn checks(
     vec![
         store_integrity(workspace_root, repair),
         fleet_ledger_orphans(workspace_root),
+        fleet_worktrees(workspace_root),
         orphan_session_sidecars(&stella_store::SessionRegistry::open_default(), repair),
         model_config(workspace_root, model_override, base_url_override),
         managed_settings(),
@@ -428,6 +432,49 @@ fn fleet_ledger_orphans(workspace_root: &Path) -> Check {
              build cannot acquire new orphans"
             .to_string(),
     ])
+}
+
+/// Whether this workspace is quietly accumulating isolated `stella fleet`
+/// worktrees under `.stella/worktrees/`. `stella fleet clean` reclaims them,
+/// but nothing else makes the pile visible before an operator thinks to run
+/// it.
+///
+/// Always a **Pass**: an accumulation is not something stella did wrong, only
+/// something an operator should see. The count and size are read straight off
+/// the filesystem; the reclaimable/kept split is a `dry_run` sweep that only
+/// runs below a threshold — see [`crate::doctor_fleet`] for why, and for the
+/// one definition of "reclaimable" this check shares with `stella fleet
+/// clean`.
+fn fleet_worktrees(workspace_root: &Path) -> Check {
+    const NAME: &str = "fleet worktrees";
+
+    let report = crate::doctor_fleet::report(workspace_root);
+    if report.count == 0 {
+        return Check::pass(NAME, "no fleet worktrees");
+    }
+
+    let size = crate::doctor_fleet::human_bytes(report.total_bytes);
+    let count = report.count;
+    match (report.split, &report.sweep_error) {
+        (Some(split), _) => Check::pass(
+            NAME,
+            format!(
+                "{count} worktree(s), {size} — {} reclaimable, {} kept; \
+                 {} loose branch(es) reclaimable, {} kept",
+                split.worktrees_reclaimable,
+                split.worktrees_kept,
+                split.branches_reclaimable,
+                split.branches_kept,
+            ),
+        ),
+        (None, Some(error)) => Check::pass(NAME, format!("{count} worktree(s), {size}"))
+            .with_details(vec![format!("reclaimable/kept split unavailable: {error}")]),
+        (None, None) => {
+            Check::pass(NAME, format!("{count} worktree(s), {size}")).with_remedy(vec![
+                "run `stella fleet clean --dry-run` to see how many are reclaimable".to_string(),
+            ])
+        }
+    }
 }
 
 /// The exit-code contract: `Ok(())` (exit 0) when every check passed, `Err`
@@ -687,6 +734,7 @@ mod tests {
             vec![
                 "store integrity",
                 "fleet ledger",
+                "fleet worktrees",
                 "session sidecars",
                 "model config",
                 "managed settings",
@@ -710,6 +758,13 @@ mod tests {
             "the ledger check names the absence: {}",
             checks[1].summary
         );
+        // No `.stella/worktrees/` here either — an unused fleet check must
+        // produce no noise.
+        assert_eq!(
+            checks[2].summary, "no fleet worktrees",
+            "an unused fleet check says so plainly, with no details or remedy"
+        );
+        assert!(checks[2].details.is_empty() && checks[2].remedy.is_empty());
     }
 
     /// #617's last open sweep: an orphan sidecar is reported without

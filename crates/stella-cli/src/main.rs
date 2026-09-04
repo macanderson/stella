@@ -52,6 +52,7 @@ mod deck_mcp;
 mod diag_boot;
 mod diag_bridge;
 mod doctor;
+mod doctor_fleet;
 mod domains;
 mod driver_plugin;
 mod durability;
