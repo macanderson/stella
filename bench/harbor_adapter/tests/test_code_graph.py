@@ -1,7 +1,8 @@
 """Unit tests for :mod:`stella_harbor.code_graph`'s pure parsers.
 
-``from_stdout`` and ``unavailable`` are the only place a trial's metadata
-learns what ``stella init`` actually did in the container. Before #3669 the
+``from_stdout``, ``from_result`` and ``unavailable`` are the only place a
+trial's metadata learns what ``stella init`` did in the container, and
+``disclose`` is the only place a run log learns it. Before #3669 the
 semantic-index outcome was not parsed at all — a trial could not say whether
 embeddings were built, skipped for want of a backend, or attempted and
 incomplete, because the parser structurally could not emit any of the three.
@@ -34,6 +35,9 @@ pytest.importorskip("harbor", reason="Harbor is required to produce its own mess
 
 from harbor.agents.installed.base import (  # noqa: E402 - after importorskip by design
     NonZeroAgentExitCodeError,
+)
+from harbor.environments.base import (  # noqa: E402 - after importorskip by design
+    ExecResult,
 )
 
 from stella_harbor import StellaAgent  # noqa: E402 - after importorskip by design
@@ -299,7 +303,7 @@ class TestFromResult:
     """
 
     def test_a_clean_exit_is_classified_from_stdout_as_before(self) -> None:
-        result = SimpleNamespace(
+        result = ExecResult(
             return_code=0,
             stdout="✓ code graph: 6 symbols, 3 imports across 1 file\n",
             stderr=None,
@@ -311,7 +315,7 @@ class TestFromResult:
         assert code_graph.from_result(result)["state"] == "reported"
 
     def test_a_nonzero_exit_carries_the_code_and_both_streams(self) -> None:
-        result = SimpleNamespace(return_code=1, stdout=_STDOUT, stderr=_STDERR)
+        result = ExecResult(return_code=1, stdout=_STDOUT, stderr=_STDERR)
         summary = code_graph.from_result(result)
         assert summary["state"] == "nonzero_exit"
         assert summary["exit_code"] == "1"
@@ -321,10 +325,10 @@ class TestFromResult:
     def test_a_nonzero_exit_is_not_a_quiet_one(self) -> None:
         """The property the defect turned on, stated directly."""
         failed = code_graph.from_result(
-            SimpleNamespace(return_code=1, stdout=_STDOUT, stderr=_STDERR)
+            ExecResult(return_code=1, stdout=_STDOUT, stderr=_STDERR)
         )
         quiet = code_graph.from_result(
-            SimpleNamespace(return_code=0, stdout=_STDOUT, stderr=None)
+            ExecResult(return_code=0, stdout=_STDOUT, stderr=None)
         )
         assert failed != quiet
         assert failed["state"] != quiet["state"]
@@ -333,7 +337,7 @@ class TestFromResult:
         """The reason is on the last lines, so the last lines are what is kept."""
         stdout = "noise\n" * 400 + "the reason it failed"
         summary = code_graph.from_result(
-            SimpleNamespace(return_code=2, stdout=stdout, stderr=None)
+            ExecResult(return_code=2, stdout=stdout, stderr=None)
         )
         assert summary["stdout"].endswith("the reason it failed")
         assert summary["stdout"].startswith("[earlier output cut] ")
@@ -348,7 +352,7 @@ class TestDisclose:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         summary = code_graph.from_result(
-            SimpleNamespace(return_code=1, stdout=_STDOUT, stderr=_STDERR)
+            ExecResult(return_code=1, stdout=_STDOUT, stderr=_STDERR)
         )
         assert code_graph.disclose(summary) is summary
         printed = capsys.readouterr().err
@@ -390,9 +394,9 @@ class _NonZeroReturningEnvironment:
 
     async def _stella_secure_exec_with_stdin(
         self, *, command: list[str], env: dict[str, str], stdin: bytes
-    ) -> SimpleNamespace:
+    ) -> ExecResult:
         self.commands.append(command)
-        return SimpleNamespace(return_code=1, stdout=_STDOUT, stderr=_STDERR)
+        return ExecResult(return_code=1, stdout=_STDOUT, stderr=_STDERR)
 
 
 class TestBuildCodeGraphOnTheReturningBranch:
