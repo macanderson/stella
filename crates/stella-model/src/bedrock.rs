@@ -403,7 +403,13 @@ fn unsupported_format_note(kind: &str, media_type: &str) -> BedrockContentBlock 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct BedrockToolUse {
+    /// Defaulted so a block that leaves it out still parses. Without the
+    /// default, one absent id fails the whole `Converse` body and the turn
+    /// dies on a serde message that names neither the tool nor the block.
+    /// Assembly refuses an empty id by name instead.
+    #[serde(default)]
     tool_use_id: String,
+    #[serde(default)]
     name: String,
     #[serde(default)]
     input: Value,
@@ -844,11 +850,32 @@ impl Provider for BedrockProvider {
         let mut text = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         if let Some(message) = parsed.output.and_then(|o| o.message) {
-            for block in message.content {
+            for (index, block) in message.content.into_iter().enumerate() {
                 if let Some(t) = block.text {
                     text.push_str(&t);
                 }
                 if let Some(tool_use) = block.tool_use {
+                    // The id is what the next turn's `toolResult` is matched
+                    // against, and the name is the tool to run. Neither can be
+                    // invented here. Two calls in one turn both keyed `""`
+                    // pair up with the wrong results in `stella-core`'s loop
+                    // evidence, and a result sent under an empty id matches
+                    // nothing Converse holds.
+                    let mut missing = Vec::new();
+                    if tool_use.tool_use_id.is_empty() {
+                        missing.push("toolUseId");
+                    }
+                    if tool_use.name.is_empty() {
+                        missing.push("name");
+                    }
+                    if !missing.is_empty() {
+                        return Err(http::malformed_tool_call_error(
+                            "Bedrock",
+                            index,
+                            &tool_use.name,
+                            &missing,
+                        ));
+                    }
                     // A no-argument Converse tool call omits `input` on the
                     // wire, so the `#[serde(default)]` field deserializes to
                     // `Value::Null` — which is the malformed-call sentinel
@@ -1292,5 +1319,7 @@ pub(crate) mod sigv4 {
     }
 }
 
+#[cfg(test)]
+mod malformed_tool_use;
 #[cfg(test)]
 mod tests;
