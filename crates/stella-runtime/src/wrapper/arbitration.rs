@@ -225,18 +225,21 @@ pub struct TurnHoldBudget {
 /// Why a claim that said no is not holding the turn open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoldStop {
-    /// The turn's shared total is spent, whatever this claim had left.
+    /// The turn's shared total is spent, while this claim still had room.
+    ///
+    /// Only two arbiters can reach this. With one claim its allowance is
+    /// already clamped by the turn ceiling, so a claim under its own
+    /// allowance is under the turn's too.
     TurnAllowanceSpent {
         /// Holds the turn has spent.
         spent: u32,
         /// The host ceiling for the turn.
         allowed: u32,
     },
-    /// This claim's own allowance is spent, though the turn has room.
+    /// This claim's own allowance is spent.
     ///
-    /// Only two arbiters can reach this. One can be out of holds while the
-    /// turn is not. Its clauses read against the turn's numbers would name
-    /// the wrong ceiling.
+    /// Asked before the turn's total, because this is what stopped it. Its
+    /// clauses read against the turn's numbers would name the wrong ceiling.
     ArbiterAllowanceSpent {
         /// Holds this claim has spent.
         spent: u32,
@@ -411,23 +414,25 @@ pub fn fold_stamps(
             .unwrap_or(budget.host_max_holds)
             .min(budget.host_max_holds);
 
-        // The turn ceiling is asked first, because it is the harder one. An
-        // arbiter with holds left cannot spend them once the turn is out of
-        // rounds. Naming its own untouched allowance would name the wrong
-        // ceiling.
+        // Its own ceiling is asked first, because that is what stopped it.
+        // The turn arm fires only for a claim that still had room of its
+        // own, which is the case a single arbiter can never reach: with one
+        // claim, `allowed` is already clamped by the turn ceiling, so a claim
+        // under its own allowance is under the turn's too. That is what lets
+        // this agree with `again` everywhere.
         let stopped = if !objects {
             None
         } else if !claim.may_hold {
             Some(HoldStop::NotAnArbiter)
-        } else if budget.turn_holds_spent >= budget.host_max_holds {
-            Some(HoldStop::TurnAllowanceSpent {
-                spent: budget.turn_holds_spent,
-                allowed: budget.host_max_holds,
-            })
         } else if claim.holds_spent >= allowed {
             Some(HoldStop::ArbiterAllowanceSpent {
                 spent: claim.holds_spent,
                 allowed,
+            })
+        } else if budget.turn_holds_spent >= budget.host_max_holds {
+            Some(HoldStop::TurnAllowanceSpent {
+                spent: budget.turn_holds_spent,
+                allowed: budget.host_max_holds,
             })
         } else {
             None

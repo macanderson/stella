@@ -391,6 +391,24 @@ fn two_arbiters_draw_from_one_turn_total() {
         );
     }
     assert_eq!(turn_spent.turn_spent, 3, "and nothing more is spent");
+
+    // Both ceilings are gone at once. The row names its own, because that is
+    // the one it hit. Naming the turn's here would report a number the
+    // arbiter never reached, and would put the fold out of step with `again`
+    // wherever a manifest asks for less than the host allows.
+    let both_gone = fold_stamps(
+        None,
+        &[claim("witness", StampAssessment::NotDone, true, Some(2), 4)],
+        budget(4, 4),
+    );
+    assert!(!both_gone.held());
+    assert_eq!(
+        both_gone.rows[0].stopped,
+        Some(HoldStop::ArbiterAllowanceSpent {
+            spent: 4,
+            allowed: 2
+        })
+    );
 }
 
 /// **Fail open, and say so.** An arbiter that did not answer stands aside.
