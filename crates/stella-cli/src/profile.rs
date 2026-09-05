@@ -272,9 +272,12 @@ pub struct Plan {
     pub profile: Profile,
     /// The session role's pick.
     ///
-    /// One, since #3908. A `Vec` rather than a bare `RolePick` because the
-    /// entries come back as plugin-declared seats in #6088, and every consumer
-    /// here already iterates.
+    /// One, since #3908, and #6088 did not add a second: it folded plugin
+    /// seats into `config_wiring::RoleWiring`, the *reported* routing table,
+    /// not into a *profile*. A profile still tunes the session's own model,
+    /// nothing else — `apply` below writes only `default_model` and
+    /// `agents.default`. A `Vec` because every consumer here already
+    /// iterates it, not because a second entry is coming.
     pub picks: Vec<RolePick>,
     pub verbosity: Verbosity,
     pub service_tier: ServiceTier,

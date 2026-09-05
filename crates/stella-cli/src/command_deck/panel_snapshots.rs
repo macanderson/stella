@@ -69,11 +69,13 @@ pub(super) fn engine_config_inbound(cfg: &Config, status: Option<String>) -> Inb
             model_efforts.insert(raw.clone(), levels.iter().map(|s| s.to_string()).collect());
         }
     }
-    let roles = crate::config_wiring::deck_rows(cfg, &providers);
     // What is installed, not what core knows: the seat list is the union of the
     // roles installed plugins declare, so a session with none shows the default
-    // model and nothing else (`doc:roleless-core` §8.4).
+    // model and nothing else (`doc:roleless-core` §8.4). Read once and shared
+    // by both the SEATS pane's own list and the `/models` roles below, which
+    // resolve a row per declared seat too.
     let declared = crate::agent::seats::installed_seats(&cfg.workspace_root);
+    let roles = crate::config_wiring::deck_rows(cfg, &providers, &declared);
     Inbound::EngineConfig {
         state: crate::engine_config::state_from_settings(
             &engine,
