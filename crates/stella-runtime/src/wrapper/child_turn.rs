@@ -57,7 +57,7 @@
 //! `reviewer` or a `second-opinion` and be served as well as any other name.
 //!
 //! Where the *spend* is booked is a separate question, and the answer comes
-//! from [`SeatGrant`](super::SeatGrant) — the manifest a human read at install.
+//! from [`SeatGrant`] — the manifest a human read at install.
 //! A host may bind a tier to a seat of its own with [`ChildTurns::with_seat`];
 //! a tier it bound nothing for gets the grant's own seat. Either way the grant
 //! is asked whether the plugin may spend there, so a binding cannot hand over a
