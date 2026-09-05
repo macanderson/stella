@@ -7,7 +7,7 @@
 //! read at the start of a turn is minutes old. Sending it back would wipe out
 //! any note a person added while the turn ran.
 //!
-//! [`write`] reads the issue just before it writes. It builds the record from
+//! [`write()`] reads the issue just before it writes. It builds the record from
 //! that read. If the read fails it writes nothing. A body nobody can see is a
 //! body nobody may replace.
 //!
