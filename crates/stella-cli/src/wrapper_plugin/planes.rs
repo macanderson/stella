@@ -45,52 +45,29 @@ pub(crate) type SessionTestRuns = TestRuns<GrantedTestRuns>;
 
 /// This host's child-turn plane for one installed plugin.
 ///
-/// Three deliberate decisions live here rather than at the call site, because
-/// each is a claim about the user's money or the receipt it lands on (#3576):
+/// Three decisions live here rather than at the call site, because each is a
+/// claim about the user's money or the receipt it lands on (#3576):
 ///
-/// - **The `verifier` seat is bound here, to `ModelCallRole::Verdict`**
-///   (#3838). [`ChildTurns`] serves `worker`, `triage`, `research` and `plan`
-///   by default and deliberately not `verifier`; `ChildTurns::with_seat`'s
-///   contract is that a host wanting one *says so and owns the claim*. This
-///   host says so.
+/// - **This host binds no tier to a seat of its own.** A plugin's word routes
+///   through the user's seat map. Where the spend is *booked* comes from
+///   [`stella_runtime::wrapper::SeatGrant`] — the manifest a person read at
+///   install.
 ///
-///   It reads as a reversal of what stood here before, and two premises
-///   changed under it. The old refusal reasoned that attributing
-///   a plugin's child turn to `Verdict` "would put a call on the receipt the
-///   pipeline itself did not make", `Verdict` being the model verdict #2584
-///   removed structurally.
+///   A plugin that declares an `[oracle]` judges the turn, so its turns are
+///   booked at `Verdict`. That is where `stella_core::goal` books its own
+///   verifier call. Its test pins the sequence `[Worker, Verdict, Worker,
+///   Verdict]`, so the two kinds of call stay apart on a receipt.
 ///
-///   1. **There is no pipeline receipt to protect.** The built-in staged
-///      pipeline was deleted from this workspace (#3865) and
-///      `--pipeline classic` is refused outright, so no host-run verification
-///      stage exists to be misattributed to.
-///   2. **`Verdict` is already this exact call's role.**
-///      `stella_core::goal`'s own loop stamps `role: ModelCallRole::Verdict`
-///      on its independent verifier call, and its test asserts the durable
-///      sequence `[Worker, Verdict, Worker, Verdict]` precisely so a worker
-///      and a verifier call stay distinguishable on the receipt. A goal-
-///      supervision plugin's verifier turn is the same kind of call, so
-///      `Verdict` is the *accurate* attribution, not a borrowed one.
+///   The grant is also what refuses. A plugin may not spend at the seat the
+///   session's own turns use. It may not spend at a deciding seat without
+///   declaring the job. Both are checked on the resolved seat, so a binding
+///   cannot smuggle one in under another name (see
+///   `a_tier_spelled_like_the_workers_never_reaches_the_workers_seat`).
 ///
-///   What this does **not** buy: authority. Nothing branches on
-///   `ModelCallRole` — `stella_core::subagent` carries it onto the receipt as
-///   `call_role: spec.role` and no code reads it back to decide anything. The
-///   seat decides what the call is *called*, never what it may *do*. The
-///   independence refusal still compares the resolved seat, so a plugin
-///   cannot reach the worker's seat by renaming it (see the sibling test
-///   `a_role_intent_pointing_at_the_worker_is_still_forbidden`).
-///
-///   Bound for any plugin declaring `tier = "verifier"`, not for one plugin
-///   id: which capabilities a plugin holds is a property of what its manifest
-///   declares and the user consented to, never of its name.
-///
-///   The deeper problem this does not solve: that this host has an opinion
-///   about the word `verifier` at all. The seat table
-///   (`ChildTurns::default_seats`) is a core-owned list of *plugin* role
-///   names, so a plugin needing a `planner` or a `reviewer` can still only be
-///   served by a name core already knows. This adds a fifth known name; it
-///   does not make seats opaque. That is #3905, under epic #3903, and it
-///   subsumes this line when it lands.
+///   None of it buys authority. Nothing branches on `ModelCallRole`.
+///   `stella_core::subagent` carries it onto the receipt as
+///   `call_role: spec.role`, and no code reads it back to decide anything. The
+///   seat decides what a call is *called*, never what it may *do*.
 /// - **No per-turn USD carve is requested.** `None` asks for the parent's
 ///   whole remaining headroom, which `BudgetGuard::carve` clamps — and the
 ///   dispatcher behind it carves from the session's sub-agent pool
@@ -103,9 +80,7 @@ pub(crate) fn child_turn_plane(
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<dyn SubAgentDispatcher>,
 ) -> SessionChildTurns {
-    ChildTurns::declare(manifest, dispatcher)
-        .in_turn_lane(stella_core::turn_slots::CHILD_TURN_LANE)
-        .with_seat("verifier", stella_protocol::event::ModelCallRole::Verdict)
+    ChildTurns::declare(manifest, dispatcher).in_turn_lane(stella_core::turn_slots::CHILD_TURN_LANE)
 }
 
 /// This host's candidate fan-out plane for one installed plugin (#3892).
@@ -114,13 +89,14 @@ pub(crate) fn child_turn_plane(
 /// capability whose unit is a *writing* worker turn rather than a read:
 ///
 /// - **Only `worker` may be fanned out to, and this host binds no extra
-///   tier.** [`CandidateFanouts`] serves the same four tiers
-///   [`ChildTurns`] does and refuses every one that does not resolve to the
-///   worker's seat, which is the inverse of the child plane's rule and the
-///   reason both exist: a child turn is evidence *about* the work and must
-///   not be graded by the model that did it, while a candidate **is** the
-///   work and must not be booked to a responsibility that wrote nothing.
-///   Nothing is bound here, so that rule stands as core wrote it.
+///   tier.** [`CandidateFanouts`] keeps its own tier table and refuses every
+///   tier that does not resolve to the worker's seat, which is the inverse of
+///   the child plane's rule and the reason both exist: a child turn is
+///   evidence *about* the work and must not be graded by the model that did
+///   it, while a candidate **is** the work and must not be booked to a
+///   responsibility that wrote nothing. Nothing is bound here, so that rule
+///   stands as core wrote it. Moving this plane onto the grant
+///   [`child_turn_plane`] reads has its own issue.
 /// - **No per-fan-out USD carve is requested.** `None` asks for the whole
 ///   headroom, divided by the clamped width, and each share is clamped again
 ///   by the substrate against the session's sub-agent pool

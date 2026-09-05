@@ -293,6 +293,7 @@ fn ladder_verdict(passed: bool, rung: Option<LadderRung>) -> AgentEvent {
                     no_test_surface: false,
                     errored_commands: 0,
                     verifier_independent: None,
+                    stamps: vec![],
                 })
             }),
         },
