@@ -236,6 +236,62 @@ else
   bad "a malformed timestamp should fail closed, got exit $rc: '$out'"
 fi
 
+# The real `check` path, end to end, through a `gh` stub instead of a
+# fixture. `gh` colorizes its output whenever it thinks it has a terminal,
+# even inside `$(...)`, which turns the comments payload into text `jq`
+# cannot parse — `check-releases-published.sh`'s own header names this
+# hazard. `gh --jq` hides it for free, because `gh` never colorizes what it
+# filters internally; splitting `--json comments` out of that call, as this
+# PR does, loses that free protection, so production has to force color off
+# itself. A stub `gh` plays back the hazard: valid JSON only when
+# `NO_COLOR`/`CLICOLOR_FORCE` are set, broken text otherwise.
+gh_colorish="$(mktemp -d)"
+trap 'rm -rf "$gh_colorish"' EXIT
+# Production stamps `select_claims`'s `now` from the real clock, so the
+# fixture's `createdAt` has to sit a few minutes behind it too — a future
+# timestamp reads as a negative age and is dropped as unparseable.
+claim_time="$(jq -n --argjson t "$(($(date -u +%s) - 300))" '$t | todateiso8601')"
+cat >"$gh_colorish/gh" <<'STUB'
+#!/usr/bin/env bash
+set -uo pipefail
+case "$*" in
+"pr list "*)
+  echo ""
+  ;;
+"api user --jq .login")
+  echo "ada"
+  ;;
+"issue view 5045 --json comments")
+  if [ "${NO_COLOR:-}" = "1" ] && [ "${CLICOLOR_FORCE:-}" = "0" ]; then
+    printf '{"comments":[{"author":{"login":"grace"},"body":"<!-- issue-claim --> grace","createdAt":__CLAIM_TIME__}]}'
+  else
+    printf '\033[1;37m{\033[0m broken, uncolored callers never see this'
+  fi
+  ;;
+*)
+  echo "gh stub: unhandled invocation: gh $*" >&2
+  exit 1
+  ;;
+esac
+STUB
+sed -i.bak "s|__CLAIM_TIME__|${claim_time}|" "$gh_colorish/gh"
+rm -f "$gh_colorish/gh.bak"
+chmod +x "$gh_colorish/gh"
+for tool in bash awk tr mktemp date jq; do
+  tool_path="$(command -v "$tool")"
+  [ -n "$tool_path" ] && ln -s "$tool_path" "$gh_colorish/$tool"
+done
+out="$(PATH="$gh_colorish" "$SCRIPT" check 5045 2>&1)"
+rc=$?
+case "$rc,$out" in
+1,*"claimed by @grace"*)
+  ok "check survives gh's own colorized JSON and still sees the live claim"
+  ;;
+*)
+  bad "check should stand down on the live claim through gh's real output shape, got exit $rc: $out"
+  ;;
+esac
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf 'issue-claim: %d passed\n' "$pass"

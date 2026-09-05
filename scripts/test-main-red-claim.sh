@@ -369,6 +369,66 @@ else
   bad "a malformed timestamp should fail closed, got exit $rc: '$out'"
 fi
 
+# The real `check` path, end to end, through a `gh` stub instead of a
+# fixture. `gh` colorizes its output whenever it thinks it has a terminal,
+# even inside `$(...)`. That turns the comments payload into text `jq`
+# cannot parse — `check-releases-published.sh`'s own header names this
+# hazard. `gh --jq` hides it for free: `gh` never colors what it filters
+# itself. This PR splits `--json comments` out of that call and loses the
+# free protection, so production must force color off on its own. A stub
+# `gh` plays back the hazard: valid JSON only when `NO_COLOR`/`CLICOLOR_FORCE`
+# are set, broken text otherwise. Restoring the old call passes every case
+# above (none of them touch `gh`) and fails only this one — why it exists.
+gh_colorish="$(mktemp -d)"
+trap 'rm -rf "$gh_less" "${clone_a:-}" "${clone_b:-}" "${no_repo:-}" "$gh_colorish"' EXIT
+# Production stamps `select_claims`'s `now` from the real clock (`date -u
+# +%s`), not from `NOW_SELECT` above, so the fixture's `createdAt` has to be
+# a few minutes behind the real clock too — a future timestamp reads as a
+# negative age and is dropped as unparseable, the same as garbage input.
+claim_time="$(jq -n --argjson t "$(($(date -u +%s) - 300))" '$t | todateiso8601')"
+# A quoted heredoc, so the stub's own backslash escapes (`\033` for the
+# color code) reach the file untouched instead of going through bash's
+# heredoc expansion first. The timestamp is filled in after, by `sed`.
+cat >"$gh_colorish/gh" <<'STUB'
+#!/usr/bin/env bash
+set -uo pipefail
+case "$*" in
+"issue list --label main-red --state open --limit 20 --json number --jq .[].number")
+  echo "9001"
+  ;;
+"api user --jq .login")
+  echo "ada"
+  ;;
+"issue view 9001 --json comments")
+  if [ "${NO_COLOR:-}" = "1" ] && [ "${CLICOLOR_FORCE:-}" = "0" ]; then
+    printf '{"comments":[{"author":{"login":"grace"},"body":"main-red-claim: grace s1","createdAt":__CLAIM_TIME__}]}'
+  else
+    printf '\033[1;37m{\033[0m broken, uncolored callers never see this'
+  fi
+  ;;
+*)
+  echo "gh stub: unhandled invocation: gh $*" >&2
+  exit 1
+  ;;
+esac
+STUB
+sed -i.bak "s|__CLAIM_TIME__|${claim_time}|" "$gh_colorish/gh" && rm -f "$gh_colorish/gh.bak"
+chmod +x "$gh_colorish/gh"
+for tool in bash awk tr mktemp date jq; do
+  tool_path="$(command -v "$tool")"
+  [ -n "$tool_path" ] && ln -s "$tool_path" "$gh_colorish/$tool"
+done
+out="$(PATH="$gh_colorish" "$SCRIPT" check 2>&1)"
+rc=$?
+case "$rc,$out" in
+1,*"claimed by @grace"*)
+  ok "check survives gh's own colorized JSON and still sees the live claim"
+  ;;
+*)
+  bad "check should stand down on the live claim through gh's real output shape, got exit $rc: $out"
+  ;;
+esac
+
 echo ""
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

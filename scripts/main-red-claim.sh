@@ -385,7 +385,7 @@ fi
 # embedded in this call.
 if [ "$use_fixture" -eq 1 ]; then
   claims="$fixture_claims"
-elif ! comments_json="$(gh issue view "$issue" --json comments 2>/dev/null)"; then
+elif ! comments_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh issue view "$issue" --json comments 2>/dev/null)"; then
   echo "note: could not read #$issue's comments. Proceeding (fail-open)." >&2
   proceed "ok  proceed (comments unreadable)"
 elif ! claims="$(printf '%s' "$comments_json" | select_claims "$(date -u +%s)")"; then
