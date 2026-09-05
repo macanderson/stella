@@ -399,12 +399,16 @@ impl SessionMemory {
             .await;
 
         let all_skills = self.load_skills();
-        let selected = skills::select_skills_reporting(
+        let mut selected = skills::select_skills_reporting(
             &all_skills,
             prompt,
             &self.active_domains(prompt),
             &SelectionConfig::default(),
         );
+        // This turn's holdout, applied to the block the model actually reads.
+        // The trial ledger records the same withholding, and the two only
+        // agree because both ask `apply_holdout`.
+        self.apply_holdout(&mut selected);
 
         // The volatile context-record channel (epic #897). Same channel as the
         // memories above and for the same reason: a fact about a staging URL costs
@@ -528,12 +532,17 @@ impl SessionMemory {
         } = self.recalled_frames_anchored(prompt, anchors, |_| {}).await;
 
         let all_skills = self.load_skills();
-        let selected = skills::select_skills_reporting(
+        let mut selected = skills::select_skills_reporting(
             &all_skills,
             prompt,
             &domains,
             &SelectionConfig::default(),
         );
+        // The same holdout the block above applies. This pass scopes its
+        // domains by the paths the turn touched rather than by the prompt
+        // alone, so its shortlist differs — which is exactly why the pick reads
+        // the catalog both passes share.
+        self.apply_holdout(&mut selected);
 
         let mut paths = turn_path_tokens(prompt);
         for path in signal.touched_paths {
