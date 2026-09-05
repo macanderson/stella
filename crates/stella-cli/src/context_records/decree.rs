@@ -282,7 +282,11 @@ fn record(
 fn lineage_suffix(statement: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(statement.as_bytes());
-    let hash = format!("{:x}", digest.finalize());
+    let hash: String = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let words: Vec<String> = statement
         .split_whitespace()
         .take(SLUG_WORDS)
