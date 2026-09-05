@@ -133,6 +133,16 @@ pub struct RunSection {
     /// direction.
     #[serde(default)]
     pub auto_trust_project: Option<bool>,
+    /// Which installed plugins take part in every turn, in the order they
+    /// run. Same name in JSON (`active_plugins`).
+    ///
+    /// Installing a plugin leaves it inert. A name here is what makes it join
+    /// each turn, and `--pipeline` still wins for one run. See
+    /// `Settings::active_plugins` for the scope rules — a project may write
+    /// this only where the project is trusted, because a name here makes the
+    /// host start a program.
+    #[serde(default)]
+    pub active_plugins: Option<Vec<String>>,
 }
 
 /// `[models]` — policy over the model catalog, not a model table.
@@ -800,6 +810,7 @@ impl TomlConfig {
             create_worktrees: run.create_worktrees,
             candidate_isolation: run.candidate_isolation,
             auto_trust_project: run.auto_trust_project,
+            active_plugins: run.active_plugins,
             allowed_dirs: workspace.allowed_dirs,
             ui,
             voice,

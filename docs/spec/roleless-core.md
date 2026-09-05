@@ -289,13 +289,16 @@ and it never depends on install order.
 install: a plugin name holding `/` is `ManifestError::NameHoldsSeatSeparator`,
 so `<plugin>/<role>` has one reading.
 
+The key is spelled `active_plugins` in `.stella/settings.json` and
+`[run] active_plugins` in `stella.toml`, and the same list answers both.
+
 Still ahead: `stella plugin enable`/`disable`, which would write the list for
 you and pick the insertion point from the band with a lexicographic tie-break
 on plugin id; consent text and `stella plugin list` rendering the stages and
-roles a package adds; and the `stella.toml` spelling of the key. A contributed
-stage also publishes no signal — the signal vocabulary stays closed, because a
-plugin minting a fact for another plugin's condition to read is a decision
-nothing here has made.
+roles a package adds; and interactive mode, which offers no `--pipeline` and so
+runs no wrapper at all. A contributed stage also publishes no signal — the
+signal vocabulary stays closed, because a plugin minting a fact for another
+plugin's condition to read is a decision nothing here has made.
 
 ### Slice 4 — the config collapse (gap D)
 

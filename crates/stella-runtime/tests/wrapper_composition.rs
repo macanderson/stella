@@ -606,22 +606,19 @@ async fn the_two_shipped_plugins_compose_into_one_selection() {
 #[tokio::test]
 async fn a_band_orders_two_plugins_that_share_no_stage() {
     for triager_first in [true, false] {
+        // Named rather than passed inline, so the trait object is the `let`'s
+        // own type: a `Vec` of the concrete transport does not coerce at the
+        // call.
+        let triager: (PluginManifest, Arc<dyn TurnWrapper>) =
+            (manifest(EARLY_TRIAGER), plugin(&["echo-stage", "triager"]));
+        let reflector: (PluginManifest, Arc<dyn TurnWrapper>) = (
+            manifest(LATE_REFLECTOR),
+            plugin(&["echo-stage", "reflector"]),
+        );
         let members = if triager_first {
-            vec![
-                (manifest(EARLY_TRIAGER), plugin(&["echo-stage", "triager"])),
-                (
-                    manifest(LATE_REFLECTOR),
-                    plugin(&["echo-stage", "reflector"]),
-                ),
-            ]
+            vec![triager, reflector]
         } else {
-            vec![
-                (
-                    manifest(LATE_REFLECTOR),
-                    plugin(&["echo-stage", "reflector"]),
-                ),
-                (manifest(EARLY_TRIAGER), plugin(&["echo-stage", "triager"])),
-            ]
+            vec![reflector, triager]
         };
         let dispatch = WrapperDispatch::bind_composed(members)
             .expect("two members with one stage each compose");

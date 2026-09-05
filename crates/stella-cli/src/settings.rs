@@ -337,7 +337,7 @@ pub struct Settings {
     #[serde(default)]
     pub plugins: BTreeMap<String, Toggle>,
     /// `active_plugins` — which installed plugins take part in every turn, in
-    /// the order they run.
+    /// the order they run. `[run] active_plugins` in `stella.toml`.
     ///
     /// Installing a plugin puts it on disk and records what a person agreed
     /// to. It leaves the plugin inert. A name in this list is what makes the
