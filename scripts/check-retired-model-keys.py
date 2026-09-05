@@ -13,8 +13,9 @@ What must not come back is code that uses one. A live string named
 `pipeline_verifier_model` is dead config that reads like a feature. That is
 the flaw the retirement ended.
 
-`scripts/check-role-names.sh` asks a different thing. It holds four languages
-to one spelling of the role words. It never asks if Rust still uses them.
+A sibling guard once ran beside this one, holding four languages to one
+spelling of the role words. It never asked whether Rust still used them, and
+it is gone. This is what remains.
 
 A hit is a quoted string on a line of code. A doc comment may cite a retired
 key. Half these files explain the retirement that way. Test code is skipped

@@ -416,8 +416,8 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
 /// The `agent_engine_config` keys #3908 and #3936 retired, still
 /// **recognized** by the trusted-launcher seam.
 ///
-/// Deliberately not simply dropped from [`ENGINE_ROOT_FIELDS`], which is the
-/// shape the other two retirements above took. That allowlist is shared with
+/// Not simply dropped from [`ENGINE_ROOT_FIELDS`], which is the shape the
+/// other two retirements above took. That allowlist is shared with
 /// `config::trusted_engine_config_shape_is_strict`, which fails **closed**, and
 /// `bench/harbor_adapter/stella_harbor/posture.py` and
 /// `arenabench/arenabench/harbor_agent.py` still *write* these keys into hashed
@@ -431,10 +431,17 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
 /// something it does not receive. These name a *model for a role that no longer
 /// exists*, and they have already been inert for the whole life of the posture
 /// that writes them — nothing has read `pipeline_verifier_model`, or
-/// `auto_mode` for model selection, since #3865. Refusing them now would not
-/// un-spend anything; naming them in every door they pass through is what
-/// actually ends the silence. The fail-closed tightening lands with slice 6
-/// (#3910), once the Python stops writing them.
+/// `auto_mode` for model selection, since the staged pipeline left this
+/// workspace. Refusing them now would not un-spend anything; naming them in
+/// every door they pass through is what ends the silence.
+///
+/// Being recognized is also what makes the *spelling* safe to stop guarding
+/// (#3910). A key here that the Python misspells falls outside
+/// [`ENGINE_ROOT_FIELDS`], and the strict seam refuses that launch out loud,
+/// so a cross-language spelling drift cannot pass quietly.
+///
+/// #6106 drops these five from the launcher's vocabulary, once the Python
+/// stops writing them.
 ///
 /// Recognized, ignored, reported — never silently accepted, and never
 /// silently dropped.

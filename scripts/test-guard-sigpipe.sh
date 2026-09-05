@@ -71,7 +71,6 @@ for guard in \
   check-left-behind.sh \
   check-command-docs.sh \
   check-gate-parity.sh \
-  check-role-names.sh \
   check-cargo-install-pins.sh \
   check-repro-wiring.sh \
   check-action-pins.sh \

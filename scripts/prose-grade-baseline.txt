@@ -1877,7 +1877,6 @@ scripts/check-releases-published.sh 10.55
 scripts/check-rendering-facts.sh 9.25
 scripts/check-repro-wiring.sh 10.36
 scripts/check-reserved-paths.sh 8.85
-scripts/check-role-names.sh 10.18
 scripts/check-stat-portability.sh 9.32
 scripts/check-tokens.py 10.08
 scripts/check-tool-docs.sh 11.55

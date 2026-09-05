@@ -74,11 +74,12 @@
 //! It does not touch [`stella_protocol::ModelCallRole`]. That enum is the
 //! *receipt* vocabulary — it groups spend by job for a cost report — and it is
 //! closed and core-owned for good reasons. Conflating it with routing is what
-//! produced the current state, where `stella-runtime`'s `ChildTurns` maps a
-//! fixed table of role words onto it and a plugin naming anything else is
-//! refused. Retiring that table, and the four-language contract pinning those
-//! words (`scripts/check-role-names.sh`), is #3906 and #3910, under epic
-//! #3903.
+//! produced the state this replaced, where `stella-runtime`'s `ChildTurns`
+//! mapped a fixed table of role words onto it and a plugin naming anything
+//! else was refused. Every call the host spends for a plugin now books at
+//! `ModelCallRole::Plugin`, and the seat name rides beside it on the
+//! `sub_agent` bracket (#3906). The four-language guard that pinned those
+//! words is retired with it (#3910), under epic #3903.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

@@ -204,7 +204,7 @@ build error otherwise), the schema regenerates, and retired variants need an
 alias path so an old recorded stream still reads. The prize is AGENTS.md #8 — the
 role name travels **with the run** as data, so a benchmark reading it from the
 trace can never desynchronize from a spelling in another language, which is the
-exact failure `check-role-names.sh` exists to prevent.
+exact failure `check-role-names.sh` existed to prevent.
 
 - **Witness:** a recorded stream containing a retired variant still parses; a
   plugin child turn's receipt names its plugin and seat.
@@ -222,7 +222,7 @@ core really makes with nothing to call it.
 `role` is a plain string everywhere on the wire. A data-carrying case would
 make it sometimes an object, and every consumer comparing `role == "worker"`
 would break in silence. That is the failure `scripts/check-role-names.sh`
-exists to prevent. It would also cost the enum its `Copy` and its
+existed to prevent. It would also cost the enum its `Copy` and its
 `const ALL`, which is the totality proof `call_role.rs` is built around. So
 the seat name travels beside the enum instead. `SubAgentPhase::Started`
 gained `seat`, filled from the `SubAgentSpec::seat` slice 0 already carries,
@@ -419,8 +419,8 @@ but the assembled session stack", which is exactly true of plugin seats.
 
 Delete `check-role-names.sh` and its `GATE_STEPS` entry **only once slice 2 has
 landed**, because slice 2 is what makes the deletion safe: with role names
-travelling as data in the trace, arenabench and the bench analyzers read the
-name that actually ran instead of copying a spelling. Repoint
+travelling as data in the trace, the bench analyzers read the name that
+actually ran instead of copying a spelling. Repoint
 `crates/stella-observatory/src/assets/index.html`'s hardcoded filter list and
 the bench schemas at the same data.
 
@@ -428,6 +428,38 @@ the bench schemas at the same data.
   it rather than dropping the row.
 - **Done when:** no role spelling is duplicated across languages, so there is
   nothing left for a guard to pin.
+
+**Landed.** The guard named three live producers by the time it was retired,
+and each one answers differently.
+
+`crates/stella-observatory/src/assets/index.html`'s settings pane read the
+keys the merged settings carry rather than a literal list of six words, so a
+seventh agent name draws a row instead of vanishing. Its sub-agent rows draw
+the seat the `sub_agent` bracket recorded, which the projection in
+`crates/stella-observatory/src/turn_agents.rs` had been dropping.
+`bench/harbor_adapter/stella_harbor/atif.py` joins the same bracket by
+`sub_agent_id` and publishes the seat beside the purpose, so an export can say
+which of a plugin's jobs bought a call rather than only that a plugin did.
+Both witnesses hand the reader a seat name no build here ships.
+
+`bench/harbor_adapter/stella_harbor/posture.py` still writes
+`pipeline_verifier_model`, and a guard is not what holds that safe. The key is
+inert on both sides since slice 4: Stella recognises it, reports it by name
+and reads nothing from it, so a drifted spelling cannot misconfigure a seat.
+It would name a key outside `ENGINE_ROOT_FIELDS` instead, and
+`config::trusted_engine_config_shape_is_strict` fails **closed** on that — a
+refused launch. The rename this guard was built for failed in silence; there
+is no silence left here.
+
+`crates/stella-tui/src/deck.rs`'s `PipelineRole` is three display slots held
+to `ModelCallRole` by an exhaustive match in `PipelineRole::of`. No second
+language is involved, so the compiler already owns it.
+
+What stays is `RETIRED_ENGINE_ROOT` in
+`crates/stella-cli/src/settings/unknown.rs`. Dropping the five retired keys
+from the launcher's vocabulary would refuse every benchmark launch and re-hash
+every digest registered in `bench/READINESS.md` §8.4, which is a
+published-numbers decision a maintainer makes.
 
 ### Slice 7 — goal and monitor leave core (gap B, and the last one)
 

@@ -114,7 +114,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)
-                         #   + left-behind + role-names
+                         #   + left-behind
                          #   + retired-model-keys (no shipping Rust
                          #     spells a key #3908 retired)
                          #   + stat-portability + module-reachability

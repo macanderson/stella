@@ -41,7 +41,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
                     guard-trigger-coverage priority-scheme left-behind \
-                    role-names retired-model-keys \
+                    retired-model-keys \
                     stat-portability module-reachability core-reachability \
                     typed-errors \
                     tool-error-class \
@@ -815,10 +815,6 @@ left-behind: ## Assert every TODO/FIXME/XXX/HACK in code names a tracking issue 
 .PHONY: left-behind-update
 left-behind-update: ## Regenerate the left-behind baseline (it should stay empty)
 	@./scripts/check-left-behind.sh --update
-
-.PHONY: role-names
-role-names: ## Assert the agent-config role names match across Rust, Python and JS (#1449)
-	@./scripts/check-role-names.sh
 
 .PHONY: retired-model-keys
 retired-model-keys: ## Assert no shipping Rust spells a retired pipeline_<role>_model key (#6061)
