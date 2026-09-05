@@ -13,6 +13,12 @@
 
 use serde::{Deserialize, Serialize};
 
+// Who claimed what about a snapshot's evidence. Its own module because
+// authorship grows on its own schedule — the evidence fields answer "what was
+// observed", these answer "by whom".
+mod stamp;
+pub use stamp::{StampAssessment, VerdictStamp};
+
 /// Which rung of the evidence ladder a `Verdict` actually came to rest
 /// on (#1043).
 ///
@@ -450,6 +456,18 @@ pub struct LadderSnapshot {
     /// recorded before this existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verifier_independent: Option<bool>,
+    /// Who claimed what about this evidence, in the order the claims
+    /// arrived. The evidence fields above say what was observed; a stamp says
+    /// who observed it, so a second observer can agree, disagree, or abstain
+    /// on the same record rather than overwrite the first one's claim.
+    ///
+    /// Empty on every snapshot recorded before stamps existed, and on every
+    /// run nobody stamped — an empty list emits no key, so a stored verdict is
+    /// byte-for-byte what it was.
+    ///
+    /// **Recorded only: no stamp changes the rung.** See [`VerdictStamp`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stamps: Vec<VerdictStamp>,
 }
 
 impl LadderSnapshot {
@@ -473,6 +491,43 @@ impl LadderSnapshot {
             verifier_independent,
             ..self
         }
+    }
+
+    /// This snapshot with one more claim on the end.
+    ///
+    /// It touches [`Self::stamps`] and nothing else, which is the contract: a
+    /// stamp records an observer, it does not give one a vote. Three `Done`
+    /// stamps on a snapshot resting at [`LadderRung::Unverified`] leave it
+    /// resting there.
+    #[must_use]
+    pub fn with_stamp(mut self, stamp: VerdictStamp) -> Self {
+        self.stamps.push(stamp);
+        self
+    }
+
+    /// The exact object a stamp's [`VerdictStamp::preimage_hash`] is computed
+    /// over: this snapshot with [`Self::stamps`] removed.
+    ///
+    /// Every producer shares this rather than each dropping the field for
+    /// itself. Two that disagreed about the preimage would mint hashes that
+    /// read as tampering, and dropping `stamps` is what lets a later observer
+    /// stamp the record without invalidating the claims already on it.
+    ///
+    /// The digest is the record-hash primitive (ADR 0004) — RFC 8785
+    /// canonical bytes, sha256, a `sha256:` prefix. It lives in `stella-core`
+    /// with the hashing crates it needs, which this crate's boundary does not
+    /// take.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `serde_json` error when this snapshot cannot be turned
+    /// into a JSON value.
+    pub fn stamp_preimage(&self) -> Result<serde_json::Value, serde_json::Error> {
+        let mut value = serde_json::to_value(self)?;
+        if let serde_json::Value::Object(map) = &mut value {
+            map.remove("stamps");
+        }
+        Ok(value)
     }
 }
 
@@ -527,11 +582,27 @@ mod tests {
             no_test_surface: false,
             errored_commands: 0,
             verifier_independent: None,
+            stamps: vec![],
+        }
+    }
+
+    fn stamp(author: &str, assessment: StampAssessment) -> VerdictStamp {
+        VerdictStamp {
+            author: author.into(),
+            author_version: Some("2.1.0".into()),
+            assessment,
+            summary: "the authored witness went red then green".into(),
+            preimage_hash: format!("sha256:{}", "a1".repeat(32)),
+            evidence_refs: vec!["trace:t1#verify".into()],
+            decided_at_ms: 1_767_225_600_000,
+            duration_ms: 4_210,
+            timed_out: false,
         }
     }
 
     /// AGENTS.md #4: the snapshot round-trips byte-for-byte, with and without
-    /// a rung, and with the grader-independence fact in either polarity.
+    /// a rung, with the grader-independence fact in either polarity, and
+    /// carrying claims from more than one observer.
     #[test]
     fn the_snapshot_round_trips() {
         for value in [
@@ -540,6 +611,10 @@ mod tests {
             snapshot()
                 .with_rung(LadderRung::Unverified)
                 .with_verifier_independence(Some(false)),
+            snapshot()
+                .with_rung(LadderRung::Unverified)
+                .with_stamp(stamp("engine", StampAssessment::Inconclusive))
+                .with_stamp(stamp("vera", StampAssessment::Done)),
             // #2194: the three channels that joined the snapshot after the
             // verdict already turned on them.
             LadderSnapshot {
@@ -726,5 +801,74 @@ mod tests {
                 "`{token}` must still parse, as the unproven rung it always was"
             );
         }
+    }
+
+    /// Stamps are additive: a snapshot nobody stamped emits no key, and one
+    /// recorded before stamps existed parses with none. That is what lets
+    /// authorship land without moving a single stored verdict.
+    #[test]
+    fn stamps_are_additive() {
+        let json = serde_json::to_string(&snapshot()).unwrap();
+        assert!(
+            !json.contains("stamps"),
+            "an unstamped snapshot emits no key: {json}"
+        );
+
+        let legacy = r#"{"flip_achieved":false,"unstable_flip":false,"diff_lines":0,
+            "diff_budget":0,"diff_available":false,
+            "mutating_actions":0,"new_diag_errors":0,"new_diag_warnings":0}"#;
+        let parsed: LadderSnapshot = serde_json::from_str(legacy).unwrap();
+        assert!(parsed.stamps.is_empty());
+    }
+
+    /// Stamps never promote a rung. Three observers all saying `Done` leave an
+    /// `Unverified` snapshot unverified, and leave every other field alone —
+    /// counting agreement is exactly the move that let an ablated verifier
+    /// score every run a pass with nothing noticing.
+    #[test]
+    fn stamps_never_promote_the_rung() {
+        let base = snapshot().with_rung(LadderRung::Unverified);
+        let stamped = base
+            .clone()
+            .with_stamp(stamp("vera", StampAssessment::Done))
+            .with_stamp(stamp("mira", StampAssessment::Done))
+            .with_stamp(stamp("engine", StampAssessment::Done));
+
+        assert_eq!(stamped.stamps.len(), 3);
+        assert_eq!(stamped.rung, Some(LadderRung::Unverified));
+        assert_eq!(
+            LadderSnapshot {
+                stamps: vec![],
+                ..stamped
+            },
+            base,
+            "stamping changes exactly one field"
+        );
+    }
+
+    /// The preimage a stamp is hashed over does not move when another stamp
+    /// arrives. Without that, the second observer's claim would invalidate
+    /// the first one's hash, and a replay would read an untouched record as
+    /// tampered.
+    #[test]
+    fn a_new_stamp_does_not_change_what_earlier_stamps_were_made_against() {
+        let bare = snapshot();
+        let stamped = bare
+            .clone()
+            .with_stamp(stamp("vera", StampAssessment::Done))
+            .with_stamp(stamp("engine", StampAssessment::Inconclusive));
+
+        assert_eq!(
+            bare.stamp_preimage().unwrap(),
+            stamped.stamp_preimage().unwrap()
+        );
+        // And the preimage carries no `stamps` key to hash in the first place.
+        assert!(stamped.stamp_preimage().unwrap().get("stamps").is_none());
+        // An unstamped snapshot's preimage is the snapshot itself: removing a
+        // key that was never emitted changes nothing.
+        assert_eq!(
+            bare.stamp_preimage().unwrap(),
+            serde_json::to_value(&bare).unwrap()
+        );
     }
 }
