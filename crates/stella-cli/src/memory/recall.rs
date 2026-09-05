@@ -275,31 +275,6 @@ impl SessionMemory {
             super::records_refresh::rules_digest(&self.workspace_root);
     }
 
-    /// This turn's volatile record channel, rendered: the registry's volatile
-    /// channel, selected by `applies_to` against the turn's prompt and the
-    /// paths it names. `None` when this session has no records at all.
-    ///
-    /// Returns the registry alongside the render because the steering
-    /// adapters (`stella_records::adapt`) resolve the rendered handles
-    /// back through it for their token estimates — the render and the ledger
-    /// must come from one selection pass, not two.
-    fn turn_record_rendered(
-        &self,
-        prompt: &str,
-    ) -> Option<(stella_records::records::Registry, RenderedChannel)> {
-        // Cloned out of the lock rather than borrowed through it: the caller
-        // threads the registry across the rest of its selection pass, and a
-        // guard held that long would block a concurrent freshness swap.
-        let registry = self.record_registry.read().expect("records lock").clone()?;
-        let paths = turn_path_tokens(prompt);
-        let facts = stella_records::records::TurnFacts {
-            text: prompt,
-            paths: &paths,
-        };
-        let rendered = registry.render_volatile_for_turn(&facts, Some(RECORD_CHANNEL_BUDGET));
-        Some((registry, rendered))
-    }
-
     /// The record channel's section and eviction report, with an injectable
     /// diagnostic sink — the same split as
     /// [`Self::recalled_frames_reporting`] and for the same reason: the
@@ -321,7 +296,7 @@ impl SessionMemory {
         prompt: &str,
         mut report: impl FnMut(String),
     ) -> Option<String> {
-        let (registry, rendered) = self.turn_record_rendered(prompt)?;
+        let (registry, rendered) = self.turn_records_for_prompt(prompt)?;
         for drop in stella_records::adapt::record_drops(&registry, &rendered) {
             // A record channel drop is never also selected — the channel's
             // own budget cut it before the plane saw it.
@@ -415,7 +390,7 @@ impl SessionMemory {
         // tokens on every turn and is worth them on almost none — which is why it
         // is selected per turn: a record scoped by `applies_to` renders only when
         // this prompt names a matching path, task, or keyword.
-        let record = self.turn_record_rendered(prompt);
+        let record = self.turn_records_for_prompt(prompt);
 
         let signal = stella_core::steering::TurnSignal {
             prompt,
@@ -432,7 +407,8 @@ impl SessionMemory {
             eprintln!("  {} {message}", "!".yellow())
         });
 
-        let frames = kept_frames(&recall.frames, &set);
+        // The holdout's memory arm, and this turn's memory join, in one door.
+        let frames = self.withhold_held_memory(&recall.frames, kept_frames(&recall.frames, &set));
         let kept = kept_skills(&selected.selected, &set);
         let record_handles = record
             .as_ref()
@@ -550,23 +526,15 @@ impl SessionMemory {
                 paths.push(path.clone());
             }
         }
-        let registry = self.record_registry.read().expect("records lock").clone();
-        let record = registry.map(|registry| {
-            let facts = stella_records::records::TurnFacts {
-                text: prompt,
-                paths: &paths,
-            };
-            // The per-record half of the #4498 dedup: the channel renders
-            // as one budgeted block, so leaving out what the turn has seen
-            // means re-rendering without those records, not filtering a
-            // list — the exclusion door is the registry's.
-            let rendered = registry.render_volatile_for_turn_excluding(
-                &facts,
-                Some(RECORD_CHANNEL_BUDGET),
-                produced.records(),
-            );
-            (registry, rendered)
-        });
+        let facts = stella_records::records::TurnFacts {
+            text: prompt,
+            paths: &paths,
+        };
+        // The per-record half of the #4498 dedup, and the holdout's rule arm:
+        // the channel renders as one budgeted block, so leaving out what the
+        // turn has seen means re-rendering without those records, not
+        // filtering a list — the exclusion door is the registry's.
+        let record = self.turn_records_held(&facts, produced.records());
 
         let set = query_gathered_plane(
             signal,
@@ -581,14 +549,20 @@ impl SessionMemory {
 
         // The per-frame cut this block exists to make. It runs AFTER the plane
         // has packed, not before the query: the drop is about what the model
-        // has already been shown, and the ledger must still report the frame as
-        // selected — recall spent the tokens fetching it either way, and a
-        // ledger that quietly forgot the ones the render suppressed would
-        // under-report the fan-out the re-query paid for.
-        let frames: Vec<RecalledFrame> = kept_frames(&recall.frames, &set)
-            .into_iter()
-            .filter(|frame| !produced.has_frame(&super::steering::frame_handle(frame)))
-            .collect();
+        // has already been shown, and the recall telemetry must still report
+        // the frame — recall spent the tokens fetching it either way, and a
+        // report that quietly forgot the ones the render suppressed would
+        // under-report the fan-out the re-query paid for. The trial ledger is
+        // a different question and gets a different answer: `produced` frames
+        // were shown earlier this turn, so `withhold_held_memory` folds them
+        // into the turn's selected set even though this block leaves them out.
+        let frames = self.withhold_held_memory(
+            &recall.frames,
+            kept_frames(&recall.frames, &set)
+                .into_iter()
+                .filter(|frame| !produced.has_frame(&super::steering::frame_handle(frame)))
+                .collect(),
+        );
         let kept: Vec<skills::SelectedSkill> = kept_skills(&selected.selected, &set)
             .into_iter()
             .filter(|sel| !produced.has_skill(&sel.skill.name))
@@ -688,6 +662,8 @@ impl SessionMemory {
     /// that injects nothing anyway, and whether this is one is not settled
     /// until the plane arm is.
     fn arm_controls(&mut self, recall_rate: u32, holdout_rate: u32) -> bool {
+        // The join and the holdout pick belong to the turn that armed them.
+        self.reset_context_trials();
         let suppressed = self.maybe_suppress_recall(recall_rate);
         self.arm_artifact_holdout(holdout_rate);
         suppressed

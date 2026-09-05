@@ -359,7 +359,12 @@ pub struct RetrievalSettings {
     /// way to say so that is not a source edit.
     pub ab_recall_rate: u32,
     /// Per-artifact holdout: every `rate`-th eligible turn runs with **one**
-    /// matched skill held back, so that skill's own control arm exists.
+    /// matched artifact held back, so that artifact's own control arm exists.
+    ///
+    /// One artifact, not one of each kind. The three kinds that can be held
+    /// back — a skill, a memory record, a mined rule — take the schedule in
+    /// turn (`memory::trials::HOLDOUT_ARMS`), because a turn that withheld
+    /// one of each could not say which withholding its outcome belongs to.
     ///
     /// Distinct from [`Self::ab_recall_rate`], which withholds the whole
     /// steering plane. A plane-control turn can say only that recall helped;
@@ -412,7 +417,7 @@ pub const DEFAULT_RECALL_MAX_TOKENS: u32 = 1200;
 /// compile-time constant this setting replaces. 10 means every tenth turn in a
 /// workspace is a control turn; 0 disables the control.
 pub const DEFAULT_AB_RECALL_RATE: u32 = 10;
-/// Per-artifact holdout rate — 20 means one matched skill is held back on
+/// Per-artifact holdout rate — 20 means one matched artifact is held back on
 /// every twentieth eligible turn. `0` disables it. Twice the plane rate above,
 /// because the plane control already costs a turn in ten and the two prices
 /// add up.

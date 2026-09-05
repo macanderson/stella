@@ -55,26 +55,26 @@
 //!
 //! # Copy law (D6)
 //!
-//! The three pipeline slots keep the deck's own words — `think` / `work` /
-//! `verify` — and the interactive agent is `lead`, the word the deck already
-//! uses for that lane. The internal role identifiers reach the rendered
-//! surface only inside a `from` path (`agents.triage.model`), where they are
-//! not a name for the slot but the literal key a user would edit.
+//! The interactive agent is `lead`, the word the deck already uses for that
+//! lane. It is the only word this file knows: the core loop resolves exactly
+//! one role (`default`). The three pipeline slots this section once named
+//! (`think` / `work` / `verify`) went with the settings keys that stopped
+//! steering anything, and the table naming them is gone with them.
 //!
 //! A role the deck has no word for — one a host contributed, which the table
 //! is open to since #3472 — is named by its own key. That is the one place an
-//! identifier is a label, and nothing else there is true: the deck cannot
+//! identifier is a label, and nothing else here is true: the deck cannot
 //! invent a word for a role it has never heard of, and a category label
 //! ("plugin") would name the row after where it came from, not after itself.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use stella_tui_theme::token;
 use unicode_width::UnicodeWidthStr;
 
-use crate::deck::{PipelineRole, WorkspaceModel};
+use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
 use crate::envelope::{EngineConfigState, RoleWiringRow, role_table};
 use crate::theme;
@@ -89,56 +89,21 @@ const MODELS_CARD_W: u16 = 72;
 /// Width of the dimmed left label column — the longest role word plus room.
 const LABEL_W: usize = 10;
 
-/// Columns held back from the model slug so a standing word has somewhere to
-/// land on the same row.
-const STANDING_W: usize = 12;
-
-/// The roles this dialog has a **word** for, in pipeline order with the
-/// interactive lane first: the settings key the driver sends each row under,
-/// and the word the deck says out loud for it.
+/// The only role this dialog has a **word** for: the settings key the driver
+/// sends it under, and the word the deck says out loud for it.
 ///
 /// Not the roles it prints. It prints every row the driver sends
-/// ([`role_table`]); this list decides the order of the ones the deck has
-/// learned to name, and a role outside it is printed after them under its own
-/// key. Adding a name here is a copy decision, never a gate.
-const SLOTS: [(&str, &str); 6] = [
-    ("default", "lead"),
-    ("triage", "think"),
-    // Between triage and the worker because that is when they run, and both
-    // are here rather than folded into `work` because they became separately
-    // pinnable (#2374) — a dialog that answers "what will each role run" has
-    // to name a role the settings file can now point somewhere else.
-    ("research", "research"),
-    ("plan", "plan"),
-    ("worker", "work"),
-    ("verifier", "verify"),
-];
-
-/// Which pipeline slot a settings role key belongs to. `default` is the
-/// interactive lane and belongs to none — it is not one of the three a scored
-/// run is read against.
-fn slot_of(role_key: &str) -> Option<PipelineRole> {
-    match role_key {
-        "triage" => Some(PipelineRole::Triage),
-        "worker" => Some(PipelineRole::Worker),
-        "verifier" => Some(PipelineRole::Verifier),
-        _ => None,
-    }
-}
-
-/// Whether this role has actually served a call, as one right-aligned word.
+/// ([`role_table`]); this is the one row whose word the deck has decided, and
+/// a role outside it is printed after it under its own key. Adding a name
+/// here is a copy decision, never a gate — and there is nothing to add until
+/// the driver can resolve a role besides `default`.
 ///
-/// The distinction the fold keeps: `configured` is a claim about
-/// intent and `served` is evidence, and a scored run is read against the
-/// second. A slot the session never reached must not read like one that ran.
-fn standing(model: &WorkspaceModel, role_key: &str) -> Option<&'static str> {
-    let slot = slot_of(role_key)?;
-    Some(match model.role_pins.get(&slot) {
-        Some(pin) if pin.served => "served",
-        Some(_) => "configured",
-        None => "unassigned",
-    })
-}
+/// Named six roles once — `think` / `research` / `plan` / `work` / `verify`
+/// — for settings keys that had already stopped steering anything.
+/// `role_table` still rendered every one of them, because it folds over
+/// whatever the driver actually sent, and the only sender left was a fixture
+/// built to spell those keys, never a real session.
+const KNOWN: [(&str, &str); 1] = [("default", "lead")];
 
 /// Pack `parts` onto as few `width`-column rows as they fit on, joined by the
 /// deck's ` · ` separator.
@@ -177,7 +142,6 @@ fn wrap_parts(parts: &[String], width: usize) -> Vec<String> {
 /// sentences, not values, and a column narrow enough to sit five abreast is
 /// exactly the column that would cut them off.
 fn role_rows(
-    model: &WorkspaceModel,
     row: &RoleWiringRow,
     word: &str,
     inner_w: usize,
@@ -190,37 +154,21 @@ fn role_rows(
         format!("from {}", row.source),
     ];
     let detail = parts.join(" · ");
-    let mark = standing(model, &row.role);
 
     if accessible {
         // A labeled record per role: no column alignment to hear, and every
         // field carries its own name instead of a position in a grid.
-        let mut text = format!("· {word} · model {} · {detail}", row.model);
-        if let Some(mark) = mark {
-            text.push_str(" · ");
-            text.push_str(mark);
-        }
+        let text = format!("· {word} · model {} · {detail}", row.model);
         return vec![Line::from(Span::styled(text, Style::new().fg(token::TEXT)))];
     }
 
-    // The role that most recently served is the one answering right now, and
-    // it carries the accent on every surface that names a pin.
-    let active = slot_of(&row.role).is_some_and(|slot| model.active_role == Some(slot));
-    let model_style = if active {
-        Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
-    } else {
-        Style::new().fg(token::TEXT)
-    };
-    let mut head = vec![
+    let head = vec![
         Span::styled(format!("{word:<LABEL_W$}"), dim),
         Span::styled(
-            cards::truncate_cols(&row.model, inner_w.saturating_sub(LABEL_W + STANDING_W)),
-            model_style,
+            cards::truncate_cols(&row.model, inner_w.saturating_sub(LABEL_W)),
+            Style::new().fg(token::TEXT),
         ),
     ];
-    if let Some(mark) = mark {
-        head = cards::pad_right(head, Span::styled(mark.to_string(), dim), inner_w);
-    }
     let mut rows = vec![Line::from(head)];
     for line in wrap_parts(&parts, inner_w.saturating_sub(LABEL_W)) {
         rows.push(Line::from(vec![
@@ -320,20 +268,12 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
         ))),
         Some(state) => {
             rows.extend(header_rows(model, state, ui.accessible));
-            // Folded, not looked up (#3472). Iterating [`SLOTS`] and looking
-            // each key up rendered exactly the six roles this file knows the
-            // names of, and dropped every other row the driver sent — so a
-            // role contributed by something the operator installed would
-            // resolve, run and spend while the one dialog that answers "what
-            // will each role run" denied it existed.
-            for entry in role_table(state, &SLOTS) {
-                rows.extend(role_rows(
-                    model,
-                    entry.row,
-                    entry.word,
-                    inner_w,
-                    ui.accessible,
-                ));
+            // Folded, not looked up (#3472). Looking each key up in [`KNOWN`]
+            // would drop any row under a key it does not list. A role a
+            // plugin adds would then run and spend while this dialog said it
+            // did not exist.
+            for entry in role_table(state, &KNOWN) {
+                rows.extend(role_rows(entry.row, entry.word, inner_w, ui.accessible));
             }
         }
     }
@@ -364,7 +304,6 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::deck::RolePin;
 
     fn wiring(role: &str, model: &str, effort: &str, source: &str) -> RoleWiringRow {
         RoleWiringRow {
@@ -377,22 +316,19 @@ mod tests {
         }
     }
 
+    /// The one row `resolve` can send today. The `effort_auto` disclosure
+    /// rides on it rather than on a fabricated `verifier` row, so the wrap
+    /// test below still exercises the card's longest line without pretending
+    /// the driver can name a role it cannot.
     fn state() -> EngineConfigState {
         EngineConfigState {
             effort_auto: true,
-            roles: vec![
-                wiring("default", "zai/glm-5.2", "medium", "default_model"),
-                wiring("worker", "zai/glm-5.2", "medium", "default_model"),
-                wiring(
-                    "verifier",
-                    "anthropic/claude-opus-5",
-                    "high  (effort_auto replaced \"max\")",
-                    "pipeline_verifier_model",
-                ),
-                wiring("triage", "z-ai/glm-5.2", "low", "agents.triage.model"),
-                wiring("research", "zai/glm-5.2", "low", "default_model"),
-                wiring("plan", "zai/glm-5.2", "medium", "default_model"),
-            ],
+            roles: vec![wiring(
+                "default",
+                "anthropic/claude-opus-5",
+                "high  (effort_auto replaced \"max\")",
+                "agents.default.model",
+            )],
             ..Default::default()
         }
     }
@@ -414,8 +350,8 @@ mod tests {
     /// same table, so a test cannot pass on rows the dialog would not print.
     fn body_of(model: &WorkspaceModel, state: &EngineConfigState, accessible: bool) -> String {
         let mut lines = header_rows(model, state, accessible);
-        for entry in role_table(state, &SLOTS) {
-            lines.extend(role_rows(model, entry.row, entry.word, 68, accessible));
+        for entry in role_table(state, &KNOWN) {
+            lines.extend(role_rows(entry.row, entry.word, 68, accessible));
         }
         text_of(&lines)
     }
@@ -424,16 +360,14 @@ mod tests {
         body_of(model, &state(), accessible)
     }
 
-    /// The dialog's whole reason to exist: every role names the setting that
+    /// The dialog's whole reason to exist: the role names the setting that
     /// chose its model, and an effort names what an auto-mode took from it. A
     /// slug alone is what the card this replaced already showed.
     #[test]
     fn every_role_names_its_model_its_effort_and_the_setting_that_chose_it() {
         let text = rendered(&WorkspaceModel::new(), false);
         for needle in [
-            "pipeline_verifier_model",
-            "agents.triage.model",
-            "default_model",
+            "agents.default.model",
             "effort_auto replaced",
             "anthropic/claude-opus-5",
             "thinking on",
@@ -446,19 +380,19 @@ mod tests {
     ///
     /// The dialog keeps printing what this session resolved — that is the
     /// question it answers — so the running pin must still be there. But a
-    /// user who saved a new verifier model and saw only the old one read the
-    /// dialog as having ignored the save, which is the failure this row exists
-    /// to prevent. Both answers, distinguishable.
+    /// user who saved a new model and saw only the old one read the dialog as
+    /// having ignored the save, which is the failure this row exists to
+    /// prevent. Both answers, distinguishable.
     #[test]
     fn a_saved_edit_is_named_as_pending_without_displacing_what_is_running() {
         let mut row = wiring(
-            "verifier",
+            "default",
             "anthropic/claude-opus-5",
             "high",
-            "pipeline_verifier_model",
+            "agents.default.model",
         );
         row.next_session = Some("openai/gpt-5.5".to_string());
-        let lines = role_rows(&WorkspaceModel::new(), &row, "verify", 68, false);
+        let lines = role_rows(&row, "lead", 68, false);
         let text = text_of(&lines);
 
         assert!(
@@ -476,37 +410,35 @@ mod tests {
     /// reader to skip the one row where it means something.
     #[test]
     fn a_role_with_no_pending_edit_stays_silent() {
-        let row = wiring("worker", "zai/glm-5.2", "medium", "default_model");
-        let text = text_of(&role_rows(&WorkspaceModel::new(), &row, "work", 68, false));
+        let row = wiring("default", "zai/glm-5.2", "medium", "default_model");
+        let text = text_of(&role_rows(&row, "lead", 68, false));
         assert!(!text.contains("next session"), "{text}");
     }
 
-    /// Copy law (D6): the deck's words label the rows. The internal role
-    /// identifiers appear only inside a settings path, where they are the key
-    /// a user edits rather than a name for the slot.
+    /// Copy law (D6): the deck's one word labels its row rather than the
+    /// settings key underneath it.
     #[test]
     fn the_rows_are_labeled_in_the_decks_own_vocabulary() {
         let text = rendered(&WorkspaceModel::new(), false);
-        for word in ["lead", "think", "work", "verify"] {
-            assert!(text.contains(word), "missing the {word:?} row in:\n{text}");
-        }
-        // `triage` survives only inside `agents.triage.model` — never in the
-        // label column, which is what the padding below would prove.
         assert!(
-            !text.contains(&format!("{:<LABEL_W$}", "triage")),
-            "an internal role identifier is labeling a row:\n{text}"
+            text.contains("lead"),
+            "missing the \"lead\" row in:\n{text}"
+        );
+        assert!(
+            !text.contains(&format!("{:<LABEL_W$}", "default")),
+            "the settings key is labeling the row instead of the deck's word:\n{text}"
         );
     }
 
-    /// The bug this dialog would otherwise ship with. `verify`'s detail is
-    /// the longest line on the card and carries the `effort_auto` disclosure
-    /// at its far end, so a truncating layout drops exactly the sentence the
-    /// dialog exists for — and does it on any terminal short of very wide.
+    /// The bug this dialog would otherwise ship with. The `effort_auto`
+    /// disclosure is the longest detail the card can carry, so a truncating
+    /// layout drops exactly the sentence the dialog exists for — and does it
+    /// on any terminal short of very wide.
     #[test]
     fn a_long_detail_wraps_rather_than_losing_its_disclosure() {
         let text = rendered(&WorkspaceModel::new(), false);
         assert!(text.contains("effort_auto replaced"), "{text}");
-        assert!(text.contains("from pipeline_verifier_model"), "{text}");
+        assert!(text.contains("from agents.default.model"), "{text}");
         assert!(!text.contains('…'), "nothing was elided:\n{text}");
 
         // Every wrapped row stays inside the width it was given.
@@ -526,43 +458,13 @@ mod tests {
         assert!(text.contains("effort on · thinking off"), "{text}");
     }
 
-    /// Intent must never read as evidence. A verifier that was configured and
-    /// never reached says so, and only a role that actually served is marked
-    /// `served` — the same distinction the fold keeps.
-    #[test]
-    fn a_configured_role_is_not_drawn_as_one_that_ran() {
-        let mut model = WorkspaceModel::new();
-        model.role_pins.insert(
-            PipelineRole::Worker,
-            RolePin {
-                provider: "zai".into(),
-                model: "glm-5.2".into(),
-                served: true,
-            },
-        );
-        model.role_pins.insert(
-            PipelineRole::Verifier,
-            RolePin {
-                provider: "anthropic".into(),
-                model: "claude-opus-5".into(),
-                served: false,
-            },
-        );
-        assert_eq!(standing(&model, "worker"), Some("served"));
-        assert_eq!(standing(&model, "verifier"), Some("configured"));
-        assert_eq!(standing(&model, "triage"), Some("unassigned"));
-        // The interactive lane is not one of the three a scored run is read
-        // against, so it claims no standing at all.
-        assert_eq!(standing(&model, "default"), None);
-    }
-
     /// Accessible mode emits labeled records, not columns: a screen reader
     /// hears which field it is on rather than a position in a grid.
     #[test]
     fn accessible_mode_labels_every_field() {
         let text = rendered(&WorkspaceModel::new(), true);
         assert!(
-            text.contains("· verify · model anthropic/claude-opus-5"),
+            text.contains("· lead · model anthropic/claude-opus-5"),
             "{text}"
         );
     }
@@ -577,7 +479,7 @@ mod tests {
         draft.roles[0].model = "typed-but-never-saved".to_string();
         ui.engine.state = Some(draft);
         let chosen = ui.engine.pristine.as_ref().or(ui.engine.state.as_ref());
-        assert_eq!(chosen.unwrap().roles[0].model, "zai/glm-5.2");
+        assert_eq!(chosen.unwrap().roles[0].model, "anthropic/claude-opus-5");
     }
 
     /// **The #3472 witness.** A role the deck has no word for is *printed*,
@@ -585,12 +487,16 @@ mod tests {
     /// driver stops sending it — which is what happens when whatever
     /// contributed it is removed.
     ///
-    /// Before this, the dialog looped its own six-slot list and looked each
-    /// key up, so a contributed row was dropped silently: it resolved, ran and
+    /// Before this, the dialog looped its own slot list and looked each key
+    /// up, so a contributed row was dropped silently: it resolved, ran and
     /// spent, and the one surface that answers "what will each role run" said
     /// nothing about it. The second half is what makes the first safe — a
     /// table that could only ever grow would keep printing a routing answer
-    /// for a role that no longer routes anywhere.
+    /// for a role that no longer routes anywhere. [`KNOWN`] had grown to that
+    /// shape too, naming four roles the driver could never send again;
+    /// shrinking it back to the one role the driver can send does not narrow
+    /// what this fold renders, only what it has a word for — a future seat
+    /// still shows up here under its own key, same as `vera-witness` below.
     #[test]
     fn a_contributed_role_is_printed_and_leaves_with_its_contributor() {
         let model = WorkspaceModel::new();
@@ -617,30 +523,19 @@ mod tests {
         );
     }
 
-    /// The built-in rows keep their order and their words when a contributed
-    /// role joins them: the reading order someone has learned is not something
-    /// a contribution gets to rearrange.
+    /// The built-in row keeps its word and its place when a contributed role
+    /// joins it: the reading order someone has learned is not something a
+    /// contribution gets to rearrange.
     #[test]
     fn a_contributed_role_joins_the_end_and_moves_nothing() {
         let mut state = state();
         state
             .roles
             .push(wiring("aaa-contributed", "zai/glm-5.2", "low", "plugin a"));
-        let words: Vec<&str> = role_table(&state, &SLOTS)
+        let words: Vec<&str> = role_table(&state, &KNOWN)
             .into_iter()
             .map(|entry| entry.word)
             .collect();
-        assert_eq!(
-            words,
-            vec![
-                "lead",
-                "think",
-                "research",
-                "plan",
-                "work",
-                "verify",
-                "aaa-contributed"
-            ]
-        );
+        assert_eq!(words, vec!["lead", "aaa-contributed"]);
     }
 }

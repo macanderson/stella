@@ -234,6 +234,16 @@ fn apply_deck_action(
     }
 }
 
+/// The one wall-clock read in the deck's run loop. It runs once per tick
+/// and is stored into [`WorkspaceModel::now_ms`] (`model.now_ms = now_ms()`
+/// at the two call sites below) — nothing else reads the clock here. This
+/// file is the I/O edge its own module doc names. Everything downstream —
+/// the deck's rendering, staleness, and elapsed-time logic — takes
+/// `model.now_ms` as plain data, the same parameter style
+/// `self_driving.rs::liveness` uses. Many existing tests already set
+/// `model.now_ms` to a fixed instant (`deck/tests.rs`, `deck_render/tests.rs`,
+/// `views/*.rs`), so a fake clock is already honoured here. Routing
+/// `now_ms()` itself through a parameter would only rename this one call.
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

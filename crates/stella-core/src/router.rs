@@ -52,24 +52,19 @@ pub struct ProviderProfile {
     /// `stella_protocol::Provider::id()` and is the key `CircuitBreaker`
     /// tracks state under.
     pub id: String,
-    /// Cross-family grouping key for verifier selection (§1: "prefer a
-    /// different family when ≥2 profiles with distinct family... are
-    /// available"). Two profiles sharing a `family` are treated as the
+    /// Cross-family grouping key for [`Router::resolve_cross_family`] (§1:
+    /// "prefer a different family when ≥2 profiles with distinct family...
+    /// are available"). Two profiles sharing a `family` are treated as the
     /// SAME family even if their `id`s differ — e.g. two OpenRouter-routed
     /// slugs of the same underlying model. Defaults to `id` via
     /// `ProviderProfile::new` when the caller has no finer concept.
     pub family: String,
-    /// Strongest available model for main coding/execution steps — the
-    /// `worker`/`plan` default.
+    /// Strongest available model for main coding/execution steps.
     pub worker_model: ModelRef,
-    /// Cheap/fast tier used for triage classification. May equal
-    /// `worker_model` when the provider has no separate fast tier — that's
-    /// the caller's choice when constructing the profile, not the router's
-    /// concern.
-    pub triage_model: ModelRef,
-    /// Model used when this provider is chosen as verifier: "never the same
-    /// instance as worker" — a fresh, separate call even when it
-    /// shares a slug with `worker_model`.
+    /// Model used when this provider is chosen by
+    /// [`Router::resolve_cross_family`]: "never the same instance as
+    /// worker" — a fresh, separate call even when it shares a slug with
+    /// `worker_model`.
     pub verifier_model: ModelRef,
 }
 
@@ -77,21 +72,15 @@ impl ProviderProfile {
     /// Construct a profile with `family` defaulting to `id` (the common
     /// case: one key = one family). Call `.with_family(..)` to override for
     /// providers that front more than one underlying model family, or that
-    /// should be grouped with another profile for verifier cross-family
-    /// selection.
-    pub fn new(
-        id: impl Into<String>,
-        worker_model: ModelRef,
-        triage_model: ModelRef,
-        verifier_model: ModelRef,
-    ) -> Self {
+    /// should be grouped with another profile for
+    /// [`Router::resolve_cross_family`] selection.
+    pub fn new(id: impl Into<String>, worker_model: ModelRef, verifier_model: ModelRef) -> Self {
         let id = id.into();
         let family = id.clone();
         Self {
             id,
             family,
             worker_model,
-            triage_model,
             verifier_model,
         }
     }
@@ -289,9 +278,10 @@ impl CircuitBreaker {
 /// `stella-cli`'s `SessionFallback::resolve_fallback` reads it and
 /// [`Self::reason`] reaches the wire from there (the module docs name the
 /// full chain, and why grepping this type's *name* will not find it).
-/// Never constructed for an intentional routing choice (e.g. verifier's
-/// cross-family preference) — only when the originally preferred provider
-/// was unavailable (L-M7: fallback is always visible, never silent).
+/// Never constructed for an intentional routing choice (e.g.
+/// [`Router::resolve_cross_family`]'s cross-family preference) — only when
+/// the originally preferred provider was unavailable (L-M7: fallback is
+/// always visible, never silent).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FallbackInfo {
     pub from: String,
@@ -299,7 +289,8 @@ pub struct FallbackInfo {
     pub reason: String,
 }
 
-/// The result of resolving one `Role`.
+/// The result of resolving one `Role`, or a provider via
+/// [`Router::resolve_cross_family`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouterDecision {
     /// The model to call.
@@ -355,6 +346,24 @@ pub enum RouterError {
         "no default model available for role `{role:?}` — pin one explicitly with RoleTable::pin"
     )]
     NoDefaultForRole { role: Role },
+}
+
+/// [`Router::resolve_cross_family`] failures. Not a [`RouterError`]: every
+/// option in that enum names a `Role`, and this resolution never does — it
+/// asks the configured providers a question ("is there a healthy one in a
+/// different family than the worker's?"), not a role lookup.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CrossFamilyError {
+    /// No `ProviderProfile`s were supplied at all.
+    #[error(
+        "no provider configured — configure at least one provider (BYOK key) before resolving a cross-family provider"
+    )]
+    NoProvidersConfigured,
+    /// Every configured provider's breaker is currently open.
+    #[error(
+        "all configured providers are circuit-broken — every breaker is open; wait for a cooldown or configure a healthy provider"
+    )]
+    AllProvidersUnavailable,
 }
 
 // Router
@@ -433,8 +442,7 @@ impl Router {
     }
 
     /// [`Router::resolve`] against an already-taken breaker guard — one lock
-    /// per resolution, and the verifier's recursive Worker resolution reuses
-    /// the guard instead of deadlocking on a second acquisition.
+    /// per resolution.
     fn resolve_with(
         &self,
         breaker: &CircuitBreaker,
@@ -445,25 +453,20 @@ impl Router {
         }
 
         match role {
-            Role::Worker | Role::Plan | Role::Research => {
-                self.resolve_tier(breaker, role, |p| &p.worker_model)
-            }
-            Role::Triage => self.resolve_tier(breaker, role, |p| &p.triage_model),
-            Role::Verifier => self.resolve_verifier(breaker),
+            Role::Worker => self.resolve_worker_tier(breaker, role),
             Role::Embed | Role::Vision | Role::Image | Role::Video => {
                 Err(RouterError::NoDefaultForRole { role })
             }
         }
     }
 
-    /// Shared logic for `Worker`/`Plan`/`Triage`: pick the most-preferred
-    /// available provider's tier model, falling back to the next available
-    /// one (and reporting it) when the preferred provider is breaker-open.
-    fn resolve_tier(
+    /// Pick the most-preferred available provider's worker model, falling
+    /// back to the next available one (and reporting it) when the preferred
+    /// provider is breaker-open.
+    fn resolve_worker_tier(
         &self,
         breaker: &CircuitBreaker,
         role: Role,
-        pick: impl Fn(&ProviderProfile) -> &ModelRef,
     ) -> Result<RouterDecision, RouterError> {
         if self.profiles.is_empty() {
             return Err(RouterError::NoProvidersConfigured { role });
@@ -471,13 +474,13 @@ impl Router {
 
         let preferred = &self.profiles[0];
         if breaker.is_available(&preferred.id) {
-            return Ok(RouterDecision::plain(pick(preferred).clone()));
+            return Ok(RouterDecision::plain(preferred.worker_model.clone()));
         }
 
         for candidate in &self.profiles[1..] {
             if breaker.is_available(&candidate.id) {
                 return Ok(RouterDecision {
-                    model_ref: pick(candidate).clone(),
+                    model_ref: candidate.worker_model.clone(),
                     fallback: Some(fallback_from(breaker, preferred, candidate)),
                     caveat: None,
                 });
@@ -487,11 +490,13 @@ impl Router {
         Err(RouterError::AllProvidersUnavailable { role })
     }
 
-    /// Verifier resolution (§1, §5, L-E11 "always on a different model than
-    /// the worker"): prefer a healthy provider whose `family` differs from the
-    /// family Worker *actually* resolves to right now; degrade — with a
-    /// caveat, never an error — to the same provider/family when it's the only
-    /// healthy option (L-M8: a single configured provider must still yield a
+    /// Resolve a provider whose family differs from the worker's (§1, §5,
+    /// L-E11 "always on a different model than the worker") — the selection
+    /// strategy `stella goal`'s verifier seat spends. Prefers a healthy
+    /// provider whose `family` differs from the family [`Role::Worker`]
+    /// *actually* resolves to right now; degrades — with a caveat, never an
+    /// error — to the same provider/family when it's the only healthy
+    /// option (L-M8: a single configured provider must still yield a
     /// working verifier).
     ///
     /// Selection is by **family**, not by slug: this returns the chosen
@@ -500,31 +505,51 @@ impl Router {
     /// separate call, not a separate model. When that happens the `caveat` says
     /// so, so "different model than the worker" is a preference the router
     /// reports on, never a guarantee it can make from one key.
-    fn resolve_verifier(&self, breaker: &CircuitBreaker) -> Result<RouterDecision, RouterError> {
+    ///
+    /// Not a [`Role`] option, and not reached through [`Router::resolve`]:
+    /// nothing pins it, and the only caller (`stella-cli`'s goal loop) always
+    /// wants exactly this strategy rather than a role that could be pinned to
+    /// something else. See [`CrossFamilyError`] for why its failures are not
+    /// a [`RouterError`].
+    pub fn resolve_cross_family(&self) -> Result<RouterDecision, CrossFamilyError> {
+        self.resolve_cross_family_with(&self.breaker())
+    }
+
+    /// [`Router::resolve_cross_family`] against an already-taken breaker
+    /// guard — one lock per resolution, and the recursive Worker resolution
+    /// below reuses the guard instead of deadlocking on a second
+    /// acquisition.
+    fn resolve_cross_family_with(
+        &self,
+        breaker: &CircuitBreaker,
+    ) -> Result<RouterDecision, CrossFamilyError> {
         if self.profiles.is_empty() {
-            return Err(RouterError::NoProvidersConfigured {
-                role: Role::Verifier,
-            });
+            return Err(CrossFamilyError::NoProvidersConfigured);
         }
 
-        // Availability is checked FIRST so an all-breakers-open state reports a
-        // `Verifier` failure — resolving Worker up front would propagate its `?`
-        // as `AllProvidersUnavailable { role: Worker }`, mislabeling a Verifier
-        // resolution with the wrong role.
+        // Availability is checked FIRST so an all-breakers-open state is
+        // reported here rather than by the Worker lookup below, whose own
+        // error this function does not propagate (see the `match` a few
+        // lines down).
         let available: Vec<&ProviderProfile> = self
             .profiles
             .iter()
             .filter(|p| breaker.is_available(&p.id))
             .collect();
         let Some(&first_healthy) = available.first() else {
-            return Err(RouterError::AllProvidersUnavailable {
-                role: Role::Verifier,
-            });
+            return Err(CrossFamilyError::AllProvidersUnavailable);
         };
 
         // What Worker actually resolves to right now (pin included) — the
-        // instance Verifier must never repeat.
-        let worker_decision = self.resolve_with(breaker, Role::Worker)?;
+        // instance this resolution must never repeat. This cannot actually
+        // fail: `profiles` is non-empty and `available` just proved at least
+        // one is healthy, so `resolve_worker_tier` always finds a candidate.
+        // The error arm exists only so this stays a typed `Result` rather
+        // than an `unwrap` on that reasoning (AGENTS.md #5).
+        let worker_decision = match self.resolve_with(breaker, Role::Worker) {
+            Ok(decision) => decision,
+            Err(_) => return Err(CrossFamilyError::AllProvidersUnavailable),
+        };
         let worker_family = self
             .profiles
             .iter()
@@ -639,7 +664,6 @@ mod tests {
         ProviderProfile::new(
             "zai",
             model("zai", "glm-5.2"),
-            model("zai", "glm-5.2-air"),
             model("zai", "glm-5.2-verifier"),
         )
     }
@@ -648,7 +672,6 @@ mod tests {
         ProviderProfile::new(
             "anthropic",
             model("anthropic", "claude-fable-5"),
-            model("anthropic", "claude-haiku"),
             model("anthropic", "claude-fable-5"),
         )
     }
@@ -688,7 +711,7 @@ mod tests {
     fn explicit_pin_wins_unconditionally_even_with_providers_and_open_breakers() {
         let mut table = RoleTable::new();
         let pinned = model("openrouter", "some/pinned-slug");
-        table.pin(Role::Verifier, pinned.clone());
+        table.pin(Role::Worker, pinned.clone());
 
         let clock = ManualClock::new(0);
         let mut breaker = breaker_with_clock(clock);
@@ -699,7 +722,7 @@ mod tests {
         }
 
         let router = Router::new(table, vec![zai_profile(), anthropic_profile()], breaker);
-        let decision = router.resolve(Role::Verifier).expect("pin always resolves");
+        let decision = router.resolve(Role::Worker).expect("pin always resolves");
         assert_eq!(decision.model_ref, pinned);
         assert_eq!(decision.fallback, None);
     }
@@ -717,7 +740,7 @@ mod tests {
     // -- Single-provider (BYOK-with-one-key, L-M8) ------------------------
 
     #[test]
-    fn single_provider_yields_a_fully_working_worker_triage_verifier_set() {
+    fn single_provider_yields_a_fully_working_worker_and_cross_family_set() {
         let router = Router::new(
             RoleTable::new(),
             vec![zai_profile()],
@@ -728,36 +751,21 @@ mod tests {
         assert_eq!(worker.model_ref, model("zai", "glm-5.2"));
         assert_eq!(worker.fallback, None);
 
-        let triage = router.resolve(Role::Triage).expect("triage resolves");
-        assert_eq!(triage.model_ref, model("zai", "glm-5.2-air"));
-
         let verifier = router
-            .resolve(Role::Verifier)
-            .expect("verifier must still resolve, not error, with only one provider");
+            .resolve_cross_family()
+            .expect("must still resolve, not error, with only one provider");
         assert_eq!(verifier.model_ref, model("zai", "glm-5.2-verifier"));
         assert_eq!(verifier.fallback, None);
         assert!(
             verifier.caveat.is_some(),
-            "single-provider verifier must flag the same-family degradation"
+            "single-provider cross-family resolution must flag the same-family degradation"
         );
     }
 
-    #[test]
-    fn plan_defaults_to_the_same_tier_as_worker() {
-        let router = Router::new(
-            RoleTable::new(),
-            vec![zai_profile()],
-            breaker_with_clock(ManualClock::new(0)),
-        );
-        let worker = router.resolve(Role::Worker).unwrap();
-        let plan = router.resolve(Role::Plan).unwrap();
-        assert_eq!(worker.model_ref, plan.model_ref);
-    }
-
-    // -- Multi-provider cross-family verifier --------------------------------
+    // -- Multi-provider cross-family selection -------------------------------
 
     #[test]
-    fn multi_provider_verifier_picks_a_different_family_than_worker() {
+    fn multi_provider_cross_family_picks_a_different_family_than_worker() {
         let router = Router::new(
             RoleTable::new(),
             vec![zai_profile(), anthropic_profile()],
@@ -767,12 +775,12 @@ mod tests {
         let worker = router.resolve(Role::Worker).unwrap();
         assert_eq!(worker.model_ref, model("zai", "glm-5.2"));
 
-        let verifier = router.resolve(Role::Verifier).unwrap();
+        let verifier = router.resolve_cross_family().unwrap();
         assert_eq!(verifier.model_ref, model("anthropic", "claude-fable-5"));
         assert_eq!(verifier.fallback, None);
         assert_eq!(
             verifier.caveat, None,
-            "cross-family verifier selection needs no degradation caveat"
+            "cross-family selection needs no degradation caveat"
         );
     }
 
@@ -791,14 +799,8 @@ mod tests {
             RouterError::NoProvidersConfigured { role: Role::Worker }
         );
         assert_eq!(
-            router.resolve(Role::Triage).unwrap_err(),
-            RouterError::NoProvidersConfigured { role: Role::Triage }
-        );
-        assert_eq!(
-            router.resolve(Role::Verifier).unwrap_err(),
-            RouterError::NoProvidersConfigured {
-                role: Role::Verifier
-            }
+            router.resolve_cross_family().unwrap_err(),
+            CrossFamilyError::NoProvidersConfigured
         );
     }
 
@@ -981,15 +983,20 @@ mod tests {
             router.resolve(Role::Worker).unwrap_err(),
             RouterError::AllProvidersUnavailable { role: Role::Worker }
         );
+        assert_eq!(
+            router.resolve_cross_family().unwrap_err(),
+            CrossFamilyError::AllProvidersUnavailable
+        );
     }
 
     #[test]
-    fn verifier_reports_both_fallback_and_same_family_caveat_when_only_the_worker_family_is_healthy()
+    fn cross_family_reports_both_fallback_and_same_family_caveat_when_only_the_worker_family_is_healthy()
      {
         // zai is broken; anthropic is the only healthy provider, and it's
         // also the family worker ends up resolving to (since zai is down).
-        // Verifier must report the breaker fallback (zai -> anthropic) AND
-        // flag that it's degraded to worker's own family.
+        // Cross-family resolution must report the breaker fallback
+        // (zai -> anthropic) AND flag that it's degraded to worker's own
+        // family.
         let clock = ManualClock::new(0);
         let mut breaker = breaker_with_clock(clock);
         for _ in 0..CircuitBreaker::DEFAULT_FAILURE_THRESHOLD {
@@ -1001,7 +1008,7 @@ mod tests {
             breaker,
         );
 
-        let verifier = router.resolve(Role::Verifier).unwrap();
+        let verifier = router.resolve_cross_family().unwrap();
         assert_eq!(verifier.model_ref, model("anthropic", "claude-fable-5"));
         let fallback = verifier
             .fallback

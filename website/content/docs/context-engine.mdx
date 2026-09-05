@@ -246,9 +246,12 @@ set it to `0` to turn the experiment off.
 
 A control turn shows that recall helped. It cannot show *which* memory, skill or
 record did the helping, because it withheld all of them at once. So there is a second,
-smaller experiment beside it: every 20th other turn runs with exactly one matched skill
-held back, and the rest of the turn untouched. That turn is the control arm for that one
-skill, which is the comparison the skill promote and retire gate reads. stella says so
+smaller experiment beside it: every 20th other turn runs with exactly one matched
+artifact held back, and the rest of the turn untouched. That turn is the control arm
+for that one artifact, which is the comparison the promote and retire gate reads.
+One artifact, not one of each kind — the three kinds take the schedule in turn, so a
+turn that held a memory and a skill back at once could not say which one its outcome
+belongs to. stella says so
 when a session starts, and again on the turn it happens. Set
 `context.retrieval.artifact_holdout_rate` to change how often, or `0` to turn it off.
 A turn the recall control already took is skipped rather than counted, so the two

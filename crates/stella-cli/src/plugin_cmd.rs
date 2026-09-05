@@ -201,16 +201,26 @@ fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
     println!("driver \"{name}\": starting `{program}`");
 
     let session = session_id();
-    let bound = resolved.serving();
+    // The capabilities are built here rather than inside the binder because
+    // this is where the workspace is: the tracker adapter and the loop's own
+    // configuration are both facts about the directory `stella` was run in.
+    let capabilities = Box::new(
+        crate::driver_plugin::capabilities::HostDriverCapabilities::new(
+            name,
+            resolved.gates().cloned(),
+            Box::new(crate::issue_provider::GhIssueProvider),
+            crate::self_driving_cmd::config::load(workspace_root),
+        ),
+    );
+    let bound = resolved.serving(capabilities);
     // Said before the session rather than inferred from the refusals after it:
-    // every capability answers `unsupported` until #3599's B1-B6 land, so a
-    // driver that asks for anything will be refused everything, and an
-    // operator should learn that from the host rather than from a driver's
-    // own halt message.
+    // this host serves the tracker read and nothing else yet, so an operator
+    // should learn which asks will degrade from the host rather than from a
+    // driver's own halt message.
     if bound.offers_calls() {
         println!(
-            "  this build serves no driver capability yet, so every ask this session makes \
-             will be refused"
+            "  this build serves `backlog_next`; every other capability this session asks for \
+             will be refused as unsupported"
         );
     }
     let next = bound.open(&session);

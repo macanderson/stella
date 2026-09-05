@@ -147,9 +147,15 @@ in `candidate_fanout.rs`, whose rule is the inverse; it has its own issue.
 
 ## 5. The four gaps
 
-- **A. Routing vocabulary.** *Mostly closed by slice 0.* What remains is
-  `ChildTurns::default_seats()` — core's list of acceptable plugin role words —
-  and `Router`'s per-tier match arms.
+- **A. Routing vocabulary.** *Closed.* Slice 1 deleted
+  `ChildTurns::default_seats()` — core's list of acceptable plugin role words.
+  `stella_protocol::Role` now keeps only `Worker` and the four media roles
+  (`Embed`/`Vision`/`Image`/`Video`); `Router`'s per-tier match arms collapsed
+  to one (`Worker`); and the cross-family verifier strategy moved off
+  `Role::Verifier` onto `Router::resolve_cross_family`, a plain method rather
+  than a role nothing else could be pinned to. None of the four retired
+  options ever crossed the wire, so removing them needed no serde alias and
+  no `docs/wire/` regeneration.
 - **B. Stage vocabulary.** The socket has four points (`before_turn`,
   `after_turn`, `judge`, `again?`) but no notion of a **named, ordered stage** a
   plugin adds. "Install triage and the turn gains a triage stage" needs stage
