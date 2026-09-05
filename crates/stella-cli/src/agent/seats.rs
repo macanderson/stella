@@ -47,6 +47,14 @@
 //! Note this is a rule about the *shape* of the key, not a licence to read it:
 //! the lookup below still compares whole strings and never splits one.
 //!
+//! The plugin id is the manifest's `name`, and
+//! [`stella_plugin::seat_key`] is the one place the two halves are joined —
+//! here for the settings list, and in `stella-runtime`'s `ChildTurns` and
+//! `candidate_workspaces` for the dispatch that has to find the assignment.
+//! Two ends joining their own halves is what leaves a `[seats]` line
+//! unfindable: the list offers `vera/verifier` and dispatch asks for
+//! `verifier`.
+//!
 //! # Who decides what
 //!
 //! - **The plugin** declares the roles its process needs, in its manifest. It
@@ -305,10 +313,12 @@ pub(crate) fn declared_seats(plugins: &[DeclaredSeats]) -> Vec<(String, String)>
     let mut rows: Vec<(String, String)> = plugins
         .iter()
         .flat_map(|plugin| {
-            plugin
-                .roles
-                .iter()
-                .map(move |role| (format!("{}/{}", plugin.plugin, role), plugin.plugin.clone()))
+            plugin.roles.iter().map(move |role| {
+                (
+                    stella_plugin::seat_key(&plugin.plugin, role),
+                    plugin.plugin.clone(),
+                )
+            })
         })
         .collect();
     rows.sort_by(|a, b| a.0.cmp(&b.0));

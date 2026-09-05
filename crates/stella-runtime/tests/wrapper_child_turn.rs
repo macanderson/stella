@@ -212,8 +212,9 @@ async fn a_plugin_asks_for_a_model_call_at_a_declared_role_and_the_host_makes_it
     );
     assert_eq!(
         specs[0].seat.as_deref(),
-        Some("reviewer"),
-        "the plugin's own word travels with the child, and onto its bracket"
+        Some("grading-wrapper/reviewer"),
+        "the plugin's own word travels with the child under this plugin's name, and onto its \
+         bracket"
     );
     assert_eq!(specs[0].instruction, "does the diff drop the retry?");
     assert!(

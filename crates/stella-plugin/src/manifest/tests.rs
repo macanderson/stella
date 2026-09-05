@@ -351,6 +351,42 @@ fn a_wrapper_can_name_a_role_intent_without_declaring_a_subloop() {
     assert!(matches!(blank_tier, ManifestError::EmptyRoleTier { .. }));
 }
 
+/// **The forgery witness.** The `/` in a seat key belongs to the host, so a
+/// manifest may not write one in either half it declares.
+///
+/// The host joins `name` and a `[roles.<name>]` key into `<plugin>/<role>`
+/// (`doc:roleless-core` §8.4). A plugin free to spell a `/` could declare
+/// `vera/verifier` and take the model a user assigned to Vera. `checked_name`
+/// in `stella-cli` refuses a `/` in the name at install, for directory
+/// safety — a different door, a different reason, and nothing at all for the
+/// role half.
+#[test]
+fn a_slash_in_a_name_or_a_role_is_rejected() {
+    let forged_plugin = parse("name = \"vera/verifier\"").unwrap_err();
+    assert!(
+        matches!(forged_plugin, ManifestError::NameCarriesSeatSeparator { ref name } if name == "vera/verifier"),
+        "{forged_plugin}"
+    );
+
+    let forged_role = parse(
+        "name = \"rival\"\n[loop]\nparticipation = \"steering\"\n\n[subloop]\nstages = \
+         [\"triage\"]\n\n[roles.\"vera/verifier\"]\ntier = \"triage\"",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(forged_role, ManifestError::RoleNameCarriesSeatSeparator { ref name } if name == "vera/verifier"),
+        "{forged_role}"
+    );
+
+    // The control: the same manifest with a bare role name loads, so this is
+    // evidence of the separator rule and not of a broken parse.
+    parse(
+        "name = \"rival\"\n[loop]\nparticipation = \"steering\"\n\n[subloop]\nstages = \
+         [\"triage\"]\n\n[roles.verifier]\ntier = \"triage\"",
+    )
+    .expect("a bare role name is what a plugin is supposed to declare");
+}
+
 #[test]
 fn an_empty_name_is_rejected() {
     let err = parse("name = \" \"").unwrap_err();

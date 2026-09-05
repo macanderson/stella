@@ -669,6 +669,36 @@ pub enum ManifestError {
         code: u32,
     },
 
+    /// The manifest's `name` carried a `/`.
+    ///
+    /// The host joins the name to a role name to build the seat key a user
+    /// assigns a model to — `<plugin>/<role>`, `doc:roleless-core` §8.4. A `/`
+    /// in the name would let one plugin spell a key that reads as another
+    /// plugin's, which is the forgery the qualified key exists to stop.
+    #[error(
+        "manifest name \"{name}\" contains `/`: the host joins the name to a role name to build \
+         the seat key `<plugin>/<role>`, so a `/` here would spell a seat another plugin owns"
+    )]
+    NameCarriesSeatSeparator {
+        /// The name that carried the separator.
+        name: String,
+    },
+
+    /// A `[roles.<name>]` key carried a `/` — the same rule, for the other
+    /// half of a seat key.
+    ///
+    /// A plugin declares its bare local role name and the host writes the
+    /// prefix. A `/` here is that prefix being written by the half that may
+    /// not write it.
+    #[error(
+        "[roles.\"{name}\"] contains `/`: a plugin declares a bare role name and the host writes \
+         the `<plugin>/<role>` seat key, so a `/` here would spell a seat this plugin does not own"
+    )]
+    RoleNameCarriesSeatSeparator {
+        /// The role name that carried the separator.
+        name: String,
+    },
+
     /// A `[[capabilities]]` entry named no tool. The tool name is what a gate
     /// rule keys on and what the consent prompt shows; a blank one is a
     /// request for nothing that still reads as a request.
