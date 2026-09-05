@@ -688,79 +688,30 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
     ]
 }
 
-/// The demo engine snapshot, carrying the resolved per-role wiring the
-/// `/models` dialog prints.
+/// The demo engine snapshot, carrying the resolved role wiring the `/models`
+/// dialog prints.
 ///
 /// The real deck holds one of these from session start, so without it every
 /// `/models` surface — the demo, the goldens — would pin the honest empty
-/// state instead of the dialog. Deliberately not identical rows: the three
-/// ways a role gets its model (its own `agents.<role>.model`, a flat
-/// `pipeline_<role>_model`, the shared `default_model`) each appear at least
-/// once, and the verifier carries the `effort_auto` disclosure that is the
-/// longest and most easily-truncated line the dialog can draw.
-///
-/// Research and plan ride `default_model` here, which is the ordinary posture
-/// for them and the one worth pinning in a golden: they inherit the worker's
-/// model, and — since #2374 — say so on their own row rather than being
-/// invisible inside the worker's.
+/// state instead of the dialog. One row, because that is what `resolve`
+/// sends today: `default`, sourced from `agents.default.model` and carrying
+/// the `effort_auto` disclosure, the longest and most easily-truncated line
+/// the dialog can draw. A demo naming a role the driver cannot send teaches
+/// the reader a word the product does not have.
 pub fn demo_engine_config() -> crate::envelope::EngineConfigState {
     use crate::envelope::RoleWiringRow;
-    let row = |role: &str, model: &str, effort: &str, thinking: &str, source: &str| RoleWiringRow {
-        role: role.to_string(),
-        model: model.to_string(),
-        effort: effort.to_string(),
-        thinking: thinking.to_string(),
-        source: source.to_string(),
-        // The demo deck has no settings file behind it, so nothing is
-        // pending — the golden frames pin the ordinary case.
-        next_session: None,
-    };
     crate::envelope::EngineConfigState {
         effort_auto: true,
-        roles: vec![
-            row(
-                "default",
-                "zai/glm-5.2-air",
-                "medium",
-                "thinking on",
-                "default_model",
-            ),
-            row(
-                "worker",
-                "zai/glm-5.2-air",
-                "medium",
-                "thinking on",
-                "default_model",
-            ),
-            row(
-                "verifier",
-                "anthropic/claude-opus-5",
-                "high  (effort_auto replaced \"max\")",
-                "thinking on",
-                "pipeline_verifier_model",
-            ),
-            row(
-                "triage",
-                "z-ai/glm-5.2",
-                "low",
-                "thinking off",
-                "agents.triage.model",
-            ),
-            row(
-                "research",
-                "zai/glm-5.2-air",
-                "low",
-                "thinking off",
-                "default_model",
-            ),
-            row(
-                "plan",
-                "zai/glm-5.2-air",
-                "medium",
-                "thinking on",
-                "default_model",
-            ),
-        ],
+        roles: vec![RoleWiringRow {
+            role: "default".to_string(),
+            model: "zai/glm-5.2-air".to_string(),
+            effort: "high  (effort_auto replaced \"max\")".to_string(),
+            thinking: "thinking on".to_string(),
+            source: "agents.default.model".to_string(),
+            // The demo deck has no settings file behind it, so nothing is
+            // pending — the golden frames pin the ordinary case.
+            next_session: None,
+        }],
         ..Default::default()
     }
 }
