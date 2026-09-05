@@ -20,6 +20,22 @@ consistent with every one of them. Evidence that cannot distinguish a claim
 from its opposite is not evidence, and no amount of reasoning about the
 container recovers what was never recorded.
 
+One trial stays unexplained, and it will stay that way. On a Frontier-Bench
+match of 2026-08-18, ``stella init`` exited non-zero on the
+``risk-scorer-replay`` task. The trial log holds one line about it:
+``Command failed``. The adapter of that match wrote a state and a detail
+string, and nothing else. The exit code and both streams were gone before the
+trajectory was written. Harbor prints that line from the non-zero branch of
+its own ``_exec``, and a timeout raises above that branch, so the artifact
+does rule a timeout out. It cannot pick among the causes that are left. They
+differ only in the exit code, which is the field that was dropped. So that
+trial is an accepted limit of the record. Running the task again today asks
+about a fresh container, not that one.
+
+:func:`unavailable` and :func:`from_result` close the gap for every run after
+it. Both ways the step can fail keep the exit code and the output the command
+gave, so the next failure names its own cause from the trial's own metadata.
+
 This module is the classification, kept out of ``__init__.py`` because that
 file is grandfathered at its file-size ceiling and closed to growth. It is
 the shape :mod:`upstream_pin` and :mod:`tool_set` already use: a small
