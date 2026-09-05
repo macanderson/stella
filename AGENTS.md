@@ -314,6 +314,24 @@ the first pass cleared. `make clear-main-red-holds` prints what a sweep would
 re-run without re-running it; `make main-red-hold-test` covers the clearing
 half beside the blocking one.
 
+**The same staleness reaches `dod-check`, one gate over.** That check reads the
+linked issue's checklist and fires on pull request events, so the object it
+judges and the events it hears are two different things. Tick the last box on
+the issue — the remedy its own failure message names — and nothing happens. The
+red `dod / dod` is still the last run on that commit. On 2026-09-05 four pull
+requests sat red on that check alone, and three had to be nudged by editing a
+pull request body somebody else wrote (`#6079`). `dod-recheck.yml` is the missing
+event: on an edit to any issue it runs `scripts/dod-recheck.sh`, which finds the
+open pull requests whose body names that issue and runs the failed check again
+on each. Running the old run again, rather than reporting a new check, is what
+settles the awkward half — the new run lands under the same name on the same
+commit, so nothing here has to report a check against a head the issue event
+does not own. The failure is the scope too: a pull request whose `dod / dod`
+already passes is left alone, which is what stops one body edit fanning out
+over every pull request that ever named the issue. It fails open, like the rest
+of this chain. `make dod-recheck N=6079` prints what a sweep would re-run;
+`make dod-recheck-test` covers it, both negative controls included.
+
 The chain has a third link, and it is not a workflow: **before you repair a
 red `main`, check whether somebody already is.** On 2026-08-24 three sessions
 each wrote the same two-line fix for the same break and merged them 95 seconds

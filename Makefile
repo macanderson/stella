@@ -941,6 +941,18 @@ main-red-claim: ## Ask whether somebody is already repairing a red `main` (reads
 main-red-claim-test: ## Test the red-main claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
 	./scripts/test-main-red-claim.sh
 
+# The same staleness one gate over: `dod-check` reads the linked issue's
+# checklist and fires on pull request events, so ticking the last box on the
+# issue leaves the red check standing (#6079). CI runs the check again on an
+# issue edit; this prints what it would re-run, and changes nothing.
+.PHONY: dod-recheck
+dod-recheck: ## List the failing `dod / dod` checks an issue's PRs still carry: make dod-recheck N=6079
+	@./scripts/dod-recheck.sh --dry-run $(N)
+
+.PHONY: dod-recheck-test
+dod-recheck-test: ## Test the DoD re-check, both negative controls included (hermetic; not part of `gate`)
+	./scripts/test-dod-recheck.sh
+
 .PHONY: issue-claim
 issue-claim: ## Ask whether somebody is already implementing an issue: make issue-claim N=5045
 	@./scripts/issue-claim.sh check $(N)
