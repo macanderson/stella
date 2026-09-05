@@ -552,7 +552,7 @@ impl PluginManifest {
         if self.name.trim().is_empty() {
             return Err(ManifestError::EmptyName);
         }
-        crate::panel::validate_plugin_name(&self.name)?;
+        crate::drawable::validate_plugin_name(&self.name)?;
 
         let grant = &self.loop_grant;
         let participation = grant.participation;
