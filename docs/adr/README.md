@@ -94,6 +94,7 @@ open; nothing before Phase 3 forces it.
 | [0025](0025-nested-frontmatter-refusal-scope.md) | Refuse a Nested Key Where It Widens a Grant | Accepted |
 | [0026](0026-context-editing-ships-off-until-measured.md) | Context Editing Ships Off Until Its Trigger Is Measured | Accepted |
 | [0027](0027-a-fleet-worker-gets-its-own-worktree.md) | A Fleet Worker Gets Its Own Worktree | Accepted |
+| [0028](0028-panel-cells-are-glyphs-in-the-contract.md) | A Panel Cell Is a Glyph in the Contract and a Column in the Host | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -140,3 +141,8 @@ git restores every tracked file in the tree, and the other's edits are gone
 with no error printed. The shared root and its cooperative file claims stay,
 as something a plan names — a claim guards one path, and a branch switch
 rewrites all of them.
+
+ADR 0028 settles what a panel frame's cell count measures. The wire contract
+counts glyphs; the host counts terminal columns. A row of wide glyphs the
+contract admits is cut at the lease's edge, and the two tests named in the
+record hold both halves of that.

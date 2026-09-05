@@ -879,14 +879,21 @@ impl PanelPatch {
 ///
 /// # What a cell is here, and what it is not
 ///
-/// [`PanelText::cells`] counts `char`s. A double-width glyph therefore draws
-/// wider than this contract counts, and the frame that carries it misaligns
-/// **its own interior** — never anything outside it, because the host clips
-/// every blit at the leased rectangle whatever a frame claims. Measuring
-/// display width would mean a Unicode width table, and this crate is a
-/// near-leaf that takes one workspace dependency on argument (see its
-/// `Cargo.toml`); the host already owns the clip that makes the difference
-/// safe.
+/// [`PanelText::cells`] counts `char`s, so a cell here is a glyph and not a
+/// terminal column. `あ` is one glyph and two columns; `e` followed by a
+/// combining acute is two glyphs and one column. A frame this contract admits
+/// can therefore need more columns than its lease has, or fewer.
+///
+/// The host measures the columns. `stella_tui::plugin_panel`'s `write_run`
+/// places a glyph only when every column it needs is inside the lease, so a
+/// row of wide glyphs is cut at that edge rather than drawn over the border.
+/// Two tests in that module hold it: `a_wide_glyph_cannot_reach_past_the_lease_into_the_border`
+/// draws the chrome first and asserts the border cell survives, and
+/// `a_frame_the_contract_admits_by_glyph_count_is_cut_at_the_lease` pins the
+/// seam between the two counts.
+///
+/// Keeping the `char` count is a recorded decision, with its costs and what
+/// would reopen it: `doc:adr/0028-panel-cells-are-glyphs-in-the-contract`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PanelText(String);
 
@@ -921,8 +928,8 @@ impl PanelText {
         &self.0
     }
 
-    /// How many cells these glyphs occupy — see the type docs on what a cell
-    /// counts as here.
+    /// How many glyphs these are — the count this contract calls cells. See
+    /// the type docs for what it does and does not measure.
     #[must_use]
     pub fn cells(&self) -> usize {
         self.0.chars().count()
