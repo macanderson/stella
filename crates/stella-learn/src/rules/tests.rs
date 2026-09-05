@@ -8,69 +8,6 @@
 
 use super::*;
 
-// ---- frontmatter parsing ----
-
-#[test]
-fn parses_description_guard_and_body() {
-    let raw = "---\ndescription: Never edit an applied migration\nguard-tool: Edit\nguard-deny-path: packages/database/migrations/*-applied/**\n---\nAdd a new forward migration instead of editing an applied one.";
-    let fm = parse_frontmatter(raw);
-    assert_eq!(
-        fm.data.get("description").unwrap(),
-        "Never edit an applied migration"
-    );
-    assert_eq!(fm.data.get("guard-tool").unwrap(), "Edit");
-    assert!(fm.body.contains("Add a new forward migration"));
-}
-
-#[test]
-fn no_fence_means_whole_trimmed_text_is_the_body() {
-    let fm = parse_frontmatter("  just a plain rule, no frontmatter  ");
-    assert!(fm.data.is_empty());
-    assert_eq!(fm.body, "just a plain rule, no frontmatter");
-}
-
-#[test]
-fn strips_a_leading_bom() {
-    let fm = parse_frontmatter("\u{feff}---\ndescription: d\n---\nbody text");
-    assert_eq!(fm.data.get("description").unwrap(), "d");
-    assert_eq!(fm.body, "body text");
-}
-
-#[test]
-fn strips_matching_quotes_from_values() {
-    let fm =
-        parse_frontmatter("---\ndescription: \"quoted value\"\nother: 'single quoted'\n---\nbody");
-    assert_eq!(fm.data.get("description").unwrap(), "quoted value");
-    assert_eq!(fm.data.get("other").unwrap(), "single quoted");
-}
-
-#[test]
-fn ignores_comment_and_blank_frontmatter_lines() {
-    let fm = parse_frontmatter("---\n# a comment\n\ndescription: d\n---\nbody");
-    assert_eq!(fm.data.len(), 1);
-    assert_eq!(fm.data.get("description").unwrap(), "d");
-}
-
-#[test]
-fn flattens_block_sequences_onto_their_key() {
-    let fm = parse_frontmatter(
-        "---\ntools:\n  - Read\n  - 'Grep'\n  - \"Web Search\"\ndescription: d\n---\nbody",
-    );
-    assert_eq!(fm.data.get("tools").unwrap(), "Read, Grep, Web Search");
-    assert_eq!(
-        fm.data.get("description").unwrap(),
-        "d",
-        "the key after the sequence parses normally"
-    );
-}
-
-#[test]
-fn dash_lines_without_a_pending_list_key_stay_ignored() {
-    let fm = parse_frontmatter("---\ndescription: d\n- stray item\n---\nbody");
-    assert_eq!(fm.data.len(), 1);
-    assert_eq!(fm.data.get("description").unwrap(), "d");
-}
-
 // ---- rule_from_file ----
 
 #[test]

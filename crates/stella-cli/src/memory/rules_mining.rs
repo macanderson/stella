@@ -1,6 +1,6 @@
 //! Wiring the rules miner — deliverable 5.
 //!
-//! `stella_core::rules::mine_candidates` is the structural twin of the skills
+//! `stella_learn::rules::mine_candidates` is the structural twin of the skills
 //! miner. It has shipped with **zero non-test references** in the workspace
 //! since `crate::mining` was extracted specifically to keep the two aligned:
 //! the shared module exists so a stopword or slug tweak cannot land in one
@@ -37,7 +37,7 @@
 use std::path::Path;
 
 use stella_context::ContextStore;
-use stella_core::rules::{self, EvidenceSource, MineConfig, RawObservation, Rule, RuleCandidate};
+use stella_learn::rules::{self, EvidenceSource, MineConfig, RawObservation, Rule, RuleCandidate};
 use stella_protocol::provenance::ProvenanceGrade;
 use stella_records::context_record::{
     EvidencePool, ObservationRecord, ProposalRecord, ProposalScore, RecordProposalKind,

@@ -85,8 +85,8 @@ search`; Rust/TS/TSX/JS/Python/Go/Java/C/C++/PHP/SQL, no
 key needed) ·
 **prompt-cache-native memory** that loads once into a byte-stable system prompt
 at ~0.1× input cost · a **fleet mode** that fans a task DAG out to
-wave-scheduled workers — one shared tree under cooperative file claims by
-default, an isolated git worktree per task on request · **lifecycle
+wave-scheduled workers — a git worktree per task by default, one shared tree
+under cooperative file claims on request · **lifecycle
 hooks** and an **MCP client** that merges external tools into the registry · and
 the **Command Deck** TUI with PR-style diffs and an editable prompt queue. Deep
 dives: [lifecycle hooks](https://stella.oxagen.sh/docs/agent-tools/hooks),

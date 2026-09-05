@@ -123,7 +123,7 @@ cleanly to and from JSON. A few of the ones you'll see constantly:
 | `AgentEvent` (in `event/kind.rs`) | Every kind of thing that can happen during a run — a stage starting, a file changing, a tool finishing. About 40 options; every one is required to declare **who reads it** (see `event/consumers.rs`) so nothing is emitted into the void. |
 | `ToolCall` / `ToolResult` / `ToolOutput` (`tool.rs`) | A request to run a tool, and what came back — success, or a typed `ErrorClass` (never a raw string). |
 | `Role` / `ModelRef` (`role.rs`) | Who is "speaking" (user, assistant, tool) and which model answered. |
-| `ModelCallRole` (`event/call_role.rs`) | Which job a particular model call was doing (e.g. the worker, a reflection pass, a triage classification). |
+| `ModelCallRole` (`event/call_role.rs`) | Which job a particular model call was doing (e.g. the worker, a reflection pass, a seat an installed plugin declared). |
 | `HookEvent` (`hook.rs`) | The points in a turn where a hook (user-defined automation) is allowed to run. |
 | `LadderRung` / `ProofTree` / `OracleObservation` (`ladder.rs`) | The shape of a verification decision — was a claim proven, and how. |
 | `ContextUsage` / `ManifestEntry` (`receipt.rs`) | What went into the model's context window this turn, so it can be audited later. |

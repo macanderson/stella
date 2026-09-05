@@ -92,7 +92,7 @@ pub struct LoadedRecord {
     /// Stamped from the directory the file was read out of, exactly like
     /// [`Self::trust`] beside it and for the same reason: a package cannot name
     /// itself something it is not. [`load_context_file`] leaves this `None`;
-    /// [`registry::load`] stamps it from the [`stella_core::rules::RuleFile`] it read,
+    /// [`registry::load`] stamps it from the [`stella_learn::rules::RuleFile`] it read,
     /// which is the one place that knows the directory.
     ///
     /// Why a field and not a path prefix: `stella context explain` has to be

@@ -72,6 +72,19 @@ pub(super) fn report_lines(
     for fault in &report.faults {
         lines.push(wrapper_line(scope, fault));
     }
+    // What the gate made of those faults. The lines above cannot say it. An
+    // arbiter that crashed did not block the turn. The run must still read
+    // apart from a run whose arbiter was happy. Only an arbiter's silence is
+    // drawn here. A steering plugin that fell silent had no say to lose.
+    for row in report.arbitration.unanswered().filter(|row| row.may_hold) {
+        lines.push(wrapper_line(
+            scope,
+            &format!(
+                "arbiter {} did not answer — recorded as inconclusive, and nothing was held open",
+                row.author
+            ),
+        ));
+    }
     // Every member's refusals, in selection order: a composition has one gate
     // per plugin (`ResolvedWrapper::serving`), and reading only the first
     // would be silent about exactly the plugin whose ask went unanswered.
@@ -148,8 +161,8 @@ pub(super) fn sweep_lines(scope: Option<&str>, leaked: &[String]) -> Vec<String>
         .collect()
 }
 
-/// One line per child turn this host ran for the plugin, naming the seat it
-/// was attributed to and what it cost.
+/// One line per child turn this host ran for a plugin. It names the plugin,
+/// the seat, and the cost.
 ///
 /// The money half of "a refusal is reported, never silent": a plugin's child
 /// turn is a model call the *user* pays for and never asked for directly, so
@@ -162,7 +175,8 @@ pub(super) fn spend_lines(spends: &[ChildTurnSpend]) -> Vec<String> {
         .iter()
         .map(|spend| {
             format!(
-                "spent a child turn at \"{}\" (seat {:?}, {} step(s), ${:.4}){}",
+                "{} spent a child turn at \"{}\" (seat {}, {} step(s), ${:.4}){}",
+                spend.plugin,
                 spend.role,
                 spend.seat,
                 spend.steps,

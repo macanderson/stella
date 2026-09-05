@@ -8,7 +8,7 @@
 
 use super::*;
 use stella_context::ContextStore;
-use stella_core::rules::RuleGuard;
+use stella_learn::rules::RuleGuard;
 use stella_records::context_record::ObservationSource;
 
 fn store() -> (tempfile::TempDir, ContextStore) {
@@ -206,7 +206,7 @@ fn a_four_task_rule_reaches_the_auto_activation_bar() {
 // ---- the shared-miner property the whole exercise is about ----
 
 /// Both miners derive the SAME `<slug>-<hash8>` for one lesson, because they
-/// share `stella_core::mining`. That is the shared module working — and it is
+/// share `stella_learn::mining`. That is the shared module working — and it is
 /// exactly why the proposal lineage has to be namespaced by kind, or declining
 /// the rule would silently decline the skill.
 #[test]
@@ -220,7 +220,7 @@ fn both_miners_agree_on_identity_and_their_proposals_stay_distinct() {
         &observations,
         &[],
         &[],
-        &stella_core::skills::SkillMineConfig::default(),
+        &stella_learn::skills::SkillMineConfig::default(),
     );
 
     assert_eq!(

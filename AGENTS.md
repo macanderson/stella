@@ -67,6 +67,24 @@ make watch-core          # re-test stella-core only (fastest loop)
 make watch-lint          # re-run clippy on every save
 ```
 
+**Rustdoc, scoped to the crate you're editing.** `make gate`'s `doc-warnings`
+step runs `cargo doc -D warnings --document-private-items` over the whole
+workspace, which is what catches a `rustdoc::private_intra_doc_links` error —
+a doc comment linking a crate-private item. Neither `make guards-fast` nor a
+scoped `cargo clippy` builds docs, so neither one catches it. `CARGO_SCOPE`
+narrows the same check to the crate at hand, the same way it narrows `lint`
+and `test` above:
+
+```bash
+make doc-warnings CARGO_SCOPE="-p stella-core"
+# equivalent to:
+RUSTDOCFLAGS="-D warnings" cargo doc -p stella-core --no-deps --document-private-items
+```
+
+It compiles, so it stays a `make gate` step rather than moving into
+`make guards-fast` — CARGO_SCOPE is what makes it seconds instead of the
+full workspace.
+
 ### The gate — what every push is held to
 
 A red gate is an automatic "not yet". CI is where it runs: on the
@@ -91,6 +109,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + guard-trigger-coverage (prose, hue-separation
                          #     and transcript-surfaces each run with no
                          #     paths: filter in at least one workflow)
+                         #   + priority-scheme (the issue priority scheme is
+                         #     stated once, in SCR-005, and the triage guard's
+                         #     regex covers exactly the levels it names)
                          #   + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
@@ -769,16 +790,17 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    paths it actually names. Anything else is in the crate because somebody put
    it there, and belongs in its own.
 
-   Reachability from the **crate root** is not this: `search.rs` and `skills/`
-   are both reachable from `lib.rs`, which is why `module-reachability` passes
-   on either, and how a 15k-LOC subsystem lands here behind a `pub mod` line.
-   That is how the record plane arrived, and it has since left for
-   `stella-records` (#5113, #5117).
+   Reachability from the **crate root** is not this: `search.rs` is reachable
+   from `lib.rs`, which is why `module-reachability` passes on it, and how a
+   15k-LOC subsystem lands here behind a `pub mod` line. That is how the
+   record plane arrived, and it has since left for
+   `stella-records` (#5113, #5117); the learning plane left for
+   `stella-learn` the same way.
 
    A `#[cfg(test)]` reference does **not** count. A subsystem the engine
    touches only from its own tests is a subsystem the engine does not need —
-   `driver/restore.rs`'s test module names `crate::skills`, and reading that
-   as reachability would make the whole skill plane look like engine code.
+   that is what made the whole skill catalog look like engine code while the
+   step path only ever called the invocation vocabulary beside it.
 
    Enforced by `scripts/check-core-reachability.py` (`make core-reachability`),
    a **down-only ratchet** over `scripts/core-reachability-baseline.txt`. The
@@ -914,7 +936,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-six crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-seven crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -925,7 +947,7 @@ the files you must plan around (see below).
 
 | You want to… | Crate | Notes |
 |---|---|---|
-| Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | [`stella-core`](crates/stella-core/README.md) | **No I/O allowed.** Decision logic only. |
+| Change the agent loop (plan / retry / compact / budget / loop-detect / hooks) | [`stella-core`](crates/stella-core/README.md) | **No I/O allowed.** Decision logic only. Skills and rules live in `stella-learn`. |
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](crates/stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
 | Add/fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`, declare one line in `catalog.rs`. |
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
@@ -941,7 +963,8 @@ the files you must plan around (see below).
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
 | Render a session transcript — folds, digests, diffs, chips — on the web or a character grid | [`stella-transcript`](crates/stella-transcript/README.md) | **Near-leaf: [`stella-diff`](crates/stella-diff/README.md) is its only workspace dependency.** One information model, two renderers, no I/O. Both surfaces render from the same folds and the same diff rows — the Observatory used to re-implement the TUI's painter in JavaScript, and that copy had drifted to having no diff rendering at all. |
 | Turn text into a vector, or compare two vectors honestly | [`stella-embed`](crates/stella-embed/README.md) | **A leaf with NO workspace-crate dependencies** — the `Embedder` seam, the fingerprint every stored vector is stamped with, the `SimilarityPosture` a backend must declare, and a pure deterministic ranker. Shared by [`stella-context`](crates/stella-context/README.md) (retrieval) and [`stella-graph`](crates/stella-graph/README.md) (semantic code search) so neither has to depend on the other. |
-| Change the record plane — the typed record taxonomy, the ingestion boundary, or the registry that merges markdown rules and TOML records | [`stella-records`](crates/stella-records/README.md) | Pure value logic, no I/O. It left `stella-core` because the engine reached the whole plane through one hash call, which now goes to `stella_protocol::hash::record_hash`. It still depends on `stella-core` for the markdown rule parser the registry reads, and the re-layering epic tracks inverting that edge. |
+| Change the record plane — the typed record taxonomy, the ingestion boundary, or the registry that merges markdown rules and TOML records | [`stella-records`](crates/stella-records/README.md) | Pure value logic, no I/O. It left `stella-core` because the engine reached the whole plane through one hash call, which now goes to `stella_protocol::hash::record_hash`. It takes the markdown rule parser and the redactor from `stella-learn`, and still depends on `stella-core` for the steering candidate types `adapt` maps onto; the re-layering epic tracks inverting that last edge. |
+| Change what the agent learns and what steers it — skills, rules, the miner behind both, secret redaction, A/B comparison, the significance test | [`stella-learn`](crates/stella-learn/README.md) | **Near-leaf: `stella-protocol` is its only workspace dependency.** Pure value logic, no I/O; `RuleSource` and `SkillSource` are the ports, implemented in `stella-cli`. It left `stella-core` because the engine reached only the skill-invocation vocabulary, which stayed behind as `stella_core::skill_invocation`. |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
@@ -1055,7 +1078,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs` |
 
-The other twenty-one crates carry no god files — keep it that way. Each crate's
+The other twenty-two crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 
@@ -1154,7 +1177,7 @@ this before assuming two of them mean the same thing:
 | **execution** | `execution_id` | `crates/stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
 | **dispatching execution** | `executions.parent_execution_id` | `crates/stella-store/src/dispatch.rs` | Which execution asked for another one (schema v36). A deck worker lane opens a real execution row of its own; this says whether a *turn* dispatched it or a person did, and NULL is the second answer, not a gap. A `delegate` child opens no row at all and is attributed by `sub_agent_id` on its events instead — the two mechanisms answer the same question about two different things. |
 | **turn** | `turn_instance` | `crates/stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
-| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/research/plan/witness-author roles take 1, 2, … Both `step_manifest` and `step_usage` carry the pair, so what a call saw and what it cost join on it; a `step_usage` line recorded before #4793 carries neither and is unjoinable, which it says by leaving both absent rather than defaulting `call_seq` to the worker's 0. |
+| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, and the overflow summarizer and a plugin's declared seats take 1, 2, … Both `step_manifest` and `step_usage` carry the pair, so what a call saw and what it cost join on it; a `step_usage` line recorded before #4793 carries neither and is unjoinable, which it says by leaving both absent rather than defaulting `call_seq` to the worker's 0. |
 | **fleet run** | `run_id` | `crates/stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
 | **task** | `stella_fleet::TaskId` / `stella_protocol::TaskId` | `crates/stella-fleet/src/plan.rs`, `crates/stella-protocol/src/task_id.rs` | One word, two entities, and since #5039 both of them have a type with the same name — read the crate. In the **fleet** ledger it is one unit of work dispatched to a worker within a run (a `String` alias). In the **board** it is a row of the agent's own task-board snapshot: the per-session ordinal `"1"`, `"2"`, …, mirrored from `TaskUpdate` events into the store's `tasks` rows keyed `(session, task id)`, and carried on the events that represent work (`events.task_id`) so a task has an evidence ledger and a per-task cost. `TaskItem::id` is still a `String` spelling of the second one (#5159). |
 
@@ -1435,6 +1458,6 @@ macanderson org repos.
   follow-up, tech-debt item, or logical next step you noticed. Apply ONLY
   the `triage` label.
 - **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
-  separation of duties:** Never apply priority (`P0`–`P4`) or size labels —
+  separation of duties:** Never apply a priority or size label —
   a dedicated triage agent owns sizing and priority; a guard workflow
   strips creator-applied priorities.

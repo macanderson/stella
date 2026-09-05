@@ -470,7 +470,7 @@ fn custom_fixture() -> CustomExtensions {
             domains: vec![],
             body: "Lowercase keywords.".to_string(),
             source_path: "x/sql-style/SKILL.md".to_string(),
-            origin: stella_core::skills::SkillOrigin::Workspace,
+            origin: stella_learn::skills::SkillOrigin::Workspace,
             contributed_by: None,
         }],
         agents: vec![AgentDef {
@@ -688,7 +688,7 @@ fn a_directive_carrying_skill_expands_as_an_invocation_with_its_scope() {
         domains: vec![],
         body: "Seed the quarter named by $ARGUMENTS.".to_string(),
         source_path: path.display().to_string(),
-        origin: stella_core::skills::SkillOrigin::Workspace,
+        origin: stella_learn::skills::SkillOrigin::Workspace,
         contributed_by: None,
     });
 
@@ -698,7 +698,7 @@ fn a_directive_carrying_skill_expands_as_an_invocation_with_its_scope() {
     assert!(
         expansion
             .prompt
-            .starts_with(stella_core::skills::invoke::SKILL_INVOCATION_PREFIX),
+            .starts_with(stella_core::skill_invocation::SKILL_INVOCATION_PREFIX),
         "a directive-carrying skill expands as the invocation marker: {}",
         expansion.prompt
     );
@@ -722,7 +722,7 @@ fn a_directive_carrying_skill_expands_as_an_invocation_with_its_scope() {
     assert_eq!(scope.effort, Some(stella_protocol::ReasoningEffort::High));
     assert_eq!(
         scope.mode,
-        stella_core::skills::invoke::SkillInvocationMode::Fork
+        stella_core::skill_invocation::SkillInvocationMode::Fork
     );
 
     // The directive-less fixture skill keeps the shape it has always had —

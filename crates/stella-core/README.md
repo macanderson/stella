@@ -3,18 +3,17 @@
 The step-driver. `Engine::run_turn` takes a message history, a budget guard and
 an event channel, and runs the model/tool loop to an answer: one model call per
 step, retry+backoff, context compaction, tool-output eviction, loop detection,
-USD metering. Alongside it live the workspace's other decision engines — rules,
-skills, routing, the task board — which the CLI drives directly rather than
-through a turn. The goal loop still lives here too, and is the one resident that
-is leaving (see "Direction" below).
+USD metering. Alongside it live the workspace's other decision engines —
+routing, the task board — which the CLI drives directly rather than through a
+turn. The goal loop still lives here too, and is the one resident that is
+leaving (see "Direction" below).
 
 **No I/O.** This crate never imports a provider SDK, never touches the
 filesystem, never spawns a process, never opens a socket. Anything needing the
 outside world is a trait the caller implements: `ToolExecutor`, `Clock`,
 `TurnGate`, `TurnSteering` ([`src/ports.rs`](src/ports.rs)), `Sleeper`
-([`src/retry.rs`](src/retry.rs)), `HookRunner` ([`src/hooks.rs`](src/hooks.rs)),
-`RuleSource` ([`src/rules.rs`](src/rules.rs)), `SkillSource`
-([`src/skills.rs`](src/skills.rs)) — plus `Provider` from `stella-protocol`.
+([`src/retry.rs`](src/retry.rs)), `HookRunner` ([`src/hooks.rs`](src/hooks.rs))
+— plus `Provider` from `stella-protocol`.
 Even the working directory is passed in (`EngineConfig::cwd`) rather than read
 from `std::env`. That is what makes compaction, eviction, loop detection and
 budget arithmetic plain synchronous functions over owned data, testable against
@@ -96,8 +95,9 @@ at all.
 Two subtler exclusions. Types whose only job is to cross a crate boundary
 belong in [`stella-protocol`](../stella-protocol) — a type earns a home here by
 serving one of this crate's algorithms, not by being shared. And heavy
-dependencies are excluded as firmly as I/O: no `regex` ([`src/glob.rs`](src/glob.rs)
-exists because rule guards refused to import one), no HTTP client, no SQLite,
+dependencies are excluded as firmly as I/O: no `regex`
+(`stella_protocol::glob` exists because rule guards and hook matchers refused
+to import one), no HTTP client, no SQLite,
 `tokio` with `sync`+`time` only. A decision engine that seems to need one of
 these is usually mis-shaped — whatever the dependency would fetch or parse
 should arrive pre-parsed through a port.
@@ -168,9 +168,8 @@ lib.rs), never as a planning assumption.
 | [`src/event_stream.rs`](src/event_stream.rs) | `validate_stream` / `conform_jsonl` — the four structural rules an emitted `AgentEvent` stream obeys (legal stage ordering, `tool_start`/`tool_result` pairing, a single terminal `run_complete`, monotonic budget), plus the JSONL reader that tolerates a torn tail and refuses interior corruption. The half of the wire contract JSON Schema cannot state; restored here after #3865 deleted `stella_pipeline::replay` (#4585). |
 | [`src/bus.rs`](src/bus.rs) | The in-process extension bus: observers (`emit`) and policy hooks (`emit_blocking`) over a dotted event-name catalog. |
 | [`src/hooks.rs`](src/hooks.rs) | Settings-declared *shell* hooks — the registry, matcher selection and blocking decisions for every `HookEvent`, in-turn and loop alike; [`src/hooks/payload.rs`](src/hooks/payload.rs) is the JSON a hook reads on stdin; [`src/hooks/decision.rs`](src/hooks/decision.rs) is the #2684 decision plane (stdout-JSON `HookDecision` fold, the `resolve_precedence` ladder, the `ApprovalRoute` port). |
-| [`src/rules.rs`](src/rules.rs) | Rules engine: loading, precedence merge, Tier-1 rendering, Tier-2 `evaluate_guards`, candidate mining. |
-| [`src/skills.rs`](src/skills.rs), [`src/skills/invoke.rs`](src/skills/invoke.rs) | Skills engine: `SKILL.md` loading, `select_skills`, `render_skills_section`, auto-creation mining, install vocabulary — plus the skill-invocation vocabulary (#2682): the invocation directives parser (`context`/`allowed-tools`/`model`/`effort`), `$ARGUMENTS` substitution, the invocation marker, and the active-invocation tracking the compaction seam reads (#2685). |
-| [`src/glob.rs`](src/glob.rs), [`src/mining.rs`](src/mining.rs), [`src/summarize.rs`](src/summarize.rs) | Non-public shared helpers: the `*`-only glob matcher behind rule guards and hook matchers; the lexical mining primitives the rules and skills miners share (they were once two byte-identical copies); the overflow summarizer's prompt and span rendering. |
+| [`src/skill_invocation.rs`](src/skill_invocation.rs) | The skill-invocation vocabulary (#2682): the invocation directives parser (`context`/`allowed-tools`/`model`/`effort`), `$ARGUMENTS` substitution, the invocation marker, and the active-invocation tracking the compaction seam reads (#2685). The catalog is `stella_learn::skills`. |
+| [`src/summarize.rs`](src/summarize.rs) | A non-public helper: the overflow summarizer's prompt and span rendering. |
 | [`src/extensions.rs`](src/extensions.rs) | Custom commands and agents parsed from markdown, plus `plan_extension_sync` for adopting `.claude/`/`.agents/` definitions. |
 | [`src/subagent.rs`](src/subagent.rs) | `Engine::run_sub_agent` — a bounded child turn with its own carved budget and its own (discarded) transcript, returning only a capped summary. `goal.rs`'s verifier is one. |
 | [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → verifier verdict → feedback, bounded by round cap, budget and turn abort. The verifier runs as a sub-agent. **A wrapper living inside the engine crate** — slated to leave for the wrapper contract (#3380); do not grow it. |
@@ -178,8 +177,6 @@ lib.rs), never as a planning assumption.
 | [`src/tasks.rs`](src/tasks.rs) | `TaskBoard` — the transition rules behind the `task_*` tools; records `SpawnRequest`s rather than spawning. |
 | [`src/plan_graph.rs`](src/plan_graph.rs) + [`src/plan_graph/`](src/plan_graph) | `PlanGraph` — who may write a `[:NEXT]` or `[:THEN]` edge, when a revision is authored, and what counts as drift (SPEC §7.4). Approval is the only constructor; a revision is authored beside its predecessor rather than over it; `ran` refuses a task the current revision does not have, which is why every difference between the two lanes is a revision somebody recorded a reason for. Divergences are derived, never stored. |
 | [`src/mcp_usage.rs`](src/mcp_usage.rs) | The MCP usage record/ledger types, homed here so `stella-mcp` and `stella-tools` need no edge between them. |
-| [`src/self_tuning.rs`](src/self_tuning.rs) | The eval-driven policy selector: reward samples per opaque arm → a confident-lift `Decision` plus a reversible `RollbackRecord`. The workspace's one significance test. |
-| [`src/comparison.rs`](src/comparison.rs) + [`src/comparison/`](src/comparison) | The A/B comparison report every measurement of "is this arm better?" emits: paired per-task trials → per-arm aggregates, a guard set, and a two-bar verdict. Consumed by `loop-bench --compare` offline and by the promotion gates. |
 
 ## Key concepts
 
@@ -303,8 +300,13 @@ system message and the latest user message are never touched.
   moved to `stella-records`, and `context_record/hash.rs` to
   `stella_protocol::hash`. The engine reached the whole plane through one hash
   call, which `receipts.rs` now makes against the protocol. Nothing in this
-  crate names a record type. `rules` stays: it is the markdown half the record
-  registry reads, and it depends on `glob` and `mining`, which `skills` shares.
+  crate names a record type.
+- **The learning plane is not here either.** `skills`, `rules`, `comparison`,
+  `mining`, `redact` and `self_tuning` moved to `stella-learn`. The step path
+  reached one file of them, the invocation vocabulary, which stayed as
+  `skill_invocation`. Two primitives both sides read went down instead of
+  across: the glob matcher and the markdown frontmatter parser are
+  `stella_protocol::glob` and `stella_protocol::frontmatter` now.
 
 ## Testing
 
@@ -320,8 +322,8 @@ which is why the engine's own suite is split across
 turn-driver audit witnesses; also `budget_boundaries.rs`,
 `usage_completeness.rs`). `proptest!` blocks live in
 [`src/retry.rs`](src/retry.rs), [`src/loop_detect.rs`](src/loop_detect.rs),
-[`src/tasks.rs`](src/tasks.rs) and [`src/skills.rs`](src/skills.rs); past
-failing seeds are committed under
+[`src/tasks.rs`](src/tasks.rs) and [`src/workspace_scope.rs`](src/workspace_scope.rs);
+past failing seeds are committed under
 [`proptest-regressions/`](proptest-regressions). No feature flag, no env var, no
 fixture server and no network — driver tests wire scripted `Provider`s, counting
 `ToolExecutor`s and no-op `Sleeper`s, so the suite runs in seconds. Keep it that
@@ -340,7 +342,7 @@ here. An intended change edits the pin in the same pull request
 **Adding an engine capability that needs the outside world:**
 
 1. Define the trait next to the decision it serves — [`src/ports.rs`](src/ports.rs)
-   for engine-wide seams, otherwise module-local like `rules::RuleSource`.
+   for engine-wide seams, otherwise module-local like `hooks::HookRunner`.
 2. Attach it with a `with_*` builder on `Engine` that stores an `Option`, so an
    engine built without it takes exactly the old path
    (`with_hooks`/`with_calibration`/`with_gate`/`with_steering` are the pattern).

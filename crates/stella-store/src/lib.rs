@@ -45,7 +45,7 @@
 //!   tool writes new rows today.
 //! - **rules** — extension-authored workspace rules: one row per rule id,
 //!   holding the full rule markdown in the `.stella/rules/*.md` authoring
-//!   format (the store never parses it — `stella_core::rules` does).
+//!   format (the store never parses it — `stella_learn::rules` does).
 //!   Written by extension providers via [`Store::upsert_rule`]; read at
 //!   session start by `stella-cli`, which merges these (lowest precedence)
 //!   with the on-disk rule files.
@@ -162,6 +162,7 @@ pub mod home;
 pub mod identity;
 pub mod integrity;
 pub mod journal;
+pub mod lane_frame;
 pub mod mcp_usage;
 pub mod notify;
 pub mod plan_graph;
@@ -375,7 +376,7 @@ pub struct RuleRow {
     /// The rule id — the analog of a rule file's filename stem.
     pub rule_id: String,
     /// Full rule markdown (optional frontmatter + body). Opaque to the
-    /// store; `stella_core::rules::rule_from_file` parses it.
+    /// store; `stella_learn::rules::rule_from_file` parses it.
     pub contents: String,
     /// Opaque label naming the writer (extension/provider id).
     pub source: String,
@@ -1517,7 +1518,7 @@ impl Store {
     /// Upsert one extension-authored workspace rule — the write seam an
     /// extension provider uses to publish a rule without touching
     /// `.stella/rules/`. `contents` is the full rule markdown in the
-    /// authoring format `stella_core::rules::rule_from_file` parses; the
+    /// authoring format `stella_learn::rules::rule_from_file` parses; the
     /// store treats it as opaque text. Re-publishing an existing `rule_id`
     /// replaces its contents and source and bumps `updated_at`.
     pub fn upsert_rule(&self, rule_id: &str, contents: &str, source: &str) -> Result<()> {

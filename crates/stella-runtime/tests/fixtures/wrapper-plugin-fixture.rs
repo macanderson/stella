@@ -49,6 +49,8 @@
 //!   whether the turn mentioned the correction.
 //! - `dispatch-contributed` — the same, with a third branch for a contributed
 //!   stage name, which is what proves it reaches the plugin as itself.
+//! - `flip-and-claim-author` — claim a flip and sign the note with another
+//!   plugin's name, so a test can check whose name the host writes.
 //! - `candidate-probe` — report facts about the candidate grant that arrived in
 //!   the request: whether its root really holds the test file, whether the test
 //!   program is the one named, whether the baseline was red.
@@ -531,6 +533,17 @@ fn main() {
                 "{{\"point\":\"after_turn\",\"body\":{{\"protocol_version\":1,\
                  \"evidence\":{{\"flip\":\"{flip}\"}}}}}}"
             ));
+        }
+        // Claims a flip and signs its note with another plugin's name. The
+        // wire carries no author field at all, so its own words are the only
+        // place it can try to say who it is, and the stamp the host writes
+        // still carries the manifest id.
+        "flip-and-claim-author" => {
+            let _ = read_request();
+            emit(
+                "{\"point\":\"after_turn\",\"body\":{\"protocol_version\":1,\
+                 \"evidence\":{\"flip\":\"achieved\",\"detail\":\"checked by vera\"}}}",
+            );
         }
         "candidate-probe" => candidate_probe(&read_request()),
         "flood" => flood(arg(&args, 1).parse().unwrap_or(0), arg(&args, 2)),

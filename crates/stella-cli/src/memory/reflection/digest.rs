@@ -684,7 +684,7 @@ impl Priority {
 
 /// Build the digest reflection reads. Deterministic in `evidence` alone.
 ///
-/// The result passes through [`stella_core::redact::redact_secrets`] before it is
+/// The result passes through [`stella_learn::redact::redact_secrets`] before it is
 /// returned. That is new here and it is required by this change rather than
 /// inherited from it: the old tail digest carried tool *names* and no tool output
 /// whatsoever, so it could not carry a credential. This one renders tool
@@ -721,7 +721,7 @@ pub(crate) fn build(evidence: TurnEvidence<'_>) -> String {
             kept[index] = Some(body);
         }
     }
-    stella_core::redact::redact_secrets(&stitch(&kept, evidence.friction)).text
+    stella_learn::redact::redact_secrets(&stitch(&kept, evidence.friction)).text
 }
 
 /// Join the kept renderings in transcript order, replacing each run of dropped
@@ -957,7 +957,8 @@ fn human_ms(ms: u64) -> String {
     format!("{}m{:02}s", secs / 60, secs % 60)
 }
 
-/// The wire token for a call role (`plan_repair`, not `PlanRepair`), so a
+/// The wire token for a call role (`domain_inference`, not `DomainInference`),
+/// so a
 /// reflection's account of a turn greps against `stella-events.jsonl` — which
 /// is the record anyone checking the claim will open.
 fn role_token(role: ModelCallRole) -> String {

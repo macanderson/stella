@@ -135,6 +135,11 @@
       "status": "implemented",
       "title": "ADR 0026: Context editing ships off until its trigger is measured"
     },
+    "adr/0027-a-fleet-worker-gets-its-own-worktree": {
+      "path": "docs/adr/0027-a-fleet-worker-gets-its-own-worktree.md",
+      "status": "implemented",
+      "title": "ADR 0027: A fleet worker gets its own worktree"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

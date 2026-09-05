@@ -226,8 +226,8 @@ wrapper whenever the result needs to carry evidence.
 
 Running `stella` on a real terminal opens the Command Deck, the tabbed interface over
 the engine. Each prompt becomes a lead-agent turn. The deck is more than a chat window:
-prompts queue while a turn runs, lines starting with `!` run shell commands inline in
-the transcript, `>` steers the turn while it's running, and `Esc` soft-stops it (both
+prompts queue while a turn runs, and lines starting with `$` run shell commands inline
+in the transcript. `>` steers the turn, `!` interrupts it, and `Esc` soft-stops it (all
 explained below). Tabs show the session's files, diff, code graph, skills, MCP servers,
 the AGENTS tab's installed agents, and the SETTINGS tab's
 [config panel](/docs/configuration/agent-engine-config) with per-seat model pickers.
@@ -308,9 +308,9 @@ babysit the CI cycle.
 ## Parallel: `stella fleet`
 
 When the work is many tasks rather than one, [fleets](/docs/agent-fleets) spread a
-dependency-ordered set of tasks out to parallel workers, in one shared tree
-coordinated by cooperative file claims, or in dedicated worktrees for tasks marked
-`isolation = "isolated"`. Each worker drives the same engine per task, using the plain
+dependency-ordered set of tasks out to parallel workers, each in a dedicated
+worktree, or in one shared tree coordinated by cooperative file claims for tasks
+marked `isolation = "shared_tree"`. Each worker drives the same engine per task, using the plain
 step loop by default, or a wrapper plugin when you pass `--pipeline <variant>`. Every
 attempt, commit, and dollar spent lands in `.stella/private/fleet.db` for review.
 
@@ -335,8 +335,8 @@ different things on top of it:
     verifier can't edit its way to a verdict.
   </OptionCard>
   <OptionCard name="Fleet workers">
-    Claim coordination in the shared tree, or a private worktree when the task is
-    marked `isolation = "isolated"`.
+    A private worktree per task, or claim coordination in the shared tree when the
+    task is marked `isolation = "shared_tree"`.
   </OptionCard>
 </CardGrid>
 
@@ -443,8 +443,8 @@ sqlite3 .stella/private/store.db \
   deck keybindings and examples.
 - [Plugins](/docs/plugins) — the wrapper system a `--pipeline <variant>` turn runs
   through, and what a plugin adds around it.
-- [Agent Fleets](/docs/agent-fleets) — plan files, waves, file claims in the
-  shared tree, and opt-in isolated worktrees.
+- [Agent Fleets](/docs/agent-fleets) — plan files, waves, a worktree per task,
+  and the opt-in shared tree with its file claims.
 - [Agent engine config](/docs/configuration/agent-engine-config) — per-seat
   model pins that all these paths share.
 - [Built-in Tools](/docs/agent-tools) — the shared catalog, and how MCP and

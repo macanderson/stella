@@ -1648,6 +1648,8 @@ mod parked;
 /// The session-override pickers' key routing (`/model`, `/agent`).
 pub(crate) mod pickers;
 pub mod sessions;
+/// The `$` and `!` composer marks — see [`sigil`].
+mod sigil;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
 pub use gates::HunkMarks;
@@ -3545,9 +3547,9 @@ fn handle_session_key(
     }
 }
 
-/// Dispatch the composer's content: a `!`-prefixed line is a shell command
-/// that executes IMMEDIATELY, bypassing the prompt queue and any busy agent
-/// entirely; any other prompt ALWAYS enqueues — never blocks on a busy agent,
+/// Dispatch the composer's content: a marked line goes where its mark says
+/// (see [`sigil`] — `$` runs a shell command NOW, `!` interrupts the running
+/// turn), and any other prompt ALWAYS enqueues — never blocks on a busy agent,
 /// though a held dispatch (see [`submit_prompt`]) jumps it to the front.
 fn dispatch_submission(ui: &mut DeckUi, model: &WorkspaceModel) -> DeckAction {
     // Before anything is taken out of the composer: a workspace whose index
@@ -3567,24 +3569,7 @@ fn dispatch_submission(ui: &mut DeckUi, model: &WorkspaceModel) -> DeckAction {
     // pasted payload *paths* (extracted at dispatch by the driver), so the
     // submission's text is the whole content here.
     match ui.composer.take_submission().map(|s| s.text) {
-        Some(text) if text.trim_start().starts_with('!') => {
-            // Strip only the single leading `!` dispatch marker — not
-            // every leading `!` — so a command whose own text starts
-            // with `!` (e.g. `!!foo`, meant as the shell command `!foo`)
-            // is not rewritten into something else.
-            let leading = text.trim_start();
-            let cmd = leading
-                .strip_prefix('!')
-                .unwrap_or(leading)
-                .trim()
-                .to_string();
-            if cmd.is_empty() {
-                DeckAction::Ignored
-            } else {
-                DeckAction::Shell(cmd)
-            }
-        }
-        Some(text) => submit_prompt(ui, model, text),
+        Some(text) => sigil::dispatch(ui, model, text),
         None => DeckAction::Ignored,
     }
 }

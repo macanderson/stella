@@ -9,8 +9,8 @@
 #
 #     guard_deny_command = "npm install*|npm ci*|yarn *"
 #
-# stella-core's matcher supports `*` and nothing else — "every other character is
-# a literal" (stella-core/src/glob.rs:1-6). So `|` is a literal pipe, and that
+# The shared matcher supports `*` and nothing else — "every other character is
+# a literal" (`stella-protocol/src/glob.rs`). So `|` is a literal pipe, and that
 # pattern matches no real command. The rule advertised Tier 2 enforcement, showed
 # up in the prompt marked [enforced], and blocked exactly zero tool calls. A
 # two-line witness would have caught it before it was ever committed.

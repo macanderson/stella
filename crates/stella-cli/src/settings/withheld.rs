@@ -252,7 +252,7 @@ pub(crate) fn survey(workspace_root: &Path) -> WithheldSteering {
     let stella = workspace_root.join(".stella");
     WithheldSteering {
         memories: count_in(&stella.join("memories"), is_markdown),
-        // Both rule directories `stella_core::rules::rule_search_dirs` hands
+        // Both rule directories `stella_learn::rules::rule_search_dirs` hands
         // the project tier, folded into one count because one gate withholds
         // them.
         records: count_in(&workspace_root.join(".claude").join("rules"), is_rule_file)

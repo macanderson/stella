@@ -74,14 +74,9 @@ pub(crate) fn role_supplies_the_turns_model(role: ModelCallRole) -> bool {
     match role {
         ModelCallRole::Worker => true,
         ModelCallRole::Unknown
-        | ModelCallRole::Triage
-        | ModelCallRole::Research
-        | ModelCallRole::Plan
-        | ModelCallRole::PlanRepair
-        | ModelCallRole::WitnessAuthor
-        | ModelCallRole::WitnessRepair
         | ModelCallRole::DistressGuidance
         | ModelCallRole::Verdict
+        | ModelCallRole::Plugin
         | ModelCallRole::AgentAuthor
         | ModelCallRole::SkillAuthor
         | ModelCallRole::DomainInference
@@ -124,9 +119,9 @@ pub(crate) fn model_call_row(event: &AgentEvent) -> Option<TranscriptEntry> {
     })
 }
 
-/// The wire token for a call role (`plan_repair`, not `PlanRepair`), so the
-/// word on screen is the word in `stella-events.jsonl` — the record anyone
-/// checking the row will open.
+/// The wire token for a call role (`domain_inference`, not
+/// `DomainInference`), so the word on screen is the word in
+/// `stella-events.jsonl` — the record anyone checking the row will open.
 ///
 /// `None` for [`ModelCallRole::Unknown`], which is the `serde` default for an
 /// *absent* role and so covers every session recorded before call-role

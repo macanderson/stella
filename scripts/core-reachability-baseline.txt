@@ -10,7 +10,6 @@ extensions
 goal
 mcp_usage
 plan_graph
-redact
 repair
 scoreboard
 search

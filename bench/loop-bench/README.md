@@ -7,7 +7,7 @@ as clearly: did the turn execute real work, or abort having done nothing? did it
 die without saying why? was it caught cycling?
 
 It shells out to the `stella` binary and `harbor`. Its only workspace dependency
-is `stella-core`, for the A/B report shape `--compare` emits (see below); the
+is `stella-learn`, for the A/B report shape `--compare` emits (see below); the
 distillation half still needs nothing but `clap`, `serde`, and `serde_json`, so
 a bench iteration stays cheap.
 
@@ -180,7 +180,7 @@ WINNER: model-b — pass_rate lift +1.000 over `model-a` (z ∞, n 12/12)
 
 Three things about that output determine whether a comparison result can be trusted:
 
-- **The report shape is `stella_core::comparison::ComparisonReport`, not a
+- **The report shape is `stella_learn::comparison::ComparisonReport`, not a
   harness-local type.** The promotion gates that read it — an adapter (#836), a
   tuned knob (#831/#1065), an eval-gated skill (#1067) — have to be reading the
   same aggregates, the same guard set, and the same significance test that were
@@ -218,7 +218,7 @@ measurement artifact creeps in.
 
 So every trial now also carries a counter map, distilled by
 [`src/features.rs`](src/features.rs) from the same stream, and folded by
-`stella-core` over the same **paired** trials as every other figure. Each key is
+`stella-learn` over the same **paired** trials as every other figure. Each key is
 `<namespace>.<what>`, and the value counts exactly what the key names:
 
 | Key | One per | Card |
@@ -370,7 +370,7 @@ multi-step trial read as empty.
 level: known outcomes producing the expected winner, a spend-bought win blocked
 by the guard set, a broken-loop trial counted as a failure rather than dropped,
 and a `NOT-RUN` row contributing nothing. The arithmetic underneath is tested in
-`stella-core` (`src/comparison/tests.rs` and `props.rs`), which is where it
+`stella-learn` (`src/comparison/tests.rs` and `props.rs`), which is where it
 lives.
 
 ## See also

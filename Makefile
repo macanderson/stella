@@ -39,7 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity \
-                    guard-trigger-coverage left-behind \
+                    guard-trigger-coverage priority-scheme left-behind \
                     role-names stat-portability module-reachability core-reachability \
                     typed-errors \
                     tool-error-class \
@@ -751,6 +751,14 @@ guard-trigger-coverage: ## Assert prose/hue-separation/transcript-surfaces each 
 guard-trigger-coverage-test: ## Test the guard-trigger-coverage guard's failure directions (hermetic; not part of `gate`)
 	@python3 ./scripts/test-guard-trigger-coverage.py
 
+.PHONY: priority-scheme
+priority-scheme: ## Assert the issue priority scheme is stated once, in SCR-005 (#5216)
+	@python3 ./scripts/check-priority-scheme.py
+
+.PHONY: priority-scheme-test
+priority-scheme-test: ## Test the priority-scheme guard's failure directions (hermetic; not part of `gate`)
+	@python3 ./scripts/test-priority-scheme.py
+
 .PHONY: bench-suites
 bench-suites: ## Assert `make bench-test` runs every suite bench.yml runs, by derivation (#2847)
 	@./scripts/check-bench-suites.sh
@@ -892,6 +900,14 @@ impacted-test: ## Test the gate-scoping script (hermetic; not part of `gate`)
 self-driving-test: ## Test the self-driving control logic — digest, AIMD, aperture, run lifecycle (hermetic)
 	cargo build -q -p stella-cli --bin stella
 	STELLA_BIN="$(CURDIR)/target/debug/stella" ./scripts/test-self-driving.sh
+
+.PHONY: session-isolation-test
+# Pins STELLA_BIN for `self-driving-test`'s reason: the harness prefers
+# target/release over target/debug, so a stale release build would win over the
+# code under test.
+session-isolation-test: ## Test that two dispatched workers get their own trees (hermetic; not part of `gate`)
+	cargo build -q -p stella-cli --bin stella
+	STELLA_BIN="$(CURDIR)/target/debug/stella" ./scripts/test-session-isolation.sh
 
 .PHONY: smoke-artifact-test
 smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic broken artifacts (hermetic; not part of `gate`)

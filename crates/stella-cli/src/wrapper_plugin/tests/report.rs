@@ -12,24 +12,102 @@ use super::*;
 
 /// A report with one fault of each kind, so [`report_lines`] has something to
 /// render on every one of its arms.
+///
+/// The arbitration record is built the way `WrapperDispatch::run` builds it —
+/// an abstention per fault, then the arbiter's own claim from the verdict —
+/// so the lines asserted here are the lines a real run produces.
 fn faulted_report() -> stella_runtime::wrapper::DispatchReport {
+    use stella_runtime::wrapper::{ArbiterClaim, TurnHoldBudget, fold_stamps};
+
+    let fault = stella_runtime::wrapper::WrapperError::EmptyArgv;
+    let grant = stella_plugin::LoopGrant {
+        participation: stella_plugin::Participation::Arbiter,
+        ..stella_plugin::LoopGrant::default()
+    };
+    let verdict = stella_plugin::Verdict::Undecided {
+        reason: stella_plugin::UndecidedReason::NoOracle,
+        // No oracle ran, so no requirement was individually decided; the
+        // board below declares none either.
+        undecided: Vec::new(),
+    };
+    let arbitration = fold_stamps(
+        None,
+        &[
+            ArbiterClaim::did_not_answer("vera", &fault, &grant),
+            ArbiterClaim::from_verdict("vera", &verdict, &grant, 0),
+        ],
+        TurnHoldBudget {
+            turn_holds_spent: 0,
+            host_max_holds: 2,
+        },
+    );
     stella_runtime::wrapper::DispatchReport {
         variant: "vera".to_string(),
         rounds: 1,
-        verdict: stella_plugin::Verdict::Undecided {
-            reason: stella_plugin::UndecidedReason::NoOracle,
-            // No oracle ran, so no requirement was individually decided; the
-            // board below declares none either.
-            undecided: Vec::new(),
-        },
+        verdict: verdict.clone(),
         outcome: stella_plugin::Outcome::Undecided {
             reason: stella_plugin::UndecidedReason::NoOracle,
         },
         // A rule with no requirements draws no rows: nothing was declared, so
         // there is no gate to report on.
         board: stella_protocol::GateBoard::default(),
-        faults: vec![stella_runtime::wrapper::WrapperError::EmptyArgv],
+        // Built by the same fold a real round uses, so this fixture cannot
+        // drift from the record a dispatch actually hands back.
+        snapshot: stella_runtime::wrapper::stamp::snapshot(
+            &stella_plugin::VerdictRule::default(),
+            &stella_plugin::EvidenceSet::unobserved(),
+            &verdict,
+        ),
+        faults: vec![fault],
+        arbitration,
     }
+}
+
+/// **Witness.** A run whose arbiter did not answer says so.
+///
+/// A fault line says what broke without saying what the gate did about it, so
+/// on its own the trace of a run whose arbiter crashed reads exactly like the
+/// trace of a run whose arbiter was satisfied. The abstention line is the
+/// missing half, and it names the arbiter so a composition's reader knows
+/// which one fell silent.
+///
+/// The same report also holds the arbiter's *answered* abstention —
+/// `Verdict::Undecided`, an observer that looked and could not tell — and
+/// that one draws no line. One "did not answer" per report, for the observer
+/// that genuinely did not.
+#[test]
+fn an_arbiter_that_did_not_answer_gets_a_line_of_its_own() {
+    let roster = roster(vec![installed(WRAPPER_MANIFEST, "/tmp/budget-keeper")]);
+    let wrapper = bound(&roster, "budget-v1", &mut |_| {}).expect("the fixture binds");
+    let lines = super::report_lines(
+        None,
+        OutputFormat::Text,
+        &faulted_report(),
+        &wrapper.gates,
+        &[],
+        &[],
+        &[],
+    );
+
+    let attributed: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains("did not answer"))
+        .collect();
+    assert_eq!(
+        attributed.len(),
+        1,
+        "one line for the observer that never answered: {lines:#?}"
+    );
+    assert!(
+        attributed[0].contains("arbiter vera did not answer"),
+        "the line names the arbiter that fell silent: {}",
+        attributed[0]
+    );
+    assert!(
+        attributed[0].contains("nothing was held open"),
+        "and says the turn was not blocked by it: {}",
+        attributed[0]
+    );
 }
 
 /// **Witness (#3883).** Every line a wrapper's report prints names the lane it
@@ -50,8 +128,9 @@ fn a_scoped_report_names_its_task_on_every_line() {
     let wrapper = bound(&roster, "budget-v1", &mut |_| {}).expect("the fixture binds");
     let report = faulted_report();
     let spends = [ChildTurnSpend {
+        plugin: "budget-keeper".to_string(),
         role: "reviewer".to_string(),
-        seat: ModelCallRole::Research,
+        seat: "research".to_string(),
         cost_usd: 0.02,
         steps: 1,
         completed: true,

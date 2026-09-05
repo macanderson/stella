@@ -9,7 +9,7 @@
 
 use colored::Colorize;
 use stella_context::ContextQuery;
-use stella_core::skills::{self, SelectionConfig};
+use stella_learn::skills::{self, SelectionConfig};
 use stella_protocol::{CompletionMessage, ContextRecallPort, MessageRole, Recall, RecalledFrame};
 use stella_records::records::RenderedChannel;
 
@@ -1138,12 +1138,12 @@ pub(super) fn query_gathered_plane(
     selected: &skills::SkillSelection,
     record: Option<&(stella_records::records::Registry, RenderedChannel)>,
 ) -> stella_core::steering::SteeringSet {
-    use stella_core::steering::{SteeringPlane, adapt};
+    use stella_core::steering::SteeringPlane;
 
     let mut candidates = super::steering::frame_candidates(frames);
-    candidates.extend(adapt::skill_candidates(&selected.selected));
+    candidates.extend(super::steering::skill_candidates(&selected.selected));
     let mut source_drops = frame_drops.to_vec();
-    source_drops.extend(adapt::skill_drops(selected));
+    source_drops.extend(super::steering::skill_drops(selected));
     if let Some((registry, rendered)) = record {
         candidates.extend(stella_records::adapt::record_candidates(registry, rendered));
         source_drops.extend(stella_records::adapt::record_drops(registry, rendered));
@@ -1211,7 +1211,7 @@ fn record_section_text(rendered: RenderedChannel) -> Option<String> {
 /// `still_selected` is the section-budget class, and it is why this takes the
 /// whole ledger rather than a handle. A skill can be in `selected` *and*
 /// `dropped` by design — top-k kept it and `skills::section_fit` then left it
-/// out of the rendered section (`adapt::skill_drops`' own doc). Both classes
+/// out of the rendered section (`steering::skill_drops`' own doc). Both classes
 /// genuinely miss the prompt, so both are reported; only the remedy differs,
 /// because `SKILLS_SECTION_TOKEN_BUDGET` is a constant and nothing
 /// configurable widens it until #3243 Phase 4 collapses the two budgets.

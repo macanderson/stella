@@ -13,8 +13,8 @@
 //! came from is not comparable with it, and nothing on the page says so.
 //!
 //! So attribution rides the trial and is folded by
-//! [`stella_core::comparison`] over the same **paired** trials as every other
-//! figure. See [`stella_core::comparison::feature`] for that contract; this
+//! [`stella_learn::comparison`] over the same **paired** trials as every other
+//! figure. See [`stella_learn::comparison::feature`] for that contract; this
 //! module owns only the vocabulary.
 //!
 //! # The vocabulary
@@ -71,7 +71,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use stella_protocol::StageKind;
 
-/// Counter keys, as [`stella_core::comparison::TrialRecord::features`] holds
+/// Counter keys, as [`stella_learn::comparison::TrialRecord::features`] holds
 /// them.
 pub type FeatureCounts = BTreeMap<String, u64>;
 

@@ -97,7 +97,7 @@ Counted on `main` at 2026-08-19, not estimated:
 | Rust files naming `verifier`, `triage` or `witness` | **505 files** |
 | Non-Rust surfaces naming them (arenabench, bench, observatory assets, website docs) | **239 files** |
 | `stella_protocol::Role` | 8 variants; `Triage`/`Plan`/`Research`/`Verifier` are routing vocabulary in the protocol crate |
-| `stella_protocol::ModelCallRole` | 14 variants incl. `WitnessAuthor`, `WitnessRepair`, `Verdict`, `PlanRepair`; **on the wire**, exported into `docs/wire/` |
+| `stella_protocol::ModelCallRole` | 14 variants incl. `WitnessAuthor`, `WitnessRepair`, `Verdict`, `PlanRepair`; **on the wire**, exported into `docs/wire/` (six of them retired by slice 2 — §6) |
 | `ChildTurns::default_seats()` | a **core-owned table of plugin role words** (`worker`/`triage`/`research`/`plan`), so a plugin needing a `reviewer` is refused |
 | `Router::resolve_with` | matches on `Role::Triage` / `Role::Verifier` / … to pick a tier |
 | `scripts/check-role-names.sh` | a **gate step** pinning four role spellings across Rust, Python and JS |
@@ -209,6 +209,29 @@ exact failure `check-role-names.sh` exists to prevent.
 - **Witness:** a recorded stream containing a retired variant still parses; a
   plugin child turn's receipt names its plugin and seat.
 - **Done when:** `ModelCallRole` names no job core cannot perform.
+
+**Landed, with one option kept and one design choice inverted.**
+`Triage`, `Research`, `Plan`, `PlanRepair`, `WitnessAuthor` and
+`WitnessRepair` are gone. Each retired token reads as the new `Plugin` case
+through a serde alias, so a recorded row keeps its cost, its tokens and its
+model. **`Verdict` stays** until slice 7. `stella_core::goal`'s round loop
+books its own verifier call against it, and retiring it would leave a call
+core really makes with nothing to call it.
+
+`Plugin` carries no payload, which is not what the slice sketched above.
+`role` is a plain string everywhere on the wire. A data-carrying case would
+make it sometimes an object, and every consumer comparing `role == "worker"`
+would break in silence. That is the failure `scripts/check-role-names.sh`
+exists to prevent. It would also cost the enum its `Copy` and its
+`const ALL`, which is the totality proof `call_role.rs` is built around. So
+the seat name travels beside the enum instead. `SubAgentPhase::Started`
+gained `seat`, filled from the `SubAgentSpec::seat` slice 0 already carries,
+and `ChildTurnSpend` names both the plugin and the seat.
+
+Slice 1's `SeatGrant::default_seat` returns `Plugin` for every grant. Reading
+the manifest's declared job instead picks `Verdict` for a judging plugin and
+`Research` for the rest, and both name a job core does — a guess that books a
+plugin's call at a core seat, which its own doc comment asks this slice to end.
 
 ### Slice 3 — stages are declared, named and ordered (gap B)
 

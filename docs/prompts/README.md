@@ -41,16 +41,24 @@ There is one document per variant of `ModelCallRole`
 (`crates/stella-protocol/src/event/call_role.rs`), which is the workspace's
 only complete role vocabulary — `ModelCallRole::ALL` is derived from the
 `model_call_roles!` macro, so a variant cannot escape it without failing an
-exhaustive `match` at compile time. If a role exists, it has a page here.
+exhaustive `match` at compile time. If a role sends a prompt this workspace
+writes, it has a page here — which leaves `plugin` without one, because the
+prompt a plugin's seat sends is the plugin's.
+
+Six of the pages below outlive their role. `triage`, `research`, `plan`,
+`plan_repair`, `witness_author` and `witness_repair` are retired, because
+each named a stage of the deleted staged pipeline. A stream recorded while
+they ran reads them as `plugin`, and their pages stay as the record of what
+those calls sent.
 
 | Role | Page | Cite as | Dispatch | Tools | What it decides |
 |---|---|---|---|---|---|
-| `triage` | [triage.md](triage.md) | `doc:prompt-triage` | raw | none | class, witness, verifier, research questions |
-| `research` | [research.md](research.md) | `doc:prompt-research` | engine (sub-agent) | read-only | one pre-plan question about the workspace |
-| `plan` | [plan.md](plan.md) | `doc:prompt-plan` | raw | none | the ordered step list |
-| `plan_repair` | [plan-repair.md](plan-repair.md) | `doc:prompt-plan-repair` | raw | none | re-emit an unparseable plan as JSON |
-| `witness_author` | [witness-author.md](witness-author.md) | `doc:prompt-witness-author` | engine | witness set | the failing test that arms the flip oracle |
-| `witness_repair` | [witness-repair.md](witness-repair.md) | `doc:prompt-witness-repair` | engine (same thread) | witness set | rewrite a witness that passed on old code |
+| `triage` *(retired)* | [triage.md](triage.md) | `doc:prompt-triage` | raw | none | class, witness, verifier, research questions |
+| `research` *(retired)* | [research.md](research.md) | `doc:prompt-research` | engine (sub-agent) | read-only | one pre-plan question about the workspace |
+| `plan` *(retired)* | [plan.md](plan.md) | `doc:prompt-plan` | raw | none | the ordered step list |
+| `plan_repair` *(retired)* | [plan-repair.md](plan-repair.md) | `doc:prompt-plan-repair` | raw | none | re-emit an unparseable plan as JSON |
+| `witness_author` *(retired)* | [witness-author.md](witness-author.md) | `doc:prompt-witness-author` | engine | witness set | the failing test that arms the flip oracle |
+| `witness_repair` *(retired)* | [witness-repair.md](witness-repair.md) | `doc:prompt-witness-repair` | engine (same thread) | witness set | rewrite a witness that passed on old code |
 | `worker` | [worker.md](worker.md) | `doc:prompt-worker` | engine / raw | full registry | the change itself |
 | `distress_guidance` | [distress-guidance.md](distress-guidance.md) | `doc:prompt-distress-guidance` | **none** | — | retired (#2584) — no call, no prompt |
 | `verdict` | [verdict.md](verdict.md) | `doc:prompt-verdict` | engine (sub-agent) | four read-only | `stella goal`'s outer assessor: is the objective met |
@@ -59,6 +67,7 @@ exhaustive `match` at compile time. If a role exists, it has a page here.
 | `domain_inference` | [domain-inference.md](domain-inference.md) | `doc:prompt-domain-inference` | raw | none | the workspace's domain taxonomy |
 | `reflection` | [reflection.md](reflection.md) | `doc:prompt-reflection` | raw | none | post-turn lessons and self-review |
 | `summarization` | [summarization.md](summarization.md) | `doc:prompt-summarization` | raw | none | the summary replacing an overflowed span |
+| `plugin` | — | — | engine (sub-agent) | read-only | nothing: it names a call an installed plugin bought at a seat it declared, and the prompt is the plugin's |
 
 Cite a page by its id, never its path (`docs/README.md § How to cite a
 document`) — these files will move before they stop being true.

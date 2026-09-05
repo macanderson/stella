@@ -24,7 +24,7 @@
 //!   ranges ([`READ_FILES_PARAM`]), and every file counts. Content is re-read
 //!   fresh at restore time, so an edit in between surfaces the current bytes.
 //! - **The full body of any active invoked skill**
-//!   ([`crate::skills::invoke::ActiveSkillInvocations`] is the tracking
+//!   ([`crate::skill_invocation::ActiveSkillInvocations`] is the tracking
 //!   half): procedure text the model is executing must survive verbatim,
 //!   never as the summary's paraphrase. An invocation whose span already
 //!   ended is history, not working set, and is not restored.
@@ -89,7 +89,7 @@ use std::collections::HashSet;
 
 use stella_protocol::{CompletionMessage, MessageRole};
 
-use crate::skills::invoke::invocation_slug;
+use crate::skill_invocation::invocation_slug;
 
 /// Prefix of the engine-authored restoration tail message. Registered in
 /// [`crate::engine_markers::ENGINE_MARKERS`] like every other engine-injected
@@ -212,7 +212,7 @@ pub struct SpanRead {
 pub struct SkillBody {
     pub slug: String,
     /// The whole invocation message content —
-    /// [`crate::skills::invoke::render_invocation_message`]'s shape.
+    /// [`crate::skill_invocation::render_invocation_message`]'s shape.
     pub content: String,
 }
 
@@ -669,7 +669,7 @@ fn embedded_sections(content: &str) -> (Vec<String>, Vec<SkillBody>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skills::invoke::render_invocation_message;
+    use crate::skill_invocation::render_invocation_message;
     use stella_protocol::{CompletionMessage, ToolCall, ToolOutput, ToolResult};
 
     fn read_call(call_id: &str, path: &str) -> CompletionMessage {

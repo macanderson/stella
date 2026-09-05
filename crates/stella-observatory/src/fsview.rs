@@ -134,7 +134,7 @@ fn frontmatter_fields(text: &str) -> (Option<String>, Option<String>, Option<Str
 /// `in_learned_dir` is position-derived provenance — true for a file under a
 /// `learned/` subdirectory. It is an OR, not the whole answer: the miner names
 /// its output `{skills_dir}/{slug}-{hash8}.md`, flat, and has never written a
-/// `learned/` path segment (`stella_core::skills::decide_auto_creation` builds
+/// `learned/` path segment (`stella_learn::skills::decide_auto_creation` builds
 /// `{target_dir}/{name}.md`). Reading provenance from position alone therefore
 /// reported every auto-created skill as hand-authored and pinned the
 /// dashboard's "learned skills" count to 0 no matter how many the loop
@@ -167,7 +167,7 @@ fn skill_entry(
     };
     let name = name.unwrap_or(fallback);
     // The candidate id the miner named the file for is the skill's own `name`
-    // (`stella_core::skills::decide_auto_creation` builds `{name}.md`), so
+    // (`stella_learn::skills::decide_auto_creation` builds `{name}.md`), so
     // that is the join key back to the proposal that promoted it (#4871). A
     // hand-authored skill was never a candidate and has no entry to find.
     let evidence_grade = grades.get(&name).copied();

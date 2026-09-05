@@ -874,11 +874,11 @@ mod tests {
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
             filler("a0"),
-            CompletionMessage::user(crate::skills::invoke::render_invocation_message(
+            CompletionMessage::user(crate::skill_invocation::render_invocation_message(
                 "deploy",
                 "Step 1: build. Step 2: ship.",
             )),
-            CompletionMessage::user(crate::skills::invoke::render_invocation_message(
+            CompletionMessage::user(crate::skill_invocation::render_invocation_message(
                 "audit",
                 "An already-finished procedure.",
             )),

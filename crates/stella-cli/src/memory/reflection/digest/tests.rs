@@ -291,7 +291,7 @@ fn a_planted_credential_never_reaches_the_digest() {
          model and not necessarily to the provider that already saw it\n\n{out}"
     );
     assert!(
-        out.contains(stella_core::redact::PLACEHOLDER),
+        out.contains(stella_learn::redact::PLACEHOLDER),
         "the redaction must be visible where it happened, so a reader knows the \
          digest was edited rather than that the turn said nothing\n\n{out}"
     );
@@ -478,11 +478,11 @@ fn step_usage(step: usize, role: ModelCallRole, cost_usd: f64, duration_ms: u64)
 #[test]
 fn the_friction_section_names_the_costliest_step_by_its_wire_role() {
     let mut friction = TurnFriction::default();
-    friction.observe(&step_usage(1, ModelCallRole::Triage, 0.001, 900));
-    friction.observe(&step_usage(7, ModelCallRole::WitnessAuthor, 0.31, 61_000));
+    friction.observe(&step_usage(1, ModelCallRole::Worker, 0.001, 900));
+    friction.observe(&step_usage(7, ModelCallRole::Plugin, 0.31, 61_000));
     let section = friction.section(1);
     assert!(
-        section.contains("step 7 (witness_author) $0.3100"),
+        section.contains("step 7 (plugin) $0.3100"),
         "the role is spelled as the wire spells it, so a reflection's account of \
          a turn greps against stella-events.jsonl — the record anyone checking \
          the claim will open\n\n{section}"

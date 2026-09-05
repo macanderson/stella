@@ -93,6 +93,7 @@ open; nothing before Phase 3 forces it.
 | [0024](0024-release-builds-unwind.md) | Release Builds Unwind on Panic | Accepted |
 | [0025](0025-nested-frontmatter-refusal-scope.md) | Refuse a Nested Key Where It Widens a Grant | Accepted |
 | [0026](0026-context-editing-ships-off-until-measured.md) | Context Editing Ships Off Until Its Trigger Is Measured | Accepted |
+| [0027](0027-a-fleet-worker-gets-its-own-worktree.md) | A Fleet Worker Gets Its Own Worktree | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -132,3 +133,10 @@ promises to a person: a panel that panics paints an error card instead of
 killing the process, and a panic in one server connection ends that connection
 rather than the server. An example binary run with `--release` in CI is what
 holds the profile there.
+
+ADR 0027 makes a `git worktree` per task the fleet default. Two workers in one
+checkout can revert each other's uncommitted files: one runs `git checkout`,
+git restores every tracked file in the tree, and the other's edits are gone
+with no error printed. The shared root and its cooperative file claims stay,
+as something a plan names — a claim guards one path, and a branch switch
+rewrites all of them.
