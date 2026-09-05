@@ -5,7 +5,7 @@
 //! invocation surface.
 //!
 //! A skill's own frontmatter declares how it runs
-//! (`stella_core::skills::invoke`): `context:` inline or fork,
+//! (`stella_core::skill_invocation`): `context:` inline or fork,
 //! `allowed-tools:` the grant, `model:`/`effort:` the overrides. This verb
 //! resolves the slug against the same loaders the recall engine and the ⚡
 //! slash menu read, renders the invocation message with `$ARGUMENTS`
@@ -31,7 +31,7 @@
 
 use std::path::Path;
 
-use stella_core::skills::invoke::{self, DirectiveDiagnostic, SkillInvocationMode};
+use stella_core::skill_invocation::{self, DirectiveDiagnostic, SkillInvocationMode};
 
 use crate::OutputFormat;
 use crate::config::Config;

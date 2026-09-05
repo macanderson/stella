@@ -49,6 +49,11 @@ stella-core = { path = "../stella-core" }
 # because the engine reached it through one hash call and nothing else;
 # `stella context`, `stella ingest` and the memory plane are its real callers.
 stella-records = { path = "../stella-records" }
+# Skills, rules, the miner behind both, redaction, and the A/B comparison the
+# tuning verbs read. It left `stella-core` for the same reason: the engine
+# reached one file of it, and `stella skill`, `stella rules`, `stella tune`
+# and the memory plane are its real callers.
+stella-learn = { path = "../stella-learn" }
 # The self-driving loop's deterministic decision core (AIMD, the aperture
 # ladder, the dry-streak oracle, the dedup digest, the ledger folds), extracted
 # to a leaf crate (#1613) so `stella-observatory`'s dashboard shares the exact

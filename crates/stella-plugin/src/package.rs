@@ -93,7 +93,7 @@ pub struct ToolContribution {
 #[serde(deny_unknown_fields)]
 pub struct SkillContribution {
     /// The slug — the `<slug>` directory name under `skills/`, which is the
-    /// identity `stella_core::skills` knows it by.
+    /// identity `stella_learn::skills` knows it by.
     pub slug: String,
     /// What the skill teaches, in the author's words.
     pub description: String,

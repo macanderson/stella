@@ -12,6 +12,7 @@ members = [
   "crates/stella-protocol",
   "crates/stella-core",
   "crates/stella-records",
+  "crates/stella-learn",
   "crates/stella-model",
   "crates/stella-store",
   "crates/stella-tools",

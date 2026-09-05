@@ -700,7 +700,7 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
     );
     assert_eq!(
         manifest["redaction"]["function"],
-        "stella_core::redact::redact_secrets"
+        "stella_learn::redact::redact_secrets"
     );
     assert_eq!(manifest["execution_id_range"][0], flipped);
     assert_eq!(manifest["execution_id_range"][1], tampered);

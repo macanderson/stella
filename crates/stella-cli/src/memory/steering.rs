@@ -15,13 +15,14 @@ use stella_core::steering::{
     DroppedCandidate, SteeringCandidate, SteeringPlane, SteeringSet, SteeringSource, TurnSignal,
     pack_to_budget,
 };
+use stella_learn::skills::{self, SelectedSkill};
 use stella_protocol::RecalledFrame;
 
 use super::recall::frame_recall_line;
 
 /// Recalled frames as candidates — the CLI's own adapter over
 /// [`RecalledFrame`] (a `stella-protocol` boundary type, not
-/// `stella-core::steering::adapt`'s own vocabulary), because the recall
+/// `stella-core::steering`'s own vocabulary), because the recall
 /// budget/citation shaping here (`est_tokens`, the `frame_recall_line` wire
 /// format) is CLI-surface presentation, not engine decision logic (invariant
 /// 2: no I/O, no presentation formatting inside `stella-core`).
@@ -41,6 +42,75 @@ pub(super) fn frame_candidates(frames: &[RecalledFrame]) -> Vec<SteeringCandidat
             score: (frames.len() - rank) as f64,
             why: format!("recall fusion ranked it #{} for this goal", rank + 1),
             est_tokens: stella_protocol::estimate_tokens(&frame_recall_line(frame)),
+        })
+        .collect()
+}
+
+// The skill adapters, beside the frame adapter above and for the same
+// reason. `stella_learn::skills` holds the selector, `stella_core::steering`
+// holds the candidate types, and neither crate depends on the other; the map
+// between them belongs to the host that already links both.
+
+/// The skills [`stella_learn::skills::select_skills`] chose, as candidates.
+///
+/// `score` is the selector's own (lexical coverage + domain boost + recency
+/// tie-break) — comparable within the source, per the contract on
+/// [`SteeringCandidate::score`]. `est_tokens` is measured over
+/// [`stella_learn::skills::rendered_skill_block`], the block the section renderer emits.
+pub(super) fn skill_candidates(selected: &[SelectedSkill]) -> Vec<SteeringCandidate> {
+    selected
+        .iter()
+        .map(|sel| SteeringCandidate {
+            source: SteeringSource::Skill,
+            handle: sel.skill.name.clone(),
+            score: sel.score,
+            why: skill_why(sel),
+            est_tokens: stella_protocol::estimate_tokens(&skills::rendered_skill_block(sel)),
+        })
+        .collect()
+}
+
+/// The selector's own evidence, in the words its drop report already uses.
+fn skill_why(sel: &SelectedSkill) -> String {
+    match (sel.matched_terms.is_empty(), sel.matched_domains.is_empty()) {
+        (false, false) => format!(
+            "matched terms: {}; active domains: {}",
+            sel.matched_terms.join(", "),
+            sel.matched_domains.join(", ")
+        ),
+        (false, true) => format!("matched terms: {}", sel.matched_terms.join(", ")),
+        (true, false) => format!("active domains: {}", sel.matched_domains.join(", ")),
+        (true, true) => "selected".to_string(),
+    }
+}
+
+/// The skills this turn's two skill budgets evicted, as ledger entries.
+///
+/// Both cuts are reported, and neither is inferred from the other, because
+/// they answer different questions:
+///
+/// - **Top-k** ([`stella_learn::skills::SkillSelection::over_top_k`]) —
+///   matched, scored, and lost a seat to `SelectionConfig::max_skills`.
+///   Estimated over the block it would have rendered, the same producer the
+///   survivors' costs come from, so "what would it have cost to widen
+///   `max_skills`" is answerable from the ledger rather than by re-running
+///   selection.
+/// - **Section budget** — survived top-k and then did not fit
+///   `render_skills_section`'s own token budget, per
+///   [`stella_learn::skills::section_fit`]. These candidates are still
+///   *selected* on the plane: the section renderer made this cut, and the
+///   plane re-enacting it would change the rendered bytes. The ledger
+///   reports it. Folding the section budget into the plane's shared budget
+///   changes behavior and is sequenced apart from this ledger slice.
+pub(super) fn skill_drops(selection: &skills::SkillSelection) -> Vec<DroppedCandidate> {
+    let fit = skills::section_fit(&selection.selected);
+    selection.selected[fit..]
+        .iter()
+        .chain(selection.over_top_k.iter())
+        .map(|sel| DroppedCandidate {
+            source: SteeringSource::Skill,
+            handle: sel.skill.name.clone(),
+            est_tokens: stella_protocol::estimate_tokens(&skills::rendered_skill_block(sel)),
         })
         .collect()
 }
@@ -71,7 +141,7 @@ impl ProducedSteering {
     /// records that reached its bytes, not the wider set recall returned.
     ///
     /// `skills` is the plane's selection, and only its `section_fit` prefix
-    /// actually renders: [`stella_core::skills::render_skills_section`] stops at
+    /// actually renders: [`stella_learn::skills::render_skills_section`] stops at
     /// its own token budget and marks the rest omitted. Counting the omitted
     /// tail as produced would suppress a skill the model was never shown, which
     /// is the one direction this set must not be wrong in. `records` carries no
@@ -79,10 +149,10 @@ impl ProducedSteering {
     /// already the post-budget answer.
     pub(super) fn of(
         frames: &[RecalledFrame],
-        skills: &[stella_core::skills::SelectedSkill],
+        skills: &[stella_learn::skills::SelectedSkill],
         records: &[String],
     ) -> Self {
-        let rendered = &skills[..stella_core::skills::section_fit(skills)];
+        let rendered = &skills[..stella_learn::skills::section_fit(skills)];
         Self {
             frames: frames.iter().map(frame_handle).collect(),
             skills: rendered.iter().map(|s| s.skill.name.clone()).collect(),
@@ -364,7 +434,145 @@ impl SteeringPlane for GatheredSteering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_core::skills::{SelectedSkill, Skill, SkillOrigin};
+    use stella_learn::skills::{Skill, SkillOrigin};
+
+    // The skill adapters: existing selector output mapped, never
+    // re-selected. These moved here with the functions they cover.
+
+    /// The skill adapter's estimate is measured over the exact block the section
+    /// renderer emits — one producer, so cost and bytes cannot drift.
+    #[test]
+    fn a_skill_candidate_costs_exactly_its_rendered_block() {
+        let sel = skills::SelectedSkill {
+            skill: skills::Skill {
+                name: "reviewer".into(),
+                description: "database review".into(),
+                domains: vec![],
+                body: "ALWAYS_REVIEW_DATABASES".into(),
+                source_path: ".stella/skills/reviewer/SKILL.md".into(),
+                origin: skills::SkillOrigin::Workspace,
+                contributed_by: None,
+            },
+            score: 0.42,
+            matched_terms: vec!["database".into(), "review".into()],
+            matched_domains: vec![],
+        };
+
+        let candidates = skill_candidates(std::slice::from_ref(&sel));
+
+        assert_eq!(candidates.len(), 1);
+        let c = &candidates[0];
+        assert_eq!(
+            (c.source, c.handle.as_str()),
+            (SteeringSource::Skill, "reviewer")
+        );
+        assert_eq!(c.score, 0.42);
+        assert_eq!(
+            c.est_tokens,
+            stella_protocol::estimate_tokens(&skills::rendered_skill_block(&sel)),
+            "the estimate and the section renderer read the same bytes"
+        );
+        assert!(
+            c.why.contains("database"),
+            "the why carries the selector's evidence: {}",
+            c.why
+        );
+    }
+
+    // ---- skill drops ----
+
+    /// A skill whose name and description both carry the prompt's terms, so
+    /// selection is decided by score order rather than by whether it matched.
+    fn scoring_skill(name: &str, body_bytes: usize) -> skills::Skill {
+        skills::Skill {
+            name: name.to_string(),
+            description: "format sql queries nicely".to_string(),
+            domains: vec!["sql".to_string()],
+            body: "x".repeat(body_bytes),
+            source_path: format!("{name}.md"),
+            origin: skills::SkillOrigin::Workspace,
+            contributed_by: None,
+        }
+    }
+
+    /// **Witness, skills / top-k.** A skill that matched, scored, and lost
+    /// the last seat to `SelectionConfig::max_skills` is named in the ledger.
+    ///
+    /// Without `select_skills_reporting`'s retained tail the drop is gone
+    /// before any adapter can see it, and a skill that loses its seat every
+    /// turn is indistinguishable from one that never matched.
+    #[test]
+    fn a_skill_cut_by_top_k_is_named_in_the_ledger() {
+        let skills: Vec<_> = ["a", "b", "c"]
+            .iter()
+            .map(|n| scoring_skill(n, 10))
+            .collect();
+        let config = skills::SelectionConfig {
+            max_skills: 2,
+            ..skills::SelectionConfig::default()
+        };
+
+        let selection = skills::select_skills_reporting(
+            &skills,
+            "please format the sql for me",
+            &["sql".to_string()],
+            &config,
+        );
+        assert_eq!(
+            selection.selected.len(),
+            2,
+            "top-k still cuts at max_skills"
+        );
+
+        let drops = skill_drops(&selection);
+        let handles: Vec<&str> = drops.iter().map(|d| d.handle.as_str()).collect();
+        assert_eq!(handles, vec!["c"], "the cut skill is named: {drops:?}");
+        assert!(
+            drops.iter().all(|d| d.source == SteeringSource::Skill
+                && d.est_tokens
+                    == stella_protocol::estimate_tokens(&skills::rendered_skill_block(
+                        &selection.over_top_k[0]
+                    ))),
+            "and costed over the block it would have rendered: {drops:?}"
+        );
+    }
+
+    /// **Witness, skills / section budget.** A skill the section renderer
+    /// omits to fit `SKILLS_SECTION_TOKEN_BUDGET` is named in the ledger, and
+    /// the rendered bytes are untouched, because the renderer still makes
+    /// that cut itself.
+    ///
+    /// Name the skills or the omission is an inline prose marker and nothing
+    /// else, reaching neither stderr nor the plane.
+    #[test]
+    fn a_skill_omitted_by_the_section_budget_is_named_without_changing_the_bytes() {
+        // Four skills whose bodies each fill the per-skill budget: three fit the
+        // section budget, and the fourth is the one the renderer omits.
+        let skills: Vec<_> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|n| scoring_skill(n, 40_000))
+            .collect();
+        let selection = skills::select_skills_reporting(
+            &skills,
+            "please format the sql for me",
+            &["sql".to_string()],
+            &skills::SelectionConfig::default(),
+        );
+        assert_eq!(selection.selected.len(), 4, "all four survive top-k");
+
+        let rendered = skills::render_skills_section(&selection.selected);
+        assert!(
+            rendered.contains("### c") && !rendered.contains("### d"),
+            "the renderer's own cut is unchanged: {rendered}"
+        );
+
+        let drops = skill_drops(&selection);
+        assert_eq!(
+            drops.iter().map(|d| d.handle.as_str()).collect::<Vec<_>>(),
+            vec!["d"],
+            "the omitted skill reaches the ledger by name: {drops:?}"
+        );
+    }
 
     fn selected(name: &str, body_bytes: usize) -> SelectedSkill {
         SelectedSkill {
@@ -397,7 +605,7 @@ mod tests {
     #[test]
     fn a_skill_the_section_budget_omitted_is_not_recorded_as_produced() {
         let skills: Vec<_> = (0..6).map(|i| selected(&format!("s{i}"), 4_000)).collect();
-        let fit = stella_core::skills::section_fit(&skills);
+        let fit = stella_learn::skills::section_fit(&skills);
         assert!(
             fit > 0 && fit < skills.len(),
             "the control: the section renderer renders some and cuts the rest, got {fit}"

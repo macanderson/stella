@@ -79,12 +79,12 @@ shipped today and is the surface a Context PR changes:
 
 - **Rule files.** One markdown document per rule: optional single-line
   `key: value` frontmatter between `---` fences, then the rule statement as
-  the body. Parsed by `stella_core::rules::rule_from_file`.
+  the body. Parsed by `stella_learn::rules::rule_from_file`.
 - **Locations and precedence.** `.stella/rules/*.md` (repository), plus
   `.claude/rules/` (compatibility) and `~/.stella/rules/` (personal).
   Directory walking and store reads live in `crates/stella-cli/src/rules.rs`; all
   rule semantics — frontmatter parsing, precedence merging, rendering,
-  guard evaluation — live in `stella-core::rules` (pure, no I/O).
+  guard evaluation — live in `stella-learn::rules` (pure, no I/O).
 - **Two enforcement tiers.**
   - **Tier 1 (prompt):** a rule with no `guard-*` keys is rendered into the
     system prompt (`agent::assemble_system_prompt`), riding the prompt cache

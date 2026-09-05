@@ -291,7 +291,7 @@ fn a_planted_credential_never_reaches_the_digest() {
          model and not necessarily to the provider that already saw it\n\n{out}"
     );
     assert!(
-        out.contains(stella_core::redact::PLACEHOLDER),
+        out.contains(stella_learn::redact::PLACEHOLDER),
         "the redaction must be visible where it happened, so a reader knows the \
          digest was edited rather than that the turn said nothing\n\n{out}"
     );

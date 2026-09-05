@@ -1,6 +1,6 @@
 //! `--compare` — the A/B half of the harness: the same task set under two or
 //! more model configurations, folded into one
-//! [`stella_core::comparison::ComparisonReport`].
+//! [`stella_learn::comparison::ComparisonReport`].
 //!
 //! # Why the report shape is not defined here
 //!
@@ -8,7 +8,7 @@
 //! (#831), an eval-gated skill (#1067) — needs a measurement instrument, and
 //! the offline instrument (this) and the live one (shadow tuning, #1065) must
 //! answer in the same words. So the aggregates, the guard set, the significance
-//! test and the verdict vocabulary all live in `stella-core::comparison`, and
+//! test and the verdict vocabulary all live in `stella-learn::comparison`, and
 //! this module does exactly two things a bench harness should: turn a
 //! [`TrialReport`] into the comparison's input vocabulary, and render the
 //! result for a human.
@@ -21,11 +21,11 @@
 //! reports a regression as an improvement. The one exception is `NOT-RUN`,
 //! which is not a result at all — see [`arm_trials`].
 
-use stella_core::comparison::{
+use stella_learn::comparison::{
     ArmTrials, ComparisonReport, ComparisonVerdict, Guard, Leader, LiftEvidence, Metric,
     TrialRecord,
 };
-use stella_core::self_tuning::{KeepReason, TaskOutcome};
+use stella_learn::self_tuning::{KeepReason, TaskOutcome};
 
 use crate::{TrialReport, truncate};
 
@@ -50,7 +50,7 @@ pub fn default_guards() -> Vec<Guard> {
 /// harbor never launched produced no observation — folding it in as a failure
 /// would attribute an infrastructure outcome to the model, and folding it in
 /// as a pass is obviously worse. Dropping it makes the task unpaired for this
-/// arm, so [`stella_core::comparison::compare`] excludes it from *both* arms
+/// arm, so [`stella_learn::comparison::compare`] excludes it from *both* arms
 /// and names it in `unpaired_tasks`, which is the honest result: nothing was
 /// measured about that task.
 pub fn arm_trials(id: &str, value: &str, reports: &[TrialReport]) -> ArmTrials {

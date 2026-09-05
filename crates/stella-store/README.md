@@ -9,7 +9,7 @@ The crate's hard boundary is **facts, not policy**. It does not
 depend on `stella-model`: no pricing table, no cache TTL, no diagnosis lives here
 — [`cache_gaps.rs`](src/cache_gaps.rs) and [`cache_trend.rs`](src/cache_trend.rs)
 surface the raw rows and the caller applies the policy. It does not parse the
-rule markdown it stores (`stella_core::rules` does). And it never takes a turn
+rule markdown it stores (`stella_learn::rules` does). And it never takes a turn
 down: every method returns `Result` and the CLI treats a failed store as
 observability loss — warn once, keep running. A panic here would be a work
 stoppage, which is why `Store::migrate` rejects a negative `user_version` with an

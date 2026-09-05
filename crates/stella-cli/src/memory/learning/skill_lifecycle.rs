@@ -17,8 +17,8 @@
 use std::path::Path;
 
 use stella_context::EpisodeOutcome;
-use stella_core::self_tuning::TaskOutcome;
-use stella_core::skills::appraisal::{AppraisalConfig, SkillTrial, SkillVerdict, appraise};
+use stella_learn::self_tuning::TaskOutcome;
+use stella_learn::skills::appraisal::{AppraisalConfig, SkillTrial, SkillVerdict, appraise};
 
 use crate::memory::{ReflectionLesson, SessionMemory, appraisals};
 

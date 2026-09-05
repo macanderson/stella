@@ -420,7 +420,7 @@ fn user_block_kind(content: &str) -> BlockKind {
     } else if content.starts_with(crate::driver::LOOP_STEER_PREFIX)
         || content.starts_with(crate::driver::CONTINUATION_MARKER_PREFIX)
         || content.starts_with(crate::driver::user_hooks::STOP_HOOK_MARKER_PREFIX)
-        || content.starts_with(crate::skills::invoke::SKILL_INVOCATION_PREFIX)
+        || content.starts_with(crate::skill_invocation::SKILL_INVOCATION_PREFIX)
         || content.starts_with(crate::waiting::WAKE_MARKER)
         || content.starts_with(crate::driver::deadline_notice::DEADLINE_MARKER_PREFIX)
         // Both completion nudges: each is a mid-turn injected instruction that

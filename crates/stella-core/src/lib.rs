@@ -1,48 +1,42 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `stella-core` — the step-driver. One model call
-//! per step, message accumulation, retry+backoff, context compaction,
-//! tool-output budget + eviction, loop detection, USD budget metering.
+//! `stella-core` — the step driver. One model call per step. It gathers
+//! messages, retries with backoff, compacts context, holds a tool-output
+//! budget, evicts, detects loops, and meters spend in USD.
 //!
-//! NO I/O of its own: the engine drives through the `Provider` and
-//! `ToolExecutor` traits and emits `AgentEvent`s over a channel. All
-//! decision logic (compaction, eviction, loop detection, budget) is plain
-//! synchronous functions over owned data — easy to property-test against
-//! fakes, with no runtime and no filesystem. See the crate README for the
-//! full module map and the port list.
+//! NO I/O of its own. The engine drives through the `Provider` and
+//! `ToolExecutor` traits, and sends `AgentEvent`s over a channel. Every
+//! decision it makes — how to compact, what to evict, when a loop started,
+//! what a turn has spent — is a plain function over owned data. That is
+//! what makes it easy to test against fakes, with no runtime and no files.
+//! The crate README has the module map and the port list.
 
 pub mod accounted_call;
 pub mod budget;
 pub mod bus;
 pub mod compaction;
-pub mod comparison;
 pub mod driver;
 pub mod engine_markers;
 pub mod estimator;
 pub mod event_sender;
 pub mod event_stream;
 pub mod extensions;
-pub mod glob;
 pub mod goal;
 pub mod hooks;
 pub mod loop_detect;
 pub mod mcp_usage;
-pub(crate) mod mining;
 pub mod plan_graph;
 pub mod ports;
 pub mod receipts;
-pub mod redact;
 pub mod repair;
 pub mod restore;
 pub mod retry;
 pub mod router;
-pub mod rules;
 pub mod scoreboard;
 pub mod search;
-pub mod self_tuning;
 pub mod shell_text;
-pub mod skills;
+pub mod skill_invocation;
 pub(crate) mod speculation;
 pub mod starvation;
 pub mod steering;
@@ -83,22 +77,6 @@ pub use ports::{Clock, LiveService, ToolExecutor};
 pub use repair::{RepairCost, RepairHeadroom, RepairPlan, RepairRefusal, plan_repair};
 pub use retry::{RetryOutcome, RetryPolicy, retry_with_backoff};
 pub use router::{RoleTable, Router};
-pub use rules::{
-    GuardCheck, LoadRulesOptions, ProposedAction, Rule, RuleGuard, RuleSource, evaluate_guards,
-    load_rules,
-};
-// Phase 3 (#714): the rules miner, previously defined but never re-exported —
-// which is most of why it shipped unwired. Mirrors the `skills::` exports below.
-pub use rules::{
-    EvidenceSource, MineConfig, RawObservation, RuleCandidate, RuleEvidence, decide_promotion,
-    mine_candidates,
-};
-pub use skills::{
-    AutoCreateConfig, AutoCreateDecision, AutoCreateSkip, InstallDecision, LoadSkillsOptions,
-    SelectedSkill, SelectionConfig, Skill, SkillCandidate, SkillInstallProposal, SkillMineConfig,
-    SkillObservation, SkillOrigin, SkillSource, decide_auto_creation, load_skills,
-    mine_skill_candidates, render_skills_section, select_skills,
-};
 pub use step::{
     AbortKind, BudgetSnapshot, CANCELLED_REASON, CHECKPOINT_VERSION, CancelToken, Checkpoint,
     CheckpointError, StepOutcome, TurnState,

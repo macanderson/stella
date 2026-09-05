@@ -800,7 +800,7 @@ fn a_plugins_skill_never_displaces_one_the_user_wrote() {
     .expect("install must succeed");
 
     let skills = crate::memory::load_workspace_skills_with_authority(&root, true).skills;
-    let held: Vec<&stella_core::skills::Skill> = skills
+    let held: Vec<&stella_learn::skills::Skill> = skills
         .iter()
         .filter(|skill| skill.name == "house-style")
         .collect();
@@ -957,7 +957,7 @@ fn removing_a_package_names_the_mcp_servers_it_took_away() {
 }
 
 /// **The tier-lookup witness** (#4905). A contributed skill is routed to its
-/// package's install tier by [`stella_core::skills::Skill::contributed_by`],
+/// package's install tier by [`stella_learn::skills::Skill::contributed_by`],
 /// the field the loader stamps — not by matching its `source_path` against the
 /// package directory.
 ///
@@ -994,7 +994,7 @@ fn a_contributed_skills_tier_is_read_off_contributed_by_not_off_its_path() {
     crate::skill_manager::set_enabled(stella_tui::SkillScope::Project, "house-style", false, &root)
         .expect("disable must succeed");
 
-    let elsewhere = |name: &str| stella_core::skills::Skill {
+    let elsewhere = |name: &str| stella_learn::skills::Skill {
         name: name.to_string(),
         description: "how this shop writes code".to_string(),
         domains: Vec::new(),
@@ -1006,7 +1006,7 @@ fn a_contributed_skills_tier_is_read_off_contributed_by_not_off_its_path() {
             .join("SKILL.md")
             .display()
             .to_string(),
-        origin: stella_core::skills::SkillOrigin::Contributed,
+        origin: stella_learn::skills::SkillOrigin::Contributed,
         contributed_by: Some("vera".to_string()),
     };
 

@@ -21,7 +21,7 @@ use stella_context::{ContextStore, NodeKind, NodeRow};
 
 use crate::memory::anchors::{extract_path_anchors, workspace_file_names};
 use crate::query_format::{QueryFormat, Rows};
-use stella_core::rules::{self, PromoteStatus, RuleCandidate};
+use stella_learn::rules::{self, PromoteStatus, RuleCandidate};
 use stella_store::{ContextSurface, MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
 
 mod edit;

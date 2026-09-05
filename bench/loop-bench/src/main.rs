@@ -74,7 +74,7 @@ use loop_bench::{
     Analysis, TrialReport, analyze, below_pass_floor, json_report, print_analysis,
     print_reconciliation, tally,
 };
-use stella_core::comparison::{ArmTrials, ComparisonConfig, Metric, compare};
+use stella_learn::comparison::{ArmTrials, ComparisonConfig, Metric, compare};
 
 /// A small, representative default pool — mixed languages and difficulties, the
 /// same tasks the loop-hardening work was measured against. `--n` takes the
@@ -209,7 +209,7 @@ struct Args {
 
 /// The `--primary` choices, mapped onto the shared metric vocabulary. A
 /// separate enum so clap validates the flag at parse time, and so the harness
-/// only offers metrics that judge the *model*. `stella-core` also has a
+/// only offers metrics that judge the *model*. `stella-learn` also has a
 /// `retries` metric; it is left out here because it counts model-call
 /// flakiness, not how well the model did the task.
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
