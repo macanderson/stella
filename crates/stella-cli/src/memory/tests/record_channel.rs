@@ -66,7 +66,7 @@ async fn open_for_session_carries_volatile_records_into_the_recall_block() {
     assert!(
         active_rules
             .registry()
-            .render(stella_core::records::Channel::Volatile, None)
+            .render(stella_records::records::Channel::Volatile, None)
             .text
             .contains("port 8788"),
         "the planted `may` record must render on the volatile channel before \

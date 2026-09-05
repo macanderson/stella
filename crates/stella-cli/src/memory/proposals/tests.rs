@@ -2,7 +2,7 @@
 
 use super::*;
 use stella_context::ContextStore;
-use stella_core::context_record::{ObservationRecord, ObservationSource};
+use stella_records::context_record::{ObservationRecord, ObservationSource};
 
 fn store() -> (tempfile::TempDir, ContextStore) {
     let dir = tempfile::tempdir().expect("tempdir");

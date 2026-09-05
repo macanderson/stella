@@ -49,15 +49,15 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 use stella_context::{ContextDelta, ContextStore, EpisodeInput, LedgerAppend};
-use stella_core::context_record::{
-    Confidence, EvidencePool, ObservationRecord, PromotionAction, PromotionActor,
-    PromotionEventRecord, ProposalRecord, ProposalScore, RecordProposalKind, RecordProposalStatus,
-    lifecycle::ObservationSource,
-};
 use stella_observatory::respond;
 use stella_protocol::{
     AgentEvent, ContextFrameRef, ErrorClass, ProviderShare, ReasoningEffort, SubAgentPhase,
     SubAgentStatus, TaskItem, TaskStatus, ToolCall, ToolOutput,
+};
+use stella_records::context_record::{
+    Confidence, EvidencePool, ObservationRecord, PromotionAction, PromotionActor,
+    PromotionEventRecord, ProposalRecord, ProposalScore, RecordProposalKind, RecordProposalStatus,
+    lifecycle::ObservationSource,
 };
 use stella_store::{
     AgentUseRow, ContextBlockRow, ExecutionReflectionRow, FileTouchRow, ManifestBlockRow,

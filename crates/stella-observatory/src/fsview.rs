@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use serde_json::{Value, json};
-use stella_core::context_record::SelectionHealthPolicy;
+use stella_records::context_record::SelectionHealthPolicy;
 
 pub use contributions::{ContributedDir, NoContributions, PluginContributions, PluginTier};
 
@@ -244,7 +244,7 @@ fn scan_skills_dir(
 /// (see the dev-dependency comments in `Cargo.toml`) keeps every write-path
 /// crate a dev-only dependency, `ProvenanceGrade` included.
 fn skill_evidence_grades(workspace_root: &Path) -> HashMap<String, &'static str> {
-    use stella_core::context_record::{ProposalRecord, RecordProposalKind};
+    use stella_records::context_record::{ProposalRecord, RecordProposalKind};
 
     let db = workspace_root
         .join(".stella")
@@ -1139,7 +1139,7 @@ tags       = ["testing", "pins"]
     #[test]
     fn skills_names_the_evidence_grade_behind_a_learned_skill() {
         use stella_context::{ContextStore, LedgerAppend};
-        use stella_core::context_record::{
+        use stella_records::context_record::{
             ContextRecordKind, EvidencePool, LIFECYCLE_SCHEMA_VERSION, ObservationRecord,
             ObservationSource, ProposalRecord, ProposalScore, RecordProposalKind,
             RecordProposalStatus, confidence_from_score,
