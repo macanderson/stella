@@ -647,6 +647,12 @@ impl Engine<'_> {
                 // engine, so the bracket records what the calls actually
                 // ran at.
                 effort: spec.effort.or(self.config.effort),
+                // The requester's own word for this child's job, forwarded
+                // untouched. The metering rows say only that some other
+                // participant spent these calls; this bracket is where the
+                // name lives, so a consumer reads what ran rather than a
+                // spelling compiled into it.
+                seat: spec.seat.clone(),
             },
         });
         // The committed tally, owned HERE rather than inside the child turn

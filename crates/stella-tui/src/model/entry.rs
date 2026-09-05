@@ -214,7 +214,7 @@ pub enum TranscriptEntry {
     /// to carry it.
     Model {
         /// What the call was for, as the wire spells the role — `worker`,
-        /// `plan_repair`, `summarization`.
+        /// `summarization`, `reflection`.
         ///
         /// `None` is [`stella_protocol::ModelCallRole::Unknown`]: a stream
         /// recorded before call-role attribution existed. The head then names

@@ -127,17 +127,21 @@ pub const DEFAULT_HOST_MAX_CHILD_TURNS: u32 = 4;
 /// prints one line per child turn beside
 /// [`RefusedCall`](super::RefusedCall) — `wrapper_plugin::spend_lines`, which
 /// is exactly where a user looks to learn what a plugin did on their money
-/// (#3576). The receipt carries the same seat independently under
-/// [`Self::seat`], because that is the `ModelCallRole` the child's model calls
-/// were attributed with — so the audit trail does not depend on this struct
-/// being read.
+/// (#3576). The trace carries the same two words independently, on the
+/// `sub_agent` bracket the child ran under, so the audit trail does not depend
+/// on this struct being read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChildTurnSpend {
+    /// Which plugin spent it.
+    pub plugin: String,
     /// The role intent the plugin named.
     pub role: String,
-    /// The responsibility the host resolved it to, and the attribution the
-    /// child's calls carry in `step_usage`.
-    pub seat: ModelCallRole,
+    /// The seat the host resolved that intent to.
+    ///
+    /// A word, not a case of a core enum. The child's own model calls are
+    /// booked to [`ModelCallRole::Plugin`], which says that some other
+    /// participant spent them; this is the half that says which.
+    pub seat: String,
     /// What the child spent, in USD, as the dispatcher settled it.
     pub cost_usd: f64,
     /// Model calls the child made.
@@ -407,7 +411,20 @@ impl<D: SubAgentDispatcher> ChildTurnPlane for ChildTurns<D> {
         // Resolution first, and before anything is spent: a refusal the plugin
         // could never have bought must not cost it an allowance, which is the
         // order `PointChannel::call` already takes for an undeclared call.
-        let seat = self.resolve(&args.role)?;
+        // The grant answers where the spend is booked, and refuses when the
+        // answer is a seat this plugin may not have.
+        let booked_at = self.resolve(&args.role)?;
+
+        // The tier the manifest named for this intent — the plugin's own word,
+        // and what a receipt records as the seat. `resolve` has already proved
+        // the entry is there; the fallback keeps this total rather than
+        // unwrapping a value a caller supplied (AGENTS.md #5), and falls back
+        // to the intent, which is the plugin's word too.
+        let seat = self
+            .roles
+            .get(&args.role)
+            .cloned()
+            .unwrap_or_else(|| args.role.clone());
 
         // `fetch_add` rather than load-then-store: a plugin pipelining two
         // calls must not be able to spend the last unit twice.
@@ -430,17 +447,19 @@ impl<D: SubAgentDispatcher> ChildTurnPlane for ChildTurns<D> {
         // instruction, and nothing else on this spec is reachable from the
         // wire.
         let spec = SubAgentSpec {
-            role: seat,
+            // Where the grant books it, which for a plugin the host bound
+            // nothing for is `ModelCallRole::Plugin`: one participant's call,
+            // and not this engine's. Which participant, and at which of its
+            // jobs, is the word below — carried as data, because a closed core
+            // vocabulary cannot hold a name a plugin invented.
+            role: booked_at,
             // The plugin's OWN word for this role, passed through untouched.
-            //
-            // `role` above is the receipt label, drawn from a closed enum this
-            // workspace owns; this is the routing key, drawn from the
-            // plugin's manifest and meaningful only to the plugin that wrote
-            // it and the user who assigned a model to it. Sending the name
-            // rather than the enum is what lets a plugin declare a role core
-            // has never heard of — a `reviewer`, a `second-opinion` — and
-            // still have the user's model choice reach it. Nothing below this
-            // line may branch on the contents.
+            // It is both the routing key — the user assigns a model to this
+            // name — and what the child's `sub_agent` bracket records, so a
+            // plugin can declare a role core has never heard of (a
+            // `reviewer`, a `second-opinion`) and have both the user's model
+            // choice and the trace reach it. Nothing below this line may
+            // branch on the contents.
             seat: Some(args.role.clone()),
             turn_instance: self.slot_for(taken),
             budget_usd: self.budget_usd,
@@ -468,15 +487,16 @@ impl<D: SubAgentDispatcher> ChildTurnPlane for ChildTurns<D> {
         let completed = matches!(outcome, SubAgentOutcome::Completed(_));
         let report = outcome.summary().to_string();
         self.record(ChildTurnSpend {
+            plugin: self.plugin.clone(),
             role: args.role.clone(),
-            seat,
+            seat: seat.clone(),
             cost_usd: outcome.cost_usd(),
             steps: outcome.report().map_or(0, |report| report.steps),
             completed,
         });
         Ok(ChildTurnResult {
             role: args.role,
-            seat: seat_token(seat),
+            seat,
             report,
             completed,
         })
@@ -496,22 +516,6 @@ impl<P: ChildTurnPlane + ?Sized> ChildTurnPlane for std::sync::Arc<P> {
     async fn child_turn(&self, args: ChildTurnArgs) -> Result<ChildTurnResult, HostCallFailure> {
         (**self).child_turn(args).await
     }
-}
-
-/// A seat's wire token, as `step_usage` records it.
-///
-/// Through `serde_json` rather than a second hand-written table, for the
-/// reason the staged pipeline's `roster::responsibility_token` gave
-/// (`crates/stella-pipeline`, deleted in #3865): the token a plugin
-/// reads must be the token the telemetry carries, and two spellings of that is
-/// how the last one drifted. The fallback is unreachable for a fieldless enum
-/// and exists only to keep this total (AGENTS.md #5 — no `expect` on a value a
-/// caller supplied).
-fn seat_token(seat: ModelCallRole) -> String {
-    serde_json::to_value(seat)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_string))
-        .unwrap_or_else(|| format!("{seat:?}"))
 }
 
 #[cfg(test)]
@@ -601,7 +605,12 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(specs.len(), 1, "exactly one call, and the host made it");
-        assert_eq!(specs[0].role, ModelCallRole::Research);
+        assert_eq!(specs[0].role, ModelCallRole::Plugin);
+        assert_eq!(
+            specs[0].seat.as_deref(),
+            Some("reviewer"),
+            "the plugin's own word reaches the child, and the bracket records it"
+        );
         assert!(
             !specs[0].write_access,
             "a plugin's child turn is read-only, enforced at execution"
@@ -609,8 +618,33 @@ mod tests {
 
         let spends = plane.spends();
         assert_eq!(spends.len(), 1);
-        assert_eq!(spends[0].seat, ModelCallRole::Research);
+        assert_eq!(spends[0].plugin, "grader");
+        assert_eq!(spends[0].role, "reviewer");
+        assert_eq!(spends[0].seat, "research");
         assert!((plane.spent_usd() - 0.01).abs() < f64::EPSILON);
+    }
+
+    /// **The seat witness.** A plugin declaring a job this workspace has no
+    /// word for runs, and its receipt names the plugin and that job. It fails
+    /// against a receipt that can only hold a case of `ModelCallRole`, which
+    /// has no case for a word a plugin invented.
+    #[tokio::test]
+    async fn a_receipt_names_the_plugin_and_the_seat_it_used() {
+        let plane = ChildTurns::declare(
+            &manifest("[roles.reviewer]\ntier = \"second-opinion\"", ""),
+            Recording::default(),
+        );
+
+        let result = plane
+            .child_turn(ask("reviewer"))
+            .await
+            .expect("core holds no list of the words a plugin may use");
+        assert_eq!(result.seat, "second-opinion");
+
+        let spends = plane.spends();
+        assert_eq!(spends[0].plugin, "grader");
+        assert_eq!(spends[0].role, "reviewer");
+        assert_eq!(spends[0].seat, "second-opinion");
     }
 
     /// `admissible`'s rule for `BeforeTurnResponse::role`, restated on the
@@ -651,9 +685,8 @@ mod tests {
             .expect("core holds no list of the words a plugin may use");
         assert_eq!(result.role, "reviewer");
         assert_eq!(
-            result.seat, "research",
-            "this manifest declares no [oracle], so the grant books it at the seat a read-only \
-             sub-agent call uses"
+            result.seat, "reviewer",
+            "the tier the manifest named, echoed back as the plugin's own word"
         );
 
         let specs = dispatcher
@@ -713,7 +746,7 @@ mod tests {
             &manifest("[roles.grader]\ntier = \"verifier\"", ""),
             Recording::default(),
         )
-        .with_seat("verifier", ModelCallRole::WitnessAuthor);
+        .with_seat("verifier", ModelCallRole::Verdict);
         let failure = plane
             .child_turn(ask("grader"))
             .await
@@ -734,7 +767,10 @@ mod tests {
         .expect("the manifest loads");
         let bound = ChildTurns::declare(&judging, Recording::default());
         let result = bound.child_turn(ask("grader")).await.expect("now served");
-        assert_eq!(result.seat, "verdict");
+        assert_eq!(
+            result.seat, "verifier",
+            "the tier the manifest named, echoed back as the plugin's own word"
+        );
     }
 
     /// The manifest's number is an ask; the ceiling is the host's.

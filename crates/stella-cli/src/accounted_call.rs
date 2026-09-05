@@ -125,15 +125,10 @@ fn standalone_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffor
         // catch-all so that adding a standalone role is a decision someone
         // makes on purpose.
         ModelCallRole::Unknown
-        | ModelCallRole::Triage
-        | ModelCallRole::Research
-        | ModelCallRole::Plan
-        | ModelCallRole::PlanRepair
-        | ModelCallRole::WitnessAuthor
-        | ModelCallRole::WitnessRepair
         | ModelCallRole::Worker
         | ModelCallRole::DistressGuidance
         | ModelCallRole::Verdict
+        | ModelCallRole::Plugin
         | ModelCallRole::Summarization => (None, None),
     }
 }
@@ -638,7 +633,7 @@ mod tests {
     /// arm exists so adding one is a decision, not so it changes behaviour.
     #[test]
     fn a_role_outside_this_chokepoint_is_forwarded_unchanged() {
-        assert_eq!(role_output_cap(ModelCallRole::Triage, None), None);
+        assert_eq!(role_output_cap(ModelCallRole::Plugin, None), None);
         assert_eq!(role_output_cap(ModelCallRole::Worker, None), None);
     }
 

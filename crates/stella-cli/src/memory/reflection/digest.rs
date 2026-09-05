@@ -957,7 +957,8 @@ fn human_ms(ms: u64) -> String {
     format!("{}m{:02}s", secs / 60, secs % 60)
 }
 
-/// The wire token for a call role (`plan_repair`, not `PlanRepair`), so a
+/// The wire token for a call role (`domain_inference`, not `DomainInference`),
+/// so a
 /// reflection's account of a turn greps against `stella-events.jsonl` — which
 /// is the record anyone checking the claim will open.
 fn role_token(role: ModelCallRole) -> String {

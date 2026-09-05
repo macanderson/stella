@@ -401,9 +401,13 @@ impl<W> std::fmt::Debug for CandidateFanouts<W> {
 fn default_seats() -> BTreeMap<String, ModelCallRole> {
     [
         ("worker", ModelCallRole::Worker),
-        ("triage", ModelCallRole::Triage),
-        ("research", ModelCallRole::Research),
-        ("plan", ModelCallRole::Plan),
+        // Three tiers a manifest still names. Each is bound to a plugin's
+        // own seat, so naming one is answered `Forbidden` — "a candidate is
+        // the work" — and not `Unavailable`, which sends a plugin author to
+        // their host operator over a rule no operator can lift.
+        ("triage", ModelCallRole::Plugin),
+        ("research", ModelCallRole::Plugin),
+        ("plan", ModelCallRole::Plugin),
     ]
     .into_iter()
     .map(|(tier, seat)| (tier.to_string(), seat))

@@ -40,8 +40,9 @@ pub enum Role {
     /// `Pipeline::can_author_independent_witness` enforces it.
     ///
     /// This is the *only* slot for a non-worker capable model. Call sites name
-    /// the job (`ModelCallRole::WitnessAuthor`, `::Verdict`), never a second
-    /// model identity: there is no separate "witness model" or "verifier model".
+    /// the job (`ModelCallRole::Verdict`, `ModelCallRole::Plugin`), never a
+    /// second model identity: there is no separate "witness model" or
+    /// "verifier model".
     ///
     /// Aliased: this role shipped on the wire as `judge`, and it is persisted
     /// in settings and role pins as well as in recorded streams. A bare rename
