@@ -4,9 +4,10 @@
 //! here can lean on shipped behaviour to say what the rules are. The tests
 //! are the rules.
 //!
-//! Four run as properties, over every claim shape the words allow. One pins
-//! the fold to the single-arbiter rule `again` ships today. Two more drive
-//! the real dispatch loop.
+//! Rules 1 to 4 run as properties, over every claim shape the words allow.
+//! Rule 5 runs as a table, because a sum reads better as one. One property
+//! pins the fold to the single-arbiter rule `again` ships today, and one
+//! test drives the real dispatch loop against a plugin that dies in it.
 //!
 //! Every test names a type that `main` does not have. So the whole file
 //! fails to build there. The law is absent before the change, and that is
