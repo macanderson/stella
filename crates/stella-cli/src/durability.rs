@@ -405,7 +405,8 @@ impl SessionDurability {
     /// The terminal frame this record's last dead attempt left, or `None`
     /// when it has none — the read side of [`Self::record_terminal_frame`].
     pub fn terminal_frame(&self) -> Option<String> {
-        stella_store::lane_frame::read(&self.journal()?)
+        let journal = self.journal()?;
+        stella_store::lane_frame::read(&journal)
     }
 
     /// Retract the terminal frame: this lane finished, so it has no
