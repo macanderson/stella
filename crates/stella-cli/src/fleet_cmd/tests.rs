@@ -961,6 +961,64 @@ fn a_fleet_attempt_reflects_before_its_spend_is_read() {
     );
 }
 
+/// A fleet worker must seed and apply token-drift calibration. Every other
+/// door onto `Engine` does this: `agent.rs`, `agent/goal.rs`,
+/// `agent/resume.rs`, `command_deck.rs`, `subsession.rs`. A worker that
+/// skips it starts from an uncalibrated estimate while its siblings start
+/// corrected.
+///
+/// This test reads the source instead of driving a real attempt, for the
+/// same reason `a_fleet_attempt_reflects_before_its_spend_is_read` does: a
+/// real attempt needs a live provider, a git worktree, a store, and a
+/// renderer task, just to watch one estimator call. The check is whether
+/// the seeded map reaches the engine that runs the attempt, not whether
+/// `seed_calibration` is called somewhere in the file.
+///
+/// Before this fix, `fleet_cmd.rs` never called `seed_calibration` in
+/// shipping code. Its `Engine::with_sleeper` construction never chained
+/// `.with_calibration(...)` either. This test fails on both counts against
+/// that tree.
+#[test]
+fn a_fleet_worker_seeds_and_applies_token_drift_calibration() {
+    const FLEET: &str = include_str!("../fleet_cmd.rs");
+
+    let seed = FLEET
+        .find("let calibration = agent::seed_calibration(&store, &cfg);")
+        .expect(
+            "run_task must seed calibration from this attempt's own store and \
+             resolved config, the same call every other door onto Engine makes",
+        );
+
+    // Anchored on the exact `Engine::with_sleeper` construction `run_task`
+    // builds inside its raced block, not a copy-pasted reference elsewhere in
+    // the file — a rename of this call site breaks the compile as well as
+    // this find.
+    let engine_ctor = FLEET
+        .find("Engine::with_sleeper(&*provider, &scoped, config, &TokioSleeper)")
+        .expect("run_task must still build its engine through Engine::with_sleeper");
+    assert!(
+        seed < engine_ctor,
+        "calibration must be seeded before the engine that consumes it is built"
+    );
+
+    // The chain this construction opens runs to its first `;` — `with_hooks`
+    // reassigns `engine` in a separate statement below, so bounding the
+    // search there is what keeps this from passing on a `.with_calibration(...)`
+    // written anywhere later in the function instead of on this construction.
+    let chain_end = engine_ctor
+        + FLEET[engine_ctor..]
+            .find(';')
+            .expect("the Engine::with_sleeper statement terminates");
+    let chain = &FLEET[engine_ctor..chain_end];
+    assert!(
+        chain.contains(".with_calibration(&calibration)"),
+        "run_task's own Engine::with_sleeper(...) construction must chain \
+         .with_calibration(&calibration) — every other door onto Engine does, \
+         and a fleet worker hitting the same providers needs the same \
+         output-ceiling correction. Chain was:\n{chain}"
+    );
+}
+
 /// Answers each reflection call with a lesson of its own.
 ///
 /// Two attempts saying the identical thing would derive the identical

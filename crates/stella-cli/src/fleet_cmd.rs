@@ -1125,9 +1125,8 @@ async fn run_task(
             .attach_turn_controls(stella_core::ports::TurnControls::none().with_gate(gate.clone()));
         let raced: Raced<Result<TurnOutcome, String>> = {
             let hook_runner = HostHookRunner;
-            // Above the operator's policy layer, the position
-            // `skill_grant`'s module docs specify: a grant selects within
-            // the surface a worker already has and can never widen it.
+            // Above the operator's policy layer, per `skill_grant`'s module
+            // docs: a grant selects within existing surface, never widens it.
             let scoped =
                 stella_tools::skill_plane::SkillScopedTools::new(&permitted, skill_plane.clone());
             let mut config = attempt_durability.engine_config(&cfg);
@@ -1135,15 +1134,16 @@ async fn run_task(
                 // The skill's `effort:` override, for this attempt.
                 config.effort = Some(effort);
             }
+            let calibration = agent::seed_calibration(&store, &cfg);
             let mut engine = Engine::with_sleeper(&*provider, &scoped, config, &TokioSleeper)
-                .with_gate(gate.as_ref());
+                .with_gate(gate.as_ref())
+                .with_calibration(&calibration);
             if let Some(hooks) = &cfg.hooks {
                 engine = engine.with_hooks(hooks, &hook_runner);
             }
-            // A fleet worker owns its lane's stage vocabulary; the engine
-            // emits no `Stage` of its own (#3416). The opener is here; the
-            // closer rides `worker_event_sender` below, ahead of the
-            // engine's `TurnComplete` (#3428).
+            // A fleet worker owns its lane's stage vocabulary — the opener is
+            // here; the closer rides `worker_event_sender` below, ahead of
+            // the engine's `TurnComplete` (#3416, #3428).
             let _ = tx.send(AgentEvent::Stage {
                 name: stella_protocol::StageKind::Execute.into(),
                 scope: stella_protocol::StageScope::Run,
