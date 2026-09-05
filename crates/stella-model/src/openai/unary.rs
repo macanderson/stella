@@ -180,7 +180,7 @@ impl OpenAiProvider {
 
         let mut text = String::new();
         let mut tool_calls = Vec::new();
-        for item in parsed.output {
+        for (index, item) in parsed.output.into_iter().enumerate() {
             match item {
                 OpenAiUnaryItem::Message { content } => {
                     for part in content {
@@ -193,11 +193,30 @@ impl OpenAiProvider {
                     call_id,
                     name,
                     arguments,
-                } => tool_calls.push(ToolCall {
-                    call_id,
-                    name,
-                    input: stream::tool_call_input(&arguments),
-                }),
+                } => {
+                    // The same refusal the streaming path makes, so the two
+                    // delivery paths cannot drift on it. Every field here
+                    // defaults, so an item that leaves out the id or the tool
+                    // name parses. A call committed with an empty id can never
+                    // be matched to its result.
+                    let mut missing = Vec::new();
+                    if call_id.is_empty() {
+                        missing.push("call_id");
+                    }
+                    if name.is_empty() {
+                        missing.push("name");
+                    }
+                    if !missing.is_empty() {
+                        return Err(crate::http::malformed_tool_call_error(
+                            "OpenAI", index, &name, &missing,
+                        ));
+                    }
+                    tool_calls.push(ToolCall {
+                        call_id,
+                        name,
+                        input: stream::tool_call_input(&arguments),
+                    });
+                }
                 OpenAiUnaryItem::Other => {}
             }
         }

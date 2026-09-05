@@ -682,7 +682,7 @@ async fn a_fleet_worker_receives_skills_records_and_todays_date() {
     assert!(
         active_rules
             .registry()
-            .render(stella_core::records::Channel::Volatile, None)
+            .render(stella_records::records::Channel::Volatile, None)
             .text
             .contains("Tuesday window"),
         "the planted `may` record must render on the volatile channel before \

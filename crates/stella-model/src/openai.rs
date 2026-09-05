@@ -407,6 +407,14 @@ enum OpenAiStreamEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum OpenAiOutputItem {
     FunctionCall {
+        /// Defaulted so a frame that leaves it out still parses. Serde reads
+        /// the `type` tag first. It then fails the whole event when the
+        /// matched case is missing a field. That failure lands in the arm
+        /// that skips an event type this adapter does not model, and the
+        /// call goes with it. Later argument deltas find no accumulator, and
+        /// the turn ends `Ok` with no tool calls. Assembly in `stream`
+        /// refuses an empty id instead, so the loss is named.
+        #[serde(default)]
         call_id: String,
         #[serde(default)]
         name: String,
@@ -721,5 +729,7 @@ impl OpenAiProvider {
     }
 }
 
+#[cfg(test)]
+mod malformed_tool_call;
 #[cfg(test)]
 mod tests;

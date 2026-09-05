@@ -44,7 +44,7 @@
 //! ordering dependency and not an invariant this module can enforce alone.
 
 use stella_context::{AppendOutcome, ContextStore, LedgerAppend};
-use stella_core::context_record::{
+use stella_records::context_record::{
     ContextInfluenceStage, ContextOutcomeRelation, ContextRecordKind, ContextUse,
     ContextUseEvaluation, ContextUseFeedback, ContextUseKind, LIFECYCLE_SCHEMA_VERSION,
     SelectionHealth, SelectionHealthPolicy, fold_selection_health, record_hash,
@@ -79,7 +79,7 @@ const EXTRACTION_BATCH: u32 = 64;
 /// their own remove anything. They still drive the shipped quarantine loop
 /// exactly as before — that path is untouched.
 const METHOD_AGENT_SELF_REPORT: &str =
-    stella_core::context_record::ContextEvaluationMethod::AGENT_SELF_REPORT;
+    stella_records::context_record::ContextEvaluationMethod::AGENT_SELF_REPORT;
 
 /// The task identity for one execution's uses.
 ///
@@ -280,11 +280,11 @@ fn feedback_for(
         influence_stage: ContextInfluenceStage::FinalResponse,
         outcome_relation: ContextOutcomeRelation::Unknown,
         observable_effect_refs: Vec::new(),
-        evaluation_method: stella_core::context_record::ContextEvaluationMethod::new(
+        evaluation_method: stella_records::context_record::ContextEvaluationMethod::new(
             METHOD_AGENT_SELF_REPORT,
         )
         .ok(),
-        attribution_confidence: stella_core::context_record::Confidence::new(
+        attribution_confidence: stella_records::context_record::Confidence::new(
             CITATION_ATTRIBUTION_CONFIDENCE,
         )
         .expect("50 is within 0..=100"),
@@ -306,7 +306,7 @@ const CITATION_ATTRIBUTION_CONFIDENCE: u16 = 50;
 /// new. `None` on any failure.
 ///
 /// The id is the record's own canonical hash (ADR 0004), truncated the same
-/// way [`stella_core::context_record::ObservationRecord`] truncates its own —
+/// way [`stella_records::context_record::ObservationRecord`] truncates its own —
 /// so two runs of identical work derive the same id and the second is a
 /// replay, not a duplicate.
 fn append_use(context: &ContextStore, record: &ContextUse) -> Option<(String, AppendOutcome)> {
