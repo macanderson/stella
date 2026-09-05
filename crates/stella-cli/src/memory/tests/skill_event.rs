@@ -240,6 +240,7 @@ async fn an_auto_selected_directive_skill_narrows_the_turn_and_denies_a_disallow
         Vec::new(),
         dir.path().to_path_buf(),
         ToolPolicy::from_switches(Vec::new()),
+        stella_core::steering::tools::ToolAdvertisement::Full,
         crate::agent::tool_stack::session_gate(dir.path()),
         Principal::User,
     );

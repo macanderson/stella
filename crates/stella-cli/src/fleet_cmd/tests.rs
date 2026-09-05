@@ -629,6 +629,7 @@ fn steered_config(workspace_root: PathBuf) -> Config {
         plan_mode: false,
         minimal_prompt: false,
         model_pinned_by_flag: false,
+        tool_advertisement: Default::default(),
         durability: Default::default(),
         output_ceilings: Default::default(),
         create_worktrees: Default::default(),

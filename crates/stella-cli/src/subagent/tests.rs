@@ -346,6 +346,7 @@ async fn the_production_tool_stack_forwards_sub_agent_spend() {
         Vec::new(),
         std::path::PathBuf::from("."),
         Default::default(),
+        stella_core::steering::tools::ToolAdvertisement::Full,
         crate::agent::tool_stack::session_gate(std::path::Path::new(".")),
         stella_core::ports::Principal::User,
     );
@@ -405,6 +406,7 @@ async fn the_production_tool_stack_forwards_wait_requests() {
         Vec::new(),
         std::path::PathBuf::from("."),
         Default::default(),
+        stella_core::steering::tools::ToolAdvertisement::Full,
         crate::agent::tool_stack::session_gate(std::path::Path::new(".")),
         stella_core::ports::Principal::User,
     );
@@ -440,6 +442,7 @@ async fn the_production_tool_stack_forwards_parallel_safe_names() {
         Vec::new(),
         std::path::PathBuf::from("."),
         Default::default(),
+        stella_core::steering::tools::ToolAdvertisement::Full,
         crate::agent::tool_stack::session_gate(std::path::Path::new(".")),
         stella_core::ports::Principal::User,
     );
@@ -491,6 +494,7 @@ async fn the_production_tool_stack_forwards_live_services() {
         Vec::new(),
         std::path::PathBuf::from("."),
         Default::default(),
+        stella_core::steering::tools::ToolAdvertisement::Full,
         crate::agent::tool_stack::session_gate(std::path::Path::new(".")),
         stella_core::ports::Principal::User,
     );

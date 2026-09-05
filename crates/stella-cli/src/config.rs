@@ -382,6 +382,15 @@ pub struct Config {
     /// (`crate::agent::PolicyToolSet`), so it covers built-ins, MCP tools,
     /// and custom tools by name.
     pub tool_policy: stella_tools::policy::ToolPolicy,
+    /// How much of the tool surface this session advertises, resolved once
+    /// here like [`Self::tool_policy`] beside it, with the steering master
+    /// switch already folded in.
+    ///
+    /// `Full` — the shipped default — advertises every schema the session's
+    /// tool stack resolves, which is what makes the lever's off state
+    /// byte-identical rather than merely equivalent: no layer is composed at
+    /// all (`crate::agent::tool_stack`).
+    pub tool_advertisement: stella_core::steering::tools::ToolAdvertisement,
     /// The workspace probe skips gitignored paths (settings
     /// `ignore_gitignore`). Default **on**; inert outside a git repository.
     pub ignore_gitignore: bool,
@@ -606,6 +615,7 @@ impl Config {
         // `Settings::load`, so this is a straight read — no second place that
         // could forget to re-apply authority.
         cfg.tool_policy = settings.tool_policy();
+        cfg.tool_advertisement = settings.tool_advertisement();
         cfg.ignore_gitignore = settings.ignore_gitignore();
         cfg.reward_policy = settings.reward_policy()?;
         cfg.plan_review = settings.plan_review()?;
@@ -766,6 +776,7 @@ impl Config {
                     engine_settings: None,
                     engine_settings_trusted: false,
                     tool_policy: Default::default(),
+                    tool_advertisement: Default::default(),
                     ignore_gitignore: true,
                     reward_policy: crate::reward::RewardPolicy::default(),
                     plan_review: crate::settings::PlanReviewPolicy::default(),
@@ -990,6 +1001,7 @@ impl Config {
             engine_settings: None,
             engine_settings_trusted: false,
             tool_policy: Default::default(),
+            tool_advertisement: Default::default(),
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
             plan_review: crate::settings::PlanReviewPolicy::default(),
@@ -1172,6 +1184,7 @@ impl Config {
             engine_settings: None,
             engine_settings_trusted: false,
             tool_policy: Default::default(),
+            tool_advertisement: Default::default(),
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
             plan_review: crate::settings::PlanReviewPolicy::default(),

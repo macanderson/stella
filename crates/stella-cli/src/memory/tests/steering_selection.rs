@@ -738,9 +738,12 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
             dropped(SteeringSource::Memory, "nod_evicted"),
             dropped(SteeringSource::Skill, "seat-loser"),
             dropped(SteeringSource::Skill, "section-cut"),
-            // Nothing on this path produces one; the silence is the absence
-            // of a producer, not a withheld report.
+            // `crate::tool_lean` produces these: the session's tool
+            // allowance, and what it could not afford.
             dropped(SteeringSource::Tool, "bash"),
+            // The plugin arm still has none, and its silence is the absence
+            // of a producer rather than a withheld report.
+            dropped(SteeringSource::Plugin, "stella-research"),
         ],
     };
 
@@ -749,7 +752,7 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
 
     assert_eq!(
         lines.len(),
-        4,
+        5,
         "one summary for the memory drops, then one line per remaining \
          reportable source: {lines:?}"
     );
@@ -782,7 +785,14 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
          knob that would not have saved it: {joined}"
     );
     assert!(
-        !joined.contains("bash"),
+        lines[4].contains("bash")
+            && lines[4].contains("still runs if it is called")
+            && lines[4].contains("context.steering.tools.max_tokens"),
+        "a tool the allowance could not afford names itself, says it is still \
+         callable, and names the knob that would have advertised it: {joined}"
+    );
+    assert!(
+        !joined.contains("stella-research"),
         "no source invents a line it has no producer for: {joined}"
     );
 }

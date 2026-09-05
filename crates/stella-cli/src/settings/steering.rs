@@ -54,6 +54,36 @@ impl Settings {
             .as_ref()
             .is_none_or(|context| context.steering.enabled)
     }
+
+    /// How much of the tool set this session sends.
+    ///
+    /// [`Self::steering_enabled`] is asked first and can settle it alone.
+    /// With the plane off, no tool may be held back. Else the switch would
+    /// take a tool away, not just a hint.
+    ///
+    /// `STELLA_TOOLS_LEAN` beats the settings chain, as
+    /// `STELLA_CONTEXT_STEERING` does. A bench arm is picked by the harness
+    /// that starts the run, not by an edit to the tree it measures.
+    pub fn tool_advertisement(&self) -> stella_core::steering::tools::ToolAdvertisement {
+        use stella_core::steering::tools::{ToolAdvertisement, ToolBudget};
+
+        if !self.steering_enabled() {
+            return ToolAdvertisement::Full;
+        }
+        let tools = self
+            .context
+            .as_ref()
+            .map(|context| context.steering.tools.clone())
+            .unwrap_or_default();
+        let lean = env_toggle("STELLA_TOOLS_LEAN").unwrap_or(tools.lean);
+        if !lean {
+            return ToolAdvertisement::Full;
+        }
+        ToolAdvertisement::Lean(ToolBudget {
+            max_tokens: tools.max_tokens,
+            mcp_max_tokens: tools.mcp_max_tokens,
+        })
+    }
 }
 
 /// The tri-state reading of an environment variable: unset, explicitly on, or
@@ -68,4 +98,51 @@ impl Settings {
 /// allowlist.
 pub(crate) fn env_toggle(name: &str) -> Option<bool> {
     std::env::var_os(name).map(|v| truthy_flag(&v))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stella_core::steering::tools::ToolAdvertisement;
+
+    fn from_json(json: &str) -> Settings {
+        serde_json::from_str(json).expect("settings")
+    }
+
+    /// The shipped default sends every tool. A workspace that says nothing
+    /// about the lever must behave as it did before the lever existed.
+    #[test]
+    fn a_workspace_that_says_nothing_sends_every_tool() {
+        assert_eq!(
+            from_json("{}").tool_advertisement(),
+            ToolAdvertisement::Full
+        );
+    }
+
+    /// **Witness.** Turning the lever on hands back a budget, and the budget
+    /// is the one the settings name.
+    #[test]
+    fn the_lever_carries_the_budget_the_settings_name() {
+        let settings = from_json(
+            r#"{"context":{"steering":{"tools":{"lean":true,"max_tokens":900,
+               "mcp_max_tokens":100}}}}"#,
+        );
+        match settings.tool_advertisement() {
+            ToolAdvertisement::Lean(budget) => {
+                assert_eq!(budget.max_tokens, 900);
+                assert_eq!(budget.mcp_max_tokens, 100);
+            }
+            other => panic!("the lever is on, so a budget is owed: {other:?}"),
+        }
+    }
+
+    /// The master switch settles it. With the plane off, no tool may be held
+    /// back, or turning steering off would take a tool away rather than a
+    /// hint.
+    #[test]
+    fn the_plane_being_off_sends_every_tool_even_with_the_lever_on() {
+        let settings =
+            from_json(r#"{"context":{"steering":{"enabled":false,"tools":{"lean":true}}}}"#);
+        assert_eq!(settings.tool_advertisement(), ToolAdvertisement::Full);
+    }
 }

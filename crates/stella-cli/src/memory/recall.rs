@@ -1268,9 +1268,13 @@ fn record_section_text(rendered: RenderedChannel) -> Option<String> {
 /// advice once per evicted memory — with an internal id a user cannot act on
 /// — is the noise that line exists to replace.
 ///
-/// `None` for a source this path never produces — a tool schema or a
-/// plugin-contributed candidate. Silence there is the absence of a producer,
-/// not a withheld report.
+/// A tool drop names the tool and the allowance that refused it. The remedy
+/// is the allowance rather than the tool: withholding one is never a
+/// capability change (`crate::tool_lean`), so the advice is to widen what the
+/// session may spend on schemas, or to turn the lever off.
+///
+/// `None` for a plugin-contributed candidate, which nothing produces yet.
+/// Silence there is the absence of a producer, not a withheld report.
 fn drop_message(
     drop: &stella_core::steering::DroppedCandidate,
     still_selected: bool,
@@ -1292,7 +1296,13 @@ fn drop_message(
             "a skill matching this turn did not fit the skill budget: {handle} — raise \
              `skills.max_skills`"
         )),
-        SteeringSource::Tool | SteeringSource::Plugin => None,
+        SteeringSource::Tool => Some(format!(
+            "a tool did not fit this session's tool allowance and was not advertised: \
+             {handle} — it still runs if it is called; raise \
+             `context.steering.tools.max_tokens`, or set `context.steering.tools.lean` \
+             false to advertise every tool"
+        )),
+        SteeringSource::Plugin => None,
     }
 }
 
@@ -1320,7 +1330,7 @@ fn drop_message(
 /// not, and quarantine in particular wants its own vocabulary rather than a
 /// line advising a bigger retrieval budget. The provider's spend on both is
 /// already accounted for by the usage report captured above the filters.
-pub(super) fn report_steering_drops(
+pub(crate) fn report_steering_drops(
     set: &stella_core::steering::SteeringSet,
     memory_budget: u32,
     mut report: impl FnMut(String),

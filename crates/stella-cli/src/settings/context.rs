@@ -50,11 +50,49 @@ pub struct ContextSettings {
 #[serde(default)]
 pub struct SteeringSettings {
     pub enabled: bool,
+    pub tools: SteeringToolSettings,
 }
 
 impl Default for SteeringSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            tools: SteeringToolSettings::default(),
+        }
+    }
+}
+
+/// What a session may spend advertising tools.
+///
+/// Ships **off**, which is the opposite of the switch above and for the
+/// opposite reason: the plane's other three sources were already selecting
+/// when it absorbed them, and tool advertisement was not. Turning this on
+/// changes what the model is shown, so it is a lever somebody chooses rather
+/// than one they inherit. A bench arm comparing the two settings is what
+/// should decide the default.
+///
+/// A withheld tool still runs when it is called
+/// (`crate::tool_lean`), so a tight allowance costs
+/// the model a description and never a capability.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SteeringToolSettings {
+    /// `false` (default) — advertise every tool the session resolves.
+    pub lean: bool,
+    /// The whole tool allowance, in estimated tokens.
+    pub max_tokens: u64,
+    /// The share of it every connected MCP server may take between them, so
+    /// one chatty server cannot spend an allowance the built-ins need.
+    pub mcp_max_tokens: u64,
+}
+
+impl Default for SteeringToolSettings {
+    fn default() -> Self {
+        Self {
+            lean: false,
+            max_tokens: 6_000,
+            mcp_max_tokens: 2_000,
+        }
     }
 }
 
