@@ -37,30 +37,6 @@
 //! task, with no path anywhere between them. So overlap falls back to
 //! [`super::select::shared_triggers`] rather than growing a second matcher, and
 //! the conflict is judged by the code that decides whether both records fire.
-//!
-//! # A path scope crosses a trigger scope only where one turn proves it
-//!
-//! Selection is disjunctive, so a record scoped `paths = ["crates/**"]` and a
-//! record scoped `tasks = ["refactor"]` both fire on a turn that edits a file
-//! under `crates/` and says "refactor". A turn like that can be written for any
-//! glob and any trigger, so reporting on that basis pairs every path-scoped
-//! record with every trigger-scoped one. A conflict suspends the more
-//! restrictive record's guard (`super::registry`'s `resolve_guard`), so such a
-//! rule would disarm guards across a whole repository on a possibility. The
-//! "a false positive is cheap" argument above was made about glob containment,
-//! where a spurious pair is rare, and it does not carry here.
-//!
-//! `crossing_scopes` reports the narrow case instead: a trigger term that is
-//! itself a path the other record's globs match. Those two records collide on
-//! the turn that edits that file — a turn anybody can name, rather than one the
-//! checker invented. A keyword `deny.toml` beside a record scoped
-//! `paths = ["deny.toml"]` is what this catches; `refactor` beside
-//! `crates/**` is what it stays silent on, and
-//! `a_path_scope_and_a_task_scope_stay_silent` pins that silence. The question
-//! goes to `stella_core::glob::match_glob`, the matcher
-//! [`super::select::applies_this_turn`] uses for the path dimension, so the
-//! answer agrees with the code that decides whether both records fire. Ratified
-//! task names are bare verbs, so this arm fires on keywords in practice.
 
 use super::super::ingest::gate::atomicity_validation;
 use super::super::ingest::record::{AppliesTo, EnforcementMode, Record};
@@ -464,6 +440,24 @@ fn overlapping_triggers(left: &AppliesTo, right: &AppliesTo) -> Option<String> {
 /// The one crossing of a path scope against a trigger scope this checker
 /// reports: a trigger term that is itself a path the other record's globs
 /// match, so the turn that edits that file selects both records.
+///
+/// Selection is disjunctive, so a record scoped `paths = ["crates/**"]` and a
+/// record scoped `tasks = ["refactor"]` also both fire on a turn that edits a
+/// file under `crates/` and says "refactor". A turn like that can be written
+/// for any glob and any trigger, so reporting on that basis pairs every
+/// path-scoped record with every trigger-scoped one — and a conflict suspends
+/// the more restrictive record's guard (`super::registry`'s `resolve_guard`),
+/// which would disarm guards across a whole repository on a possibility. The
+/// module header's "a false positive is cheap" argument was made about glob
+/// containment, where a spurious pair is rare, and it does not carry here;
+/// `a_path_scope_and_a_task_scope_stay_silent` pins the resulting silence.
+/// `docs/spec/adaptive-context/context-pr.md` §12 states the same rule.
+///
+/// The match goes to `stella_core::glob::match_glob`, the matcher
+/// [`super::select::applies_this_turn`] uses for the path dimension, so the
+/// answer agrees with the code that decides whether both records fire.
+/// Ratified task names are bare verbs, so this arm fires on keywords in
+/// practice.
 ///
 /// Asked in both directions, because either record can be the one carrying the
 /// trigger. A term is named once, against the first glob that matches it — a
