@@ -33,15 +33,16 @@
 //!
 //! Paths are half a scope. A record can also be scoped by `tasks` and
 //! `keywords`, and two records scoped that way collide on every turn that names
-//! a trigger they share — a `hard` record and an advisory one over the same
-//! task, with no path anywhere between them. So overlap falls back to
-//! [`super::select::shared_triggers`] rather than growing a second matcher, and
-//! the conflict is judged by the code that decides whether both records fire.
+//! a trigger they share, so overlap falls back to
+//! [`super::select::shared_triggers`] rather than growing a second matcher. A
+//! path scope crosses a trigger scope only where one turn proves it: that is
+//! `crossing_scopes`, whose doc comment carries the rule and why it is narrow.
 
 use super::super::ingest::gate::atomicity_validation;
 use super::super::ingest::record::{AppliesTo, EnforcementMode, Record};
 use super::select::shared_triggers;
 use super::{KNOWN_TASKS, LoadedRecord, RecordFinding, Trust};
+use stella_core::glob::match_glob;
 use stella_core::redact::redact_secrets;
 
 /// Glob metacharacters that are **literals** in this engine's matcher. A guard
@@ -372,10 +373,11 @@ fn restrictiveness(mode: EnforcementMode) -> u8 {
 /// every other record — which is correct, and is why an unscoped `hard` record
 /// beside an unscoped advisory one is a conflict worth reporting.
 ///
-/// Two scoped records overlap when their path globs can reach a common path, or
-/// when they share a task or keyword trigger. The trigger half only runs when
-/// the path half found nothing, so a pair that already collides on a path keeps
-/// the more specific report.
+/// Two scoped records overlap when their path globs can reach a common path,
+/// when they share a task or keyword trigger, or when one record's trigger
+/// names a path the other's globs match. Each arm only runs when the one before
+/// it found nothing, so a pair that already collides on a path keeps the more
+/// specific report.
 fn overlapping_scope(left: Option<&AppliesTo>, right: Option<&AppliesTo>) -> Option<String> {
     let unscoped = |applies: Option<&AppliesTo>| applies.is_none_or(AppliesTo::is_empty);
     if unscoped(left) && unscoped(right) {
@@ -391,7 +393,9 @@ fn overlapping_scope(left: Option<&AppliesTo>, right: Option<&AppliesTo>) -> Opt
         });
     }
     let (left, right) = (left?, right?);
-    overlapping_paths(left, right).or_else(|| overlapping_triggers(left, right))
+    overlapping_paths(left, right)
+        .or_else(|| overlapping_triggers(left, right))
+        .or_else(|| crossing_scopes(left, right))
 }
 
 /// The path globs two scoped records can both reach.
@@ -431,6 +435,57 @@ fn overlapping_triggers(left: &AppliesTo, right: &AppliesTo) -> Option<String> {
         }
     }
     (!shared.is_empty()).then(|| format!("the triggers {}", shared.join(", ")))
+}
+
+/// The one crossing of a path scope against a trigger scope this checker
+/// reports: a trigger term that is itself a path the other record's globs
+/// match, so the turn that edits that file selects both records.
+///
+/// Selection is disjunctive, so a record scoped `paths = ["crates/**"]` and a
+/// record scoped `tasks = ["refactor"]` also both fire on a turn that edits a
+/// file under `crates/` and says "refactor". A turn like that can be written
+/// for any glob and any trigger, so reporting on that basis pairs every
+/// path-scoped record with every trigger-scoped one — and a conflict suspends
+/// the more restrictive record's guard (`super::registry`'s `resolve_guard`),
+/// which would disarm guards across a whole repository on a possibility. The
+/// module header's "a false positive is cheap" argument was made about glob
+/// containment, where a spurious pair is rare, and it does not carry here;
+/// `a_path_scope_and_a_task_scope_stay_silent` pins the resulting silence.
+/// `docs/spec/adaptive-context/context-pr.md` §12 states the same rule.
+///
+/// The match goes to `stella_core::glob::match_glob`, the matcher
+/// [`super::select::applies_this_turn`] uses for the path dimension, so the
+/// answer agrees with the code that decides whether both records fire.
+/// Ratified task names are bare verbs, so this arm fires on keywords in
+/// practice.
+///
+/// Asked in both directions, because either record can be the one carrying the
+/// trigger. A term is named once, against the first glob that matches it — a
+/// second glob over the same file adds nothing a reader can act on.
+fn crossing_scopes(left: &AppliesTo, right: &AppliesTo) -> Option<String> {
+    let mut crossings = triggers_naming_a_path(left, right);
+    crossings.extend(triggers_naming_a_path(right, left));
+    (!crossings.is_empty()).then(|| crossings.join(", "))
+}
+
+/// Each of `scope`'s triggers that `other`'s path globs match, named with the
+/// glob that matched it.
+fn triggers_naming_a_path(scope: &AppliesTo, other: &AppliesTo) -> Vec<String> {
+    scope
+        .tasks
+        .iter()
+        .chain(scope.keywords.iter())
+        .filter(|term| !term.is_empty())
+        .filter_map(|term| {
+            let glob = other
+                .paths
+                .iter()
+                .find(|pattern| match_glob(pattern.as_str(), term.as_str()))?;
+            Some(format!(
+                "{term} (a trigger on one record, matched by the other's path glob {glob})"
+            ))
+        })
+        .collect()
 }
 
 /// Whether two globs can match a common value.
@@ -692,6 +747,98 @@ mod tests {
             "{}",
             conflicts[0].detail
         );
+    }
+
+    #[test]
+    fn a_keyword_naming_a_path_conflicts_with_the_record_scoped_to_that_path() {
+        // The turn that edits `deny.toml` names the file, so the path-scoped
+        // record fires on its glob and the keyword-scoped one fires on its
+        // text. Neither dimension alone can see that: the second record has no
+        // path to compare, and `shared_triggers` asks about a turn's text, so a
+        // glob never answers it.
+        let mut records = vec![
+            at("license-guard", EnforcementMode::Hard, &["deny.toml"], 50),
+            triggered(
+                "license-exemption",
+                EnforcementMode::None,
+                &[],
+                &["deny.toml"],
+                50,
+            ),
+        ];
+        records.iter_mut().for_each(check_record);
+        let conflicts = detect_conflicts(&mut records);
+        assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+        let conflict = &conflicts[0];
+        assert!(conflict.detail.contains("deny.toml"), "{}", conflict.detail);
+        assert!(
+            conflict.detail.contains("path glob"),
+            "the report names the crossing it found: {}",
+            conflict.detail
+        );
+        assert_eq!(
+            conflict.suspended, "license-guard",
+            "enforcement falls back to the LESS restrictive behavior"
+        );
+        for loaded in &records {
+            assert!(
+                loaded
+                    .findings
+                    .iter()
+                    .any(|f| matches!(f, RecordFinding::Conflict { .. })),
+                "^{} carries no conflict finding",
+                loaded.handle
+            );
+        }
+    }
+
+    #[test]
+    fn a_directory_glob_reaches_a_keyword_naming_a_file_inside_it() {
+        let mut records = vec![
+            at("api-guard", EnforcementMode::Hard, &["src/api/*"], 50),
+            triggered(
+                "api-notes",
+                EnforcementMode::None,
+                &[],
+                &["src/api/handler.rs"],
+                50,
+            ),
+        ];
+        records.iter_mut().for_each(check_record);
+        let conflicts = detect_conflicts(&mut records);
+        assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+        assert!(
+            conflicts[0].detail.contains("src/api/handler.rs"),
+            "{}",
+            conflicts[0].detail
+        );
+    }
+
+    #[test]
+    fn a_path_scope_and_a_task_scope_stay_silent() {
+        // A turn that edits a file under `crates/stella-core/` and says
+        // "refactor" does fire both records. Such a turn can be written for
+        // every glob and every trigger, so reporting it would pair every
+        // path-scoped record with every trigger-scoped one — and each pair
+        // suspends the more restrictive record's guard. The silence is that
+        // decision; see this module's header.
+        let mut records = vec![
+            at(
+                "core-guard",
+                EnforcementMode::Hard,
+                &["crates/stella-core/**"],
+                50,
+            ),
+            triggered(
+                "refactor-advice",
+                EnforcementMode::None,
+                &["refactor"],
+                &[],
+                50,
+            ),
+        ];
+        records.iter_mut().for_each(check_record);
+        assert!(detect_conflicts(&mut records).is_empty());
     }
 
     #[test]
