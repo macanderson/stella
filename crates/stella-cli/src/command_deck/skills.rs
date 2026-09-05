@@ -214,6 +214,7 @@ fn skills_snapshot_created(
 ) -> Inbound {
     Inbound::Skills(SkillsView {
         rows: crate::skill_manager::enumerate(workspace_root),
+        rejections: crate::skill_manager::rejected_rows(workspace_root),
         status,
         busy: false,
         created,
@@ -614,6 +615,11 @@ pub(super) fn handle_skills_input(
             let now = super::now_ms() / 1_000;
             let status =
                 crate::skill_manager::reject(*scope, name, now, &root).unwrap_or_else(|e| e);
+            let _ = in_tx.send(skills_snapshot(&root, Some(status)));
+        }
+        SkillOp::Unreject { scope, mined_as } => {
+            let status =
+                crate::skill_manager::unreject(*scope, mined_as, &root).unwrap_or_else(|e| e);
             let _ = in_tx.send(skills_snapshot(&root, Some(status)));
         }
         SkillOp::Search { query } => {

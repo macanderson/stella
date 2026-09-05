@@ -549,10 +549,27 @@ an unquoted `vera/verifier = "x"` is a parse error the user sees immediately —
 which is a different category from the dot's silent mis-parse. `crates/stella-cli/src/settings/toml_config.rs`
 carries a round-trip test pinning it.
 
-One constraint follows for slice 3: **a plugin id may not contain `/`**. Core
-never splits a seat key — it compares whole strings — but the host constructs
-one and a display surface reverses it, so the separator must be unambiguous at
-those two points.
+**The plugin id is the manifest's `name`.** A manifest carries two identifiers
+that could stand in for it: `name`, which a plugin is installed and removed
+under and which `PluginRoster::get` looks it up by, and `[wrapper] id`, which
+only `--pipeline` matches on. A seat key names `name`. A user reading a
+`[seats]` key has to be able to find the plugin it names in `stella plugin
+list`, and that list is keyed on `name`.
+
+**Neither half may contain `/`.** Core never splits a seat key — it compares
+whole strings — but the host constructs one and a display surface reverses it,
+so the separator must be unambiguous at those two points.
+`PluginManifest::validate` refuses both halves at load
+(`ManifestError::NameCarriesSeatSeparator` and
+`ManifestError::RoleNameCarriesSeatSeparator`), which is what makes the host's
+prefix unforgeable rather than merely conventional.
+
+**`stella_plugin::seat_key` is the one place the two halves are joined** — in
+`stella-cli`'s settings list, and on both dispatch paths that have to find the
+assignment (`stella-runtime`'s `ChildTurns` and `stella-cli`'s candidate
+fan-out). Splitting that join across two files is what leaves a `[seats]` line
+unfindable: the pane offers `vera/verifier` while dispatch asks for `verifier`,
+the lookup misses, and the turn runs on the session's model with no notice.
 
 The bare form was recommended here first, for one-line convenience when several
 plugins declare the same role name and want the same model. Three things killed

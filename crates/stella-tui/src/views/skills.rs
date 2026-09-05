@@ -11,6 +11,7 @@
 //! │  [ ] sql-tuning               v1 · user     Read a query plan and propose …     │
 //! │ learned from traces · 1   stella wrote these after repeated wins                │
 //! │  [x] bench-rig-access         learned   from 4 traces · turn 37 · was a1b2c3d4  │
+//! │ 1 rejected   press ! to review · reverse one                                    │
 //! ╰────────────────────────────────────────────────────────────────────────────────╯
 //! registry · web · 3 results
 //! ╭────────────────────────────────────────────────────────────────────────────────╮
@@ -25,7 +26,11 @@
 //! in a section of their own showing `from N traces · turn M · was <hash>` and
 //! answering `r` rename, `ctrl+o` source traces, `x` reject) and the
 //! **registry** (`npx skills find` → install). ←/→ move the keyboard between
-//! the two. The driver owns the skills on disk, their state, and the registry;
+//! the two. Below the learned section, a collapsed `N rejected` line is the
+//! reader/undo half `x` never had: `!` opens a review of every rejection
+//! this workspace has recorded — name and date — and reverses one, after
+//! which the miner is free to propose it again on its very next pass.
+//! The driver owns the skills on disk, their state, and the registry;
 //! this module renders the [`crate::envelope::SkillsView`] read-model it
 //! pushes, and [`overlays`] draws the dialogs and the `ctrl+o` preview over the
 //! top. Content is a function of `(ui.skills)`, so buffer tests stay stable.
@@ -228,6 +233,17 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         for (i, row) in learned.iter().skip(lstart).take(room) {
             lines.push(installed_row_line(row, *i == sel && focused, width));
         }
+    }
+    // The collapsed half of the reader/undo lifecycle: every rejection this
+    // workspace has recorded is invisible otherwise, so this line is the
+    // whole answer to "what have I rejected here?" until `!` expands it into
+    // the names-and-dates review.
+    let rejected = ui.skills.view.rejections.len();
+    if rejected > 0 && lines.len() < budget {
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {rejected} rejected"), text),
+            Span::styled("   press ! to review · reverse one", dim),
+        ]));
     }
     Paragraph::new(lines).render(inner, buf);
 }
@@ -574,7 +590,8 @@ mod tests {
     use super::*;
     use crate::deck_ui::{ScopeAction, SkillPreview, SkillPrompt};
     use crate::envelope::{
-        LearnedProvenance, LearnedSource, SkillRow, SkillScope, SkillSearchHit, SkillsView,
+        LearnedProvenance, LearnedSource, RejectedSkillRow, SkillRow, SkillScope, SkillSearchHit,
+        SkillsView,
     };
     use crate::theme;
 
@@ -675,6 +692,7 @@ mod tests {
                 row("pdf-extract", SkillScope::User, false, 1, 1),
             ],
             status: None,
+            rejections: vec![],
             busy: false,
             created: None,
         };
@@ -706,6 +724,7 @@ mod tests {
                 learned_row("from-model-opinion", Some("model_critique")),
             ],
             status: None,
+            rejections: vec![],
             busy: false,
             created: None,
         };
@@ -729,6 +748,7 @@ mod tests {
         ui.skills.view = SkillsView {
             rows: vec![traced_row("money-is-minor-units", 4, Some(37), "a1b2c3d4")],
             status: None,
+            rejections: vec![],
             busy: false,
             created: None,
         };
@@ -739,6 +759,53 @@ mod tests {
         assert!(
             text.contains("from 4 traces · turn 37 · was a1b2c3d4"),
             "the whole provenance line, in SPEC 9.2's order:\n{text}"
+        );
+    }
+
+    /// **The witness.** A workspace with rejections shows the collapsed count
+    /// and the `!` hint under the installed section; one with none shows
+    /// neither — the line must not read "0 rejected" at every empty
+    /// workspace.
+    #[test]
+    fn the_installed_section_shows_a_collapsed_rejected_count() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.view = SkillsView {
+            rows: vec![row("sql-style", SkillScope::Project, true, 1, 1)],
+            rejections: vec![
+                RejectedSkillRow {
+                    scope: SkillScope::Project,
+                    name: "bench-rig-access".to_string(),
+                    mined_as: "bench-rig-access-a1b2c3d4".to_string(),
+                    rejected_at: 1,
+                },
+                RejectedSkillRow {
+                    scope: SkillScope::User,
+                    name: "prefer-tables".to_string(),
+                    mined_as: "prefer-tables-deadbeef".to_string(),
+                    rejected_at: 2,
+                },
+            ],
+            status: None,
+            busy: false,
+            created: None,
+        };
+        let area = Rect::new(0, 0, 120, 20);
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("2 rejected"), "{text}");
+        assert!(text.contains("press ! to review"), "{text}");
+
+        ui.skills.view.rejections.clear();
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(
+            !text.contains("rejected") && !text.contains("press !"),
+            "an empty workspace shows no rejected line at all:\n{text}"
         );
     }
 
@@ -785,6 +852,7 @@ mod tests {
                 traced_row("money-is-minor-units", 4, Some(37), "a1b2c3d4"),
             ],
             status: None,
+            rejections: vec![],
             busy: false,
             created: None,
         };
@@ -818,6 +886,7 @@ mod tests {
                 traced_row("money-is-minor-units", 4, Some(37), "a1b2c3d4"),
             ],
             status: None,
+            rejections: vec![],
             busy: false,
             created: None,
         };
@@ -862,6 +931,7 @@ mod tests {
             // `origin: auto`, but nothing ever mined it: no traces, no sidecar.
             rows: vec![learned_row("hand-written-auto", None)],
             status: None,
+            rejections: vec![],
             busy: false,
             created: None,
         };

@@ -987,9 +987,9 @@ fn a_plugin_name_may_not_carry_the_seat_separator() {
     .expect_err("a name with a slash makes one seat key mean two things");
 
     match error {
-        ManifestError::NameHoldsSeatSeparator { name } => {
+        ManifestError::NameCarriesSeatSeparator { name } => {
             assert_eq!(name, "vera/verifier");
         }
-        other => panic!("expected NameHoldsSeatSeparator, got {other:?}"),
+        other => panic!("expected NameCarriesSeatSeparator, got {other:?}"),
     }
 }

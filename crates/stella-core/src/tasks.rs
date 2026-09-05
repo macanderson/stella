@@ -92,11 +92,14 @@ pub struct SpawnRequest {
 /// delegated in service of task 4 is task 4's evidence and task 4's cost, and
 /// a ledger that dropped it would under-report every task that fanned out.
 ///
-/// A `task_assign` worker is the other shape — its own session, its own board
-/// — and its board is empty, so its source answers `None` and its events go
-/// untagged. Untagged states no falsehood (the events are in no task's ledger)
-/// but it is not complete: that lane exists to work one named task, so its
-/// source should be a constant rather than a board read. Tracked in #5158.
+/// A `task_assign` worker is the other shape — its own session, its own board,
+/// and that board is empty, so a read of it answers `None`. Its host attaches
+/// a **constant** source instead, naming the one task the lane was spawned to
+/// work (`stella-cli`'s `subsession::lane_events`). Constant rather
+/// than a read for the same reason the lead's is a read: each names the
+/// authority that actually knows, and the worker's own board is not it — board
+/// ids are per-session ordinals, so its `"1"` is a different task from the
+/// lead's `"1"`.
 #[derive(Clone)]
 pub struct RunningTask(Arc<dyn Fn() -> Option<TaskId> + Send + Sync>);
 

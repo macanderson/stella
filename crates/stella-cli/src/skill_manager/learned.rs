@@ -4,9 +4,13 @@
 //! The learned-skill lifecycle — SPEC 9.2, the half of the SKILLS tab that
 //! applies only to skills stella wrote itself: the provenance a mined skill
 //! carries ([`learned_provenance`]), the [`rename`] that gives it a human name
-//! without losing the identity it was mined under, and the [`reject`] that
+//! without losing the identity it was mined under, the [`reject`] that
 //! deletes it and records the negative signal the miner reads
 //! ([`rejections`]).
+//!
+//! Two more functions are the reader/undo half. [`rejected_rows`] reads
+//! every rejection back for the SKILLS tab's `!` review. [`unreject`] drops
+//! one, so the miner can propose the skill again.
 //!
 //! `stella_learn::skills::render_skill_markdown` is byte-pinned, so the mined
 //! identity and the turn cannot become frontmatter; they go where the parent's
@@ -17,7 +21,7 @@
 use std::path::Path;
 
 use stella_learn::skills::SkillRejection;
-use stella_tui::{LearnedProvenance, LearnedSource, SkillScope};
+use stella_tui::{LearnedProvenance, LearnedSource, RejectedSkillRow, SkillScope};
 
 use super::{
     LearnedRecord, RejectedSkill, ScopeState, list_scope, read_state, scope_root, slugify,
@@ -358,6 +362,62 @@ pub fn rejections(workspace_root: &Path) -> Vec<SkillRejection> {
     out
 }
 
+/// Every rejection recorded across both scopes, in the shape the SKILLS
+/// tab's `!` review renders. [`rejections`] carries the same records in the
+/// shape the miner reads — no scope, no display name, since the miner needs
+/// neither. The tab needs both: to label each row, and to route
+/// [`unreject`] back to the right sidecar.
+pub fn rejected_rows(workspace_root: &Path) -> Vec<RejectedSkillRow> {
+    let mut out = Vec::new();
+    for scope in [SkillScope::Project, SkillScope::User] {
+        let Some(root) = scope_root(scope, workspace_root) else {
+            continue;
+        };
+        out.extend(
+            read_state(&root)
+                .rejected
+                .into_iter()
+                .map(|r| RejectedSkillRow {
+                    scope,
+                    name: r.name,
+                    mined_as: r.mined_as,
+                    rejected_at: r.rejected_at,
+                }),
+        );
+    }
+    out
+}
+
+/// Reverse a rejection — the inverse of [`reject`]. It drops the recorded
+/// entry, so the miner's next pass over the same unchanged log is free to
+/// propose the skill again.
+///
+/// The file is never restored. Nothing here writes `<slug>.md`. The loop
+/// rebuilds it from the observations the log never stopped holding — the
+/// same property that made the rejection durable in the first place.
+pub fn unreject(
+    scope: SkillScope,
+    mined_as: &str,
+    workspace_root: &Path,
+) -> Result<String, String> {
+    let root = scope_root(scope, workspace_root)
+        .ok_or_else(|| "no $HOME for the user scope".to_string())?;
+    let mut state = read_state(&root);
+    let Some(pos) = state.rejected.iter().position(|r| r.mined_as == mined_as) else {
+        return Err(format!(
+            "no rejection recorded for {mined_as} in the {} scope",
+            scope.label()
+        ));
+    };
+    let removed = state.rejected.remove(pos);
+    write_state(&root, &state)?;
+    Ok(format!(
+        "un-rejected {} ({}) — the learner may propose it again",
+        removed.name,
+        scope.label()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::tests::{scratch, write_skill};
@@ -630,5 +690,86 @@ mod tests {
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[1, 2, 3]);
         uninstall(SkillScope::Project, &mined, &ws).unwrap();
         assert_eq!(rejections(&ws).len(), 1, "the rejection is still recorded");
+    }
+
+    // ---- the reader/undo half of the lifecycle ----
+
+    /// **Witness, the disk half.** `unreject` drops the recorded entry.
+    /// [`rejections`] — the shape the miner reads — is empty again for the
+    /// identity it named.
+    #[test]
+    fn unreject_drops_the_recorded_rejection() {
+        let (td, _home, _lock) = scratch();
+        let ws = td.path().join("ws");
+        let lesson = "money amounts must be stored as minor units";
+        let mined = stella_learn::skills::candidate_id(lesson);
+        write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[100, 200, 300]);
+        reject(SkillScope::Project, &mined, 1_700_000_000, &ws).unwrap();
+        assert_eq!(rejections(&ws).len(), 1, "the control must reject");
+
+        unreject(SkillScope::Project, &mined, &ws).unwrap();
+
+        assert!(
+            rejections(&ws).is_empty(),
+            "the rejection must be gone: {:?}",
+            rejections(&ws)
+        );
+    }
+
+    /// A rejection recorded against a **renamed** skill un-rejects on the
+    /// mined identity, not the display name. That is the same key
+    /// [`rejecting_a_renamed_skill_records_its_mined_identity`] proves
+    /// `reject` writes.
+    #[test]
+    fn unreject_matches_on_the_mined_identity_after_a_rename() {
+        let (td, _home, _lock) = scratch();
+        let ws = td.path().join("ws");
+        let lesson = "terraform plans belong in review before anyone applies them";
+        let mined = stella_learn::skills::candidate_id(lesson);
+        write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[1, 2, 3]);
+        rename(SkillScope::Project, &mined, "review-plans", &ws).unwrap();
+        reject(SkillScope::Project, "review-plans", 5, &ws).unwrap();
+
+        unreject(SkillScope::Project, &mined, &ws).unwrap();
+
+        assert!(rejections(&ws).is_empty());
+    }
+
+    /// Un-rejecting an identity nobody rejected refuses. It names the key it
+    /// looked for, the same way [`reject_refuses_a_skill_nobody_learned`]
+    /// refuses a reject with nothing to act on.
+    #[test]
+    fn unreject_refuses_an_identity_that_was_never_rejected() {
+        let (td, _home, _lock) = scratch();
+        let ws = td.path().join("ws");
+        let error = unreject(SkillScope::Project, "never-rejected-abcd1234", &ws).unwrap_err();
+        assert!(error.contains("never-rejected-abcd1234"), "{error}");
+    }
+
+    /// [`rejected_rows`] carries the scope and the display name, alongside
+    /// the mined identity. [`rejections`] drops both — the miner needs
+    /// neither — but the SKILLS tab's review needs both.
+    #[test]
+    fn rejected_rows_carry_scope_and_display_name() {
+        let (td, _home, _lock) = scratch();
+        let ws = td.path().join("ws");
+        let lesson = "reach for ripgrep instead of grep in this repository";
+        let mined = stella_learn::skills::candidate_id(lesson);
+        write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[1, 2, 3]);
+        rename(SkillScope::Project, &mined, "prefer-ripgrep", &ws).unwrap();
+        reject(SkillScope::Project, "prefer-ripgrep", 9, &ws).unwrap();
+
+        let rows = rejected_rows(&ws);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].scope, SkillScope::Project);
+        assert_eq!(
+            rows[0].name, "prefer-ripgrep",
+            "the row names what the skill was CALLED when rejected"
+        );
+        assert_eq!(
+            rows[0].mined_as, mined,
+            "and the mined identity `unreject` actually matches on"
+        );
+        assert_eq!(rows[0].rejected_at, 9);
     }
 }

@@ -45,13 +45,20 @@
 //! path, built to the same shape as `store.db`'s [`crate::prune`]: an age
 //! cutoff plus a ceiling, both opt-in, run when a command asks rather than on
 //! every exit.
+//!
+//! A session's worker lanes each keep a record of their own. Those records
+//! belong to the session. They are dropped with it, in one batch, and are
+//! never counted or aged on their own. [`lane`] holds the key shape and the
+//! reasons.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::git_env::sealed_git;
 use crate::{Result, StoreError};
 
+pub mod lane;
 pub mod snapshot;
 
 pub use snapshot::{JournalChange, JournalChangeKind};
@@ -112,6 +119,30 @@ fn journal_key_of(refname: &str) -> Option<&str> {
     (!key.is_empty() && !key.contains('/')).then_some(key)
 }
 
+/// The journal key a refname sits under: the first path segment after
+/// `refs/stella/`.
+///
+/// Unlike [`journal_key_of`] this takes a turn mark as well as a tip.
+/// Retention deletes every ref a key owns, so it has to name the key a turn
+/// mark sits under. The tip-only reading cannot do that.
+fn key_of_ref(refname: &str) -> Option<&str> {
+    let key = refname.strip_prefix("refs/stella/")?.split('/').next()?;
+    (!key.is_empty()).then_some(key)
+}
+
+/// Every journal key the given refs sit under, sorted, each listed once — one
+/// session's own key plus one per lane it dispatched.
+fn keys_of_refs(refs: &[String]) -> Vec<String> {
+    let mut keys: Vec<String> = refs
+        .iter()
+        .filter_map(|refname| key_of_ref(refname.as_str()))
+        .map(str::to_string)
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
 /// The reserved directory stella's own records live under, so a blob can
 /// never collide with a real workspace path — and so a per-turn diff can
 /// filter the records back out ([`WorkJournal::changed_paths_at_turn`]).
@@ -144,10 +175,15 @@ const LARGE_PRUNE_REFS: u64 = 100;
 /// the same shape: an age cutoff, a hard ceiling, both opt-in, and a policy
 /// carrying neither is a no-op that deletes nothing.
 ///
-/// The unit of retention is the **session**, because that is what the ref
-/// namespace is keyed on: a session owns `refs/stella/<session>/head` plus one
+/// The unit of retention is the **session**, because that is the lifetime the
+/// records share: a session owns `refs/stella/<session>/head` plus one
 /// `refs/stella/<session>/turn/<n>` per turn, and dropping some of a session's
 /// turns would leave a truncated history that reads as a complete one.
+///
+/// A worker lane's record sits under a name of its own
+/// (`refs/stella/<session>__<lane>/…`). It is still part of the session, not
+/// a unit beside it. It has no age of its own. It takes no line against
+/// `max_sessions`. [`lane`] holds the reasons.
 #[derive(Debug, Clone, Default)]
 pub struct JournalPrunePolicy {
     /// Sessions whose last commit is at least this old are dropped; `None`
@@ -183,11 +219,17 @@ pub struct JournalPruneReport {
     pub aged_out: u64,
     /// Sessions evicted to satisfy the ceiling.
     pub ceiling_evicted: u64,
-    /// Refs deleted across both phases — one `head` per session plus its turn
-    /// marks. This is the number that matters: a session's objects stay
-    /// reachable, and so unreclaimable, until its last ref is gone.
+    /// Worker-lane records dropped with the sessions that started them.
+    /// Counted apart from [`Self::total_sessions`] because a lane is not a
+    /// session. Folding the two together would report more sessions removed
+    /// than a prune removed.
+    pub lanes_removed: u64,
+    /// Refs deleted across both phases: every ref a pruned session owns, its
+    /// lanes' included. This is the number that matters. A session's objects
+    /// stay reachable, and so stay on disk, until its last ref is gone.
     pub refs_deleted: u64,
-    /// Sidecar index files removed, one per pruned session that had one.
+    /// Sidecar index files removed, one per pruned record that had one — a
+    /// session's own and each of its lanes'.
     pub indexes_removed: u64,
     /// Sessions still above the ceiling afterwards, because the only ones left
     /// to evict were protected (the running session is never pruned).
@@ -264,7 +306,12 @@ impl WorkJournal {
         if self.git_dir.join("HEAD").exists() {
             return Ok(());
         }
-        run(Command::new("git").args(["init", "-q", "--bare", &self.git_dir.to_string_lossy()]))?;
+        run(sealed_git(&self.git_dir).args([
+            "init",
+            "-q",
+            "--bare",
+            &self.git_dir.to_string_lossy(),
+        ]))?;
         // A bare repo refuses a work tree. Everything else about bare — no
         // checkout of its own, no branch to confuse — is exactly what is
         // wanted, so flip only this one bit.
@@ -277,17 +324,13 @@ impl WorkJournal {
     }
 
     fn git(&self, args: &[&str]) -> Result<String> {
-        let mut cmd = Command::new("git");
+        let mut cmd = sealed_git(&self.git_dir);
         cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .arg("--work-tree")
             .arg(&self.work_tree)
             .args(args)
-            .env("GIT_INDEX_FILE", &self.index_file)
-            // The work tree is the user's; a hook or config of theirs must
-            // never run as a side effect of stella recording history.
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", &self.git_dir);
+            .env("GIT_INDEX_FILE", &self.index_file);
         run(&mut cmd)
     }
 
@@ -427,26 +470,22 @@ impl WorkJournal {
     /// cost of storing one extra file is trivial next to silently dropping a
     /// real one from the durable record.
     fn is_ignored(&self, path: &str) -> bool {
-        Command::new("git")
-            .arg("--git-dir")
+        let mut cmd = sealed_git(&self.git_dir);
+        cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .arg("--work-tree")
             .arg(&self.work_tree)
             .args(["check-ignore", "-q", "--", path])
             .env("GIT_INDEX_FILE", &self.index_file)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", &self.git_dir)
-            .current_dir(&self.work_tree)
-            .status()
-            .is_ok_and(|s| s.success())
+            .current_dir(&self.work_tree);
+        cmd.status().is_ok_and(|s| s.success())
     }
 
     fn hash_blob(&self, content: &str) -> Result<String> {
-        let mut cmd = Command::new("git");
+        let mut cmd = sealed_git(&self.git_dir);
         cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .args(["hash-object", "-w", "--stdin"])
-            .env("GIT_CONFIG_NOSYSTEM", "1")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -705,7 +744,9 @@ impl WorkJournal {
     /// including the automatic one [`Self::compact`] runs, can collect them.
     /// A session's refs go in one transactional batch: half a namespace left
     /// standing keeps the whole history reachable, which would report a prune
-    /// that reclaimed nothing.
+    /// that reclaimed nothing. The batch covers the session's worker lanes
+    /// too. A lane left behind by its own session is the half-deleted
+    /// namespace this rule exists to prevent; [`lane`] gives the reasons.
     ///
     /// **The running session is never pruned**, whatever the policy says —
     /// this is the analogue of `store.db`'s un-replicated-telemetry guard, and
@@ -723,11 +764,15 @@ impl WorkJournal {
         }
         let mut retained = self.recorded_sessions()?;
         let mut doomed: Vec<String> = Vec::new();
+        // A lane's handle protects the session it hangs off, not just its
+        // own key. Pruning the lead out from under a live lane would delete
+        // the resume point that lane is about to read.
+        let running = lane::owning_session(&self.session);
 
         if let Some(older_than) = policy.older_than {
             let cutoff = unix_now().saturating_sub(older_than.as_secs() as i64);
             retained.retain(|(session, at)| {
-                if *at <= cutoff && *session != self.session {
+                if *at <= cutoff && session.as_str() != running {
                     doomed.push(session.clone());
                     return false;
                 }
@@ -743,7 +788,7 @@ impl WorkJournal {
             // `recorded_sessions` is oldest-first, so this evicts in the same
             // order `store.db`'s ceiling does.
             retained.retain(|(session, _)| {
-                if excess > 0 && *session != self.session {
+                if excess > 0 && session.as_str() != running {
                     excess -= 1;
                     doomed.push(session.clone());
                     report.ceiling_evicted += 1;
@@ -757,22 +802,27 @@ impl WorkJournal {
         for session in &doomed {
             let refs = self.session_refs(session)?;
             report.refs_deleted += refs.len() as u64;
+            let keys = keys_of_refs(&refs);
+            report.lanes_removed += keys.iter().filter(|key| *key != session).count() as u64;
             if policy.dry_run {
                 continue;
             }
             self.delete_refs(&refs)?;
-            let index = index_file_path(&self.store_root, &self.workspace_id, session);
-            if std::fs::remove_file(&index).is_ok() {
-                report.indexes_removed += 1;
-            }
-            // The snapshot lineage's sidecar, removed on the same terms. A
-            // session can have one without the other (a turn that snapshotted
-            // but never checkpointed, or the reverse), so neither removal may
-            // be conditioned on the other having succeeded.
-            let snapshot_index =
-                snapshot_index_file_path(&self.store_root, &self.workspace_id, session);
-            if std::fs::remove_file(&snapshot_index).is_ok() {
-                report.indexes_removed += 1;
+            for key in &keys {
+                let index = index_file_path(&self.store_root, &self.workspace_id, key);
+                if std::fs::remove_file(&index).is_ok() {
+                    report.indexes_removed += 1;
+                }
+                // The snapshot lineage's sidecar, removed on the same terms. A
+                // record can have one without the other (a turn that
+                // snapshotted but never checkpointed, or the reverse), so
+                // neither removal may be conditioned on the other having
+                // succeeded.
+                let snapshot_index =
+                    snapshot_index_file_path(&self.store_root, &self.workspace_id, key);
+                if std::fs::remove_file(&snapshot_index).is_ok() {
+                    report.indexes_removed += 1;
+                }
             }
         }
 
@@ -797,9 +847,10 @@ impl WorkJournal {
     /// retention half of the same question and stays private, because an age
     /// cutoff is [`Self::prune`]'s business alone.
     ///
-    /// This module learns no composition rule. A prefix is whatever the caller
-    /// says it is, so the convention that separates a session from a lane
-    /// stays in the crate that mints it.
+    /// A prefix is whatever the caller says it is. This reader applies no key
+    /// shape of its own. The shape lives in [`lane`]: retention has to know
+    /// which keys a session owns before it can drop them. The caller still
+    /// picks which lanes exist and what they are called.
     ///
     /// An empty result is a real answer — nothing recorded under that prefix —
     /// and is not distinguished from a store with no history at all.
@@ -831,6 +882,12 @@ impl WorkJournal {
     /// resume point to write a checkpoint) has a `tree` ref and no `head`, and
     /// reading `head` alone would leave it permanently unreachable by
     /// retention. A session with both is listed once, at its later tip.
+    ///
+    /// A worker lane's tips fold into the session that started it
+    /// ([`lane::owning_session`]). A lane is not a session. It gets no clock
+    /// of its own and no line against the ceiling. A deck session with ten
+    /// lanes is one session here, and its age is the latest moment any of its
+    /// eleven records moved.
     fn recorded_sessions(&self) -> Result<Vec<(String, i64)>> {
         let listing = self.git(&[
             "for-each-ref",
@@ -842,7 +899,7 @@ impl WorkJournal {
             let Some((at, refname)) = line.trim().split_once(' ') else {
                 continue;
             };
-            let Some(session) = journal_key_of(refname) else {
+            let Some(session) = journal_key_of(refname).map(lane::owning_session) else {
                 continue;
             };
             let Ok(at) = at.parse::<i64>() else {
@@ -850,7 +907,7 @@ impl WorkJournal {
             };
             // Later tip wins: the session's most recent moment is what an age
             // cutoff must judge, so a stale `head` must never age out a
-            // session whose snapshots are current.
+            // session whose snapshots — or whose lanes — are current.
             match sessions.iter_mut().find(|(name, _)| name == session) {
                 Some((_, seen)) => *seen = (*seen).max(at),
                 None => sessions.push((session.to_string(), at)),
@@ -860,18 +917,23 @@ impl WorkJournal {
         Ok(sessions)
     }
 
-    /// Every ref in one session's namespace — its head and all of its turn
-    /// marks.
+    /// Every ref one session owns — its head, its snapshot tip and all of its
+    /// turn marks, plus the same for every worker lane it dispatched
+    /// ([`lane`]).
+    ///
+    /// One listing of `refs/stella/`, filtered here, rather than a glob
+    /// handed to git. `for-each-ref` matches with wildmatch, whose `*` stops
+    /// at a `/`. A glob would then have to obey git's rules as well as this
+    /// module's. Reading the key off each refname asks the question directly.
     fn session_refs(&self, session: &str) -> Result<Vec<String>> {
-        let listing = self.git(&[
-            "for-each-ref",
-            "--format=%(refname)",
-            &format!("refs/stella/{session}/"),
-        ])?;
+        let listing = self.git(&["for-each-ref", "--format=%(refname)", "refs/stella/"])?;
         Ok(listing
             .lines()
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty())
+            .filter_map(|line| {
+                let refname = line.trim();
+                let key = key_of_ref(refname)?;
+                (lane::owning_session(key) == session).then(|| refname.to_string())
+            })
             .collect())
     }
 
@@ -888,12 +950,10 @@ impl WorkJournal {
             input.push_str(name);
             input.push('\n');
         }
-        let mut cmd = Command::new("git");
+        let mut cmd = sealed_git(&self.git_dir);
         cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .args(["update-ref", "--stdin"])
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", &self.git_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -949,18 +1009,52 @@ fn run(cmd: &mut Command) -> Result<String> {
 }
 
 #[cfg(test)]
+mod retention_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     /// A scratch workspace and its own store root. No environment variable
     /// is touched, so these run correctly in parallel with everything else —
     /// an earlier version set `STELLA_HOME` and the tests raced each other.
-    fn scratch() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    pub(super) fn scratch() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let guard = tempfile::tempdir().unwrap();
         let ws = guard.path().join("ws");
         std::fs::create_dir_all(&ws).unwrap();
         let store = guard.path().join("store");
         (guard, ws, store)
+    }
+
+    /// **Witness.** See [`crate::git_env`] for the mechanism this pins. A
+    /// race against another thread cannot itself be run as a clean
+    /// pass/fail test. So this test picks one fixed cause instead: an
+    /// ambient `GIT_CONFIG_GLOBAL` naming a bad file breaks every command
+    /// here, `record_checkpoint` included. That is the same silent failure
+    /// `CheckpointSink::persist` hides in real use — which is why this
+    /// checks the `Result` itself, not that sink.
+    #[test]
+    fn a_hostile_ambient_git_config_global_cannot_reach_a_sealed_git_spawn() {
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["GIT_CONFIG_GLOBAL"]);
+
+        let (_guard, ws, store) = scratch();
+        let hostile = tempfile::tempdir().unwrap();
+        let config = hostile.path().join("hostile.gitconfig");
+        std::fs::write(&config, "this is not a valid git config file\n").unwrap();
+        // SAFETY: `test_env::lock()` is held for `_restore`'s whole
+        // lifetime, which outlives every git spawn below.
+        unsafe { std::env::set_var("GIT_CONFIG_GLOBAL", &config) };
+
+        let journal = WorkJournal::open_in(&store, &ws, "ses-hostile-config")
+            .expect("opening the journal must not depend on the ambient environment");
+        assert!(
+            journal
+                .record_checkpoint(r#"{"lane":"req:1"}"#, None)
+                .is_ok(),
+            "a hostile ambient GIT_CONFIG_GLOBAL must not reach this \
+             module's own git subprocesses"
+        );
     }
 
     #[test]
@@ -997,7 +1091,7 @@ mod tests {
     /// Both lineages count. A key that only ever checkpointed has a `head` and
     /// no `tree`; one that only ever snapshotted has the reverse; reading
     /// either alone would report a live key as absent, and a caller avoiding a
-    /// name it must not reuse (#3233) would then reuse it. A key with both is
+    /// name it must not reuse would then reuse it. A key with both is
     /// listed once. Turn marks name no key of their own.
     #[test]
     fn a_prefix_finds_every_key_recorded_under_it_and_nothing_else() {
@@ -1201,7 +1295,7 @@ mod tests {
 
     #[test]
     fn changed_paths_name_exactly_what_moved_between_turns() {
-        // The #1870 name half: turn 2 changed a.txt and created c.txt, so
+        // The naming half: turn 2 changed a.txt and created c.txt, so
         // those two — and only those two — are its changed paths. b.txt was
         // recorded in turn 1 and untouched since; the checkpoint blob rides
         // in the same commits and must never surface as a workspace path.
@@ -1250,7 +1344,7 @@ mod tests {
 
     #[test]
     fn computing_a_diff_neither_blocks_nor_mutates_a_live_writer() {
-        // The #1870 no-lock constraint, made a test instead of a sentence:
+        // The no-lock constraint, made a test instead of a sentence:
         // the diff reads are tree-to-tree plumbing against refs, so another
         // session committing into the same shared store is not blocked, and
         // the reader leaves every ref of both sessions exactly where it was.
@@ -1304,140 +1398,6 @@ mod tests {
 
         assert_eq!(journal.read_at_turn(2, "first.txt").unwrap(), "one\n");
         assert_eq!(journal.read_at_turn(2, "second.txt").unwrap(), "two\n");
-    }
-
-    /// Whether the store still holds `oid` at all — `cat-file -e` is the
-    /// cheapest way to ask, and the only assertion that distinguishes "the ref
-    /// is gone" from "the bytes are gone".
-    fn object_exists(journal: &WorkJournal, oid: &str) -> bool {
-        journal.git(&["cat-file", "-e", oid]).is_ok()
-    }
-
-    #[test]
-    fn pruning_a_session_unreaches_its_objects_so_gc_can_reclaim_them() {
-        // The whole point of retention here: deleting the ref is what makes
-        // the objects collectable. `gc` on its own is required to KEEP
-        // anything a ref reaches, so a store with no ref deletion grows
-        // forever no matter how often it compacts.
-        let (_guard, ws, store) = scratch();
-        std::fs::write(ws.join("a.txt"), "theirs\n").unwrap();
-        let theirs = WorkJournal::open_in(&store, &ws, "ses-old").unwrap();
-        let dropped = theirs.record(&["a.txt".into()], &[], "their work").unwrap();
-        theirs.mark_turn(1, &dropped).unwrap();
-
-        std::fs::write(ws.join("b.txt"), "mine\n").unwrap();
-        let mine = WorkJournal::open_in(&store, &ws, "ses-live").unwrap();
-        let kept = mine.record(&["b.txt".into()], &[], "my work").unwrap();
-
-        let report = mine
-            .prune(&JournalPrunePolicy {
-                older_than: Some(Duration::ZERO),
-                gc: true,
-                ..Default::default()
-            })
-            .unwrap();
-
-        assert_eq!(report.aged_out, 1, "the running session is never pruned");
-        assert_eq!(report.total_sessions(), 1);
-        assert_eq!(report.refs_deleted, 2, "the head plus its one turn mark");
-        assert_eq!(report.indexes_removed, 1, "and the sidecar index with it");
-        assert!(report.gc_ran);
-
-        assert!(
-            theirs.session_tip().is_none(),
-            "the pruned session's head is gone"
-        );
-        assert!(
-            theirs.read_at_turn(1, "a.txt").is_err(),
-            "and so is its turn mark"
-        );
-        assert!(
-            !index_file_path(&mine.store_root, &mine.workspace_id, "ses-old").exists(),
-            "the pruned session's index file is gone"
-        );
-        assert_eq!(
-            mine.session_tip().as_deref(),
-            Some(kept.as_str()),
-            "the live session is untouched"
-        );
-
-        assert!(object_exists(&mine, &kept), "a retained commit stays");
-        assert!(
-            !object_exists(&mine, &dropped),
-            "the pruned commit's objects were actually reclaimed"
-        );
-    }
-
-    #[test]
-    fn the_session_ceiling_evicts_the_oldest_and_reports_what_the_guard_blocks() {
-        let (_guard, ws, store) = scratch();
-        std::fs::write(ws.join("a.txt"), "shared\n").unwrap();
-        // Same second for all three, so the tiebreak is the session name and
-        // the eviction order is deterministic: ses-1 (this handle's, and
-        // therefore protected), then ses-2, then ses-3.
-        for session in ["ses-1", "ses-2", "ses-3"] {
-            let journal = WorkJournal::open_in(&store, &ws, session).unwrap();
-            journal.record(&["a.txt".into()], &[], session).unwrap();
-        }
-        let mine = WorkJournal::open_in(&store, &ws, "ses-1").unwrap();
-
-        let report = mine
-            .prune(&JournalPrunePolicy {
-                max_sessions: Some(1),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(report.aged_out, 0, "no age window means no age phase");
-        assert_eq!(report.ceiling_evicted, 2);
-        assert_eq!(report.still_over_ceiling, 0);
-        assert_eq!(mine.recorded_sessions().unwrap().len(), 1);
-
-        // A ceiling the guard cannot satisfy is reported, never forced: the
-        // running session outranks any policy.
-        let report = mine
-            .prune(&JournalPrunePolicy {
-                max_sessions: Some(0),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(report.ceiling_evicted, 0);
-        assert_eq!(report.still_over_ceiling, 1);
-        assert!(mine.session_tip().is_some());
-    }
-
-    #[test]
-    fn an_empty_policy_is_a_no_op_and_a_dry_run_deletes_nothing() {
-        let (_guard, ws, store) = scratch();
-        std::fs::write(ws.join("a.txt"), "theirs\n").unwrap();
-        let theirs = WorkJournal::open_in(&store, &ws, "ses-old").unwrap();
-        let tip = theirs.record(&["a.txt".into()], &[], "their work").unwrap();
-        theirs.mark_turn(1, &tip).unwrap();
-        let mine = WorkJournal::open_in(&store, &ws, "ses-live").unwrap();
-        mine.record(&["a.txt".into()], &[], "my work").unwrap();
-
-        assert_eq!(
-            mine.prune(&JournalPrunePolicy::default()).unwrap(),
-            JournalPruneReport::default(),
-            "a policy with neither knob set deletes nothing"
-        );
-
-        let report = mine
-            .prune(&JournalPrunePolicy {
-                older_than: Some(Duration::ZERO),
-                gc: true,
-                dry_run: true,
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(report.aged_out, 1, "a dry run reports what it would drop");
-        assert_eq!(report.refs_deleted, 2);
-        assert_eq!(report.indexes_removed, 0);
-        assert!(!report.gc_ran, "and never reclaims");
-        assert_eq!(
-            theirs.session_tip().as_deref(),
-            Some(tip.as_str()),
-            "the session it named is still there"
-        );
     }
 
     #[test]

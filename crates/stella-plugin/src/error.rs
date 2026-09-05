@@ -671,17 +671,31 @@ pub enum ManifestError {
 
     /// The manifest's `name` carried a `/`.
     ///
-    /// A seat is written `<plugin>/<role>` in a user's settings, and the host
-    /// is what joins the two halves. A name with a `/` of its own gives one
-    /// seat key two readings, so the host could hand a role the model somebody
-    /// picked for a different plugin. The name has to hold no separator for
-    /// the join to have one meaning.
+    /// The host joins the name to a role name to build the seat key a user
+    /// assigns a model to — `<plugin>/<role>`, `doc:roleless-core` §8.4. A `/`
+    /// in the name would let one plugin spell a key that reads as another
+    /// plugin's, which is the forgery the qualified key exists to stop.
     #[error(
-        "manifest name \"{name}\" carries a \"/\": a seat is written <plugin>/<role> in \
-         settings, so a name holding the separator makes one seat key mean two things"
+        "manifest name \"{name}\" contains `/`: the host joins the name to a role name to build \
+         the seat key `<plugin>/<role>`, so a `/` here would spell a seat another plugin owns"
     )]
-    NameHoldsSeatSeparator {
-        /// The name that was refused.
+    NameCarriesSeatSeparator {
+        /// The name that carried the separator.
+        name: String,
+    },
+
+    /// A `[roles.<name>]` key carried a `/` — the same rule, for the other
+    /// half of a seat key.
+    ///
+    /// A plugin declares its bare local role name and the host writes the
+    /// prefix. A `/` here is that prefix being written by the half that may
+    /// not write it.
+    #[error(
+        "[roles.\"{name}\"] contains `/`: a plugin declares a bare role name and the host writes \
+         the `<plugin>/<role>` seat key, so a `/` here would spell a seat this plugin does not own"
+    )]
+    RoleNameCarriesSeatSeparator {
+        /// The role name that carried the separator.
         name: String,
     },
 

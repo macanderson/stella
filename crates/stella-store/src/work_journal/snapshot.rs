@@ -52,9 +52,8 @@
 //! after the model has answered, off the critical path, in a process that is
 //! already shelling to git at every step.
 
-use std::process::Command;
-
 use super::{JOURNAL_DIR, WorkJournal, run, snapshot_ref};
+use crate::git_env::sealed_git;
 use crate::{Result, StoreError};
 
 /// What happened to one path between two tree snapshots.
@@ -241,15 +240,13 @@ impl WorkJournal {
     /// stella measuring it — but pointed at the dedicated index file this
     /// module owns.
     fn git_snapshot(&self, args: &[&str]) -> Result<String> {
-        let mut cmd = Command::new("git");
+        let mut cmd = sealed_git(&self.git_dir);
         cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .arg("--work-tree")
             .arg(&self.work_tree)
             .args(args)
-            .env("GIT_INDEX_FILE", &self.snapshot_index)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", &self.git_dir);
+            .env("GIT_INDEX_FILE", &self.snapshot_index);
         run(&mut cmd)
     }
 }

@@ -330,8 +330,9 @@ async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() 
         );
         assert_eq!(
             spec.seat.as_deref(),
-            Some("verifier"),
-            "and the seat the plugin declared says which of its jobs it was"
+            Some("stella-goal/verifier"),
+            "and the seat the plugin declared, under its own name, says which of its jobs it \
+             was"
         );
         assert!(
             !spec.write_access,

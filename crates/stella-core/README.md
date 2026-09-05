@@ -283,6 +283,11 @@ system message and the latest user message are never touched.
   while assembling the system prompt it owns (`run_turn` only borrows history),
   and surfaces the diagnostics this no-I/O crate cannot print. `stella-parity`'s
   `hooks.lifecycle` row pins that a second, engine-side owner never grows back.
+  `UserPromptSubmit` is the same host obligation, fired from the CLI before
+  each turn-starting prompt is accepted — the one event here that can `deny`
+  or `modify` before any `Engine` exists. `SubagentStart`/`SubagentStop` are
+  the opposite case: they fire from inside this crate
+  ([`src/subagent.rs`](src/subagent.rs)), around a child turn, observe-only.
 - **`Engine::with_sleeper` is the only *public* constructor,** and it cannot
   carry `gate`/`steering`/`hooks` — those are builder-set private fields. A
   nested turn built through it silently drops all three, which is the bug

@@ -78,12 +78,15 @@ pub(crate) const MANIFEST_FILE: &str = "plugin.toml";
 /// `event_order_is_exhaustive` test destructures the enum against this list,
 /// so a new in-turn event added to `stella-protocol` without a line here
 /// stops it compiling.
-const EVENT_ORDER: [HookEvent; 5] = [
+const EVENT_ORDER: [HookEvent; 8] = [
     HookEvent::SessionStart,
     HookEvent::PreToolUse,
     HookEvent::PostToolUse,
     HookEvent::Stop,
     HookEvent::PreCompact,
+    HookEvent::UserPromptSubmit,
+    HookEvent::SubagentStart,
+    HookEvent::SubagentStop,
 ];
 
 /// Which tier a plugin was installed into.
