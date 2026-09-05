@@ -553,12 +553,12 @@ fn a_wrapper_without_a_runtime_block_is_refused() {
 }
 
 /// A manifest that declares `[loop] calls = ["child_turn"]` and two role
-/// intents: one resolving to a research seat, one pointed straight at the
-/// worker.
+/// intents. Both words are the plugin's own, and one of them is spelled like
+/// the seat the session's own turns use.
 ///
-/// `grader` is declared deliberately. The independence rule has to be
-/// tested against a role the *manifest permits*, or it proves only that
-/// the manifest check works.
+/// `grader` is declared on purpose. The independence rule has to be tested
+/// against a role the *manifest permits*, or it proves only that the manifest
+/// check works.
 const GRADING_MANIFEST: &str = r#"
 name = "grading-wrapper"
 [loop]
@@ -934,35 +934,49 @@ fn a_fanout_reports_what_it_bought_and_names_a_clamp() {
     );
 }
 
-/// The independence rule survives the wiring: a role intent the manifest
-/// declares but that resolves to the **worker's** seat is refused, and
-/// refused as `Forbidden` — "you may not have this" — rather than as the
-/// weaker `Unavailable` that would read as a configuration accident.
+/// **Witness.** The independence rule survives the wiring, and it reads the
+/// grant rather than a word: this door binds no tier to the seat the session's
+/// own turns use, so no plugin can reach that seat through it.
+///
+/// `[roles.grader] tier = "worker"` is refused `Forbidden` without this
+/// change, because core's table mapped that one word to the seat and this
+/// plane looked the word up. The word buys nothing — the turn runs, and the
+/// receipt says what the grant says, which is not the session's own seat. That
+/// is the same guarantee: a plugin's spend is never booked as the work it is
+/// judging.
 #[tokio::test]
-async fn a_role_intent_pointing_at_the_worker_is_still_forbidden() {
-    use stella_plugin::{HostCallOutcome, HostCallRefusal};
+async fn a_tier_spelled_like_the_workers_never_reaches_the_workers_seat() {
     use stella_runtime::wrapper::HostCallChannel;
 
     let (wrapper, dispatcher) = grading_host();
     let outcome = wrapper.gate().open().call(child_turn("grader")).await;
     assert!(
-        matches!(
-            outcome,
-            HostCallOutcome::Err(ref failure)
-                if failure.refusal == HostCallRefusal::Forbidden
-        ),
-        "a plugin may not spend the model whose work it judges, got {outcome:?}"
+        matches!(outcome, stella_plugin::HostCallOutcome::Ok(_)),
+        "the word is the plugin's own and core reads nothing into it, got {outcome:?}"
     );
-    assert!(
-        dispatcher.specs().is_empty(),
-        "a refusal costs no model call"
+
+    let specs = dispatcher.specs();
+    assert_eq!(specs.len(), 1);
+    assert_ne!(
+        specs[0].role,
+        stella_protocol::event::ModelCallRole::Worker,
+        "a plugin's spend is never booked as the session's own work"
     );
     assert_eq!(
-        wrapper.gate().refusals().len(),
-        1,
-        "and the user is told, not only the plugin"
+        specs[0].role,
+        stella_protocol::event::ModelCallRole::Research,
+        "this manifest declares no [oracle], so the grant books it as a read-only child call"
     );
-    assert!(wrapper.child_spends().is_empty());
+    assert_eq!(
+        specs[0].seat.as_deref(),
+        Some("grader"),
+        "and the plugin's own word is what the user's seat map is asked about"
+    );
+    assert!(
+        wrapper.gate().refusals().is_empty(),
+        "{:?}",
+        wrapper.gate().refusals()
+    );
 }
 
 /// The shipped `plugins/stella-goal` manifest, read off disk.
@@ -979,22 +993,17 @@ fn shipped_goal_manifest() -> PluginManifest {
     PluginManifest::from_toml_str(&text).expect("the shipped manifest loads")
 }
 
-/// **Witness (#3838).** The `verifier` role intent that
-/// `plugins/stella-goal` declares resolves on the plane
-/// [`child_turn_plane`] actually builds — the production wiring, not a
-/// test-only `.with_seat` call.
+/// **Witness.** The `verifier` role intent that `plugins/stella-goal` declares
+/// resolves on the plane [`child_turn_plane`] actually builds — the production
+/// wiring, not a test-only `.with_seat` call.
 ///
-/// Fails before this change with `HostCallRefusal::Unavailable`:
-/// `ChildTurns::default_seats()` serves `worker`/`triage`/`research`/`plan`
-/// and not `verifier`, and this host bound no seat of its own. The
-/// consequence was not a degraded run but an inert plugin — every
-/// `after_turn` refused, evidence always empty, `judge` abstaining on
-/// `MeasurementMissing`, and the loop ending `Undecided` after exactly one
-/// round on every run, forever.
+/// A refusal here is not a degraded run but an inert plugin: every `after_turn`
+/// refused, evidence always empty, `judge` abstaining on `MeasurementMissing`,
+/// and the loop ending `Undecided` after one round on every run, forever.
 ///
-/// Asserts the seat is `verdict` and not merely "something resolved",
-/// because the attribution is the claim this host is owning: a plugin's
-/// verifier turn is booked against the same responsibility
+/// Asserts the seat is `verdict` and not merely "something resolved", because
+/// the attribution is the claim being made: this plugin declares an
+/// `[oracle]`, so its grant books its turns against the same responsibility
 /// `stella_core::goal` books its own independent verifier call against.
 #[tokio::test]
 async fn the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane() {

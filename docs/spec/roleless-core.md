@@ -136,6 +136,15 @@ of accepted roles.
 rather than in place of it. Nothing above has been deleted, and `default_seats()`
 still gates which words a plugin may use. That is the rest of this document.
 
+**Slice 1 (done).** `ChildTurns::default_seats()` is deleted. A child turn's
+role name routes through the seat plane and nothing else. Where the spend is
+booked, and whether it may be spent there at all, come from
+`stella_runtime::wrapper::SeatGrant` — the manifest a person read at install.
+The two rules the table carried survive on the grant: no plugin spends at the
+seat the session's own turns use, and a seat that decides whether the work is
+done needs a manifest declaring an `[oracle]`. One table is left in that crate,
+in `candidate_fanout.rs`, whose rule is the inverse; it has its own issue.
+
 ## 5. The four gaps
 
 - **A. Routing vocabulary.** *Mostly closed by slice 0.* What remains is
@@ -172,6 +181,15 @@ reference to any role name.
 - **Witness:** a manifest declaring a role named `reviewer` runs a child turn;
   today it is refused `Unavailable`.
 - **Done when:** no literal role word appears in `crates/stella-runtime/`.
+
+**Landed.** The witness is
+`a_tier_core_has_never_heard_of_runs_at_the_grants_own_seat` in
+`crates/stella-runtime/src/wrapper/child_turn.rs`. The done check was written
+as a whole-crate one and could not be met as written: `candidate_fanout.rs`
+keeps its own table for the inverted rule, tracked as its own issue, and prose
+that explains the rule still names the worker. What holds instead is that the
+child-turn plane carries no role-word table and no role-word literal outside
+its tests.
 
 ### Slice 2 — receipts carry the name (gap C)
 
