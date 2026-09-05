@@ -1,4 +1,5 @@
-//! The deck's half of the withheld-steering notice (#2302, #3616, #4463).
+//! The deck's boot disclosures about steering: what this checkout withheld,
+//! and what the learning holdout costs a turn (#2302, #3616, #4463).
 //!
 //! `agent::output::open_raw_turn` announces it on the raw door, where the
 //! event lands beside the turn it applies to. The deck cannot do that: the
@@ -24,6 +25,33 @@ use stella_tui::Inbound;
 use super::LEAD;
 use crate::config::Config;
 
+/// Say what this session's steering is doing that the user did not ask for:
+/// what a withheld checkout is not loading, and what the learning holdout
+/// holds back.
+///
+/// One entry point because both are session facts settled before any turn
+/// opens, and because the boot keeps one line whatever this grows to say.
+pub(super) fn announce_session_steering(cfg: &Config, in_tx: &UnboundedSender<Inbound>) {
+    announce_withheld(cfg, in_tx);
+    announce_holdout(cfg, in_tx);
+}
+
+/// Tell the user what the per-artifact holdout costs.
+///
+/// A learning loop that pays for its evidence with the user's own turns has
+/// to say so. Silent when the holdout is switched off, because a notice about
+/// a cost nobody is paying is chrome.
+///
+/// An `Inbound::Notice` rather than a transcript event: this is the deck
+/// telling the user about the session, which is what that channel is for, and
+/// unlike the withheld-checkout refusal it names no remedy to scroll back to.
+fn announce_holdout(cfg: &Config, in_tx: &UnboundedSender<Inbound>) {
+    let rate = crate::memory::session_artifact_holdout_rate(&cfg.workspace_root);
+    if let Some(line) = stella_learn::holdout::disclosure(rate, "skill") {
+        let _ = in_tx.send(Inbound::Notice(line));
+    }
+}
+
 /// Put this session's withheld-steering notice on the lead's transcript, if
 /// there is one.
 ///
@@ -35,7 +63,7 @@ use crate::config::Config;
 /// **Call it before the boot's `Status::WaitingInput`.** An `Inbound::Event`
 /// folds the lead to `Running`, which is what that assertion exists to
 /// correct for the rest of the startup chrome.
-pub(super) fn announce_withheld(cfg: &Config, in_tx: &UnboundedSender<Inbound>) {
+fn announce_withheld(cfg: &Config, in_tx: &UnboundedSender<Inbound>) {
     let Some(withheld) = cfg.authority.withheld.as_ref() else {
         return;
     };
@@ -114,5 +142,50 @@ mod tests {
     #[test]
     fn a_trusted_checkout_is_announced_nothing() {
         assert!(drain(&config()).is_empty());
+    }
+
+    /// Send the whole boot disclosure over a workspace whose settings pin
+    /// `holdout`, and collect what reached the deck.
+    fn drain_session(holdout: &str) -> Vec<Inbound> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".stella")).expect("dot stella");
+        std::fs::write(
+            dir.path().join(".stella/settings.json"),
+            format!(r#"{{"context":{{"retrieval":{{"artifact_holdout_rate":{holdout}}}}}}}"#),
+        )
+        .expect("settings");
+
+        let mut cfg = config();
+        cfg.workspace_root = dir.path().to_path_buf();
+
+        let _latch = crate::agent::latch_for_withheld_test();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        announce_session_steering(&cfg, &tx);
+        drop(tx);
+        let mut out = Vec::new();
+        while let Ok(inbound) = rx.try_recv() {
+            out.push(inbound);
+        }
+        out
+    }
+
+    /// **The disclosure witness.** A holdout spends the user's own turns, so
+    /// the deck's boot names the fraction it spends.
+    #[test]
+    fn the_deck_boot_discloses_the_holdout_fraction() {
+        match drain_session("4").as_slice() {
+            [Inbound::Notice(line)] => {
+                assert!(line.contains("1 turn in 4"), "{line}");
+                assert!(line.contains("skill"), "{line}");
+            }
+            other => panic!("expected one notice, got {other:?}"),
+        }
+    }
+
+    /// A workspace that switched the holdout off pays nothing, so it is told
+    /// nothing.
+    #[test]
+    fn a_workspace_with_the_holdout_off_is_told_nothing() {
+        assert!(drain_session("0").is_empty());
     }
 }

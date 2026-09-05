@@ -320,6 +320,25 @@ pub struct RetrievalSettings {
     /// in the pipeline, and a workspace that would rather not pay that needs a
     /// way to say so that is not a source edit.
     pub ab_recall_rate: u32,
+    /// Per-artifact holdout: every `rate`-th eligible turn runs with **one**
+    /// matched skill held back, so that skill's own control arm exists.
+    ///
+    /// Distinct from [`Self::ab_recall_rate`], which withholds the whole
+    /// steering plane. A plane-control turn can say only that recall helped;
+    /// it cannot say which memory, skill or record did the helping. This one
+    /// leaves the rest of the turn intact, so the trial it writes is about one
+    /// artifact.
+    ///
+    /// A turn the plane control already took is skipped rather than counted,
+    /// so the two schedules cannot land on the same turn. Both counters
+    /// advance once per turn, so a shared count would put every holdout on a
+    /// turn where everything was withheld already, and the per-artifact arm
+    /// would never carry one distinct measurement.
+    ///
+    /// `0` (and `1`) disable it. The default is higher than the plane rate
+    /// because the plane control already spends turns and the two costs add
+    /// up.
+    pub artifact_holdout_rate: u32,
 }
 
 impl Default for RetrievalSettings {
@@ -342,6 +361,7 @@ impl Default for RetrievalSettings {
             ann_probes: t.ann_probes,
             require_evidence: t.require_evidence,
             ab_recall_rate: DEFAULT_AB_RECALL_RATE,
+            artifact_holdout_rate: DEFAULT_ARTIFACT_HOLDOUT_RATE,
         }
     }
 }
@@ -354,6 +374,11 @@ pub const DEFAULT_RECALL_MAX_TOKENS: u32 = 1200;
 /// compile-time constant this setting replaces. 10 means every tenth turn in a
 /// workspace is a control turn; 0 disables the control.
 pub const DEFAULT_AB_RECALL_RATE: u32 = 10;
+/// Per-artifact holdout rate — 20 means one matched skill is held back on
+/// every twentieth eligible turn. `0` disables it. Twice the plane rate above,
+/// because the plane control already costs a turn in ten and the two prices
+/// add up.
+pub const DEFAULT_ARTIFACT_HOLDOUT_RATE: u32 = 20;
 
 impl RetrievalSettings {
     /// The store-level knobs, as the context plane's own type.
@@ -517,7 +542,8 @@ mod tests {
                 "ann_enabled":true,
                 "ann_probes":23,
                 "require_evidence":false,
-                "ab_recall_rate":7
+                "ab_recall_rate":7,
+                "artifact_holdout_rate":9
             }
         }}"#;
         let s: Settings = serde_json::from_str(json).expect("parse");
@@ -567,6 +593,7 @@ mod tests {
         assert_eq!(r.ann_probes, 23);
         assert!(!r.require_evidence, "the escape hatch must parse");
         assert_eq!(r.ab_recall_rate, 7);
+        assert_eq!(r.artifact_holdout_rate, 9);
     }
 
     /// The defaults must reproduce the values that shipped as `const`s, or
@@ -609,6 +636,17 @@ mod tests {
         assert_eq!(
             d.ab_recall_rate, 10,
             "the rate that shipped as the `AB_RECALL_RATE` constant"
+        );
+        assert_eq!(
+            d.artifact_holdout_rate, DEFAULT_ARTIFACT_HOLDOUT_RATE,
+            "the per-artifact holdout ships on, and costs less than the plane \
+             control it sits beside"
+        );
+        assert!(
+            d.artifact_holdout_rate > d.ab_recall_rate,
+            "a per-artifact holdout that fired more often than the plane \
+             control would spend more of the user's turns than the coarser \
+             experiment it refines"
         );
         assert_eq!(
             d.tuning(),

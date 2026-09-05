@@ -78,6 +78,19 @@ pub(super) fn skill_promotion(
         .unwrap_or_default()
 }
 
+/// The per-artifact holdout rate in force for a workspace
+/// (`context.retrieval.artifact_holdout_rate`).
+///
+/// A second read of the same block `session_retrieval_settings` returns,
+/// for the one caller that needs the number without a session: the deck's
+/// boot disclosure runs before any `SessionMemory` exists. It degrades to the
+/// shipped default for the reason that read does — a typo in a ranking knob
+/// must not cost the user their memory — and the disclosure is then the one
+/// a workspace on the defaults would have seen anyway.
+pub fn session_artifact_holdout_rate(workspace_root: &std::path::Path) -> u32 {
+    session_retrieval_settings(workspace_root).artifact_holdout_rate
+}
+
 /// Phase 4 (#715): the efficacy thresholds that decide when a record's
 /// selection health counts as failing.
 ///

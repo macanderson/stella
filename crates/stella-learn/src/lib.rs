@@ -3,10 +3,11 @@
 
 //! What the agent learns, and what steers it.
 //!
-//! Five trees live here. `skills` is the skill catalog. `rules` is the rule
+//! Six trees live here. `skills` is the skill catalog. `rules` is the rule
 //! engine. `mining` is the text miner both of them share. `comparison` and
-//! `self_tuning` answer whether arm B beat arm A. `redact` strips secrets
-//! out of text.
+//! `self_tuning` answer whether arm B beat arm A. `holdout` is the schedule
+//! that makes the arm they compare against. `redact` strips secrets out of
+//! text.
 //!
 //! No I/O. Every entry point is a plain function. A caller reads the file
 //! and hands the text in. `RuleSource` and `SkillSource` are the ports for
@@ -20,6 +21,7 @@
 //! and the glob a rule guard matches on.
 
 pub mod comparison;
+pub mod holdout;
 pub(crate) mod mining;
 pub mod redact;
 pub mod rules;

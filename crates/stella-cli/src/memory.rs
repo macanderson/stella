@@ -119,7 +119,7 @@ pub(crate) use skill_files::{
 };
 // Phase 2 (#713): the engine-config builder reads the lifecycle switch through
 // here, so exactly one place in the crate resolves a `context.*` sub-block.
-pub use tuning::session_lifecycle_enabled;
+pub use tuning::{session_artifact_holdout_rate, session_lifecycle_enabled};
 
 /// Marker prefixing a recalled-context message so
 /// [`recall::inject_recall_block`] can find the newest one for dedup. Blocks
@@ -361,6 +361,21 @@ pub struct SessionMemory {
     /// somewhere and because it is what the arm is derived from
     /// (`recall::ab_control_turn`).
     ab_turn: u64,
+    /// The turn number this session last claimed from the per-artifact
+    /// holdout's own schedule (`recall::ARTIFACT_HOLDOUT_EXPERIMENT`), or the
+    /// in-session tally when the store could not hand one out. Kept beside
+    /// `ab_turn` and never shared with it: a plane-control turn advances that
+    /// counter and is skipped by this one, so the two run over different
+    /// populations.
+    holdout_turn: u64,
+    /// Which holdout this turn is, counting from zero, or `None` when this
+    /// turn holds nothing back. Set by `arm_recall_control()` alongside
+    /// `ab_suppressed`, read by [`Self::note_turn_skills`] when it picks the
+    /// skill to withhold.
+    ///
+    /// The ordinal rather than the rate and the turn, so the pick cannot
+    /// disagree with the arm about which schedule it is on.
+    holdout_ordinal: Option<u64>,
     /// Phase 3 (#714): `context.lifecycle.enabled`, read once at open. While
     /// this is off the learning loop runs exactly the lexical path that ships
     /// today and writes nothing to the lifecycle ledger.
@@ -635,6 +650,8 @@ impl SessionMemory {
                     ab_suppressed: false,
                     steering_enabled: true,
                     ab_turn: 0,
+                    holdout_turn: 0,
+                    holdout_ordinal: None,
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
                     task_id,
@@ -752,12 +769,13 @@ impl SessionMemory {
     /// The skills recall would inject for `prompt`, as `(name, reason)` pairs
     /// — `reason` is the matched domains/terms that selected it.
     ///
-    /// Test-gated: [`Self::note_turn_skills`] returns the same pairs and also
-    /// arms the turn's trial join, so it is the door every production caller
-    /// takes. A production caller of this one would be a caller reporting an
-    /// injection without recording the measurement of it, which is the split
-    /// that left the appraisal ledger empty. Drop the gate if a surface ever
-    /// needs to *preview* a selection rather than take a turn with it.
+    /// Test-gated: [`Self::note_turn_skills`] returns the same pairs, minus
+    /// whatever this turn holds back, and also arms the turn's trial join, so
+    /// it is the door every production caller takes. A production caller of
+    /// this one would be a caller reporting an injection without recording the
+    /// measurement of it, which is the split that left the appraisal ledger
+    /// empty. Drop the gate if a surface ever needs to *preview* a selection
+    /// rather than take a turn with it.
     #[cfg(test)]
     pub fn selected_skills(&self, prompt: &str) -> Vec<(String, String)> {
         if self.injection_suppressed() {
@@ -777,11 +795,11 @@ impl SessionMemory {
 
     /// One scoring pass over the loaded skills, keeping the top-k tail.
     ///
-    /// The A/B control is **not** applied here. Whether this turn's prompt
-    /// matched a skill's trigger is a fact about the prompt; whether the match
-    /// was then injected is the experiment. Collapsing the two would erase the
-    /// control arm, since a suppressed turn would look like a turn the skill
-    /// never matched.
+    /// Neither holdout is applied here — not the plane control, and not
+    /// [`Self::apply_holdout`]. Whether this turn's prompt matched a skill's
+    /// trigger is a fact about the prompt; whether the match was then injected
+    /// is the experiment. Collapsing the two would erase the control arm, since
+    /// a withheld turn would look like a turn the skill never matched.
     fn skill_selection(&self, prompt: &str) -> skills::SkillSelection {
         skills::select_skills_reporting(
             &self.load_skills(),
@@ -789,6 +807,35 @@ impl SessionMemory {
             &self.active_domains(prompt),
             &SelectionConfig::default(),
         )
+    }
+
+    /// Take this turn's held-back skill out of a selection about to be
+    /// injected, and name it. `None` when this turn holds nothing back.
+    ///
+    /// Only one skill goes, and the rest of the turn is untouched, so the trial
+    /// this leaves behind is about that skill rather than about recall as a
+    /// whole — which is the measurement the plane-wide control cannot make.
+    ///
+    /// **Every path that injects skills calls this**, because each one runs its
+    /// own scoring pass: recall scopes its domains by the paths a turn touched,
+    /// and this seam scopes them by the prompt alone, so the two shortlists
+    /// differ. Applied at the recording seam alone, the ledger would have
+    /// written `selected: false` for a skill the prompt still carried.
+    ///
+    /// The pick therefore reads the **loaded catalog**, which every site
+    /// shares, rather than the shortlist in front of it, which they do not. A
+    /// turn whose pick was not going to be injected anyway holds nothing back:
+    /// that costs the experiment samples and cannot cost it correctness. The
+    /// catalog is read only on a turn the schedule armed, which is one turn in
+    /// `context.retrieval.artifact_holdout_rate`.
+    fn apply_holdout(&self, selection: &mut skills::SkillSelection) -> Option<String> {
+        let ordinal = self.holdout_ordinal?;
+        let loaded = self.load_skills();
+        let names: Vec<&str> = loaded.iter().map(|s| s.name.as_str()).collect();
+        let held = stella_learn::holdout::pick(ordinal, &names)?;
+        let before = selection.selected.len();
+        selection.selected.retain(|s| s.skill.name != held);
+        (selection.selected.len() != before).then(|| held.to_string())
     }
 
     /// Render selected skills as `(name, why)` — the matched domains and terms
@@ -825,22 +872,37 @@ impl SessionMemory {
     /// question nobody asked.
     ///
     /// Matched-but-not-injected turns are what the without-skill arm is made
-    /// of, and there are three ways to be one: the A/B control's coin, steering
-    /// switched off, and losing the last top-k seat to a higher-scoring
-    /// sibling. All three are recorded, which is why this reads the selection
-    /// pass rather than `selected_skills` — that one returns nothing at
-    /// all on a suppressed turn, by design.
+    /// of, and there are four ways to be one: the plane control's coin,
+    /// steering switched off, losing the last top-k seat to a higher-scoring
+    /// sibling, and the per-artifact holdout naming this skill
+    /// ([`Self::apply_holdout`]). All four are recorded, which is why this
+    /// reads the selection pass rather than `selected_skills` — that one
+    /// returns nothing at all on a suppressed turn, by design.
+    ///
+    /// Only the fourth is a *paired* control: the other three either withhold
+    /// everything or withhold on a reason of their own, so the turn they leave
+    /// behind cannot say which artifact the outcome belongs to.
     pub(crate) fn note_turn_skills(&self, prompt: &str) -> Vec<(String, String)> {
-        let selection = self.skill_selection(prompt);
+        let mut selection = self.skill_selection(prompt);
+        let held = self.apply_holdout(&mut selection);
         // The trigger-matched population: the survivors plus the ones the
         // top-k cut threw away. Both cleared the same score floor, which is
-        // what "the trigger matched" means here.
-        let trigger_matched: Vec<String> = selection
+        // what "the trigger matched" means here. The held-back skill rejoins it
+        // below: it cleared the floor too, and leaving it out would withhold a
+        // skill and record nothing about the turn that paid for it.
+        let mut trigger_matched: Vec<String> = selection
             .selected
             .iter()
             .chain(selection.over_top_k.iter())
             .map(|s| s.skill.name.clone())
             .collect();
+        if let Some(name) = held {
+            eprintln!(
+                "  {} holding back skill `{name}` this turn, to measure whether it helps",
+                "!".yellow()
+            );
+            trigger_matched.push(name);
+        }
         let injected = if self.injection_suppressed() {
             Vec::new()
         } else {
