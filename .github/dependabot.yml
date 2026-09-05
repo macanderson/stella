@@ -1,5 +1,13 @@
 # Automated dependency + security updates.
 # https://docs.github.com/code-security/dependabot
+#
+# Coverage (#3459): what is tracked automatically, and what is not.
+#   - cargo (workspace root): automatic for every direct/transitive
+#     dependency except `futures-util`, ignored below.
+#   - github-actions: automatic for every pinned action.
+#   - pip in /bench/harbor_adapter and /bench/terminal_bench_analysis: the
+#     only two directories under /bench with a Python manifest, automatic
+#     except `harbor`, ignored in both for the reason given below.
 version: 2
 updates:
   # Rust workspace.
@@ -11,6 +19,39 @@ updates:
     groups:
       cargo:
         update-types: [minor, patch]
+    ignore:
+      # `futures-util` is this workspace's only *direct* dependency from the
+      # `futures` 0.3 family ([workspace.dependencies]); `futures`,
+      # `futures-channel`, `futures-core`, `futures-executor`, `futures-io`,
+      # `futures-macro`, `futures-sink` and `futures-task` all ride along as
+      # transitives locked to the same 0.3.x line (Cargo.lock). Dependabot's
+      # cargo `LockfileUpdater` moves a family member with
+      # `cargo update -p futures-util`, and when that leaves the line
+      # unmoved it retries with `--precise` to force the sibling crates to
+      # cascade -- its own source names this exact shape ("the futures
+      # family: 0.3.34 needs futures-* at ^0.3.34",
+      # cargo/lib/dependabot/cargo/file_updater/lockfile_updater.rb,
+      # `force_precise_update`). For this workspace both attempts still
+      # leave futures-util unmoved, so `validate_dependency_update` raises
+      # `RuntimeError: Failed to update futures-util!` and the whole grouped
+      # cargo update job exits non-zero -- reproduced on three consecutive
+      # weekly runs (2026-08-16 run 31946407960, 2026-08-23 run
+      # 32638709216, 2026-08-30 run 33310879038; every one names
+      # futures-util in the job's own "Dependencies failed to update"
+      # table). `serde` hit the same validator once, on the 2026-08-16 run
+      # only, most likely for the same reason (it now splits into `serde`
+      # + `serde_core`); it is not ignored here because no run since has had
+      # a serde update to test the validator against, so there is nothing
+      # to reproduce -- if it recurs, extend this list the same way.
+      #
+      # This ignore is a deliberate decision to hand-track futures-util
+      # rather than block every other cargo update on an upstream bug. To
+      # bump it: `cargo update -p futures-util --precise <version>` (which
+      # cascades the sibling futures-* crates the same way Dependabot's own
+      # retry tries and fails to), then `cargo test -p <affected crates>`.
+      # Remove this entry once dependabot-core stops hitting the family
+      # lockstep case here, and re-track automatically.
+      - dependency-name: futures-util
 
   # GitHub Actions are pinned to full commit SHAs in every workflow, with the
   # human-readable tag kept as a trailing comment. Dependabot reads that
@@ -35,7 +76,7 @@ updates:
   # path unlaunchable until #909 caught it. Moving the pin means re-auditing
   # the launcher against the new release and updating every site together.
   - package-ecosystem: pip
-    directory: /bench
+    directory: /bench/terminal_bench_analysis
     schedule:
       interval: weekly
     ignore:
