@@ -23,7 +23,7 @@ use super::*;
 /// conflated: a call routed to a smaller-context or non-reasoning model still
 /// got the session model's clamps, which is the wire-shape/400 class #273
 /// exists to warn about. The role that used to diverge here was the worker's;
-/// the ones that will diverge again are plugin-declared seats (#3909), which
+/// the ones that will diverge again are plugin-declared seats, which
 /// resolve their own model through [`crate::agent::seats`].
 fn tuned_engine_config(cfg: &Config, catalog_ref: (&str, &str)) -> EngineConfig {
     let (provider_id, model_id) = catalog_ref;

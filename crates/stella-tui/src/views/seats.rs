@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The SEATS pane — which model each **plugin-declared** role runs on:
+//! The SEATS pane — which model each role of this session runs on:
 //!
 //! ```text
-//! seats · 2 · read-only
+//! seats · 3 · read-only
+//!  default               zai/glm-5.2               from default_model
 //!  acme/second-opinion   anthropic/claude-opus-5   from acme
 //!  vera/test_author      default                   from vera
 //! ```
@@ -21,14 +22,33 @@
 //! removed — which is the whole contract, and why this file contains no list of
 //! roles and no `match` on a role name.
 //!
+//! # The session's own role leads the list
+//!
+//! [`rows`] puts the roles the driver **resolved** first
+//! ([`EngineConfigState::roles`], an open list of names the driver chose —
+//! today just `default`), then the roles installed plugins **declared**. The
+//! driver supplies each one, so the pane still names nothing: a session with
+//! no plugin shows its one role, and a plugin declaring `reviewer` makes that
+//! two rows.
+//!
+//! Leading with the resolved role is what lets the pane answer the question a
+//! reader brings to it. Plugin seats alone say which roles run on a model of
+//! their own and leave "then what runs everything else?" unanswered, while
+//! `default` is the model every unassigned row above already points at.
+//!
 //! # What a row says, and what it does not
 //!
-//! Each row is a seat key (`<plugin-id>/<role>`, `doc:roleless-core` §8.4), the
-//! model assigned to it, and the plugin it came from. The key is **rendered
-//! whole and never split**: the deck has no business knowing which half is the
-//! plugin, which is why [`stella_protocol`]-side callers send
-//! [`SeatRow::from`](crate::envelope::SeatRow::from) separately rather than
-//! letting this pane parse it out.
+//! Each row is a name, the model it runs on, and where that answer came from.
+//! For a plugin seat the name is a seat key (`<plugin-id>/<role>`,
+//! `doc:roleless-core` §8.4) and the source is the plugin. For a resolved role
+//! the source is the settings key that chose the model — `default_model`,
+//! `agents.default.model`, `session default`, `--model (this invocation)` —
+//! pre-rendered driver-side like every other cell in this module tree.
+//!
+//! A seat key is **rendered whole and never split**: the deck has no business
+//! knowing which half is the plugin, which is why [`stella_protocol`]-side
+//! callers send [`SeatRow::from`](crate::envelope::SeatRow::from) separately
+//! rather than letting this pane parse it out.
 //!
 //! An unassigned seat renders as `default`, not as a blank. That is the truth —
 //! an unassigned seat genuinely runs on the session's model — and a blank cell
@@ -37,15 +57,11 @@
 //! # Read-only, for now, and that is a smaller claim than AGENTS makes
 //!
 //! This pane renders; it does not edit. Assigning a model writes
-//! `agent_engine_config.seat_models`, which is #3909's second half — the
-//! editor arrives with the AGENTS pane's persona tabs leaving
-//! (`doc:roleless-core` slice 5b), because until then the two panes would
-//! offer two different ways to say the same thing. Rendering a seat the user
-//! cannot yet edit reflects what the driver already knows; editing one whose
-//! settings block is about to be restructured would not. The header says
-//! `read-only` so a reader who pressed
-//! `e` and saw nothing happen learns why from the screen rather than from the
-//! source.
+//! `agent_engine_config.seat_models`, and that editor is #6086. Rendering a
+//! seat the user cannot yet edit reflects what the driver already knows;
+//! editing one before the write path is proved would not. The header says
+//! `read-only` so a reader who pressed `e` and saw nothing happen learns why
+//! from the screen rather than from the source.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -54,7 +70,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 use stella_tui_theme::token;
 
-use crate::envelope::SeatRow;
+use crate::envelope::{EngineConfigState, SeatRow};
 use crate::render::columns;
 
 /// Shown when the driver has not delivered an engine snapshot yet — a race
@@ -62,11 +78,11 @@ use crate::render::columns;
 /// remedy) as the TOOLS panel's.
 const NO_SNAPSHOT_HINT: &str = "waiting for the seat list — r to reload";
 
-/// Shown when the snapshot arrived and named no seats.
+/// Shown when the snapshot arrived and named no rows at all — no resolved role
+/// and no declared seat.
 ///
-/// Not an apology or an error. No plugin declaring a role is the
-/// ordinary state of a fresh install, and the line says what would change it
-/// rather than implying something is missing.
+/// Not an apology or an error. The line says what runs instead rather than
+/// implying something is missing.
 const NO_SEATS_HINT: &str = "no installed plugin declares a role — every turn runs on the default \
                              model";
 
@@ -86,10 +102,37 @@ const MIN_KEY_CELLS: usize = 12;
 /// Cells between two columns.
 const GAP: usize = 3;
 
+/// The pane's rows: the roles the driver resolved, then the roles installed
+/// plugins declared.
+///
+/// A pure fold over the snapshot, which is what lets the painter below stay a
+/// painter. Every row comes from the driver — this function holds no list of
+/// role names, and adding one is the defect it exists to prevent.
+///
+/// A resolved role takes the same row shape as a declared seat: its name, the
+/// model it resolved to, and the settings key that chose that model. Its model
+/// is always `Some`, because a resolved role has one by definition; an
+/// unassigned plugin seat stays `None` and renders as `default`.
+#[must_use]
+pub fn rows(state: &EngineConfigState) -> Vec<SeatRow> {
+    state
+        .roles
+        .iter()
+        .map(|role| SeatRow {
+            key: role.role.clone(),
+            model: Some(role.model.clone()),
+            from: role.source.clone(),
+        })
+        .chain(state.seats.iter().cloned())
+        .collect()
+}
+
 /// Draw the SEATS pane into `area`.
 ///
 /// `seats` is `None` while the driver has sent no engine snapshot, which is a
-/// different fact from an empty slice and renders as a different line.
+/// different fact from an empty slice and renders as a different line. Build
+/// the slice with [`rows`] rather than handing over a raw seat list, or the
+/// session's own role goes missing from its own seat list.
 pub fn render(seats: Option<&[SeatRow]>, area: Rect, buf: &mut Buffer) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -248,6 +291,108 @@ mod tests {
             model: model.map(str::to_string),
             from: from.to_string(),
         }
+    }
+
+    /// One resolved role as the driver sends it: a name, the model it landed
+    /// on, and the settings key that chose it.
+    fn resolved(role: &str, model: &str, source: &str) -> crate::envelope::RoleWiringRow {
+        crate::envelope::RoleWiringRow {
+            role: role.to_string(),
+            model: model.to_string(),
+            source: source.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn snapshot(
+        roles: Vec<crate::envelope::RoleWiringRow>,
+        seats: Vec<SeatRow>,
+    ) -> EngineConfigState {
+        EngineConfigState {
+            roles,
+            seats,
+            ..Default::default()
+        }
+    }
+
+    /// The keys of the rows [`rows`] folds out of a snapshot, in order.
+    fn keys(state: &EngineConfigState) -> Vec<String> {
+        rows(state).into_iter().map(|row| row.key).collect()
+    }
+
+    /// **The witness.** One plugin declaring `reviewer`, and the pane is two
+    /// rows: the session's own role first, then the plugin's.
+    ///
+    /// The fold is what puts the first row there. A pane handed `state.seats`
+    /// alone draws one row and never names the model everything else runs on,
+    /// which is what this asserts against.
+    #[test]
+    fn the_session_role_leads_the_plugin_seats() {
+        let state = snapshot(
+            vec![resolved("default", "zai/glm-5.2", "default_model")],
+            vec![seat("acme/reviewer", None, "acme")],
+        );
+        assert_eq!(keys(&state), ["default", "acme/reviewer"]);
+
+        let folded = rows(&state);
+        let text = draw(Some(&folded), 90, 12);
+        assert!(text.contains("seats · 2 · read-only"), "{text}");
+        assert!(text.contains("zai/glm-5.2"), "{text}");
+        assert!(text.contains("from default_model"), "{text}");
+        assert!(text.contains("acme/reviewer"), "{text}");
+    }
+
+    /// A fresh install has no plugin, and the pane is the one row the session
+    /// does have rather than a hint that it has none.
+    #[test]
+    fn a_session_with_no_plugin_still_shows_its_own_role() {
+        let state = snapshot(
+            vec![resolved(
+                "default",
+                "anthropic/claude-opus-5",
+                "session default",
+            )],
+            Vec::new(),
+        );
+        assert_eq!(keys(&state), ["default"]);
+
+        let folded = rows(&state);
+        let text = draw(Some(&folded), 90, 12);
+        assert!(text.contains("anthropic/claude-opus-5"), "{text}");
+        assert!(!text.contains("no installed plugin"), "{text}");
+    }
+
+    /// The fold names nothing. A driver that calls the session's own role
+    /// something else gets that word back, which is what proves the row is
+    /// read rather than written here.
+    #[test]
+    fn the_leading_row_is_named_by_the_driver_not_by_this_pane() {
+        let state = snapshot(
+            vec![resolved("lead", "zai/glm-5.2", "default_model")],
+            vec![],
+        );
+        assert_eq!(keys(&state), ["lead"]);
+    }
+
+    /// A snapshot the driver sent no rows in draws the hint, not an invented
+    /// `default` row: the pane must not answer a question the driver has not.
+    #[test]
+    fn an_empty_snapshot_invents_no_row() {
+        assert!(rows(&EngineConfigState::default()).is_empty());
+    }
+
+    /// An unassigned plugin seat stays unassigned through the fold. Filling it
+    /// with the leading row's model would make it indistinguishable from a
+    /// seat somebody pinned there.
+    #[test]
+    fn the_fold_leaves_an_unassigned_seat_unassigned() {
+        let state = snapshot(
+            vec![resolved("default", "zai/glm-5.2", "default_model")],
+            vec![seat("vera/test_author", None, "vera")],
+        );
+        let folded = rows(&state);
+        assert_eq!(folded[0].model.as_deref(), Some("zai/glm-5.2"));
+        assert_eq!(folded[1].model, None);
     }
 
     /// **The witness.** A role no core enum has ever heard of renders, because

@@ -273,7 +273,7 @@ pub struct Plan {
     /// The session role's pick.
     ///
     /// One, since #3908. A `Vec` rather than a bare `RolePick` because the
-    /// entries come back as plugin-declared seats in #3909, and every consumer
+    /// entries come back as plugin-declared seats in #6088, and every consumer
     /// here already iterates.
     pub picks: Vec<RolePick>,
     pub verbosity: Verbosity,
