@@ -655,7 +655,6 @@ pub fn state_from_settings(
         })
         .collect();
     EngineConfigState {
-        auto_mode: engine.auto_mode_on(),
         effort_auto: engine.effort_auto_on(),
         reasoning_auto: engine.reasoning_auto_on(),
         minimal_prompt: engine.minimal_prompt_on(),
@@ -703,11 +702,6 @@ fn seat_rows(
 /// empty allowed list are omitted entirely (the file stays minimal).
 pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
     let mut engine = AgentEngineConfig {
-        auto_mode: Some(if state.auto_mode {
-            Toggle::On
-        } else {
-            Toggle::Off
-        }),
         effort_auto: Some(if state.effort_auto {
             Toggle::On
         } else {
@@ -1244,7 +1238,7 @@ mod tests {
         let engine = engine_from_json(
             r#"{"default_model": "openrouter/openai/gpt-5.5",
                 "allowed_models": ["anthropic/claude-fable-5"],
-                "auto_mode": "off", "effort_auto": "on", "reasoning_auto": "off",
+                "effort_auto": "on", "reasoning_auto": "off",
                 "minimal_prompt": "on",
                 "agents": {"default": {"provider": "openrouter", "effort": "high",
                                       "reasoning": "on",
@@ -1260,7 +1254,6 @@ mod tests {
             Vec::new(),
             &[],
         );
-        assert!(!state.auto_mode);
         assert!(state.effort_auto);
         assert!(
             state.minimal_prompt,
@@ -1291,7 +1284,6 @@ mod tests {
         assert_eq!(params.service_tier, Some(ServiceTier::Flex));
         // The toggles are written explicitly (an "off" the user chose is
         // preserved, not dropped).
-        assert_eq!(back.auto_mode, Some(Toggle::Off));
         assert_eq!(back.effort_auto, Some(Toggle::On));
         assert_eq!(back.minimal_prompt, Some(Toggle::On));
         // The round trip is stable: state → settings → state is identity

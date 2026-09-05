@@ -31,10 +31,15 @@
 //! **What that check cannot do**, said plainly because a guard trusted past
 //! its reach is worse than none: the table below is an enumeration, so it
 //! catches drift in a power somebody already thought of. A driver that grew
-//! an entirely new capability nobody listed would pass it. Closing that needs
-//! the loader binding these declarations to a gate under
-//! `Principal::Plugin`, where an undeclared call is refused rather than
-//! merely unlisted — `doc:pipeline-as-plugins` §A4, and not this slice.
+//! an entirely new capability nobody listed would pass it.
+//!
+//! The gate that would refuse such a call now exists. `stella-cli`'s
+//! `plugin_authz` turns an installed list into a rule, and its
+//! `the_shipped_selfdriving_grant_is_exactly_what_the_gate_enforces` puts
+//! this manifest in front of it. The hole here stays open. The rule judges
+//! one thing: a call Stella makes for the plugin. Stella starts no program
+//! in this package, so it makes none. `scripts/self-driving.sh` runs as you.
+//! To close the hole, the loop has to become a program Stella drives.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

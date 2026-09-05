@@ -282,10 +282,10 @@ pub struct Config {
     ///
     /// `load_with_settings` folds the flag and the settings-configured
     /// default into one `Option<&str>` before resolution, so by the time a
-    /// `Config` exists the two are otherwise indistinguishable. The pipeline
-    /// wiring needs to tell them apart: an explicit flag is a per-invocation
-    /// pin of the WORKER model that `pipeline_worker_model`/`agents.worker.*`
-    /// must not override (see `crate::agent::resolve_engine_wiring`).
+    /// `Config` exists the two are otherwise indistinguishable. The engine
+    /// wiring must tell them apart. An explicit flag pins the model for one
+    /// run, and a configured `default_model` must not win over it (see
+    /// `crate::agent::resolve_engine_wiring`).
     pub model_pinned_by_flag: bool,
     pub api_key: ApiKey,
     /// `--turn-timeout`: the wall clock one turn may spend, used only to decide
@@ -564,9 +564,9 @@ impl Config {
             }
         });
         // Captured BEFORE the fold below, which is the last point where the
-        // flag and the settings default are still distinguishable. The
-        // pipeline wiring needs the distinction to stop
-        // `pipeline_worker_model` from overriding an explicit `--model`.
+        // flag and the settings default are still distinguishable. The engine
+        // wiring needs that: a configured `default_model` must not win over
+        // an explicit `--model`.
         let model_pinned_by_flag = model_override.is_some();
         let model_override = model_override.or(engine_default.as_deref());
 

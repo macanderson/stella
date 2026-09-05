@@ -1,0 +1,168 @@
+# Static analysis (CodeQL) — the security-scanning half of the supply-chain
+# posture AGENTS.md describes: `cargo deny` gates advisories/bans/sources/
+# licenses, `dependency-review.yml` reviews every PR's dependency diff, and
+# this is what actually reads the code.
+#
+# ── Why this file exists at all (#3260) ──────────────────────────────────────
+#
+# Until this file, CodeQL ran as GitHub's managed "default setup" — no
+# committed workflow, configured entirely through repository settings. Its
+# last successful analysis was 2026-07-13; every run after that, on
+# 2026-07-17, failed in five to nine seconds each. That is too fast to be a
+# Rust autobuild actually attempting this workspace — a real build failure
+# would cost minutes, not single digits of seconds — which points at an
+# init-time configuration error rather than a build problem, though the exact
+# cause is not recoverable: default setup's run logs are not retained the way
+# a committed workflow's are, and by the time #3260 was filed they had already
+# expired. What is verifiable is that default setup's own state is
+# `not-configured` today (`gh api repos/<repo>/code-scanning/default-setup`) —
+# GitHub disables default setup automatically after enough consecutive
+# failures — so from some point after 2026-07-17 there were not even any red
+# runs left to notice. The scanner was not merely failing; for over a month,
+# nothing invoked it at all, and nothing in this repository's own gate reads
+# CodeQL's status, so nothing said so.
+#
+# Committing this file switches CodeQL to "advanced setup": a workflow this
+# repository owns, whose logs live in this repository's own Actions history
+# with the same retention as every other workflow here, and whose language
+# list and build step are declared rather than configured through a settings
+# page nobody was watching.
+#
+# ── Why these four languages, and not default setup's seven ─────────────────
+#
+# Default setup's configured language list (readable via the same API call
+# above) was `[actions, javascript, javascript-typescript, python, ruby, rust,
+# typescript]` — `javascript`, `javascript-typescript` and `typescript` all
+# three at once. Current CodeQL does not accept that combination (the
+# consolidated `javascript-typescript` id supersedes the separate
+# `javascript`/`typescript` ones), and duplicated/overlapping language ids is
+# exactly the kind of error that would fail at init time, before any build
+# runs — consistent with the five-to-nine-second failures above, though this
+# is inference rather than something a log line confirms.
+#
+# The four kept here are the languages this repository actually has real
+# source in: `rust` (the workspace itself), `python` (`bench/`, `scripts/`),
+# `javascript-typescript` (`website/`) and `actions` (every workflow under
+# `.github/workflows/`). `ruby` is dropped — the repository's only `.rb` file
+# is `packaging/homebrew/stella.rb`, not worth its own CodeQL extractor pass.
+#
+# ── Why every language here gets `build-mode: none` ─────────────────────────
+#
+# CodeQL's Rust extractor accepts one build mode, `none`: it extracts from
+# source with the workspace resolved by cargo, rather than tracing a compiler
+# the way the C/C++/Java extractors do. `manual` is refused outright by
+# `codeql database init` — "Rust does not support the manual build mode.
+# Please try using one of the following build modes instead: none" — so the
+# rust leg carries no build step. `python` and `javascript-typescript` are
+# interpreted and `actions` parses YAML directly, so none of those needs one
+# either.
+#
+# The rust leg still installs the toolchain `rust-toolchain.toml` pins,
+# because the extractor resolves the workspace through cargo before it
+# extracts; a runner with no toolchain hands it an unresolved dependency
+# graph. Whether this workspace *compiles* is `ci.yml`'s question, not this
+# file's.
+#
+# ── Why this stays advisory (#3260 DoD item 4) ───────────────────────────────
+#
+# Recorded on the issue: advisory, not a required check. This repository
+# already gates hard on `cargo deny` as a required check, and adding a second
+# required check before a CodeQL run is proven reliably green risks
+# reproducing the exact failure this file exists to fix — a scanner nobody can
+# get green, blocking every PR, is worse than one running silently. The
+# `report` job below is the other half of that decision: the silence itself
+# was the defect (five and a half weeks with nothing surfacing it), so a red
+# run on `main` now opens a labelled tracking issue and a green run closes it
+# — `scripts/codeql-canary.sh`, modeled on `main-canary.yml`'s pattern but
+# scoped to the one fact this workflow already knows: did the analyze job
+# conclude success or failure.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, offset from scorecard.yml's Monday 06:00 so the two scheduled
+    # security scans do not queue against each other.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Only the rust leg needs a toolchain — CodeQL's extractor resolves the
+      # workspace through cargo. The pin comes from rust-toolchain.toml.
+      - name: Install Rust (rustup; the pin comes from rust-toolchain.toml)
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - if: matrix.language == 'rust'
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # Makes a sustained red visible (#3260 DoD item 4) instead of another month
+  # of silence. Runs only outside `pull_request`: a PR's `GITHUB_TOKEN` cannot
+  # be trusted with `issues: write` the way a push-to-main or scheduled run's
+  # can, and per-PR issue noise is not what this is for — the canary is
+  # answering "is CodeQL still working on `main`", not judging any one PR's
+  # code.
+  report:
+    name: report CodeQL status
+    needs: analyze
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Open, refresh or close the codeql-red tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          conclusion=failure
+          if [ "${{ needs.analyze.result }}" = "success" ]; then
+            conclusion=success
+          fi
+          ./scripts/codeql-canary.sh \
+            --announce \
+            --conclusion "$conclusion" \
+            --sha "${{ github.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

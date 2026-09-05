@@ -61,9 +61,9 @@ You can see the rule everywhere in the product:
     **Mechanism:** you pin a model explicitly, or explicitly set none.
     There's no hidden `"auto"` string doing something unclear.
 
-    **Model, as fallback:** `auto_mode` picks from your `allowed_models`
-    list, using clear rules: a different model family first, then price
-    tier, then list order.
+    **Model, as fallback:** an unassigned seat runs on the session's own
+    model, never a default core made up. A second model — `stella goal`'s
+    verifier — groups by family at the point of use, not from a saved pin.
   </SpecCard>
   <SpecCard title="What goes in the prompt?">
     **Mechanism:** a system prompt that never changes byte-for-byte, plus

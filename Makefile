@@ -41,7 +41,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
                     guard-trigger-coverage priority-scheme left-behind \
-                    role-names stat-portability module-reachability core-reachability \
+                    role-names retired-model-keys \
+                    stat-portability module-reachability core-reachability \
                     typed-errors \
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
@@ -819,6 +820,14 @@ left-behind-update: ## Regenerate the left-behind baseline (it should stay empty
 role-names: ## Assert the agent-config role names match across Rust, Python and JS (#1449)
 	@./scripts/check-role-names.sh
 
+.PHONY: retired-model-keys
+retired-model-keys: ## Assert no shipping Rust spells a retired pipeline_<role>_model key (#6061)
+	@python3 ./scripts/check-retired-model-keys.py
+
+.PHONY: retired-model-keys-test
+retired-model-keys-test: ## Test the retired-key guard's directions (hermetic; not part of `gate`)
+	./scripts/test-retired-model-keys.sh
+
 .PHONY: stat-portability
 stat-portability: ## Assert file identity is read through MetadataExt, not a raw libc::stat (#1758)
 	@./scripts/check-stat-portability.sh
@@ -953,6 +962,16 @@ dependabot-pip-dirs: ## Assert every pip directory: in .github/dependabot.yml ho
 .PHONY: dependabot-pip-dirs-test
 dependabot-pip-dirs-test: ## Test the dependabot pip-directory guard (hermetic; not part of `gate`)
 	./scripts/test-dependabot-pip-dirs.sh
+
+# The same shape as main-canary, scoped to one fact: did CodeQL's analyze job
+# pass or fail. A job in codeql.yml runs scripts/codeql-canary.sh directly
+# with --announce and the job's own conclusion, so a sustained red opens a
+# labelled issue instead of running silently. There is nothing for a local
+# "ask" target to check — the conclusion is not this repository's to derive,
+# only the CI job's — so only the test suite gets a target.
+.PHONY: codeql-canary-test
+codeql-canary-test: ## Test the CodeQL canary, announcing included (hermetic; not part of `gate`)
+	./scripts/test-codeql-canary.sh
 
 .PHONY: check
 check: $(CHECK_STEPS) ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy (default and schema features), no rustdoc and no tests

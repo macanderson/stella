@@ -846,7 +846,6 @@ fn every_root_section_is_documented_on_the_reference_page() {
 fn the_toml_agents_vocabulary_matches_the_section() {
     let AgentsSection {
         default_model: _,
-        auto_mode: _,
         effort_auto: _,
         reasoning_auto: _,
         minimal_prompt: _,
@@ -859,7 +858,6 @@ fn the_toml_agents_vocabulary_matches_the_section() {
 
     let declared = [
         "default_model",
-        "auto_mode",
         "effort_auto",
         "reasoning_auto",
         "minimal_prompt",

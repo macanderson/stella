@@ -279,12 +279,11 @@ value like `default_model`.
 
 That closed set is exactly why plugin seats get a section of their own instead of
 joining this one: a seat name comes from whatever you installed, and user-chosen keys
-must not share a namespace with `auto_mode`.
+must not share a namespace with `effort_auto`.
 
 ```toml title="stella.toml"
 [agents]
 default_model = "zai/glm-5.2"
-auto_mode     = "off"
 effort_auto   = "on"
 
 [agents.default]
@@ -811,7 +810,7 @@ allowed = ["zai/glm-5.2", "anthropic/claude-fable-5"]
 
 [agents]
 default_model = "zai/glm-5.2"
-auto_mode     = "on"
+effort_auto   = "on"
 
 [tools]
 delegate  = "off"

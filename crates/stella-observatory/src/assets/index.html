@@ -834,6 +834,19 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .tx-sect .step-row{font-size:var(--fs-sm);color:var(--text-2);padding:4px 0;
                    border-bottom:1px solid var(--hairline)}
 .tx-sect .step-row:last-child{border-bottom:0}
+/* A recall frame's kind (`memory`, `snippet`, `graph`…) runs wider than the
+   step/tool rows' leading number, so this is its own grid rather than a
+   `.step-row` squeezed to fit — the same reasoning `RecallColumns` in the
+   deck's renderer documents for the terminal column widths (#2563). */
+.recall-row{display:grid;grid-template-columns:64px minmax(0,1fr) 130px;gap:var(--sp2);
+            align-items:center;font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3);padding:3px 0}
+.recall-row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recall-row > span:last-child{text-align:right}
+.tx-sect .recall-row{font-size:var(--fs-sm);color:var(--text-2);padding:4px 0;
+                     border-bottom:1px solid var(--hairline)}
+.tx-sect .recall-row:last-child{border-bottom:0}
+.recall-block + .recall-block{margin-top:var(--sp3);padding-top:var(--sp3);
+                              border-top:1px solid var(--hairline)}
 .tokbar{display:flex;height:10px;border-radius:0;overflow:hidden;gap:2px}
 .tokbar i{display:block;height:100%}
 /* The per-turn diff (#1870), opened from a control on the turn card and
@@ -2908,6 +2921,53 @@ function toolRowHtml(t) {
         ${t.ok ? "" : " ✕ " + esc(clip(t.error, 60))}</span>
       <span>${fmtMs(t.duration_ms)} · ${fmtTok(t.bytes_out)}B</span></div>`;
 }
+/* One recalled frame: kind, citation, and whether it is verifiable. A frame
+   with no `content_digest` is not verifiable per
+   `docs/spec/adaptive-context/context-reuse.md` §1 — say so rather than
+   leaving the cell blank, which would read as a rendering bug rather than a
+   fact about the frame (#2563). The provenance chain (`provider ← source`,
+   the method, the raw id) rides in the `title` tooltip rather than its own
+   column: it is a detail-view fact, not one a reader scans a column of. */
+function recallFrameRowHtml(f) {
+  const chain = f.provider && f.source && f.provider !== f.source
+    ? `${f.provider} ← ${f.source}` : (f.provider || f.source || "");
+  const detail = [chain, f.method, f.uri].filter(Boolean).join(" · ");
+  return `<div class="recall-row">
+      <span>${esc(f.kind || "frame")}</span>
+      <span class="name" title="${esc(detail)}">${esc(f.citation_label ?? "")}</span>
+      <span>${f.content_digest ? "verified" : "unverifiable"} · ${fmtTok(f.token_cost)}</span>
+    </div>`;
+}
+/* One context-recall event (`AgentEvent::ContextRecall`, #875): the frames it
+   named, and the CGP budget report when the recall carried one. The report
+   *subsumes* the plain provider mix — it counts what each leg served **and**
+   what the host rejected, and a rejected frame never reaches the frame list
+   above, so a provider that misdeclared its cost shows up only here. */
+function recallEventHtml(rec) {
+  const frames = Array.isArray(rec.frames) ? rec.frames : [];
+  // `0` (or absent) means "not measured" on the wire, never "instant" — `num`
+  // folds a missing measurement to `0` for exactly this comparison.
+  const head = `${frames.length} frame${frames.length === 1 ? "" : "s"} · ${fmtTok(rec.tokens)} tok`
+    + (num(rec.latency_ms) > 0 ? ` · ${fmtMs(rec.latency_ms)}` : "")
+    + (rec.used_ann_index === true ? " · ann" : rec.used_ann_index === false ? " · scan" : "");
+  const frameRows = frames.map(recallFrameRowHtml).join("")
+    || `<div class="empty">No frames recalled.</div>`;
+  const legs = (rec.usage && Array.isArray(rec.usage.providers)) ? rec.usage.providers : [];
+  const budget = rec.usage ? `<div class="recall-row">
+        <span></span>
+        <span class="name">budget ${fmtTok(rec.usage.budget_consumed)} of ${fmtTok(rec.usage.budget_requested)} tok</span>
+        <span></span>
+      </div>` + legs.map(p => `<div class="recall-row">
+        <span></span>
+        <span class="name">${esc(p.provider_id)} — ${fmtInt(p.frames_served)} served${
+          p.frames_rejected ? `, ${fmtInt(p.frames_rejected)} rejected` : ""}</span>
+        <span>${fmtTok(p.token_cost)}</span>
+      </div>`).join("") : "";
+  return `<div class="recall-block">
+      <div class="kick" style="margin-bottom:4px">${esc(head)}</div>
+      ${frameRows}${budget}
+    </div>`;
+}
 /* One sub-agent's page: the turn panel, assumed by the child. A delegate
    opens no execution row of its own and its narration stays private to the
    parent engine, so this page states what IS recorded — the started/finished
@@ -3074,6 +3134,7 @@ async function openTranscript(id, full = false, sub = "") {
   const entries = Array.isArray(j) ? j : [];
   const stillRunning = d.finished_at == null;
   const steps = d.steps ?? [], tools = d.tools ?? [], files = d.files ?? [];
+  const recall = d.recall ?? [];
   const calls = (cx && cx.calls) ? cx.calls : [];
   const inTok = steps.reduce((a, s) => a + num(s.input_tokens), 0);
   const outTok = steps.reduce((a, s) => a + num(s.output_tokens), 0);
@@ -3126,6 +3187,9 @@ async function openTranscript(id, full = false, sub = "") {
       <span><span style="color:var(--ok)">+${fmtInt(f.lines_added)}</span>
         <span style="color:var(--bad)">−${fmtInt(f.lines_removed)}</span></span>
     </div>`).join("");
+  const recallHtml = recall.map(recallEventHtml).join("");
+  const recallFrameCount = recall.reduce(
+    (a, r) => a + (Array.isArray(r.frames) ? r.frames.length : 0), 0);
   const rf = d.reflection;
 
   const sect = (id_, label, kick, inner) =>
@@ -3194,6 +3258,10 @@ async function openTranscript(id, full = false, sub = "") {
       toolRows || `<div class="empty">This run called no tools.</div>`)
     + sect("tx-files", "Files touched", "Every path this run created, edited or deleted.",
       fileRows || `<div class="empty">This run touched no files.</div>`)
+    + sect("tx-recall", "Context recall",
+      "What retrieval actually returned this run — per-frame identity and cost, "
+      + "not just how many frames came back.",
+      recallHtml || `<div class="empty">This run recalled no context.</div>`)
     + (rf ? sect("tx-reflection", "Self-reflection",
       "What the agent said about its own turn once it was over.",
       /* `partial_run` leads: a cancelled run's reflection covers only what
@@ -3214,6 +3282,7 @@ async function openTranscript(id, full = false, sub = "") {
     { id: "tx-steps", label: "Steps", n: steps.length },
     { id: "tx-tools", label: "Tool calls", n: tools.length },
     { id: "tx-files", label: "Files", n: files.length },
+    { id: "tx-recall", label: "Recall", n: recallFrameCount },
     ...(rf ? [{ id: "tx-reflection", label: "Reflection" }] : []),
   ]);
 

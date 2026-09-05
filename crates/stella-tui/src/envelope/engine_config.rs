@@ -95,8 +95,9 @@ pub struct EngineAgentState {
 /// the type carries a *rendering*, not a model to reason over.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoleWiringRow {
-    /// The settings key this role is spelled as (`default` / `worker` /
-    /// `verifier` / `triage`) — the word a user would type to change it.
+    /// The name this row is spelled as: `default` for the session's own
+    /// model, and a plugin-declared seat beside it once one is installed.
+    /// The word a user would type to change it.
     pub role: String,
     /// `provider/slug` exactly as it goes on the wire.
     pub model: String,
@@ -107,7 +108,7 @@ pub struct RoleWiringRow {
     /// `reasoning_auto` disclosure.
     pub thinking: String,
     /// The settings key that decided `model`, as a path a user can edit:
-    /// `agents.verifier.model`, `pipeline_triage_model`, `default_model`,
+    /// `agents.default.model`, `default_model`,
     /// `--model (this invocation)`, or `session default`.
     pub source: String,
     /// What a session started **now** would resolve for this role, when a
@@ -119,8 +120,8 @@ pub struct RoleWiringRow {
     /// running" is the question this dialog exists to answer and showing a
     /// mid-session edit as though it were in force would misreport exactly
     /// that. But saying nothing about the edit was its own lie: a user who
-    /// changed `pipeline_verifier_model` and saved saw their old pin with no
-    /// explanation, and read the dialog as having ignored the save (#1521).
+    /// changed a model pin and saved saw their old one with no explanation,
+    /// and read the dialog as having ignored the save (#1521).
     /// So this is strictly *additional* information, pre-rendered driver-side
     /// like every other cell, holding only the parts that differ.
     pub next_session: Option<String>,
@@ -131,9 +132,6 @@ pub struct RoleWiringRow {
 /// [`WorkspaceInput::EngineConfigSave`](super::WorkspaceInput::EngineConfigSave)).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EngineConfigState {
-    /// Auto verifier-model selection: pick the best allowed model for the
-    /// verifier (preferring a different family than the worker's).
-    pub auto_mode: bool,
     /// Auto per-agent effort (verifier high, worker medium, triage low).
     pub effort_auto: bool,
     /// Auto per-agent reasoning (on for verifier/worker, off for triage).

@@ -51,8 +51,8 @@ use sha2::{Digest, Sha256};
 use stella_context::{ContextDelta, ContextStore, EpisodeInput, LedgerAppend};
 use stella_observatory::respond;
 use stella_protocol::{
-    AgentEvent, ContextFrameRef, ErrorClass, ProviderShare, ReasoningEffort, SubAgentPhase,
-    SubAgentStatus, TaskItem, TaskStatus, ToolCall, ToolOutput,
+    AgentEvent, ContextFrameRef, ContextProviderUsage, ContextUsage, ErrorClass, ProviderShare,
+    ReasoningEffort, SubAgentPhase, SubAgentStatus, TaskItem, TaskStatus, ToolCall, ToolOutput,
 };
 use stella_records::context_record::{
     Confidence, EvidencePool, ObservationRecord, PromotionAction, PromotionActor,

@@ -1,0 +1,18 @@
+[package]
+name = "stella-ansi"
+description = "Strip ANSI escape sequences from tool output — pure functions over borrowed strings, zero dependencies. Shared by stella-tui's transcript fold and the Observatory's journal route so a colourised child process never reaches a reader unstripped."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# A LEAF crate with NO dependencies at all — the `stella-diff`/`stella-home`
+# shape. `stella-observatory` must not link `stella-tui`: that crate carries
+# `ratatui` for rendering, which an observer that links almost nothing has no
+# use for (see its own Cargo.toml). Stripping is pure text processing with no
+# rendering involved, so it belongs in a crate both sides can depend on
+# without either one taking on the other's shape. Adding any dependency here
+# — workspace or registry — takes that property away, so don't.
+[dependencies]

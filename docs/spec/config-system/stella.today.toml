@@ -188,12 +188,13 @@ allowed = [
 # on every run — see `[seats]` below for what replaces them.
 default_model = "anthropic/claude-fable-5"
 
+# RETIRED: `auto_mode` picked the verifier's model out of `allowed`. It
+# ranked by price and preferred a family other than the worker's. The role
+# and its selector went with the five keys above. A file that still carries
+# the key loads fine and says so by name, like those five.
+#
 # on/off toggles. A dedicated enum, not a bool: a typo must be a loud parse
 # error, never a silently-false setting.
-auto_mode      = "off"  # DIMINISHED (#3936): it used to pick the verifier model
-                        # out of `allowed`. The role went with the pipeline, and
-                        # so did the selector. It still marks whether a
-                        # `/profile` holds the dials, and nothing else.
 effort_auto    = "on"   # on = the effort nobody has to think about, overriding
                         # any per-agent `effort`
 reasoning_auto = "on"   # on = thinking chosen automatically, overriding any

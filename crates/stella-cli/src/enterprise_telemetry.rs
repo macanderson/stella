@@ -81,7 +81,27 @@ fn store_process_free_authority(value: u8) {
 /// The names the startup rollback restores after a project dotenv file has
 /// run. `env_files` refuses every one of them outright — the rollback is the
 /// backstop behind that deny-list, and its own test holds the two in step.
+///
+/// `HOME`, `USERPROFILE`, `STELLA_HOME` and `STELLA_DATA_DIR` are the whole
+/// user-tier redirect chain in `stella_home`. `HOME` and `USERPROFILE` set
+/// the default `~/.stella` root. `STELLA_HOME` moves that root. `STELLA_DATA_DIR`
+/// moves the data tier alone and wins over it. Each one is read fresh on
+/// every call, not snapshotted once. So a name a dotenv loader missed could
+/// point trusted settings, credentials, and skills anywhere the project
+/// chose. That is why each one belongs here, the same reason
+/// `STELLA_DATA_DIR` already did.
+///
+/// `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_STATE_HOME` are refused by
+/// `env_files` too, but they are not here. Nothing in the trusted user tier
+/// reads them. `stella_home::systemd_user_unit_dir` reads `XDG_CONFIG_HOME`
+/// only for the self-driving loop's per-user systemd unit path — not
+/// `~/.stella`, and not a privileged config or credential. Restoring it after
+/// a project dotenv load would be a no-op that costs a line and proves
+/// nothing.
 pub(crate) const PRIVILEGED_ENV_NAMES: &[&str] = &[
+    "HOME",
+    "USERPROFILE",
+    "STELLA_HOME",
     "STELLA_MANAGED_SETTINGS",
     "STELLA_DATA_DIR",
     "STELLA_TRUST_PROJECT",

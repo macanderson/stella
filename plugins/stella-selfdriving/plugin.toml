@@ -32,11 +32,17 @@
 # is still the working driver and is deliberately untouched — §10's rule is
 # that the shell driver is not deleted until its replacement is proven, and no
 # replacement has been written. So installing this copies a declaration and a
-# README, and starts nothing. Nothing here is enforced either: binding a
-# declared capability to an `AuthzGate` rule under `Principal::Plugin` is the
-# loader's job (`doc:pipeline-as-plugins` §A4) and has not landed for a host
-# plugin. Read the capability list as "what this loop does to your machine
-# today, written down", because that is exactly what it is.
+# README, and starts nothing.
+#
+# WHAT THE HOST NOW DOES WITH THIS LIST. Installing it builds a rule from it.
+# The loader turns each entry below into an `AuthzGate` rule
+# (`crates/stella-cli/src/plugin_authz.rs`, bound by `agent/tool_stack.rs`'s
+# `session_gate`), so a tool call Stella attributes to this plugin is refused
+# unless this list allows it, at a grade this list allows. That rule is built
+# and never asked, because Stella starts no program here and so attributes
+# nothing to this plugin. `scripts/self-driving.sh` runs as you and holds these
+# powers directly. Read the capability list as "what this loop does to your
+# machine today, written down", because that is exactly what it is.
 #
 # The grades below are read off `scripts/self-driving.sh` itself, and
 # `crates/stella-cli/tests/self_driving_consent.rs` fails if a power named

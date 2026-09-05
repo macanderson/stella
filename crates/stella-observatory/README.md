@@ -35,24 +35,27 @@ this page is where a user sees whether they are running one.
 Nearly a leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
 `sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and these
 `stella-*` dependencies: [`stella-home`](../stella-home), which has no
-dependencies of its own; [`stella-autonomy`](../stella-autonomy), a leaf crate
-with no workspace-crate dependencies, for the self-driving fold and its signal
-thresholds; [`stella-diff`](../stella-diff), another zero-dependency leaf, for
-the unified differ; [`stella-transcript`](../stella-transcript), a near-leaf
-over `stella-diff`, for the `/transcript` page; and
-[`stella-core`](../stella-core), for `context_record`'s types alone.
-Everything heavier is excluded: `stella_store::Store::open` creates `.stella/`
-and runs schema migrations, and an observer that migrates what it observes is
-not an observer.
+dependencies of its own; [`stella-ansi`](../stella-ansi), another
+dependency-free leaf, to strip a tool's colourised output before the journal
+route serves it; [`stella-autonomy`](../stella-autonomy), a leaf crate with
+no workspace-crate dependencies, for the self-driving fold and its signal
+thresholds; [`stella-diff`](../stella-diff), also zero-dependency, for the
+unified differ; [`stella-transcript`](../stella-transcript), a near-leaf over
+`stella-diff`, for the `/transcript` page; and
+[`stella-records`](../stella-records), for `context_record`'s types alone —
+a `stella-core` edge until the record plane left the engine, the types
+unchanged. Everything heavier is excluded: `stella_store::Store::open`
+creates `.stella/` and runs schema migrations, and an observer that migrates
+what it observes is not an observer.
 
 **The rule is about the write path, not about the dependency count.** This
 crate re-reads artifacts instead of linking the crates that produce them, which
 is why it opens `store.db` with `rusqlite` rather than linking `stella-store`.
 The `stella-*` dependencies it does take are all the opposite shape and none of
-them opens anything: `stella-home` is path arithmetic over environment
-variables, `stella-autonomy` is decision logic over owned data (no I/O) with
-the clock passed in as a parameter, and `stella-diff` and `stella-transcript`
-are pure renderers over borrowed text.
+them opens anything: `stella-home` and `stella-ansi` are pure functions over
+borrowed strings, `stella-autonomy` is decision logic over owned data (no I/O)
+with the clock passed in as a parameter, and `stella-diff` and
+`stella-transcript` are pure renderers over borrowed text.
 
 The price is a small set of acknowledged copies. Two of them are gone:
 `global::data_dir` is shared through `stella-home` now (#1139), and
@@ -93,6 +96,7 @@ free one). This crate builds no binary —
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The HTTP responder: the route table, the `Host` and head-cap gates, the CSP, `serve`. Open it to add a route or to touch anything security-relevant. |
 | [`src/db.rs`](src/db.rs) | Every query against `.stella/private/store.db` and `fleet.db`. Open it when a panel needs a new aggregate; the SQL mirrors `stella stats` semantics (resolved = outcome `completed`, `off-grid` = provider `local`). |
+| [`src/db/recall.rs`](src/db/recall.rs) | The `context_recall` projection: which frames a turn recalled, from which providers, at what cost, and the CGP budget report. Split out of `src/db.rs` for the same reason as `sent_context.rs` below. |
 | [`src/sent_context.rs`](src/sent_context.rs) | `/api/execution-context`: the receipt queries (`step_receipt`, `step_manifest`, `context_blocks`) and the fold that rebuilds the messages one model call was sent, with the digest-verification verdict. Kept out of `src/db.rs` so that file stays clear of the 1500-line ratchet. |
 | [`src/context_db.rs`](src/context_db.rs) | `/api/context-lifecycle` (#1871): the self-improvement plane read out of `.stella/private/context.db` — the promotion audit trail (`context_records` folded by lineage in append order), current episodes, and selection health. Record bodies deserialize through `stella-core`'s own `context_record` types and the health fold is the CLI's `fold_selection_health`, linked rather than copied. |
 | [`src/context_diff.rs`](src/context_diff.rs) | `/api/execution-context-diff` (#1511): `stella inspect --diff`, served — the unified diff between one call's reconstruction and its resolved baseline (`prev`/`first`/`prompt`, same-role, whole-session). The differ itself is the `stella-diff` leaf crate. |
