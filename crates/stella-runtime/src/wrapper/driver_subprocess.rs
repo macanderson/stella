@@ -41,7 +41,7 @@
 //! merge would be the same one that would make `arbiter` quietly mean "may
 //! merge to `main`".
 //!
-//! # The three bounds this transport owns
+//! # The four bounds this transport owns
 //!
 //! 1. **The budget covers the whole session**, not each message of it — a
 //!    driver must not be able to buy time by talking (`doc:wrapper-socket` §6b
@@ -61,6 +61,10 @@
 //!    a value on the wire, never a death: killing a driver for asking is how
 //!    its author learns nothing, and a loop that dies on a refusal cannot
 //!    degrade to the smaller cycle it is still permitted.
+//! 4. **A requested [`DriveNext::Sleep`] is clamped to [`MAX_SLEEP_SECS`].**
+//!    The wire type's own doc comment already says this: the host clamps it,
+//!    so a driver cannot buy an unbounded absence by asking for one. The
+//!    clamp is a ceiling only. A shorter request is returned unchanged.
 //!
 //! # What it inherits from the wrapper socket's spawn policy, deliberately
 //!
@@ -88,7 +92,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use stella_plugin::{DriveRequest, DriveResponse, DriverCallResponse, DriverMessage};
+use stella_plugin::{DriveNext, DriveRequest, DriveResponse, DriverCallResponse, DriverMessage};
 use stella_tools::exec::MAX_CAPTURE_BYTES;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -99,6 +103,39 @@ use super::driver_call::{DriverCallGate, DriverSession};
 use super::error::{DriverError, bounded};
 use super::framing::{Framer, OUTPUT_EXCERPT_CHARS, READ_CHUNK, write_frames};
 use super::subprocess::refuses_env_name;
+
+/// The longest sleep a driver may ask for, in seconds.
+///
+/// A driver session ends by naming what it wants next.
+/// [`DriveNext::Sleep`]'s own doc comment promises that the host clamps this
+/// value. [`clamp_sleep`] is what keeps that promise true.
+///
+/// This is not the same bound as [`MAX_WRAPPER_TIMEOUT`]. That one caps how
+/// long one driver process may run. This one caps how long the host may go
+/// before it opens the next session — so the driver can still see a grant
+/// that changed, or a budget that refilled, or a block that cleared. A day
+/// is short enough for that and cheap enough to poll. Whichever phase first
+/// schedules a second session should re-check this number against real use,
+/// the same way this module's header asks for the session budget.
+pub const MAX_SLEEP_SECS: u32 = 24 * 60 * 60;
+
+/// Clamp a driver's requested [`next`](DriveResponse::next) to
+/// [`MAX_SLEEP_SECS`], never below it.
+///
+/// [`DriveNext::Halt`] has no duration, so it passes through unchanged. A
+/// [`DriveNext::Sleep`] under the bound also passes through unchanged. This
+/// is a ceiling, not a floor: a shorter request must reach its caller
+/// exactly as asked.
+fn clamp_sleep(response: DriveResponse) -> DriveResponse {
+    match response.next {
+        DriveNext::Sleep { secs } if secs > MAX_SLEEP_SECS => DriveResponse {
+            next: DriveNext::Sleep {
+                secs: MAX_SLEEP_SECS,
+            },
+        },
+        DriveNext::Sleep { .. } | DriveNext::Halt { .. } => response,
+    }
+}
 
 /// A driver that runs as a child process and speaks the driver channel.
 ///
@@ -474,7 +511,7 @@ impl SubprocessDriver {
         // depends on whether it had asked the host for something first: an ask
         // and then silence is an abandoned session, and naming the call is
         // what tells its author where.
-        response.ok_or_else(|| match served_call {
+        let response = response.ok_or_else(|| match served_call {
             Some(call) => DriverError::UnansweredCall {
                 program: self.program.clone(),
                 call,
@@ -483,7 +520,10 @@ impl SubprocessDriver {
                 program: self.program.clone(),
                 stderr: bounded(&stderr_seen, OUTPUT_EXCERPT_CHARS),
             },
-        })
+        })?;
+        // Bound 4 of this module's header: a driver's own `secs` never
+        // reaches the caller unexamined.
+        Ok(clamp_sleep(response))
     }
 
     /// Read the driver's messages until the one that ends the session,

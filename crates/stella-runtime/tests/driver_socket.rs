@@ -30,7 +30,7 @@ use stella_plugin::{
     PluginManifest,
 };
 use stella_runtime::wrapper::{
-    DEFAULT_DRIVER_MAX_CALLS, DriverCallGate, DriverCapabilities, DriverError,
+    DEFAULT_DRIVER_MAX_CALLS, DriverCallGate, DriverCapabilities, DriverError, MAX_SLEEP_SECS,
     NoDriverCapabilities, SubprocessDriver,
 };
 
@@ -560,5 +560,51 @@ async fn a_driver_that_talks_after_deciding_does_not_wedge_the_session() {
     assert!(
         elapsed < budget / 2,
         "the trailing output was drained rather than waited out: {elapsed:?}"
+    );
+}
+
+/// **The witness for the sleep ceiling.** [`DriveNext::Sleep`]'s own doc
+/// comment promises that the host clamps a driver's requested sleep. This
+/// test asks for a decade of sleep. Without a real clamp in `drive()`, the
+/// decade would reach the caller whole, and the assertion below would fail.
+#[tokio::test]
+async fn an_oversized_sleep_request_is_clamped_to_the_hosts_ceiling() {
+    let a_decade: u32 = 10 * 365 * 24 * 60 * 60;
+    let ask = format!(
+        "{{\"point\":\"drive\",\"body\":{{\"next\":{{\"sleep\":{{\"secs\":{}}}}}}}}}",
+        MAX_SLEEP_SECS + a_decade,
+    );
+    let response = ungated(&["emit", &ask], Duration::from_secs(10))
+        .drive(DriveRequest::new("cycle-clamp"))
+        .await
+        .expect("a fixed-answer driver that closes stdin early is a legitimate session");
+
+    assert_eq!(
+        response.next,
+        DriveNext::Sleep {
+            secs: MAX_SLEEP_SECS
+        },
+        "a request for a decade of absence is reduced to the host's ceiling"
+    );
+}
+
+/// The clamp is a ceiling, never a floor. A request already at the ceiling
+/// must reach the caller unchanged, not reduced further.
+#[tokio::test]
+async fn a_sleep_request_at_the_ceiling_is_not_shortened() {
+    let ask = format!(
+        "{{\"point\":\"drive\",\"body\":{{\"next\":{{\"sleep\":{{\"secs\":{MAX_SLEEP_SECS}}}}}}}}}"
+    );
+    let response = ungated(&["emit", &ask], Duration::from_secs(10))
+        .drive(DriveRequest::new("cycle-ceiling"))
+        .await
+        .expect("a fixed-answer driver that closes stdin early is a legitimate session");
+
+    assert_eq!(
+        response.next,
+        DriveNext::Sleep {
+            secs: MAX_SLEEP_SECS
+        },
+        "a request exactly at the ceiling is returned unchanged, not reduced further"
     );
 }
