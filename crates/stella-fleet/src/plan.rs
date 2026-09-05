@@ -8,11 +8,10 @@
 //! drained. [`Plan::topological_order`] is the linear-schedule view of the
 //! same graph (used for display and single-threaded execution).
 //!
-//! Tasks share the tree by default ([`Isolation::SharedTree`] — one
-//! repository root under the cooperative claim discipline, so siblings
-//! fail fast by name on a conflicting path instead of clobbering each
-//! other); a plan author *explicitly* opts genuinely divergent work into
-//! [`Isolation::Isolated`] — a dedicated git worktree per task.
+//! Every task gets its own git worktree ([`Isolation::Isolated`], the
+//! default), so no two workers can share a checkout. A plan that wants one
+//! root under the cooperative claim discipline names
+//! [`Isolation::SharedTree`] itself.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
@@ -25,27 +24,31 @@ use serde::{Deserialize, Serialize};
 /// directory name.
 pub type TaskId = String;
 
-/// How a task's workspace is provisioned. **Share by default**: every
-/// worker runs in the one repository root, coordinated by cooperative
-/// claims — declared upfront (`claims`) plus claim-on-first-write at the
-/// tool layer — so conflicts surface in under a second at write time with
-/// the rival named, commits interleave on one branch (no merge-back), and
-/// the build cache stays warm. The claim table lives in the workspace
-/// store, so coordination spans processes: multiple fleets (and the deck's
-/// own sub-sessions) safely share one tree.
+/// How a task's workspace is provisioned. **A worktree per task by
+/// default** (ADR 0027): a worker cannot lose a tree it was never
+/// given, and two workers in one checkout are one `git checkout` away from
+/// reverting each other's uncommitted files. That loss is silent, and it is
+/// asymmetric — a switch restores the tracked files and leaves the untracked
+/// ones, so what survives is the half that cannot build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Isolation {
-    /// A dedicated git worktree on a fresh branch — the explicit opt-in for
-    /// genuinely DIVERGENT work: best-of-N attempts producing competing
-    /// versions of the same files, or tasks that mutate checkout state.
-    /// Claims cannot help there (the conflict is the point), and the costs
-    /// are real: a cold build cache per tree and conflicts deferred to
-    /// integration time.
-    Isolated,
-    /// Run directly in the shared repository root (the default) under the
-    /// cooperative claim discipline.
+    /// A dedicated git worktree on a fresh branch — the default. It costs a
+    /// cold build cache per tree, and it defers conflicts to integration
+    /// time. Both are paid in disk and in merges, which a person can see and
+    /// undo; the shared-tree failure is neither.
     #[default]
+    Isolated,
+    /// Run directly in the shared repository root, coordinated by cooperative
+    /// claims — declared upfront (`claims`) plus claim-on-first-write at the
+    /// tool layer — so a conflicting path fails in under a second with the
+    /// rival named, commits interleave on one branch (no merge-back), and the
+    /// build cache stays warm. The claim table lives in the workspace store,
+    /// so the coordination spans processes.
+    ///
+    /// **A plan must name this.** A claim guards one path at a time and says
+    /// nothing about `git checkout`, so a plan that opts in is accepting the
+    /// branch-switch loss above in exchange for the warm cache.
     SharedTree,
 }
 
@@ -68,8 +71,9 @@ pub struct Task {
     /// [`Plan::validate`]).
     #[serde(default)]
     pub depends_on: Vec<TaskId>,
-    /// Isolation strategy — defaults to [`Isolation::SharedTree`] when
-    /// absent from serialized input.
+    /// Isolation strategy — defaults to [`Isolation::Isolated`] when absent
+    /// from serialized input, so a plan file that names nothing gets a tree
+    /// per task.
     #[serde(default)]
     pub isolation: Isolation,
     /// Workspace-relative paths this task declares it will touch. The fleet
@@ -101,7 +105,8 @@ pub struct Task {
 }
 
 impl Task {
-    /// A dependency-free, shared-tree task claiming no paths.
+    /// A dependency-free task claiming no paths, in its own worktree
+    /// ([`Isolation::default`]).
     #[must_use]
     pub fn new(id: impl Into<TaskId>, title: impl Into<String>, prompt: impl Into<String>) -> Self {
         Self {
@@ -109,7 +114,7 @@ impl Task {
             title: title.into(),
             prompt: prompt.into(),
             depends_on: Vec::new(),
-            isolation: Isolation::SharedTree,
+            isolation: Isolation::default(),
             claims: Vec::new(),
             test_command: None,
         }
@@ -138,17 +143,17 @@ impl Task {
         self
     }
 
-    /// Opt this task into running in the shared tree (builder style). A
-    /// no-op since share-by-default landed; kept for plan-construction code
-    /// that states the intent explicitly.
+    /// Opt this task into the shared repository root (builder style) — the
+    /// named exception to the worktree-per-task default. Read
+    /// [`Isolation::SharedTree`] for what it gives up.
     #[must_use]
     pub fn shared_tree(mut self) -> Self {
         self.isolation = Isolation::SharedTree;
         self
     }
 
-    /// Opt this task into a dedicated git worktree (builder style) — the
-    /// one exception for divergent work (see [`Isolation::Isolated`]).
+    /// Put this task in its own git worktree (builder style). Already the
+    /// default; kept for plan-construction code that states it.
     #[must_use]
     pub fn isolated(mut self) -> Self {
         self.isolation = Isolation::Isolated;
@@ -542,16 +547,28 @@ mod tests {
         );
     }
 
+    /// **Witness.** A plan that names no isolation gets a worktree per
+    /// task. Both assertions below read `SharedTree` before ADR 0027, which
+    /// is how two dispatched workers ended up in one checkout with nothing in
+    /// the plan asking for it.
     #[test]
-    fn plan_json_roundtrips_with_isolation_defaulting_to_shared_tree() {
-        // A task serialized without an `isolation` field deserializes as
-        // SharedTree (share-by-default: one tree, cooperative claims), and
-        // one without `depends_on` gets an empty edge list.
+    fn a_task_that_names_no_isolation_gets_its_own_worktree() {
         let json = r#"{"tasks":[{"id":"a","title":"t","prompt":"p"}]}"#;
         let plan: Plan = serde_json::from_str(json).unwrap();
-        assert_eq!(plan.tasks[0].isolation, Isolation::SharedTree);
+        assert_eq!(plan.tasks[0].isolation, Isolation::Isolated);
+        assert_eq!(Task::new("a", "t", "p").isolation, Isolation::Isolated);
         assert!(plan.tasks[0].depends_on.is_empty());
         assert!(plan.tasks[0].claims.is_empty(), "claims default to none");
+    }
+
+    /// The shared tree is still reachable, and only by name — both over the
+    /// wire and through the builder.
+    #[test]
+    fn the_shared_tree_is_an_opt_in_a_plan_has_to_spell() {
+        let json = r#"{"tasks":[{"id":"a","title":"t","prompt":"p",
+            "isolation":"shared_tree"}]}"#;
+        let plan: Plan = serde_json::from_str(json).unwrap();
+        assert_eq!(plan.tasks[0].isolation, Isolation::SharedTree);
 
         let shared = Task::new("b", "t", "p").shared_tree().claims(["src/a.rs"]);
         let back: Task = serde_json::from_str(&serde_json::to_string(&shared).unwrap()).unwrap();

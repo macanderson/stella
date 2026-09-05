@@ -8,11 +8,11 @@
 //! untracked ones alone. What is left is a tree holding a new module that
 //! nothing declares, and no error anywhere saying why.
 //!
-//! Stella's own dispatchers do not make that state. A fleet task marked
-//! `isolation = "isolated"` gets a `git worktree` of its own, and so does
-//! every unit of `stella self-driving work`. A person, or an outside
-//! harness, can still start two decks in one tree. This is what that person
-//! sees.
+//! Stella's own dispatchers do not make that state. A fleet task gets a
+//! `git worktree` of its own unless the plan named the shared tree
+//! (ADR 0027), and so does every unit of `stella self-driving work`. A
+//! person, or an outside harness, can still start two decks in one tree.
+//! This is what that person sees.
 //!
 //! It never refuses. A session told to stop has nowhere to go, because the
 //! working directory is picked at launch and cannot be taken later. So the

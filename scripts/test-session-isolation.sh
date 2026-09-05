@@ -14,13 +14,17 @@
 # switch in the other. Then look for the edit. Give both workers one tree and
 # the edit goes, and this suite goes red.
 #
-# Two cases, one on each side of the guarantee:
+# Three cases:
 #
-#   - a plan of isolated tasks gets two trees, and the edit lives.
-#   - a plan of shared-tree tasks gets one tree, and the edit dies. That is
-#     the control. A suite that can only pass is not a suite. It also pins
-#     the gap the README names: path claims guard one file at a time, and a
-#     branch switch rewrites them all.
+#   - a run that names no isolation gets two trees. The edit lives. This case
+#     fails before ADR 0027. The old default was the shared tree, so both
+#     workers landed in the checkout and the edit went.
+#   - a plan naming `isolated` gets the same answer. That makes the default a
+#     default, not a rename.
+#   - a plan naming `shared_tree` gets one tree. The edit dies. That is the
+#     control. A suite that can only pass is not a suite. It also pins the gap
+#     the README names. Path claims guard one file. A branch switch rewrites
+#     them all.
 #
 # Hermetic. A throwaway git repository, a stub model on loopback, and a
 # `$STELLA_HOME` under the temp tree. No network, no key, no real provider.
@@ -159,8 +163,9 @@ JSON
 #
 # Every key the binary could pick up is cleared here. One inherited variable
 # is all it takes to reach a billed backend.
-run_fleet() { # run_fleet <repo> <plan> <log>
-  local repo="$1" plan="$2" log="$3"
+run_fleet() { # run_fleet <repo> <log> <fleet args...>
+  local repo="$1" log="$2"
+  shift 2
   ( cd "$repo" &&
     env \
       -u OPENROUTER_API_KEY -u ANTHROPIC_API_KEY -u ZAI_API_KEY -u OPENAI_API_KEY \
@@ -178,7 +183,7 @@ run_fleet() { # run_fleet <repo> <plan> <log>
       --api-key sk-test-session-isolation \
       --base-url "http://127.0.0.1:$PORT" \
       --spend-limit 5.0 \
-      fleet --plan "$plan" --max-concurrency 2 --task-timeout 120 \
+      fleet "$@" --max-concurrency 2 --task-timeout 120 \
       </dev/null ) >"$log" 2>&1
 }
 
@@ -210,44 +215,61 @@ experiment() { # experiment <tree_a> <tree_b> <branch>
   printf '%s %s\n' "$tracked" "$untracked"
 }
 
-# ── Case 1: an isolated plan ─────────────────────────────────────────────────
+# Run the whole test on one dispatch. Report both halves.
+two_trees_survive() { # two_trees_survive <repo> <log> <switch branch>
+  local repo="$1" log="$2" branch="$3" trees tree_count tree_a tree_b result
+  trees="$(worker_trees "$repo")"
+  tree_count="$(printf '%s\n' "$trees" | grep -c . )"
+  if [ "$tree_count" -eq 2 ]; then
+    ok "the dispatch cut one tree per worker"
+  else
+    bad "expected 2 worker trees, got $tree_count. The run said:"
+    sed -e 's/^/      /' "$log" >&2
+    return
+  fi
+  tree_a="$(printf '%s\n' "$trees" | sed -n 1p)"
+  tree_b="$(printf '%s\n' "$trees" | sed -n 2p)"
+  result="$(experiment "$tree_a" "$tree_b" "$branch")"
+  case "$result" in
+  "kept kept") ok "a branch switch in one tree left the other's work alone" ;;
+  *) bad "the sibling's work did not survive the switch (tracked/untracked: $result)" ;;
+  esac
+}
+
+# ── Case 1: nothing names an isolation ───────────────────────────────────────
+#
+# Two positional prompts. That is what a person types. Nothing here asks for a
+# worktree, so the default answers. Before ADR 0027 the default was the shared
+# tree. This case found no worker trees, and the sibling's edit was gone.
 
 start_provider
+
+head_ "two workers, no isolation named"
+
+repo_default="$ROOT/default"
+make_repo "$repo_default"
+run_fleet "$repo_default" "$ROOT/default.log" \
+  "answer in one short sentence" "answer in one short sentence"
+two_trees_survive "$repo_default" "$ROOT/default.log" "switch-default"
+
+# ── Case 2: a plan that names `isolated` ─────────────────────────────────────
 
 head_ "two workers, isolated tasks"
 
 repo_iso="$ROOT/isolated"
 make_repo "$repo_iso"
 write_plan "$ROOT/isolated.json" "isolated"
-run_fleet "$repo_iso" "$ROOT/isolated.json" "$ROOT/isolated.log"
+run_fleet "$repo_iso" "$ROOT/isolated.log" --plan "$ROOT/isolated.json"
+two_trees_survive "$repo_iso" "$ROOT/isolated.log" "switch-isolated"
 
-trees="$(worker_trees "$repo_iso")"
-tree_count="$(printf '%s\n' "$trees" | grep -c . )"
-if [ "$tree_count" -eq 2 ]; then
-  ok "the dispatch cut one tree per worker"
-else
-  bad "expected 2 worker trees, got $tree_count. The run said:"
-  sed -e 's/^/      /' "$ROOT/isolated.log" >&2
-fi
-
-if [ "$tree_count" -eq 2 ]; then
-  tree_a="$(printf '%s\n' "$trees" | sed -n 1p)"
-  tree_b="$(printf '%s\n' "$trees" | sed -n 2p)"
-  result="$(experiment "$tree_a" "$tree_b" "switch-isolated")"
-  case "$result" in
-  "kept kept") ok "a branch switch in one tree left the other's work alone" ;;
-  *) bad "the sibling's work did not survive the switch (tracked/untracked: $result)" ;;
-  esac
-fi
-
-# ── Case 2: the control ──────────────────────────────────────────────────────
+# ── Case 3: the control ──────────────────────────────────────────────────────
 
 head_ "two workers, shared tree (the control)"
 
 repo_shared="$ROOT/shared"
 make_repo "$repo_shared"
 write_plan "$ROOT/shared.json" "shared_tree"
-run_fleet "$repo_shared" "$ROOT/shared.json" "$ROOT/shared.log"
+run_fleet "$repo_shared" "$ROOT/shared.log" --plan "$ROOT/shared.json"
 
 shared_trees="$(worker_trees "$repo_shared")"
 if [ -z "$shared_trees" ]; then
