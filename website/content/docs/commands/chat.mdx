@@ -77,15 +77,18 @@ also update the changelog          ⏎   ← queued behind it
                                    Esc ← both land in the running turn, in that order
 ```
 
-Two prefixes skip the queue:
+These prefixes skip the queue:
 
 <CardGrid size="md">
   <SpecCard title="Steer now — `> …`">
     A message that starts with `>` goes into the running turn at its next step, without
     waiting for `Esc`.
   </SpecCard>
-  <SpecCard title="Shell — `! …`">
-    A line that starts with `!` runs immediately as a shell command, inline in the transcript, and is never queued.
+  <SpecCard title="Interrupt — `! …`">
+    A line that starts with `!` stops the running turn at its next step boundary, keeps the steps it finished, and runs your words next.
+  </SpecCard>
+  <SpecCard title="Shell — `$ …`">
+    A line that starts with `$` runs immediately as a shell command, inline in the transcript, and is never queued. `!cmd` still works for one release.
   </SpecCard>
 </CardGrid>
 

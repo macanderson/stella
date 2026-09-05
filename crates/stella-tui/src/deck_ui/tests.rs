@@ -31,6 +31,7 @@ mod routing_card;
 mod selection;
 mod sessions;
 mod settings;
+mod sigil;
 mod skills;
 mod splash;
 mod tabs;

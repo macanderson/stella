@@ -161,8 +161,8 @@ pub(super) fn sweep_lines(scope: Option<&str>, leaked: &[String]) -> Vec<String>
         .collect()
 }
 
-/// One line per child turn this host ran for the plugin, naming the seat it
-/// was attributed to and what it cost.
+/// One line per child turn this host ran for a plugin. It names the plugin,
+/// the seat, and the cost.
 ///
 /// The money half of "a refusal is reported, never silent": a plugin's child
 /// turn is a model call the *user* pays for and never asked for directly, so
@@ -175,7 +175,8 @@ pub(super) fn spend_lines(spends: &[ChildTurnSpend]) -> Vec<String> {
         .iter()
         .map(|spend| {
             format!(
-                "spent a child turn at \"{}\" (seat {:?}, {} step(s), ${:.4}){}",
+                "{} spent a child turn at \"{}\" (seat {}, {} step(s), ${:.4}){}",
+                spend.plugin,
                 spend.role,
                 spend.seat,
                 spend.steps,

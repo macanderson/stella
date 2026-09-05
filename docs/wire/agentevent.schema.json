@@ -1316,41 +1316,11 @@
       ]
     },
     "ModelCallRole": {
-      "description": "Concrete purpose of one provider call. This is more precise than the\nrouter's tier role: repair and guidance calls must remain distinguishable\nin the paid-call ledger even when they share a provider/model.\n\nThis vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]\nis the `serde(default)` for an *absent* `role`, not a `serde(other)`\ncatch-all for an unrecognized one. A role token this build has never seen\nfails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —\nbecause a known `\"type\"` with a body that does not fit stays a hard error by\ndesign (see the module docs). Adding a case here is therefore a\none-directional change in a way adding an [`AgentEvent`] case no longer\nis.",
+      "description": "Concrete purpose of one provider call. This is more precise than the\nrouter's tier role: an auxiliary call and the worker's own must stay\ndistinguishable in the paid-call ledger even when they share a\nprovider/model.\n\nIt names the calls the engine itself makes. A call the host spends for a\nplugin is [`Self::Plugin`]. The seat name the plugin chose rides beside\nit as data. A closed list cannot hold words it does not know, and a cost\nreport over an open one stops being auditable.\n\nThis vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]\nis the `serde(default)` for an *absent* `role`, not a `serde(other)`\ncatch-all for an unrecognized one. A role token this build has never seen\nfails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —\nbecause a known `\"type\"` with a body that does not fit stays a hard error by\ndesign (see the module docs). Adding a case here is therefore a\none-directional change in a way adding an [`AgentEvent`] case no longer\nis.",
       "oneOf": [
         {
           "const": "unknown",
           "description": "Legacy events written before call-role attribution existed. The default\nfor an absent `role` field only — an unrecognized one is an error.",
-          "type": "string"
-        },
-        {
-          "const": "triage",
-          "description": "Prompt classification and tier routing.",
-          "type": "string"
-        },
-        {
-          "const": "research",
-          "description": "A read-only research sub-agent answering one of triage's pre-plan\nquestions (#1778).",
-          "type": "string"
-        },
-        {
-          "const": "plan",
-          "description": "Authoring the ordered plan.",
-          "type": "string"
-        },
-        {
-          "const": "plan_repair",
-          "description": "Re-authoring a plan the parser or the scope gate rejected.",
-          "type": "string"
-        },
-        {
-          "const": "witness_author",
-          "description": "Writing the witness test that arms the flip oracle.",
-          "type": "string"
-        },
-        {
-          "const": "witness_repair",
-          "description": "Fixing a witness that did not fail on the current code.",
           "type": "string"
         },
         {
@@ -1391,6 +1361,11 @@
         {
           "const": "summarization",
           "description": "The overflow summarizer that replaces a history span with a summary.",
+          "type": "string"
+        },
+        {
+          "const": "plugin",
+          "description": "A call the host spent for a plugin, at a seat the plugin declared.\n\nWhich seat is data, not a case here. The word is the plugin's own.\nThis list can neither hold it nor read it, so it rides on the\n`sub_agent` bracket the child turn ran under. A consumer reads the\nname that ran from there.\n\nSix retired spellings land here too: `triage`, `research`, `plan`,\n`plan_repair`, `witness_author` and `witness_repair`. Each named a\nstage of a pipeline this engine does not run. A stream recorded while\nit did still parses, so the row keeps its cost, its tokens and its\nmodel.",
           "type": "string"
         }
       ]
@@ -2062,6 +2037,13 @@
             "phase": {
               "const": "started",
               "type": "string"
+            },
+            "seat": {
+              "description": "The seat this child was asked to run at.\n\nThe requester's own word, and the key a user assigns a model to.\nThis is where the name of a plugin's job lives. The metering row\nsays only that some other participant spent the call. This word\nsays which one, and at which seat.\n\n`None` when nobody named a seat. A `delegate` sub-agent names\nnone. Nor does a child dispatched before seats existed, hence\n`serde(default)`.\n\nOpaque by contract. It is compared, never parsed or matched\nagainst a literal. A word no one has used before travels as well\nas one shipped in an example.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "write_access": {
               "description": "Whether the child may mutate the workspace. `false` (the\ndefault) means it ran behind a read-only view of the parent's\ntools and could not have changed anything.",

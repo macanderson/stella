@@ -109,6 +109,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + guard-trigger-coverage (prose, hue-separation
                          #     and transcript-surfaces each run with no
                          #     paths: filter in at least one workflow)
+                         #   + priority-scheme (the issue priority scheme is
+                         #     stated once, in SCR-005, and the triage guard's
+                         #     regex covers exactly the levels it names)
                          #   + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
@@ -1174,7 +1177,7 @@ this before assuming two of them mean the same thing:
 | **execution** | `execution_id` | `crates/stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
 | **dispatching execution** | `executions.parent_execution_id` | `crates/stella-store/src/dispatch.rs` | Which execution asked for another one (schema v36). A deck worker lane opens a real execution row of its own; this says whether a *turn* dispatched it or a person did, and NULL is the second answer, not a gap. A `delegate` child opens no row at all and is attributed by `sub_agent_id` on its events instead — the two mechanisms answer the same question about two different things. |
 | **turn** | `turn_instance` | `crates/stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
-| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/research/plan/witness-author roles take 1, 2, … Both `step_manifest` and `step_usage` carry the pair, so what a call saw and what it cost join on it; a `step_usage` line recorded before #4793 carries neither and is unjoinable, which it says by leaving both absent rather than defaulting `call_seq` to the worker's 0. |
+| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, and the overflow summarizer and a plugin's declared seats take 1, 2, … Both `step_manifest` and `step_usage` carry the pair, so what a call saw and what it cost join on it; a `step_usage` line recorded before #4793 carries neither and is unjoinable, which it says by leaving both absent rather than defaulting `call_seq` to the worker's 0. |
 | **fleet run** | `run_id` | `crates/stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
 | **task** | `stella_fleet::TaskId` / `stella_protocol::TaskId` | `crates/stella-fleet/src/plan.rs`, `crates/stella-protocol/src/task_id.rs` | One word, two entities, and since #5039 both of them have a type with the same name — read the crate. In the **fleet** ledger it is one unit of work dispatched to a worker within a run (a `String` alias). In the **board** it is a row of the agent's own task-board snapshot: the per-session ordinal `"1"`, `"2"`, …, mirrored from `TaskUpdate` events into the store's `tasks` rows keyed `(session, task id)`, and carried on the events that represent work (`events.task_id`) so a task has an evidence ledger and a per-task cost. `TaskItem::id` is still a `String` spelling of the second one (#5159). |
 
@@ -1455,6 +1458,6 @@ macanderson org repos.
   follow-up, tech-debt item, or logical next step you noticed. Apply ONLY
   the `triage` label.
 - **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
-  separation of duties:** Never apply priority (`P0`–`P4`) or size labels —
+  separation of duties:** Never apply a priority or size label —
   a dedicated triage agent owns sizing and priority; a guard workflow
   strips creator-applied priorities.

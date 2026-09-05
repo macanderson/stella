@@ -466,7 +466,7 @@ What makes that enforceable rather than aspirational:
 - **Landed (#3564), and the last clause above is exactly how.** The port is the
   `child_turn` host call, not a new `TurnWrapper` method:
   `stella_runtime::wrapper::ChildTurns` resolves the declared role intent to a
-  `ModelCallRole` seat, clamps the count against the host's own ceiling, and
+  seat, clamps the count against the host's own ceiling, and
   spends through the host's `SubAgentDispatcher` — which builds its child
   through `Engine::assemble`, so the guarantee is inherited rather than
   re-argued. Two clauses of this section are now enforced rather than described:

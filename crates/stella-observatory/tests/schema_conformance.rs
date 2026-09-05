@@ -259,6 +259,7 @@ fn real_store_workspace() -> tempfile::TempDir {
                     write_access: false,
                     depth: 1,
                     effort: Some(ReasoningEffort::High),
+                    seat: None,
                 },
             },
         )

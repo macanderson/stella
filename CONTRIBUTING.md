@@ -88,6 +88,7 @@ python3 ./scripts/check-adr-numbering.py
 ./scripts/check-god-files.sh
 ./scripts/check-gate-parity.sh
 python3 ./scripts/check-guard-trigger-coverage.py
+python3 ./scripts/check-priority-scheme.py
 ./scripts/check-left-behind.sh
 ./scripts/check-role-names.sh
 ./scripts/check-stat-portability.sh
@@ -376,7 +377,8 @@ normal part of the loop here, not a rejection.
 - **[Bug report](https://github.com/macanderson/stella/issues/new?template=bug_report.yml)** — include `stella --version`, OS, provider/model, and a repro.
 - **[Feature request](https://github.com/macanderson/stella/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
 
-Labels you'll see: `area:*` routes an issue to a crate; `P0`–`P2` is priority;
+Labels you'll see: `area:*` routes an issue to a crate; a `P` label is priority,
+and [SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) names the levels;
 `good first issue` and `help wanted` mean what they say; `needs-witness` means
 a PR is waiting on its witness test.
 

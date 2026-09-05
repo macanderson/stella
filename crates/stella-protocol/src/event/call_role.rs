@@ -19,8 +19,14 @@ use serde::{Deserialize, Serialize};
 use super::AgentEvent;
 
 /// Concrete purpose of one provider call. This is more precise than the
-/// router's tier role: repair and guidance calls must remain distinguishable
-/// in the paid-call ledger even when they share a provider/model.
+/// router's tier role: an auxiliary call and the worker's own must stay
+/// distinguishable in the paid-call ledger even when they share a
+/// provider/model.
+///
+/// It names the calls the engine itself makes. A call the host spends for a
+/// plugin is [`Self::Plugin`]. The seat name the plugin chose rides beside
+/// it as data. A closed list cannot hold words it does not know, and a cost
+/// report over an open one stops being auditable.
 ///
 /// This vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]
 /// is the `serde(default)` for an *absent* `role`, not a `serde(other)`
@@ -44,19 +50,6 @@ pub enum ModelCallRole {
     /// for an absent `role` field only — an unrecognized one is an error.
     #[default]
     Unknown,
-    /// Prompt classification and tier routing.
-    Triage,
-    /// A read-only research sub-agent answering one of triage's pre-plan
-    /// questions (#1778).
-    Research,
-    /// Authoring the ordered plan.
-    Plan,
-    /// Re-authoring a plan the parser or the scope gate rejected.
-    PlanRepair,
-    /// Writing the witness test that arms the flip oracle.
-    WitnessAuthor,
-    /// Fixing a witness that did not fail on the current code.
-    WitnessRepair,
     /// The tool-calling loop that actually changes the workspace.
     Worker,
     /// Course-correction handed to a worker that is looping or stuck.
@@ -77,6 +70,27 @@ pub enum ModelCallRole {
     Reflection,
     /// The overflow summarizer that replaces a history span with a summary.
     Summarization,
+    /// A call the host spent for a plugin, at a seat the plugin declared.
+    ///
+    /// Which seat is data, not a case here. The word is the plugin's own.
+    /// This list can neither hold it nor read it, so it rides on the
+    /// `sub_agent` bracket the child turn ran under. A consumer reads the
+    /// name that ran from there.
+    ///
+    /// Six retired spellings land here too: `triage`, `research`, `plan`,
+    /// `plan_repair`, `witness_author` and `witness_repair`. Each named a
+    /// stage of a pipeline this engine does not run. A stream recorded while
+    /// it did still parses, so the row keeps its cost, its tokens and its
+    /// model.
+    #[serde(
+        alias = "triage",
+        alias = "research",
+        alias = "plan",
+        alias = "plan_repair",
+        alias = "witness_author",
+        alias = "witness_repair"
+    )]
+    Plugin,
 }
 
 /// Declares the role family once and derives [`ModelCallRole::ALL`] from it,
@@ -124,12 +138,6 @@ macro_rules! model_call_roles {
 
 model_call_roles! {
     Unknown,
-    Triage,
-    Research,
-    Plan,
-    PlanRepair,
-    WitnessAuthor,
-    WitnessRepair,
     Worker,
     DistressGuidance,
     Verdict,
@@ -138,6 +146,7 @@ model_call_roles! {
     DomainInference,
     Reflection,
     Summarization,
+    Plugin,
 }
 
 #[cfg(test)]
@@ -165,9 +174,34 @@ mod tests {
         );
         assert_eq!(
             ModelCallRole::ALL.last(),
-            Some(&ModelCallRole::Summarization),
+            Some(&ModelCallRole::Plugin),
             "ALL should close with the declaration-order last case"
         );
+    }
+
+    /// The retirement witness. Six spellings named stages of a pipeline this
+    /// workspace deleted. Every recorded session still carries them.
+    /// `step_usage` has no catch-all, so without the aliases below each one
+    /// fails its whole event. The row would lose its cost, its tokens and
+    /// its model along with the label.
+    #[test]
+    fn every_retired_spelling_still_parses() {
+        for token in [
+            "triage",
+            "research",
+            "plan",
+            "plan_repair",
+            "witness_author",
+            "witness_repair",
+        ] {
+            let role: ModelCallRole = serde_json::from_str(&format!("\"{token}\""))
+                .unwrap_or_else(|err| panic!("a recorded \"{token}\" does not parse: {err}"));
+            assert_eq!(
+                role,
+                ModelCallRole::Plugin,
+                "\"{token}\" names a stage this engine does not run"
+            );
+        }
     }
 
     /// Every role in the family must survive the wire, since `ALL` is what

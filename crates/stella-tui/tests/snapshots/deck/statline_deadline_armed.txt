@@ -41,5 +41,5 @@
 
  ✓ plan ▸ execute ████░░░░ 50% · verify
 >>>
- ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · $ shell · / commands
 zai/glm-5.2-air · execute · deadline 12m 34s · ctx ▌░░░░░░░░░░░ 4% · $3.79 · saved $0.00 · ✉ 0                                                            ? help

@@ -877,7 +877,7 @@ mod tests {
         budget.set_task_deadline(Some(Instant::now() - Duration::from_secs(5)));
 
         let result = run_accounted_call(
-            one_call(&provider, ModelCallRole::Triage),
+            one_call(&provider, ModelCallRole::Plugin),
             &mut budget,
             &EventSender::new(tx),
             &NoopSleeper,
@@ -911,7 +911,7 @@ mod tests {
         budget.set_task_deadline(Some(Instant::now() + Duration::from_secs(600)));
 
         let result = run_accounted_call(
-            one_call(&provider, ModelCallRole::Triage),
+            one_call(&provider, ModelCallRole::Plugin),
             &mut budget,
             &EventSender::new(tx),
             &NoopSleeper,
@@ -933,7 +933,7 @@ mod tests {
             let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
             budget.set_task_deadline(deadline);
             let _ = run_accounted_call(
-                one_call(&provider, ModelCallRole::Triage),
+                one_call(&provider, ModelCallRole::Plugin),
                 &mut budget,
                 &EventSender::new(tx),
                 &NoopSleeper,
@@ -1127,7 +1127,7 @@ mod tests {
         let result = run_accounted_call(
             AccountedCall {
                 provider: &provider,
-                role: ModelCallRole::Triage,
+                role: ModelCallRole::Plugin,
                 model_hint: "z-ai/glm-5.2".into(),
                 request: CompletionRequest {
                     messages: vec![CompletionMessage::user("inspect the repository")],
