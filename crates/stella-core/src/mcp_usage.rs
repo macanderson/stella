@@ -34,28 +34,28 @@ pub struct McpUsageRecord {
 }
 
 impl McpUsageRecord {
-    /// Build a record, stamping the call time from the system clock.
-    pub fn now(
+    /// Build a record. `called_at_ms` is the call time, in milliseconds
+    /// since the Unix epoch, chosen by the caller.
+    ///
+    /// This crate holds no clock of its own — [`crate::ports::Clock`]'s own
+    /// doc comment says so. The caller reads the real clock (`stella-mcp`'s
+    /// `McpToolSet`, right when a call finishes) and passes the value in. A
+    /// plain argument, not a `&dyn Clock`, because this constructor has no
+    /// other reason to hold a clock. It also lets a test pick any instant it
+    /// wants.
+    pub fn new(
         server: impl Into<String>,
         tool: impl Into<String>,
         reason: impl Into<String>,
+        called_at_ms: u64,
     ) -> Self {
         Self {
             server: server.into(),
             tool: tool.into(),
             reason: reason.into(),
-            called_at_ms: now_ms(),
+            called_at_ms,
         }
     }
-}
-
-/// Current time in milliseconds since the Unix epoch (saturating at 0 if the
-/// clock is before the epoch — never panics).
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// A session-scoped, drain-once ledger of MCP tool calls, shared by two owners:
@@ -85,8 +85,14 @@ mod tests {
     #[test]
     fn push_then_drain_moves_records_out_and_leaves_empty() {
         let ledger: McpUsageLedger = Arc::default();
-        push_usage(&ledger, McpUsageRecord::now("github", "search_issues", ""));
-        push_usage(&ledger, McpUsageRecord::now("fs", "read", "inspect config"));
+        push_usage(
+            &ledger,
+            McpUsageRecord::new("github", "search_issues", "", 1),
+        );
+        push_usage(
+            &ledger,
+            McpUsageRecord::new("fs", "read", "inspect config", 2),
+        );
 
         let drained = drain_usage(&ledger);
         assert_eq!(drained.len(), 2);
@@ -101,7 +107,26 @@ mod tests {
     fn a_shared_clone_sees_appends_from_the_other_owner() {
         let writer: McpUsageLedger = Arc::default();
         let draining = writer.clone();
-        push_usage(&writer, McpUsageRecord::now("s", "t", ""));
+        push_usage(&writer, McpUsageRecord::new("s", "t", "", 1));
         assert_eq!(drain_usage(&draining).len(), 1);
+    }
+
+    /// **Witness.** The old constructor, `now()`, read the real clock inside
+    /// this crate. That is the exact thing [`crate::ports::Clock`]'s doc
+    /// comment says this crate must never do. `now()` also took no
+    /// timestamp argument, so no test could place a record at a chosen
+    /// instant.
+    ///
+    /// `stella-store`'s `mcp_usage` table orders rows by `called_at_ms`. A
+    /// test built on `now()` could only see two real clock reads, taken
+    /// milliseconds apart. `new` takes the timestamp as a plain argument, so
+    /// this test places one record far in the past and one far in the
+    /// future, with no wait at all. `now()` had no way to do that.
+    #[test]
+    fn new_stamps_the_record_at_the_caller_supplied_instant_not_the_wall_clock() {
+        let past = McpUsageRecord::new("github", "search_issues", "", 1_000);
+        let future = McpUsageRecord::new("github", "search_issues", "", 9_999_999_999_999);
+        assert_eq!(past.called_at_ms, 1_000);
+        assert_eq!(future.called_at_ms, 9_999_999_999_999);
     }
 }
