@@ -49,7 +49,7 @@
 //! whether they both fire.
 
 use super::super::ingest::record::AppliesTo;
-use stella_core::glob::match_glob;
+use stella_protocol::glob::match_glob;
 
 /// The facts of one turn that scoped records are matched against.
 ///

@@ -424,7 +424,7 @@ fn every_shared_contract_reaches_every_static_prompt_verbatim() {
 fn both_static_prompts_teach_the_skill_invocation_and_parked_wait_markers() {
     for (label, prompt) in STATIC_PROMPTS {
         for marker in [
-            stella_core::skills::invoke::SKILL_INVOCATION_PREFIX,
+            stella_core::skill_invocation::SKILL_INVOCATION_PREFIX,
             stella_core::waiting::WAKE_MARKER,
         ] {
             assert!(

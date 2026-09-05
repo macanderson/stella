@@ -1729,7 +1729,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "stella-core",
+ "stella-learn",
  "stella-protocol",
  "tempfile",
 ]
@@ -3226,6 +3226,7 @@ dependencies = [
  "stella-fleet",
  "stella-graph",
  "stella-home",
+ "stella-learn",
  "stella-mcp",
  "stella-model",
  "stella-observatory",
@@ -3381,6 +3382,16 @@ name = "stella-home"
 version = "0.9.330"
 
 [[package]]
+name = "stella-learn"
+version = "0.9.329"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "stella-protocol",
+]
+
+[[package]]
 name = "stella-mcp"
 version = "0.9.330"
 dependencies = [
@@ -3490,6 +3501,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "stella-core",
+ "stella-learn",
  "stella-protocol",
  "thiserror 2.0.20",
  "toml",

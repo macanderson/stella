@@ -2,7 +2,7 @@
 //!
 //! ## What is reused, verbatim
 //!
-//! **The miner.** `stella_core::skills::mine_skill_candidates` is called
+//! **The miner.** `stella_learn::skills::mine_skill_candidates` is called
 //! unchanged, with unchanged [`SkillMineConfig`] thresholds, over observations
 //! carrying the same `text`, `reference`, `occurred_at`, and `domains` the
 //! lexical path fed it. Same clustering, same `<slug>-<hash8>` identity, same
@@ -30,7 +30,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use stella_context::{ContextStore, LedgerAppend};
-use stella_core::skills::{self, Skill, SkillCandidate, SkillMineConfig, SkillObservation};
+use stella_learn::skills::{self, Skill, SkillCandidate, SkillMineConfig, SkillObservation};
 use stella_protocol::provenance::ProvenanceGrade;
 use stella_records::context_record::{
     ContextRecordKind, EvidencePool, LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ProposalRecord,

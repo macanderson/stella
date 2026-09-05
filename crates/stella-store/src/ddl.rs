@@ -282,7 +282,7 @@ pub(crate) fn telemetry_ddl(table: &str) -> String {
 /// rule id (the analog of a rule file's filename stem). `contents` is the
 /// FULL rule markdown in the `.stella/rules/*.md` authoring format
 /// (optional `---` frontmatter — `description:`/`guard-*:` keys — plus the
-/// rule statement body); the store never parses it, `stella_core::rules`
+/// rule statement body); the store never parses it, `stella_learn::rules`
 /// does. `source` is an opaque label naming the writer (extension/provider
 /// id). `IF NOT EXISTS` so one batch serves both the fresh-file schema and
 /// the v2 → v3 migration.

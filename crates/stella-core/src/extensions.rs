@@ -9,8 +9,8 @@
 //! a system-prompt-shaped markdown body with a `name:`/`description:`
 //! frontmatter header — listed by the `/agents` command (and the seam a
 //! future fleet spawn will consume). Both are distinct from a
-//! [`crate::skills`] *skill* (know-how selected into context automatically)
-//! and a [`crate::rules`] *rule* (an enforceable guardrail).
+//! `stella_learn::skills` *skill* (know-how selected automatically) and a
+//! `stella_learn::rules` *rule* (an enforceable guardrail).
 //!
 //! Directory conventions mirror the skills engine:
 //! `<workspace>/.stella/commands/` and `<workspace>/.stella/agents/`
@@ -66,7 +66,7 @@
 //! actions, and the `*_from_file` parsers operate on already-read content,
 //! unit-tested below without touching a filesystem.
 
-use crate::rules::{Frontmatter, parse_frontmatter};
+use stella_protocol::frontmatter::{Frontmatter, parse_frontmatter};
 
 // Kinds
 
@@ -180,7 +180,8 @@ pub struct AgentDef {
 }
 
 /// Why one definition file could not be loaded. Mirrors
-/// [`crate::skills::SkillProblem`]: typed so the CLI can report it precisely
+/// `stella_learn::skills::SkillProblem`: typed so the CLI can report it
+/// precisely
 /// instead of silently dropping the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtensionProblem {
@@ -219,7 +220,7 @@ const FALLBACK_DESCRIPTION_MAX_CHARS: usize = 72;
 
 /// The filename stem (or, for a nested `<slug>/<FILE>.md` layout, the parent
 /// directory name) as the definition's slug — same derivation as
-/// [`crate::skills`], generalized over the nested filename.
+/// `stella_learn::skills`, generalized over the nested filename.
 fn name_from_path(path: &str, nested_file: &str) -> String {
     let base = path.rsplit('/').next().unwrap_or(path);
     if base.eq_ignore_ascii_case(nested_file) {
@@ -576,7 +577,7 @@ fn positional_fields(args: &str) -> Vec<&str> {
 
 /// Merge definitions by `key`, later entries overriding earlier ones while
 /// keeping the first-seen ordering position — the same semantics as
-/// [`crate::skills::load_skills`], so "workspace beats user-global" works by
+/// `stella_learn::skills::load_skills`, so "workspace beats user-global" works by
 /// passing user-scope definitions first.
 pub fn merge_by_name<T>(items: Vec<T>, key: impl Fn(&T) -> String) -> Vec<T> {
     let mut order: Vec<String> = Vec::new();

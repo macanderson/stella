@@ -224,7 +224,7 @@ pub(crate) fn create_private_dir(dir: &Path) -> Result<(), String> {
 }
 
 /// Redact credentials from one table's JSON dump (#817). Parses the array and
-/// runs [`stella_core::redact::redact_secrets`] over **every string value**,
+/// runs [`stella_learn::redact::redact_secrets`] over **every string value**,
 /// then re-serializes — so the output is always valid JSON and a secret
 /// embedded anywhere (a prompt, a tool's `args_json`, a touched file's events)
 /// is masked. If the dump is not the JSON shape we expect, falls back to a
@@ -234,9 +234,9 @@ fn redact_dump(json: &str) -> String {
         Ok(mut value) => {
             redact_json_strings(&mut value);
             serde_json::to_string(&value)
-                .unwrap_or_else(|_| stella_core::redact::redact_secrets(json).text)
+                .unwrap_or_else(|_| stella_learn::redact::redact_secrets(json).text)
         }
-        Err(_) => stella_core::redact::redact_secrets(json).text,
+        Err(_) => stella_learn::redact::redact_secrets(json).text,
     }
 }
 
@@ -244,7 +244,7 @@ fn redact_dump(json: &str) -> String {
 fn redact_json_strings(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::String(text) => {
-            let redaction = stella_core::redact::redact_secrets(text);
+            let redaction = stella_learn::redact::redact_secrets(text);
             if redaction.redacted {
                 *text = redaction.text;
             }

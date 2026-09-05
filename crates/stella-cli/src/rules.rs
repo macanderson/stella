@@ -1,4 +1,4 @@
-//! Production wiring for the workspace rules engine (`stella_core::rules`):
+//! Production wiring for the workspace rules engine (`stella_learn::rules`):
 //! the [`RuleSource`] backed by real directory reads and the workspace
 //! store, plus the session glue that hard-enforces Tier-2 guards at the
 //! tool boundary.
@@ -19,7 +19,7 @@
 //!
 //! A rule is one markdown document: optional single-line `key: value`
 //! frontmatter between `---` fences, then the rule statement as the body
-//! (parsed by `stella_core::rules::rule_from_file`). Recognized keys:
+//! (parsed by `stella_learn::rules::rule_from_file`). Recognized keys:
 //!
 //! - `name:` — rule id (defaults to the filename stem)
 //! - `description:` — one-line summary
@@ -51,7 +51,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use stella_core::bus::{HookBus, HookDecision, names as hook_names};
-use stella_core::rules::{
+use stella_learn::rules::{
     LoadRulesOptions, ProposedAction, Rule, RuleFile, RuleSource, evaluate_guards, load_rules,
 };
 use stella_records::records::Registry as RecordRegistry;
@@ -503,7 +503,7 @@ pub(crate) fn enforce_workspace_rules(
 }
 
 /// Map a registry tool name to the canonical vocabulary guards are authored
-/// in (`guard-tool: Bash|Write|Edit|Read|Delete`, `stella_core::rules::
+/// in (`guard-tool: Bash|Write|Edit|Read|Delete`, `stella_learn::rules::
 /// RuleGuard`). No built-in carries these conventional names; a workspace
 /// custom tool that adopts one answers to the canonical guard vocabulary by
 /// construction, so a `guard-tool: Edit` rule is enforcement rather than a
@@ -714,7 +714,7 @@ mod tests {
         );
         assert_eq!(
             rules[0].guard,
-            Some(stella_core::rules::RuleGuard {
+            Some(stella_learn::rules::RuleGuard {
                 tool: Some("Edit".to_string()),
                 deny_path_glob: Some("migrations/*-applied/**".to_string()),
                 deny_command_glob: None,
@@ -1208,7 +1208,7 @@ mod tests {
     }
 
     // Representative `.stella/rules/*.md` fixtures must parse under the CURRENT
-    // `stella_core::rules` parser. Captures both a promoted guard rule and a
+    // `stella_learn::rules` parser. Captures both a promoted guard rule and a
     // legacy context-as-code directive whose retired metadata frontmatter must
     // stay loadable and inert.
     const GUARD_RULE_FIXTURE: &str =
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[test]
     fn guard_rule_fixture_parses_as_a_guarded_rule_without_metadata() {
-        let rule = stella_core::rules::rule_from_file(
+        let rule = stella_learn::rules::rule_from_file(
             ".stella/rules/no-hand-edited-migrations.md",
             GUARD_RULE_FIXTURE,
         )
@@ -1244,7 +1244,7 @@ mod tests {
         // (ADR 0009/0011) and its parser retired. Files already written with
         // that frontmatter must keep loading as ordinary prompt rules, the
         // extra keys inert.
-        let rule = stella_core::rules::rule_from_file(
+        let rule = stella_learn::rules::rule_from_file(
             ".stella/rules/api-integration-coverage.md",
             DIRECTIVE_RULE_FIXTURE,
         )

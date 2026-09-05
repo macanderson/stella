@@ -5,8 +5,8 @@
 
 use super::{record_candidates, record_drops};
 use crate::records::{Facts, Registry, TurnFacts, registry};
-use stella_core::rules::RuleFile;
 use stella_core::steering::SteeringSource;
+use stella_learn::rules::RuleFile;
 
 /// One record is drawn. The other is cut. That covers both halves.
 fn two_record_registry() -> Registry {

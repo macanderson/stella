@@ -12,7 +12,7 @@
 //!
 //! It scores each arm from the per-trial rewards, and promotes the candidate
 //! **only** when it confidently beats the baseline (see
-//! [`stella_core::self_tuning`]). Without `--promote` it reports and records the
+//! [`stella_learn::self_tuning`]). Without `--promote` it reports and records the
 //! A/B receipt but changes nothing; with `--promote` it writes the winning
 //! effort to settings and records a reversible rollback. `stella tune rollback`
 //! reverts the last promotion; `stella tune status` shows the ledger.
@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
-use stella_core::self_tuning::{Decision, KeepReason, RewardWeights, SelectionConfig};
+use stella_learn::self_tuning::{Decision, KeepReason, RewardWeights, SelectionConfig};
 
 use crate::memory::self_tuning::{
     self as engine, BenchTrial, ExperimentReport, LedgerEntry, RollbackOutcome, SettingsScope,

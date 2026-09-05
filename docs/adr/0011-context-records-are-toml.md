@@ -24,12 +24,12 @@ same model."
 That reasoning still holds. What has changed is what the surface has to carry.
 
 **The frontmatter became a record.** When 0008 was written, a rule file was a
-`description` line and up to three guard keys. Today `crates/stella-core/src/rules/metadata.rs`
+`description` line and up to three guard keys. Today `crates/stella-learn/src/rules/metadata.rs`
 validates eleven required fields with enum parsing, RFC-3339 timestamp
 validation, list parsing, and duplicate-key detection. That is a typed record
 serialised into a document header.
 
-**The parser underneath it is not a YAML parser.** `crates/stella-core/src/rules.rs`
+**The parser underneath it is not a YAML parser.** `crates/stella-protocol/src/frontmatter.rs`
 hand-rolls roughly thirty-five lines of line reader: `key: value` scalars, plus
 block sequences flattened into a comma-joined string. It supports no nesting,
 and a nested key is not rejected — indentation is stripped and the key is

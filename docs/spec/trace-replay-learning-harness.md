@@ -29,7 +29,7 @@ a clock.
 | # | Learner | Entry point | Model calls |
 |---|---|---|---|
 | 1 | Memory formation | `SessionMemory::reflect_and_record` — `crates/stella-cli/src/memory/learning.rs:57` | **exactly one** (`reflect_on_turn`, `learning.rs:66`) |
-| 2 | Skill learning | `SessionMemory::auto_create_skills` — `learning.rs:372` (typed `:606`, lexical `:756`) → `stella_core::skills::mine_skill_candidates` (`crates/stella-core/src/skills.rs:650`), `decide_auto_creation` (`:833`) | none |
+| 2 | Skill learning | `SessionMemory::auto_create_skills` — `learning.rs:372` (typed `:606`, lexical `:756`) → `stella_learn::skills::mine_skill_candidates` (`crates/stella-learn/src/skills.rs:650`), `decide_auto_creation` (`:833`) | none |
 | 3 | Rules mining | `extract_reflection_observations` (`crates/stella-cli/src/memory/observations.rs:81`) → `induce_rule_proposals` (`crates/stella-cli/src/memory/rules_mining.rs:104`) → `write_rule` (`:188`) | none |
 | 4 | Tool foundry | `stella_core::detect_tool_gaps` — `crates/stella-core/src/tool_foundry.rs:198`; CLI adapter `crates/stella-cli/src/tool_foundry.rs:56` | none, **by design** |
 | 5 | Selection / lifecycle | `four_class_certification` and `time_lapse_certification` — `crates/stella-records/src/records/tests.rs:462`, `:709` | none — landed in #2306 |
@@ -455,7 +455,7 @@ harness earning its keep before it shipped.
    most common recurrence shape — finally counts as an occurrence while the
    store still keeps one copy. Threshold: the miners' `min_similarity` moved
    from the inherited 0.5 to 0.4, a value measured in
-   `stella_core::mining::terms`'s own token space (naturally-varied same-fact
+   `stella_learn::mining::terms`'s own token space (naturally-varied same-fact
    pairs score 0.40; the worst cross-fact pair 0.36) rather than borrowed from
    `stella_store::SIMILARITY_THRESHOLD`, which is measured over a tokenizer
    that keeps a path as one token where `terms` shatters it into five. The
