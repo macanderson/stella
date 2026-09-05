@@ -140,6 +140,11 @@
       "status": "implemented",
       "title": "ADR 0027: A fleet worker gets its own worktree"
     },
+    "adr/0028-panel-cells-are-glyphs-in-the-contract": {
+      "path": "docs/adr/0028-panel-cells-are-glyphs-in-the-contract.md",
+      "status": "implemented",
+      "title": "ADR 0028: A panel cell is a glyph in the contract and a column in the host"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

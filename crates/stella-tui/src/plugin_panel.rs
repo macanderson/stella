@@ -30,8 +30,17 @@
 //! repainted, so the border stays overwritten. That is a plugin painting a
 //! cell it was not leased, through a path a `chars()`-counting bounds check
 //! calls in-bounds. So a glyph whose width would cross the lease's right edge
-//! is refused rather than truncated, and a zero-width glyph is refused at the
-//! left edge, where the terminal would attach it to the border instead.
+//! is refused rather than truncated, and a combining mark rides the cell the
+//! glyph before it took rather than claiming one of its own — a mark in its own
+//! cell would attach to whatever the host drew there.
+//!
+//! The two counts still differ, and the difference is decided rather than
+//! overlooked: `stella_plugin::PanelText::cells` counts `char`s, so a row of
+//! wide glyphs the wire contract admits is cut here at the lease's edge. See
+//! `doc:adr/0028-panel-cells-are-glyphs-in-the-contract`, and this module's
+//! `a_frame_the_contract_admits_by_glyph_count_is_cut_at_the_lease` for the
+//! seam itself. That test is not linked: it is a `#[cfg(test)]` item, and a
+//! rustdoc link to one is an unresolved link in the run that ships.
 //!
 //! **The palette.** [`PanelInk`] names a token, never an RGB triple, and
 //! [`ink`] resolves it against the shipped theme — so a panel degrades with
@@ -196,22 +205,41 @@ fn blit_patches(patches: &[PanelPatch], rect: Rect, buf: &mut Buffer) {
     }
 }
 
+/// The most combining marks one cell keeps.
+///
+/// A mark takes no column of its own, so nothing else here bounds how many of
+/// them a plugin can hang on one glyph, and every one of them is bytes the
+/// terminal redraws on each repaint. Unicode's stream-safe format caps a
+/// sequence at 30 non-starters, so text that follows it loses no mark to this
+/// limit.
+const MARKS_PER_CELL: usize = 30;
+
 /// Write `text` rightwards from `x`, in display cells, stopping at the lease's
 /// right edge. Returns the column after the last glyph written.
 ///
 /// A glyph is placed only when **all** of its columns are inside the lease, so
 /// the last leased column refuses a double-width glyph rather than letting the
-/// terminal paint its second half over the host's border. A zero-width glyph —
-/// a combining mark that arrived without the character it modifies — is
-/// dropped at the left edge, where the terminal would otherwise attach it to
-/// the border cell.
+/// terminal paint its second half over the host's border.
+///
+/// A zero-width glyph rides the cell the glyph before it took, which is how
+/// ratatui writes one itself: `Buffer::set_stringn` splits into grapheme
+/// clusters and puts a whole cluster in one cell. A mark with no glyph to ride
+/// — one opening a run, or arriving after the lease's edge cut the run short —
+/// is dropped, because its own cell would attach it to whatever the host drew
+/// there.
 fn write_run(buf: &mut Buffer, mut x: u16, y: u16, rect: Rect, text: &str, style: Style) -> u16 {
     let right = rect.x.saturating_add(rect.width);
+    // The cell this run last wrote a glyph into, and how many marks it carries.
+    let mut carrier: Option<(u16, u16)> = None;
+    let mut marks = 0usize;
     for ch in text.chars() {
         let width = ch.width().unwrap_or(0);
         if width == 0 {
-            // Nothing to advance past, and nowhere safe to put it: at the
-            // lease's left edge it would modify the host's border.
+            if let Some(at) = carrier
+                && marks < MARKS_PER_CELL
+            {
+                marks += usize::from(attach_mark(buf, at, ch));
+            }
             continue;
         }
         let Ok(width) = u16::try_from(width) else {
@@ -221,6 +249,8 @@ fn write_run(buf: &mut Buffer, mut x: u16, y: u16, rect: Rect, text: &str, style
             break;
         }
         write_cell(buf, x, y, ch, style);
+        carrier = Some((x, y));
+        marks = 0;
         // The columns a wide glyph occupies beyond its first are the
         // terminal's to fill; the buffer must not leave a stale symbol in
         // them, or the diff emits a cell that overlaps the glyph.
@@ -233,6 +263,21 @@ fn write_run(buf: &mut Buffer, mut x: u16, y: u16, rect: Rect, text: &str, style
         x += width;
     }
     x
+}
+
+/// Hang one combining mark on the glyph already in `(x, y)`.
+///
+/// Returns whether it landed: a cell the buffer does not hold takes nothing,
+/// for the reason [`write_cell`] gives.
+fn attach_mark(buf: &mut Buffer, (x, y): (u16, u16), mark: char) -> bool {
+    let Some(cell) = buf.cell_mut((x, y)) else {
+        return false;
+    };
+    let mut symbol = String::with_capacity(cell.symbol().len() + mark.len_utf8());
+    symbol.push_str(cell.symbol());
+    symbol.push(mark);
+    cell.set_symbol(&symbol);
+    true
 }
 
 /// Write one glyph, if the buffer actually has that cell.
@@ -440,11 +485,11 @@ mod tests {
         assert_eq!(buf.cell((2, 0)).expect("cell").symbol(), "b");
     }
 
-    /// A lone combining mark is dropped rather than placed: it has no column of
-    /// its own, and at the lease's left edge the terminal would attach it to
-    /// the host's border glyph.
+    /// A combining mark that opens a run is dropped: it has no glyph to ride,
+    /// and a cell of its own at the lease's left edge would attach it to the
+    /// host's border glyph.
     #[test]
-    fn a_zero_width_glyph_is_never_placed() {
+    fn a_combining_mark_with_no_glyph_to_ride_is_dropped() {
         let area = Rect::new(0, 0, 4, 1);
         let mut buf = Buffer::empty(area);
         let frame = lines(vec![vec![span("\u{301}x", PanelStyle::plain())]]);
@@ -453,6 +498,90 @@ mod tests {
             buf.cell((0, 0)).expect("cell").symbol(),
             "x",
             "the mark was dropped and the real glyph took the first column"
+        );
+    }
+
+    /// A combining mark that *does* have a glyph rides it, in one cell, as
+    /// ratatui's own `Buffer::set_stringn` writes a grapheme cluster.
+    ///
+    /// Dropping every zero-width `char` instead paints `e` where the plugin
+    /// wrote `é`, and the accent goes with nothing to say it went.
+    #[test]
+    fn a_combining_mark_rides_the_glyph_it_modifies() {
+        let area = Rect::new(0, 0, 4, 1);
+        let mut buf = Buffer::empty(area);
+        let frame = lines(vec![vec![span("e\u{301}x", PanelStyle::plain())]]);
+        blit(&frame, area, &mut buf);
+        assert_eq!(
+            buf.cell((0, 0)).expect("cell").symbol(),
+            "e\u{301}",
+            "the accent stayed on the glyph it modifies"
+        );
+        assert_eq!(
+            buf.cell((1, 0)).expect("cell").symbol(),
+            "x",
+            "and it took no column of its own"
+        );
+    }
+
+    /// A mark costs no column, so the lease cannot bound how many of them one
+    /// cell collects. [`MARKS_PER_CELL`] does.
+    #[test]
+    fn one_cell_keeps_no_more_marks_than_the_stream_safe_limit() {
+        let area = Rect::new(0, 0, 2, 1);
+        let mut buf = Buffer::empty(area);
+        let mut text = String::from("e");
+        for _ in 0..MARKS_PER_CELL + 5 {
+            text.push('\u{301}');
+        }
+        let frame = lines(vec![vec![span(&text, PanelStyle::plain())]]);
+        blit(&frame, area, &mut buf);
+        assert_eq!(
+            buf.cell((0, 0)).expect("cell").symbol().chars().count(),
+            MARKS_PER_CELL + 1,
+            "the glyph, and the marks it is allowed to carry"
+        );
+    }
+
+    /// **The seam.** The wire contract counts glyphs and the host counts
+    /// columns, and this is the frame where the two disagree: four ideographs
+    /// measure four cells against a four-column lease, so `PanelFrame::fits`
+    /// admits them, and they need eight columns to draw.
+    ///
+    /// The host cuts the row at the lease's edge and the border survives. That
+    /// is the decision `doc:adr/0028-panel-cells-are-glyphs-in-the-contract`
+    /// records: changing either half alone breaks this test.
+    #[test]
+    fn a_frame_the_contract_admits_by_glyph_count_is_cut_at_the_lease() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 10, 3));
+        let lease = chrome(Rect::new(0, 0, 6, 3), "seam", &mut buf);
+        assert_eq!(lease, Rect::new(1, 1, 4, 1));
+        let border_x = lease.x + lease.width;
+        let before = buf
+            .cell((border_x, lease.y))
+            .expect("a border cell")
+            .symbol()
+            .to_string();
+
+        let frame = lines(vec![vec![span("日本語だ", PanelStyle::plain())]]);
+        assert_eq!(
+            frame.fits(lease_rect(lease)),
+            Ok(()),
+            "the contract counts four glyphs against four columns"
+        );
+
+        blit(&frame, lease, &mut buf);
+
+        let row: String = (lease.x..lease.x + lease.width)
+            .map(|x| buf.cell((x, lease.y)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+        assert_eq!(row, "日 本 ", "two of the four glyphs fit the four columns");
+        assert_eq!(
+            buf.cell((border_x, lease.y))
+                .expect("a border cell")
+                .symbol(),
+            before,
+            "the host's border survived the frame the contract admitted"
         );
     }
 
