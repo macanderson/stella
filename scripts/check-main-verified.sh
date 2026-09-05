@@ -234,8 +234,13 @@ Re-dispatch the missing runs and let them finish before merging onto this tree:
 
   gh workflow run ci.yml --ref main
 
-An Actions incident is the usual cause (#5027). If that is what this is, the
-runs will start on their own once capacity returns — but nothing was checking,
-which is the part this exists to fix.
+An Actions incident is one cause. There the runs start on their own once
+capacity returns, and nothing was checking, which is the part this exists to
+fix. A push made with the token a workflow run holds is the other cause, and
+the release version write-back is one of those: that push raised no event at
+all, so no run was ever created and none is coming. Nothing will start on its
+own. Ask for it:
+
+  ./scripts/dispatch-main-verification.sh
 TXT
 exit 1

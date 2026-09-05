@@ -670,3 +670,30 @@ jobs:
           gh pr merge "${BRANCH}" --squash --auto \
             || echo "::warning::could not enable auto-merge — merge the ${BRANCH} PR manually once checks are green."
           echo "::warning::${BRANCH} did not merge in this run; auto-merge is armed. If it is still open, check that its workflow runs are not parked in action_required (#5589)."
+
+      # The merge above is made with `secrets.GITHUB_TOKEN`, and GitHub raises
+      # no workflow-triggering event for a push made with that token. So
+      # ci.yml's `push: branches: [main]` trigger does not fire, and neither
+      # does main-canary.yml's — every release landed a
+      # `chore(release): sync versions` commit on `main` that nothing had
+      # checked, and the only thing that ever asked was the canary's daily
+      # schedule, hours later (#5817). The workflow already compensates for
+      # this same token rule on the PR side, where it approves the sync PR's
+      # parked runs.
+      #
+      # scripts/dispatch-main-verification.sh asks for the missing run. It
+      # reads the tip of `main`, counts the `ci` runs for that exact commit,
+      # and starts `ci.yml` and then `main-canary.yml` only when there are
+      # none — so the paths above that do NOT merge (a red check, the lockfile
+      # refusal, auto-merge armed for later) leave a tip that already has a
+      # run, and it stops. It exits 0 at every unknown, on the argument
+      # scripts/main-red-claim.sh's header makes: a step that can red the
+      # release is worse than the gap it watches.
+      #
+      # `!cancelled()` rather than `success()`: a merge step that ended in a
+      # warning still merged, and that tip is exactly the one to ask about.
+      - name: Make sure the merged tip of main gets checked
+        if: ${{ !cancelled() && steps.ver.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/dispatch-main-verification.sh

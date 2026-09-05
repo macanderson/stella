@@ -833,6 +833,17 @@ main-verified: ## Ask whether every recent commit on main has a completed ci run
 main-verified-test: ## Test the unverified-main detector (hermetic; not part of `gate`)
 	./scripts/test-main-verified.sh
 
+# The imperative half of the check above. A push made with the token a
+# workflow run holds raises no event, so the release version write-back landed
+# a commit on main that ci.yml and main-canary.yml never saw (#5817).
+.PHONY: dispatch-main-verification
+dispatch-main-verification: ## Start the ci and canary runs main's tip never got (#5817)
+	@./scripts/dispatch-main-verification.sh
+
+.PHONY: dispatch-main-verification-test
+dispatch-main-verification-test: ## Test the main-tip dispatcher (hermetic; not part of `gate`)
+	./scripts/test-dispatch-main-verification.sh
+
 .PHONY: main-red-hold
 main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)
 	@./scripts/check-main-red-hold.sh

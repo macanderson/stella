@@ -48,6 +48,13 @@ main and does everything — no manual steps:
    period opens (or updates) one issue labelled `version-writeback-deferred`
    naming the branch, the version, and the lockfile reason, and closes it
    automatically the run the write-back finally merges (#3842).
+   The merge itself is made with the token the workflow run holds, and GitHub
+   starts no workflow for a push made with that token — so the sync commit
+   lands on `main` with no `ci` run and no `main-canary` run of its own. The
+   last step asks for them:
+   [`scripts/dispatch-main-verification.sh`](scripts/dispatch-main-verification.sh)
+   counts the `ci` runs for main's tip and starts both workflows when there
+   are none.
    On a **minor or major** release the same PR also **rolls
    [`CHANGELOG.md`](CHANGELOG.md)**: whatever sits under `## [Unreleased]`
    moves beneath a new version heading, and `[Unreleased]` is left empty for
