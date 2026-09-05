@@ -95,6 +95,7 @@ open; nothing before Phase 3 forces it.
 | [0026](0026-context-editing-ships-off-until-measured.md) | Context Editing Ships Off Until Its Trigger Is Measured | Accepted |
 | [0027](0027-a-fleet-worker-gets-its-own-worktree.md) | A Fleet Worker Gets Its Own Worktree | Accepted |
 | [0028](0028-panel-cells-are-glyphs-in-the-contract.md) | A Panel Cell Is a Glyph in the Contract and a Column in the Host | Accepted |
+| [0029](0029-branch-protection-stays-non-strict.md) | Branch Protection Stays Non-Strict | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -146,3 +147,11 @@ ADR 0028 settles what a panel frame's cell count measures. The wire contract
 counts glyphs; the host counts terminal columns. A row of wide glyphs the
 contract admits is cut at the lease's edge, and the two tests named in the
 record hold both halves of that.
+
+ADR 0029 records that `main`'s branch protection keeps
+`required_status_checks.strict` off, read from the protection API rather than
+assumed. Many concurrent agent sessions merging at once make the `strict`
+up-to-date requirement serialize merges to a handful an hour; the composition
+risk it would have caught is left to `main-canary.yml` and
+`main-red-hold.yml` as an after-the-fact backstop, with the durable close
+tracked at `#4998` rather than a merge queue enabled here.

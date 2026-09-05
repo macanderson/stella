@@ -6,18 +6,32 @@
 #   ./scripts/automerge-nudge.sh --select [--base main]   # pure: JSON on stdin
 # --help text ends here.
 #
-# ── The deadlock ─────────────────────────────────────────────────────────────
+# ── The deadlock, and why it is dormant now ──────────────────────────────────
 #
-# Branch protection on `main` sets `required_status_checks.strict` — head
-# branches must be up to date with base. Auto-merge does not update branches on
-# its own. So a PR with every check green and auto-merge armed sits forever at
-# `mergeStateStatus=BEHIND` as soon as `main` moves under it. On 2026-08-05 six
-# of them (#1502/#1504/#1505/#1514/#1515/#1523) piled up that way and only
-# drained because a human loop kept running `gh pr update-branch` by hand.
+# This script drains PRs stuck at GitHub's `mergeStateStatus=BEHIND`. GitHub
+# only reports `BEHIND` when `main`'s branch protection has
+# `required_status_checks.strict` on. That is off today, per ADR 0029:
 #
-# The strict rule is NOT the bug and must stay: the same evening produced the
-# counterexample that justifies it, when two individually-green PRs merged into
-# a semantically incompatible stella-pipeline (#1482/#1462) and broke main.
+#   gh api repos/macanderson/stella/branches/main/protection \
+#     --jq '.required_status_checks.strict'
+#   false
+#
+# With `strict` off, a PR many commits behind main reports `CLEAN`, never
+# `BEHIND`. So `select_pr`'s `BEHIND` filter below can never match anything.
+# The workflow that calls this script
+# (`.github/workflows/automerge-nudge.yml`) runs only on `workflow_dispatch`
+# for the same reason. Both files' headers say how to turn this back on if
+# `strict` returns.
+#
+# Kept for whoever revisits ADR 0029: on 2026-08-05, six PRs
+# (#1502/#1504/#1505/#1514/#1515/#1523) sat at `BEHIND` as soon as `main`
+# moved under them, and drained only because a human ran `gh pr
+# update-branch` by hand, in a loop. `strict` stayed on that day for a
+# reason: the same evening, two green PRs merged into a broken
+# stella-pipeline (#1482/#1462) and broke main. ADR 0029 weighs that
+# trade against today's much higher merge rate and turns `strict` off.
+# `main-canary.yml` and `main-red-hold.yml` catch a broken merge after the
+# fact instead.
 #
 # ── One at a time ────────────────────────────────────────────────────────────
 #

@@ -1,17 +1,33 @@
 name: automerge-nudge
 
-# Keep armed auto-merge PRs from deadlocking at BEHIND (#1527).
+# Drains armed auto-merge PRs stuck at GitHub's BEHIND merge state — but only
+# while main's branch protection has required_status_checks.strict on, and it
+# does not today (ADR 0029, #6078). Read straight from the protection API:
 #
-# `main`'s protection sets required_status_checks.strict — head branches must
-# be up to date with base — and auto-merge does not update branches on its own.
-# So a PR with every check green and auto-merge armed stops dead the moment
-# main moves under it. Six of them piled up that way on 2026-08-05 and drained
-# only because someone ran `gh pr update-branch` by hand in a loop.
+#   $ gh api repos/macanderson/stella/branches/main/protection \
+#       --jq '.required_status_checks.strict'
+#   false
 #
-# The strict rule stays: the same evening, two individually-green PRs merged
-# into a semantically incompatible stella-pipeline and broke main (#1482/#1462).
-# That is the counterexample that justifies requiring up-to-date branches, so
-# this fixes the deadlock rather than relaxing the rule.
+# `strict` is what makes GitHub report BEHIND at all: with it off, a PR whose
+# branch is many commits behind main reports CLEAN, never BEHIND, so this
+# workflow's selector (mergeStateStatus == "BEHIND", scripts/automerge-nudge.sh)
+# has nothing to ever select. Automatic triggers below are disabled for that
+# reason — a workflow that can provably never act has no business running on
+# every push to main and every 15 minutes forever. workflow_dispatch stays, so
+# a maintainer can run it by hand, and it is cheap to re-enable in full: restore
+# the `on.push`/`on.schedule` block this comment used to sit above (see this
+# file's git history, or ADR 0029) if `strict` is ever turned back on.
+#
+# The history this workflow was built for, kept for whoever revisits ADR 0029:
+# a PR with every check green and auto-merge armed used to stop dead the moment
+# main moved under it while strict was on. Six of them piled up that way on
+# 2026-08-05 and drained only because someone ran `gh pr update-branch` by hand
+# in a loop (#1527). `strict` was kept on at the time because the same evening,
+# two individually-green PRs merged into a semantically incompatible
+# stella-pipeline and broke main (#1482/#1462) — the counterexample that
+# justified requiring up-to-date branches. ADR 0029 revisits that trade under
+# today's much higher concurrent-merge load and lands on `strict` off, with
+# main-canary.yml and main-red-hold.yml as the after-the-fact backstop instead.
 #
 # ── Why one PR per run ───────────────────────────────────────────────────────
 #
@@ -22,25 +38,29 @@ name: automerge-nudge
 #
 # ── Triggers ─────────────────────────────────────────────────────────────────
 #
-# `push: main` is the responsive one: main moving is the event that creates the
-# deadlock, so it is the moment to start draining. The schedule is the backstop
-# for a main that stopped moving with PRs still queued behind it, and for a
-# push whose event did not reach Actions.
+# workflow_dispatch only, while strict is off (see the header). The automatic
+# pair this ran on before — `push: main`, the responsive trigger for the
+# moment main moves; and a 15-minute `schedule`, the backstop for a main that
+# stopped moving with PRs still queued behind it — has nothing to trigger for,
+# since the selector they both feed can never match. Restoring them is the
+# first step in undoing this record if `strict` returns:
+#
+#   on:
+#     push:
+#       branches: [main]
+#     schedule:
+#       - cron: "*/15 * * * *"
+#     workflow_dispatch:
+#       inputs: { ... }   # keep the block below
 #
 # ── Why this cannot be the merge queue (yet) ─────────────────────────────────
 #
-# GitHub's merge queue is #1527's preferred fix and would make this workflow
-# unnecessary: it serializes candidates and tests each against the true merge
-# result, so armed PRs drain themselves. Turning it on is a repository settings
-# change that needs admin, so this ships the mechanism that does not.
+# GitHub's merge queue would make this workflow unnecessary even with strict
+# back on: it serializes candidates and tests each against the true merge
+# result, so armed PRs drain themselves. Turning it on is a repository
+# settings change that needs admin, tracked at #4998 rather than here.
 
 on:
-  push:
-    branches: [main]
-  schedule:
-    # Every 15 minutes. One `gh pr list` call, and scheduled workflows are
-    # delayed under load anyway — a tighter cron buys nothing.
-    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       dry-run:

@@ -94,7 +94,7 @@ want "E4 a CLEAN PR is left alone" \
 want "E5 a DIRTY (conflicted) PR is left alone" \
   "" "[$(pr 305 DIRTY yes no 2026-08-05T10:00:00Z)]"
 
-# A stacked PR targeting another branch is not subject to main's strict rule.
+# A PR aimed at another branch skips main's protection rule.
 want "E6 a PR based on another branch is left alone" \
   "" "[$(pr 306 BEHIND yes no 2026-08-05T10:00:00Z release/0.6)]"
 
