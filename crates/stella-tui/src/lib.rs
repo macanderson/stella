@@ -122,7 +122,7 @@ pub use envelope::{
     AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, EngineAgentState,
     EngineConfigState, EngineRole, EntityField, EntityHit, GRAPH_SERVER, Inbound, InspectMessage,
     InspectSection, InspectView, InstalledAgentEntry, IssueAction, IssueRow, JournalEra,
-    LearnedProvenance, LearnedSource, McpLiveIdentity, McpLookupState, McpSearchItem,
+    KeepStrength, LearnedProvenance, LearnedSource, McpLiveIdentity, McpLookupState, McpSearchItem,
     McpSearchOutcome, McpServerDetail, McpServerInfo, McpSignature, McpSourceTier, McpToolRow,
     NotificationInfo, RecordedCallInfo, RejectedSkillRow, SeatRow, Secret, SessionInfo,
     SessionPhase, SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView, SplashCue, ToolDenial,

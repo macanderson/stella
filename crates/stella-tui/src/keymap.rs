@@ -657,11 +657,13 @@ pub const BINDINGS: &[Binding] = &[
     ),
     row(
         ">text / !text",
-        "steer at the next step boundary · ! stops there first",
+        "steer at the boundary · ! stops · !! !!! keep the words",
         Everywhere,
         &[
             "steering_sends_the_marker_the_driver_already_reads",
             "a_bang_at_a_running_lead_interrupts_the_turn_with_the_text",
+            "two_bangs_interrupt_and_ask_for_the_words_to_be_kept_as_guidance",
+            "three_bangs_interrupt_and_ask_for_the_words_to_be_kept_as_a_rule",
         ],
     ),
     row(
