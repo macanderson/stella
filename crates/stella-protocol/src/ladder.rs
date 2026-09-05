@@ -515,9 +515,8 @@ impl LadderSnapshot {
     /// stamp the record without invalidating the claims already on it.
     ///
     /// The digest is the record-hash primitive (ADR 0004) — RFC 8785
-    /// canonical bytes, sha256, a `sha256:` prefix. It lives in `stella-core`
-    /// with the hashing crates it needs, which this crate's boundary does not
-    /// take.
+    /// canonical bytes, sha256, a `sha256:` prefix. It is [`crate::hash`], so
+    /// one hashing rule covers the tree.
     ///
     /// # Errors
     ///

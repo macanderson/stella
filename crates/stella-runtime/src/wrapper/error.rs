@@ -436,7 +436,7 @@ pub enum WrapperError {
         wrapper: String,
         /// Why the record could not be turned into canonical bytes.
         #[source]
-        source: stella_core::context_record::RecordHashError,
+        source: stella_protocol::hash::RecordHashError,
     },
 }
 

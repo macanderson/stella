@@ -15,12 +15,12 @@
 //! times in, which is what lets a test pin a whole stamp to the byte.
 //! [`HostClock`] is the source a real run passes them from.
 
-use stella_core::context_record::{RecordHashError, record_hash};
 use stella_core::ports::Clock;
 use stella_plugin::{
     EvidenceProvenance, EvidenceSet, FlipObservation, TamperFinding, UndecidedReason, Verdict,
     VerdictRule,
 };
+use stella_protocol::hash::{RecordHashError, record_hash};
 use stella_protocol::{FlipOutcome, LadderRung, LadderSnapshot, StampAssessment, VerdictStamp};
 
 /// The name a stamp carries when the host reached the answer itself.

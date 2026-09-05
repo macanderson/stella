@@ -15,12 +15,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use stella_core::context_record::record_hash;
 use stella_core::ports::Clock;
 use stella_plugin::{
     CandidateGrant, PluginManifest, SignalValues, TamperFinding, TestBaseline, TestPlan,
     TurnOutcome,
 };
+use stella_protocol::hash::record_hash;
 use stella_protocol::{CandidateHandle, StampAssessment};
 use stella_runtime::wrapper::{
     DEFAULT_WRAPPER_TIMEOUT, DispatchReport, DrivenTurn, RoundInput, SubprocessWrapper, TurnDriver,
