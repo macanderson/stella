@@ -629,19 +629,26 @@ SCHEMA_FEATURES := stella-protocol/schema,stella-plugin/schema,stella-serve/sche
 # the source changed, which let a broken intra-doc link introduced by moving a
 # function between modules in `stella-plugin` survive a local
 # `make doc-warnings-schema` and reproduce only under a hand-run
-# `rm -rf target/doc` (#5139). `cargo clean --doc` is the package-scoped,
-# cargo-native version of that same fix: it drops the rustdoc output AND the
-# fingerprints cargo used to call the stale build fresh, for exactly the three
-# crates this recipe documents, so the two invocations below always run
-# rustdoc for real rather than trusting a cache that has already been wrong
-# once. Scoped to $(SCHEMA_CRATES) rather than the whole `target/doc` tree —
-# `doc-warnings` below has the same theoretical exposure, but cleaning its
-# workspace-wide output before every gate run would force a full rustdoc
-# rebuild every time, which is the "correct but slow" option #5139 weighed
-# against for a hole this recipe's own repro is what actually demonstrated.
+# `rm -rf target/doc` (#5139). The clean drops the rustdoc output AND the
+# fingerprints cargo used to call the stale build fresh, so the two
+# invocations below always run rustdoc for real rather than trusting a cache
+# that has already been wrong once.
+#
+# It cleans the whole `target/doc` tree because cargo offers no other shape:
+# `--doc` and `-p` are mutually exclusive, and `cargo clean --doc
+# $(SCHEMA_CRATES)` is rejected outright with `--doc cannot be used with -p`
+# (#5991). #5947 landed it in the scoped spelling, which made this recipe
+# fail on its first line for every diff that reaches wire-schema.yml.
+#
+# So the cost #5139 weighed against is paid after all: `doc-warnings` below
+# shares `target/doc`, and cleaning it means a full rustdoc rebuild on each
+# gate run. That is the "correct but slow" side of that trade, taken because
+# the alternative available today is to drop the clean and restore the stale
+# cache #5139 exists to close. #5991 holds the question of buying the scope
+# back — a separate CARGO_TARGET_DIR for this recipe is the obvious candidate.
 .PHONY: doc-warnings-schema
 doc-warnings-schema: ## Assert rustdoc is clean for the `schema`-gated wire-contract modules (#4584)
-	cargo clean --doc $(SCHEMA_CRATES)
+	cargo clean --doc
 	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
 	  --features $(SCHEMA_FEATURES) --no-deps --keep-going
 	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \

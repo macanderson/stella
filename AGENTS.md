@@ -515,11 +515,18 @@ stays `gate`-only on purpose, paired with `doc-warnings`: at `check`, rustdoc
 never runs, for either feature set.
 
 `doc-warnings-schema` also wipes its own doc output before each run
-(`cargo clean --doc`, for the three schema crates only). `cargo doc`'s own
-freshness check can call a stale prior run "up to date" — and print nothing
-— even after the source changed. That let a broken doc link in
-`stella-plugin` pass a local `make doc-warnings-schema`, and show up only
-after a hand-run `rm -rf target/doc`.
+(`cargo clean --doc`). `cargo doc`'s own freshness check can call a stale
+prior run "up to date" — and print nothing — even after the source changed.
+That let a broken doc link in `stella-plugin` pass a local
+`make doc-warnings-schema`, and show up only after a hand-run
+`rm -rf target/doc`.
+
+The clean takes the whole `target/doc` tree, because cargo rejects `--doc`
+alongside `-p` and there is no scoped spelling. A scoped one shipped once and
+failed the recipe on its own first line for every diff that reaches
+`wire-schema.yml`. `doc-warnings` shares that tree, so it now rebuilds each
+gate run; the recipe's own comment carries what that costs and what would buy
+the scope back.
 
 **Every rung needs `shellcheck` on `PATH`, and it is not vendored.** It is the
 gate's one external binary, so a machine or container image without it stops at
