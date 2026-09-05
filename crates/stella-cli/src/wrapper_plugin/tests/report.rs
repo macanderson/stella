@@ -128,8 +128,9 @@ fn a_scoped_report_names_its_task_on_every_line() {
     let wrapper = bound(&roster, "budget-v1", &mut |_| {}).expect("the fixture binds");
     let report = faulted_report();
     let spends = [ChildTurnSpend {
+        plugin: "budget-keeper".to_string(),
         role: "reviewer".to_string(),
-        seat: ModelCallRole::Research,
+        seat: "research".to_string(),
         cost_usd: 0.02,
         steps: 1,
         completed: true,

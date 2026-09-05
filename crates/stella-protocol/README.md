@@ -175,10 +175,11 @@ is the exact boundary, and it is generated from the same macro list as
 enums nested inside a case — `ModelCallRole`, `StageKind`, `PolicyKind`,
 `CiStatus`, `FinishReason`, and their peers — are closed, so a token from a
 newer build is a body that does not fit a known tag, i.e. a hard error that
-costs the reader the whole event. `ModelCallRole` is the one to watch: it has
-grown from four values to fourteen, and its `Unknown` case is the
-`serde(default)` for an *absent* `role`, not a `serde(other)` catch-all for an
-unrecognized one. `BlockKind` and `CacheZone` are the only two vocabularies
+costs the reader the whole event. `ModelCallRole` is the one to watch: its
+`Unknown` case is the `serde(default)` for an *absent* `role`, not a
+`serde(other)` catch-all for an unrecognized one. Six spellings it retired
+read as `plugin` through a serde alias, which is what keeps an already
+recorded stream parsing. `BlockKind` and `CacheZone` are the only two vocabularies
 that do degrade — and they degrade lossily, re-serializing a future token as
 `"other"` rather than preserving it the way `AgentEvent::Unknown` preserves an
 event. Adding a value to a nested vocabulary is therefore still a

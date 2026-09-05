@@ -53,10 +53,10 @@ pub(crate) type SessionTestRuns = TestRuns<GrantedTestRuns>;
 ///   [`stella_runtime::wrapper::SeatGrant`] — the manifest a person read at
 ///   install.
 ///
-///   A plugin that declares an `[oracle]` judges the turn, so its turns are
-///   booked at `Verdict`. That is where `stella_core::goal` books its own
-///   verifier call. Its test pins the sequence `[Worker, Verdict, Worker,
-///   Verdict]`, so the two kinds of call stay apart on a receipt.
+///   Every plugin's turns are booked at `Plugin`, and the plugin's own word
+///   for the job rides beside it on the child's `sub_agent` bracket. So a
+///   receipt says a plugin spent the call and which of its declared seats
+///   spent it, and never that core did a job core did not do.
 ///
 ///   The grant is also what refuses. A plugin may not spend at the seat the
 ///   session's own turns use. It may not spend at a deciding seat without

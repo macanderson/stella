@@ -94,25 +94,12 @@ pub(crate) fn all_policy_kinds() -> Vec<PolicyKind> {
     vec![Evaluated, Blocked, ApprovalRequested, SecretDetected]
 }
 
+/// Read from `ModelCallRole::ALL` rather than written out here.
+///
+/// The macro builds that list from the same tokens the match uses. So a
+/// role cannot join the enum and be missed here.
 pub(crate) fn all_model_call_roles() -> Vec<ModelCallRole> {
-    use ModelCallRole::*;
-    vec![
-        Unknown,
-        Triage,
-        Research,
-        Plan,
-        PlanRepair,
-        WitnessAuthor,
-        WitnessRepair,
-        Worker,
-        DistressGuidance,
-        Verdict,
-        AgentAuthor,
-        SkillAuthor,
-        DomainInference,
-        Reflection,
-        Summarization,
-    ]
+    ModelCallRole::ALL.to_vec()
 }
 
 pub(crate) fn all_usage_incomplete_reasons() -> Vec<UsageIncompleteReason> {
@@ -313,6 +300,7 @@ pub(crate) fn all_subagent_phases() -> Vec<SubAgentPhase> {
             write_access: false,
             depth: 1,
             effort: Some(stella_protocol::ReasoningEffort::High),
+            seat: Some("reviewer".into()),
         },
         SubAgentPhase::Finished {
             agent_id: "search-1".into(),
@@ -1339,6 +1327,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             write_access: true,
             depth: 2,
             effort: None,
+            seat: None,
         },
     });
     // Every effort a child's bracket can pin — the same vocabulary
@@ -1355,6 +1344,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                     write_access: false,
                     depth: 1,
                     effort: Some(effort),
+                    seat: None,
                 },
             }),
     );

@@ -437,10 +437,17 @@ pub struct WorkspaceModel {
 
 /// The three roles the statline surfaces.
 ///
-/// Deliberately not every [`stella_protocol::ModelCallRole`]: reflection,
-/// summarization and the authoring roles are real calls with real cost, but
-/// they are not the pipeline a head-to-head bench run compares, and a cell
-/// that listed all fourteen would stop answering the question it exists for.
+/// Not every [`stella_protocol::ModelCallRole`]: reflection, summarization
+/// and the authoring roles are real calls with real cost, but they are not
+/// the pipeline a head-to-head bench run compares, and a cell listing every
+/// role would stop answering the question it exists for.
+///
+/// [`Self::Triage`] takes no *observed* pin — [`Self::of`] never returns it,
+/// because the engine makes no triage call since the staged pipeline left
+/// this workspace. It survives as a slot because the `/models`
+/// dialog still pins a model to the `triage` settings key
+/// ([`crate::views::models_card`]'s `slot_of`), and that key is a separate
+/// vocabulary from the call roles a receipt records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PipelineRole {
     Triage,
@@ -454,26 +461,19 @@ impl PipelineRole {
     pub fn of(role: stella_protocol::ModelCallRole) -> Option<Self> {
         use stella_protocol::ModelCallRole as R;
         match role {
-            R::Triage => Some(Self::Triage),
             // The whole main line of work reads as the worker: the statline
             // has three cells because horizontal space is the binding
             // constraint there, not because these calls are indistinguishable.
-            //
-            // Plan and research became separately pinnable in #2374, so this
-            // fold can now hide a real difference — a run whose research is
-            // pinned elsewhere still reports the worker's model in the `W`
-            // cell. The `/models` dialog prints all six rows and is the
-            // surface that answers "what will each role run"; splitting the
-            // statline is a width question tracked separately.
-            R::Plan
-            | R::PlanRepair
-            | R::Research
-            | R::WitnessAuthor
-            | R::WitnessRepair
-            | R::Worker
-            | R::DistressGuidance => Some(Self::Worker),
+            R::Worker | R::DistressGuidance => Some(Self::Worker),
             R::Verdict => Some(Self::Verifier),
-            R::Unknown
+            // A plugin's call belongs to no cell here. The seat it ran at is
+            // the plugin's own word, carried on the `sub_agent` bracket
+            // rather than in this enum, so it can neither name one of these
+            // three nor be folded into the worker: writing a plugin's model
+            // into the `W` cell would report a model the worker is not
+            // running, which is the defect #4307 fixed one fold over.
+            R::Plugin
+            | R::Unknown
             | R::AgentAuthor
             | R::SkillAuthor
             | R::DomainInference
@@ -647,7 +647,7 @@ impl WorkspaceModel {
                 }
             }
             Inbound::Event { agent, event } => self.apply_event(agent, event),
-            // Local `!` output: transcript only. See `Inbound::ShellEvent` for
+            // Local `$` output: transcript only. See `Inbound::ShellEvent` for
             // why this must not go through `apply_event` — the status it would
             // derive (`Running`) has nothing to park it. An unknown id is a
             // no-op rather than an auto-register: the caller only ever names a

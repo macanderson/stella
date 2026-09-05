@@ -1055,7 +1055,7 @@ fn shell_result(call_id: &str, out: &str) -> AgentEvent {
 
 #[test]
 fn bang_shell_output_lands_in_the_focused_session_transcript() {
-    // The whole point of `ShellEvent`: `! pwd` answers where it was asked.
+    // The whole point of `ShellEvent`: `$ pwd` answers where it was asked.
     // `views::session::render` draws only `agents[ui.focused]`, so output
     // routed to any other lane is output the user never sees.
     let mut w = WorkspaceModel::new();
@@ -1084,7 +1084,7 @@ fn bang_shell_output_lands_in_the_focused_session_transcript() {
 
 #[test]
 fn bang_shell_output_never_disturbs_the_agent_it_borrows() {
-    // A `!` command is user-initiated local shell, not agent activity. The
+    // A `$` command is user-initiated local shell, not agent activity. The
     // lane lends its transcript and nothing else: `status_from_event` maps
     // ToolStart/ToolResult to `Running`, and an agent flipped Running by a
     // shell command would spin forever — no engine turn exists to park it.
@@ -1232,4 +1232,41 @@ fn a_wide_character_trace_snip_is_capped_in_columns() {
 
     // A newline still flattens, and short ASCII passes through untouched.
     assert_eq!(super::classify::snip("one\ntwo"), "one two");
+}
+
+/// No call role claims the triage cell, and a plugin's call claims no cell.
+///
+/// The engine makes no triage call. The staged pipeline that made one is
+/// gone, and the stage names `ModelCallRole` aliases onto `Plugin` went with
+/// it.
+///
+/// A plugin's seat is its own word. It rides on the `sub_agent` bracket, not
+/// in this enum. Fold that call into the worker and the `W` cell names a
+/// model the worker never ran.
+///
+/// The loop reads `ModelCallRole::ALL`. The `model_call_roles!` macro builds
+/// that list from the enum's own cases, so a role added later is covered.
+#[test]
+fn no_call_role_maps_to_the_triage_cell_and_a_plugin_call_maps_to_none() {
+    use stella_protocol::ModelCallRole as R;
+
+    for role in R::ALL {
+        assert_ne!(
+            PipelineRole::of(*role),
+            Some(PipelineRole::Triage),
+            "{role:?} claimed the triage cell, which no engine call fills"
+        );
+    }
+
+    assert_eq!(
+        PipelineRole::of(R::Plugin),
+        None,
+        "a plugin's call belongs to no statline cell"
+    );
+    assert_eq!(PipelineRole::of(R::Worker), Some(PipelineRole::Worker));
+    assert_eq!(
+        PipelineRole::of(R::DistressGuidance),
+        Some(PipelineRole::Worker)
+    );
+    assert_eq!(PipelineRole::of(R::Verdict), Some(PipelineRole::Verifier));
 }

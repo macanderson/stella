@@ -174,11 +174,12 @@ pub(super) fn handle_focused_gates(
                 }
                 return Some(DeckAction::Ignored);
             }
-            // A `!` line is a shell command even while a gate is pending — the
-            // same carve-out the two gates around this one make.
+            // A marked line keeps its mark while a gate waits
+            // (`sigil::claims_submission`). The gates around this one carve
+            // out the same case.
             KeyCode::Enter
                 if classify_enter(&key) == EnterAction::Submit
-                    && !ui.composer.buffer().trim_start().starts_with('!') =>
+                    && !super::sigil::claims_submission(ui.composer.buffer()) =>
             {
                 match ui.composer.take_submission() {
                     // A typed line is read as a selection. An unparseable one
@@ -236,12 +237,11 @@ pub(super) fn handle_focused_gates(
             }
             // A bare `⏎` dispatches the typed free text as the answer.
             // A *modified* `⏎` is NOT claimed — it falls through to composer
-            // editing, so the answer can span lines. A `!` line is a shell
-            // command even while a question is pending — it must run
-            // immediately, not be swallowed as the answer.
+            // editing, so the answer can span lines. A marked line keeps its
+            // mark while a question waits. A `$` runs and a `!` interrupts.
             KeyCode::Enter
                 if classify_enter(&key) == EnterAction::Submit
-                    && !ui.composer.buffer().trim_start().starts_with('!') =>
+                    && !super::sigil::claims_submission(ui.composer.buffer()) =>
             {
                 if let Some(submission) = ui.composer.take_submission() {
                     let id = prompt.id.clone();

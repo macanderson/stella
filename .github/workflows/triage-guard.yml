@@ -33,7 +33,12 @@ jobs:
             // directions: the guard never strips it from a non-triage login,
             // and an issue carrying only that label reads as unprioritised to
             // every query built on this pattern while reading as triaged to a
-            // human (#5216). Keep this in step with SCR-005's scheme.
+            // human (#5216).
+            //
+            // SCR-005 states the scheme; this is the one copy of it, because a
+            // workflow cannot read a document as it runs. The two are held
+            // together by scripts/check-priority-scheme.py, so editing one
+            // without the other fails the gate rather than the backlog.
             const P = /^P[0-4]$/;
             const allowed = process.env.TRIAGE_LOGINS.split(/\s+/);
             const names = issue.labels.map(l => (typeof l === 'string' ? l : l.name));

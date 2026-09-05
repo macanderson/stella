@@ -1370,6 +1370,7 @@ mod tests {
                     budget_usd: Some(0.1),
                     write_access: false,
                     depth: 1,
+                    seat: None,
                 },
             },
             AgentEvent::SubAgent {

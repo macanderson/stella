@@ -391,7 +391,7 @@ async fn the_three_refusals_are_distinguishable_and_none_of_them_creates_a_works
         .expect_err("a writing turn booked anywhere but the worker's seat");
     assert_eq!(forbidden.refusal, HostCallRefusal::Forbidden);
     assert!(
-        forbidden.detail.contains("research"),
+        forbidden.detail.contains("plugin"),
         "the refusal names the seat it would have been misbooked at: {forbidden}"
     );
 

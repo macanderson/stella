@@ -45,7 +45,7 @@ use crate::theme;
 /// gauge / elapsed timers live without busy-spinning.
 const TICK: Duration = Duration::from_millis(33);
 
-/// The synthetic agent id a `!` shell command falls back to when the deck has
+/// The synthetic agent id a `$` shell command falls back to when the deck has
 /// no agent registered yet. Normally a command borrows the focused agent's
 /// lane instead, so its output reads inline in the transcript the user is
 /// looking at — see [`spawn_shell_command`]. This lane exists so output is
@@ -209,12 +209,12 @@ fn apply_deck_action(
             false
         }
         DeckAction::Shell(cmd) => {
-            // `!` commands run NOW — never queued, never
+            // `$` commands run NOW — never queued, never
             // waiting on the engine. Output returns on the
             // local lane as ordinary events.
             //
             // It lands in the transcript the user is
-            // reading — the focused agent's — so `! pwd`
+            // reading — the focused agent's — so `$ pwd`
             // answers where they asked, like Claude Code.
             // Before any agent registers there is no such
             // lane, and only then does it fall back to the
@@ -277,15 +277,15 @@ fn space_landed_in_composer(composer: &Composer, before_len: usize, before_curso
         && composer.buffer()[..composer.cursor()].ends_with(' ')
 }
 
-/// Run one `!` shell command **immediately** on the local event lane.
+/// Run one `$` shell command **immediately** on the local event lane.
 ///
 /// `target` is the lane the output belongs to. `Some(agent)` — the normal
 /// case — is the lane the user is actually reading (the focused agent), so a
-/// `!` command reads inline in the session transcript exactly like Claude
+/// `$` command reads inline in the session transcript exactly like Claude
 /// Code's bash mode. Those events go out as [`Inbound::ShellEvent`], which
 /// folds into the transcript and nothing else; the lane gets no `Register`
 /// (re-registering an existing agent overwrites its meta, renaming the
-/// session to `! cmd` and restyling it as a shell row) and no terminal
+/// session to `$ cmd` and restyling it as a shell row) and no terminal
 /// `Status` (which would clobber the real agent's own lifecycle).
 ///
 /// `None` — only when the deck has no agent registered yet — falls back to
@@ -299,7 +299,7 @@ fn space_landed_in_composer(composer: &Composer, before_len: usize, before_curso
 /// task and reports back over `tx`.
 ///
 /// `active` counts shell commands currently in flight on the shared
-/// [`SHELL_AGENT`] lane. Because immediate `!` commands can overlap (a second
+/// [`SHELL_AGENT`] lane. Because immediate `$` commands can overlap (a second
 /// one dispatched before the first finishes), only the invocation that drains
 /// the count to zero is allowed to park the lane with a terminal `Status` —
 /// otherwise an earlier command finishing first would mark the lane
@@ -329,7 +329,7 @@ fn spawn_shell_command(
     };
 
     // `started_ms` is the deck's tick clock (~33ms granularity), so two
-    // overlapping `!` commands can share a timestamp — and the fold pairs
+    // overlapping `$` commands can share a timestamp — and the fold pairs
     // ToolResult to ToolStart by `call_id`, so a shared id mispairs their
     // rows. The process-wide counter makes the id unique regardless.
     static SHELL_CALL_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -338,10 +338,10 @@ fn spawn_shell_command(
     active.fetch_add(1, Ordering::SeqCst);
     // Only the synthetic lane is registered. Sending this for a real agent
     // would overwrite its meta — `WorkspaceModel::register` replaces `meta`
-    // wholesale on a known id — retitling the session `! cmd`.
+    // wholesale on a known id — retitling the session `$ cmd`.
     if synthetic {
         let _ = tx.send(Inbound::Register(
-            AgentMeta::new(SHELL_AGENT, format!("! {cmd}"), started_ms).with_role("shell"),
+            AgentMeta::new(SHELL_AGENT, format!("$ {cmd}"), started_ms).with_role("shell"),
         ));
     }
     let _ = tx.send(envelope(
@@ -365,13 +365,13 @@ fn spawn_shell_command(
             .arg(&cmd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // A `!` command must not outlive the deck. `kill_on_drop` reaps the
+            // A `$` command must not outlive the deck. `kill_on_drop` reaps the
             // child when this task's handle drops, which is what stops a
             // long-running command surviving deck exit. It is not a hard kill:
             // it only fires while the tokio runtime is still alive, and it
             // signals the direct child, not its whole process group.
             .kill_on_drop(true);
-        // `!` commands execute user/repository-controlled shell text. Keep
+        // `$` commands execute user/repository-controlled shell text. Keep
         // normal task configuration but never inherit Stella/provider,
         // repository, cloud, or tracker credentials.
         scrub_shell_command(&mut command);
@@ -731,7 +731,7 @@ pub async fn run_deck(
     ui.voice.release_events = guard.kitty();
     let mut resources = ResourceMonitor::new();
 
-    // Synthetic-event lane for `!` shell commands: spawned commands report
+    // Synthetic-event lane for `$` shell commands: spawned commands report
     // back here and are folded exactly like engine events. The sender lives
     // for the whole loop, so this arm never closes it.
     let (local_tx, mut local_rx) = tokio::sync::mpsc::unbounded_channel::<Inbound>();
@@ -742,7 +742,7 @@ pub async fn run_deck(
     // as `local_tx`.
     let (clip_tx, mut clip_rx) =
         tokio::sync::mpsc::unbounded_channel::<Result<crate::clipboard::ClipboardPaste, String>>();
-    // Shared in-flight count for overlapping `!` commands (see
+    // Shared in-flight count for overlapping `$` commands (see
     // `spawn_shell_command`) — persists across every dispatch this loop makes.
     let shell_active = Arc::new(AtomicUsize::new(0));
 
@@ -968,7 +968,7 @@ pub async fn run_deck(
                 match maybe_local {
                     Some(ev) => {
                         ingest_inbound(&ev, &mut model, &mut ui);
-                        // Coalesced like the engine lane above — a chatty `!`
+                        // Coalesced like the engine lane above — a chatty `$`
                         // command must not cost one repaint per event either.
                         let _ = drain_inbound(&mut local_rx, &mut model, &mut ui);
                     }
@@ -1250,13 +1250,13 @@ mod tests {
         );
         assert!(
             !rest.iter().any(|i| matches!(i, Inbound::Status { .. })),
-            "a real lane is never parked by a `!` command: {rest:?}"
+            "a real lane is never parked by a `$` command: {rest:?}"
         );
     }
 
     #[test]
     fn overlapping_shell_commands_within_one_tick_get_distinct_call_ids() {
-        // Two `!` commands dispatched inside the same 33ms tick share
+        // Two `$` commands dispatched inside the same 33ms tick share
         // `started_ms`; the fold pairs ToolResult to ToolStart by `call_id`,
         // so the ids must differ anyway or the rows mispair.
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1285,7 +1285,7 @@ mod tests {
 
     #[test]
     fn overlapping_shell_commands_only_park_the_lane_once_the_last_finishes() {
-        // Two `!` commands dispatched before either finishes share the same
+        // Two `$` commands dispatched before either finishes share the same
         // SHELL_AGENT lane. The fast one (`echo`) must not send a terminal
         // Status while the slow one (`sleep`) is still running — only the
         // last to finish may park the lane.

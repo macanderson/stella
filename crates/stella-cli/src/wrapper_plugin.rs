@@ -32,7 +32,7 @@
 //! - **A child-turn plane**, spent by this session's own `SubAgentDispatcher`,
 //!   so the plugin never holds a provider, an `Engine` or a credential
 //!   (invariant 3, `doc:turn-loop-wrappers` §9.3). The `verifier` tier binds to
-//!   `ModelCallRole::Verdict`; a point runs between the parent's turns where
+//!   the seat of the same name; a point runs between the parent's turns where
 //!   the tool registry's event slot is empty, so its spend reaches the
 //!   session's guard and this run's report but not the store's receipt; and
 //!   [`dispatch_under_turn_controls`] publishes the turn's boundary controls

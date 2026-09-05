@@ -226,8 +226,8 @@ wrapper whenever the result needs to carry evidence.
 
 Running `stella` on a real terminal opens the Command Deck, the tabbed interface over
 the engine. Each prompt becomes a lead-agent turn. The deck is more than a chat window:
-prompts queue while a turn runs, lines starting with `!` run shell commands inline in
-the transcript, `>` steers the turn while it's running, and `Esc` soft-stops it (both
+prompts queue while a turn runs, and lines starting with `$` run shell commands inline
+in the transcript. `>` steers the turn, `!` interrupts it, and `Esc` soft-stops it (all
 explained below). Tabs show the session's files, diff, code graph, skills, MCP servers,
 the AGENTS tab's installed agents, and the SETTINGS tab's
 [config panel](/docs/configuration/agent-engine-config) with per-seat model pickers.

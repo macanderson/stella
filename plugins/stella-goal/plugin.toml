@@ -164,10 +164,9 @@ check = "met >= 1"
 # The one role intent this plugin names. `tier = "verifier"` is the honest
 # name for what this call is: an independent assessment of the worker's own
 # turn. The word is this plugin's own — the host compares it and reads nothing
-# into it. Where the spend is booked comes from the `[oracle]` above: a plugin
-# that declares one judges the turn, so its child turns are booked at
-# `ModelCallRole::Verdict`, the same responsibility `stella_core::goal` books
-# its own verifier call against (`SeatGrant`).
+# into it. The spend is booked at `ModelCallRole::Plugin`, and this word rides
+# beside it on the child's `sub_agent` bracket, so a receipt names the plugin
+# and the job it declared (`SeatGrant`).
 [roles.verifier]
 tier = "verifier"
 

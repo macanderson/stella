@@ -49,10 +49,10 @@
 # trace data (#3906) — this guard and its GATE_STEPS entry go together, and
 # `RETIRED_ENGINE_AGENT_NAMES` can shrink to nothing.
 #
-# Note this is NOT `stella_protocol::ModelCallRole`, which has fourteen variants
-# describing individual model calls (PlanRepair, WitnessAuthor, Summarization…).
-# Those never cross a language boundary. The agent-config roles do, and
-# they are the whole subject here.
+# Note this is NOT `stella_protocol::ModelCallRole`. That one names a single
+# model call (Worker, Summarization, Plugin…). It stays in Rust. The
+# agent-config roles do cross a language boundary, and they are the whole
+# subject here.
 #
 # ── Aliases ──────────────────────────────────────────────────────────────────
 #

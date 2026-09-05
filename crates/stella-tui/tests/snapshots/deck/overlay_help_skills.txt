@@ -11,7 +11,7 @@
 ╭─│  SKILLS tab                                                                    everywhere                                                                │─╮
 │ │  ← →             installed ↔ registry search (→ past the search leaves th…     ⏎               queue the prompt — mid-turn it waits its turn (unless a … │ │
 │▸│  space           enable / disable                                              ⌘⏎ / ⌃⏎ / ⌥⏎    insert a line break in the prompt                         │ │
-│ │  e               edit the selected skill                                       !cmd            run a shell command NOW (skips the queue)                 │ │
+│ │  e               edit the selected skill                                       $cmd            run a shell command NOW (skips the queue)                 │ │
 │ │  p               pin / unpin                                                   /               slash commands — ↑↓ pick · tab completes · ⏎ runs         │ │
 │ │  n               new skill — drafted by the LLM                                ctrl-v          paste — a copied image is attached to the prompt          │ │
 │ │  ctrl-o          preview                                                       space           dictate — hold until listening, or tap to start and stop… │ │
@@ -24,7 +24,7 @@
 │ │  ⏎               open it — a diff, a lane, a message's full text               ⏎               on PLAN: zoom the step — contract, evidence, planned vs … │ │
 │ │  ⌫               back up one level; never reaches a running turn               esc             on the zoom: back to PLAN, on the step you zoomed         │ │
 │ │  ⇞ ⇟ · Home End  a page · the ends                                             r s b i ⌥       on the zoom: re-run checks · split · hand off · promote … │ │
-│ │  tab / ⇧tab      the next / previous tab                                       >text           steer the running turn — lands at the next step boundary  │ │
+│ │  tab / ⇧tab      the next / previous tab                                       >text / !text   steer at the next step boundary · ! stops there first     │ │
 │ │  q / esc         close any overlay                                             esc             steer: your draft + queue go INTO the running turn        │ │
 │ │                                                                                esc esc         cancel NOW & hold — nothing runs until your next prompt   │ │
 │ │                                                                                ?               this sheet                                                │ │
@@ -41,5 +41,5 @@
  4│  mem             148M                                                                                                                                    │
  ▶└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 >>>
- ⏎ queue · ↓ 2 sub-agents · ! shell · / commands
+ ⏎ queue · ↓ 2 sub-agents · $ shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

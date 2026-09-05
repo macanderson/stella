@@ -325,8 +325,13 @@ async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() 
     for spec in &specs {
         assert_eq!(
             spec.role,
-            ModelCallRole::Verdict,
-            "this plugin declares an [oracle], so its grant books the turn as a verdict call"
+            ModelCallRole::Plugin,
+            "a plugin spent it, which is all core's own vocabulary claims"
+        );
+        assert_eq!(
+            spec.seat.as_deref(),
+            Some("verifier"),
+            "and the seat the plugin declared says which of its jobs it was"
         );
         assert!(
             !spec.write_access,
