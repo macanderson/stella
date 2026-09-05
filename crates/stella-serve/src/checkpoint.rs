@@ -375,6 +375,32 @@ impl TurnCheckpoint {
             reported: AtomicBool::new(false),
         })
     }
+
+    /// Discard this resume point outside the engine's step loop. Unlike the
+    /// engine's own discard, this one tells the caller whether it worked.
+    ///
+    /// [`CheckpointSink::discard`] stays void on purpose: the engine never
+    /// branches on an I/O result. A session-delete route is not the step
+    /// loop. It discards this key exactly once, right before it answers a
+    /// caller, so it can afford to know the answer.
+    ///
+    /// A failure is still reported the same way [`StoreSink::discard`]
+    /// reports one: one [`ServeEvent::CheckpointFailed`], which feeds
+    /// `checkpoints_failed_total`. An operator sees it either way. The
+    /// return value here is only for the caller's own response.
+    pub(crate) fn discard_now(&self, observer: &SharedObserver, turn: TurnRef) -> bool {
+        match self.store.remove(&self.key) {
+            Ok(()) => true,
+            Err(err) => {
+                observer.emit(&ServeEvent::CheckpointFailed {
+                    turn,
+                    op: CheckpointOp::Discard,
+                    error: err.to_string(),
+                });
+                false
+            }
+        }
+    }
 }
 
 /// One key of a [`CheckpointStore`], seen by the engine as a

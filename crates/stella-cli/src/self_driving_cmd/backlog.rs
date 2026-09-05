@@ -30,6 +30,8 @@ use crate::query_format::{QueryFormat, Rows};
 use super::config::LoopConfig;
 use super::state::LoopState;
 
+mod record;
+
 /// How many open issues cross the port to produce one cycle's batch.
 ///
 /// This is a page size, and a page the backlog outgrows silently changes the
@@ -521,7 +523,6 @@ pub(super) fn escalate_blocking(
     provider: &dyn IssueProvider,
     key: &str,
     why: &str,
-    body: &str,
     policy: &EscalationPolicy,
     signature: &str,
 ) -> Result<EscalationRecord, String> {
@@ -534,7 +535,6 @@ pub(super) fn escalate_blocking(
             provider,
             &IssueKey::from(key),
             why,
-            body,
             policy,
             signature,
         ))
@@ -554,29 +554,32 @@ pub(super) fn escalate_blocking(
 /// costs no extra call to the tracker. It is an HTML comment, so nobody
 /// reading the rendered issue sees it.
 ///
+/// **No body is passed in.** A turn runs for minutes, and the text a person
+/// is looking at can change in that time. [`record::write`] reads the issue
+/// itself, right before it writes, and that module carries the rest of the
+/// rule — what happens to an edit that lands in the gap, and how wide the gap
+/// can be.
+///
 /// Returns the record it wrote, so the caller can count an issue that has
 /// just used up its last attempt.
 pub(super) async fn escalate(
     provider: &dyn IssueProvider,
     key: &IssueKey,
     why: &str,
-    body: &str,
     policy: &EscalationPolicy,
     signature: &str,
 ) -> Result<EscalationRecord, IssueError> {
-    let record = escalation::next(
-        escalation::parse(body).as_ref(),
-        escalation::classify(why),
-        &crate::timefmt::rfc3339_utc_now(),
-        crate::timefmt::now_unix(),
-    );
-
     provider
         .relabel(key, &[stella_autonomy::ESCALATION_LABEL.to_owned()], &[])
         .await?;
-    provider
-        .edit(key, None, Some(&escalation::stamp(body, &record)))
-        .await?;
+    let record = record::write(
+        provider,
+        key,
+        escalation::classify(why),
+        &crate::timefmt::rfc3339_utc_now(),
+        crate::timefmt::now_unix(),
+    )
+    .await?;
 
     let next_step = match escalation::retry_after(&record, policy) {
         Some(wait) => format!(
@@ -794,16 +797,14 @@ mod tests {
 
     /// A tracker that is not GitHub and is not a process.
     ///
-    /// Records what it was asked to write, so a test can assert not only what
-    /// was filed but that nothing **was** — which is the half that matters for
-    /// a refusal, since a conformance check that ran after the write would pass
-    /// the same assertions on the returned value.
+    /// It keeps every draft it was asked to file. So a test can assert that
+    /// nothing was filed at all, which is what a refusal has to show: a check
+    /// that ran after the write would pass the same assertions on the value it
+    /// returned.
     #[derive(Default)]
     struct FixtureProvider {
         open: Vec<Issue>,
         filed: std::sync::Mutex<Vec<IssueDraft>>,
-        edited: std::sync::Mutex<Vec<String>>,
-        labelled: std::sync::Mutex<Vec<String>>,
     }
 
     impl FixtureProvider {
@@ -816,14 +817,6 @@ mod tests {
 
         fn filed(&self) -> Vec<IssueDraft> {
             self.filed.lock().expect("fixture lock").clone()
-        }
-
-        fn edited(&self) -> Vec<String> {
-            self.edited.lock().expect("fixture lock").clone()
-        }
-
-        fn labelled(&self) -> Vec<String> {
-            self.labelled.lock().expect("fixture lock").clone()
         }
     }
 
@@ -859,13 +852,9 @@ mod tests {
         async fn relabel(
             &self,
             _key: &IssueKey,
-            add: &[String],
+            _add: &[String],
             _remove: &[String],
         ) -> Result<(), IssueError> {
-            self.labelled
-                .lock()
-                .expect("fixture lock")
-                .extend(add.iter().cloned());
             Ok(())
         }
 
@@ -873,14 +862,8 @@ mod tests {
             &self,
             _key: &IssueKey,
             _title: Option<&str>,
-            body: Option<&str>,
+            _body: Option<&str>,
         ) -> Result<(), IssueError> {
-            if let Some(body) = body {
-                self.edited
-                    .lock()
-                    .expect("fixture lock")
-                    .push(body.to_owned());
-            }
             Ok(())
         }
     }
@@ -1373,67 +1356,6 @@ mod tests {
             &stella_autonomy::Attribution::default(),
         );
         assert!(outcome.is_err(), "{outcome:?}");
-    }
-
-    /// **The escalation-record witness.** Escalating writes the label a
-    /// person reads *and* a record the next run reads: the count,
-    /// the reason, and the moment. A second escalation on the stamped body
-    /// carries the count forward rather than starting over, which is what
-    /// makes parking reachable.
-    #[test]
-    fn escalating_stamps_a_record_the_next_run_can_read() {
-        let provider = FixtureProvider::default();
-        let policy = stella_autonomy::escalation::EscalationPolicy::default();
-
-        let first = escalate_blocking(
-            &provider,
-            "17",
-            "the turn exited 1 — the same `bash` call with identical arguments \
-             produced byte-identical output every time",
-            "## What happens\nThe environment was stale.\n",
-            &policy,
-            "created by stella*",
-        )
-        .expect("the fixture accepts writes");
-
-        assert_eq!(first.attempts, 1);
-        assert_eq!(
-            first.last_reason,
-            stella_autonomy::escalation::EscalationReason::Environmental(
-                stella_autonomy::escalation::EnvCause::StuckLoop
-            ),
-            "a stuck-loop abort is a broken machine, and it is retried eagerly"
-        );
-        assert_eq!(
-            provider.labelled(),
-            vec![stella_autonomy::ESCALATION_LABEL.to_owned()],
-            "the label stays as the marker a person scans for"
-        );
-
-        let stamped = provider.edited().pop().expect("the body was stamped");
-        assert!(
-            stamped.starts_with("## What happens"),
-            "the issue's own text is kept: {stamped}"
-        );
-        assert_eq!(
-            stella_autonomy::escalation::parse(&stamped).as_ref(),
-            Some(&first),
-            "the record must survive a read of the body it was written into"
-        );
-
-        let second = escalate_blocking(
-            &provider,
-            "17",
-            "the turn ran and could not work out what the issue asks for",
-            &stamped,
-            &policy,
-            "created by stella*",
-        )
-        .expect("the fixture accepts writes");
-        assert_eq!(
-            second.attempts, 2,
-            "the count carries forward, or parking is never reached"
-        );
     }
 
     /// The limit bounds what crosses the port, not what the ranker discards

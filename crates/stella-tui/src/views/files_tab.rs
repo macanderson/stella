@@ -61,6 +61,7 @@ use stella_protocol::FileChangeKind;
 use crate::deck::{FileLedger, FileRecord, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::diff;
+use crate::render::columns;
 
 /// The selection gutter: `▸ ` on the selected row, blank on every other.
 const GUTTER_W: usize = 2;
@@ -282,9 +283,9 @@ fn header_line(width: usize) -> Line<'static> {
 fn record_line(rec: &FileRecord, width: usize, selected: bool) -> Line<'static> {
     let muted = Style::new().fg(token::MUTED);
     let pw = path_width(width);
-    let path = elide_left(&rec.path, pw);
-    let pad = pw.saturating_sub(path.chars().count());
-    let agent = elide_left(&rec.agent, AGENT_W.saturating_sub(1));
+    let path = columns::tail(&rec.path, pw);
+    let pad = pw.saturating_sub(columns::width(&path));
+    let agent = columns::tail(&rec.agent, AGENT_W.saturating_sub(1));
     let (op_letter, op_metal) = op_style(rec.kind);
 
     let mut spans = vec![Span::styled(
@@ -300,8 +301,10 @@ fn record_line(rec: &FileRecord, width: usize, selected: bool) -> Line<'static> 
     spans.extend([
         // Padded to the full column, unlike the pre-port row, which padded to
         // one less and left every op badge sitting a column left of its own
-        // header cell.
-        Span::styled(format!("{agent:<aw$}", aw = AGENT_W), muted),
+        // header cell. `columns::pad` fills by display column, not by char.
+        // An agent tag is free text (a name, a model slug), and Rust's own
+        // `{:<aw$}` fills by char — too little space for a CJK or emoji tag.
+        Span::styled(columns::pad(&agent, AGENT_W), muted),
         Span::styled(
             format!("{op_letter:^ow$}", ow = OP_W),
             Style::new().fg(op_metal).add_modifier(Modifier::BOLD),
@@ -356,23 +359,6 @@ fn op_style(kind: FileChangeKind) -> (&'static str, Color) {
         FileChangeKind::Deleted => token::RED,
     };
     (crate::textline::crud_letter(kind), metal)
-}
-
-/// Left-elide `text` to at most `max` chars, keeping the tail (the
-/// meaningful end of a path) and marking the cut with `…`.
-fn elide_left(text: &str, max: usize) -> String {
-    if max == 0 {
-        return String::new();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= max {
-        return text.to_string();
-    }
-    if max == 1 {
-        return "…".to_string();
-    }
-    let tail: String = chars[chars.len() - (max - 1)..].iter().collect();
-    format!("…{tail}")
 }
 
 // ── Diff pane ────────────────────────────────────────────────────────────
@@ -914,6 +900,33 @@ mod tests {
         render(&model, &mut ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("no files touched yet"));
+    }
+
+    /// A CJK path or agent tag stays inside its column, and the row it sits
+    /// on stays inside the pane.
+    ///
+    /// Old code used `elide_left` and `chars().count()`. A CJK glyph is
+    /// one char but two columns, so a char budget kept twice the width it
+    /// meant to. Measured with [`ratatui::text::Line::width`], never
+    /// through `render::columns` itself, so the test cannot agree with
+    /// the bug it checks for.
+    #[test]
+    fn a_wide_character_row_stays_inside_its_width() {
+        let width = 60;
+        let rec = FileRecord {
+            agent: "查看文件目录结构树状图代理".into(),
+            path: "crates/查看文件目录结构树状图/driver.rs".into(),
+            kind: FileChangeKind::Modified,
+            added: 4,
+            removed: 1,
+            changes: 1,
+            reads: 0,
+        };
+        let line = record_line(&rec, width, false);
+        assert!(
+            line.width() <= width,
+            "row overran its {width}-column budget: {line:?}"
+        );
     }
 
     #[test]

@@ -76,6 +76,10 @@ use stella_tools::registry::question::QuestionBroker;
 use crate::settings::PlanReviewPolicy;
 use tokio::sync::mpsc::UnboundedSender;
 
+mod revision;
+
+pub(crate) use revision::SharedRevisions;
+
 /// The label whose selection means "run this plan". Matched by exact string
 /// against [`stella_protocol::Answer::chosen`], so it is named once here
 /// rather than written twice.
@@ -125,6 +129,10 @@ pub(crate) struct PlanGate {
     plan_changed: DivergenceCause,
     /// The same, for a plan put up again unchanged.
     re_proposed: DivergenceCause,
+    /// The lane's plan-change gate, shared with the forwarder that writes to
+    /// it (`revision`). A change waiting there withholds every tool call
+    /// [`Self::review`] guards.
+    revisions: SharedRevisions,
     state: Mutex<GateState>,
 }
 
@@ -141,6 +149,8 @@ pub(crate) struct PlanSetup {
     pub(crate) goal: String,
     /// The `plan_review` policy this invocation applies.
     pub(crate) policy: PlanReviewPolicy,
+    /// The lane's plan-change gate, shared with its forwarder (`revision`).
+    pub(crate) revisions: SharedRevisions,
 }
 
 impl PlanSetup {
@@ -150,10 +160,15 @@ impl PlanSetup {
     /// Both sources are joined here, once, so no caller downstream can apply
     /// only one of the two — the same discipline `Config::allowed_write_dirs`
     /// applies to its flag.
-    pub(crate) fn for_turn(messages: &[CompletionMessage], cfg: &crate::config::Config) -> Self {
+    pub(crate) fn for_turn(
+        messages: &[CompletionMessage],
+        cfg: &crate::config::Config,
+        revisions: SharedRevisions,
+    ) -> Self {
         Self {
             goal: plan_goal(messages),
             policy: cfg.plan_review.for_run(cfg.plan_mode),
+            revisions,
         }
     }
 }
@@ -218,6 +233,7 @@ impl PlanGate {
             min_steps: plan.policy.min_steps,
             plan_changed,
             re_proposed,
+            revisions: plan.revisions,
             state: Mutex::new(GateState::default()),
         })
     }
@@ -250,6 +266,12 @@ impl PlanGate {
     /// repair step), then from a plain statement of what happened. There is no
     /// fourth source, because a `DivergenceCause` cannot be blank.
     pub(crate) async fn review(&self, board: &[TaskItem]) -> Option<ToolOutput> {
+        // A waiting plan change is settled first. The plan changed under a
+        // turn that is already running, and SPEC 8.1 item 3 says nothing runs
+        // until somebody answers that (see the `revision` submodule).
+        if let Some(held) = self.settle_revision(board) {
+            return Some(held);
+        }
         let steps = plan_steps(board);
         let tasks = plan_tasks(board);
         let revision = {
