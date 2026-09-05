@@ -344,3 +344,76 @@ fn strip_ansi(text: &str) -> String {
     }
     out
 }
+
+// --------------------------------------------------------- the golden
+
+/// The command quoted in every failure message below.
+const SCROLLBACK_BLESS_CMD: &str = "BLESS=1 cargo test -p stella-cli --lib \
+     plain::transcript::tests::the_scrollback_a_run_leaves_matches_its_golden";
+
+fn scrollback_snapshot_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/plain/transcript/snapshots/scrollback.txt")
+}
+
+/// The full golden file: a self-describing header, then the exact bytes a
+/// terminal or a log file receives.
+fn scrollback_golden_body(frame: &str) -> String {
+    format!(
+        "# plain scrollback golden · one turn, width {W}\n\
+         # TranscriptPrinter's byte-for-byte scrollback for a fixed event\n\
+         # sequence — this crate's one shipping caller of\n\
+         # stella_transcript::grid::render_turn_lines. The grid golden that\n\
+         # pins the renderer itself lives one crate over, in\n\
+         # crates/stella-transcript/tests/grid_snapshots.rs. Styling stripped\n\
+         # via strip_ansi. Regenerate with:\n\
+         #   {SCROLLBACK_BLESS_CMD}\n\
+         \n\
+         {frame}"
+    )
+}
+
+/// This pins the artifact the user sees. `grid_snapshots.rs`, in
+/// `stella-transcript`, pins the renderer. This test pins what
+/// [`TranscriptPrinter`] streams to scrollback, byte for byte, for one
+/// fixed run. No other test here checks that against a saved frame.
+///
+/// Every other test in this module checks `streamed`'s output with
+/// `contains(...)`. A substring check cannot see a row slide one column, or
+/// a gutter constant drift. A golden test can.
+#[test]
+fn the_scrollback_a_run_leaves_matches_its_golden() {
+    let live = strip_ansi(&streamed(&turn_events()));
+    let body = scrollback_golden_body(&live);
+    let path = scrollback_snapshot_path();
+
+    if std::env::var_os("BLESS").is_some() {
+        let dir = path.parent().expect("snapshot path has a parent");
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|err| panic!("create {}: {err}", dir.display()));
+        std::fs::write(&path, &body)
+            .unwrap_or_else(|err| panic!("write {}: {err}", path.display()));
+        return;
+    }
+
+    let Ok(expected) = std::fs::read_to_string(&path) else {
+        panic!(
+            "no golden at {}.\n\
+             Create it with:  {SCROLLBACK_BLESS_CMD}\n\
+             \n\
+             This run produced:\n{body}",
+            path.display()
+        );
+    };
+    // Normalize line endings: a Windows checkout with `core.autocrlf` on
+    // would otherwise fail this golden on the first character of every line.
+    let expected = expected.replace("\r\n", "\n");
+
+    assert_eq!(
+        expected,
+        body,
+        "the plain surface's scrollback drifted from its golden at {}.\n\
+         If the change is intended, re-bless and read the diff:  {SCROLLBACK_BLESS_CMD}",
+        path.display()
+    );
+}
