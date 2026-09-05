@@ -87,7 +87,11 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     are declared, and ci.yml's filter is built
                          #     from that declaration)
                          #   + god-files
-                         #   + gate-parity + left-behind + role-names
+                         #   + gate-parity
+                         #   + guard-trigger-coverage (prose, hue-separation
+                         #     and transcript-surfaces each run with no
+                         #     paths: filter in at least one workflow)
+                         #   + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
                          #     reachable from the engine's step path; down-only)
@@ -172,8 +176,16 @@ ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
 `prose` exists to judge — alongside the hermetic suites that prove a guard can
 still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
 one does is checked, by `gate-parity` against every `run:` in
-`.github/workflows/`. That workflow's `gate-steps` job — named `gate steps no
-other workflow runs` — is now one of `main`'s required status checks too,
+`.github/workflows/`. That check stops at "does some workflow run it" — it
+says nothing about which files reach it, so a `paths:` filter narrowing
+`guard-self-tests.yml`'s `pull_request:` trigger to `docs/**` would still read
+as green, and the three steps would run nowhere for a scripts-only pull
+request. Nothing held that absence in place except a comment.
+`guard-trigger-coverage` reads the trigger back: each of the three must run
+with no `paths:`/`paths-ignore:` filter in at least one workflow, so a later
+edit narrowing this one cannot reopen the gap silently. That workflow's
+`gate-steps` job — named `gate steps no other workflow runs` — is now one of
+`main`'s required status checks too,
 added after a red run of it merged into `main` and reddened every open PR.
 
 A fifth workflow, `deck-fit.yml`, owns the decks under
