@@ -442,15 +442,16 @@ pub(crate) struct EngineWiring {
 /// always the literal session-default `ModelRef` the pre-built primary
 /// provider is bound to, never an already-overridden ref, so this check
 /// stays "does this need a NEW adapter instance" regardless of which role is
-/// being pinned). `roles` lets one resolved model pin more than one router
-/// role at once (`Role::Plan` shares `Role::Worker`'s tier — see
-/// `resolve_engine_wiring`'s worker-override handling). Every failure here
-/// is soft — a missing credential or a build error pushes a notice and
-/// leaves every role in `roles` unpinned, degrading to `fallback` in the
-/// router, never a hard error. Returns the resolved [`ModelRef`] on success.
+/// being pinned). Every failure here is soft — a missing credential or a
+/// build error pushes a notice and leaves `role` unpinned, degrading to
+/// `fallback` in the router, never a hard error. Returns the resolved
+/// [`ModelRef`] on success.
+///
+/// Takes one `role`, not a slice: `Role::Worker` is the only router role
+/// this session ever pins.
 fn pin_role(
     wiring: &mut EngineWiring,
-    roles: &[Role],
+    role: Role,
     label: &str,
     spec: &crate::engine_config::ModelSpec,
     base_ref: &ModelRef,
@@ -475,10 +476,8 @@ fn pin_role(
     let pinned = ModelRef::new(entry.config.id, slug.clone());
     if pinned == *base_ref {
         // Same instance the primary resolver entry already serves: no new
-        // adapter needed, the pin(s) still record the explicit choice.
-        for &role in roles {
-            wiring.pins.pin(role, pinned.clone());
-        }
+        // adapter needed, the pin still records the explicit choice.
+        wiring.pins.pin(role, pinned.clone());
         return Some(pinned);
     }
     match build_provider_parts(
@@ -494,23 +493,16 @@ fn pin_role(
         stella_model::CacheTtl::default(),
     ) {
         Ok(provider) => {
-            for &role in roles {
-                wiring.pins.pin(role, pinned.clone());
-            }
+            wiring.pins.pin(role, pinned.clone());
             // A profile for the routed provider keeps the router's provider
             // list honest (breaker bookkeeping, `providers()` introspection,
-            // and — critically — the router's own unpinned-verifier cross-
-            // family lookup, which matches `resolve(Worker)`'s result against
-            // a profile's `worker_model` field) even though the pin itself
-            // short-circuits normal tiered resolution.
+            // and — critically — `resolve_cross_family`'s own lookup, which
+            // matches `resolve(Worker)`'s result against a profile's
+            // `worker_model` field) even though the pin itself short-circuits
+            // normal tiered resolution.
             wiring.profiles.push(
-                ProviderProfile::new(
-                    entry.config.id,
-                    pinned.clone(),
-                    pinned.clone(),
-                    pinned.clone(),
-                )
-                .with_family(provider_family(entry.config.id)),
+                ProviderProfile::new(entry.config.id, pinned.clone(), pinned.clone())
+                    .with_family(provider_family(entry.config.id)),
             );
             wiring.extra_providers.push((pinned.clone(), provider));
             Some(pinned)
@@ -548,14 +540,16 @@ fn pin_role(
 /// It resolved four more roles until #3908 — verifier, triage, research and
 /// plan, each from its own `pipeline_<role>_model` key, each pinned into the
 /// [`RoleTable`]. Those pins were **read by nothing**: the only live
-/// `Router::resolve` call sites are `SessionFallback::resolve_fallback`
-/// (`Role::Worker` alone) and [`resolve_cross_family_verifier`], and the
-/// latter builds its router with `RoleTable::new()`. So an operator could
+/// `Router::resolve` call site is `SessionFallback::resolve_fallback`
+/// (`Role::Worker` alone), and [`resolve_cross_family_verifier`] does not
+/// resolve a `Role` at all — it calls `Router::resolve_cross_family`, whose
+/// router it builds with `RoleTable::new()` regardless. So an operator could
 /// set `pipeline_verifier_model` and watch it resolve, log, and steer
 /// nothing — including at the one place a second model actually runs. The
 /// keys are retired (`settings::unknown`) rather than dropped in silence, and
 /// a model for a participant other than the session's own is now a
-/// plugin-declared seat ([`crate::agent::seats`]).
+/// plugin-declared seat ([`crate::agent::seats`]); the four now-unroutable
+/// `Role` options are gone too.
 ///
 /// The `Role::Worker` pin below survives because it is the one that was ever
 /// read. Pins deliberately bypass the circuit breaker (`RoleTable`
@@ -569,7 +563,6 @@ pub(crate) fn resolve_engine_wiring(
 
     let worker_profile = ProviderProfile::new(
         worker_ref.provider.clone(),
-        worker_ref.clone(),
         worker_ref.clone(),
         worker_ref.clone(),
     )
@@ -624,7 +617,7 @@ pub(crate) fn resolve_engine_wiring(
     let effective_worker_ref = match &worker_spec {
         Some(spec) => pin_role(
             &mut wiring,
-            &[Role::Worker],
+            Role::Worker,
             "model",
             spec,
             worker_ref,
@@ -745,50 +738,47 @@ pub(crate) fn provider_family(provider_id: &str) -> String {
 }
 
 /// A `ProviderProfile` for a discovered provider, using its `default_model`
-/// for all three role tiers (the finest model this layer knows without a
-/// per-role catalog) and [`provider_family`] for cross-family grouping.
+/// as both the worker and verifier model (the finest model this layer knows
+/// without a per-role catalog) and [`provider_family`] for cross-family
+/// grouping.
 fn profile_for(config: &crate::config::ProviderConfig) -> ProviderProfile {
     let model = ModelRef::new(config.id, config.default_model);
-    ProviderProfile::new(config.id, model.clone(), model.clone(), model)
-        .with_family(provider_family(config.id))
+    ProviderProfile::new(config.id, model.clone(), model).with_family(provider_family(config.id))
 }
 
-/// Resolve one seat's model, and build the adapter that serves it — the
-/// session's whole answer to "does this role run on a model of its own?".
+/// Resolve the goal loop's verifier seat, and build the adapter that serves
+/// it — the session's whole answer to "does verification run on a model of
+/// its own?".
 ///
-/// Builds a role [`Router`] whose most-preferred provider is the active worker
+/// Builds a [`Router`] whose most-preferred provider is the active worker
 /// (`worker_id`/`worker_model`, so the `--model` pin is honored) followed by
-/// every OTHER configured provider, then resolves `role` through it. What that
-/// buys depends on the role, and the difference is the router's to make, not
-/// this function's: `Role::Verifier` prefers a healthy provider whose family
-/// differs from the worker's (`Router::resolve_verifier`), while the tier roles
-/// take the most-preferred available provider's matching tier.
+/// every OTHER configured provider, then asks it for a provider in a
+/// different family than the worker's
+/// ([`Router::resolve_cross_family`]).
 ///
-/// - The router lands back on the worker's own provider → `None`, and no second
-///   adapter is built. This is the single-family case for the verifier and the
-///   ordinary case for every tier role today, because [`profile_for`] points a
-///   provider's three tiers at one `default_model`. A seat that cannot diverge
-///   says so by returning `None` rather than by building a duplicate adapter.
+/// - The router lands back on the worker's own provider → `None`, and no
+///   second adapter is built. This is the single-family case: a seat that
+///   cannot diverge says so by returning `None` rather than by building a
+///   duplicate adapter.
 /// - A distinct provider is selected → its concrete adapter and id.
 ///
-/// Returns `None` on ANY failure — degradation to the worker, a resolve error,
-/// an unknown provider, or an adapter build failure — so seat routing can never
-/// break the loop that asked for it. Every caller's `None` arm is "use the
-/// worker's provider", which is what the session did before seats existed.
-pub(crate) fn resolve_seat_provider(
-    role: Role,
+/// Returns `None` on ANY failure — degradation to the worker, a resolve
+/// error, an unknown provider, or an adapter build failure — so this can
+/// never break the loop that asked for it. The caller's `None` arm is "use
+/// the worker's provider", which is what the session did before this seat
+/// existed.
+///
+/// Takes no `role` parameter: the strategy this asks for — "a provider in a
+/// different family than this one" — is fixed, not one of several roles
+/// core routes generically.
+pub(crate) fn resolve_cross_family_verifier(
     worker_id: &str,
     worker_model: &str,
     configured: &[crate::config::ConfiguredProvider],
 ) -> Option<(Box<dyn Provider>, String)> {
     let worker_ref = ModelRef::new(worker_id, worker_model);
-    let worker_profile = ProviderProfile::new(
-        worker_id,
-        worker_ref.clone(),
-        worker_ref.clone(),
-        worker_ref,
-    )
-    .with_family(provider_family(worker_id));
+    let worker_profile = ProviderProfile::new(worker_id, worker_ref.clone(), worker_ref)
+        .with_family(provider_family(worker_id));
 
     let mut profiles = vec![worker_profile];
     for entry in configured {
@@ -803,7 +793,7 @@ pub(crate) fn resolve_seat_provider(
         profiles,
         CircuitBreaker::new(Box::new(SystemClock::new())),
     );
-    let decision = router.resolve(role).ok()?;
+    let decision = router.resolve_cross_family().ok()?;
 
     // Same provider as the worker → single-family/degraded: reuse the worker
     // provider directly, never build a duplicate.
@@ -829,22 +819,6 @@ pub(crate) fn resolve_seat_provider(
     )
     .ok()?;
     Some((seat, decision.model_ref.provider))
-}
-
-/// Resolve the VERIFIER seat for the goal loop.
-///
-/// The named entry point the goal loop calls, kept as its own function rather
-/// than open-coding [`resolve_seat_provider`]'s `Role::Verifier` at the call
-/// site: the goal loop prints an operator-facing notice about *cross-family
-/// verification specifically*, so the role it asks for is part of that
-/// surface's contract rather than an argument a later edit could quietly
-/// retune.
-pub(crate) fn resolve_cross_family_verifier(
-    worker_id: &str,
-    worker_model: &str,
-    configured: &[crate::config::ConfiguredProvider],
-) -> Option<(Box<dyn Provider>, String)> {
-    resolve_seat_provider(Role::Verifier, worker_id, worker_model, configured)
 }
 
 /// The session-scoped role [`Router`] for a bare (non-pipeline) loop — the

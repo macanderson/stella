@@ -488,13 +488,13 @@ pub(crate) async fn run_raw_one_shot(
 
 /// Run a one-shot goal loop (non-interactive): work in judged rounds until
 /// a verifier model assesses the goal as met (`stella goal "…"`, and `stella
-/// monitor` composed on top of it). The verifier is routed by role: when a
-/// second provider family is configured (BYOK), `run_goal_turn` builds a
-/// role `Router` and resolves `Role::Verifier` to a DIFFERENT family than the
-/// worker for bias-resistant assessment; with a
-/// single family it stays the worker provider, identical to before. The
-/// worker turns get the full tool stack (built-ins + MCP + custom), same as
-/// `run_one_shot`.
+/// monitor` composed on top of it). The verifier is routed by a
+/// cross-family strategy, not a `Role`: when a second provider family is
+/// configured (BYOK), `run_goal_turn` builds a `Router` and resolves a
+/// provider in a DIFFERENT family than the worker for bias-resistant
+/// assessment (`Router::resolve_cross_family`); with a single family it
+/// stays the worker provider, identical to before. The worker turns get the
+/// full tool stack (built-ins + MCP + custom), same as `run_one_shot`.
 ///
 /// `pipeline` selects the driver for each working round (#3381). It has two
 /// arms, both live: `--pipeline classic` is refused at

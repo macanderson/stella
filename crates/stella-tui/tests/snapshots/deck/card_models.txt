@@ -19,23 +19,23 @@
  │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
  │   irreducible generation
 
-── EXECUTE ─────────────────────────────────╭ models  resolved routing ────────────────────────────────────────────╮────────────────────────────────────────────
-                                            │session   glm-5.2                                                     │
- │ ⊙ apps/app/automations/page.tsx          │auto      effort on · thinking off                                    │                                      ⚡ 42ms
- │ ⎿ 312 lines                              │                                                                      │                         42ms
-                                            │lead      zai/glm-5.2-air                                             │
- │ ● edit apps/app/automations/page.tsx +4 -│          medium · thinking on · from default_model                   │                                      ⚡ 18ms
- │ ⎿                                        │think     z-ai/glm-5.2                                    unassigned  │                 +4 −1 · 18ms
- │     10 -  const items = []               │          low · thinking off · from agents.triage.model               │
- │     10 +  const items = useAutomations() │research  zai/glm-5.2-air                                             │
- │     11 +  const [q, setQ] = useState("") │          low · thinking off · from default_model                     │
- │     12 +  const filtered = filter(items, │plan      zai/glm-5.2-air                                             │
- │     13 +  const onNew = () => open()     │          medium · thinking on · from default_model                   │
-                                            │work      zai/glm-5.2-air                                     served  │
- │ ◐ model worker · 428 tok/s               │          medium · thinking on · from default_model                   │                                    ⚡ 2100ms
- │   irreducible generation                 │verify    anthropic/claude-opus-5                         unassigned  │
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ │ ⊙ apps/app/automations/page.tsx                                                                                                                        ⚡ 42ms
+ │ ⎿ 312 lines                                                                                                                               42ms
+
+ │ ● edit apps/app/automations/page.tsx +4 -1                                                                                                             ⚡ 18ms
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations()
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, ╭ models  resolved routing ────────────────────────────────────────────╮
+ │     13 +  const onNew = () => open()     │session   glm-5.2                                                     │
+                                            │auto      effort on · thinking off                                    │
+ │ ◐ model worker · 428 tok/s               │                                                                      │                                    ⚡ 2100ms
+ │   irreducible generation                 │lead      zai/glm-5.2-air                                             │
                                             │          high  (effort_auto replaced "max") · thinking on            │
-☰  plan  5/7  ·  Workflows canvas           │          from pipeline_verifier_model                                │
+☰  plan  5/7  ·  Workflows canvas           │          from agents.default.model                                   │
                                             ╰─────────────────────────────────────────────────────────── esc close ╯
 ⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
