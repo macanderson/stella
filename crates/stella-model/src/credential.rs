@@ -178,10 +178,14 @@ impl ApiKey {
     /// A host that already knows how it talks to its user — a GUI, a daemon
     /// with its own secret store, a test — injects that here instead of
     /// inheriting `rpassword` on the controlling terminal. It is also the only
-    /// way to reach the swallow below deterministically: the shipping
-    /// [`TerminalPrompt`] declines under `cargo test`, where stdout is not a
-    /// terminal, so a test driving `resolve` alone exercises the gate and
-    /// never the arm underneath it (#4576).
+    /// safe way to reach the swallow below deterministically:
+    /// [`TerminalPrompt::can_prompt`] genuinely probes `/dev/tty` (Unix) or
+    /// `CONIN$`/`CONOUT$` (Windows) rather than asking whether `stdout` is
+    /// captured, so a test that drives `resolve` (not this function) with
+    /// `interactive: true` is not guaranteed to decline — on a machine with a
+    /// controlling terminal attached to the test process, it would actually
+    /// call `rpassword` and block on a keystroke. Every test exercising the
+    /// interactive step calls this function with a fake instead (#4576).
     pub fn resolve_with_prompt(
         provider_id: &str,
         env_var: &str,

@@ -8,24 +8,85 @@
 //! zero-argument [`ApiKey::resolve`](super::ApiKey::resolve) uses.
 //!
 //! The seam exists because the alternative could not be tested. Under `cargo
-//! test`, `stdout().is_terminal()` is false, so [`TerminalPrompt::can_prompt`]
-//! declines and the arm below it — the one that swallows a failed prompt and
-//! degrades to [`CredentialError::NotFound`] — was never reached by the test
-//! that claimed to cover it. It was green because of the gate, not because of
-//! the swallow (#4576).
+//! test`, neither probe below finds a controlling terminal, so
+//! [`TerminalPrompt::can_prompt`] declines and the arm below it — the one
+//! that swallows a failed prompt and degrades to
+//! [`CredentialError::NotFound`] — was never reached by the test that
+//! claimed to cover it. It was green because of the gate, not because of the
+//! swallow (#4576).
 //!
-//! It is also where #3052 lands. `rpassword` opens `/dev/tty` directly on
-//! Unix rather than writing to stdout, so [`TerminalPrompt::decide`]'s
-//! `stdout_is_terminal` is a proxy for "the prompt is visible" rather than the
-//! exact condition. Probing what `rpassword` actually opens changes one
-//! function here — and a real `prompt_password` on a machine with a
-//! controlling terminal would then block the suite forever if the tests still
-//! had to reach it through the shipping implementation, which is why that fix
-//! waits on this one.
+//! `rpassword` never touches `stdin`/`stdout` on Unix or Windows — see
+//! [`rpassword_tty`]'s doc for the exact device it opens instead, and why
+//! [`TerminalPrompt::can_prompt`] probes that device directly rather than
+//! asking whether `stdout` is a terminal. A `stella config > out.txt` run
+//! from a real terminal shows the prompt correctly (it lives on `/dev/tty`,
+//! not stdout); a `stdout` that merely *looks* like a terminal, with no
+//! controlling terminal behind it, correctly declines.
 
 use zeroize::Zeroizing;
 
 use super::CredentialError;
+
+/// What `rpassword::prompt_password` actually opens to show its prompt and
+/// read the answer, probed the same way it probes it — open, then drop —
+/// rather than asking whether `stdin`/`stdout` are terminals.
+///
+/// `rpassword-7.5.4/src/unix.rs`'s `DEFAULT_INPUT_PATH`/`DEFAULT_OUTPUT_PATH`
+/// are both `/dev/tty`; `windows.rs`'s twin constants are `CONIN$`/`CONOUT$`.
+/// Neither is `std::io::Stdin`/`std::io::Stdout`, so checking `stdin`/`stdout`
+/// instead would decline a redirected-stdout run — an ordinary
+/// `stella config > out.txt` — even with a live controlling terminal that
+/// `rpassword` could show the prompt on fine. `wasm.rs`'s pair is
+/// `/dev/stdin`/`/dev/stdout`, which *is* what `IsTerminal` on
+/// `std::io::stdin`/`std::io::stdout` answers for, so that stays the fallback
+/// on every target this crate does not name below.
+mod rpassword_tty {
+    /// Can `rpassword` read the typed answer right now?
+    #[cfg(unix)]
+    pub(super) fn input_is_open() -> bool {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .open("/dev/tty")
+            .is_ok()
+    }
+
+    #[cfg(windows)]
+    pub(super) fn input_is_open() -> bool {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .open("CONIN$")
+            .is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    pub(super) fn input_is_open() -> bool {
+        use std::io::IsTerminal;
+        std::io::stdin().is_terminal()
+    }
+
+    /// Can `rpassword` show the prompt text right now?
+    #[cfg(unix)]
+    pub(super) fn output_is_open() -> bool {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/tty")
+            .is_ok()
+    }
+
+    #[cfg(windows)]
+    pub(super) fn output_is_open() -> bool {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open("CONOUT$")
+            .is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    pub(super) fn output_is_open() -> bool {
+        use std::io::IsTerminal;
+        std::io::stdout().is_terminal()
+    }
+}
 
 /// Asking a human for a provider's API key.
 ///
@@ -71,23 +132,23 @@ impl TerminalPrompt {
     /// [`stella_tty::human_can_answer`]'s `interactive_output` role, so this
     /// only adds the check that was missing: a redirected stdout must decline
     /// exactly as a redirected stdin does, not just print a prompt nobody
-    /// reads before blocking on an answer nobody can give.
-    /// `stdout_is_terminal` is a proxy for whether `rpassword`'s prompt is
-    /// actually visible rather than an exact match — it writes to `/dev/tty`
-    /// directly on Unix, not stdout — tracked separately as #3052 rather than
-    /// folded into that fix.
-    pub fn decide(interactive: bool, stdin_is_terminal: bool, stdout_is_terminal: bool) -> bool {
-        stella_tty::human_can_answer(interactive, stdin_is_terminal, stdout_is_terminal)
+    /// reads before blocking on an answer nobody can give. `can_prompt` feeds
+    /// this the `rpassword_tty` probes (#3052), so `can_answer`/
+    /// `prompt_is_visible` are the exact condition rather than a stand-in.
+    /// That module is private, so this names it without linking it: a public
+    /// item's intra-doc link to a private one resolves only under
+    /// `--document-private-items` and is a `-D warnings` error without it.
+    pub fn decide(interactive: bool, can_answer: bool, prompt_is_visible: bool) -> bool {
+        stella_tty::human_can_answer(interactive, can_answer, prompt_is_visible)
     }
 }
 
 impl CredentialPrompt for TerminalPrompt {
     fn can_prompt(&self, interactive: bool) -> bool {
-        use std::io::IsTerminal;
         Self::decide(
             interactive,
-            std::io::stdin().is_terminal(),
-            std::io::stdout().is_terminal(),
+            rpassword_tty::input_is_open(),
+            rpassword_tty::output_is_open(),
         )
     }
 

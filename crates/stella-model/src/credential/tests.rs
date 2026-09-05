@@ -515,15 +515,34 @@ fn resolve_with_nothing_configured_and_non_interactive_is_a_named_not_found() {
     );
 }
 
+/// A prompt that always says no, and panics if asked anyway. Mirrors
+/// `ScriptedPrompt` in `tests/credential_prompt_degrade.rs`, which lives
+/// in a different binary and cannot be shared here.
+struct NoTerminal;
+
+impl CredentialPrompt for NoTerminal {
+    fn can_prompt(&self, _interactive: bool) -> bool {
+        false
+    }
+
+    fn ask(&self, _provider_id: &str, _env_var: &str) -> Result<String, CredentialError> {
+        panic!("can_prompt returned false — ask must never be called")
+    }
+}
+
 #[test]
-fn resolve_never_prompts_when_interactive_is_true_but_stdin_is_not_a_terminal() {
-    // Test harnesses never run with a real TTY on stdin, so this also
-    // guards against the suite hanging on a read that would otherwise
-    // block forever waiting for input that will never arrive.
+fn resolve_never_prompts_when_interactive_is_true_but_no_prompt_is_available() {
+    // This uses `resolve_with_prompt` with the fake, not the real
+    // `TerminalPrompt`. The real one opens `/dev/tty`. It only says no
+    // when the test has no controlling terminal — true in CI, but not
+    // on every machine. The fake pins the same rule everywhere: no
+    // prompt available means no prompt shown.
     unsafe {
         std::env::remove_var("STELLA_TEST_R5_KEY");
     }
-    let err = ApiKey::resolve("r5", "STELLA_TEST_R5_KEY", None, None, true).unwrap_err();
+    let err =
+        ApiKey::resolve_with_prompt("r5", "STELLA_TEST_R5_KEY", None, None, true, &NoTerminal)
+            .unwrap_err();
     assert_eq!(
         err,
         CredentialError::NotFound {
