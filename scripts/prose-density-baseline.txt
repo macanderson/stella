@@ -4,7 +4,15 @@
 # `//!` block in that crate's Rust files, recorded in hundredths so the
 # comparison is integer arithmetic. A unit may lower its mean; it may never
 # raise it, and a unit absent from this list is held to 12.00. Lower one with
-# `make prose-retighten`; `make prose-update` never touches this file.
+# `make prose-retighten`.
+#
+# `make prose-update` writes here only for a unit a file move touched, and
+# only up to that unit's own mean. Extracting a crate moves headers from one
+# unit to another with nobody having written a word, and both means change --
+# the source unit's because below-average files left it, the new unit's
+# because it did not exist. Judging those against the same files' old lengths
+# is what keeps this a ratchet on prose rather than a bar on splitting a
+# crate.
 #
 # Mean header length rather than comment share, because share is a bad proxy on
 # its own: a well-documented pure-function crate should be comment-heavy, and
@@ -18,7 +26,7 @@
 crates/stella-autonomy 38.25
 crates/stella-cli 23.45
 crates/stella-context 18.11
-crates/stella-core 27.99
+crates/stella-core 28.44
 crates/stella-diag 25.12
 crates/stella-diff 27.80
 crates/stella-embed 18.00
@@ -31,7 +39,8 @@ crates/stella-model 18.08
 crates/stella-observatory 22.28
 crates/stella-parity 35.00
 crates/stella-plugin 35.08
-crates/stella-protocol 27.23
+crates/stella-protocol 27.21
+crates/stella-records 24.33
 crates/stella-runtime 35.64
 crates/stella-serve 25.96
 crates/stella-store 24.92

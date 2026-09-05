@@ -37,10 +37,10 @@
 use serde::{Deserialize, Serialize};
 use stella_protocol::provenance::ProvenanceGrade;
 
-use super::super::context_record::hash::{RecordHashError, record_hash};
 use super::super::context_record::kind::{
     Origin, RecordProposalKind, RecordProposalStatus, RecordStatus,
 };
+use stella_protocol::hash::{RecordHashError, record_hash};
 
 /// The schema tag every context-record file carries in its header.
 pub const SCHEMA_TAG: &str = "context-record/v0.1";

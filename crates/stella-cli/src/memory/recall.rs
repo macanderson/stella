@@ -9,9 +9,9 @@
 
 use colored::Colorize;
 use stella_context::ContextQuery;
-use stella_core::records::RenderedChannel;
 use stella_core::skills::{self, SelectionConfig};
 use stella_protocol::{CompletionMessage, ContextRecallPort, MessageRole, Recall, RecalledFrame};
+use stella_records::records::RenderedChannel;
 
 use super::projection::{is_suppressed_local_frame, project_recalled_frame};
 use super::{RECALL_MARKER, SessionMemory};
@@ -259,7 +259,7 @@ impl SessionMemory {
     /// that skips this step. The registry is stored rather than a rendered
     /// string because rendering happens per turn: `applies_to` selection needs
     /// each turn's prompt to decide which scoped records apply.
-    pub(super) fn set_record_registry(&mut self, registry: stella_core::records::Registry) {
+    pub(super) fn set_record_registry(&mut self, registry: stella_records::records::Registry) {
         *self.record_registry.get_mut().expect("records lock") =
             (!registry.entries.is_empty()).then_some(registry);
         // Prime the freshness digest, so the first boundary check after open
@@ -273,19 +273,19 @@ impl SessionMemory {
     /// paths it names. `None` when this session has no records at all.
     ///
     /// Returns the registry alongside the render because the steering
-    /// adapters (`stella_core::steering::adapt`) resolve the rendered handles
+    /// adapters (`stella_records::adapt`) resolve the rendered handles
     /// back through it for their token estimates — the render and the ledger
     /// must come from one selection pass, not two.
     fn turn_record_rendered(
         &self,
         prompt: &str,
-    ) -> Option<(stella_core::records::Registry, RenderedChannel)> {
+    ) -> Option<(stella_records::records::Registry, RenderedChannel)> {
         // Cloned out of the lock rather than borrowed through it: the caller
         // threads the registry across the rest of its selection pass, and a
         // guard held that long would block a concurrent freshness swap.
         let registry = self.record_registry.read().expect("records lock").clone()?;
         let paths = turn_path_tokens(prompt);
-        let facts = stella_core::records::TurnFacts {
+        let facts = stella_records::records::TurnFacts {
             text: prompt,
             paths: &paths,
         };
@@ -315,7 +315,7 @@ impl SessionMemory {
         mut report: impl FnMut(String),
     ) -> Option<String> {
         let (registry, rendered) = self.turn_record_rendered(prompt)?;
-        for drop in stella_core::steering::adapt::record_drops(&registry, &rendered) {
+        for drop in stella_records::adapt::record_drops(&registry, &rendered) {
             // A record channel drop is never also selected — the channel's
             // own budget cut it before the plane saw it.
             if let Some(message) = drop_message(&drop, false) {
@@ -536,7 +536,7 @@ impl SessionMemory {
         }
         let registry = self.record_registry.read().expect("records lock").clone();
         let record = registry.map(|registry| {
-            let facts = stella_core::records::TurnFacts {
+            let facts = stella_records::records::TurnFacts {
                 text: prompt,
                 paths: &paths,
             };
@@ -1136,7 +1136,7 @@ pub(super) fn query_gathered_plane(
     frames: &[RecalledFrame],
     frame_drops: &[stella_core::steering::DroppedCandidate],
     selected: &skills::SkillSelection,
-    record: Option<&(stella_core::records::Registry, RenderedChannel)>,
+    record: Option<&(stella_records::records::Registry, RenderedChannel)>,
 ) -> stella_core::steering::SteeringSet {
     use stella_core::steering::{SteeringPlane, adapt};
 
@@ -1145,8 +1145,8 @@ pub(super) fn query_gathered_plane(
     let mut source_drops = frame_drops.to_vec();
     source_drops.extend(adapt::skill_drops(selected));
     if let Some((registry, rendered)) = record {
-        candidates.extend(adapt::record_candidates(registry, rendered));
-        source_drops.extend(adapt::record_drops(registry, rendered));
+        candidates.extend(stella_records::adapt::record_candidates(registry, rendered));
+        source_drops.extend(stella_records::adapt::record_drops(registry, rendered));
     }
     let plane = super::steering::GatheredSteering {
         candidates,

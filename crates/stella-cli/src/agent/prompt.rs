@@ -546,11 +546,11 @@ pub(crate) fn assemble_system_prompt(
     // freshness is in question, so no clock and no per-turn text enters here
     // (docs/spec/adaptive-context/context-record-examples/07-agent-projection.md).
     let rules_section = active_rules.registry().render(
-        stella_core::records::Channel::Cached,
+        stella_records::records::Channel::Cached,
         // Capped since #2709: a pinned record is guaranteed a prefix seat
         // only while the set fits, and a runaway ingest must not flood every
         // future prompt. No real record set has approached this budget.
-        Some(stella_core::records::CACHED_RECORD_BUDGET_CHARS),
+        Some(stella_records::records::CACHED_RECORD_BUDGET_CHARS),
     );
     if !rules_section.text.is_empty() {
         prompt.push('\n');

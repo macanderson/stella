@@ -389,7 +389,7 @@ fn tool_names(dir: &Path) -> Vec<String> {
 /// The record lineages a package's `rules/` directory will contribute.
 ///
 /// One file is a record *set*, so the answer is per record and not per file.
-/// [`stella_core::records::load_context_file`] is the same reader
+/// [`stella_records::records::load_context_file`] is the same reader
 /// [`crate::context_records`] uses, for `tool_names`' reason; an unreadable
 /// file falls back to the stem for the same one.
 fn record_lineages(dir: &Path) -> Vec<String> {
@@ -397,7 +397,7 @@ fn record_lineages(dir: &Path) -> Vec<String> {
         .into_iter()
         .flat_map(|(path, stem)| {
             let parsed = std::fs::read_to_string(&path).ok().and_then(|text| {
-                stella_core::records::load_context_file(&path.display().to_string(), &text).ok()
+                stella_records::records::load_context_file(&path.display().to_string(), &text).ok()
             });
             match parsed {
                 Some(records) if !records.is_empty() => records

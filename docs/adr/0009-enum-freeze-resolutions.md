@@ -59,7 +59,7 @@ The legacy context-as-code enum `RuleEnforcement`
 over a *different* vocabulary (`observe | advisory | required | blocking`);
 `informational` appears in neither the four- nor the two-value set, so no
 ratified edge reaches it. The code already self-flags this gap
-(`crates/stella-core/src/context_record.rs:37-41`).
+(`crates/stella-records/src/context_record.rs:37-41`).
 
 `informational` is defined as "Inform reviewers without adding an enforcement
 expectation" (`metadata.rs:32`) — passive, no enforcement — which is
@@ -92,13 +92,13 @@ The flag reported that the directive schema enumerates origin as four values
 Corroborated by lifecycle:628 ("Portable Origin values are user, system,
 observed, inferred, and imported") and `docs/spec/adaptive-context/context-frame-spec.md` §4.
 The code already implements the 5-value set
-(`crates/stella-core/src/context_record/kind.rs:147-155`). The four-value list in
+(`crates/stella-records/src/context_record/kind.rs:147-155`). The four-value list in
 `docs/design/directive-schema.md` § Type definition is on the *superseded*
 schema; its neighbour `source: "observed" | "imported"` in § End-user
 observations belongs to a different type (`Observation`), not to directives.
 
 **Follow-up (not a decision):** the "deferred per-family validator" comments in
-`crates/stella-core/src/context_record.rs:42-46` and `kind.rs:143-146` are now **stale**
+`crates/stella-records/src/context_record.rs:42-46` and `kind.rs:143-146` are now **stale**
 relative to ADR 0001 (which resolves *against* a per-family narrowing). They
 should be removed or updated when installment #470 lands; a directive-specific
 narrowing would be a *new* decision, not implied by current spec.

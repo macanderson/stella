@@ -7,7 +7,7 @@
 //! * no sharing or scope widens without an explicit act.
 
 use super::*;
-use stella_core::context_record::{
+use stella_records::context_record::{
     EvidencePool, ObservationRecord, ObservationSource, ProposalScore, RecordProposalKind,
     RecordProposalStatus, confidence_from_score,
 };

@@ -14,6 +14,11 @@
 //!    preimage bytes are byte-identical to CGP's for export interop);
 //! 5. sha256, lowercase hex, `sha256:` prefix.
 //!
+//! It lives here because two crates hash against it: `stella-records` seals a
+//! record, and `stella-core::receipts` derives a frame's `frame_hash`. Beside
+//! [`crate::context_event`]'s golden vector, the agreement is a same-crate
+//! fact rather than a doc comment promising it.
+//!
 //! Two normalization steps are the *caller's* responsibility before hashing and
 //! are intentionally NOT redone here: **alias normalization** (legacy field
 //! aliases like `recorded_at`→`observed_at`, `valid_to`→`valid_until` are mapped
@@ -185,4 +190,32 @@ mod tests {
     // hashing pipeline or the record's canonical bytes will break this.
     const GOLDEN_DIRECTIVE_HASH: &str =
         "sha256:761d3d24d908aa31946a09d2fab3ab329c7504cfdb508b5f7d4832d23bd18499";
+
+    /// The move from `stella-core::context_record::hash` to this crate changed
+    /// the import path and nothing else. The preimage is the
+    /// serialized record and never names a crate, so ADR 0004 hash neutrality
+    /// says the digest cannot move — and this is what says it out loud, with
+    /// the digest copied from the value the old path produced.
+    #[test]
+    fn the_move_to_this_crate_did_not_change_a_single_byte() {
+        let record = json!({
+            "schema_version": "1.0-draft",
+            "record_kind": "directive",
+            "record_id": "dir_example_v1",
+            "lineage_id": "lin_example",
+            "directive_kind": "rule",
+            "origin": "inferred",
+            "enforcement": "advisory",
+            "confidence": 88,
+            "scope": { "repository_id": "repo_1" },
+            "sharing_scope": "repository",
+            "observed_at": "2026-07-20T18:30:00Z",
+            "valid_from": "2026-07-20T18:30:00Z"
+        });
+        assert_eq!(
+            record_hash(&record).expect("hashes"),
+            "sha256:761d3d24d908aa31946a09d2fab3ab329c7504cfdb508b5f7d4832d23bd18499",
+            "the digest stella-core::context_record::hash produced for this record"
+        );
+    }
 }

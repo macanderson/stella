@@ -729,7 +729,7 @@ fn the_provenance_markers_are_what_this_assembler_emits() {
     // the splitter's copy is joined from that constant plus the newline
     // `assemble_system_prompt` pushes before the rendered channel.
     assert!(
-        stella_core::records::CACHED_HEADING.starts_with("\n## Workspace rules"),
+        stella_records::records::CACHED_HEADING.starts_with("\n## Workspace rules"),
         "the rules marker is derived from this constant"
     );
 
@@ -877,7 +877,7 @@ fn the_observatory_marker_copy_matches_the_emitting_constants() {
     // The rules marker is the record channel's heading behind the newline
     // `assemble_system_prompt` pushes before the rendered channel.
     assert_eq!(
-        format!("\n{}", stella_core::records::CACHED_HEADING),
+        format!("\n{}", stella_records::records::CACHED_HEADING),
         "\n\n## Workspace rules (cite the ^handle of any you apply)",
         "the rules heading moved — update the Observatory MARKERS"
     );
@@ -952,7 +952,7 @@ fn a_worktree_turn_is_steered_by_this_repositorys_records() {
 
     let steered = prompt_in(worktree.path());
     assert!(
-        steered.contains(stella_core::records::CACHED_HEADING.trim_start()),
+        steered.contains(stella_records::records::CACHED_HEADING.trim_start()),
         "the records must render as the cached rules block: {steered}"
     );
     for statement in [HARDEN_CI, DURABLE_DESIGN, NOTHING_LEFT_BEHIND] {
