@@ -47,7 +47,9 @@ pub(super) fn announce_session_steering(cfg: &Config, in_tx: &UnboundedSender<In
 /// unlike the withheld-checkout refusal it names no remedy to scroll back to.
 fn announce_holdout(cfg: &Config, in_tx: &UnboundedSender<Inbound>) {
     let rate = crate::memory::session_artifact_holdout_rate(&cfg.workspace_root);
-    if let Some(line) = stella_learn::holdout::disclosure(rate, "skill") {
+    // Three kinds share the schedule and take it in turn
+    // (`memory::trials::HOLDOUT_ARMS`), so the line names all three.
+    if let Some(line) = stella_learn::holdout::disclosure(rate, "memory, skill or record") {
         let _ = in_tx.send(Inbound::Notice(line));
     }
 }
