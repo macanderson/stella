@@ -59,8 +59,9 @@ pub fn run_memory_retired() -> Result<(), String> {
     // itself guarantees.
     retired.sort_by(|a, b| a.0.cmp(b.0));
 
-    // The evidence behind each decision, so "why" is answerable here rather
-    // than only in the ledger.
+    // What the turns said about each record, shown beside the reason. It is
+    // context for a reader, not what decided the retirement — the reason on
+    // the event is that, and it says so in its own words.
     let policy = crate::memory::tuning::selection_health_policy(&workspace_root);
     let health = uses::selection_health(&store, policy);
 
@@ -70,7 +71,7 @@ pub fn run_memory_retired() -> Result<(), String> {
         println!("    reason: {}", event.reason);
         if let Some(h) = health.iter().find(|h| &h.context_record_id == *record_id) {
             println!(
-                "    evidence: {} of {} assessed uses not helpful, {} uses across {} task(s)",
+                "    citations: {} of {} assessed uses not helpful, {} uses across {} task(s)",
                 h.not_helpful, h.assessed_uses, h.uses, h.distinct_tasks
             );
         }
@@ -82,12 +83,11 @@ pub fn run_memory_retired() -> Result<(), String> {
 /// `stella memory retire <id> --reason` — a person's explicit judgement that a
 /// memory has stopped earning its place.
 ///
-/// This is the evidence tier the automatic sweep cannot reach on its own. A
-/// citation is an `agent_self_report` and is deliberately not pruning-eligible
-/// (see [`crate::memory::uses`]), so until a deterministic or external evidence
-/// source is wired, a human is the one source strong enough to retire
-/// something. That is the correct default: the loop shows its work and a person
-/// decides.
+/// The sweeps reach two findings ([`crate::memory::retirement`]). Every path
+/// a memory names is gone. Or its recorded turns say withholding it won. A
+/// citation reaches neither, so it retires nothing (see
+/// [`crate::memory::uses`]). This is the door for the rest: a memory nothing
+/// has measured, or one the loop may not touch because a person wrote it.
 pub fn run_memory_retire(id: &str, reason: &str) -> Result<(), String> {
     if reason.trim().is_empty() {
         return Err("a retirement must carry a reason".into());

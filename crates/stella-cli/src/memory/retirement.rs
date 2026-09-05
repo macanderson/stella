@@ -3,6 +3,19 @@
 //! Context that repeatedly fails to help stops being selected — visibly, with
 //! reasons, and reversibly.
 //!
+//! # Two evidence sources, one door
+//!
+//! A memory leaves selection on one of two findings. [`sweep_vanished`] acts
+//! on a deterministic check: every path the memory names has left the tree.
+//! [`sweep`] acts on a measurement: the shared appraisal over the artifact
+//! trial ledger says withholding the record won, or that a full window in both
+//! arms found no contribution at all. Both write the same reversible event
+//! through the same protection predicate.
+//!
+//! A citation is not a third source. It is the model's own report about
+//! context it was handed, so it informs selection health and is shown to a
+//! reader; it retires nothing (see [`super::uses`]).
+//!
 //! # Retirement is derived, not stored
 //!
 //! A retirement is an immutable `promotion_event` carrying
@@ -39,9 +52,11 @@
 use std::collections::{HashMap, HashSet};
 
 use stella_context::ContextStore;
+use stella_learn::skills::SkillOrigin;
+use stella_learn::skills::appraisal::{DemotionDecision, DemotionReason, SkillAppraisal};
 use stella_records::context_record::{
     ContextRecordKind, LIFECYCLE_SCHEMA_VERSION, PromotionAction, PromotionActor,
-    PromotionEventRecord, SelectionHealth,
+    PromotionEventRecord,
 };
 
 /// How many promotion events one replay reads. Matches the proposals surface's
@@ -164,20 +179,58 @@ pub(crate) fn protection_for(
     }
 }
 
-/// The retirement a failing record has earned, or `None`.
+/// The `node.uri` scheme a memory's mirror node is keyed under. Stripping it
+/// yields the lineage [`ContextStore::memory_kind`] answers for.
+const MEMORY_URI_SCHEME: &str = "memory://";
+
+/// Which memory records the loop may retire on its own — the origin map
+/// [`super::appraisals::sweep`] reads.
+///
+/// Only a mined lesson is listed. A record with no entry is treated as
+/// hand-authored, and `decide_demotion` then keeps it whatever the numbers
+/// say, so an unreadable store, an unrecognised kind, or a frame whose handle
+/// names no node at all leaves the record protected rather than exposed.
+///
+/// The kind is asked per lineage rather than joined in one query so this reads
+/// the same "current revision" `stella memory edit` reads. A second definition
+/// of which revision counts could drift from the first.
+pub(crate) fn origins(store: &ContextStore) -> HashMap<String, SkillOrigin> {
+    let mut out = HashMap::new();
+    for node in store.memory_nodes().unwrap_or_default() {
+        let Some(lineage) = node
+            .uri
+            .as_deref()
+            .and_then(|uri| uri.strip_prefix(MEMORY_URI_SCHEME))
+        else {
+            continue;
+        };
+        let kind = store.memory_kind(lineage).ok().flatten();
+        if kind.as_deref() == Some(stella_context::MemoryKind::Reflection.as_str()) {
+            out.insert(node.public_id, SkillOrigin::AutoCreated);
+        }
+    }
+    out
+}
+
+/// The retirement a demoted record has earned, or `None`.
 ///
 /// Separated from the write so the decision is testable without a store, and
 /// so the reason is built in one place — a retirement with no legible cause is
 /// exactly what the gate criterion forbids.
-pub(crate) fn retirement_reason(health: &SelectionHealth) -> Option<String> {
-    if !health.failing {
+pub(crate) fn retirement_reason(decision: &DemotionDecision) -> Option<String> {
+    let DemotionDecision::Demote { reason } = decision else {
         return None;
-    }
-    Some(format!(
-        "not helpful in {} of {} assessed uses across {} task(s) — \
-         auto-retired by the efficacy loop; reaffirm to restore",
-        health.not_helpful, health.assessed_uses, health.distinct_tasks
-    ))
+    };
+    Some(match reason {
+        DemotionReason::Harmful { lift } => format!(
+            "withholding it improved outcomes on the turns it was offered on \
+             (lift {lift:.3}) — auto-retired by the efficacy loop; reaffirm to restore"
+        ),
+        DemotionReason::Inert { trials } => format!(
+            "no measurable contribution across {trials} recorded turns — \
+             auto-retired by the efficacy loop; reaffirm to restore"
+        ),
+    })
 }
 
 /// Outcome of one retirement sweep, for reporting.
@@ -185,43 +238,58 @@ pub(crate) fn retirement_reason(health: &SelectionHealth) -> Option<String> {
 pub(crate) struct RetirementSweep {
     /// Records newly retired.
     pub(crate) retired: Vec<String>,
-    /// Records that were failing but are protected, with why. Reported rather
-    /// than silently skipped — a sweep that quietly declines to act on half its
-    /// candidates reads as "nothing was failing", which is a different claim.
+    /// Records that earned retirement but are protected, with why. Reported
+    /// rather than silently skipped — a sweep that quietly declines to act on
+    /// half its candidates reads as "nothing earned it", a different claim.
     pub(crate) refused: Vec<(String, RetirementProtection)>,
 }
 
-/// Retire every failing, unprotected record. Returns what it did.
+/// Retire every demoted, unprotected record. Returns what it did.
+///
+/// The input is what [`super::appraisals::sweep`] returned for
+/// [`stella_learn::ledger::ArtifactKind::Memory`]: one appraisal per record
+/// the trial ledger holds evidence for, paired with the keep-or-demote
+/// decision its origin allows. A record is retired only when the measurement
+/// says withholding it wins — or that it contributes nothing over a full
+/// window — **and** `decide_demotion` found it auto-created. A person's own
+/// memory is kept whatever the numbers say.
 ///
 /// The actor is [`PromotionActor::System`] and the enforcement is `None`: a
 /// system event may never carry blocking enforcement, and the constructor
 /// refuses one that tries.
 pub(crate) fn sweep(
     store: &ContextStore,
-    health: &[SelectionHealth],
+    decisions: &[(SkillAppraisal, DemotionDecision)],
     occurred_at: &str,
 ) -> RetirementSweep {
     let standings = standings(store);
     let mut sweep = RetirementSweep::default();
-    for record in health {
-        let Some(reason) = retirement_reason(record) else {
+    for (appraisal, decision) in decisions {
+        let Some(reason) = retirement_reason(decision) else {
             continue;
         };
-        if let Some(protection) = protection_for(standings.get(&record.context_record_id)) {
-            sweep
-                .refused
-                .push((record.context_record_id.clone(), protection));
+        // `SkillAppraisal::skill` is the id the sweep appraised. For this kind
+        // that is the memory record's `nod_…` public id.
+        let record_id = &appraisal.skill;
+        if let Some(protection) = protection_for(standings.get(record_id)) {
+            // `AlreadyRetired` is the steady state: a retired record's trial
+            // rows stay in the ledger, so every later sweep re-earns the same
+            // demotion. Only a *new* refusal is worth reporting, for
+            // [`sweep_vanished`]'s reason.
+            if protection != RetirementProtection::AlreadyRetired {
+                sweep.refused.push((record_id.clone(), protection));
+            }
             continue;
         }
         if record_decision(
             store,
-            &record.context_record_id,
+            record_id,
             PromotionAction::Retired,
             PromotionActor::System,
             &reason,
             occurred_at,
         ) {
-            sweep.retired.push(record.context_record_id.clone());
+            sweep.retired.push(record_id.clone());
         }
     }
     sweep
@@ -232,10 +300,10 @@ pub(crate) fn sweep(
 ///
 /// Same single protection predicate, same reversible `PromotionEvent`, same
 /// system actor; only the trigger differs. It deliberately does not wait for
-/// the health fold's `min_attributable_uses` floor: that floor guards against
-/// noisy per-turn judgements, and a file-existence check re-run N times is one
-/// fact, not N pieces of evidence. The reason names every missing path, so the
-/// retirement is legible without the ledger.
+/// [`sweep`]'s evidence floor: that floor guards against noisy per-turn
+/// judgements, and a file-existence check re-run N times is one fact, not N
+/// pieces of evidence. The reason names every missing path, so the retirement
+/// is legible without the ledger.
 pub(crate) fn sweep_vanished(
     store: &ContextStore,
     vanished: &[super::validation::VanishedMemory],

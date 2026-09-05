@@ -75,9 +75,11 @@ const EXTRACTION_BATCH: u32 = 64;
 /// it unhelpful, which retires it, which destroys the evidence that the reading
 /// was wrong.
 ///
-/// So citations inform selection health and stay fully visible, and cannot on
-/// their own remove anything. They still drive the shipped quarantine loop
-/// exactly as before — that path is untouched.
+/// So the citation class is **display-only**: it folds into selection
+/// health, health is shown by `stella memory retired` and the Observatory, and
+/// nothing reads it to remove anything. Retirement measures instead — see
+/// [`super::retirement`]. The shipped quarantine loop still runs off citations
+/// exactly as before; that path is untouched.
 const METHOD_AGENT_SELF_REPORT: &str =
     stella_records::context_record::ContextEvaluationMethod::AGENT_SELF_REPORT;
 
@@ -369,6 +371,11 @@ const HEALTH_READ_LIMIT: usize = 20_000;
 /// is order-independent by construction — so this is a projection of the
 /// ledger's contents and nothing else. Recomputing it is the only way to read
 /// it; there is no stored copy that could disagree.
+///
+/// Read by `stella memory retired` for its evidence lines and by the
+/// Observatory's context panel. Retirement does not read it: what a citation
+/// establishes is reference, not effect, so the measured sweep decides and
+/// this explains.
 pub(crate) fn selection_health(
     context: &ContextStore,
     policy: SelectionHealthPolicy,

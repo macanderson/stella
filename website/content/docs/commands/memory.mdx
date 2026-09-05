@@ -140,9 +140,9 @@ reports it as unhelpful, the memory gets retired, and the evidence that the mode
 disappears. stella closes that loop on purpose.
 
 Only one place in the code decides this: the check that says whether a given feedback method is
-allowed to retire a record. Retirement requires a person's judgment or another reliable source. If
-you're adding a new kind of feedback, that's the one check to update, and self-reports should never
-be let through it.
+allowed to retire a record. An automatic retirement needs a measurement over recorded turns, or a
+plain file check. Anything weaker needs a person. If you're adding a new kind of feedback, that's
+the one check to update, and self-reports should never be let through it.
 </Callout>
 
 ### `stella memory retire <id> --reason <why>`
@@ -153,7 +153,9 @@ Stop stella from selecting a memory automatically. You can undo this later.
 stella memory retire nod_9f2c1a --reason "the API it describes was replaced in 0.6"
 ```
 
-`--reason` is **required**. An empty reason is rejected, because a retirement needs a clear cause you can look back on later. Citations alone can't retire a memory, so a person's judgment is the strongest evidence stella currently has. The loop shows its work, and you make the call.
+`--reason` is **required**. An empty reason is rejected, because a retirement needs a clear cause you can look back on later.
+
+Citations alone can't retire a memory. stella retires one on its own in two cases: the turns that showed it did worse than the turns that withheld it, or every file it names has gone. It never retires a memory you wrote yourself. Everything else is your call, and this is how you make it.
 
 Some records can't be retired at all:
 
