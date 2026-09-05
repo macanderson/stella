@@ -4,7 +4,6 @@
 use stella_context::ContextStore;
 use stella_records::context_record::{
     ContextRecordKind, ContextUse, ContextUseEvaluation, ContextUseFeedback, ContextUseKind,
-    SelectionHealth,
 };
 use stella_store::{ContextBlockRow, MemoryCitationRow, Store};
 
@@ -317,15 +316,17 @@ fn a_record_rendered_twice_in_one_turn_is_one_use() {
     assert_eq!(uses(&context).len(), 1);
 }
 
-/// The phase's observable behavior, end to end: context that repeatedly fails
-/// to help stops being selected — visibly, with a reason, and reversibly.
+/// Citations are display-only: they fold into selection health, health is
+/// shown, and no record leaves selection because of one.
 ///
-/// This is the one test that would fail if any single deliverable regressed,
-/// so it exercises the real pipeline rather than any component in isolation:
-/// turns run and are cited (D1/D2), the ledger is folded into health (D4), and
-/// the sweep acts on it (D5) under opportunity-aware rules (D3).
+/// Turns run and are cited (D1/D2) and the ledger folds into health (D4) under
+/// opportunity-aware rules (D3). Retirement reads the measured appraisal over
+/// the trial ledger, which this fixture writes nothing into, so no policy a
+/// workspace could set turns these citations into a retirement.
+/// `a_memory_that_stops_helping_is_retired_and_a_hand_written_one_is_kept`
+/// (`memory/learning/memory_lifecycle.rs`) is the other side of it.
 #[test]
-fn citations_alone_never_retire_and_a_strong_verdict_retires_restorably() {
+fn citations_are_display_only_and_retire_nothing() {
     use stella_records::context_record::SelectionHealthPolicy;
 
     let (_dir, store, context) = workspace();
@@ -374,50 +375,12 @@ fn citations_alone_never_retire_and_a_strong_verdict_retires_restorably() {
         "trace correlation alone must not be enough to retire"
     );
     assert!(!good.failing);
+
+    // Six cited turns for each record, and the retirement plane is untouched.
+    // Health is not one of its inputs, so there is no policy a workspace could
+    // set that would turn these citations into a retirement.
     assert!(
-        super::super::retirement::sweep(&context, &health, "2026-07-26T00:00:00Z")
-            .retired
-            .is_empty(),
+        super::super::retirement::retired_ids(&context).is_empty(),
         "nothing may be retired on citation evidence alone"
-    );
-
-    // Now the case the deliverable IS about: a stronger evidence source — one
-    // that recorded an observable effect and a real method — judged it
-    // unhelpful. That is what retirement acts on.
-    let strong = SelectionHealth {
-        context_record_id: "nod_bad".into(),
-        uses: 6,
-        distinct_tasks: 6,
-        assessed_uses: 6,
-        helpful: 0,
-        not_helpful: 6,
-        neutral: 0,
-        not_helpful_ratio: 1.0,
-        eligible_assessed: 5,
-        eligible_not_helpful: 5,
-        attributable: true,
-        failing: true,
-    };
-    let sweep = super::super::retirement::sweep(&context, &[strong], "2026-07-26T00:00:00Z");
-    assert_eq!(sweep.retired, vec!["nod_bad".to_string()]);
-
-    // Excluded from automatic selection…
-    let retired = super::super::retirement::retired_ids(&context);
-    assert!(retired.contains("nod_bad"));
-    assert!(
-        !retired.contains("nod_good"),
-        "a record that kept helping must be untouched"
-    );
-
-    // …still explicitly retrievable, and restorable.
-    assert!(super::super::retirement::reaffirm(
-        &context,
-        "nod_bad",
-        "still needed",
-        "2026-07-27T00:00:00Z"
-    ));
-    assert!(
-        !super::super::retirement::retired_ids(&context).contains("nod_bad"),
-        "reaffirming must return it to selection"
     );
 }

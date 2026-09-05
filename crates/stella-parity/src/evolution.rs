@@ -293,14 +293,17 @@ evolution_surfaces! {
     /// What Stella remembers between turns.
     Memory => "memory",
         EvolutionPosture::Shipped {
-            mechanism: "a memory whose every named path has vanished is retired by the \
-                        post-turn sweep, with the missing paths in the reason. The citation \
-                        fold is built and cannot fire: trace correlation records a neutral \
-                        verdict rather than `not_helpful` by design, so citations alone never \
-                        reach `failing`, and nothing writes `memory_citations` in the first \
-                        place (#4862). Path-anchor validation is the only evidence source \
-                        that retires anything today",
-            witness: "a_vanished_memory_is_retired_with_the_missing_paths_in_the_reason",
+            mechanism: "two evidence sources, one door. Each turn records which memory \
+                        records it could show and which it showed. That join lands in the \
+                        shared artifact trial ledger. The post-turn sweep then runs the same \
+                        `appraise` + `decide_demotion` pass the skill sweep runs. A record \
+                        whose turns say withholding it won is retired. A record a person \
+                        wrote is kept, whatever the numbers say. Beside that, a memory whose \
+                        named paths have all gone is retired by a plain file check, with the \
+                        missing paths in the reason. Citations only show: they fold into \
+                        selection health, health is displayed, and nothing reads it to retire \
+                        anything",
+            witness: "a_memory_that_stops_helping_is_retired_and_a_hand_written_one_is_kept",
         },
         EvolutionTiming::BetweenTurns,
         ImpactClass::RecallBias,
@@ -502,8 +505,11 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 13] {
+fn evolution_sources() -> [&'static str; 14] {
     [
+        // The Memory row's witness. A window of real turns retires a mined
+        // memory, and leaves a hand-written one alone.
+        include_str!("../../stella-cli/src/memory/learning/memory_lifecycle.rs"),
         // The Delivery row's witness: what the backlog picks and the
         // ledger row it writes, proven on a fixture tracker.
         include_str!("../../stella-cli/src/self_driving_cmd/ready.rs"),
