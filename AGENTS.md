@@ -372,6 +372,20 @@ than a merge one — and this repository rebases constantly, because branches go
 stale behind required checks. It happened to #4954 against #4951, and
 `check-rebase-replay.sh` fires on #4939's merged head today.
 
+**A path can drop out of the branch's diff for two reasons, and only one is
+this hazard.** The branch removed it — an edit undone, or a file created and
+deleted. Or the base branch renamed or deleted it and the branch absorbed that
+through a merge, which is the ordinary way a long-lived branch survives a
+refactor. Tree state cannot tell them apart: a file the branch created and
+deleted is absent at the merge base and at the head, exactly like an inherited
+rename. What differs is who removed it, so the guard asks that instead — a
+suspect is dropped only when it is gone at the head *and* no non-merge commit
+of the branch's own deleted it. An inherited removal is not in the range at
+all, because merging the base advances the merge base past it. The record-plane
+extraction is what forced this: it fired the guard on every open branch that
+had correctly followed the move, and the printed remedy would have charged each
+one a history rewrite for a hazard that was not there.
+
 **The remedy is to flatten**, so the path is absent from the branch's history
 rather than present as an edit and an undo. The branch's tree is identical
 either way, so flattening costs nothing and the guard offers no
