@@ -267,12 +267,21 @@ evolution_surfaces! {
     /// Prompts, policies, and the loop's own instructions.
     Framework => "framework",
         EvolutionPosture::Shipped {
-            mechanism: "the rules miner induces directive candidates from reflection \
-                        observations and `stella proposals` publishes the kept ones as TOML \
-                        records under `.stella/rules/`, which `FsRuleSource` loads into the \
-                        system prefix. The system prompt template itself is assembled and \
+            mechanism: "**this row's evidence column is enforced, and today it refuses \
+                        everything the loop can offer.** All three publication paths \
+                        — auto-activation, `stella proposals keep`, `stella memory promote` \
+                        — ask `authorises` before they write, and a refusal names the grade \
+                        it needed beside the grade it was offered. A reflection lesson grades \
+                        `ModelCritique` and the pool folds by minimum, so nothing mined \
+                        reaches the `EnvironmentObservation` a directive costs: the surface \
+                        is live and its evidence bar is unmet, so a mined rule stays a \
+                        reviewable proposal until a measured producer exists. What \
+                        publishes when the grade pays: the rules miner induces directive \
+                        candidates from reflection observations, and a kept one is written as \
+                        a TOML record under `.stella/rules/`, which `FsRuleSource` loads into \
+                        the system prefix. The system prompt template itself is assembled and \
                         never self-edited: no path writes AGENTS.md or CLAUDE.md",
-            witness: "mined_rules_land_where_the_loader_reads",
+            witness: "a_rule_on_reflection_evidence_is_refused_and_nothing_lands",
         },
         EvolutionTiming::OfflineBatch,
         ImpactClass::SteeringDirective,

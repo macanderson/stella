@@ -27,9 +27,22 @@ fn published_workspace() -> (tempfile::TempDir, RuleCandidate) {
         guard: None,
         score: 30,
     };
-    crate::memory::rules_mining::write_rule(dir.path(), &candidate, None)
-        .expect("publishable")
-        .expect("written");
+    // Written on a measured run. The gate turns down a weaker grade. These
+    // tests are about pulling back a rule that did land.
+    let outcome = crate::memory::rules_mining::write_rule(
+        dir.path(),
+        &candidate,
+        Some(stella_protocol::provenance::ProvenanceGrade::EnvironmentObservation),
+        stella_protocol::provenance::PublicationAuthority::LocalHuman,
+    )
+    .expect("publishable");
+    assert!(
+        matches!(
+            outcome,
+            crate::memory::rules_mining::RulePublication::Written(_)
+        ),
+        "the fixture rule was not published: {outcome:?}"
+    );
     (dir, candidate)
 }
 

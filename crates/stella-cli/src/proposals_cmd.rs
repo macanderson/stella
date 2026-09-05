@@ -39,6 +39,8 @@ use stella_core::context_record::{
     PromotionActor, PromotionEventRecord, ProposalRecord, RecordProposalKind,
 };
 
+use crate::memory::rules_mining::RulePublication;
+
 /// Subcommands under `stella proposals`.
 #[derive(Subcommand, Clone)]
 pub enum ProposalsCmd {
@@ -462,13 +464,33 @@ fn materialize_directive(
         score: 0,
     };
     // The grade the proposal was folded to, carried onto the published record
-    // so the rule on disk still says what it stands on (#2782).
-    match crate::memory::rules_mining::write_rule(workspace_root, &candidate, proposal.provenance) {
-        Ok(Some(path)) => println!("    {} wrote {}", "·".dimmed(), path.display()),
-        Ok(None) => println!(
+    // so the rule on disk still says what it stands on (#2782) — and asked
+    // against the evidence gate on the way. `LocalHuman` because a
+    // person typed this command; it does not lift a weak grade, and is not
+    // meant to. The refusal is printed where the keep was typed, so a person
+    // who decided to publish learns that nothing was published and why.
+    match crate::memory::rules_mining::write_rule(
+        workspace_root,
+        &candidate,
+        proposal.provenance,
+        stella_protocol::provenance::PublicationAuthority::LocalHuman,
+    ) {
+        Ok(RulePublication::Written(path)) => {
+            println!("    {} wrote {}", "·".dimmed(), path.display());
+        }
+        Ok(RulePublication::AlreadyPresent) => println!(
             "    {} a rule file for `{}` already exists — left untouched",
             "·".dimmed(),
             candidate.id
+        ),
+        Ok(RulePublication::Refused(refusal)) => println!(
+            "    {} {}",
+            "✗".red(),
+            crate::promotion_gate::refusal_line(
+                crate::promotion_gate::Published::Rule,
+                &candidate.id,
+                &refusal,
+            )
         ),
         Err(reason) => println!(
             "    {} could not publish `{}`: {reason}",

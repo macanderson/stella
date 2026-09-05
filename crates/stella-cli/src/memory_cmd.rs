@@ -312,17 +312,34 @@ fn promote_in(workspace_root: &std::path::Path, id: &str) -> Result<(), String> 
 
     let candidate = promotion_candidate(&node, stat);
     let set_id = crate::ingest_cmd::derive_set_id(workspace_root);
+    // A memory reaches this bar by accumulating positive citations, and a
+    // citation is a model's judgement that a memory helped. Counting them is
+    // aggregation, which never promotes a grade (#2782) — so however long the
+    // streak, the evidence behind this rule is model critique.
+    let grade = stella_protocol::provenance::ProvenanceGrade::ModelCritique;
+    // And a rule steers, which the policy prices above that. The gate is
+    // asked here, before the record is built, so the answer a person gets is
+    // the grade they would need rather than a file they did not earn.
+    // `LocalHuman` because a person typed the command; it does not lift the
+    // grade, and the refusal says as much.
+    if let Err(refusal) = crate::promotion_gate::admits(
+        crate::promotion_gate::Published::Rule,
+        Some(grade),
+        stella_protocol::provenance::PublicationAuthority::LocalHuman,
+    ) {
+        return Err(crate::promotion_gate::refusal_line(
+            crate::promotion_gate::Published::Rule,
+            &candidate.id,
+            &refusal,
+        ));
+    }
     let record = crate::context_records::inferred_rule_record(
         &set_id,
         &candidate.id,
         &candidate.text,
         "memory",
         &format!("memory:{}", node.public_id),
-        // A memory reaches this bar by accumulating positive citations, and a
-        // citation is a model's judgement that a memory helped. Counting them
-        // is aggregation, which never promotes a grade (#2782) — so however
-        // long the streak, the evidence behind this rule is model critique.
-        Some(stella_protocol::provenance::ProvenanceGrade::ModelCritique),
+        Some(grade),
     )?;
     // A rule this memory promoted under the retired markdown surface still
     // steers; publishing a TOML copy beside it would double-inject the lesson.

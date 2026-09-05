@@ -337,10 +337,13 @@ async fn recurrence_across_distinct_tasks_builds_what_recurrence_within_one_task
         "a naturally-worded convention recurring across distinct tasks should \
          clear the eligibility gate: {spread:?}"
     );
+    // No rule, on either corpus. Confidence clears the auto-activation bar,
+    // and the evidence gate still refuses: a reflection lesson grades
+    // `ModelCritique` and a steering directive costs `EnvironmentObservation`.
+    // The skill above is what a reflection corpus can still build.
     assert!(
-        !spread.rules.is_empty(),
-        "and with four occurrences over four distinct tasks its confidence \
-         clears the auto-activation bar: {spread:?}"
+        spread.rules.is_empty(),
+        "a rule published on reflection prose alone: {spread:?}"
     );
     assert!(
         single.skills.is_empty(),
@@ -448,85 +451,46 @@ fn the_dedup_and_clustering_predicates_hold_the_declared_relationship() {
     );
 }
 
-// ---- §5 assertion 2: promotion is advisory, and never clobbers ------------
+// ---- §5 assertion 2: a directive costs measured evidence ------------------
 
-/// An auto-activated rule is **advisory** — `force = should`, no enforcement
-/// block — so an inferred directive can never deny a tool call.
+/// **The gate, on the loop's own path.**
 ///
-/// The published TOML is read back off disk rather than inspected in memory:
-/// the file is what a teammate's session actually loads, and an assertion
-/// against the in-memory record would pass even if the writer dropped a field.
+/// A corpus of lessons turns on no rule. A lesson grades `ModelCritique`. A
+/// rule costs `EnvironmentObservation`. So the writer says no. Before the
+/// gate, this corpus wrote a rule on every replay.
+///
+/// It also carries §5 assertion 2's no-clobber half. A hand-written record
+/// here lives on byte for byte, and nothing joins it.
+///
+/// What a rule looks like on disk is checked where one can still be written,
+/// in `rules_mining::tests::a_written_rule_file_is_prompt_only`.
 #[tokio::test]
-async fn an_auto_activated_rule_is_advisory_and_never_blocking() {
+async fn auto_activation_is_refused_on_reflection_evidence_and_clobbers_nothing() {
     let corpus = trace(
         "one convention, five tasks",
         one_task_each(recurring_registry_lessons()),
     );
-    let (summary, dir) = replay(&corpus).await;
-    assert!(
-        !summary.rules.is_empty(),
-        "expected an auto-activated rule: {summary:?}"
-    );
-
-    for name in &summary.rules {
-        let path = crate::memory::rules_mining::workspace_rules_dir(&replay_root(&dir))
-            .join(format!("{name}.toml"));
-        let toml = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("published rule {} unreadable: {e}", path.display()));
-        assert!(
-            toml.contains("force = \"should\"") || toml.contains("force = 'should'"),
-            "a mined rule must be advisory, not `must`: {toml}"
-        );
-        assert!(
-            !toml.contains("[enforcement]"),
-            "an inferred directive must never carry an enforcement block — that \
-             is the line between suggesting a convention and denying a tool \
-             call: {toml}"
-        );
-        assert!(
-            toml.contains("inferred"),
-            "and it must be labelled as inferred: {toml}"
-        );
-    }
-}
-
-/// Auto-activation never clobbers a file already on disk (#737).
-///
-/// A hand-written record at the path the miner would publish to must survive
-/// the replay byte for byte.
-#[tokio::test]
-async fn auto_activation_never_clobbers_an_existing_record() {
-    // First, learn where the miner publishes.
-    let corpus = trace(
-        "one convention, five tasks",
-        one_task_each(recurring_registry_lessons()),
-    );
-    let (first, dir) = replay(&corpus).await;
-    let name = first
-        .rules
-        .first()
-        .cloned()
-        .expect("the corpus should auto-activate a rule");
-    drop(dir);
-
-    // Now replay the same corpus into a workspace where that file already
-    // exists, hand-written.
-    let second = tempfile::tempdir().expect("tempdir");
-    let root = replay_root(&second);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = replay_root(&dir);
     let rules = crate::memory::rules_mining::workspace_rules_dir(&root);
     std::fs::create_dir_all(&rules).expect("rules dir");
-    let occupied = rules.join(format!("{name}.toml"));
+    let occupied = rules.join("ctx.hand.written.toml");
     let hand_written = "# hand-written; the miner must not touch this\n";
     std::fs::write(&occupied, hand_written).expect("seed the record");
 
-    Replayer::run(&corpus, &root)
+    let summary = Replayer::run(&corpus, &root)
         .await
         .expect("the trace replays");
 
     assert_eq!(
+        summary.rules,
+        vec!["ctx.hand.written".to_string()],
+        "the replay published a directive on reflection prose: {summary:?}"
+    );
+    assert_eq!(
         std::fs::read_to_string(&occupied).expect("still readable"),
         hand_written,
-        "auto-activation overwrote a file it did not create"
+        "the replay overwrote a file it did not create"
     );
 }
 
@@ -890,12 +854,17 @@ fn committed_corpus() -> Trace {
     Trace::fixture("simulated-months").expect("the committed corpus loads")
 }
 
-/// The committed corpus replays and builds one of everything.
+/// The committed corpus replays and builds what reflection evidence can pay
+/// for.
 ///
 /// This is the epic's "done when": a synthetic simulated-months trace that
-/// replays deterministically in CI, with the §6 metrics printed per run.
+/// replays deterministically in CI, with the §6 metrics printed per run. The
+/// rule class left the list when the evidence gate was wired — a directive
+/// costs a measured observation, and a corpus of reflections holds none. The
+/// refusal is asserted in
+/// `auto_activation_is_refused_on_reflection_evidence_and_clobbers_nothing`.
 #[tokio::test]
-async fn the_committed_corpus_builds_a_memory_a_skill_a_rule_and_a_tool() {
+async fn the_committed_corpus_builds_a_memory_a_skill_and_a_tool() {
     let corpus = committed_corpus();
     let (summary, _dir) = replay(&corpus).await;
     println!("{}", summary.render());
@@ -907,7 +876,7 @@ async fn the_committed_corpus_builds_a_memory_a_skill_a_rule_and_a_tool() {
     );
     assert!(summary.memories > 0, "memories: {summary:?}");
     assert!(!summary.skills.is_empty(), "skills: {summary:?}");
-    assert!(!summary.rules.is_empty(), "rules: {summary:?}");
+    assert!(summary.rules.is_empty(), "rules: {summary:?}");
     assert!(!summary.tools.is_empty(), "tools: {summary:?}");
 }
 
@@ -929,24 +898,21 @@ async fn turns_to_first_is_measured_for_every_class_not_placed() {
     let skill = summary
         .first_skill_turn
         .expect("the committed corpus builds a skill");
-    let rule = summary
-        .first_rule_turn
-        .expect("the committed corpus publishes a rule");
     assert!(
         skill < summary.turns,
         "a skill promoted mid-corpus is reported where it happened, not at the \
          end: skill {skill} of {} turns",
         summary.turns
     );
-    // The rule on this corpus genuinely lands on its last turn, so the same
-    // strict inequality would assert a fact about the fixture rather than
-    // about the metric. What the rule half witnesses is that the class is
-    // reported at all: the row below has three classes on the old code.
-    assert!(rule <= summary.turns, "{summary:?}");
+    // The rule class is not built by this corpus any more — the evidence gate
+    // refuses a directive mined from reflection prose — so the rule half
+    // witnesses the other side of the same rule: a class that never appeared
+    // is a dash, never a number that reads like a measurement.
+    assert_eq!(summary.first_rule_turn, None, "{summary:?}");
 
     let rendered = summary.render();
     assert!(
-        rendered.contains(&format!("skill {skill}, rule {rule}")),
+        rendered.contains(&format!("skill {skill}, rule —")),
         "and all four classes are named in the row: {rendered}"
     );
 }

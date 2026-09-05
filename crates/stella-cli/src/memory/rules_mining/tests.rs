@@ -36,6 +36,30 @@ fn across_turns(text: &str, turns: &[u64]) -> Vec<ObservationRecord> {
     turns.iter().map(|t| observation(text, *t)).collect()
 }
 
+/// Write a candidate on proof that pays for a rule.
+///
+/// Said once here, not at every call. The gate turns down a rule mined from
+/// prose. So a test about a rule on disk hands the writer a measured grade.
+/// The no has its own tests below.
+fn publish(root: &Path, candidate: &RuleCandidate) -> RulePublication {
+    write_rule(
+        root,
+        candidate,
+        Some(ProvenanceGrade::EnvironmentObservation),
+        PublicationAuthority::Agent,
+    )
+    .expect("publishable")
+}
+
+/// The path a published rule landed at, or a panic naming what happened
+/// instead.
+fn published_path(root: &Path, candidate: &RuleCandidate) -> std::path::PathBuf {
+    match publish(root, candidate) {
+        RulePublication::Written(path) => path,
+        other => panic!("expected a written rule, got {other:?}"),
+    }
+}
+
 // ---- GATE: no inferred directive reaches blocking by any path ----
 
 /// A mined rule is prompt-only, whatever the miner inferred.
@@ -117,9 +141,7 @@ fn a_written_rule_file_is_prompt_only() {
         }),
         score: 30,
     };
-    let path = write_rule(dir.path(), &candidate, None)
-        .expect("publishable")
-        .expect("written");
+    let path = published_path(dir.path(), &candidate);
     assert_eq!(
         path.extension().and_then(|e| e.to_str()),
         Some("toml"),
@@ -259,10 +281,9 @@ fn writing_never_clobbers_an_existing_rule_file() {
         guard: None,
         score: 30,
     };
-    assert!(
-        write_rule(dir.path(), &candidate, None)
-            .expect("an existing file is a skip, not an error")
-            .is_none(),
+    assert_eq!(
+        publish(dir.path(), &candidate),
+        RulePublication::AlreadyPresent,
         "the writer claimed to write over an existing file"
     );
     assert_eq!(
@@ -308,9 +329,7 @@ fn mined_rules_land_where_the_loader_reads() {
         guard: None,
         score: 30,
     };
-    write_rule(dir.path(), &candidate, None)
-        .expect("publishable")
-        .expect("written");
+    published_path(dir.path(), &candidate);
 
     // The unfiltered loader keys raw files by filename, and a record file's
     // name is its lineage — assert the lesson landed under it, which is the
@@ -346,25 +365,68 @@ fn a_published_rule_carries_the_grade_of_the_proposal_it_came_from() {
         score: 30,
     };
 
-    let path = write_rule(
-        dir.path(),
-        &candidate,
-        Some(stella_protocol::provenance::ProvenanceGrade::ModelCritique),
-    )
-    .expect("publishable")
-    .expect("written");
+    let path = published_path(dir.path(), &candidate);
 
     let written = std::fs::read_to_string(&path).expect("the published record is readable");
     assert!(
-        written.contains("model_critique"),
+        written.contains("environment_observation"),
         "the published rule dropped the grade it was published on:\n{written}"
     );
 }
 
-/// A rule published with no grade behind it writes no grade — absent evidence
-/// stays absent rather than being spelled as a weak one.
+// ---- GATE: a directive costs measured evidence ----------------------------
+
+/// **The witness.** A rule mined from prose grades `ModelCritique`. A rule
+/// costs `EnvironmentObservation`. So the writer says no and puts nothing on
+/// disk.
+///
+/// This is what the loop holds today. `observation_grade` maps a lesson to
+/// `ModelCritique`, and a pool folds to its weakest part. So no count of
+/// lessons reaches the bar. Before the gate, this call wrote the file.
 #[test]
-fn a_published_rule_with_no_grade_writes_none() {
+fn a_rule_on_reflection_evidence_is_refused_and_nothing_lands() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let candidate = RuleCandidate {
+        id: "critiqued-abcd1234".into(),
+        text: LESSON.into(),
+        description: "d".into(),
+        occurrences: 3,
+        salient: false,
+        evidence: Vec::new(),
+        guard: None,
+        score: 30,
+    };
+
+    let outcome = write_rule(
+        dir.path(),
+        &candidate,
+        Some(ProvenanceGrade::ModelCritique),
+        PublicationAuthority::LocalHuman,
+    )
+    .expect("a refusal is an answer, not a failure");
+
+    assert_eq!(
+        outcome,
+        RulePublication::Refused(PromotionRefusal::EvidenceTooWeak {
+            impact: stella_protocol::provenance::ImpactClass::SteeringDirective,
+            required: ProvenanceGrade::EnvironmentObservation,
+            actual: ProvenanceGrade::ModelCritique,
+        })
+    );
+    assert!(
+        crate::rules::load_workspace_rules_unfiltered(dir.path()).is_empty(),
+        "a refused rule reached the loader anyway"
+    );
+}
+
+/// An old record with no grade is a *missing* proof, not a weak one. And
+/// nothing is written for it.
+///
+/// That is the posture for a record from before grades were kept. It does not
+/// write on its own. No actor changes that: the gate reads the proof before
+/// it reads who is asking.
+#[test]
+fn a_rule_with_no_grade_at_all_is_refused_as_absent() {
     let dir = tempfile::tempdir().expect("tempdir");
     let candidate = RuleCandidate {
         id: "ungraded-abcd1234".into(),
@@ -377,13 +439,22 @@ fn a_published_rule_with_no_grade_writes_none() {
         score: 30,
     };
 
-    let path = write_rule(dir.path(), &candidate, None)
-        .expect("publishable")
-        .expect("written");
+    let outcome = write_rule(
+        dir.path(),
+        &candidate,
+        None,
+        PublicationAuthority::LocalHuman,
+    )
+    .expect("a refusal is an answer, not a failure");
 
-    let written = std::fs::read_to_string(&path).expect("the published record is readable");
+    assert_eq!(
+        outcome,
+        RulePublication::Refused(PromotionRefusal::NoEvidence {
+            impact: stella_protocol::provenance::ImpactClass::SteeringDirective,
+        })
+    );
     assert!(
-        !written.contains("evidence_grade"),
-        "an absent grade must not be written at all:\n{written}"
+        crate::rules::load_workspace_rules_unfiltered(dir.path()).is_empty(),
+        "an ungraded rule reached the loader anyway"
     );
 }
