@@ -10,8 +10,8 @@
 //! `command_succeeds` and `http_ok` return `unfalsifiable` from [`evaluate`].
 //! They are not assumed to have been filtered out upstream. Two callers reach
 //! this function and they apply different rules.
-//! [`stella_core::ingest::gate`] refuses a gated kind by the proposal's origin.
-//! `stella_core::records::honored_probe` admits one on a record the user
+//! [`stella_records::ingest::gate`] refuses a gated kind by the proposal's origin.
+//! `stella_records::records::honored_probe` admits one on a record the user
 //! published and a human decreed. So "stripped before we get here" was a claim
 //! about the callers, and for the second one it was already false. Running a
 //! command or reaching a host is a power this runner does not have. No caller
@@ -23,7 +23,7 @@
 
 use std::path::Path;
 
-use stella_core::ingest::{Probe, ProbeKind, Refutation, Verdict};
+use stella_records::ingest::{Probe, ProbeKind, Refutation, Verdict};
 
 /// The largest file the `file_contains` probe reads. A tracked config file that
 /// needs more than this to answer "does it mention X" is not what the probe is

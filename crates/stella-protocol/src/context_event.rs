@@ -24,9 +24,9 @@
 //! and it rides the step manifest on [`crate::event::AgentEvent`].
 //!
 //! The golden JCS vector below is the reason the body is pinned here: those
-//! canonical bytes are the preimage `stella-core::context_record::hash` builds
-//! `record_hash` values from. Renaming, retyping, or adding a field breaks
-//! this golden line; reordering one does not — JCS already sorts the keys.
+//! canonical bytes are the preimage [`crate::hash::record_hash`] builds its
+//! values from. Renaming, retyping, or adding a field breaks this golden
+//! line; reordering one does not — JCS already sorts the keys.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,8 +45,8 @@ mod tests {
     use super::*;
 
     /// The RFC 8785 (JCS) canonical bytes of a value — the same canonicalizer
-    /// crate + version `stella-core::context_record::hash` builds `record_hash`
-    /// preimages with, so an event body's bytes here and there agree.
+    /// crate + version [`crate::hash::record_hash`] builds its preimages with,
+    /// so an event body's bytes here and there agree.
     fn jcs<T: Serialize>(value: &T) -> String {
         serde_json_canonicalizer::to_string(value).expect("canonicalizes")
     }

@@ -754,5 +754,76 @@ else
   no "G7 --update lowers an improved grade" "--update exited non-zero"
 fi
 
+# ── S: splitting a crate is a move, not new prose ───────────────────────────
+#
+# The density ratchet is arithmetic over a file set, so moving a header from
+# one crate to another changes two means with nobody having written a word.
+# Before this the ratchet forbade the move outright: the new crate had no
+# entry and was held to the new-unit ceiling, while the old crate's mean rose
+# because the files that left were shorter than its average. S1 and S2 are the
+# witnesses -- both fail before `--update` learned to re-base a moved unit.
+# S3 and S4 are the direction that must not change: a re-base is not an
+# amnesty, and a genuinely new crate is still held to the new-unit ceiling.
+
+# $1 = root, $2 = source crate, $3 = file stem, $4 = target crate.
+move_rs() {
+  mkdir -p "$1/crates/$4/src"
+  move "$1" "crates/$2/src/$3.rs" "crates/$4/src/$3.rs"
+}
+
+r="$(new_root s1)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 30 long
+rs_with_header "$r" alpha 10 short
+commit_all "$r"
+move_rs "$r" alpha long beta
+expect_update_ok "S1 --update accepts a crate split" "$r"
+if grep -qx "crates/beta 30.00" "$r/scripts/prose-density-baseline.txt"; then
+  ok "S1 the new unit is re-based on the header it received"
+else
+  no "S1 the new unit is re-based on the header it received" "no entry at 30.00"
+fi
+expect_pass "S1 the tree passes once the unit is re-based" "$r"
+
+# The other half: the source crate's mean RISES when a below-average file
+# leaves it, and failing that would make every extraction impossible from the
+# side it was extracted from.
+r="$(new_root s2)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 30 long
+rs_with_header "$r" alpha 10 short
+commit_all "$r"
+move_rs "$r" alpha short beta
+expect_update_ok "S2 --update accepts the source crate's risen mean" "$r"
+if grep -qx "crates/alpha 30.00" "$r/scripts/prose-density-baseline.txt"; then
+  ok "S2 the source unit is re-based on the headers it kept"
+else
+  no "S2 the source unit is re-based on the headers it kept" "no entry at 30.00"
+fi
+
+# S3: a re-base is not an amnesty. A header GROWN while the file moved is new
+# prose, and the refusal is the same as it would be in place.
+r="$(new_root s3)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 20 lib
+commit_all "$r"
+move_rs "$r" alpha lib beta
+rs_with_header "$r" beta 40 lib
+expect_update_refused "S3 --update refuses a header grown while moving" "$r"
+
+# S4: a crate nothing moved into is still held to the new-unit ceiling, so a
+# split cannot be the cover story for a crate that arrives carrying essays.
+r="$(new_root s4)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 20 lib
+commit_all "$r"
+move_rs "$r" alpha lib beta
+rs_with_header "$r" gamma 30 lib
+expect_update_refused "S4 an unrelated new crate is still held to the ceiling" "$r"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

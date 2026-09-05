@@ -39,7 +39,7 @@
 use std::collections::{HashMap, HashSet};
 
 use stella_context::ContextStore;
-use stella_core::context_record::{
+use stella_records::context_record::{
     ContextRecordKind, LIFECYCLE_SCHEMA_VERSION, PromotionAction, PromotionActor,
     PromotionEventRecord, SelectionHealth,
 };
@@ -142,12 +142,13 @@ pub(crate) fn retired_ids(store: &ContextStore) -> HashSet<String> {
 /// to have something to protect would have been the worse answer — it would
 /// make the gate criterion *look* satisfied by code that never fires.
 ///
-/// [`DirectivePriority::Critical`]: stella_core::context_record::DirectivePriority
+/// [`DirectivePriority::Critical`]: stella_records::context_record::DirectivePriority
 pub(crate) fn protection_for(
     standing: Option<&PromotionEventRecord>,
 ) -> Option<RetirementProtection> {
     let standing = standing?;
-    if standing.enforcement == Some(stella_core::context_record::DirectiveEnforcement::Blocking) {
+    if standing.enforcement == Some(stella_records::context_record::DirectiveEnforcement::Blocking)
+    {
         return Some(RetirementProtection::Blocking);
     }
     match standing.action {

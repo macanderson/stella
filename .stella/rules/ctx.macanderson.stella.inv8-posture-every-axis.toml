@@ -3,6 +3,8 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.inv8-posture-every-axis"
+record_id = "rec_macanderson_stella_inv8_posture_every_axis_cc7ff80065b6"
+record_hash = "sha256:ab8f9e40bd4d26f0f3c2e9f9391bb43c52a8536d6bb2d8005ba6a4002d1613bd"
 kind = "rule"
 statement = "Each provider id declares a posture on every parity axis and, for a controllable/opt-in/implicit posture, names the witness test proving it on the wire."
 origin = "imported"
@@ -26,11 +28,14 @@ precedence = 100
 [record.steering.applies_to]
 paths = ["crates/stella-model/src/provider_parity.rs"]
 # The extractor proposed tasks = ["add-provider"]; no such task is in the ratified
-# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
-# carry the selection instead.
+# applies_to.tasks vocabulary, so it matched nothing. The path and the parity
+# words carry the selection. The keyword "witness test" is the whole subject of
+# two `soft` records, and sharing it at equal precedence held this `hard` guard
+# suspended, so the trigger names parity instead. The statement still names the
+# witness test it asks a provider row to cite.
 keywords = [
     "posture",
-    "witness test",
+    "provider parity",
     "axis",
 ]
 

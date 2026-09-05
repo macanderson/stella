@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Adapters: each existing selector's output, mapped into steering candidates
-//! (#3349).
+//! Adapters: a selector's output, mapped into steering candidates (#3349).
 //!
 //! The migration contract is stated in the parent module and enforced by
 //! `stella-cli`'s golden block test: an adapter maps what a selector **already
 //! chose** into [`SteeringCandidate`]s — it does not re-select, re-rank, or
-//! re-render. Every estimate here is taken over the exact bytes the existing
-//! renderer will emit, through the same producer function, so the cost the
-//! budgeter sees and the bytes the prompt pays for cannot drift apart (the
-//! #3334 single-producer discipline).
+//! re-render. Every estimate is taken over the exact bytes the renderer will
+//! emit, through the same producer function, so cost and bytes cannot drift.
 //!
-//! The recalled-frame adapter is deliberately **not** here: `RecalledFrame`
+//! The record adapters live in `stella_records::adapt`; the engine does not
+//! depend on that crate and names no record type.
+//!
+//! The recalled-frame adapter is not here either: `RecalledFrame`
 //! was a staged-pipeline type when this was written (`crates/stella-pipeline`,
 //! deleted in #3865; the type now lives in `stella-protocol::recall`), and the
 //! adapter sits with the plane implementation in `stella-cli::memory::steering`.
 
-use crate::records::{Registry, RenderedChannel, render};
 use crate::skills::{self, SelectedSkill};
 
 use super::{DroppedCandidate, SteeringCandidate, SteeringSource};
@@ -82,67 +81,6 @@ pub fn skill_drops(selection: &skills::SkillSelection) -> Vec<DroppedCandidate> 
             source: SteeringSource::Skill,
             handle: sel.skill.name.clone(),
             est_tokens: stella_protocol::estimate_tokens(&skills::rendered_skill_block(sel)),
-        })
-        .collect()
-}
-
-/// The records the volatile channel rendered this turn, as candidates.
-///
-/// `score` flattens the exact importance `render::survivors` drops by —
-/// effective force first, declared precedence within it — so the ledger's
-/// within-source order agrees with the order the channel's own budget would
-/// evict in. The flattening is lossless: strength is a `u8` and precedence a
-/// `u32`, so `strength * 2^32 + precedence` is exact in an `f64` and compares
-/// exactly as the tuple does.
-///
-/// A handle the registry cannot resolve is skipped: `rendered` came from this
-/// same registry moments ago, so an unresolvable handle is a caller passing
-/// mismatched arguments, and inventing a zero-cost candidate for it would
-/// corrupt the ledger it feeds.
-pub fn record_candidates(
-    registry: &Registry,
-    rendered: &RenderedChannel,
-) -> Vec<SteeringCandidate> {
-    rendered
-        .rendered
-        .iter()
-        .filter_map(|handle| {
-            let entry = registry.by_handle(handle)?;
-            let input = entry.render_input();
-            let force = render::effective_force(input.record, input.disposition);
-            Some(SteeringCandidate {
-                source: SteeringSource::Record,
-                handle: handle.clone(),
-                score: f64::from(force.strength()) * 4_294_967_296.0
-                    + f64::from(input.record.record.precedence()),
-                why: format!(
-                    "record channel selected ^{handle} for this turn (force {}, precedence {})",
-                    force.as_str(),
-                    input.record.record.precedence()
-                ),
-                est_tokens: stella_protocol::estimate_tokens(&render::bullet(&input)),
-            })
-        })
-        .collect()
-}
-
-/// The records the volatile channel's own budget evicted, as ledger entries —
-/// the named-drop behavior [`super::SteeringSet::dropped`] generalizes to
-/// every source. An unresolvable handle keeps its name with a zero estimate:
-/// for a drop, the name is the report and the cost is already not being paid.
-pub fn record_drops(registry: &Registry, rendered: &RenderedChannel) -> Vec<DroppedCandidate> {
-    rendered
-        .dropped
-        .iter()
-        .map(|handle| DroppedCandidate {
-            source: SteeringSource::Record,
-            handle: handle.clone(),
-            est_tokens: registry
-                .by_handle(handle)
-                .map(|entry| {
-                    stella_protocol::estimate_tokens(&render::bullet(&entry.render_input()))
-                })
-                .unwrap_or(0),
         })
         .collect()
 }

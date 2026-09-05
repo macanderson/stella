@@ -51,10 +51,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use stella_core::bus::{HookBus, HookDecision, names as hook_names};
-use stella_core::records::Registry as RecordRegistry;
 use stella_core::rules::{
     LoadRulesOptions, ProposedAction, Rule, RuleFile, RuleSource, evaluate_guards, load_rules,
 };
+use stella_records::records::Registry as RecordRegistry;
 use stella_tools::ToolRegistry;
 
 /// One immutable rule snapshot resolved at session assembly. Cloning this
@@ -64,7 +64,7 @@ use stella_tools::ToolRegistry;
 /// Two views of one resolution, never two resolutions: `rules` is the flat
 /// [`Rule`] list the tool boundary evaluates, and `records` is the record
 /// registry the prompt renders from. Both come out of a single
-/// [`stella_core::records::registry::load`] call, so the tier a rule advertises
+/// [`stella_records::records::registry::load`] call, so the tier a rule advertises
 /// in the prompt is the tier it actually has at the boundary.
 #[derive(Clone, Default)]
 pub(crate) struct ResolvedRules {
@@ -109,7 +109,7 @@ impl From<Vec<Rule>> for ResolvedRules {
 /// `.md` is the legacy markdown rule; `.toml` is the context-record surface ADR
 /// 0011 ratified. Both are read from the same directories in the same order, so
 /// there is one precedence order rather than one per format — see
-/// [`stella_core::records::registry`].
+/// [`stella_records::records::registry`].
 pub(crate) const RULE_EXTENSIONS: &[&str] = &["md", "toml"];
 
 /// File names inside a rules directory that are **governance, not policy**, and
@@ -131,7 +131,7 @@ pub(crate) const RULE_EXTENSIONS: &[&str] = &["md", "toml"];
 /// `promotions.jsonl` needs no entry — its extension is not in
 /// [`RULE_EXTENSIONS`], so it is already never read.
 ///
-/// [g]: stella_core::records::promotion::Governance
+/// [g]: stella_records::records::promotion::Governance
 pub(crate) const RESERVED_RULE_FILENAMES: &[&str] = &["governance.toml"];
 
 /// The production [`RuleSource`]: real `std::fs` reads over each directory
@@ -606,7 +606,7 @@ mod tests {
     /// Record a local human approval for `lineage`, published to `published_to` —
     /// what `stella context review` appends when the reviewer authorizes blocking.
     fn approve_blocking(root: &Path, lineage: &str, published_to: &Path) {
-        let mut event = stella_core::records::DecisionEvent::keep(
+        let mut event = stella_records::records::DecisionEvent::keep(
             "candidate-1",
             lineage,
             "mac",
@@ -1200,7 +1200,7 @@ mod tests {
         assert!(
             rules
                 .registry()
-                .render(stella_core::records::Channel::Cached, None)
+                .render(stella_records::records::Channel::Cached, None)
                 .text
                 .contains("Never force-push"),
             "the record must still reach the prompt"

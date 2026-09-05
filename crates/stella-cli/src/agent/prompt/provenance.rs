@@ -14,7 +14,7 @@
 //! [`crate::agent::engine::SESSION_HOOK_CONTEXT_HEADER`] — so a reworded
 //! heading moves both sides at once and cannot silently relabel a span. The
 //! rules heading is the one that cannot be shared outright:
-//! [`stella_core::records::CACHED_HEADING`] opens with a single newline and
+//! [`stella_records::records::CACHED_HEADING`] opens with a single newline and
 //! [`super::assemble_system_prompt`] pushes the second, so the marker is that
 //! constant with a newline in front of it. `RULES_HEADER` spells the joined
 //! bytes out, and `the_rules_marker_is_the_heading_the_record_channel_renders`
@@ -42,7 +42,7 @@ use crate::agent::engine::SESSION_HOOK_CONTEXT_HEADER;
 use super::{MEMORIES_HEADER, MEMORIES_OMITTED_PREFIX, SESSION_ENVIRONMENT_HEADER};
 
 /// The workspace-rules heading as it lands in the prompt: the record
-/// channel's own [`stella_core::records::CACHED_HEADING`] with the newline
+/// channel's own [`stella_records::records::CACHED_HEADING`] with the newline
 /// [`super::assemble_system_prompt`] pushes before it. Written out because
 /// `const` concatenation of a non-literal is not a thing Rust does; pinned by
 /// a test rather than by a comment asking the next reader to check.
@@ -254,7 +254,7 @@ mod tests {
     fn the_rules_marker_is_the_heading_the_record_channel_renders() {
         assert_eq!(
             RULES_HEADER,
-            format!("\n{}", stella_core::records::CACHED_HEADING),
+            format!("\n{}", stella_records::records::CACHED_HEADING),
             "the assembler pushes '\\n' then the rendered channel, which opens with CACHED_HEADING"
         );
     }

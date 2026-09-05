@@ -22,7 +22,7 @@
 //!
 //! # Why overlap detection errs toward reporting
 //!
-//! `super::super::glob` implements one wildcard: `*`. Deciding whether two such
+//! `stella_core::glob` implements one wildcard: `*`. Deciding whether two such
 //! globs can match a common path is decidable but fiddly, and the two failure
 //! directions are not symmetric. A missed overlap means a real conflict resolves
 //! silently — the thing §12 forbids. A spurious overlap means a warning about two
@@ -40,9 +40,9 @@
 
 use super::super::ingest::gate::atomicity_validation;
 use super::super::ingest::record::{AppliesTo, EnforcementMode, Record};
-use super::super::redact::redact_secrets;
 use super::select::shared_triggers;
 use super::{KNOWN_TASKS, LoadedRecord, RecordFinding, Trust};
+use stella_core::redact::redact_secrets;
 
 /// Glob metacharacters that are **literals** in this engine's matcher. A guard
 /// written with them expresses an intent the matcher will not honor, so it silently

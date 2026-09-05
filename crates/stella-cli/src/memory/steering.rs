@@ -57,7 +57,7 @@ pub(super) fn frame_candidates(frames: &[RecalledFrame]) -> Vec<SteeringCandidat
 ///
 /// Records joined the set in #4498: their channel renders as one budgeted
 /// block, so suppressing one means re-rendering the channel without it —
-/// [`stella_core::records::Registry::render_volatile_for_turn_excluding`] is
+/// [`stella_records::records::Registry::render_volatile_for_turn_excluding`] is
 /// that door, and these handles are what it is handed.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ProducedSteering {
@@ -75,7 +75,7 @@ impl ProducedSteering {
     /// its own token budget and marks the rest omitted. Counting the omitted
     /// tail as produced would suppress a skill the model was never shown, which
     /// is the one direction this set must not be wrong in. `records` carries no
-    /// such asymmetry: [`stella_core::records::RenderedChannel::rendered`] is
+    /// such asymmetry: [`stella_records::records::RenderedChannel::rendered`] is
     /// already the post-budget answer.
     pub(super) fn of(
         frames: &[RecalledFrame],
