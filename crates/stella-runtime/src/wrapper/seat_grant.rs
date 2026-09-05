@@ -19,10 +19,8 @@
 //! 2. a plugin may not spend at a seat that means "this call decided whether
 //!    the work is done" unless it declared that job and a human agreed.
 //!
-//! Hiding those two rules in a word list made both of them accidents of
-//! spelling. A plugin that needed a `reviewer` was refused, and a plugin that
-//! got a seat bound for it bought a verdict nobody consented to. Both rules
-//! read the manifest here instead (`doc:roleless-core` §6).
+//! Both rules read the manifest here rather than a word list, so neither is an
+//! accident of spelling (`doc:roleless-core` §6).
 //!
 //! # What counts as declaring the job
 //!
