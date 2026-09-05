@@ -362,9 +362,10 @@ pub struct LadderSnapshot {
     pub new_diag_errors: u32,
     pub new_diag_warnings: u32,
     /// The witness-tamper check's result: `None` when no witness was armed,
-    /// `Some(true)` when every witness artifact matched its pinned identity.
-    /// `Some(false)` never reaches a verdict — tampering aborts the
-    /// candidate — so its presence here is the *stated* proof the check ran.
+    /// `Some(true)` when every witness artifact matched its pinned identity,
+    /// and `Some(false)` when one did not. A wrapper plugin's round records
+    /// that third case: a modified artifact refuses the flip, and the record
+    /// has to say which check refused it rather than read as no check at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witness_intact: Option<bool>,
     /// The mutation audit's finding (#870): `Some(true)` = the witness

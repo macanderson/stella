@@ -13,21 +13,29 @@ use super::*;
 /// A report with one fault of each kind, so [`report_lines`] has something to
 /// render on every one of its arms.
 fn faulted_report() -> stella_runtime::wrapper::DispatchReport {
+    let verdict = stella_plugin::Verdict::Undecided {
+        reason: stella_plugin::UndecidedReason::NoOracle,
+        // No oracle ran, so no requirement was individually decided; the
+        // board below declares none either.
+        undecided: Vec::new(),
+    };
     stella_runtime::wrapper::DispatchReport {
         variant: "vera".to_string(),
         rounds: 1,
-        verdict: stella_plugin::Verdict::Undecided {
-            reason: stella_plugin::UndecidedReason::NoOracle,
-            // No oracle ran, so no requirement was individually decided; the
-            // board below declares none either.
-            undecided: Vec::new(),
-        },
+        verdict: verdict.clone(),
         outcome: stella_plugin::Outcome::Undecided {
             reason: stella_plugin::UndecidedReason::NoOracle,
         },
         // A rule with no requirements draws no rows: nothing was declared, so
         // there is no gate to report on.
         board: stella_protocol::GateBoard::default(),
+        // Built by the same fold a real round uses, so this fixture cannot
+        // drift from the record a dispatch actually hands back.
+        snapshot: stella_runtime::wrapper::stamp::snapshot(
+            &stella_plugin::VerdictRule::default(),
+            &stella_plugin::EvidenceSet::unobserved(),
+            &verdict,
+        ),
         faults: vec![stella_runtime::wrapper::WrapperError::EmptyArgv],
     }
 }

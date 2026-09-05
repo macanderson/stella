@@ -421,6 +421,23 @@ pub enum WrapperError {
         /// The second.
         other: String,
     },
+
+    /// The round was decided, and its record could not be hashed, so no stamp
+    /// was written.
+    ///
+    /// The verdict stands. Hashing runs after the decision and can change
+    /// nothing about it, so a host that meets this keeps the answer and loses
+    /// only the name on it. Reported rather than dropped, because a record
+    /// with no claim on it and a record whose claim failed to form are
+    /// different facts.
+    #[error("wrapper `{wrapper}` decided the round, but its record could not be hashed: {source}")]
+    Unstampable {
+        /// The pipeline id that ran.
+        wrapper: String,
+        /// Why the record could not be turned into canonical bytes.
+        #[source]
+        source: stella_core::context_record::RecordHashError,
+    },
 }
 
 /// A driver session could not be opened, or its answer could not be used.

@@ -89,6 +89,9 @@ mod framing;
 mod host_call;
 mod in_process;
 mod seat_grant;
+// Public, unlike its siblings: a host that reads a report's record also
+// wants the clock and the timing type that produced it.
+pub mod stamp;
 mod subprocess;
 mod test_run;
 mod verdict;
