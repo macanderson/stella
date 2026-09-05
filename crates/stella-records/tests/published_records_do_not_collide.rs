@@ -15,8 +15,8 @@
 
 use std::path::PathBuf;
 
-use stella_core::ingest::record::EnforcementMode;
-use stella_core::records::{
+use stella_records::ingest::record::EnforcementMode;
+use stella_records::records::{
     LoadedRecord, assign_handles, detect_conflicts, is_suspended, load_context_file,
 };
 
