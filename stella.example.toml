@@ -422,6 +422,20 @@ ab_recall_rate = 0
 # turned back on.
 enabled = true
 
+# Tool advertisement as a plane consumer. Ships OFF, because turning it
+# on changes what the model is shown. A tool the allowance cannot afford is not
+# advertised and still runs when it is called, so this costs the model a
+# description and never a capability; every withheld tool is named on stderr.
+# STELLA_TOOLS_LEAN=1 turns it on for one process, which is how a measurement
+# arm selects it without editing the workspace it is measuring.
+[context.steering.tools]
+lean = false
+# The whole tool allowance, in estimated tokens.
+max_tokens = 6000
+# The share of it every connected MCP server may take between them, so one
+# chatty server cannot spend an allowance the built-ins need.
+mcp_max_tokens = 2000
+
 
 # -----------------------------------------------------------------------------
 # CONTEXT PROVIDERS — third-party CGP context sources

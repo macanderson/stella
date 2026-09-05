@@ -8,8 +8,8 @@
 //! Stella already asks that question four times per turn, from four unrelated
 //! engines, over corpora that overlap: recall frames (RRF fuse + MMR),
 //! context records (`applies_to` glob matching), skills (lexical coverage +
-//! domain boost), and tool advertisement (unfiltered, or `tool_search`'s rank
-//! under lean mode). They fire at the same moment, from the same trigger, and
+//! domain boost), and the tool list ([`tools`]). They fire at the same
+//! moment, from the same trigger, and
 //! **not one of them knows the other three exist** — four relevance engines,
 //! four budgets, four failure postures, three on/off switches. A skill the
 //! host declines to inject can be the top `skill_search` hit, because those
@@ -36,6 +36,8 @@
 //! has *become*.
 
 use std::collections::BTreeMap;
+
+pub mod tools;
 
 /// What is happening in this turn, as a selector needs to see it.
 ///
@@ -143,8 +145,9 @@ fn source_rank(source: SteeringSource) -> u8 {
         // A published record is the repository's own steering policy; it
         // outranks anything inferred.
         SteeringSource::Record => 0,
-        // A tool the model cannot see is a capability it does not have,
-        // which fails harder than missing know-how.
+        // A tool the model cannot see is one it will not pick. That
+        // fails harder than missing know-how. It can still be called:
+        // see [`tools`], where a hidden tool is not a lost one.
         SteeringSource::Tool => 1,
         SteeringSource::Skill => 2,
         SteeringSource::Memory => 3,

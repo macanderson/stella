@@ -9,10 +9,16 @@
 //!
 //! ```text
 //! GatedToolSet        <- authorization: who is asking, and may they? (#2716)
-//!   PolicyToolSet     <- operator switches: is this tool on at all?
-//!     CustomToolSet   <- .stella/tools/*.toml
-//!       base          <- registry / MCP view / claim tap, per driver
+//!   LeanToolSet       <- the tool allowance: how many schemas fit? (#6057)
+//!     PolicyToolSet   <- operator switches: is this tool on at all?
+//!       CustomToolSet <- .stella/tools/*.toml
+//!         base        <- registry / MCP view / claim tap, per driver
 //! ```
+//!
+//! The allowance layer is composed only when a session asks for one — the
+//! `Lean` arm of [`ToolAdvertisement`], off by default — so with the lever
+//! off the chain is the four layers it always was, and the advertised array
+//! is byte-identical rather than merely equivalent.
 //!
 //! The base of the chain stays the driver's own: which registry, whether an
 //! MCP view sits on it, whether a claim tap coordinates writes — those differ
@@ -41,12 +47,14 @@ use std::sync::Arc;
 
 use stella_core::bus::HookBus;
 use stella_core::ports::{AuthzGate, NoAuthz, Principal, ToolExecutor};
+use stella_core::steering::tools::ToolAdvertisement;
 use stella_tools::custom::{CustomTool, CustomToolSet};
 use stella_tools::gated::GatedToolSet;
 use stella_tools::policy::ToolPolicy;
 
 use super::session_tool_policy;
 use crate::config::Config;
+use crate::tool_lean::LeanToolSet;
 use crate::tool_policy::PolicyToolSet;
 
 /// The authorization gate every session stack runs under.
@@ -86,6 +94,7 @@ pub(crate) fn session_stack<'a>(
             custom_tools,
             cfg.workspace_root.clone(),
             session_tool_policy(cfg),
+            cfg.tool_advertisement,
             session_gate(&cfg.workspace_root),
             principal,
         ),
@@ -112,6 +121,7 @@ pub(crate) fn session_stack_with_gate<'a>(
     custom_tools: Vec<CustomTool>,
     workspace_root: PathBuf,
     policy: ToolPolicy,
+    advertisement: ToolAdvertisement,
     gate: Arc<dyn AuthzGate>,
     principal: Principal,
 ) -> GatedToolSet<'a> {
@@ -126,9 +136,13 @@ pub(crate) fn session_stack_with_gate<'a>(
     let namespaces = contributed_server_principals(&workspace_root);
     let customs = CustomToolSet::new(base, custom_tools, workspace_root);
     let permitted = PolicyToolSet::new_boxed(Box::new(customs), policy);
-    GatedToolSet::new_boxed(Box::new(permitted), gate, principal)
-        .with_tool_principals(contributed)
-        .with_prefix_principals(namespaces)
+    GatedToolSet::new_boxed(
+        budgeted(Box::new(permitted), advertisement),
+        gate,
+        principal,
+    )
+    .with_tool_principals(contributed)
+    .with_prefix_principals(namespaces)
 }
 
 /// The principal each plugin-contributed **MCP server's** tools authorize as,
@@ -216,6 +230,7 @@ pub(crate) fn policy_stack<'a>(
         policy_stack_with(
             base,
             session_tool_policy(cfg),
+            cfg.tool_advertisement,
             session_gate(&cfg.workspace_root),
             principal,
         ),
@@ -243,11 +258,37 @@ pub(crate) fn policy_stack<'a>(
 pub(crate) fn policy_stack_with<'a>(
     base: &'a dyn ToolExecutor,
     policy: ToolPolicy,
+    advertisement: ToolAdvertisement,
     gate: Arc<dyn AuthzGate>,
     principal: Principal,
 ) -> GatedToolSet<'a> {
     let permitted = PolicyToolSet::new(base, policy);
-    GatedToolSet::new_boxed(Box::new(permitted), gate, principal)
+    GatedToolSet::new_boxed(
+        budgeted(Box::new(permitted), advertisement),
+        gate,
+        principal,
+    )
+}
+
+/// Compose the tool allowance over `permitted`, or hand it back untouched.
+///
+/// `Full` returns the chain it was given rather than a forwarding layer that
+/// filters nothing, so the lever's off state is the absence of a layer. "Off
+/// advertises the whole surface" is then a fact about the composition rather
+/// than a claim about a filter, which is what a bench arm measuring the lever
+/// needs on its control side.
+fn budgeted<'a>(
+    permitted: Box<dyn ToolExecutor + 'a>,
+    advertisement: ToolAdvertisement,
+) -> Box<dyn ToolExecutor + 'a> {
+    match advertisement {
+        ToolAdvertisement::Full => permitted,
+        ToolAdvertisement::Lean(budget) => {
+            let lean = LeanToolSet::new(permitted, budget);
+            lean.report_drops();
+            Box::new(lean)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -320,6 +361,7 @@ mod tests {
             Vec::new(),
             PathBuf::from("."),
             ToolPolicy::allow_all(),
+            ToolAdvertisement::Full,
             gate,
             Principal::User,
         )

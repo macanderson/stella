@@ -66,6 +66,9 @@ mod private_state;
 mod projection;
 pub(crate) mod proposals;
 mod recall;
+/// The one writer of a steering drop line, shared with the tool budget's own
+/// ledger (`crate::tool_lean`) so both report in the same words.
+pub(crate) use recall::report_steering_drops;
 mod records_refresh;
 // #2304: the trace-replay learning harness — the learning machinery driven from
 // recorded traces with zero model calls. Test-only by construction: the crate is
