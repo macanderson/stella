@@ -239,6 +239,16 @@ CREATE TABLE IF NOT EXISTS code_graph_chunk_vectors (
 -- pass does.
 CREATE INDEX IF NOT EXISTS code_graph_chunk_vectors_fp
     ON code_graph_chunk_vectors(fingerprint);
+-- The coverage question (`vectors::chunks::NEEDS_CHUNK_PASS`) asks, per file,
+-- whether any chunk row exists under one fingerprint for the file's current
+-- hash. Without this index the planner answers it from the fingerprint index
+-- above, which walks every chunk row of that fingerprint, vector blob
+-- included, once per file: on a workspace of two thousand files and thirty
+-- thousand chunks one count took eleven seconds, and the readiness gate asks
+-- for that count after every embedding batch. Three equality columns, and
+-- covering, so the answer is an index probe that never reads a vector.
+CREATE INDEX IF NOT EXISTS code_graph_chunk_vectors_coverage
+    ON code_graph_chunk_vectors(file_id, fingerprint, file_sha256);
 -- The commit this store last reconciled against (see `crate::reconcile`).
 -- Exactly one row, enforced by the CHECK rather than by every writer
 -- remembering to: this is a singleton, and a second row would silently make
