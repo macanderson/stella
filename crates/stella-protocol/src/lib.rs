@@ -158,7 +158,10 @@ pub use question::{
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
 pub use issue::{Issue, IssueClass, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState};
-pub use ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation, ProofTree};
+pub use ladder::{
+    FlipOutcome, LadderRung, LadderSnapshot, OracleObservation, ProofTree, StampAssessment,
+    VerdictStamp,
+};
 pub use provider::{Provider, ToolCallObserver};
 // The context-recall port every door's memory injection shares (removal
 // census for `stella-pipeline`, `docs/spec/pipeline-as-plugins.md` §7) — see

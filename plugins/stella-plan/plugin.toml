@@ -72,12 +72,11 @@ calls = ["child_turn"]
 # so the consent text a human reads states the real number.
 max_calls = 1
 
-# The one role intent this plugin names. `tier = "plan"` resolves to
-# `ModelCallRole::Plan` under the host's `default_seats()`
-# (`crates/stella-runtime/src/wrapper/child_turn.rs:170-180`), which is the
-# same responsibility the built-in stage's own `Role::Plan` model call
-# carries — so a child turn spent here lands on the receipt under the seat a
-# human reading it already expects a planning call to use.
+# The one role intent this plugin names. The word is this plugin's own: the
+# host compares it, asks the user's seat map about it, and reads nothing into
+# it (`ChildTurns::resolve`). Where the spend is booked comes from the
+# grant instead — this manifest declares no `[oracle]`, so the turn lands on
+# the receipt as the read-only child call it is.
 [roles.planner]
 tier = "plan"
 

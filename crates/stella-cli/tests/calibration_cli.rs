@@ -51,6 +51,7 @@ fn uncorroborated_snapshot() -> LadderSnapshot {
         no_test_surface: false,
         errored_commands: 0,
         verifier_independent: Some(false),
+        stamps: vec![],
     }
 }
 

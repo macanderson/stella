@@ -42,12 +42,13 @@ use stella_runtime::wrapper::{
 };
 
 /// What a human consents to at install: this plugin answers `before_turn`, may
-/// ask for `child_turn`, and declares two role intents — one that resolves to a
-/// research seat, one that points straight at the worker.
+/// ask for `child_turn`, and declares two role intents.
 ///
-/// `grader` is declared. The independence rule has to be tested
-/// against a role the *manifest permits*, or it proves only that the manifest
-/// check works.
+/// `grader` is declared, and [`host`] binds its tier to the seat the session's
+/// own turns use. The independence rule has to be tested against a role the
+/// *manifest permits*, or it proves only that the manifest check works. It also
+/// has to be tested against a seat this host actually serves, or it proves only
+/// that core knows nothing about the word.
 const GRADING_MANIFEST: &str = r#"
 name = "grading-wrapper"
 description = "asks the host to spend a model call it cannot make itself"
@@ -122,13 +123,21 @@ fn manifest() -> PluginManifest {
 
 /// The host a driver would assemble: the plugin's declared role intents bound
 /// to this host's dispatcher, behind the gate the manifest's grant declares.
+///
+/// It binds one tier to the seat the session's own turns use — something the
+/// shipped door does not do, and the only way to reach that seat at all now
+/// that core holds no table of role words. The refusal test below is about
+/// what happens when a host *does* serve it.
 fn host(
     manifest: &PluginManifest,
     max_turns: u32,
 ) -> (Arc<HostCallGate>, Arc<ChildTurns<Dispatcher>>, Dispatcher) {
     let dispatcher = Dispatcher::default();
-    let plane =
-        Arc::new(ChildTurns::declare(manifest, dispatcher.clone()).with_max_turns(max_turns));
+    let plane = Arc::new(
+        ChildTurns::declare(manifest, dispatcher.clone())
+            .with_max_turns(max_turns)
+            .with_seat("worker", ModelCallRole::Worker),
+    );
     let gate = Arc::new(HostCallGate::declare(
         manifest.loop_grant.clone(),
         DEFAULT_HOST_MAX_CALLS,
@@ -261,8 +270,8 @@ async fn an_undeclared_role_intent_is_refused_to_the_plugin_and_reported_to_the_
 }
 
 /// **Verifier independence, through the host-call channel.** The role is
-/// declared, it resolves, and the host still refuses it: a plugin may not spend
-/// the model whose work it is judging.
+/// declared, this host serves the seat, and it still refuses: a plugin may not
+/// spend the model whose work it is judging.
 ///
 /// The staged pipeline's roster *reported* this loss for an operator who chose
 /// it (`Roster::independence_losses`; `crates/stella-pipeline`, deleted in

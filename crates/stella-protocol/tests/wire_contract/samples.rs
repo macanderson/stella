@@ -20,7 +20,6 @@ use stella_protocol::event::{
     ProofTree, ScopeProposal, SkillTrigger, StageKind, SteerCause, TaskItem, TaskStatus,
     UsageIncompleteReason,
 };
-use stella_protocol::ladder::{FlipOutcome, LadderRung, LadderSnapshot, OracleObservation};
 use stella_protocol::receipt::{
     BlockKind, BlockOrigin, CacheZone, ContextFrameRef, ContextProviderUsage, ContextUsage,
     ManifestEntry, ProviderShare,
@@ -32,6 +31,14 @@ use stella_protocol::{
 use stella_protocol::{
     Check, CheckKind, CheckMechanism, CheckOutcome, DefinitionOfDone, Judge, TaskContract,
 };
+
+// The ladder vocabularies and the verdict sweeps that carry them. Its own
+// module because this file reached the file-size ceiling
+// (`scripts/check-file-size.sh`), and this is the half that grows whenever the
+// ladder does. `#[path]` because `samples` is itself loaded through one.
+#[path = "samples/verdict.rs"]
+mod verdict;
+pub(crate) use verdict::{all_flip_outcomes, all_ladder_rungs, all_stamp_assessments};
 
 /// Both scopes an [`AgentEvent::Stage`] can report (#3398). Enumerated like
 /// every other nested vocabulary so the wire contract fails if a third is
@@ -148,24 +155,6 @@ pub(crate) fn all_skill_triggers() -> Vec<SkillTrigger> {
 
 pub(crate) fn all_proof_trees() -> Vec<ProofTree> {
     vec![ProofTree::Baseline, ProofTree::Candidate]
-}
-
-pub(crate) fn all_ladder_rungs() -> Vec<LadderRung> {
-    use LadderRung::*;
-    vec![
-        SubmitFast,
-        Revise,
-        NothingAttempted,
-        Unverifiable,
-        Unverified,
-        WitnessUnsatisfiable,
-        Waived,
-    ]
-}
-
-pub(crate) fn all_flip_outcomes() -> Vec<FlipOutcome> {
-    use FlipOutcome::*;
-    vec![Unobserved, NotAchieved, Achieved]
 }
 
 pub(crate) fn all_memory_classes() -> Vec<MemoryClass> {
@@ -1369,93 +1358,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 },
             }),
     );
-    // Every ladder rung (#1043). Each has to reach the wire on its own,
-    // because the rung is the *only* thing separating verdicts that the
-    // surrounding `passed`/`deterministic` flags spell identically — a
-    // deterministic pass from a waived review, a verifier that answered from one
-    // that was unavailable.
-    events.extend(
-        all_ladder_rungs()
-            .into_iter()
-            .map(|rung| AgentEvent::Verdict {
-                passed: rung.is_deterministic(),
-                evidence: VerdictEvidence {
-                    summary: "sampled for the rung".into(),
-                    deterministic: rung.is_deterministic(),
-                    evidence_refs: vec![],
-                    ladder: Some(Box::new(LadderSnapshot {
-                        rung: Some(rung),
-                        tracked_command: Some("cargo test -p x".into()),
-                        oracle_trace: vec![OracleObservation {
-                            tree: ProofTree::Candidate,
-                            passed: true,
-                        }],
-                        flip: FlipOutcome::Achieved,
-                        unstable_flip: false,
-                        flip_refused_different_failure: false,
-                        touched_tests_passed: Some(true),
-                        test_infra: Some("timed_out".into()),
-                        diff_lines: 12,
-                        diff_budget: 400,
-                        diff_available: true,
-                        mutating_actions: 3,
-                        new_diag_errors: 0,
-                        new_diag_warnings: 1,
-                        witness_intact: Some(true),
-                        witness_mutation: Some(true),
-                        diff_coverage: Some("covered".into()),
-                        verify_done_flip: true,
-                        no_test_surface: true,
-                        errored_commands: 2,
-                        verifier_independent: Some(false),
-                    })),
-                },
-            }),
-    );
-    // Every flip outcome (#2556). The rung sweep above pins only `achieved`,
-    // and the two it misses are the pair the tri-state exists to separate:
-    // `not_achieved` is a finding about the work, `unobserved` is a finding
-    // about the instrument. A sample that reached the wire for only one of
-    // them would leave the distinction unproven at exactly the surface — the
-    // recorded verdict — where the old boolean lost it.
-    events.extend(
-        all_flip_outcomes()
-            .into_iter()
-            .map(|flip| AgentEvent::Verdict {
-                passed: flip.is_achieved(),
-                evidence: VerdictEvidence {
-                    summary: "sampled for the flip outcome".into(),
-                    deterministic: flip.is_achieved(),
-                    evidence_refs: vec![],
-                    ladder: Some(Box::new(LadderSnapshot {
-                        rung: None,
-                        // `unobserved` is the state where no command was ever
-                        // tracked, so the sample states that pairing rather
-                        // than an impossible one.
-                        tracked_command: flip.was_observed().then(|| "cargo test -p x".to_string()),
-                        oracle_trace: vec![],
-                        flip,
-                        unstable_flip: false,
-                        flip_refused_different_failure: false,
-                        touched_tests_passed: None,
-                        test_infra: None,
-                        diff_lines: 3,
-                        diff_budget: 400,
-                        diff_available: true,
-                        mutating_actions: 1,
-                        new_diag_errors: 0,
-                        new_diag_warnings: 0,
-                        witness_intact: None,
-                        witness_mutation: None,
-                        diff_coverage: None,
-                        verify_done_flip: false,
-                        no_test_surface: !flip.was_observed(),
-                        errored_commands: 0,
-                        verifier_independent: None,
-                    })),
-                },
-            }),
-    );
+    events.extend(verdict::verdict_events());
 
     events
 }

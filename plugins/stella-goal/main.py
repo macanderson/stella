@@ -89,8 +89,8 @@ own planner prompt (goal only, no `recall`/`research`/`repo_structure`/
 
 Mirrors `stella-plan/main.py`'s `HostCalls`/`child_turn` split exactly. The
 host offers no channel (`unavailable`), the manifest declares no such role
-intent (`undeclared`), the role resolves to the worker's own seat
-(`forbidden`), the allowance is spent (`allowance-spent`), the host tried and
+intent (`undeclared`), the seat is one no grant buys (`forbidden`), the
+allowance is spent (`allowance-spent`), the host tried and
 the turn failed (`failed`), or nobody answered — every one of these degrades
 to empty evidence (no `"met"` measurement) and is reported on stderr, never
 guessed at. Two further degradations are this program's own, past a

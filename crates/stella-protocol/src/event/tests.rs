@@ -627,6 +627,7 @@ fn ladder_snapshot_is_additive_and_roundtrips() {
                 no_test_surface: false,
                 errored_commands: 0,
                 verifier_independent: None,
+                stamps: vec![],
             })),
         },
     };

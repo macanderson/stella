@@ -2535,8 +2535,11 @@ function sentContextVerdictHtml(c) {
   }
   const bad = (c.digest_mismatches ?? []).length;
   const gaps = (c.unresolved ?? []).length;
+  const local = (c.local_content_anomalies ?? []).length;
   return `${bad ? `<div class="ctx-verdict" style="color:var(--bad)">✕ ${fmtInt(bad)} block(s)
       did NOT re-hash to their recorded digest — the journal is torn or was altered</div>` : ""}
+    ${local ? `<div class="ctx-verdict" style="color:var(--bad)">✕ ${fmtInt(local)} block(s) were read
+      from the store instead of the journal, so nothing independent checked them</div>` : ""}
     ${gaps ? `<div class="ctx-verdict" style="color:var(--warn)">◌ ${fmtInt(gaps)} block(s) could not
       be resolved (synthetic results, discarded speculation, or attachments)</div>` : ""}`;
 }
