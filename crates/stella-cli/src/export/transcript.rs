@@ -225,8 +225,12 @@ impl<'a> Fold<'a> {
         // A call still in flight when the turn ends never resolved. Rendered
         // as `Running` rather than dropped: a tool that hung is exactly what
         // a reader is looking for.
+        //
+        // Taken rather than drained in place: `admit` charges the row budget
+        // once per call, and a live `drain` would still hold the `&mut self`
+        // that charge needs.
         let elapsed = self.elapsed_ms;
-        for (_, call) in self.pending.drain(..) {
+        for (_, call) in std::mem::take(&mut self.pending) {
             if self.admit() {
                 turn.steps.push(Step {
                     call: Some(call),
