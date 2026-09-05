@@ -213,6 +213,13 @@ pub use stella_core::driver::output_budget_recovery::SessionOutputCeilings;
 pub use stella_core::driver::{
     Engine, EngineConfig, SOFT_STOP_REASON, TurnHalt, TurnOutcome, step_cap_reason,
 };
+// `Engine::assemble` is the blessed constructor, and its one non-port
+// parameter is a `TurnCapabilities`. Without the type here a host could name
+// the method and never call it — obligation 1 of the closure rule, read at the
+// parameter. `OwnedTurnCapabilities` rides along because a host that builds
+// its seams with no frame above holding them is the case that struct exists
+// for, which is exactly an out-of-process host.
+pub use stella_core::driver::capabilities::{OwnedTurnCapabilities, TurnCapabilities};
 pub use stella_core::estimator::CalibrationMap;
 pub use stella_core::event_sender::{EventSendError, EventSender};
 pub use stella_core::loop_detect::LoopDetectionConfig;

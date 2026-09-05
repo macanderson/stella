@@ -789,23 +789,32 @@ mod tests {
     /// Keyed on the engine construction rather than on a turn-entry spelling,
     /// because the drivers do not agree on one: `run_turn_with_sender`,
     /// `run_goal` and the resume path are three different entries and
-    /// `Engine::with_sleeper` is the one thing all of them do first.
+    /// building an engine is the one thing all of them do first.
+    ///
+    /// **Both** constructors count: `Engine::with_sleeper` and
+    /// [`stella_core::Engine::assemble`], the blessed one a named lane uses.
+    /// A fence that saw only one spelling would read every driver on the
+    /// other as not building an engine at all.
     ///
     /// Shipping files only. A `#[cfg(test)]` engine is a fixture, and the
     /// question here is which *door* drives a turn.
     #[test]
     fn every_engine_driver_declares_what_it_owes_the_ledger() {
         // Built rather than written out, so this file is not its own match,
-        // and with the open paren so a doc comment naming the constructor is
+        // and with the open paren so a doc comment naming a constructor is
         // prose rather than a driver.
-        let builds = format!("Engine::with_{}(", "sleeper");
+        let constructors = [
+            format!("Engine::with_{}(", "sleeper"),
+            format!("Engine::{}(", "assemble"),
+        ];
+        let builds = |body: &str| constructors.iter().any(|ctor| body.contains(ctor));
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
         for (file, posture) in ENGINE_DRIVERS {
             let body = std::fs::read_to_string(src.join(file))
                 .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
             assert!(
-                body.contains(&builds),
+                builds(&body),
                 "{file} is declared a turn driver ({posture:?}) and no longer \
                  builds an engine. A stale row is worse than no row: it makes \
                  the list look complete while the door it stood for has moved."
@@ -831,7 +840,7 @@ mod tests {
 
         for path in shipping_sources(&src) {
             let body = std::fs::read_to_string(&path).expect("a listed source");
-            if !body.contains(&builds) {
+            if !builds(&body) {
                 continue;
             }
             let relative = path

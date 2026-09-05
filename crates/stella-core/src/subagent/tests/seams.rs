@@ -396,3 +396,56 @@ async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
         "{payloads:?}"
     );
 }
+
+// ---- the lane a fork declares -----------------------------------------
+
+/// **The fork's lane witness.** A child's turn says which lane it ran in, so
+/// a reader can group a delegated turn apart from the parent's.
+///
+/// Fails on a tree whose `Engine::assemble` carries no lane: the field is not
+/// on the engine, so `agent.turn.started` has no `lane` key to read at all.
+///
+/// The bus is attached to the PARENT, and the child inherits it — which is
+/// why one turn opens on it here rather than two: this parent never drives a
+/// turn of its own.
+#[tokio::test]
+async fn a_forked_child_stamps_the_subagent_fork_lane() {
+    let bus = HookBus::new("fork-lane-test");
+    let seen: std::sync::Arc<Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&seen);
+    bus.on(crate::bus::names::AGENT_TURN_STARTED, move |event| {
+        sink.lock().unwrap().push(event.payload.clone());
+        Ok(())
+    })
+    .detach();
+
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![Ok(text_result("done", 0.01))]);
+    let tools = MixedTools::default();
+    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep)
+        .with_bus(&bus);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("laned", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+
+    let lanes: Vec<serde_json::Value> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|payload| payload.get("lane").cloned())
+        .collect();
+    assert_eq!(
+        lanes,
+        vec![serde_json::json!({ "builtin": "subagent_fork" })],
+        "the child's turn must name the lane that assembled it",
+    );
+}

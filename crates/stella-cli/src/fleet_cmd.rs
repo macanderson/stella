@@ -75,6 +75,7 @@ use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::config::Config;
+use crate::lane_capabilities;
 use crate::runtime::{SystemClock, TokioSleeper, WallClock};
 // The trait is in scope for `AttemptPointStream::publish` below — a fleet
 // attempt publishes its own channel across the dispatch's points (#4730).
@@ -1135,12 +1136,10 @@ async fn run_task(
                 config.effort = Some(effort);
             }
             let calibration = agent::seed_calibration(&store, &cfg);
-            let mut engine = Engine::with_sleeper(&*provider, &scoped, config, &TokioSleeper)
-                .with_gate(gate.as_ref())
-                .with_calibration(&calibration);
-            if let Some(hooks) = &cfg.hooks {
-                engine = engine.with_hooks(hooks, &hook_runner);
-            }
+            let hooks = cfg.hooks.as_ref();
+            let seams =
+                lane_capabilities::fleet_attempt(hooks, &hook_runner, &calibration, gate.as_ref());
+            let engine = Engine::assemble(&*provider, &scoped, config, &TokioSleeper, seams);
             // A fleet worker owns its lane's stage vocabulary — the opener is
             // here; the closer rides `worker_event_sender` below, ahead of
             // the engine's `TurnComplete` (#3416, #3428).
