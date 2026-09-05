@@ -784,11 +784,29 @@ fn execution_costs(root: &Path) -> Vec<(i64, f64)> {
 /// expires on its own if the holder dies (#4300). So this table — not any one
 /// journal — is the machine-wide answer to "what is being worked this
 /// second, and by whom", including a second drive against the same clone.
-fn live_claims(root: &Path, now: i64) -> Vec<Value> {
+///
+/// `None` is a third answer, not a spelling of the empty list. An empty table
+/// says nobody holds an issue right now. An unreadable one says nothing at
+/// all. A workspace that never ran the fleet or the drive verb has no
+/// `fleet.db`. Reading that as "every issue is free" would let this page
+/// contradict a journal it has no evidence against.
+fn live_claims(root: &Path, now: i64) -> Option<Vec<Value>> {
     let db = root.join(".stella").join("private").join("fleet.db");
-    let Some(conn) = open_read_only(&db) else {
-        return Vec::new();
-    };
+    let conn = open_read_only(&db)?;
+    // `collect_rows` turns a missing table into an empty result. That is the
+    // collapse this signature undoes, so ask for the table by name first. A
+    // `fleet.db` older than the lease table cannot answer either.
+    let claims_table: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'dispatch_claims'",
+            [],
+            |r| r.get(0),
+        )
+        .ok()?;
+    if claims_table == 0 {
+        return None;
+    }
     let now_ms = now * 1000;
     let rows = collect_rows(
         &conn,
@@ -809,22 +827,55 @@ fn live_claims(root: &Path, now: i64) -> Vec<Value> {
             }))
         },
     );
-    match rows {
-        Ok(v) => v,
-        Err(crate::db::DbError::Query(e)) if is_missing_schema(&e) => Vec::new(),
-        Err(_) => Vec::new(),
+    rows.ok()
+}
+
+/// Whether one queued issue is being worked this second.
+///
+/// The journal proposes and the lease table disposes. The lease covers a
+/// narrow window. `stella self-driving drive` takes `issue:<n>` when it starts
+/// a turn and drops it on the way out of that arm. `drive.rs`'s
+/// `LoopStep::Work` calls that arm "the window where a turn is in flight and
+/// no pull request exists yet".
+///
+/// So the lease may contradict the journal, but only inside that window. An
+/// issue parked on a pull request holds no lease, because the loop is polling
+/// CI. There the journal is the only witness.
+///
+/// Everywhere else a turn should be in flight. A lease table that names no
+/// holder is saying nobody is running one. A driver that died without a stop
+/// record leaves exactly that state, and its journal keeps the issue open
+/// until it goes stale.
+///
+/// `leased: None` means there was no lease table to ask. It contradicts
+/// nothing.
+fn in_progress(
+    number: &str,
+    open_now: &BTreeMap<String, String>,
+    leased: Option<&BTreeSet<String>>,
+) -> bool {
+    let Some(stage) = open_now.get(number) else {
+        return false;
+    };
+    match leased {
+        Some(held) if stage != "pr open" => held.contains(number),
+        _ => true,
     }
 }
 
 fn issue_json(i: &Issue, learning: &Learning) -> Value {
     let (lo, hi) = (i.claimed_unix, i.last_unix.max(i.claimed_unix));
     let in_window = |u: i64| u >= lo && u <= hi + 60;
+    // An episode that names an issue belongs to that issue alone. The time
+    // window is the fallback for an episode that names none. OR'd with the
+    // tag, it pulled one issue's episode into another as well, whenever the
+    // two windows overlapped.
     let episodes: Vec<&Value> = learning
         .episodes
         .iter()
-        .filter(|e| {
-            e.get("issue").and_then(Value::as_str) == Some(i.number.as_str())
-                || in_window(e.get("started_unix").and_then(Value::as_i64).unwrap_or(-1))
+        .filter(|e| match e.get("issue").and_then(Value::as_str) {
+            Some(tag) => tag == i.number,
+            None => in_window(e.get("started_unix").and_then(Value::as_i64).unwrap_or(-1)),
         })
         .collect();
     let lessons: Vec<&Value> = learning
@@ -879,6 +930,11 @@ fn session_json(
     } else {
         now
     };
+    // What the workspace spent while this session was open. It is a window
+    // sum, not a split. No cost row names the session that spent it. So a
+    // dollar spent while two sessions overlap is counted by both. That is as
+    // much as one row can claim. It is also why the machine-wide total in
+    // `sessions_from` adds up the daily series instead of these figures.
     let spend: f64 = costs
         .iter()
         .filter(|(u, _)| *u >= s.started_unix && *u <= end)
@@ -981,15 +1037,21 @@ fn sessions_from(roots: &[PathBuf], workspace_root: &Path, now: i64) -> Value {
         });
         let costs = root.as_deref().map(execution_costs).unwrap_or_default();
         let spend_days = root.as_deref().map(spend_rows).unwrap_or_default();
-        let claims = root
-            .as_deref()
-            .map(|r| live_claims(r, now))
-            .unwrap_or_default();
-        for c in &claims {
+        let claims = root.as_deref().and_then(|r| live_claims(r, now));
+        for c in claims.iter().flatten() {
             if let Some(o) = c.get("owner").and_then(Value::as_str) {
                 holders.insert(o.to_string());
             }
         }
+        // The issues a live lease names, or `None` where there was no lease
+        // table to ask.
+        let leased: Option<BTreeSet<String>> = claims.as_ref().map(|rows| {
+            rows.iter()
+                .filter_map(|c| c.get("key").and_then(Value::as_str))
+                .filter_map(|k| k.strip_prefix("issue:"))
+                .map(str::to_string)
+                .collect()
+        });
 
         // Journal → daily.
         for s in &l.sessions {
@@ -1046,9 +1108,11 @@ fn sessions_from(roots: &[PathBuf], workspace_root: &Path, now: i64) -> Value {
         }
 
         // Overlay the live claims on the queue so "in the queue" and "being
-        // worked right now" are one picture.
+        // worked right now" are one picture. Each open issue a running session
+        // holds, keyed to the stage its journal last reached — which is what
+        // decides whether a missing lease may contradict the journal.
         let mut queue = l.queue.clone();
-        let open_now: BTreeSet<String> = session_rows
+        let open_now: BTreeMap<String, String> = session_rows
             .iter()
             .filter(|s| str_at(s, "status") == "running")
             .flat_map(|s| {
@@ -1057,7 +1121,7 @@ fn sessions_from(roots: &[PathBuf], workspace_root: &Path, now: i64) -> Value {
                     .map(|a| {
                         a.iter()
                             .filter(|i| i.get("open").and_then(Value::as_bool).unwrap_or(false))
-                            .map(|i| str_at(i, "number"))
+                            .map(|i| (str_at(i, "number"), str_at(i, "outcome")))
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default()
@@ -1079,7 +1143,10 @@ fn sessions_from(roots: &[PathBuf], workspace_root: &Path, now: i64) -> Value {
                     })
                     .or_insert(0) += 1;
                 if let Some(o) = item.as_object_mut() {
-                    o.insert("in_progress".into(), json!(open_now.contains(&n)));
+                    o.insert(
+                        "in_progress".into(),
+                        json!(in_progress(&n, &open_now, leased.as_ref())),
+                    );
                 }
             }
         }
@@ -1121,10 +1188,13 @@ fn sessions_from(roots: &[PathBuf], workspace_root: &Path, now: i64) -> Value {
         .iter()
         .map(|s| s.get("claimed").and_then(Value::as_i64).unwrap_or(0))
         .sum();
-    let spend: f64 = all_sessions
-        .iter()
-        .map(|s| s.get("spend_usd").and_then(Value::as_f64).unwrap_or(0.0))
-        .sum();
+    // From the daily series, which counts each execution once. A session's
+    // own figure is a window sum over the loop's whole cost vector. Nothing
+    // links a cost row to the session that spent it. So two drives running at
+    // once each count the overlap in full. Adding those figures up billed the
+    // machine twice for one dollar. Two at once is supported: the
+    // `dispatch_claims` lease table exists for it.
+    let spend: f64 = days.values().map(|d| d.spend_usd).sum();
     let lessons: i64 = days.values().map(|d| d.lessons).sum();
     let applied: i64 = days.values().map(|d| d.applied).sum();
 
@@ -1194,238 +1264,4 @@ pub fn session_detail(id: &str) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn line(at: &str, action: &str, subject: Option<&str>, outcome: &str) -> String {
-        let subj = subject.map_or("null".to_string(), |s| format!("\"{s}\""));
-        format!(
-            r#"{{"at":"{at}","run_id":"unassigned","action":"{action}","subject":{subj},"outcome":"{outcome}"}}"#
-        )
-    }
-
-    fn seed(root: &Path, slug: &str, lines: &[String], queue: Option<&str>) -> PathBuf {
-        let dir = root.join("self-driving").join(slug);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("audit.jsonl"), lines.join("\n") + "\n").unwrap();
-        std::fs::write(
-            dir.join("workspace.json"),
-            format!(r#"{{"roots":["/nowhere/{slug}"],"slug":"{slug}"}}"#),
-        )
-        .unwrap();
-        if let Some(q) = queue {
-            std::fs::write(dir.join("queue.json"), q).unwrap();
-        }
-        dir
-    }
-
-    #[test]
-    fn timestamps_in_both_dialects_parse_to_the_same_instant() {
-        assert_eq!(
-            parse_unix("2026-08-23T04:32:50Z"),
-            parse_unix("2026-08-23 04:32:50")
-        );
-        assert_eq!(parse_unix("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(parse_unix("1970-01-02T00:00:01Z"), Some(86_401));
-        assert_eq!(parse_unix("not a date"), None);
-    }
-
-    /// The journal that exists today: `run_id: "unassigned"` on every line and
-    /// no session id. Two `session_started` lines in the same second are one
-    /// launch; the next `session_started` is a new session.
-    #[test]
-    fn legacy_records_fold_into_sessions_by_session_started() {
-        let lines = [
-            line(
-                "2026-08-23T04:20:02Z",
-                "session_started",
-                None,
-                "session began — up to 10 issue(s)",
-            ),
-            line(
-                "2026-08-23T04:20:02Z",
-                "session_started",
-                None,
-                "changes will be proved here",
-            ),
-            line(
-                "2026-08-23T04:22:38Z",
-                "claimed",
-                Some("1180"),
-                "taken off the ranked queue",
-            ),
-            line(
-                "2026-08-23T04:22:40Z",
-                "work_started",
-                Some("1180"),
-                "began work — P1: drizzle mock",
-            ),
-            line(
-                "2026-08-23T04:26:28Z",
-                "session_started",
-                None,
-                "session began — up to 10 issue(s)",
-            ),
-            line(
-                "2026-08-23T04:32:43Z",
-                "claimed",
-                Some("1180"),
-                "taken off the ranked queue",
-            ),
-            line(
-                "2026-08-23T04:46:41Z",
-                "work_changed",
-                Some("1180"),
-                "the turn left changes",
-            ),
-            line(
-                "2026-08-23T04:48:04Z",
-                "pr_opened",
-                Some("1186"),
-                "opened for #1180 — ci in progress",
-            ),
-            line(
-                "2026-08-23T04:48:55Z",
-                "pr_observed",
-                Some("1186"),
-                "ci=Green -> Wait",
-            ),
-            line(
-                "2026-08-23T04:49:40Z",
-                "pr_observed",
-                Some("1186"),
-                "ci=Green -> Wait",
-            ),
-            line("2026-08-23T05:00:00Z", "pr_merged", Some("1186"), "merged"),
-            line(
-                "2026-08-23T05:00:01Z",
-                "session_stopped",
-                None,
-                "reached the bound",
-            ),
-        ];
-        let tmp = tempfile::tempdir().unwrap();
-        seed(tmp.path(), "demo", &lines, None);
-
-        let out = sessions_from(
-            &[tmp.path().join("self-driving")],
-            Path::new("/nowhere/demo"),
-            parse_unix("2026-08-23T05:01:00Z").unwrap(),
-        );
-        let s = out["sessions"].as_array().unwrap();
-        assert_eq!(s.len(), 2, "two launches, two sessions: {s:?}");
-        // Newest first.
-        assert_eq!(s[0]["status"], "stopped");
-        assert_eq!(s[0]["prs_merged"], 1);
-        assert_eq!(s[0]["claimed"], 1);
-        let issue = &s[0]["issues"][0];
-        assert_eq!(issue["number"], "1180");
-        assert_eq!(
-            issue["pr"], "1186",
-            "pr_opened's outcome links the PR to its issue"
-        );
-        assert_eq!(issue["outcome"], "merged");
-        assert_eq!(issue["polls"], 2, "pr_observed polls collapse to a count");
-        assert_eq!(issue["title"], "P1: drizzle mock");
-        // The first launch never stopped and its journal is stale.
-        assert_eq!(s[1]["status"], "lost");
-        assert_eq!(s[1]["issues"][0]["outcome"], "working");
-        assert_eq!(out["totals"]["merged"], 1);
-        assert_eq!(out["loops"][0]["is_current_workspace"], true);
-    }
-
-    /// A session-stamped journal (the writer after this change) groups by id,
-    /// and a recorded pid decides liveness rather than the journal's age.
-    #[test]
-    fn stamped_records_group_by_session_id_and_a_dead_pid_reads_crashed() {
-        let stamped = |at: &str, action: &str, sid: &str, pid: u32| {
-            format!(
-                r#"{{"at":"{at}","run_id":"{sid}","session_id":"{sid}","pid":{pid},"action":"{action}","subject":null,"outcome":""}}"#
-            )
-        };
-        // Interleaved: two drives against one repo at once.
-        let lines = [
-            stamped(
-                "2026-08-23T04:20:02Z",
-                "session_started",
-                "sd-a",
-                4_000_000_000,
-            ),
-            stamped(
-                "2026-08-23T04:20:03Z",
-                "session_started",
-                "sd-b",
-                4_000_000_001,
-            ),
-            stamped("2026-08-23T04:21:00Z", "claimed", "sd-b", 4_000_000_001),
-            stamped("2026-08-23T04:22:00Z", "claimed", "sd-a", 4_000_000_000),
-        ];
-        let tmp = tempfile::tempdir().unwrap();
-        seed(tmp.path(), "demo", &lines, None);
-        let out = sessions_from(
-            &[tmp.path().join("self-driving")],
-            Path::new("/x"),
-            parse_unix("2026-08-23T04:23:00Z").unwrap(),
-        );
-        let s = out["sessions"].as_array().unwrap();
-        assert_eq!(s.len(), 2);
-        for row in s {
-            // A pid past pid_t cannot be alive, so both read crashed even though
-            // their journals are seconds old — the pid is the witness now.
-            assert_eq!(row["status"], "crashed", "{row}");
-            assert_eq!(row["liveness"], "pid gone, no stop record");
-        }
-        assert_eq!(out["totals"]["running"], 0);
-    }
-
-    /// The queue is the loop's own snapshot, ranked, with the issues a running
-    /// session holds marked in progress.
-    #[test]
-    fn queue_snapshot_is_ranked_and_overlaid_with_live_claims() {
-        let lines = [
-            line(
-                "2026-08-23T04:20:02Z",
-                "session_started",
-                None,
-                "session began",
-            ),
-            line(
-                "2026-08-23T04:22:38Z",
-                "claimed",
-                Some("1180"),
-                "taken off the ranked queue",
-            ),
-            line(
-                "2026-08-23T04:22:40Z",
-                "work_started",
-                Some("1180"),
-                "began work — P1: x",
-            ),
-        ];
-        let queue = r#"{"at":"2026-08-23T04:22:00Z","open_total":7,"untriaged":2,
-            "items":[{"number":1180,"title":"x","rank":"P1"},{"number":1182,"title":"y","rank":"P1"},
-                     {"number":1190,"title":"z","rank":"untriaged"}]}"#;
-        let tmp = tempfile::tempdir().unwrap();
-        seed(tmp.path(), "demo", &lines, Some(queue));
-        let out = sessions_from(
-            &[tmp.path().join("self-driving")],
-            Path::new("/x"),
-            parse_unix("2026-08-23T04:23:00Z").unwrap(),
-        );
-        assert_eq!(
-            out["totals"]["running"], 1,
-            "a recent legacy journal reads running"
-        );
-        assert_eq!(out["totals"]["busy"], 1);
-        let items = out["loops"][0]["queue"]["items"].as_array().unwrap();
-        assert_eq!(items[0]["in_progress"], true);
-        assert_eq!(items[1]["in_progress"], false);
-        assert_eq!(out["queue_by_rank"]["P1"], 2);
-        assert_eq!(out["queue_by_rank"]["untriaged"], 1);
-    }
-
-    #[test]
-    fn an_unknown_session_is_an_empty_object() {
-        assert_eq!(session_detail("no-such-session"), json!({}));
-    }
-}
+mod tests;

@@ -178,7 +178,6 @@ lib.rs), never as a planning assumption.
 | [`src/tasks.rs`](src/tasks.rs) | `TaskBoard` — the transition rules behind the `task_*` tools; records `SpawnRequest`s rather than spawning. |
 | [`src/plan_graph.rs`](src/plan_graph.rs) + [`src/plan_graph/`](src/plan_graph) | `PlanGraph` — who may write a `[:NEXT]` or `[:THEN]` edge, when a revision is authored, and what counts as drift (SPEC §7.4). Approval is the only constructor; a revision is authored beside its predecessor rather than over it; `ran` refuses a task the current revision does not have, which is why every difference between the two lanes is a revision somebody recorded a reason for. Divergences are derived, never stored. |
 | [`src/mcp_usage.rs`](src/mcp_usage.rs) | The MCP usage record/ledger types, homed here so `stella-mcp` and `stella-tools` need no edge between them. |
-| [`src/context_record.rs`](src/context_record.rs) + [`src/context_record/`](src/context_record) | The adaptive-context Phase 1 value layer: taxonomy enums, scope, temporal, canonical `record_hash`, context-use, contract, outcome, representation. Types and validators only. |
 | [`src/self_tuning.rs`](src/self_tuning.rs) | The eval-driven policy selector: reward samples per opaque arm → a confident-lift `Decision` plus a reversible `RollbackRecord`. The workspace's one significance test. |
 | [`src/comparison.rs`](src/comparison.rs) + [`src/comparison/`](src/comparison) | The A/B comparison report every measurement of "is this arm better?" emits: paired per-task trials → per-arm aggregates, a guard set, and a two-bar verdict. Consumed by `loop-bench --compare` offline and by the promotion gates. |
 
@@ -300,13 +299,12 @@ system message and the latest user message are never touched.
   would swallow a message the user addressed to the parent. `ChildSteering`
   forwards the (non-destructive, latched) soft stop and returns nothing for the
   drain.
-- **`context_record` is not `stella-context`** — the module is the pure record
-  taxonomy (types, validators, hashing); the crate is the retrieval plane. It
-  *is* the type layer under the live rules path: markdown and TOML rules alike
-  are projected onto records by `records::registry`, and the legacy
-  `rules::metadata` frontmatter layer those types subsumed (ADR 0009, ratified
-  2026-07-24) has been retired. Old `.md` rule files carrying its frontmatter
-  keys keep loading; the keys are inert.
+- **The record plane is not here.** `records`, `context_record` and `ingest`
+  moved to `stella-records`, and `context_record/hash.rs` to
+  `stella_protocol::hash`. The engine reached the whole plane through one hash
+  call, which `receipts.rs` now makes against the protocol. Nothing in this
+  crate names a record type. `rules` stays: it is the markdown half the record
+  registry reads, and it depends on `glob` and `mining`, which `skills` shares.
 
 ## Testing
 

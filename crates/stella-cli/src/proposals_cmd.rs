@@ -34,7 +34,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use stella_context::{ContextStore, LedgerAppend};
-use stella_core::context_record::{
+use stella_records::context_record::{
     ContextRecordKind, DirectiveEnforcement, LIFECYCLE_SCHEMA_VERSION, PromotionAction,
     PromotionActor, PromotionEventRecord, ProposalRecord, RecordProposalKind,
 };

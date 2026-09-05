@@ -21,7 +21,7 @@ in between:
 
     host   {"point": "before_turn", "body": {...}}
  -> plugin {"call": "child_turn", "id": 1, "args": {"role": "planner", "instruction": "..."}}
- -> host   {"result": 1, "ok": {"role": "planner", "seat": "plan", "report": "...", "completed": true}}
+ -> host   {"result": 1, "ok": {"role": "planner", "seat": "research", "report": "...", "completed": true}}
  -> plugin {"point": "before_turn", "body": {"context": [...]}}   <- ends it
 
 Every table denies unknown fields, the envelope included, so this program
@@ -100,9 +100,8 @@ every time, and that is a decision, not an omission.
 
 Every way the ask can fail to produce a report — the host offers no channel
 (`unavailable`), the manifest declares no such role intent (`undeclared`),
-the role resolves to the worker's own seat (`forbidden` — not this plugin's
-case, since `planner` resolves to `ModelCallRole::Plan`, but the code path is
-shared with every other `child_turn` asker), the allowance is spent
+the seat is one no grant buys (`forbidden` — not this plugin's case, but the
+code path is shared with every other `child_turn` asker), the allowance is spent
 (`allowance-spent`), the host tried and the turn failed (`failed`), or nobody
 answered — degrades to the empty contribution rather than a fabricated plan,
 and says so on stderr. A completed child turn whose report simply does not
@@ -177,8 +176,8 @@ CHILD_TURN_OK_FIELDS = {"role", "seat", "report", "completed"}
 CHILD_TURN_ANSWER = "the child turn answer"
 
 # The `[roles.<name>]` key this plugin declares and the only role intent it
-# ever names. Resolves to `ModelCallRole::Plan` under the host's
-# `default_seats()`.
+# ever names. The word is this plugin's own. The host compares it and routes
+# the turn on it. It reads nothing into it.
 ROLE_INTENT = "planner"
 
 # The planner's fixed instruction block, copied byte-for-byte from

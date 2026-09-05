@@ -1,6 +1,6 @@
 //! The I/O half of ingest provenance lineages (#2683, first slice).
 //!
-//! [`stella_core::ingest::lineage`] decides everything — what a lineage
+//! [`stella_records::ingest::lineage`] decides everything — what a lineage
 //! remembers, when drift warrants an alert, and what dismissal means. This
 //! module supplies the three facts it cannot know:
 //!
@@ -25,7 +25,7 @@
 use std::path::Path;
 
 use colored::Colorize;
-use stella_core::ingest::lineage::{AlertState, Drift, Lineage, LineageLedger};
+use stella_records::ingest::lineage::{AlertState, Drift, Lineage, LineageLedger};
 use stella_store::{Notification, NotificationStore};
 
 /// Where the private lineage ledger lives, relative to the workspace root.

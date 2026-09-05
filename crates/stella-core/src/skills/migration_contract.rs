@@ -310,7 +310,7 @@ fn lexical_miner_counts_events_not_distinct_tasks() {
 /// because the default is the whole claim: flipping it back to `false` would let
 /// frequency alone write a `SKILL.md` from one task's repetitions, which is
 /// exactly what the distinct-task floor exists to refuse. The floor itself still
-/// belongs to the typed path — [`crate::context_record::lifecycle`]'s
+/// belongs to the typed path — `stella_records::context_record::lifecycle`'s
 /// `ProposalRecord::is_eligible` counts distinct tasks — because
 /// [`SkillObservation`] carries no task identity to count. `#5738` is where that
 /// floor is being built.

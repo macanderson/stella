@@ -14,7 +14,7 @@
 //! it is a valid argument. The tiering is a default, not a gate.
 //!
 //! The walking and reading live here; every decision about *what a document is*
-//! lives in [`stella_core::ingest`], which is pure and tested without a fixture
+//! lives in [`stella_records::ingest`], which is pure and tested without a fixture
 //! tree.
 
 use std::fs;
@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Subcommand};
 use colored::Colorize;
 
-use stella_core::ingest::lineage::AlertState;
-use stella_core::ingest::{self, Candidate, Plan, Tier};
+use stella_records::ingest::lineage::AlertState;
+use stella_records::ingest::{self, Candidate, Plan, Tier};
 
 mod chunk;
 mod extract;

@@ -222,8 +222,9 @@ impl ProposalRecord {
     /// with new evidence is a new revision rather than a silent overwrite.
     ///
     /// **The lineage is namespaced by `proposal_kind`, and it has to be.** The
-    /// skills and rules miners share `crate::mining`, so for one lesson they
-    /// derive the *same* `<slug>-<hash8>` — that is the shared module working
+    /// skills and rules miners share `stella_core::mining`, so for one lesson
+    /// they derive the *same* `<slug>-<hash8>` — that is the shared module
+    /// working
     /// as designed. But a knowledge proposal and a directive proposal for that
     /// lesson are different artifacts with different authority: one becomes a
     /// SKILL.md that informs, the other a rule that steers. Without the
