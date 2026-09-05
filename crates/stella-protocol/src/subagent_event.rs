@@ -259,6 +259,7 @@ mod tests {
             write_access: false,
             depth: 1,
             effort: None,
+            seat: None,
         };
         let json = serde_json::to_string(&started).unwrap();
         assert!(!json.contains("budget_usd"), "{json}");
