@@ -1,7 +1,7 @@
 //! The I/O half of the published-record engine: the sweep, the ledgers, and the
 //! session's registry.
 //!
-//! [`stella_core::records`] decides everything — which records load, whether a
+//! [`stella_records::records`] decides everything — which records load, whether a
 //! claim still holds, what reaches the prompt, what blocks a tool call. None of it
 //! touches a filesystem. This module supplies the three facts it cannot know:
 //!
@@ -37,11 +37,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use stella_core::ingest::record::{ProbeKind, Verdict};
-use stella_core::records::{
+use stella_core::rules::{LoadRulesOptions, RuleFile, RuleSource, rule_search_dirs};
+use stella_records::ingest::record::{ProbeKind, Verdict};
+use stella_records::records::{
     self, DecisionEvent, Facts, LoadedRecord, Registry, Trust, decision, load_context_file,
 };
-use stella_core::rules::{LoadRulesOptions, RuleFile, RuleSource, rule_search_dirs};
 
 /// Where the private sweep cache lives, relative to the workspace root.
 const SWEEP_CACHE: &str = ".stella/private/context-sweep.json";
@@ -86,12 +86,12 @@ const PROMOTION_LOCK: &str = ".stella/private/promotions.lock";
 /// held must not be softer than the ledger.
 pub(crate) fn read_governance(
     root: &Path,
-) -> Result<stella_core::records::promotion::Governance, String> {
+) -> Result<stella_records::records::promotion::Governance, String> {
     let path = root.join(GOVERNANCE_FILE);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(stella_core::records::promotion::Governance::default());
+            return Ok(stella_records::records::promotion::Governance::default());
         }
         Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
     };
@@ -130,13 +130,13 @@ pub(crate) fn separation_checked_proposer(
         .filter(|event| event.lineage_id == lineage_id && event.decision.publishes())
         .map(|event| event.actor.clone())
         .next_back();
-    if !(governance.mode == stella_core::records::promotion::GovernanceMode::Regulated
+    if !(governance.mode == stella_records::records::promotion::GovernanceMode::Regulated
         && governance.separation)
     {
         return Ok(proposer);
     }
     let events = read_promotions(root)?;
-    if !stella_core::records::promotion::blocking_grants(&events).contains_key(lineage_id) {
+    if !stella_records::records::promotion::blocking_grants(&events).contains_key(lineage_id) {
         return Ok(proposer);
     }
     match &proposer {
@@ -159,7 +159,7 @@ pub(crate) fn separation_checked_proposer(
 /// only persists an already-confirmed change.
 pub(crate) fn write_governance(
     root: &Path,
-    governance: &stella_core::records::promotion::Governance,
+    governance: &stella_records::records::promotion::Governance,
 ) -> Result<(), String> {
     let path = root.join(GOVERNANCE_FILE);
     if let Some(parent) = path.parent() {
@@ -203,20 +203,21 @@ const PROMOTION_HEAD_PIN: &str = ".stella/private/promotions-head.json";
 /// a private cache could not be updated would be worse than the gap.
 pub(crate) fn read_promotions(
     root: &Path,
-) -> Result<Vec<stella_core::records::promotion::PromotionEvent>, String> {
+) -> Result<Vec<stella_records::records::promotion::PromotionEvent>, String> {
     let (path, text) = promotion_ledger_text(root);
-    let events = stella_core::records::promotion::parse_and_verify(&text).map_err(|violation| {
-        format!(
-            "{} line {}: {}",
-            path.display(),
-            violation.line,
-            violation.reason
-        )
-    })?;
+    let events =
+        stella_records::records::promotion::parse_and_verify(&text).map_err(|violation| {
+            format!(
+                "{} line {}: {}",
+                path.display(),
+                violation.line,
+                violation.reason
+            )
+        })?;
 
     if let Some(pinned) = read_head_pin(root)
         && let Some(violation) =
-            stella_core::records::promotion::continuity_violation(&text, &pinned)
+            stella_records::records::promotion::continuity_violation(&text, &pinned)
     {
         return Err(format!(
             "{}: {}\n\
@@ -232,7 +233,7 @@ pub(crate) fn read_promotions(
 }
 
 /// What this machine last saw at the end of the ledger, if it has looked.
-fn read_head_pin(root: &Path) -> Option<stella_core::records::promotion::ChainHead> {
+fn read_head_pin(root: &Path) -> Option<stella_records::records::promotion::ChainHead> {
     let text = std::fs::read_to_string(root.join(PROMOTION_HEAD_PIN)).ok()?;
     // An unreadable pin is no pin. Failing closed here would refuse every
     // command on a corrupt private cache, which is a local artifact the user
@@ -243,7 +244,7 @@ fn read_head_pin(root: &Path) -> Option<stella_core::records::promotion::ChainHe
 
 /// Record the ledger's head as this machine's new anchor. Best-effort.
 fn write_head_pin(root: &Path, text: &str) {
-    let Some(head) = stella_core::records::promotion::head_of(text) else {
+    let Some(head) = stella_records::records::promotion::head_of(text) else {
         return;
     };
     let path = root.join(PROMOTION_HEAD_PIN);
@@ -283,18 +284,19 @@ fn write_head_pin(root: &Path, text: &str) {
 ///   reviewable ledger must not have.
 pub(crate) fn append_promotion(
     root: &Path,
-    event: stella_core::records::promotion::PromotionEvent,
+    event: stella_records::records::promotion::PromotionEvent,
 ) -> Result<u64, String> {
     let _lock = promotion_lock(root)?;
     let (path, text) = promotion_ledger_text(root);
-    let line = stella_core::records::promotion::next_line(&text, event).map_err(|violation| {
-        format!(
-            "{} line {}: {}",
-            path.display(),
-            violation.line,
-            violation.reason
-        )
-    })?;
+    let line =
+        stella_records::records::promotion::next_line(&text, event).map_err(|violation| {
+            format!(
+                "{} line {}: {}",
+                path.display(),
+                violation.line,
+                violation.reason
+            )
+        })?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
@@ -310,7 +312,7 @@ pub(crate) fn append_promotion(
     }
     appended.push_str(&line);
     appended.push('\n');
-    let events = stella_core::records::promotion::parse_and_verify(&appended)
+    let events = stella_records::records::promotion::parse_and_verify(&appended)
         .map_err(|violation| format!("ledger invalid after append: {}", violation.reason))?;
     stella_store::durable::write_atomic_preserving_mode(
         &path,
@@ -318,7 +320,7 @@ pub(crate) fn append_promotion(
         stella_store::durable::MODE_SHARED,
     )
     .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    Ok(stella_core::records::promotion::policy_version(&events))
+    Ok(stella_records::records::promotion::policy_version(&events))
 }
 
 /// Take the promotion ledger's mutation lock, held for as long as the
@@ -552,7 +554,7 @@ impl TieredFiles {
     /// Every file, tier forgotten — for the passes that only ask what is on disk.
     ///
     /// Not for the probe pass. Running a due probe asks whether a gated probe may
-    /// run, which `stella_core::records::honored_probe` answers from the tier, so
+    /// run, which `stella_records::records::honored_probe` answers from the tier, so
     /// the sweep reads `tiered` instead. Flattening there let a repository
     /// record be swept as if the user had published it.
     pub(crate) fn all(&self) -> Vec<RuleFile> {
@@ -665,12 +667,12 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
     let mut retired_lineages: BTreeSet<(Trust, String)> = BTreeSet::new();
     if let Ok(events) = read_promotions(root) {
         let repo_owned = repo_owned_lineages(files);
-        for lineage in stella_core::records::promotion::blocking_grants(&events).into_keys() {
+        for lineage in stella_records::records::promotion::blocking_grants(&events).into_keys() {
             if repo_owned.contains(&lineage) {
                 approved_blocking.insert((Trust::Project, lineage));
             }
         }
-        for lineage in stella_core::records::promotion::retired_lineages(&events) {
+        for lineage in stella_records::records::promotion::retired_lineages(&events) {
             if repo_owned.contains(&lineage) {
                 retired_lineages.insert((Trust::Project, lineage));
             }
@@ -877,7 +879,7 @@ pub(crate) fn registry_with_cache(
 /// Where a record of this sharing scope is published, as a real path.
 pub(crate) fn publication_path(
     root: &Path,
-    scope: stella_core::ingest::record::SharingScope,
+    scope: stella_records::ingest::record::SharingScope,
     lineage: &str,
 ) -> Option<PathBuf> {
     let dir = match records::publication_dir(scope) {
@@ -895,14 +897,14 @@ pub(crate) fn publication_path(
 pub(crate) fn write_record(
     path: &Path,
     set_id: &str,
-    record: &stella_core::ingest::record::Record,
+    record: &stella_records::ingest::record::Record,
 ) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
-    let file = stella_core::ingest::record::ContextFile {
-        schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
+    let file = stella_records::ingest::record::ContextFile {
+        schema: stella_records::ingest::record::SCHEMA_TAG.to_string(),
         set_id: set_id.to_string(),
         ingest_run_id: None,
         defaults: None,
@@ -942,12 +944,12 @@ pub(crate) fn write_record(
 pub(crate) fn replace_record(
     path: &Path,
     set_id: &str,
-    record: &stella_core::ingest::record::Record,
+    record: &stella_records::ingest::record::Record,
 ) -> Result<(), String> {
     replace_context_file(
         path,
-        &stella_core::ingest::record::ContextFile {
-            schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
+        &stella_records::ingest::record::ContextFile {
+            schema: stella_records::ingest::record::SCHEMA_TAG.to_string(),
             set_id: set_id.to_string(),
             ingest_run_id: None,
             defaults: None,
@@ -969,7 +971,7 @@ pub(crate) fn replace_record(
 /// reviewed one stood.
 pub(crate) fn replace_context_file(
     path: &Path,
-    file: &stella_core::ingest::record::ContextFile,
+    file: &stella_records::ingest::record::ContextFile,
 ) -> Result<(), String> {
     let body =
         toml::to_string_pretty(file).map_err(|e| format!("cannot serialize the record: {e}"))?;
@@ -1001,9 +1003,9 @@ pub(crate) fn inferred_rule_record(
     source_kind: &str,
     source_uri: &str,
     evidence_grade: Option<stella_protocol::provenance::ProvenanceGrade>,
-) -> Result<stella_core::ingest::record::Record, String> {
-    use stella_core::context_record::{Origin, RecordStatus};
-    use stella_core::ingest::record as rec;
+) -> Result<stella_records::ingest::record::Record, String> {
+    use stella_records::context_record::{Origin, RecordStatus};
+    use stella_records::ingest::record as rec;
     // A dot-prefixed workspace directory (or any set id with stray dots) would
     // put an empty segment in the lineage (`ctx..foo.bar`); normalize rather
     // than publish a malformed lineage.
@@ -1017,7 +1019,7 @@ pub(crate) fn inferred_rule_record(
     if statement.is_empty() {
         return Err("the rule statement is empty".to_string());
     }
-    if stella_core::records::validate::statement_reads_as_pasted(statement) {
+    if stella_records::records::validate::statement_reads_as_pasted(statement) {
         return Err(format!(
             "the content spans {} characters over {} lines, but a context record's statement is \
              a single sentence (`stella context validate` would flag it) — distill the wording \

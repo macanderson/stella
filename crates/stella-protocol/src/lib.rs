@@ -66,6 +66,7 @@ pub mod delivery_event;
 pub mod denial;
 pub mod error;
 pub mod event;
+pub mod hash;
 pub mod hook;
 pub mod issue;
 pub mod journal;

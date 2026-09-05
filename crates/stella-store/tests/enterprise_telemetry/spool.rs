@@ -845,6 +845,40 @@ fn repeated_corruption_keeps_only_a_bounded_diagnostic_sample() {
     }
 }
 
+/// What one claim did when two connections raced for the same row.
+///
+/// SQLite may refuse a write while a peer holds the lock. That is a lost
+/// race, not a fault, so it gets an answer of its own here.
+#[derive(Debug, PartialEq, Eq)]
+enum ClaimOutcome {
+    /// This caller leased that many rows.
+    Leased(usize),
+    /// The lock was held past the wait, so the write was refused.
+    Refused,
+}
+
+impl ClaimOutcome {
+    /// Rows this caller leased. A refused caller leased none.
+    fn leased(&self) -> usize {
+        match self {
+            Self::Leased(rows) => *rows,
+            Self::Refused => 0,
+        }
+    }
+}
+
+/// Claim once, and sort the answer into the two a race is allowed to give.
+///
+/// Only a held lock is a lost race. Every other error is still a failure,
+/// so bad data still fails the test that calls this.
+fn claim_racing(spool: &EnterpriseTelemetrySpool, owner: &str, now_ms: i64) -> ClaimOutcome {
+    match spool.claim_batch_at(SINK_A, owner, now_ms, 1_000, 1, 64 * 1024) {
+        Ok(rows) => ClaimOutcome::Leased(rows.len()),
+        Err(error) if error.is_busy() => ClaimOutcome::Refused,
+        Err(error) => panic!("{owner}: the claim failed, and not on a held lock: {error}"),
+    }
+}
+
 #[test]
 fn separate_connections_cannot_claim_the_same_event_concurrently() {
     use std::sync::{Arc, Barrier};
@@ -855,24 +889,66 @@ fn separate_connections_cannot_claim_the_same_event_concurrently() {
     let event = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(1)).unwrap();
     first.enqueue(SINK_A, &event, 1).unwrap();
     let second = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    let settling = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
     let barrier = Arc::new(Barrier::new(3));
     let a_barrier = barrier.clone();
     let a = std::thread::spawn(move || {
         a_barrier.wait();
-        first
-            .claim_batch_at(SINK_A, "a", 10, 1_000, 1, 64 * 1024)
-            .unwrap()
+        claim_racing(&first, "a", 10)
     });
     let b_barrier = barrier.clone();
     let b = std::thread::spawn(move || {
         b_barrier.wait();
-        second
-            .claim_batch_at(SINK_A, "b", 10, 1_000, 1, 64 * 1024)
-            .unwrap()
+        claim_racing(&second, "b", 10)
     });
     barrier.wait();
-    let claimed = a.join().unwrap().len() + b.join().unwrap().len();
-    assert_eq!(claimed, 1);
+    let a = a.join().unwrap();
+    let b = b.join().unwrap();
+
+    let leased = a.leased() + b.leased();
+    assert!(leased <= 1, "both connections leased the row: {a:?}, {b:?}");
+    if a != ClaimOutcome::Refused && b != ClaimOutcome::Refused {
+        assert_eq!(leased, 1, "one side must win the row: {a:?}, {b:?}");
+    }
+    if leased == 0 {
+        let settled = settling
+            .claim_batch_at(SINK_A, "settling", 20, 1_000, 1, 64 * 1024)
+            .unwrap();
+        assert_eq!(
+            settled.len(),
+            1,
+            "a refused claim must leave the row: {a:?}, {b:?}"
+        );
+    }
+}
+
+/// **The witness.** A claim refused for a held lock is a lost race, and the
+/// row it did not take is still there.
+///
+/// The lock is held here on purpose, so the refusal lands on every run and
+/// not only on a busy machine. Read that refusal as a fault and the test
+/// panics on the same `DatabaseBusy` the racing test above turns into a
+/// verdict.
+#[test]
+fn a_claim_refused_for_a_held_lock_is_a_lost_race_not_a_lost_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("enterprise-telemetry.db");
+    let spool = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    let event = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(1)).unwrap();
+    spool.enqueue(SINK_A, &event, 1).unwrap();
+
+    let holder = rusqlite::Connection::open(&path).unwrap();
+    holder
+        .busy_timeout(std::time::Duration::ZERO)
+        .expect("the holder never waits");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("hold the write lock");
+
+    assert_eq!(claim_racing(&spool, "blocked", 10), ClaimOutcome::Refused);
+
+    holder.execute_batch("COMMIT").expect("release the lock");
+    assert_eq!(claim_racing(&spool, "settled", 10), ClaimOutcome::Leased(1));
 }
 
 #[test]

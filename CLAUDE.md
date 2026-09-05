@@ -169,7 +169,10 @@
     what #4392 actually measured. Mean header length rather than comment
     share, because a pure-function crate should be comment-heavy and share
     cannot tell that from an essay. A crate with no entry is held to 12.00
-    mean lines, so a new one cannot arrive carrying essays.
+    mean lines, so a new one cannot arrive carrying essays. A move is the
+    one exception. When a file changes crates, `--update` re-bases both
+    units on the old lengths of the files they hold now, and writes those
+    entries. Both means shift, and no one wrote a word.
 - **AGENTS.md is the orientation document.** Commands, architectural
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —

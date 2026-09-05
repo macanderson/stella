@@ -2,7 +2,7 @@
 //! exercised through the commands a person actually runs.
 
 use super::*;
-use stella_core::records::{Channel, Decision, decision};
+use stella_records::records::{Channel, Decision, decision};
 
 use crate::context_records::{PROPOSALS_DIR, RULES_DIR, load_registry, read_decisions};
 use crate::query_format::QueryFormat;
@@ -133,7 +133,7 @@ fn archive_in_place(root: &Path, lineage_id: &str) {
     let mut file: ContextFile = toml::from_str(&contents).expect("parses");
     let defaults = file.defaults.clone().unwrap_or_default();
     for record in &mut file.records {
-        record.status = Some(stella_core::context_record::RecordStatus::Archived);
+        record.status = Some(stella_records::context_record::RecordStatus::Archived);
         record.supersedes_record_id = record.record_id.clone();
         record.stamp(&defaults).expect("re-stamps");
     }
@@ -241,7 +241,7 @@ fn a_declined_claim_is_withheld_from_the_next_ingest() {
     review::run_ignore(root.path(), "node-version", None, None).expect("ignore succeeds");
     let states = decision::fold(&read_decisions(root.path()));
     assert!(
-        !stella_core::records::should_repropose(
+        !stella_records::records::should_repropose(
             &states,
             "node-version-2222bbbb",
             "2026-08-01T00:00:00Z"
@@ -249,7 +249,7 @@ fn a_declined_claim_is_withheld_from_the_next_ingest() {
         "this is the fact `stella ingest` consults before offering a claim"
     );
     assert!(
-        stella_core::records::should_repropose(
+        stella_records::records::should_repropose(
             &states,
             "node-version-2222bbbb",
             "2027-01-01T00:00:00Z"
@@ -309,11 +309,10 @@ fn a_published_records_hash_verifies_on_load() {
     let registry = load_registry(root.path());
     let entry = registry.by_handle("pkg-manager").unwrap();
     assert!(
-        !entry
-            .record
-            .findings
-            .iter()
-            .any(|f| matches!(f, stella_core::records::RecordFinding::HashMismatch { .. })),
+        !entry.record.findings.iter().any(|f| matches!(
+            f,
+            stella_records::records::RecordFinding::HashMismatch { .. }
+        )),
         "publication must write a hash that recomputes: {:?}",
         entry.record.findings
     );
@@ -342,7 +341,7 @@ fn keeping_a_changed_claim_supersedes_the_published_revision() {
     let published = root
         .path()
         .join(".stella/rules/ctx.acme.web.pkg-manager.toml");
-    let old: stella_core::ingest::ContextFile =
+    let old: stella_records::ingest::ContextFile =
         toml::from_str(&std::fs::read_to_string(&published).expect("readable")).expect("parses");
     let old_id = old.records[0].record_id.clone().expect("stamped");
 
@@ -354,7 +353,7 @@ fn keeping_a_changed_claim_supersedes_the_published_revision() {
     )
     .expect("a changed claim supersedes");
 
-    let new: stella_core::ingest::ContextFile =
+    let new: stella_records::ingest::ContextFile =
         toml::from_str(&std::fs::read_to_string(&published).expect("readable")).expect("parses");
     let record = &new.records[0];
     assert_eq!(
@@ -392,7 +391,7 @@ fn keeping_a_changed_claim_supersedes_the_published_revision() {
     assert_eq!(events.len(), 1);
     assert_eq!(
         events[0].action,
-        stella_core::records::promotion::LedgerAction::Superseded
+        stella_records::records::promotion::LedgerAction::Superseded
     );
     assert!(events[0].reason.contains(&old_id), "{}", events[0].reason);
     assert!(
@@ -854,8 +853,8 @@ fn a_ledger_promotion_is_replayable_and_arms_the_guard() {
     write_guarded_project_record(root.path(), lineage);
     crate::context_records::write_governance(
         root.path(),
-        &stella_core::records::promotion::Governance {
-            mode: stella_core::records::promotion::GovernanceMode::Regulated,
+        &stella_records::records::promotion::Governance {
+            mode: stella_records::records::promotion::GovernanceMode::Regulated,
             separation: false,
         },
     )
@@ -883,7 +882,7 @@ fn a_ledger_promotion_is_replayable_and_arms_the_guard() {
     assert_eq!(events[0].reason, "measured advisory precision over 30 days");
     assert_eq!(events[0].mode, "regulated");
     assert_eq!(
-        stella_core::records::promotion::policy_version(&events),
+        stella_records::records::promotion::policy_version(&events),
         1,
         "the promotion created policy version 1"
     );
@@ -904,7 +903,7 @@ fn separation_refuses_the_authors_own_grant() {
     write_guarded_project_record(root.path(), lineage);
     // Record authorship in the decision ledger, as `stella context keep`
     // would have on the author's machine.
-    let event = stella_core::records::decision::DecisionEvent::keep(
+    let event = stella_records::records::decision::DecisionEvent::keep(
         "no-force-push-1234abcd",
         lineage,
         "author@example.test",
@@ -914,8 +913,8 @@ fn separation_refuses_the_authors_own_grant() {
     crate::context_records::append_decision(root.path(), &event).unwrap();
     crate::context_records::write_governance(
         root.path(),
-        &stella_core::records::promotion::Governance {
-            mode: stella_core::records::promotion::GovernanceMode::Regulated,
+        &stella_records::records::promotion::Governance {
+            mode: stella_records::records::promotion::GovernanceMode::Regulated,
             separation: true,
         },
     )
@@ -962,7 +961,7 @@ fn a_corrupt_governance_file_fails_closed_and_an_absent_one_stays_solo() {
     let absent = crate::context_records::read_governance(root.path()).unwrap();
     assert_eq!(
         absent.mode,
-        stella_core::records::promotion::GovernanceMode::Solo
+        stella_records::records::promotion::GovernanceMode::Solo
     );
 
     std::fs::create_dir_all(root.path().join(RULES_DIR)).unwrap();
@@ -986,7 +985,7 @@ fn separation_refuses_the_authors_own_disarm_of_a_blocking_grant() {
     let root = tempfile::tempdir().unwrap();
     let lineage = "ctx.acme.web.no-force-push";
     write_guarded_project_record(root.path(), lineage);
-    let event = stella_core::records::decision::DecisionEvent::keep(
+    let event = stella_records::records::decision::DecisionEvent::keep(
         "no-force-push-1234abcd",
         lineage,
         "author@example.test",
@@ -996,8 +995,8 @@ fn separation_refuses_the_authors_own_disarm_of_a_blocking_grant() {
     crate::context_records::append_decision(root.path(), &event).unwrap();
     crate::context_records::write_governance(
         root.path(),
-        &stella_core::records::promotion::Governance {
-            mode: stella_core::records::promotion::GovernanceMode::Regulated,
+        &stella_records::records::promotion::Governance {
+            mode: stella_records::records::promotion::GovernanceMode::Regulated,
             separation: true,
         },
     )
@@ -1054,8 +1053,8 @@ fn govern_keeps_separation_unless_told_otherwise() {
     let root = tempfile::tempdir().unwrap();
     crate::context_records::write_governance(
         root.path(),
-        &stella_core::records::promotion::Governance {
-            mode: stella_core::records::promotion::GovernanceMode::Regulated,
+        &stella_records::records::promotion::Governance {
+            mode: stella_records::records::promotion::GovernanceMode::Regulated,
             separation: true,
         },
     )
@@ -1065,7 +1064,7 @@ fn govern_keeps_separation_unless_told_otherwise() {
     let g = crate::context_records::read_governance(root.path()).unwrap();
     assert_eq!(
         g.mode,
-        stella_core::records::promotion::GovernanceMode::Team
+        stella_records::records::promotion::GovernanceMode::Team
     );
     assert!(g.separation, "an omitted flag keeps separation on");
 
@@ -1073,7 +1072,7 @@ fn govern_keeps_separation_unless_told_otherwise() {
     let g = crate::context_records::read_governance(root.path()).unwrap();
     assert_eq!(
         g.mode,
-        stella_core::records::promotion::GovernanceMode::Team
+        stella_records::records::promotion::GovernanceMode::Team
     );
     assert!(!g.separation, "an explicit false turns it off");
 }
@@ -1125,9 +1124,9 @@ fn a_tampered_promotion_ledger_fails_validate() {
 // #4264 — amending a published record's scope
 
 /// The published record's steering, read straight off the file.
-fn published_steering(root: &Path, lineage: &str) -> stella_core::ingest::record::Steering {
+fn published_steering(root: &Path, lineage: &str) -> stella_records::ingest::record::Steering {
     let path = root.join(RULES_DIR).join(format!("{lineage}.toml"));
-    let file: stella_core::ingest::ContextFile =
+    let file: stella_records::ingest::ContextFile =
         toml::from_str(&std::fs::read_to_string(&path).expect("readable")).expect("parses");
     file.records[0]
         .steering
@@ -1177,8 +1176,8 @@ fn amending_precedence_republishes_a_record_that_verifies() {
     assert!(
         entry.record.findings.iter().all(|finding| !matches!(
             finding,
-            stella_core::records::RecordFinding::HashMismatch { .. }
-                | stella_core::records::RecordFinding::IdentityStamped
+            stella_records::records::RecordFinding::HashMismatch { .. }
+                | stella_records::records::RecordFinding::IdentityStamped
         )),
         "the amended file must carry an identity that recomputes: {:?}",
         entry.record.findings
@@ -1267,7 +1266,10 @@ fn a_bare_amend_restamps_a_hand_edited_record() {
             .record
             .findings
             .iter()
-            .any(|f| matches!(f, stella_core::records::RecordFinding::HashMismatch { .. })),
+            .any(|f| matches!(
+                f,
+                stella_records::records::RecordFinding::HashMismatch { .. }
+            )),
         "the control: a hand-edit strands the stored hash"
     );
 

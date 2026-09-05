@@ -2,7 +2,7 @@
 //! the actual `git` binary — the pieces the pure core deliberately cannot see.
 
 use super::*;
-use stella_core::ingest::lineage::{AlertState, Lineage};
+use stella_records::ingest::lineage::{AlertState, Lineage};
 use stella_store::NotificationStore;
 
 fn lineage(hash: &str) -> Lineage {

@@ -2,7 +2,7 @@
 //! provably never touches a protected record.
 
 use stella_context::ContextStore;
-use stella_core::context_record::{
+use stella_records::context_record::{
     DirectiveEnforcement, PromotionAction, PromotionActor, PromotionEventRecord, SelectionHealth,
 };
 
@@ -75,9 +75,9 @@ fn given_standing(
         .append_record(stella_context::LedgerAppend {
             record_id: &event.record_id,
             lineage_id: &event.lineage_id,
-            record_kind: stella_core::context_record::ContextRecordKind::PromotionEvent.as_str(),
+            record_kind: stella_records::context_record::ContextRecordKind::PromotionEvent.as_str(),
             record_hash: &event.record_hash,
-            schema_version: stella_core::context_record::LIFECYCLE_SCHEMA_VERSION,
+            schema_version: stella_records::context_record::LIFECYCLE_SCHEMA_VERSION,
             body: &body,
             observed_at: &event.occurred_at,
             supersedes: None,
@@ -229,7 +229,7 @@ fn reaffirming_outranks_without_erasing() {
     // deleted. The standing is the latest, not the only.
     let events = store
         .records_of_kind_in_append_order(
-            stella_core::context_record::ContextRecordKind::PromotionEvent.as_str(),
+            stella_records::context_record::ContextRecordKind::PromotionEvent.as_str(),
             100,
         )
         .expect("read");
@@ -297,7 +297,7 @@ fn retirement_never_deletes_the_record() {
     // physically deletes" is a gate criterion and deserves its own assertion.
     let events = store
         .records_of_kind_in_append_order(
-            stella_core::context_record::ContextRecordKind::PromotionEvent.as_str(),
+            stella_records::context_record::ContextRecordKind::PromotionEvent.as_str(),
             100,
         )
         .expect("read");

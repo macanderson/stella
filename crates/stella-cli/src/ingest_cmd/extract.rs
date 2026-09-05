@@ -27,7 +27,7 @@
 //!
 //! The model is asked to split atomically and to surface any executable content
 //! it finds, but nothing downstream trusts that it did. Atomicity, quarantine,
-//! and probe-gating are re-decided by [`stella_core::ingest::gate`], which is
+//! and probe-gating are re-decided by [`stella_records::ingest::gate`], which is
 //! pure and cannot be talked out of a rule by a cleverly-worded document. The
 //! model's job is extraction; the gate's job is safety.
 //!
@@ -43,16 +43,16 @@ use std::path::Path;
 use colored::Colorize;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use stella_core::context_record::Origin;
-use stella_core::ingest::Tier;
-use stella_core::ingest::record::Tier as PromotionTier;
-use stella_core::ingest::{
+use stella_protocol::{
+    CompletionMessage, CompletionRequest, FinishReason, ModelCallRole, Provider,
+};
+use stella_records::context_record::Origin;
+use stella_records::ingest::Tier;
+use stella_records::ingest::record::Tier as PromotionTier;
+use stella_records::ingest::{
     AppliesTo, ContextFile, Defaults, Enforcement, EnforcementMode, Force, Probe, ProbeKind,
     Proposal, Provenance, Record, RecordKind, Refutation, Steering, Truth, TruthBasis, Verdict,
     gate,
-};
-use stella_protocol::{
-    CompletionMessage, CompletionRequest, FinishReason, ModelCallRole, Provider,
 };
 
 use super::chunk::{self, Chunk};
@@ -107,7 +107,7 @@ or \"absent\"). NEVER command_succeeds or http_ok. Omit the probe if none of the
 /// [`SYSTEM_PROMPT`], plus the closed `tasks` vocabulary spelled out.
 ///
 /// Appended rather than written into the const so the names come from
-/// [`stella_core::records::KNOWN_TASKS`], the one place they are ratified (ADR
+/// [`stella_records::records::KNOWN_TASKS`], the one place they are ratified (ADR
 /// 0012 Decision 5). A hand-written second copy here would drift the day a name
 /// is added, and the extractor would keep inventing the one that was missing.
 ///
@@ -119,7 +119,7 @@ fn system_prompt() -> String {
          The only valid values are: {}. A name outside it selects nothing while \
          still skewing how the record ranks, so omit \"tasks\" rather than \
          invent a name for a task kind this list does not have.",
-        stella_core::records::KNOWN_TASKS.join(", ")
+        stella_records::records::KNOWN_TASKS.join(", ")
     )
 }
 
@@ -208,7 +208,7 @@ pub(super) struct DocSummary {
     /// source still says, and a claim withheld as already-decided is exactly
     /// the "unchanged, keep the published record" case. Omitting withheld
     /// claims here would read every unchanged record as removed and retire it.
-    pub asserted: Vec<stella_core::ingest::AssertedClaim>,
+    pub asserted: Vec<stella_records::ingest::AssertedClaim>,
 }
 
 /// Extract every named document, writing one proposal file each.
@@ -264,7 +264,7 @@ pub(super) fn extract_all(
                 super::lineage::record_ingest(
                     root,
                     &doc.rel,
-                    stella_core::ingest::lineage::Lineage {
+                    stella_records::ingest::lineage::Lineage {
                         source_hash: super::lineage::ingested_content_hash(
                             root,
                             &doc.rel,
@@ -274,7 +274,7 @@ pub(super) fn extract_all(
                         ingested_at: observed_at.clone(),
                         ingest_run_id: ingest_run_id.clone(),
                         candidate_ids: summary.candidate_ids.clone(),
-                        alerts: stella_core::ingest::lineage::AlertState::Active,
+                        alerts: stella_records::ingest::lineage::AlertState::Active,
                     },
                     options.keep_dismissed,
                 );
@@ -378,7 +378,7 @@ async fn extract_narrated(
     // rather than a proposal — re-offering either is how a review surface teaches
     // people that reviewing accomplishes nothing.
     let decided =
-        stella_core::records::decision::fold(&crate::context_records::read_decisions(root));
+        stella_records::records::decision::fold(&crate::context_records::read_decisions(root));
 
     let mut file = ContextFile::new_ingest(set_id, ingest_run_id, defaults.clone());
     let (mut eligible, mut refuted, mut dismissed) = (0usize, 0usize, 0usize);
@@ -401,11 +401,12 @@ async fn extract_narrated(
         // is otherwise starved by this loop — can actually draw the label above.
         tokio::task::yield_now().await;
         let proposal = build_proposal(root, set_id, &defaults, observed_at, eligibility, claim);
-        asserted.push(stella_core::ingest::AssertedClaim {
+        asserted.push(stella_records::ingest::AssertedClaim {
             lineage_id: proposal.record.lineage_id.clone(),
             statement: proposal.record.statement.clone(),
         });
-        if !stella_core::records::should_repropose(&decided, &proposal.candidate_id, observed_at) {
+        if !stella_records::records::should_repropose(&decided, &proposal.candidate_id, observed_at)
+        {
             withheld += 1;
             continue;
         }
@@ -630,9 +631,9 @@ fn build_defaults(
     extracted_at: &str,
 ) -> Defaults {
     Defaults {
-        sharing_scope: Some(stella_core::ingest::SharingScope::Repository),
+        sharing_scope: Some(stella_records::ingest::SharingScope::Repository),
         origin: Some(Origin::Imported),
-        status: Some(stella_core::context_record::RecordStatus::Active),
+        status: Some(stella_records::context_record::RecordStatus::Active),
         review_every: None,
         provenance: Some(Provenance {
             source_kind: Some("document".to_string()),
@@ -1145,7 +1146,7 @@ fn report(doc: &NamedDoc, summary: &DocSummary) {
     // budget, so an ingest that mints more pinned content than the budget
     // holds is told so HERE, where the classification can still be fixed at
     // review — not discovered later as a silently thinner prefix.
-    if summary.pinned_chars > stella_core::records::CACHED_RECORD_BUDGET_CHARS {
+    if summary.pinned_chars > stella_records::records::CACHED_RECORD_BUDGET_CHARS {
         println!(
             "    {}",
             format!(
@@ -1154,7 +1155,7 @@ fn report(doc: &NamedDoc, summary: &DocSummary) {
                  be dropped from the prefix at session open. Retier or trim them in \
                  `stella context review` before keeping.",
                 summary.pinned_chars,
-                stella_core::records::CACHED_RECORD_BUDGET_CHARS
+                stella_records::records::CACHED_RECORD_BUDGET_CHARS
             )
             .yellow()
         );
@@ -1249,7 +1250,7 @@ fn promotion_tier_for(force: Force, applies_to: Option<&AppliesTo>) -> Promotion
 /// The record's scope, or `None` when it applies unconditionally.
 ///
 /// `tasks` is filtered to the ratified vocabulary
-/// ([`stella_core::records::KNOWN_TASKS`], ADR 0012 Decision 5). The extractor
+/// ([`stella_records::records::KNOWN_TASKS`], ADR 0012 Decision 5). The extractor
 /// is a model call and invented its own names for everything it saw —
 /// `add-provider`, `benchmark`, `bisect`, `pull-request` — none of which any
 /// task ever reports, so the selector matched nothing while still counting
@@ -1272,7 +1273,7 @@ fn applies_to(claim: &Claim) -> Option<AppliesTo> {
             .tasks
             .iter()
             .map(|task| task.trim().to_lowercase())
-            .filter(|task| stella_core::records::KNOWN_TASKS.contains(&task.as_str()))
+            .filter(|task| stella_records::records::KNOWN_TASKS.contains(&task.as_str()))
             .collect(),
         keywords: claim.keywords.clone(),
     };

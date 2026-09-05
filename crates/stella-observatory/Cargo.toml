@@ -15,11 +15,12 @@ publish.workspace = true
 # all, so depending on it costs none of the isolation the dev-dependency note
 # below protects — it is path arithmetic over env vars and opens nothing.
 stella-home = { path = "../stella-home" }
-# `stella_core::context_record`'s types, for the code-graph selection-health
+# `stella_records::context_record`'s types, for the code-graph selection-health
 # view (`src/context_db.rs`) — read-only, no I/O of its own from this crate's
 # side; the isolation note on the dev-dependency below is about the WRITE
-# path, which this does not touch.
-stella-core = { path = "../stella-core" }
+# path, which this does not touch. This was a `stella-core` edge until the
+# record plane left the engine; the types are the same ones.
+stella-records = { path = "../stella-records" }
 # The self-driving fold and its signal thresholds, shared rather than copied
 # (#1613). This crate carried its own `fold_runs` and `self_improvement`,
 # written when the only other implementation was shell — and the two had
