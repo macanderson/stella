@@ -1770,6 +1770,28 @@ pub async fn run_deck_session(
             }
         };
 
+        // Fired on the resolved prompt (a custom command's expansion, when
+        // there was one) — the same text about to become this turn's
+        // user message below. A deny declines the turn and returns the deck
+        // to idle exactly like a `Handled` command above; a `modify` rewrites
+        // `prompt` in place.
+        let prompt = match agent::user_prompt_submit_hook(cfg, &prompt).await {
+            Ok(prompt) => prompt,
+            Err(reason) => {
+                let _ = in_tx.send(Inbound::Event {
+                    agent: LEAD.to_string(),
+                    event: AgentEvent::Text {
+                        text: format!("prompt rejected by a UserPromptSubmit hook: {reason}"),
+                    },
+                });
+                let _ = in_tx.send(Inbound::Status {
+                    agent: LEAD.to_string(),
+                    status: AgentStatus::WaitingInput,
+                });
+                continue 'session;
+            }
+        };
+
         // A real model turn is about to run — announce the work machine-wide.
         // The first prompt names the session (`<workspace>: <prompt…>`),
         // every prompt refreshes the summary, and the phase flips to

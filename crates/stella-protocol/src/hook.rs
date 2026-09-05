@@ -44,7 +44,8 @@
 use serde::{Deserialize, Serialize};
 
 /// Lifecycle events a hook can fire on (TS: `HookEvent`, `HOOK_EVENTS`,
-/// plus the #2684 additions `Stop` and `PreCompact`).
+/// plus the #2684 additions `Stop` and `PreCompact`, and the #2836 additions
+/// `UserPromptSubmit`, `SubagentStart` and `SubagentStop`).
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HookEvent {
@@ -61,6 +62,27 @@ pub enum HookEvent {
     /// An overflow-summarization round is about to run
     /// (`driver::user_hooks`). Not tool-scoped: the matcher is ignored.
     PreCompact,
+    /// The user's prompt was submitted, before it becomes part of any turn.
+    /// Not tool-scoped: the matcher is ignored.
+    ///
+    /// Fired **host-side**, in `stella-cli`, on [`HookEvent::SessionStart`]'s
+    /// own terms: no `Engine` exists yet, so nothing here runs from
+    /// `driver::user_hooks`. A `deny` decision rejects the prompt outright,
+    /// with the hook's reason shown to the person who typed it and no turn
+    /// built at all — the permission-shaped posture `PreToolUse` already
+    /// takes, applied one step earlier. A `modify` decision may rewrite the
+    /// prompt text the turn actually runs with.
+    UserPromptSubmit,
+    /// A child turn (`stella_core::subagent`) is about to start. Not
+    /// tool-scoped, and **observe-only**: nothing here may veto or rewrite
+    /// the child, mirroring [`HookEvent::PostToolUse`]'s posture rather than
+    /// `PreToolUse`'s — the parent already decided to delegate, and this is a
+    /// subscriber's window into that decision, not a second permission gate
+    /// on it.
+    SubagentStart,
+    /// A child turn (`stella_core::subagent`) has finished, whatever the
+    /// outcome. Not tool-scoped, and cannot veto — the child already ran.
+    SubagentStop,
     /// The self-driving loop is about to work an issue, before the worktree
     /// exists and before any model call (#3599). Not tool-scoped.
     ///
@@ -169,12 +191,15 @@ impl HookEvent {
     /// case without adding it here fails this module's
     /// `every_variant_is_listed` test, which is what makes "the whole
     /// vocabulary" a value a caller can iterate instead of a set it re-types.
-    pub const ALL: [HookEvent; 24] = [
+    pub const ALL: [HookEvent; 27] = [
         HookEvent::SessionStart,
         HookEvent::PreToolUse,
         HookEvent::PostToolUse,
         HookEvent::Stop,
         HookEvent::PreCompact,
+        HookEvent::UserPromptSubmit,
+        HookEvent::SubagentStart,
+        HookEvent::SubagentStop,
         HookEvent::PreIssueWork,
         HookEvent::PostIssueWork,
         HookEvent::DriveRunStart,
@@ -206,10 +231,13 @@ impl HookEvent {
     /// Whether this event names a point **inside** a turn.
     ///
     /// The two families this enum holds, as a value rather than a paragraph.
-    /// An in-turn event is dispatched by the engine's driver and is the only
-    /// kind a plugin may be routed at; everything else is dispatched by the
-    /// self-driving loop, outside every turn, from the operator's own `hooks`
-    /// settings.
+    /// An in-turn event fires somewhere between a turn's start and its
+    /// completion and is the only kind a plugin may be routed at — most of
+    /// them from the engine's driver, `SessionStart`/`UserPromptSubmit` from
+    /// the CLI host before any `Engine` exists, and the `Subagent` pair from
+    /// `stella_core::subagent` around a child turn. Everything else is
+    /// dispatched by the self-driving loop, outside every turn, from the
+    /// operator's own `hooks` settings.
     ///
     /// A total `match` rather than a `matches!` allowlist, and that is the
     /// point: the allowlist form would silently place a new event on the
@@ -222,7 +250,10 @@ impl HookEvent {
             | HookEvent::PreToolUse
             | HookEvent::PostToolUse
             | HookEvent::Stop
-            | HookEvent::PreCompact => true,
+            | HookEvent::PreCompact
+            | HookEvent::UserPromptSubmit
+            | HookEvent::SubagentStart
+            | HookEvent::SubagentStop => true,
             HookEvent::PreIssueWork
             | HookEvent::PostIssueWork
             | HookEvent::DriveRunStart
@@ -254,6 +285,9 @@ impl HookEvent {
             HookEvent::PostToolUse => "PostToolUse",
             HookEvent::Stop => "Stop",
             HookEvent::PreCompact => "PreCompact",
+            HookEvent::UserPromptSubmit => "UserPromptSubmit",
+            HookEvent::SubagentStart => "SubagentStart",
+            HookEvent::SubagentStop => "SubagentStop",
             HookEvent::PreIssueWork => "PreIssueWork",
             HookEvent::PostIssueWork => "PostIssueWork",
             HookEvent::DriveRunStart => "DriveRunStart",
@@ -290,12 +324,15 @@ mod tests {
     /// The pinned wire strings. A rename here is a break of every shipped
     /// `.stella/settings.json` and every plugin manifest, so it has to be a
     /// considered edit to this list.
-    const WIRE_STRINGS: [&str; 24] = [
+    const WIRE_STRINGS: [&str; 27] = [
         "SessionStart",
         "PreToolUse",
         "PostToolUse",
         "Stop",
         "PreCompact",
+        "UserPromptSubmit",
+        "SubagentStart",
+        "SubagentStop",
         "PreIssueWork",
         "PostIssueWork",
         "DriveRunStart",
@@ -326,25 +363,28 @@ mod tests {
             HookEvent::PostToolUse => 2,
             HookEvent::Stop => 3,
             HookEvent::PreCompact => 4,
-            HookEvent::PreIssueWork => 5,
-            HookEvent::PostIssueWork => 6,
-            HookEvent::DriveRunStart => 7,
-            HookEvent::DriveRunEnd => 8,
-            HookEvent::DriveCycleStart => 9,
-            HookEvent::DriveCycleEnd => 10,
-            HookEvent::DriveIdle => 11,
-            HookEvent::IssueCreated => 12,
-            HookEvent::IssueClosed => 13,
-            HookEvent::IssueEscalated => 14,
-            HookEvent::PullRequestOpened => 15,
-            HookEvent::PullRequestReadyForReview => 16,
-            HookEvent::PullRequestConflicted => 17,
-            HookEvent::PullRequestMerged => 18,
-            HookEvent::ChecksFailed => 19,
-            HookEvent::BaseBroken => 20,
-            HookEvent::ChecksGreen => 21,
-            HookEvent::DriveBudgetExhausted => 22,
-            HookEvent::DriveRefused => 23,
+            HookEvent::UserPromptSubmit => 5,
+            HookEvent::SubagentStart => 6,
+            HookEvent::SubagentStop => 7,
+            HookEvent::PreIssueWork => 8,
+            HookEvent::PostIssueWork => 9,
+            HookEvent::DriveRunStart => 10,
+            HookEvent::DriveRunEnd => 11,
+            HookEvent::DriveCycleStart => 12,
+            HookEvent::DriveCycleEnd => 13,
+            HookEvent::DriveIdle => 14,
+            HookEvent::IssueCreated => 15,
+            HookEvent::IssueClosed => 16,
+            HookEvent::IssueEscalated => 17,
+            HookEvent::PullRequestOpened => 18,
+            HookEvent::PullRequestReadyForReview => 19,
+            HookEvent::PullRequestConflicted => 20,
+            HookEvent::PullRequestMerged => 21,
+            HookEvent::ChecksFailed => 22,
+            HookEvent::BaseBroken => 23,
+            HookEvent::ChecksGreen => 24,
+            HookEvent::DriveBudgetExhausted => 25,
+            HookEvent::DriveRefused => 26,
         }
     }
 
@@ -386,16 +426,17 @@ mod tests {
         }
     }
 
-    /// The two families, pinned from the outside: an in-turn event is one the
-    /// engine's driver dispatches, and every loop event — the `Issue` pair
-    /// included — sits outside a turn, which is what makes it unroutable to a
-    /// plugin.
+    /// The two families, pinned from the outside: an in-turn event is one
+    /// fired somewhere inside a turn's lifetime — the engine's driver, the
+    /// CLI host, or `stella_core::subagent` — and every loop event — the
+    /// `Issue` pair included — sits outside a turn, which is what makes it
+    /// unroutable to a plugin.
     ///
     /// Spelled as a list here rather than re-deriving [`HookEvent::in_turn`]'s
     /// match, because a test that recomputed the answer would agree with any
     /// mistake the answer contains.
     #[test]
-    fn the_in_turn_family_is_exactly_the_five_the_engine_dispatches() {
+    fn the_in_turn_family_is_exactly_the_events_the_turn_lifecycle_dispatches() {
         let in_turn: Vec<&str> = HookEvent::ALL
             .into_iter()
             .filter(|event| event.in_turn())
@@ -408,7 +449,10 @@ mod tests {
                 "PreToolUse",
                 "PostToolUse",
                 "Stop",
-                "PreCompact"
+                "PreCompact",
+                "UserPromptSubmit",
+                "SubagentStart",
+                "SubagentStop",
             ]
         );
     }

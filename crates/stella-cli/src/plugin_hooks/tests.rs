@@ -164,6 +164,44 @@ fn the_operators_hooks_run_before_a_plugins() {
     assert_eq!(owners, vec![None, Some("vera".to_string())]);
 }
 
+/// A plugin may be routed at `UserPromptSubmit`, `SubagentStart`, and
+/// `SubagentStop` too: `slot_for` names all three, so a route for each lands
+/// in the matching field rather than failing to compile or falling through
+/// to `unreachable!`.
+#[test]
+fn a_plugin_may_be_routed_at_each_2836_event() {
+    let routes = vec![
+        PluginHookRoute {
+            plugin: "vera".to_string(),
+            principal: stella_core::ports::Principal::Plugin("vera".to_string()),
+            event: HookEvent::UserPromptSubmit,
+            argv: vec!["python3".to_string()],
+            timeout_secs: 30,
+            env_allowlist: Vec::new(),
+        },
+        PluginHookRoute {
+            plugin: "vera".to_string(),
+            principal: stella_core::ports::Principal::Plugin("vera".to_string()),
+            event: HookEvent::SubagentStart,
+            argv: vec!["python3".to_string()],
+            timeout_secs: 30,
+            env_allowlist: Vec::new(),
+        },
+        PluginHookRoute {
+            plugin: "vera".to_string(),
+            principal: stella_core::ports::Principal::Plugin("vera".to_string()),
+            event: HookEvent::SubagentStop,
+            argv: vec!["python3".to_string()],
+            timeout_secs: 30,
+            env_allowlist: Vec::new(),
+        },
+    ];
+    let plane = fold_plugin_routes(None, &routes).expect("a plane with three routes");
+    assert_eq!(plane.user_prompt_submit.as_ref().map(Vec::len), Some(1));
+    assert_eq!(plane.subagent_start.as_ref().map(Vec::len), Some(1));
+    assert_eq!(plane.subagent_stop.as_ref().map(Vec::len), Some(1));
+}
+
 /// No routes means no plane, rather than an empty one: a hook-free session
 /// must carry no hooks handle at all so the engine takes its pre-hooks path.
 #[test]

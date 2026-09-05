@@ -456,16 +456,20 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "hooks.lifecycle",
-        engine_home: "stella-core hooks (PreToolUse/PostToolUse/SessionStart/Stop/PreCompact, \
-                      the #2684 stdout-decision plane in hooks::decision) and the observer-only \
-                      HookBus",
+        engine_home: "stella-core hooks (PreToolUse/PostToolUse/SessionStart/Stop/PreCompact/\
+                      UserPromptSubmit/SubagentStart/SubagentStop, the #2684 stdout-decision \
+                      plane in hooks::decision) and the observer-only HookBus",
         engine_entries: &["with_hooks", "with_bus", "with_hook_approval_route"],
         cli: SurfacePosture::Shipped {
             mechanism: "workspace hooks wired via with_session_hook_context on every driver \
                         path. SessionStart firing is a HOST obligation (#2674): the engine \
                         has no method for it — a host fires hooks::run_hooks once \
                         while it assembles the system prompt, before any Engine exists, and \
-                        owns surfacing the diagnostics the no-I/O engine cannot print",
+                        owns surfacing the diagnostics the no-I/O engine cannot print. \
+                        UserPromptSubmit is the same host obligation, one call later: \
+                        user_prompt_submit_hook fires before each turn-starting prompt is \
+                        accepted, on every surface that builds one, and folds a deny/modify \
+                        decision through the PreToolUse ladder, never through the engine",
             witness: "a_configured_session_start_hook_reaches_the_system_prompt",
         },
         api: SurfacePosture::Shipped {

@@ -52,6 +52,21 @@ pub struct HookPayload {
     /// same reason: what a hook can afford to read is the hook's call.
     #[serde(rename = "finalText", default, skip_serializing_if = "Option::is_none")]
     pub final_text: Option<String>,
+    /// Present for `UserPromptSubmit`: the prompt the user just typed,
+    /// whole — the same unclipped posture as `final_text`, before any turn
+    /// exists to clip it against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// Present for `SubagentStart` / `SubagentStop`: which child turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<HookSubAgentInfo>,
+    /// Present for `SubagentStop`: how that child's turn ended.
+    #[serde(
+        rename = "subagentResult",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subagent_result: Option<HookSubAgentResult>,
     /// Present for `PreIssueWork` / `PostIssueWork`: which issue the
     /// self-driving loop is about to work, or has just worked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,6 +110,9 @@ impl HookPayload {
             tool: None,
             tool_result: None,
             final_text: None,
+            prompt: None,
+            subagent: None,
+            subagent_result: None,
             issue: None,
             issue_outcome: None,
             run: None,
@@ -157,6 +175,35 @@ impl HookPayload {
     /// A `PreCompact` payload — the event and the workspace, nothing else.
     pub fn pre_compact(cwd: impl Into<String>) -> Self {
         Self::bare(HookEvent::PreCompact, cwd.into())
+    }
+
+    /// A `UserPromptSubmit` payload carrying the prompt the user just typed.
+    pub fn user_prompt_submit(cwd: impl Into<String>, prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: Some(prompt.into()),
+            ..Self::bare(HookEvent::UserPromptSubmit, cwd.into())
+        }
+    }
+
+    /// A `SubagentStart` payload — the child about to run.
+    pub fn subagent_start(cwd: impl Into<String>, subagent: HookSubAgentInfo) -> Self {
+        Self {
+            subagent: Some(subagent),
+            ..Self::bare(HookEvent::SubagentStart, cwd.into())
+        }
+    }
+
+    /// A `SubagentStop` payload — the same child, plus how its turn ended.
+    pub fn subagent_stop(
+        cwd: impl Into<String>,
+        subagent: HookSubAgentInfo,
+        result: HookSubAgentResult,
+    ) -> Self {
+        Self {
+            subagent: Some(subagent),
+            subagent_result: Some(result),
+            ..Self::bare(HookEvent::SubagentStop, cwd.into())
+        }
     }
 
     /// A `PreIssueWork` payload — the issue the loop is about to work.
@@ -237,6 +284,44 @@ impl HookPayload {
             ..Self::bare(event, cwd.into())
         }
     }
+}
+
+/// The child turn a `SubagentStart`/`SubagentStop` hook observes.
+///
+/// Present on both events, unlike [`HookToolInfo`]/[`HookSubAgentResult`]'s
+/// pre/post split: `agent_id` is how a subscriber pairs a `SubagentStop`
+/// back to the `SubagentStart` that opened it, so both need to carry it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HookSubAgentInfo {
+    /// Stable id for this child, unique within the parent turn — the same
+    /// identifier [`stella_protocol::SubAgentPhase::agent_id`] carries.
+    #[serde(rename = "agentId")]
+    pub agent_id: String,
+    /// The child's task, truncated for display — never the full prompt, on
+    /// the same posture as the `Started` `AgentEvent`.
+    #[serde(rename = "instructionPreview")]
+    pub instruction_preview: String,
+    /// Nesting depth: `1` for a child of the top-level turn.
+    pub depth: u8,
+}
+
+/// How a child's turn ended, for [`HookEvent::SubagentStop`].
+///
+/// Mirrors the fields of [`stella_protocol::SubAgentPhase::Finished`] a
+/// subscriber can actually act on — not `truncated`/`absorbed_messages`,
+/// which describe the parent's bookkeeping rather than the child's outcome.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HookSubAgentResult {
+    /// Whether the child reached a clean final answer, aborted at a step
+    /// boundary, or was refused before its first model call.
+    pub status: stella_protocol::SubAgentStatus,
+    /// The report handed back to the parent.
+    pub summary: String,
+    /// The child's total spend, already settled into the parent's budget.
+    #[serde(rename = "costUsd")]
+    pub cost_usd: f64,
+    /// Model calls the child made.
+    pub steps: usize,
 }
 
 /// The run a loop-lifecycle event belongs to, as a hook sees it.

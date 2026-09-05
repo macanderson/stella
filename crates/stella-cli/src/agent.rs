@@ -470,6 +470,18 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 );
                 continue;
             }
+            // Same posture as the plain-prompt branch below.
+            let goal_owned = match user_prompt_submit_hook(cfg, goal).await {
+                Ok(goal) => goal,
+                Err(reason) => {
+                    println!(
+                        "  {} prompt rejected by a UserPromptSubmit hook: {reason}\n",
+                        "✗".red()
+                    );
+                    continue;
+                }
+            };
+            let goal: &str = &goal_owned;
             println!();
             // Phase 2 (#713): carried to `run_goal_turn`, which owns the
             // event channel this turn's telemetry rides and the tool stack
@@ -558,6 +570,20 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         // reads before retiring one.
         let invoked_skill = expanded.as_mut().and_then(|e| e.skill.take());
         let input = expanded.as_ref().map_or(input, |e| e.prompt.as_str());
+        // Fired on the resolved prompt — the expanded template for a
+        // `/slug` invocation, the raw line otherwise — since that is the
+        // text about to become this turn's user message.
+        let input_owned = match user_prompt_submit_hook(cfg, input).await {
+            Ok(input) => input,
+            Err(reason) => {
+                println!(
+                    "  {} prompt rejected by a UserPromptSubmit hook: {reason}\n",
+                    "✗".red()
+                );
+                continue;
+            }
+        };
+        let input: &str = &input_owned;
 
         messages.push(crate::attachments::user_message_in(
             input,
