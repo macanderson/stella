@@ -246,9 +246,9 @@ async fn the_host_sequence_drives_the_plugin_and_the_host_runs_its_child_turn() 
     );
     assert_eq!(
         specs[0].seat.as_deref(),
-        Some("planner"),
-        "the plugin's own word both routes the turn to a model and says which \
-         job this call was"
+        Some("stella-plan/planner"),
+        "the plugin's own word, under this plugin's name, both routes the turn \
+         to a model and says which job this call was"
     );
     assert!(
         !specs[0].write_access,

@@ -53,8 +53,11 @@
 //!
 //! A role intent is a word the plugin chose. This module compares it and never
 //! reads it. Which model runs the turn comes from the user's own seat map
-//! (`stella_cli::agent::seats`), keyed on that word, so a plugin may declare a
+//! (`stella_cli::agent::seats`), keyed on that word under this plugin's name —
+//! `grader/reviewer`, never a bare `reviewer` — so a plugin may declare a
 //! `reviewer` or a `second-opinion` and be served as well as any other name.
+//! The host writes the prefix ([`stella_plugin::seat_key`]) and the plugin
+//! sends only the bare half, so no plugin can claim another's assignment.
 //!
 //! Where the *spend* is booked is a separate question, and the answer comes
 //! from [`SeatGrant`] — the manifest a human read at install.
@@ -453,14 +456,20 @@ impl<D: SubAgentDispatcher> ChildTurnPlane for ChildTurns<D> {
             // jobs, is the word below — carried as data, because a closed core
             // vocabulary cannot hold a name a plugin invented.
             role: booked_at,
-            // The plugin's OWN word for this role, passed through untouched.
-            // It is both the routing key — the user assigns a model to this
-            // name — and what the child's `sub_agent` bracket records, so a
-            // plugin can declare a role core has never heard of (a
-            // `reviewer`, a `second-opinion`) and have both the user's model
-            // choice and the trace reach it. Nothing below this line may
-            // branch on the contents.
-            seat: Some(args.role.clone()),
+            // The routing key: this plugin's name, then its own word for the
+            // role. The user assigns a model to that key in `[seats]`, and the
+            // child's `sub_agent` bracket records it, so a plugin can declare
+            // a role core has never heard of (a `reviewer`, a
+            // `second-opinion`) and have both the user's model choice and the
+            // trace reach it.
+            //
+            // The host writes the prefix and the plugin never sends one, so no
+            // plugin can spell a seat another plugin owns
+            // (`doc:roleless-core` §8.4). Sending the bare word makes a
+            // `[seats]` line unfindable: the assignment resolves, the lookup
+            // misses, and the turn runs on the session's model with no notice.
+            // Nothing below this line may branch on the contents.
+            seat: Some(stella_plugin::seat_key(&self.plugin, &args.role)),
             turn_instance: self.slot_for(taken),
             budget_usd: self.budget_usd,
             ..SubAgentSpec::read_only(
@@ -608,8 +617,9 @@ mod tests {
         assert_eq!(specs[0].role, ModelCallRole::Plugin);
         assert_eq!(
             specs[0].seat.as_deref(),
-            Some("reviewer"),
-            "the plugin's own word reaches the child, and the bracket records it"
+            Some("grader/reviewer"),
+            "the plugin's own word reaches the child under this plugin's name, which is the \
+             key the user's `[seats]` line is written with"
         );
         assert!(
             !specs[0].write_access,
@@ -645,6 +655,45 @@ mod tests {
         assert_eq!(spends[0].plugin, "grader");
         assert_eq!(spends[0].role, "reviewer");
         assert_eq!(spends[0].seat, "second-opinion");
+    }
+
+    /// **The routing witness.** The seat a child runs under carries the
+    /// plugin's own name, so the `[seats]` line a user wrote can be found.
+    ///
+    /// Two plugins declare the same bare role name and get two different
+    /// seats. Sending the bare `reviewer` from both would match neither half
+    /// of `grader/reviewer` — the only spelling the settings pane offers — and
+    /// both turns would run on the session's model with no notice.
+    #[tokio::test]
+    async fn the_seat_carries_the_plugin_name_so_two_plugins_never_share_one() {
+        let mut seen = Vec::new();
+        for plugin in ["grader", "rival"] {
+            let dispatcher = Recording::default();
+            let manifest = PluginManifest::from_toml_str(&format!(
+                "name = \"{plugin}\"\n\n[loop]\nparticipation = \"steering\"\npoints = \
+                 [\"after_turn\"]\ncalls = [\"child_turn\"]\n\n[subloop]\nstages = \
+                 [\"research\"]\n\n[roles.reviewer]\ntier = \"research\"\n"
+            ))
+            .expect("the manifest loads");
+            let plane = ChildTurns::declare(&manifest, dispatcher.clone());
+            plane
+                .child_turn(ask("reviewer"))
+                .await
+                .expect("a declared, resolvable role runs");
+            let specs = dispatcher
+                .specs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            seen.push(specs[0].seat.clone());
+        }
+        assert_eq!(
+            seen,
+            [
+                Some("grader/reviewer".to_string()),
+                Some("rival/reviewer".to_string())
+            ],
+            "the host writes the prefix, so one plugin's assignment cannot reach another's role"
+        );
     }
 
     /// `admissible`'s rule for `BeforeTurnResponse::role`, restated on the
@@ -695,8 +744,8 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(
             specs[0].seat.as_deref(),
-            Some("reviewer"),
-            "the plugin's own word is what routes the turn to a model"
+            Some("grader/reviewer"),
+            "the plugin's own word, under this plugin's name, is what routes the turn to a model"
         );
     }
 

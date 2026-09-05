@@ -739,11 +739,13 @@ async fn dispatch_candidate_turn(
     let registry = Arc::new(crate::write_dirs::registry_rooted_at(cfg, root));
     let spec = SubAgentSpec {
         role: work.seat,
-        // The plugin's own word for the role, passed through untouched —
-        // the routing key the user's seat assignment is looked up by.
-        // `role` above is the receipt label. Nothing below may branch on
-        // this string's contents.
-        seat: Some(work.role.clone()),
+        // The routing key the user's seat assignment is looked up by: this
+        // plugin's name, then its own word for the role. `role` above is the
+        // receipt label. The host writes the prefix and the plugin never
+        // sends one, so no plugin can spell a seat another plugin owns
+        // (`doc:roleless-core` §8.4). Nothing below may branch on this
+        // string's contents.
+        seat: Some(stella_plugin::seat_key(plugin, &work.role)),
         turn_instance: work.turn_instance,
         budget_usd: work.budget_usd,
         // The whole capability. Every other dispatched child in this crate

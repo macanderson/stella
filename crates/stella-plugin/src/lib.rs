@@ -116,6 +116,7 @@ mod panel;
 mod program;
 mod progressive;
 mod runtime;
+mod seat;
 mod wire;
 /// The generated description of the wrapper socket's wire contract, published
 /// under `docs/wire/` and gate-checked by `scripts/check-wire-schema.sh`.
@@ -179,6 +180,7 @@ pub use panel::{
 pub use program::{SignalValues, StageProgram};
 pub use progressive::{ProgressiveResolver, StageDecision};
 pub use runtime::{PLUGIN_DIR_PLACEHOLDER, ProcessBlock, Runtime, expand_plugin_dir};
+pub use seat::{SEAT_SEPARATOR, seat_key};
 pub use wire::{
     AfterTurnRequest, AfterTurnResponse, BeforeTurnRequest, BeforeTurnResponse, CandidateGrant,
     Continuation, Correction, EvidenceProvenance, EvidenceSet, FlipObservation, HOOK_FIELDS,

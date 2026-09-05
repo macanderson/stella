@@ -332,6 +332,10 @@ pub struct Subloop {
 /// One `[roles.<name>]` entry — a routing *intent*, never a credential or a
 /// URL. The host resolves the tier against the user's BYOK providers
 /// (parity AGENTS.md #8), soft-failing to the session default with a notice.
+///
+/// The map key is the plugin's own bare role name. The host prefixes it with
+/// the plugin's name to build the seat a user assigns a model to
+/// ([`seat_key`](crate::seat_key)), so the key here may not carry a `/`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Role {
@@ -362,6 +366,14 @@ pub struct Role {
 pub struct PluginManifest {
     /// The plugin's identity — what every grant, deck chip, and hold
     /// attribution hangs off. Non-empty.
+    ///
+    /// **This is "the plugin id" a seat key names** (`doc:roleless-core`
+    /// §8.4): the host joins it to a role name through
+    /// [`seat_key`](crate::seat_key). Not `[wrapper] id`, which a manifest may
+    /// spell differently and which only `--pipeline` matches on. This one,
+    /// because it is what a plugin is installed and removed under and what
+    /// the roster looks it up by, so a user reading a `[seats]` key can find
+    /// the plugin it names.
     pub name: String,
     /// One line for humans; shown at install consent and in `stella app
     /// list`.
@@ -553,6 +565,15 @@ impl PluginManifest {
             return Err(ManifestError::EmptyName);
         }
         crate::panel::validate_plugin_name(&self.name)?;
+        // The host builds `<plugin>/<role>` seat keys out of this name
+        // (`doc:roleless-core` §8.4, `crate::seat_key`). A `/` in either half
+        // would spell a key some other plugin owns, so each half is refused a
+        // `/` where it is written, not where the two are joined.
+        if self.name.contains(crate::SEAT_SEPARATOR) {
+            return Err(ManifestError::NameCarriesSeatSeparator {
+                name: self.name.clone(),
+            });
+        }
 
         let grant = &self.loop_grant;
         let participation = grant.participation;
@@ -799,6 +820,9 @@ impl PluginManifest {
                 return Err(ManifestError::RolesResolveNowhere);
             }
             for (name, role) in roles {
+                if name.contains(crate::SEAT_SEPARATOR) {
+                    return Err(ManifestError::RoleNameCarriesSeatSeparator { name: name.clone() });
+                }
                 if role.tier.trim().is_empty() {
                     return Err(ManifestError::EmptyRoleTier { name: name.clone() });
                 }
