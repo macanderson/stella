@@ -30,8 +30,9 @@ The YAML reading here is line-based and only correct for the shapes this
 repository's own workflow files use — a mapping `on:` block with each event
 as its own key, or the rare bare scalar/list form that cannot carry a
 `paths:` key in the first place. It is not a general YAML parser, and does
-not try to be one: `scripts/test-hermetic-guard-triggers.py` builds fixture
-workflows to prove it still fails on both.
+not try to be one: `scripts/test-guard-trigger-coverage.py` builds a fixture
+workflow in each of those two shapes and runs this guard against it, so
+neither reading is left to a claim in this docstring.
 """
 
 from __future__ import annotations

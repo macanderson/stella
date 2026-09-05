@@ -69,7 +69,7 @@ def expect(name: str, root: Path, want_rc: int, needle: str = "") -> None:
     pass_count += 1
 
 
-# ── T1  an unfiltered trigger for all three watched guards passes ───────────
+# ── T1  an unfiltered trigger for all three watched guards passes. ──────────
 root = fixture(
     "unfiltered",
     {
@@ -82,7 +82,7 @@ root = fixture(
 )
 expect("T1 an unrestricted pull_request trigger passes", root, 0)
 
-# ── T2  a paths: filter under pull_request fails ─────────────────────────────
+# ── T2  a paths: filter under pull_request fails. ────────────────────────────
 root = fixture(
     "paths_filter",
     {
@@ -100,7 +100,7 @@ expect(
     "check-prose.py: every workflow that runs it restricts",
 )
 
-# ── T3  paths-ignore: is caught the same way ─────────────────────────────────
+# ── T3  paths-ignore: is caught the same way. ────────────────────────────────
 root = fixture(
     "paths_ignore",
     {
@@ -118,7 +118,7 @@ expect(
     "check-prose.py: every workflow that runs it restricts",
 )
 
-# ── T4  one filtered copy plus one unfiltered copy still passes ─────────────
+# ── T4  one filtered copy plus one unfiltered copy still passes. ────────────
 root = fixture(
     "second_copy_saves_it",
     {
@@ -134,7 +134,7 @@ root = fixture(
 )
 expect("T4 a second unfiltered copy of the same guard still passes", root, 0)
 
-# ── T5  a workflow that never triggers on pull_request at all fails ─────────
+# ── T5  a workflow that never triggers on pull_request at all fails. ────────
 root = fixture(
     "push_only",
     {
@@ -160,7 +160,7 @@ expect(
     "no pull_request trigger",
 )
 
-# ── T6  a guard named only in a paths: filter is not counted as running ─────
+# ── T6  a guard named only in a paths: filter is not counted as running. ────
 root = fixture(
     "watched_not_run",
     {
@@ -178,7 +178,7 @@ expect(
     "check-prose.py: no workflow runs it at all.",
 )
 
-# ── T7  a guard named only in a shell comment inside a run: block is not a run
+# ── T7  a shell comment inside a run: block is not a run. ──────────────────
 root = fixture(
     "shell_comment",
     {
@@ -206,6 +206,28 @@ expect(
     1,
     "check-prose.py: no workflow runs it at all.",
 )
+
+# ── T8  the bare flow form of `on:` counts as unfiltered. ──────────────────
+# `on: [pull_request, push]` has no block to hang `paths:` on. Every case
+# above writes the mapping form, so this is the only one that reaches that
+# arm of `pull_request_is_unconditional`.
+root = fixture(
+    "flow_form",
+    {
+        "guards.yml": (
+            "name: fixture\n"
+            "on: [pull_request, push]\n"
+            "jobs:\n"
+            "  guards:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: prose\n        run: python3 ./scripts/check-prose.py\n"
+            "      - name: hue\n        run: python3 ./scripts/check-hue-separation.py\n"
+            "      - name: transcript\n        run: python3 ./scripts/check-transcript-surfaces.py\n"
+        )
+    },
+)
+expect("T8 the bare flow form of on: counts as unfiltered coverage", root, 0)
 
 print()
 print(f"test-guard-trigger-coverage: {pass_count} passed, {fail_count} failed")
