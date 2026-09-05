@@ -516,6 +516,7 @@ mod tests {
             vec![script_tool(dir.path())],
             dir.path().to_path_buf(),
             ToolPolicy::allow_all(),
+            ToolAdvertisement::Full,
             session_gate(dir.path()),
             Principal::User,
         );
@@ -590,6 +591,7 @@ mod tests {
             vec![script_tool(dir.path())],
             dir.path().to_path_buf(),
             ToolPolicy::allow_all(),
+            ToolAdvertisement::Full,
             session_gate(dir.path()),
             Principal::User,
         );
@@ -640,6 +642,7 @@ mod tests {
             Vec::new(),
             dir.path().to_path_buf(),
             policy,
+            ToolAdvertisement::Full,
             session_gate(dir.path()),
             Principal::User,
         );

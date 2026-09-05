@@ -17,12 +17,14 @@
 //! keeps its reviewed contract at the gate above. It keeps its concurrency
 //! claim. A tight budget is a cost measure. It can never wedge a turn.
 //!
-//! # The list holds still for the session
+//! # The list holds still while its inputs do
 //!
 //! It is worked out once, in [`LeanToolSet::new`], over the schemas the
 //! layer below has. The list sits ahead of the system prompt in every
-//! cache, so a list that moved between two turns of one session would make
-//! the model pay for the whole chat again.
+//! cache, so a list that moved from turn to turn would make the model pay
+//! for the whole chat again. A `/reload` that changes the budget moves it,
+//! and so does one that switches a tool off. Each costs the same one cold
+//! write, and each is an act an operator asked for.
 
 use async_trait::async_trait;
 use serde_json::Value;

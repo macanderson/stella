@@ -21,8 +21,8 @@
 //! Neither rule claims to know what helps this turn. A rank read off the
 //! prompt would move the list from turn to turn. The list sits ahead of the
 //! prompt in every cache. Moving it makes the model pay for the whole chat
-//! again. This order reads the session tool set and nothing else. So the
-//! list holds still while that set does.
+//! again. This order reads the session tool set and the budget, and nothing
+//! else. So the list holds still while those two do.
 //!
 //! # A hidden tool is not a lost tool
 //!
