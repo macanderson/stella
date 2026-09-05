@@ -67,6 +67,24 @@ make watch-core          # re-test stella-core only (fastest loop)
 make watch-lint          # re-run clippy on every save
 ```
 
+**Rustdoc, scoped to the crate you're editing.** `make gate`'s `doc-warnings`
+step runs `cargo doc -D warnings --document-private-items` over the whole
+workspace, which is what catches a `rustdoc::private_intra_doc_links` error —
+a doc comment linking a crate-private item. Neither `make guards-fast` nor a
+scoped `cargo clippy` builds docs, so neither one catches it. `CARGO_SCOPE`
+narrows the same check to the crate at hand, the same way it narrows `lint`
+and `test` above:
+
+```bash
+make doc-warnings CARGO_SCOPE="-p stella-core"
+# equivalent to:
+RUSTDOCFLAGS="-D warnings" cargo doc -p stella-core --no-deps --document-private-items
+```
+
+It compiles, so it stays a `make gate` step rather than moving into
+`make guards-fast` — CARGO_SCOPE is what makes it seconds instead of the
+full workspace.
+
 ### The gate — what every push is held to
 
 A red gate is an automatic "not yet". CI is where it runs: on the
