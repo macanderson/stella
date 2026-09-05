@@ -202,10 +202,14 @@ pub(super) fn frame_handle(frame: &RecalledFrame) -> String {
 /// runs at exactly the sum of the surviving estimates and can evict nothing —
 /// which is the migration contract (#3349: same selection, same bytes). What
 /// the pack contributes today is the union, the deterministic cross-source
-/// order, and the one drop ledger. The budget starts *binding* when the tool
-/// arm joins the plane and the per-source caps collapse into a shared one —
-/// that is a behavior change, and it is sequenced with #3033/#1856 as Phase 4
-/// of #3243, not smuggled into a refactor.
+/// order, and the one drop ledger.
+///
+/// The tool arm joined the plane in #6057, and it spends its own allowance
+/// (`stella_core::steering::tools`) rather than this one: the tools array is
+/// assembled per model call, inside the engine, while this block is rendered
+/// once before the turn opens, so there is no moment at which both costs are
+/// known and one number could bind them both. Collapsing the per-source caps
+/// into a single running total across the turn is #6110.
 pub(super) struct GatheredSteering {
     pub candidates: Vec<SteeringCandidate>,
     /// Drops the sources' own budgets already decided, from all three sources

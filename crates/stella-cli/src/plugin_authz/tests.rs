@@ -413,6 +413,7 @@ async fn a_plugin_is_refused_through_the_assembled_stack_and_the_user_is_not() {
     let refused = crate::agent::tool_stack::policy_stack_with(
         &leaf,
         stella_tools::policy::ToolPolicy::allow_all(),
+        stella_core::steering::tools::ToolAdvertisement::Full,
         gate.clone(),
         Principal::Plugin("p".into()),
     )
@@ -440,6 +441,7 @@ async fn a_plugin_is_refused_through_the_assembled_stack_and_the_user_is_not() {
     let allowed = crate::agent::tool_stack::policy_stack_with(
         &leaf,
         stella_tools::policy::ToolPolicy::allow_all(),
+        stella_core::steering::tools::ToolAdvertisement::Full,
         gate,
         Principal::User,
     )

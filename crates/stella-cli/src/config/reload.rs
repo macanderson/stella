@@ -57,6 +57,7 @@ impl Config {
             )
         };
         let tool_policy = settings.tool_policy();
+        let tool_advertisement = settings.tool_advertisement();
         let ignore_gitignore = settings.ignore_gitignore();
         let reward_policy = settings.reward_policy()?;
         let plan_review = settings.plan_review()?;
@@ -71,6 +72,7 @@ impl Config {
         self.engine_settings_trusted = engine_is_trusted;
         self.authority = settings.authority_policy;
         self.tool_policy = tool_policy;
+        self.tool_advertisement = tool_advertisement;
         self.ignore_gitignore = ignore_gitignore;
         self.reward_policy = reward_policy;
         self.plan_review = plan_review;

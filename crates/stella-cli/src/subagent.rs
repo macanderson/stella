@@ -629,7 +629,18 @@ impl SessionSubAgents {
                 // only the owned pieces it is assembled from can.
                 let base: &dyn stella_core::ports::ToolExecutor = &*tools;
                 let stacked = stack.map(|(policy, gate, principal)| {
-                    crate::agent::tool_stack::policy_stack_with(base, policy, gate, principal)
+                    // A child advertises the full surface. The session tool
+                    // allowance is resolved from a `Config` this thread does
+                    // not have, and whether a delegated child should inherit
+                    // its parent's allowance at all is a separate question.
+                    // TODO(#6111): decide it and carry the answer here.
+                    crate::agent::tool_stack::policy_stack_with(
+                        base,
+                        policy,
+                        stella_core::steering::tools::ToolAdvertisement::Full,
+                        gate,
+                        principal,
+                    )
                 });
                 let child_tools: &dyn stella_core::ports::ToolExecutor = match &stacked {
                     Some(stack) => stack,

@@ -134,6 +134,7 @@ mod subsession;
 mod term_policy;
 mod timefmt;
 mod tool_foundry;
+mod tool_lean;
 mod tool_policy;
 // The generated per-tool reference (`docs/tools/`) and the guard that fails
 // when it drifts. Test-only: it is a build-time artifact generator, not

@@ -78,6 +78,7 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
         engine_settings,
         engine_settings_trusted,
         tool_policy,
+        tool_advertisement,
         ignore_gitignore,
         reward_policy,
         plan_review,
@@ -195,6 +196,16 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
             moved: tool_policy.allows("bash") != before.tool_policy.allows("bash"),
         },
         Field {
+            name: "tool_advertisement",
+            // Reloaded for the reason `tool_policy` is. Both decide what
+            // the model is shown. An operator who edits the key and
+            // reloads must see it take. The tool list is cache prefix, so
+            // a reload that moves it costs one cold write. Switching a
+            // tool off pays the same price.
+            posture: Posture::Reloaded,
+            moved: tool_advertisement != &before.tool_advertisement,
+        },
+        Field {
             name: "ignore_gitignore",
             posture: Posture::Reloaded,
             moved: ignore_gitignore != &before.ignore_gitignore,
@@ -270,6 +281,7 @@ const EVERY_RELOADABLE_KEY: &str = r#"{
   "hooks": { "Stop": [ { "hooks": [{ "command": "stop" }] } ] },
   "agent_engine_config": { "default_model": "local/reloaded" },
   "tools": { "bash": "off" },
+  "context": { "steering": { "tools": { "lean": true } } },
   "ignore_gitignore": "off",
   "create_worktrees": "never",
   "reward": { "deterministic_weight": 2.0 },
