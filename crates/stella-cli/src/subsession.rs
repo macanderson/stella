@@ -909,17 +909,15 @@ pub(crate) fn spawn(
 /// embedded in `session` there is parsed as a path separator into a
 /// subdirectory nothing creates — so `record_checkpoint` fails, and
 /// `JournalCheckpointSink::persist`'s best-effort contract swallows that
-/// error silently. `__` is neither a filesystem nor a git-ref special
-/// character, so it is safe on both axes at once.
+/// error silently.
 ///
-/// `:` is replaced too, for the ref-name half of the same contract: every
-/// lane id this file mints carries one (`req:<n>`, `sub:<task-id>`), so
-/// this is not a defensive edge case — every lane hits both bytes, and an
-/// unsanitized key would make `bind_session` fail silently on every single
-/// one, defeating the whole feature with no visible symptom short of a kill
-/// actually losing a transcript.
+/// The shape itself is [`stella_store::work_journal::lane`]'s, not this
+/// file's: retention has to know which keys a session owns before it can drop
+/// them, and the same rule written down in two crates is the drift this
+/// repository files bugs about. What stays here is which lanes exist and what
+/// they are called.
 fn lane_journal_key(session_id: &str, lane: &str) -> String {
-    format!("{session_id}__{}", lane.replace(':', "-"))
+    stella_store::work_journal::lane::lane_key(session_id, lane)
 }
 
 /// A worker's initial messages: restored from a prior interrupted attempt on
@@ -1026,6 +1024,13 @@ async fn run_worker(
     // killed worker's transcript survives independently of the lead's, and a
     // later spawn on the SAME lane id (a task re-assigned after a crash, or
     // the Restart verb) can find it.
+    //
+    // It lives exactly as long as this deck session: nothing retires it when
+    // the lane ends, and `WorkJournal::prune` drops it with the session
+    // rather than ageing it out on a clock of its own
+    // (`stella_store::work_journal::lane`). A lane that dies and is never
+    // re-attempted therefore keeps its terminal frame for the lead to read,
+    // and stops costing anything once the session it belonged to is pruned.
     let lane_durability = crate::durability::SessionDurability::default();
     let lane_key = lane_journal_key(session_id, &spec.lane);
     if let Some(warning) =
