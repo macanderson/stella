@@ -3084,7 +3084,7 @@
           "type": "boolean"
         },
         "witness_intact": {
-          "description": "The witness-tamper check's result: `None` when no witness was armed,\n`Some(true)` when every witness artifact matched its pinned identity.\n`Some(false)` never reaches a verdict — tampering aborts the\ncandidate — so its presence here is the *stated* proof the check ran.",
+          "description": "The witness-tamper check's result: `None` when no witness was armed,\n`Some(true)` when every witness artifact matched its pinned identity,\nand `Some(false)` when one did not. A wrapper plugin's round records\nthat third case: a modified artifact refuses the flip, and the record\nhas to say which check refused it rather than read as no check at all.",
           "type": [
             "boolean",
             "null"

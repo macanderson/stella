@@ -810,9 +810,10 @@ export interface LadderSnapshot {
   verify_done_flip?: boolean;
   /**
    * The witness-tamper check's result: `None` when no witness was armed,
-   * `Some(true)` when every witness artifact matched its pinned identity.
-   * `Some(false)` never reaches a verdict — tampering aborts the
-   * candidate — so its presence here is the *stated* proof the check ran.
+   * `Some(true)` when every witness artifact matched its pinned identity,
+   * and `Some(false)` when one did not. A wrapper plugin's round records
+   * that third case: a modified artifact refuses the flip, and the record
+   * has to say which check refused it rather than read as no check at all.
    */
   witness_intact?: boolean | null;
   /**
