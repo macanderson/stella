@@ -10,10 +10,31 @@
   ],
   "driver_results": [
     {
-      "case": "ok",
+      "case": "ok/empty",
       "message": {
         "ok": {},
         "result": 1
+      }
+    },
+    {
+      "case": "ok/backlog",
+      "message": {
+        "ok": {
+          "backlog": {
+            "issues": [
+              {
+                "key": "1234",
+                "labels": [
+                  "bug",
+                  "P1"
+                ],
+                "title": "the queue is read over a port",
+                "url": "https://example.invalid/1234"
+              }
+            ]
+          }
+        },
+        "result": 4
       }
     },
     {
@@ -30,7 +51,7 @@
       "case": "err/unsupported",
       "message": {
         "err": {
-          "detail": "B0 serves no capability yet",
+          "detail": "this host does not perform \"work_start\" yet",
           "refusal": "unsupported"
         },
         "result": 3

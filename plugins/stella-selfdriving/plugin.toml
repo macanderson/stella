@@ -2,18 +2,15 @@
 #
 # `doc:pipeline-as-plugins` §10 settles what this is: self-driving is a HOST,
 # not a wrapper (option 2). It does not participate in a turn; it DRIVES
-# Stella from outside, calling the verbs `stella self-driving surface`
-# declares, exactly as `scripts/self-driving.sh` already does (#1548). That is
-# why `[loop] participation` is `none` below and why there is no `[runtime]`,
-# no `[oracle]` and no `[wrapper]`: none of them would be true. Stella never
-# starts this program — a person does, and then it starts Stella.
+# Stella from outside. That is why `[loop] participation` is `none` below and
+# why there is no `[runtime]`, no `[oracle]` and no `[wrapper]`: none of them
+# would be true.
 #
-# Stella CAN start a driver, since #3783: a `[driver.process]` block names the
-# program and `stella plugin drive <name>` opens one session against it. This
-# package still declares none, because there is no program here to name — see
-# WHAT THIS FILE IS NOT below. The absence is now itself disclosed at install
-# ("is not started by Stella"), so a reader can tell this declaration from a
-# driver the host will spawn.
+# Stella starts it. `[driver.process]` at the foot of this file names
+# `main.py`, and `stella plugin drive stella-selfdriving` opens one session
+# against it (#3783, #6063). The program asks for the capabilities listed in
+# `[driver] calls` and gets exactly those; anything else comes back refused,
+# and Stella performs what it does serve as this plugin rather than as you.
 #
 # WHAT THIS FILE IS FOR. The run playbook's D-3 settles the authority
 # question: making the loop a plugin RELOCATES the authority it already holds
@@ -28,20 +25,22 @@
 # terminal attached it prints the same text and refuses rather than assuming
 # an answer.
 #
-# WHAT THIS FILE IS NOT. It is not the extraction. `scripts/self-driving.sh`
-# is still the working driver and is deliberately untouched — §10's rule is
-# that the shell driver is not deleted until its replacement is proven, and no
-# replacement has been written. So installing this copies a declaration and a
-# README, and starts nothing.
+# WHAT THIS FILE IS NOT. It is not the whole extraction yet.
+# `scripts/self-driving.sh` is still the working driver and is deliberately
+# untouched — §10's rule is that the shell driver is not deleted until its
+# replacement is proven, and `main.py` gets as far as reading the ranked queue
+# and asking to claim the top of it. Everything after that is still the shell
+# script's, running as you.
 #
 # WHAT THE HOST NOW DOES WITH THIS LIST. Installing it builds a rule from it.
 # The loader turns each entry below into an `AuthzGate` rule
 # (`crates/stella-cli/src/plugin_authz.rs`, bound by `agent/tool_stack.rs`'s
 # `session_gate`), so a tool call Stella attributes to this plugin is refused
-# unless this list allows it, at a grade this list allows. That rule is built
-# and never asked, because Stella starts no program here and so attributes
-# nothing to this plugin. `scripts/self-driving.sh` runs as you and holds these
-# powers directly. Read the capability list as "what this loop does to your
+# unless this list allows it, at a grade this list allows. The rule is asked:
+# when `main.py` asks Stella to read the tracker, Stella checks this list for
+# `bash` — the capability that shells out to `gh` — as
+# `Principal::Plugin("stella-selfdriving")`, and refuses the read if the list
+# does not carry it. Read the capability list as "what this loop does to your
 # machine today, written down", because that is exactly what it is.
 #
 # The grades below are read off `scripts/self-driving.sh` itself, and
@@ -114,12 +113,13 @@ scope = [
 # in-turn influence: `participation = "none"` above stays the honest answer,
 # because this plugin still never runs inside a turn. It starts them.
 #
-# NOTHING BELOW IS SERVED YET. B0 is the channel; the capabilities land in
-# B1-B6, and until each one does, asking for it returns `unsupported` and the
-# loop degrades rather than dying. Declaring them here now is deliberate — a
-# grant is a consent document, and a user should read the whole shape of what
-# this loop will be permitted to do before any of it works, not discover it
-# one silent widening at a time.
+# ONE OF THESE IS SERVED. `backlog_next` reads the tracker through the same
+# `IssueProvider` port the `stella self-driving` verbs use. Every other verb
+# below returns `unsupported` until the phase that builds it lands, and the
+# loop degrades rather than dying. They are all declared now because a grant is
+# a consent document: a user should read the whole shape of what this loop will
+# be permitted to do before any of it works, rather than discover it one silent
+# widening at a time.
 #
 # WHAT IS DELIBERATELY ABSENT, and why each is a decision rather than an
 # oversight:
@@ -180,3 +180,23 @@ calls = [
   "curate_propose",
   "curate_list",
 ]
+
+# How Stella starts the program. A list, never a shell string; `${plugin_dir}`
+# interpolation is the host's job.
+#
+# `[driver.process]` rather than `[runtime]`, because the two are different
+# consents: `[runtime]` is the process a plugin is INSIDE a turn, and the
+# manifest refuses it below `participation = "observer"`. A driver is never
+# invoked inside a turn by construction, so `none` above stays the right grade
+# and this block is where its process is named.
+[driver.process]
+argv = ["python3", "${plugin_dir}/main.py"]
+# One session is a decision, not a cycle of work: the program reads the queue,
+# asks, and says what should happen next. A minute is a backstop against a
+# child that hangs before writing anything, not a work budget.
+timeout_secs = 60
+# Default-deny, and `PATH` is the whole list — it is here so the host can find
+# `python3`. This program reaches for no file, no forge token and no provider
+# key: everything it needs, it asks for above, and the socket withholds a model
+# credential from every child the host spawns whatever a manifest asks for.
+env = ["PATH"]

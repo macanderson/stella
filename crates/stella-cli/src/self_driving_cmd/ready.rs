@@ -51,8 +51,31 @@ pub(super) fn ready_full(
     cfg: &LoopConfig,
 ) -> Result<Vec<stella_protocol::issue::Issue>, String> {
     let issues = open_page(provider)?;
-    let ready = fold_ready(&issues, cfg);
-    Ok(ready
+    Ok(join_records(&issues, &fold_ready(&issues, cfg)))
+}
+
+/// [`ready_full`], for a caller that already holds a runtime.
+///
+/// The driver channel's `backlog_next` is one. It is served inside the
+/// runtime the driver session runs on. A nested `block_on` panics there.
+///
+/// Same read, same page cap, same fold. This one builds no runtime.
+/// [`ready_full`] wraps it and blocks.
+pub(crate) async fn ready_full_async(
+    provider: &dyn IssueProvider,
+    cfg: &LoopConfig,
+) -> Result<Vec<stella_protocol::issue::Issue>, String> {
+    let issues = read_open_page(provider).await?;
+    Ok(join_records(&issues, &fold_ready(&issues, cfg)))
+}
+
+/// The ready numbers, joined back to the records of the read that judged
+/// them. So one read's order can never meet another read's body.
+fn join_records(
+    issues: &[stella_protocol::issue::Issue],
+    ready: &[stella_autonomy::QueueIssue],
+) -> Vec<stella_protocol::issue::Issue> {
+    ready
         .iter()
         .filter_map(|queued| {
             issues
@@ -60,17 +83,25 @@ pub(super) fn ready_full(
                 .find(|issue| issue.key.as_str() == queued.number.to_string())
                 .cloned()
         })
-        .collect())
+        .collect()
 }
 
-/// One bounded read of the open set — the truncation refusal above.
+/// One bounded read of the open set, with the cap above.
 fn open_page(provider: &dyn IssueProvider) -> Result<Vec<stella_protocol::issue::Issue>, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
-    let issues = runtime
-        .block_on(provider.list_open(super::backlog::QUEUE_READ_LIMIT))
+    runtime.block_on(read_open_page(provider))
+}
+
+/// The read itself, and the ceiling that governs it.
+async fn read_open_page(
+    provider: &dyn IssueProvider,
+) -> Result<Vec<stella_protocol::issue::Issue>, String> {
+    let issues = provider
+        .list_open(super::backlog::QUEUE_READ_LIMIT)
+        .await
         .map_err(|error| error.to_string())?;
     if issues.len() >= super::backlog::QUEUE_READ_LIMIT {
         return Err(format!(
