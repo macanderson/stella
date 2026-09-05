@@ -144,9 +144,9 @@ def read_session(stdin):
 def queue_of(ok):
     """The issues a served `backlog_next` answered with.
 
-    An answer with no `backlog` member is a host that performed the call and
-    reported nothing, which is a different fact from an empty queue — both read
-    as "no work" here, and the caller says which it saw.
+    An answer with no `backlog` member is a host that did the call and reported
+    nothing. That is a different fact from an empty queue, and a later cycle
+    may want to tell them apart. Both mean "no work to take" here.
     """
     page = (ok or {}).get("backlog") or {}
     return page.get("issues") or []
