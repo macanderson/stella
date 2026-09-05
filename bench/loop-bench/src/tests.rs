@@ -196,6 +196,9 @@ fn a_retryable_warning_is_not_a_terminal_event() {
 /// #611: the engine's own loop detector firing on a non-pass is the
 /// `STUCK-LOOP` verdict, and it gates red — a run that burns its budget
 /// cycling the same two tools must not report `ran (unsolved)` and exit 0.
+///
+/// These events state no outcome, which counts as an abort: a stream that
+/// does not say the turn recovered is not evidence that it did.
 #[test]
 fn a_detected_loop_on_a_non_pass_is_stuck_and_gates_red() {
     let stream = ev(&[
@@ -214,6 +217,70 @@ fn a_detected_loop_on_a_non_pass_is_stuck_and_gates_red() {
     solved.reward = Some(1.0);
     assert_eq!(solved.loop_verdict(), "solved");
     assert!(!solved.loop_broken());
+}
+
+/// A warning the turn survived is not a stuck loop. The engine emits
+/// `loop_detected` with `aborted: false` when it steers the model and lets the
+/// turn run on; the abort carries `aborted: true`. Only the abort gates.
+#[test]
+fn a_steer_the_turn_survived_is_not_a_stuck_loop() {
+    let steered = ev(&[
+        r#"{"type":"tool_start","call":{"name":"bash"}}"#,
+        r#"{"type":"loop_detected","kind":"exact_repeat","repeats":3,"aborted":false}"#,
+        r#"{"type":"tool_start","call":{"name":"edit_file"}}"#,
+    ]);
+    let r = distill_events("steered", &steered);
+    assert_eq!(
+        (r.loop_detected, r.loop_aborted, r.loop_steered()),
+        (1, 0, 1)
+    );
+    assert_eq!(
+        r.loop_verdict(),
+        "ran (unsolved)",
+        "the engine warned and the turn went on doing work"
+    );
+    assert!(!r.loop_broken());
+
+    // The second detection ends the turn, and that is the gate.
+    let aborted = ev(&[
+        r#"{"type":"tool_start","call":{"name":"bash"}}"#,
+        r#"{"type":"loop_detected","kind":"exact_repeat","repeats":3,"aborted":false}"#,
+        r#"{"type":"loop_detected","kind":"exact_repeat","repeats":3,"aborted":true}"#,
+    ]);
+    let a = distill_events("aborted", &aborted);
+    assert_eq!(
+        (a.loop_detected, a.loop_aborted, a.loop_steered()),
+        (2, 1, 1)
+    );
+    assert_eq!(a.loop_verdict(), "STUCK-LOOP");
+    assert!(a.loop_broken());
+}
+
+/// The trial that held `nightly-bench` red, replayed from its own stream.
+///
+/// This is the `loop_detected` line out of `events/overfull-hbox__82dbB8w.jsonl`
+/// in artifact `loop-bench-33387694069`, with the tool calls either side of it
+/// standing in for the 136 the trial made. One warning, obeyed, then a turn
+/// that worked until harbor's 750-second ceiling killed it — which the row
+/// reports as the crash it was.
+#[test]
+fn the_nightly_trial_that_obeyed_its_warning_is_not_stuck() {
+    let stream = ev(&[
+        r#"{"type":"tool_start","call":{"name":"bash","input":{"command":"grep -E \"sensitivity|knowledge\" synonyms.txt"}}}"#,
+        r#"{"type":"loop_detected","turn_instance":0,"kind":"exact_repeat","pattern":["bash"],"repeats":3,"evidence":"the same `bash` call with identical arguments repeated 3 times consecutively","aborted":false}"#,
+        r#"{"type":"tool_start","call":{"name":"bash","input":{"command":"grep -i \"parent\" synonyms.txt"}}}"#,
+        r#"{"type":"tool_start","call":{"name":"edit_file","input":{"path":"input.tex"}}}"#,
+    ]);
+    let mut r = distill_events("overfull-hbox", &stream);
+    r.reward = Some(0.0);
+    r.crash = Some("AgentTimeoutError: Agent execution timed out after 750.0 seconds".into());
+    assert_eq!(r.loop_steered(), 1);
+    assert_eq!(
+        r.loop_verdict(),
+        "CRASHED",
+        "the wall clock ended this trial; the warning did not"
+    );
+    assert!(!r.loop_broken(), "a harbor timeout is not a loop defect");
 }
 
 /// #611: the harness's own cost cap stopping the turn is `BUDGET-CAP`,
