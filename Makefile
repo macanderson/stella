@@ -954,6 +954,16 @@ dependabot-pip-dirs: ## Assert every pip directory: in .github/dependabot.yml ho
 dependabot-pip-dirs-test: ## Test the dependabot pip-directory guard (hermetic; not part of `gate`)
 	./scripts/test-dependabot-pip-dirs.sh
 
+# The same shape as main-canary, scoped to one fact: did CodeQL's analyze job
+# pass or fail. A job in codeql.yml runs scripts/codeql-canary.sh directly
+# with --announce and the job's own conclusion, so a sustained red opens a
+# labelled issue instead of running silently. There is nothing for a local
+# "ask" target to check — the conclusion is not this repository's to derive,
+# only the CI job's — so only the test suite gets a target.
+.PHONY: codeql-canary-test
+codeql-canary-test: ## Test the CodeQL canary, announcing included (hermetic; not part of `gate`)
+	./scripts/test-codeql-canary.sh
+
 .PHONY: check
 check: $(CHECK_STEPS) ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy (default and schema features), no rustdoc and no tests
 	@./scripts/check-hooks-installed.sh
