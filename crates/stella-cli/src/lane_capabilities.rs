@@ -14,10 +14,8 @@
 //! every other one, and a report keyed by lane then has nothing to show.
 //!
 //! Each function below answers every seam. Every literal is written out in
-//! full. So a new slot on
-//! [`TurnCapabilities`](stella_core::TurnCapabilities) breaks this file until
-//! someone picks an answer for each lane. That is why the type has no
-//! `Default`.
+//! full. So a new slot on [`TurnCapabilities`] breaks this file until someone
+//! picks an answer for each lane. That is why the type has no `Default`.
 //!
 //! **One file, not four call sites.** Side by side, the four are easy to
 //! compare. And `subsession.rs` and `fleet_cmd.rs` both sit near the
