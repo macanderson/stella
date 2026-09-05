@@ -88,6 +88,16 @@ pub struct ScoredName {
 /// `PATH_TERM_WEIGHT` and for the same reason — the two rungs answer the
 /// same question against different haystacks, and a reader comparing their
 /// answers should not have to hold two different weightings in mind.
+///
+/// MEASURED: 2026-09-04, 32 labelled queries
+/// (`crates/stella-tools/tests/fixtures/name_rung_queries.jsonl`) over the
+/// 1,761-file frozen corpus, every one of the 480 settings of the four
+/// constants below. Holding the other three at the values here, this weight
+/// scores 11, 11, 10, 10, 9, 8 top hits for the values 1 to 6, and 16, 17,
+/// 16, 15, 15, 15 answers inside the top three. Averaged over the other
+/// three, 2 leads — and that lead **reverses** between the first 11 queries
+/// and the last 21, so the corpus cannot tell 2 from 3.
+/// `crates/stella-tools/tests/name_rung_calibration.rs` runs the sweep.
 const BASENAME_WEIGHT: u64 = 3;
 
 /// A term found in a **directory** component is worth this many found in the
@@ -96,6 +106,10 @@ const BASENAME_WEIGHT: u64 = 3;
 /// Lower than [`BASENAME_WEIGHT`] on purpose: `crates/stella-model/` says
 /// this file is somewhere in the model crate, which is a category rather
 /// than a claim, and every one of that crate's files makes it equally.
+///
+/// MEASURED: the same sweep. Holding the other three, the values 0 to 3 all
+/// score 10 top hits, and 15, 16, 16, 17 answers inside the top three. One
+/// query across the whole range is the weakest signal of the four axes.
 const DIRECTORY_WEIGHT: u64 = 1;
 
 /// The shortest stem that may match by prefix rather than by equality.
@@ -104,6 +118,11 @@ const DIRECTORY_WEIGHT: u64 = 1;
 /// `login`, and neither is what someone searching for logging meant. Four is
 /// also the floor the stemmer honours, so a suffix is never stripped down to
 /// a fragment that would then match half the tree.
+///
+/// MEASURED: the same sweep. Holding the other three, the values 3 to 6
+/// score 11, 10, 9, 9 top hits and 15, 16, 14, 14 answers inside the top
+/// three. Three and four are one query apart in each direction; five and six
+/// lose two.
 const MIN_PREFIX_STEM: usize = 4;
 
 /// How much of a word a prefix match is allowed to leave unexplained.
@@ -114,7 +133,51 @@ const MIN_PREFIX_STEM: usize = 4;
 /// simply different words: `path` is a prefix of `pathological` and `work` of
 /// `workspace`, and reading either as a match is exactly the incidental hit
 /// this rung is being fixed to stop making.
+///
+/// MEASURED: the same sweep. Holding the other three, the values 1 to 5 all
+/// score 10 top hits, and 16, 15, 16, 16, 16 answers inside the top three.
+/// The corpus reads this axis as flat, so the argument above is what sets
+/// it: a tail of three covers `compact` against `compaction`, and a tail of
+/// four would let `work` reach `workspace`.
 const MAX_PREFIX_TAIL: usize = 3;
+
+/// The four numbers that decide what a name match is worth.
+///
+/// A `const` cannot be moved by a test, so a sweep over these values had
+/// nowhere to live and the four numbers went unmeasured for as long as the
+/// rung existed. Passing them in makes the sweep a test rather than an
+/// argument: [`rank`] fixes them at [`Weights::SHIPPED`] and every caller in
+/// the tool goes through it, while
+/// `crates/stella-tools/tests/name_rung_calibration.rs` walks the grid.
+///
+/// What the sweep found is in each constant's own marker above, and the
+/// short form is that none of the four separates from its neighbours. The
+/// shipped set scores 10 top hits and 16 answers inside the top three out of
+/// 32; the best of all 480 settings scores 13 and 17, a gap a paired sign
+/// test puts at p = 0.375; and a set picked on half the queries does worse
+/// than the shipped one on the other half in three of the four arms. So the
+/// values stay where they are, and the eval is the record of why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Weights {
+    /// Credit for a term in the file's own name (`BASENAME_WEIGHT`).
+    pub basename: u64,
+    /// Credit for a term in a directory above it (`DIRECTORY_WEIGHT`).
+    pub directory: u64,
+    /// Shortest stem allowed to match by prefix (`MIN_PREFIX_STEM`).
+    pub min_prefix_stem: usize,
+    /// Longest tail a prefix match may leave (`MAX_PREFIX_TAIL`).
+    pub max_prefix_tail: usize,
+}
+
+impl Weights {
+    /// What the tool runs with. Every path through [`rank`] uses these.
+    pub const SHIPPED: Weights = Weights {
+        basename: BASENAME_WEIGHT,
+        directory: DIRECTORY_WEIGHT,
+        min_prefix_stem: MIN_PREFIX_STEM,
+        max_prefix_tail: MAX_PREFIX_TAIL,
+    };
+}
 
 /// English function words that carry no signal in a path or a symbol name.
 ///
@@ -163,7 +226,18 @@ pub fn terms_of(query: &str) -> Vec<String> {
 /// stopword list and the length floor — the part that decides what is worth
 /// searching for — and differ only in the normalisation each haystack needs.
 pub fn stems_of(query: &str) -> Vec<String> {
-    let mut stems: Vec<String> = terms_of(query).iter().map(|term| stem(term)).collect();
+    stems_of_with(query, Weights::SHIPPED)
+}
+
+/// [`stems_of`] under a chosen set of weights, for the calibration sweep.
+///
+/// Only [`Weights::min_prefix_stem`] reaches the stemmer, so this differs
+/// from [`stems_of`] only when that value does.
+pub fn stems_of_with(query: &str, weights: Weights) -> Vec<String> {
+    let mut stems: Vec<String> = terms_of(query)
+        .iter()
+        .map(|term| stem(term, weights))
+        .collect();
     stems.sort();
     stems.dedup();
     stems
@@ -183,18 +257,18 @@ pub fn stems_of(query: &str) -> Vec<String> {
 /// not English prose, a full stemmer would pull in a dependency for the
 /// three suffixes that actually occur in queries, and every extra rule is
 /// another way for two unrelated words to collide.
-fn stem(word: &str) -> String {
+fn stem(word: &str, weights: Weights) -> String {
     const SUFFIXES: [&str; 4] = ["ing", "ed", "es", "s"];
     let mut base = word;
     for suffix in SUFFIXES {
         if let Some(shorter) = word.strip_suffix(suffix)
-            && shorter.chars().count() >= MIN_PREFIX_STEM
+            && shorter.chars().count() >= weights.min_prefix_stem
         {
             base = shorter;
             break;
         }
     }
-    if base.chars().count() >= MIN_PREFIX_STEM
+    if base.chars().count() >= weights.min_prefix_stem
         && let Some(without_y) = base.strip_suffix('y')
     {
         return format!("{without_y}i");
@@ -209,12 +283,12 @@ fn stem(word: &str) -> String {
 /// `stream-fallback-posture` all yield the same three units. An acronym run
 /// keeps its shape until the word that follows it starts: `HTTPServer` is
 /// `http` + `server`, not `h` + `t` + `t` + `p` + `server`.
-fn push_units(text: &str, out: &mut Vec<String>) {
+fn push_units(text: &str, weights: Weights, out: &mut Vec<String>) {
     let chars: Vec<char> = text.chars().collect();
     let mut current = String::new();
     for (index, &ch) in chars.iter().enumerate() {
         if !ch.is_alphanumeric() {
-            flush(&mut current, out);
+            flush(&mut current, weights, out);
             continue;
         }
         let previous = index.checked_sub(1).and_then(|before| chars.get(before));
@@ -226,17 +300,17 @@ fn push_units(text: &str, out: &mut Vec<String>) {
                         && chars.get(index + 1).is_some_and(|next| next.is_lowercase())))
         });
         if starts_word {
-            flush(&mut current, out);
+            flush(&mut current, weights, out);
         }
         current.push(ch);
     }
-    flush(&mut current, out);
+    flush(&mut current, weights, out);
 }
 
 /// Move `current` into `out` as a lowercased stem, leaving it empty.
-fn flush(current: &mut String, out: &mut Vec<String>) {
+fn flush(current: &mut String, weights: Weights, out: &mut Vec<String>) {
     if !current.is_empty() {
-        out.push(stem(&current.to_lowercase()));
+        out.push(stem(&current.to_lowercase(), weights));
         current.clear();
     }
 }
@@ -250,10 +324,10 @@ fn flush(current: &mut String, out: &mut Vec<String>) {
 /// guards the shorter string against [`MIN_PREFIX_STEM`] and the longer one
 /// against [`MAX_PREFIX_TAIL`], so a match is a word and its inflections and
 /// never a word that merely starts the same way.
-fn matches(stem: &str, units: &[String]) -> bool {
+fn matches(stem: &str, units: &[String], weights: Weights) -> bool {
     units
         .iter()
-        .any(|unit| unit == stem || extends(unit, stem) || extends(stem, unit))
+        .any(|unit| unit == stem || extends(unit, stem, weights) || extends(stem, unit, weights))
 }
 
 /// Whether `longer` is `shorter` plus a non-empty, at-most-inflectional tail.
@@ -261,11 +335,12 @@ fn matches(stem: &str, units: &[String]) -> bool {
 /// Equality is handled by its caller, so this never has to decide whether a
 /// three-character term equals itself — the length floor here is only ever
 /// asked about a genuine prefix.
-fn extends(longer: &str, shorter: &str) -> bool {
+fn extends(longer: &str, shorter: &str, weights: Weights) -> bool {
     let Some(tail) = longer.strip_prefix(shorter) else {
         return false;
     };
-    shorter.chars().count() >= MIN_PREFIX_STEM && tail.chars().count() <= MAX_PREFIX_TAIL
+    shorter.chars().count() >= weights.min_prefix_stem
+        && tail.chars().count() <= weights.max_prefix_tail
 }
 
 /// How much a term is worth for matching in a corpus where `hits` of
@@ -308,15 +383,15 @@ struct FileUnits {
 
 impl FileUnits {
     /// Split one indexed file into its word units.
-    fn of(file: &IndexedNames) -> FileUnits {
+    fn of(file: &IndexedNames, weights: Weights) -> FileUnits {
         let (directories, basename) = match file.path.rsplit_once('/') {
             Some((above, name)) => (above, name),
             None => ("", file.path.as_str()),
         };
         let mut basename_units = Vec::new();
-        push_units(basename, &mut basename_units);
+        push_units(basename, weights, &mut basename_units);
         let mut directory_units = Vec::new();
-        push_units(directories, &mut directory_units);
+        push_units(directories, weights, &mut directory_units);
         FileUnits {
             basename: basename_units,
             directories: directory_units,
@@ -325,7 +400,7 @@ impl FileUnits {
                 .iter()
                 .map(|symbol| {
                     let mut units = Vec::new();
-                    push_units(symbol, &mut units);
+                    push_units(symbol, weights, &mut units);
                     units
                 })
                 .collect(),
@@ -334,26 +409,29 @@ impl FileUnits {
 
     /// Whether this file contains `stem` anywhere at all — the question
     /// [`rarity_weight`] counts over the corpus.
-    fn contains(&self, stem: &str) -> bool {
-        matches(stem, &self.basename)
-            || matches(stem, &self.directories)
-            || self.symbols.iter().any(|symbol| matches(stem, symbol))
+    fn contains(&self, stem: &str, weights: Weights) -> bool {
+        matches(stem, &self.basename, weights)
+            || matches(stem, &self.directories, weights)
+            || self
+                .symbols
+                .iter()
+                .any(|symbol| matches(stem, symbol, weights))
     }
 
     /// This file's unweighted credit for one term: the weighted count of
     /// where it appears, before rarity scales it.
-    fn credit(&self, stem: &str) -> u64 {
+    fn credit(&self, stem: &str, weights: Weights) -> u64 {
         let mut credit = 0;
-        if matches(stem, &self.basename) {
-            credit += BASENAME_WEIGHT;
+        if matches(stem, &self.basename, weights) {
+            credit += weights.basename;
         }
-        if matches(stem, &self.directories) {
-            credit += DIRECTORY_WEIGHT;
+        if matches(stem, &self.directories, weights) {
+            credit += weights.directory;
         }
         let repeats = self
             .symbols
             .iter()
-            .filter(|symbol| matches(stem, symbol))
+            .filter(|symbol| matches(stem, symbol, weights))
             .count();
         if repeats > 0 {
             credit += repetition_weight(repeats);
@@ -372,15 +450,30 @@ impl FileUnits {
 /// for why that is a total order and why no step of the arithmetic can vary
 /// by platform.
 pub fn rank(corpus: &[IndexedNames], query: &str) -> Vec<ScoredName> {
-    let stems = stems_of(query);
+    rank_with(corpus, query, Weights::SHIPPED)
+}
+
+/// [`rank`] under a chosen set of weights.
+///
+/// The tool always ranks at [`Weights::SHIPPED`]; this exists so a sweep can
+/// ask what the other settings would have done, which is the only way the
+/// four constants can be measured rather than argued.
+pub fn rank_with(corpus: &[IndexedNames], query: &str, weights: Weights) -> Vec<ScoredName> {
+    let stems = stems_of_with(query, weights);
     if stems.is_empty() {
         return Vec::new();
     }
-    let units: Vec<FileUnits> = corpus.iter().map(FileUnits::of).collect();
+    let units: Vec<FileUnits> = corpus
+        .iter()
+        .map(|file| FileUnits::of(file, weights))
+        .collect();
     let rarity: Vec<u64> = stems
         .iter()
         .map(|stem| {
-            let hits = units.iter().filter(|file| file.contains(stem)).count();
+            let hits = units
+                .iter()
+                .filter(|file| file.contains(stem, weights))
+                .count();
             rarity_weight(corpus.len(), hits)
         })
         .collect();
@@ -392,7 +485,7 @@ pub fn rank(corpus: &[IndexedNames], query: &str) -> Vec<ScoredName> {
             let mut score = 0;
             let mut matched_terms = 0;
             for (index, stem) in stems.iter().enumerate() {
-                let credit = units.credit(stem);
+                let credit = units.credit(stem, weights);
                 if credit > 0 {
                     matched_terms += 1;
                     score += credit * rarity.get(index).copied().unwrap_or(1);
@@ -439,29 +532,50 @@ mod tests {
         assert!(!terms.contains(&"its".to_string()));
     }
 
+    /// The four values [`rank`] runs with are the four constants, so a merge
+    /// that moves one of them moves the shipped ranking.
+    ///
+    /// Each carries a `MEASURED:` marker naming the sweep that read it. The
+    /// numbers those markers record are re-derived by
+    /// `crates/stella-tools/tests/name_rung_calibration.rs`, which is where a
+    /// changed value is caught; this only holds the wiring.
+    #[test]
+    fn the_shipped_weights_are_the_four_measured_constants() {
+        assert_eq!(Weights::SHIPPED.basename, BASENAME_WEIGHT);
+        assert_eq!(Weights::SHIPPED.directory, DIRECTORY_WEIGHT);
+        assert_eq!(Weights::SHIPPED.min_prefix_stem, MIN_PREFIX_STEM);
+        assert_eq!(Weights::SHIPPED.max_prefix_tail, MAX_PREFIX_TAIL);
+    }
+
     /// The pairs the issue named, plus the floor that stops a stem becoming
     /// a fragment.
     #[test]
     fn the_query_spelling_and_the_identifier_spelling_meet() {
-        assert_eq!(stem("streaming"), "stream");
-        assert_eq!(stem("stream"), "stream");
+        let shipped = Weights::SHIPPED;
+        assert_eq!(stem("streaming", shipped), "stream");
+        assert_eq!(stem("stream", shipped), "stream");
         assert!(matches(
-            &stem("streaming"),
-            &[stem("Stream".to_lowercase().as_str())]
+            &stem("streaming", shipped),
+            &[stem("Stream".to_lowercase().as_str(), shipped)],
+            shipped
         ));
 
-        assert_eq!(stem("recovers"), "recover");
-        assert_eq!(stem("recovery"), "recoveri");
-        assert!(matches(&stem("recovers"), &[stem("recovery")]));
+        assert_eq!(stem("recovers", shipped), "recover");
+        assert_eq!(stem("recovery", shipped), "recoveri");
+        assert!(matches(
+            &stem("recovers", shipped),
+            &[stem("recovery", shipped)],
+            shipped
+        ));
 
         // `-y` and `-ies` fold onto the same stem, in both directions.
-        assert_eq!(stem("directory"), "directori");
-        assert_eq!(stem("directories"), "directori");
+        assert_eq!(stem("directory", shipped), "directori");
+        assert_eq!(stem("directories", shipped), "directori");
 
         // A stem below the floor is not stripped: `us` would prefix-match
         // half the tree.
-        assert_eq!(stem("used"), "used");
-        assert_eq!(stem("runs"), "runs");
+        assert_eq!(stem("used", shipped), "used");
+        assert_eq!(stem("runs", shipped), "runs");
     }
 
     /// A bounded prefix is an inflection; an unbounded one is a different
@@ -469,28 +583,55 @@ mod tests {
     /// `path`/`pathological` apart.
     #[test]
     fn a_prefix_match_is_an_inflection_and_not_a_longer_word() {
-        assert!(matches("compact", &["compaction".into()]));
-        assert!(matches("detect", &["detector".into()]));
-        assert!(!matches("path", &["pathological".into()]));
-        assert!(!matches("work", &["workspace".into()]));
+        let shipped = Weights::SHIPPED;
+        assert!(matches("compact", &["compaction".into()], shipped));
+        assert!(matches("detect", &["detector".into()], shipped));
+        assert!(!matches("path", &["pathological".into()], shipped));
+        assert!(!matches("work", &["workspace".into()], shipped));
         // Below the floor, only equality counts — `log` must not reach
         // `login`.
-        assert!(matches("log", &["log".into()]));
-        assert!(!matches("log", &["login".into()]));
+        assert!(matches("log", &["log".into()], shipped));
+        assert!(!matches("log", &["login".into()], shipped));
     }
 
     /// Case boundaries, separators and acronym runs all yield the same units.
     #[test]
     fn a_symbol_name_splits_into_the_words_it_is_made_of() {
+        let shipped = Weights::SHIPPED;
         let mut units = Vec::new();
-        push_units("StreamFallbackPosture", &mut units);
+        push_units("StreamFallbackPosture", shipped, &mut units);
         assert_eq!(units, ["stream", "fallback", "posture"]);
         let mut snake = Vec::new();
-        push_units("stream_fallback_posture", &mut snake);
+        push_units("stream_fallback_posture", shipped, &mut snake);
         assert_eq!(snake, units);
         let mut acronym = Vec::new();
-        push_units("HTTPServerV2", &mut acronym);
+        push_units("HTTPServerV2", shipped, &mut acronym);
         assert_eq!(acronym, ["http", "server", "v2"]);
+    }
+
+    /// A weight the sweep asks about really does change the ranking, so the
+    /// grid is measuring something rather than re-running one setting.
+    #[test]
+    fn a_changed_weight_changes_the_ranking() {
+        let corpus = [
+            file("crates/retry/src/lib.rs", &["open", "close"]),
+            file("src/retry.rs", &["unrelated"]),
+        ];
+        let shipped = rank(&corpus, "retry");
+        let directory_led = rank_with(
+            &corpus,
+            "retry",
+            Weights {
+                basename: 1,
+                directory: 6,
+                ..Weights::SHIPPED
+            },
+        );
+        assert_eq!(paths(&shipped).first().copied(), Some("src/retry.rs"));
+        assert_eq!(
+            paths(&directory_led).first().copied(),
+            Some("crates/retry/src/lib.rs")
+        );
     }
 
     /// **Defect 1.** The natural phrasing of a query reaches the identifier
