@@ -371,11 +371,16 @@ agent_event_tags! {
     // `task_ledger::task_events` and inherits that same contract: the tag
     // says which task was running when the change was measured, which is no
     // more an attribution of authorship than the row it rides on.
+    //
+    // `Surface::Interactive`: the Files tab reads it too, and not by the
+    // exhaustive `Model::apply` match alone — `model/file_state.rs`'s
+    // `touch_file` keeps the per-path diff history the tab renders, and
+    // nothing else feeds that history.
     FileChange => "file_change",
         ConsumerPosture::Behavioral {
             site: "stella-cli/src/turn_facts.rs::TurnFacts::observe",
         },
-        &[Surface::Observatory];
+        &[Surface::Observatory, Surface::Interactive];
     // `Behavioral`: the deck's forwarder holds the run's `Stage(Execute)`
     // boundary until the first event that is not a recall, so a turn's recall
     // renders ahead of the stage it opens. The Observatory's recall-timings
@@ -533,11 +538,16 @@ agent_event_tags! {
     // (`stella-cli/src/command_deck/mid_turn_ask.rs`, which blocks on the
     // answer rather than on this event) never receives a reply and the turn
     // sits there until the session is killed.
+    //
+    // `Surface::Interactive`: `handle_focused_gates` is exactly the
+    // narrower, tag-specific claim that surface names — it exists only
+    // because `pending_ask_user` is set, not because `Model::apply` happens
+    // to reach every case.
     AskUser => "ask_user",
         ConsumerPosture::Behavioral {
             site: "stella-tui/src/model.rs::Model::apply (latches pending_ask_user)",
         },
-        &[];
+        &[Surface::Interactive];
     // The media pair (#4454). `RecordedOnly` because #4448 removed
     // `stella-media` and left these with zero producers in this tree: they are
     // kept as the wire contract an out-of-tree media MCP surface would speak,
@@ -579,14 +589,22 @@ agent_event_tags! {
     TaskUpdate => "task_update",
         ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
-    // `RecordedOnly`: the delegation itself is driven by
+    // `Surfaced`, not `RecordedOnly` — this row named a still-open gap;
+    // the readers below close it. The delegation itself is driven by
     // `stella-core::subagent`'s dispatcher and this reports its phases. The
-    // deck stamps a start/finish bracket from them (`deck.rs`), which is the
-    // elapsed a human reads; nothing else consumes them. The controllable
-    // sub-session lanes are a separate mechanism and do not ride this case.
+    // deck's own per-case match (`deck.rs`'s derived-counters block, not the
+    // exhaustive `Model::apply`) stamps a start/finish bracket from them into
+    // `delegate_clocks`, and the SUB-AGENTS overlay
+    // (`views/subagents/rows.rs::delegates_of`, also a per-case filter rather
+    // than the exhaustive transcript match) reads both that clock and the
+    // `TranscriptEntry::SubAgent` bracket to list every `delegate` child.
+    // Rendering is the whole of it — nothing branches on the phase, only what
+    // a human sees does — which is `Surfaced`, not `Behavioral`, by this
+    // module's own test. The controllable sub-session lanes are a separate
+    // mechanism and do not ride this case.
     SubAgent => "sub_agent",
-        ConsumerPosture::RecordedOnly { issue: "#4501" },
-        &[];
+        ConsumerPosture::Surfaced,
+        &[Surface::Interactive];
     // The delivery decision (#2942). `Surfaced` rather than `RecordedOnly`
     // because the observatory's journal query was widened to select it in the
     // same change — a reader asking "did this candidate's work land?" gets the

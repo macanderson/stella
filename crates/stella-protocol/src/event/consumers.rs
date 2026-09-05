@@ -76,15 +76,10 @@ use super::KNOWN_TYPE_TAGS;
 
 /// A surface that renders some signals and not others.
 ///
-/// Narrow. Two plausible surfaces are **absent** because
-/// membership in them is not a per-case fact:
-///
-/// - **Interactive mode** matches `AgentEvent` exhaustively
-///   (`stella-tui`'s `model::Model::apply`, `textline::event_line`,
-///   `deck::trace_of`), so every case reaches it by construction.
-/// - **Replay** likewise tagged every case, in the then-existing
-///   `stella-pipeline`'s `replay::event_signature`; that crate was deleted in
-///   #3865 and no replay tagger has replaced it yet.
+/// Narrow. One plausible surface is **absent** because membership in it is
+/// not a per-case fact: **replay** tagged every case, in the then-existing
+/// `stella-pipeline`'s `replay::event_signature`; that crate was deleted in
+/// #3865 and no replay tagger has replaced it yet.
 ///
 /// `stella-serve` mostly forwards the stream opaquely, which is why it was
 /// listed here as absent until the #4501 census read its `observe/tally.rs`:
@@ -105,6 +100,23 @@ pub enum Surface {
     /// The non-interactive engine server, for the arms where it does something
     /// case-specific rather than forwarding.
     Serve,
+    /// A `stella-tui` feature that reads one tag by name. This is not
+    /// interactive mode's exhaustive matchers (`model::Model::apply`,
+    /// `textline::event_line`, `deck::trace_of`). Those reach every case, so
+    /// they stay out of this enum, the same reason replay does. This surface
+    /// is the narrower claim: one reader picks out this one tag, the same
+    /// bar `Serve` holds `TallyFold::observe` to. Three rows hold it today:
+    ///
+    /// - the Files tab (`views/files_tab.rs`, fed by `model/file_state.rs`'s
+    ///   `touch_file`) selects
+    ///   [`AgentEvent::FileChange`](super::AgentEvent::FileChange);
+    /// - the SUB-AGENTS overlay (`views/subagents/rows.rs::delegates_of`)
+    ///   filters the transcript for
+    ///   [`AgentEvent::SubAgent`](super::AgentEvent::SubAgent) specifically;
+    /// - the ask card (`deck_ui/gates.rs::handle_focused_gates`) reads the
+    ///   `pending_ask_user` latch that only
+    ///   [`AgentEvent::AskUser`](super::AgentEvent::AskUser) sets.
+    Interactive,
 }
 
 /// Where an emitted signal's value is realized.
@@ -270,9 +282,11 @@ impl std::fmt::Display for LedgerViolation {
             Self::SurfacedNowhere { type_tag } => write!(
                 f,
                 "`{type_tag}` is Surfaced but lists no selecting surface. Note \
-                 that Surface omits interactive mode and replay, which render \
-                 every case: if those are the only consumers, the correct \
-                 posture is RecordedOnly with a tracking issue"
+                 that Surface omits replay, and that Surface::Interactive names \
+                 only a feature that selects this tag by name — not interactive \
+                 mode's exhaustive matchers, which render every case regardless: \
+                 if the only consumer is one of those, the correct posture is \
+                 RecordedOnly with a tracking issue"
             ),
             Self::RecordedYetSurfaced { type_tag } => write!(
                 f,
