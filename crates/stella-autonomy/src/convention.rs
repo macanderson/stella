@@ -14,7 +14,7 @@
 //! carries `bug` **or** `triage` — an untriaged issue is a defect nobody has
 //! classified yet. Meanwhile `.github/workflows/issue-triage.yml` adds
 //! `triage` to any issue opened without one of its `TYPE_LABELS`
-//! (`bug feature epic documentation question`), and the comment above that
+//! (`bug feature chore documentation epic`), and the comment above that
 //! rule says why: "Issues opened outside the template (`gh issue create`, the
 //! API) carry no labels at all — those are exactly the ones this catches."
 //!
@@ -499,7 +499,7 @@ mod tests {
             axes: vec![
                 LabelAxis {
                     name: "type".into(),
-                    members: ["bug", "feature", "epic", "documentation", "question"]
+                    members: ["bug", "feature", "chore", "documentation", "epic"]
                         .iter()
                         .map(|s| (*s).to_owned())
                         .collect(),
@@ -545,9 +545,9 @@ mod tests {
                 candidates: vec![
                     "bug".into(),
                     "feature".into(),
-                    "epic".into(),
+                    "chore".into(),
                     "documentation".into(),
-                    "question".into(),
+                    "epic".into(),
                 ],
             }]
         );

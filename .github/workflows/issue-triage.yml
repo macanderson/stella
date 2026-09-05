@@ -26,8 +26,11 @@ env:
   GH_TOKEN: ${{ github.token }}
   ISSUE: ${{ github.event.issue.number }}
   REPO: ${{ github.repository }}
-  # Space-separated; adding any of these counts as typing the issue.
-  TYPE_LABELS: bug feature epic documentation question
+  # Space-separated; adding any of these counts as typing the issue. Must
+  # match /backlog-triage's five valid types exactly (#2825): `question` is
+  # not one of them and `chore` was missing, so a `chore`-typed issue never
+  # counted as typed here.
+  TYPE_LABELS: bug feature chore documentation epic
 
 jobs:
   triage:
