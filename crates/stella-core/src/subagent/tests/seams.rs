@@ -1,4 +1,5 @@
 use super::*;
+use crate::hooks::{HookAction, HookExecError, HookExecResult, HookMatcher, HookRunner, Hooks};
 
 // ---- seams: gate, steering, attribution -------------------------------
 
@@ -290,5 +291,108 @@ async fn the_child_claims_its_own_receipt_turn_slot() {
     assert!(
         !slots.is_empty() && slots.iter().all(|slot| *slot == 5),
         "the child's manifests must land in ITS slot, got {slots:?}"
+    );
+}
+
+// ---- SubagentStart / SubagentStop hooks --------------------------------
+
+/// A no-I/O [`HookRunner`] fake. It returns a fixed exit code and records
+/// the JSON payload of every call, so a test can check what fired and what
+/// it carried, with no real shell. `driver::tests::user_hooks` has one like
+/// it; this one is local since that one lives in a sibling test module.
+struct RecordingHookRunner {
+    exit_code: i32,
+    payloads: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl HookRunner for RecordingHookRunner {
+    async fn run(
+        &self,
+        _action: &HookAction,
+        payload_json: &str,
+        _cwd: &str,
+    ) -> Result<HookExecResult, HookExecError> {
+        self.payloads.lock().unwrap().push(payload_json.to_string());
+        Ok(HookExecResult {
+            exit_code: self.exit_code,
+            stdout: String::new(),
+            stderr: "a subagent hook opinion nobody asked for".into(),
+        })
+    }
+}
+
+/// **The witness for the SubagentStart/SubagentStop hook pair.** A hook set
+/// on the parent fires around the child's turn. It carries the child's id
+/// and, for `Stop`, its outcome. It never blocks the child, even when the
+/// hook itself fails with a non-zero exit.
+#[tokio::test]
+async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![Ok(text_result("done", 0.01))]);
+    let tools = MixedTools::default();
+    let runner = RecordingHookRunner {
+        exit_code: 1,
+        payloads: Mutex::new(Vec::new()),
+    };
+    let hooks = Hooks {
+        subagent_start: Some(vec![HookMatcher {
+            matcher: None,
+            hooks: vec![HookAction::new("a fake command — never spawned")],
+        }]),
+        subagent_stop: Some(vec![HookMatcher {
+            matcher: None,
+            hooks: vec![HookAction::new("a fake command — never spawned")],
+        }]),
+        ..Hooks::default()
+    };
+    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep)
+        .with_hooks(&hooks, &runner);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("search-1", "find the retry policy"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+
+    assert!(
+        matches!(outcome, SubAgentOutcome::Completed(_)),
+        "a hook that fails must never block or alter the child's outcome: {outcome:?}"
+    );
+
+    let payloads = runner.payloads.lock().unwrap();
+    assert_eq!(
+        payloads.len(),
+        2,
+        "exactly one SubagentStart and one SubagentStop: {payloads:?}"
+    );
+    assert!(
+        payloads[0].contains("\"event\":\"SubagentStart\""),
+        "{payloads:?}"
+    );
+    assert!(
+        payloads[0].contains("\"agentId\":\"search-1\""),
+        "{payloads:?}"
+    );
+    assert!(
+        !payloads[0].contains("subagentResult"),
+        "SubagentStart has no outcome yet: {payloads:?}"
+    );
+    assert!(
+        payloads[1].contains("\"event\":\"SubagentStop\""),
+        "{payloads:?}"
+    );
+    assert!(
+        payloads[1].contains("\"agentId\":\"search-1\""),
+        "{payloads:?}"
+    );
+    assert!(
+        payloads[1].contains("\"status\":\"completed\""),
+        "{payloads:?}"
     );
 }

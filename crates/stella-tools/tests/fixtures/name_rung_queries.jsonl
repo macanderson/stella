@@ -1,0 +1,32 @@
+{"query": "how a provider recovers when its streaming path is broken", "answer": "crates/stella-model/src/provider_parity.rs", "why": "declares StreamFallbackPosture, the parity axis for exactly this question"}
+{"query": "which telemetry columns may be exported off the machine", "answer": "crates/stella-store/src/content_free.rs", "why": "holds the reviewed allowlist of hub telemetry columns"}
+{"query": "which columns an encoder is allowed to put in a telemetry drain", "answer": "crates/stella-store/src/content_free.rs", "why": "ContentFreeEncoder::allowed_keys and drain_format are the answer"}
+{"query": "detecting that the agent is repeating the same tool call", "answer": "crates/stella-core/src/loop_detect.rs", "why": "the engine's loop detector, the only file that decides a repeat is a loop"}
+{"query": "compacting the conversation when the context window fills up", "answer": "crates/stella-core/src/compaction.rs", "why": "the engine's compaction decision"}
+{"query": "retry backoff jitter between workers", "answer": "crates/stella-core/src/retry.rs", "why": "the retry policy, including the decorrelation that unsyncs workers"}
+{"query": "resolving where the stella home directory lives", "answer": "crates/stella-home/src/lib.rs", "why": "the single implementation of ~/.stella resolution"}
+{"query": "deciding whether a human is present to answer a prompt", "answer": "crates/stella-tty/src/lib.rs", "why": "human_can_answer, the one derivation both prompts share"}
+{"query": "which files the workspace ignores when walking the tree", "answer": "crates/stella-graph/src/workspace_ignore.rs", "why": "WorkspaceIgnore::excludes, the indexer's ignore resolution"}
+{"query": "the ledger of fleet runs attempts and spend", "answer": "crates/stella-fleet/src/ledger.rs", "why": "the fleet run/attempt/commit/spend ledger"}
+{"query": "producing a unified diff with hunk headers", "answer": "crates/stella-diff/src/lib.rs", "why": "defines unified_diff and Hunk::header"}
+{"query": "logging in to an mcp server with oauth", "answer": "crates/stella-mcp/src/oauth.rs", "why": "OAuth 2.1 login for streamable-HTTP MCP servers"}
+{"query": "skipping a repeated unauthorized probe against a tool server", "answer": "crates/stella-mcp/src/suppress.rs", "why": "remembers which servers answered 401 so the next session skips the round trip"}
+{"query": "re-issuing a completion as one request when the stream breaks", "answer": "crates/stella-model/src/stream_recovery.rs", "why": "the streaming to non-streaming fallback state every adapter shares"}
+{"query": "keeping an api key out of log lines and panic messages", "answer": "crates/stella-model/src/credential.rs", "why": "ApiKey has no Display and a redacted Debug; reveal is the one sanctioned read"}
+{"query": "which environment variables a spawned tool inherits", "answer": "crates/stella-tools/src/subprocess_env.rs", "why": "environment policy for subprocesses that run model-controlled code"}
+{"query": "replacing a file's contents without losing it on a crash", "answer": "crates/stella-tools/src/durable_write.rs", "why": "durable replacement on the agent's primary source-mutation path"}
+{"query": "where a turn parks intermediate notes between steps", "answer": "crates/stella-tools/src/scratch.rs", "why": "the session scratch plane: save_state, get_state, list_state, delete_state"}
+{"query": "collecting the facts about the machine the session runs on", "answer": "crates/stella-tools/src/environment.rs", "why": "environment identity, collected from one place so renderings cannot drift"}
+{"query": "estimating how many tokens a conversation holds", "answer": "crates/stella-core/src/estimator.rs", "why": "token estimation for compaction decisions"}
+{"query": "picking which model answers for a given role", "answer": "crates/stella-core/src/router.rs", "why": "the role to model resolver plus the per-provider circuit breaker"}
+{"query": "stopping a bounded call from spending everything on thinking", "answer": "crates/stella-core/src/starvation.rs", "why": "the reasoning-starvation budget arithmetic"}
+{"query": "running read only tool calls before the reply finishes", "answer": "crates/stella-core/src/speculation.rs", "why": "speculative execution of speculation-safe read-only tool calls"}
+{"query": "what a session may see and what it may change", "answer": "crates/stella-core/src/workspace_scope.rs", "why": "the module's own subject: read scope and write scope"}
+{"query": "the directory walk that yields indexable source files", "answer": "crates/stella-graph/src/walk.rs", "why": "the ripgrep-semantics walk the indexer drives"}
+{"query": "the approximate nearest neighbour index for recall", "answer": "crates/stella-context/src/ann.rs", "why": "the opt-in IVF accelerator for recall's cosine scan"}
+{"query": "the offline fallback embedder that downloads nothing", "answer": "crates/stella-embed/src/hash.rs", "why": "HashEmbedder, the pure-Rust zero-download fallback"}
+{"query": "the bounded ring of records kept for a crash report", "answer": "crates/stella-diag/src/ring.rs", "why": "the crash ring holding every record at every level"}
+{"query": "reclaiming worktrees and branches a fleet run left behind", "answer": "crates/stella-fleet/src/gc.rs", "why": "reclaims isolated worktrees and their fleet/* branches"}
+{"query": "deleting old executions from the local telemetry store", "answer": "crates/stella-store/src/prune.rs", "why": "retention for store.db, the deletion path"}
+{"query": "announcing a running session so other processes can see it", "answer": "crates/stella-store/src/sessions.rs", "why": "the cross-process session registry"}
+{"query": "cutting a ranked list where the scores drop off", "answer": "crates/stella-embed/src/rank.rs", "why": "relevant_prefix, the relevance boundary"}

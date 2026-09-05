@@ -29,7 +29,8 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 use stella_core::hooks::{
-    HookIssueInfo, HookIssueOutcome, HookPayload, HookPullRequestInfo, HookRunInfo, HookToolInfo,
+    HookIssueInfo, HookIssueOutcome, HookPayload, HookPullRequestInfo, HookRunInfo,
+    HookSubAgentInfo, HookSubAgentResult, HookToolInfo,
 };
 use stella_plugin::{HOOK_FIELDS, HookEvent};
 
@@ -98,6 +99,27 @@ fn widest_payloads() -> Vec<(HookEvent, Vec<HookPayload>)> {
         ),
         (HookEvent::Stop, vec![HookPayload::stop("/w", "done")]),
         (HookEvent::PreCompact, vec![HookPayload::pre_compact("/w")]),
+        (
+            HookEvent::UserPromptSubmit,
+            vec![HookPayload::user_prompt_submit("/w", "fix the flaky test")],
+        ),
+        (
+            HookEvent::SubagentStart,
+            vec![HookPayload::subagent_start("/w", subagent_info())],
+        ),
+        (
+            HookEvent::SubagentStop,
+            vec![HookPayload::subagent_stop(
+                "/w",
+                subagent_info(),
+                HookSubAgentResult {
+                    status: stella_protocol::SubAgentStatus::Completed,
+                    summary: "found it in retry.rs".into(),
+                    cost_usd: 0.02,
+                    steps: 3,
+                },
+            )],
+        ),
         (
             HookEvent::PreIssueWork,
             vec![HookPayload::pre_issue_work("/w", issue.clone())],
@@ -284,6 +306,15 @@ fn pr() -> HookPullRequestInfo {
     HookPullRequestInfo::new("412").for_issue("4310")
 }
 
+/// The child agent every `Subagent` event in the census is about.
+fn subagent_info() -> HookSubAgentInfo {
+    HookSubAgentInfo {
+        agent_id: "search-1".into(),
+        instruction_preview: "find the retry policy".into(),
+        depth: 1,
+    }
+}
+
 /// **The anti-drift guard for #4310.** Every field of every payload type has a
 /// row, checked by taking the types apart rather than by reading them.
 #[test]
@@ -294,6 +325,9 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         tool,
         tool_result,
         final_text,
+        prompt,
+        subagent,
+        subagent_result,
         issue,
         issue_outcome,
         run,
@@ -315,6 +349,22 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         number: pr_number,
         issue: pr_issue,
     } = HookPullRequestInfo::new("412");
+    let HookSubAgentInfo {
+        agent_id,
+        instruction_preview,
+        depth,
+    } = subagent_info();
+    let HookSubAgentResult {
+        status,
+        summary: subagent_summary,
+        cost_usd,
+        steps,
+    } = HookSubAgentResult {
+        status: stella_protocol::SubAgentStatus::Completed,
+        summary: String::new(),
+        cost_usd: 0.0,
+        steps: 0,
+    };
     // `HookIssueOutcome` is an internally tagged enum: `status` is the tag, and
     // each arm's own field crosses beside it. Matched exhaustively so a fourth
     // arm does not compile until it has rows.
@@ -349,6 +399,16 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         named("tool.read_only", read_only),
         named("toolResult", tool_result),
         named("finalText", final_text),
+        named("prompt", prompt),
+        named("subagent.agentId", agent_id),
+        named("subagent.instructionPreview", instruction_preview),
+        named("subagent.depth", depth),
+        named("subagent", subagent),
+        named("subagentResult.status", status),
+        named("subagentResult.summary", subagent_summary),
+        named("subagentResult.costUsd", cost_usd),
+        named("subagentResult.steps", steps),
+        named("subagentResult", subagent_result),
         named("issue.number", number),
         named("issue.title", title),
         named("issue.branch", branch),
@@ -362,11 +422,17 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         named("pullRequest", pull_request),
         named("reason", reason),
     ];
-    // `issue`, `run` and `pullRequest` are not leaves; their own fields are
-    // named above, so drop the containers from the list the table is checked
-    // against. They are still destructured, which is what makes a new field
-    // inside one of them an `E0027` rather than a silence.
-    declared.retain(|path| !matches!(*path, "issue" | "run" | "pullRequest"));
+    // `issue`, `run`, `pullRequest`, `subagent` and `subagentResult` are not
+    // leaves; their own fields are named above, so drop the containers from
+    // the list the table is checked against. They are still destructured,
+    // which is what makes a new field inside one of them an `E0027` rather
+    // than a silence.
+    declared.retain(|path| {
+        !matches!(
+            *path,
+            "issue" | "run" | "pullRequest" | "subagent" | "subagentResult"
+        )
+    });
     declared.extend(arm_fields);
 
     let table: BTreeSet<&str> = HOOK_FIELDS.iter().map(|field| field.path).collect();

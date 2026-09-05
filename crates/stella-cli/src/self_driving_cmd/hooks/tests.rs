@@ -237,8 +237,8 @@ fn a_failure_is_reported_as_its_own_outcome() {
 fn every_reporting_event_reaches_a_hook_under_its_own_name() {
     let root = temp_root("reporting");
     for event in HookEvent::ALL {
-        // `PreIssueWork` is the one gate and is covered above; the in-turn
-        // five are the engine's to dispatch and never come through here.
+        // `PreIssueWork` is the one gate, covered above. The rest are the
+        // engine's to fire, and never come through here.
         if event.in_turn() || event == HookEvent::PreIssueWork {
             continue;
         }
@@ -349,15 +349,18 @@ fn payload_for(event: HookEvent, root: &std::path::Path) -> HookPayload {
             HookIssueInfo::new("4310"),
             HookIssueOutcome::NoChange,
         ),
-        // The gate and the in-turn five never come through `report`, and a
-        // total match is what keeps a new event from silently landing in a
-        // default arm that reports nothing.
+        // The gate and the in-turn hooks never come through `report`. A
+        // total match keeps a new event out of a default arm that would
+        // report nothing.
         HookEvent::PreIssueWork
         | HookEvent::SessionStart
         | HookEvent::PreToolUse
         | HookEvent::PostToolUse
         | HookEvent::Stop
-        | HookEvent::PreCompact => {
+        | HookEvent::PreCompact
+        | HookEvent::UserPromptSubmit
+        | HookEvent::SubagentStart
+        | HookEvent::SubagentStop => {
             panic!("{event} is not dispatched by the loop")
         }
     }
