@@ -281,18 +281,23 @@ pub static CAPABILITIES: &[Capability] = &[
     Capability {
         id: "turn.steering_requery",
         engine_home: "stella-core SteeringRequery port — the steering plane re-queried at step \
-                      boundaries when TurnSignal drift says the opening prompt no longer \
-                      describes the turn (#3243 Phase 3)",
+                      boundaries when TurnSignal drift says the opening prompt stopped \
+                      describing the turn",
         engine_entries: &["with_requery"],
         cli: SurfacePosture::Shipped {
-            mechanism: "agent::run_turn and the deck attach a SessionRequery over SessionMemory, \
-                        so a drifted turn re-selects skills/records against what it has become",
+            mechanism: "agent::run_turn, the deck, and a fleet worker each attach a \
+                        SessionRequery over SessionMemory, so a drifted turn re-selects \
+                        skills/records against what it has become. The fleet lane keeps its \
+                        memory handle open for the length of the attempt \
+                        (fleet_cmd::steering::WorkerSteering) and pins its own drift with \
+                        a_fleet_worker_requeries_the_skill_its_opening_prompt_could_not",
             witness: "a_drifted_turn_recalls_the_skill_its_prompt_could_not",
         },
         api: SurfacePosture::Deferred {
             waiting_on: "a serve-side SteeringRequery implementor: the engine port exists, but \
                          the serve stack assembles no requery source, so remote turns still \
-                         select context against the opening prompt alone",
+                         select context against the opening prompt alone — #6121 is where \
+                         that is being decided",
         },
     },
     Capability {
@@ -721,7 +726,7 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 16] {
+    fn cli_sources() -> [&'static str; 17] {
         [
             // The deck's session-scoped whistle relay (#4768) — home of the
             // `turn.whistle` witness.
@@ -741,6 +746,9 @@ mod tests {
             // The steering-plane selection suite — home of the
             // `turn.steering_requery` witness (#3243 Phase 3).
             include_str!("../../stella-cli/src/memory/tests/steering_selection.rs"),
+            // The fleet worker's own steering seam — home of the fleet
+            // witness the same row's `mechanism` cites.
+            include_str!("../../stella-cli/src/fleet_cmd/steering.rs"),
             // The tool-chain assembly seam (#3283) — home of the
             // `tools.contracts` witness.
             include_str!("../../stella-cli/src/agent/tool_stack.rs"),
@@ -929,6 +937,25 @@ mod tests {
                 "the row cites {cited}, which no swept CLI source defines"
             );
         }
+    }
+
+    /// The re-query row names a second CLI witness in its `mechanism`, for
+    /// the fleet worker lane. One `witness` field cannot hold two doors, and
+    /// the fleet lane is the one that keeps a memory handle open for the
+    /// whole turn. Checked here so the citation cannot decay into a test
+    /// nothing answers to.
+    #[test]
+    fn the_requery_row_cites_the_fleet_worker_witness() {
+        let row = capability("turn.steering_requery").expect("the row is declared");
+        let SurfacePosture::Shipped { mechanism, .. } = row.cli else {
+            panic!("turn.steering_requery's CLI posture moved — a shipped row names its witnesses");
+        };
+        let cited = "a_fleet_worker_requeries_the_skill_its_opening_prompt_could_not";
+        assert!(mechanism.contains(cited), "the row stopped citing {cited}");
+        assert!(
+            witness_exists(&cli_sources(), cited),
+            "the row cites {cited}, which no swept CLI source defines"
+        );
     }
 
     /// The unwitnessed-claims ratchet: exact equality, so witnessing a row
