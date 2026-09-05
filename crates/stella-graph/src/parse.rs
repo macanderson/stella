@@ -558,7 +558,7 @@ fn extract_rust_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
             }
         }
 
-        for idx in (0..node.child_count() as u32).rev() {
+        for idx in (0..node.child_count()).rev() {
             if let Some(child) = node.child(idx) {
                 stack.push(child);
             }
@@ -594,7 +594,7 @@ fn extract_python_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
             }
         }
 
-        for idx in (0..node.child_count() as u32).rev() {
+        for idx in (0..node.child_count()).rev() {
             if let Some(child) = node.child(idx) {
                 stack.push(child);
             }
