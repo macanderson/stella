@@ -114,6 +114,8 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //               spool, and the per-store export ledger
 //   error       (crate-private module, `StoreError` re-exported) every
 //               failure this crate returns, as named cases
+//   event_clock (crate-private) the millisecond stamp on `events.ts`, and
+//               the insert that writes it
 //   export      the `/export` telemetry dump and `stella stats`' usage
 //               aggregate, plus the `ExportScope` that decides whether either
 //               covers one session or the whole workspace (#2558)
@@ -135,6 +137,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 mod ddl;
 mod dispatch;
 mod error;
+mod event_clock;
 mod git_env;
 mod migrations;
 mod private;
@@ -479,20 +482,21 @@ pub struct PullRequestRecord {
 pub struct SessionEventRecord {
     pub execution_id: i64,
     pub seq: i64,
-    /// The `events.ts` column: wall-clock, `YYYY-MM-DD HH:MM:SS`.
+    /// The `events.ts` column: wall-clock UTC, `YYYY-MM-DD HH:MM:SS.sss`.
     ///
-    /// **Second resolution, and that is the whole precision available.**
-    /// Every writer omits the column and takes SQLite's
-    /// `DEFAULT CURRENT_TIMESTAMP`, which has no sub-second component, so a
-    /// consumer rendering an elapsed clock from this may print whole seconds
-    /// and nothing finer. A tenth of a second here would be invented, not
-    /// measured — per-call durations live on the payloads
-    /// ([`AgentEvent::ToolResult::duration_ms`],
-    /// [`AgentEvent::StepUsage::duration_ms`]) and are the millisecond-precise
-    /// figures.
+    /// **Two widths, and a reader has to take both.** [`Store::record_event`]
+    /// stamps the millisecond field itself (`event_clock::INSERT_EVENT`).
+    /// Older rows took SQLite's `DEFAULT CURRENT_TIMESTAMP`. They are 19
+    /// characters wide, with no fractional part, and they stay that way. The
+    /// first 19 characters mean the same thing in both widths, so a reader
+    /// that slices that prefix is safe.
     ///
     /// Ordering still comes from `(execution_id, seq)`, never from this: it is
     /// wall-clock, so it neither ties-break nor survives a clock adjustment.
+    /// Per-call durations still live on the payloads
+    /// ([`AgentEvent::ToolResult::duration_ms`],
+    /// [`AgentEvent::StepUsage::duration_ms`]) and remain the figures to sum
+    /// when the question is how long one call took.
     pub ts: String,
     pub event: AgentEvent,
 }
@@ -890,8 +894,7 @@ impl Store {
         let tx = conn.transaction()?;
         let task_id = event.task_id().map(stella_protocol::TaskId::as_str);
         tx.execute(
-            "INSERT INTO events (execution_id, seq, event_type, payload, task_id) \
-             VALUES (?, ?, ?, ?, ?)",
+            event_clock::INSERT_EVENT,
             params![execution_id, seq, event_type, payload, task_id],
         )?;
         tool_calls::project_event(&tx, execution_id, seq, event)?;

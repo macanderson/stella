@@ -25,13 +25,17 @@
 //! miss a field the way a scattered set of `clean()` calls could.
 //!
 //! **2. Never invent a clock reading finer than what was measured.**
-//! `events.ts` is a plain SQLite timestamp with no sub-second part
-//! ([`SessionEventRecord::ts`](stella_store::SessionEventRecord::ts)), so
-//! this fold never reads it. [`Step::offset_ms`] is summed instead from the
-//! real, millisecond-precise durations on `ToolResult` and `StepUsage` — the
-//! same durations the shared renderer already draws for `stella observe`,
-//! and the same sum [`stella_tui::transcript_build::RunBuilder`] already
-//! keeps for the live surface.
+//! [`Step::offset_ms`] is summed from the real, millisecond-precise durations
+//! on `ToolResult` and `StepUsage` — the same durations the shared renderer
+//! already draws for `stella observe`, and the same sum
+//! [`stella_tui::transcript_build::RunBuilder`] already keeps for the live
+//! surface. This fold does not read `events.ts`. Since #2604 that column is
+//! stamped to the millisecond
+//! ([`SessionEventRecord::ts`](stella_store::SessionEventRecord::ts)), so the
+//! old reason — nothing sub-second to read — has gone. Rows written before
+//! #2604 still hold whole seconds, a session's journal spans executions, and
+//! wall-clock does not survive a clock adjustment; whether those make `ts` the
+//! better source here is #6037.
 //!
 //! **3. Drop nothing.** The shared run model has no slot for most of the
 //! wire's event kinds: a stage boundary, a provider fallback, a verdict, and

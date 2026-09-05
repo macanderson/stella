@@ -162,6 +162,12 @@ pub(crate) const UNCHANGED_TABLES: &str = "CREATE TABLE IF NOT EXISTS file_locks
 /// is exactly the replay access path (superseding the pre-v1 non-unique
 /// `events_by_execution` index, which is why no separate index exists).
 ///
+/// The `ts` default is not what a new row gets. `Store::record_event` writes
+/// the column itself, to the millisecond (`crate::event_clock`). The default
+/// is only what older rows carry, and they keep it. A migrated file and a
+/// fresh one therefore hold the same second-resolution default and the same
+/// millisecond rows.
+///
 /// `task_id` (v39, #5039) is the board task this event is evidence for, `NULL`
 /// when it is in no task's ledger — either nothing was running when it was
 /// dispatched, or the case carries no tag at all. It is a projection of the
