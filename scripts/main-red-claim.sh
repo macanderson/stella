@@ -96,6 +96,7 @@
 #   scripts/main-red-claim.sh check            # exit 0 proceed, 1 stand down
 #   scripts/main-red-claim.sh claim            # check, then claim it
 #   scripts/main-red-claim.sh session          # print this clone's session word
+#   scripts/main-red-claim.sh select --now <unix-seconds>   # pure: JSON in, rows out
 #   scripts/main-red-claim.sh check --window-minutes 20
 #   scripts/main-red-claim.sh check --fixture-open-issues "4671" \
 #                                   --fixture-login "ada" \
@@ -103,8 +104,12 @@
 #                                   --fixture-claims "grace s1 300"
 #
 # Uses portable POSIX tools plus `gh` so it runs anywhere a clone does. The
-# staleness arithmetic is done by `gh --jq`, not by `date`, because `date -d`
-# and `date -j` disagree across the platforms this repository is cloned on.
+# staleness arithmetic runs in `select_claims`'s own jq filter below, not
+# embedded in the `gh` call. `select` is that filter's seam: a test can feed
+# it a real payload instead of only the already-parsed `--fixture-claims`
+# shape. Not `date`: `date -d` and `date -j` disagree across the platforms
+# this repository is cloned on, which is why the arithmetic stays in jq
+# either way.
 set -uo pipefail
 
 label="main-red"
@@ -115,11 +120,12 @@ fixture_open_issues=""
 fixture_login=""
 fixture_claims=""
 fixture_session=""
+select_now=""
 use_fixture=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-  check | claim | session)
+  check | claim | session | select)
     mode="$1"
     shift
     ;;
@@ -129,6 +135,17 @@ while [ $# -gt 0 ]; do
       exit 2
     }
     window_minutes="$2"
+    shift 2
+    ;;
+  # `select`'s own clock, so a test can pin it. Unrelated to the fixture
+  # seams below: `select` reads real comments JSON on stdin and never stubs
+  # the tracker.
+  --now)
+    [ $# -ge 2 ] || {
+      echo "main-red-claim: --now needs a unix timestamp" >&2
+      exit 2
+    }
+    select_now="$2"
     shift 2
     ;;
   # Test-only seams. Supplying any one of them stubs the tracker entirely: a
@@ -264,6 +281,44 @@ if [ "$mode" = "session" ]; then
   exit 1
 fi
 
+# Every claim comment in a `gh issue view --json comments` payload, as
+# `<login> <session> <age-in-seconds>` — `-` marks a claim with no session
+# word, same as `--fixture-claims`. Pure: the payload comes in on stdin, and
+# `now` is an argument, not the real clock. That lets `select` mode below,
+# and the tests in scripts/test-main-red-claim.sh, run the exact filter
+# production uses.
+#
+# Only the first line is read, with CRLF stripped and runs of spaces
+# collapsed to one field each. A claim's marker line is
+# `main-red-claim: <login> [session]`; later lines never enter this parse.
+# Padding with three `-` first is what lets a two-column claim — no session
+# word, written by an older copy of this script — parse `$word[2]` instead
+# of erroring on a missing index.
+select_claims() {
+  jq -r --arg marker "$marker" --argjson now "$1" '
+    .comments[]
+    | select(.body | startswith($marker))
+    | ((.body | split("\n")[0] | gsub("\r"; "") | split(" ")
+        | map(select(length > 0)))
+       + ["-", "-", "-"]) as $word
+    | "\(.author.login) \($word[2]) \(($now - (.createdAt | fromdateiso8601)) | floor)"
+  '
+}
+
+# `select` is the seam a test can drive directly: real comments JSON goes in,
+# the parsed rows come out. No tracker, no fixture. Production wires it to
+# `gh issue view --json comments` below instead of writing this filter into
+# that call. Break the filter, and a test fails here — not only a live
+# claim, silently, later.
+if [ "$mode" = "select" ]; then
+  [ -n "$select_now" ] || {
+    echo "main-red-claim: select needs --now <unix-seconds>" >&2
+    exit 2
+  }
+  select_claims "$select_now"
+  exit $?
+fi
+
 if [ "$use_fixture" -eq 0 ] && ! command -v gh >/dev/null 2>&1; then
   echo "note: gh is not installed, so this run could not ask whether the" >&2
   echo "      repair is already claimed. Proceeding: a claim check that can" >&2
@@ -326,20 +381,14 @@ if [ -z "$my_session" ]; then
   echo "      be told from a peer session's. Proceeding on those (fail-open)." >&2
 fi
 
-# Every claim comment, as `<login> <session> <age-in-seconds>`, with `-` for a
-# claim that carries no session word. The arithmetic is jq's: `date` spells the
-# same conversion two incompatible ways across macOS and Linux, and this script
-# is run from a clone on both.
+# Every claim comment, via `select_claims` above rather than a `--jq` program
+# embedded in this call.
 if [ "$use_fixture" -eq 1 ]; then
   claims="$fixture_claims"
-elif ! claims="$(gh issue view "$issue" --json comments --jq "
-    .comments[]
-    | select(.body | startswith(\"$marker\"))
-    | ((.body | split(\"\n\")[0] | gsub(\"\r\"; \"\") | split(\" \")
-        | map(select(length > 0)))
-       + [\"-\", \"-\", \"-\"]) as \$word
-    | \"\(.author.login) \(\$word[2]) \((now - (.createdAt | fromdateiso8601)) | floor)\"
-  " 2>/dev/null)"; then
+elif ! comments_json="$(gh issue view "$issue" --json comments 2>/dev/null)"; then
+  echo "note: could not read #$issue's comments. Proceeding (fail-open)." >&2
+  proceed "ok  proceed (comments unreadable)"
+elif ! claims="$(printf '%s' "$comments_json" | select_claims "$(date -u +%s)")"; then
   echo "note: could not read #$issue's comments. Proceeding (fail-open)." >&2
   proceed "ok  proceed (comments unreadable)"
 fi

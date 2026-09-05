@@ -4,6 +4,7 @@
 #
 #   scripts/issue-claim.sh check <n>    # exit 0 proceed, 1 stand down
 #   scripts/issue-claim.sh claim <n>    # check, then post the claim
+#   scripts/issue-claim.sh select --now <unix-seconds>   # pure: JSON in, rows out
 #
 # ── Why this exists ──────────────────────────────────────────────────────────
 #
@@ -55,16 +56,24 @@ fixture_login=""
 fixture_claims=""
 fixture_prs=""
 fixture_prs_failed=0
+select_now=""
 use_fixture=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-  check | claim)
+  check | claim | select)
     mode="$1"
     shift
     ;;
   --window-minutes)
     window_minutes="${2:-}"
+    shift 2
+    ;;
+  # `select`'s own clock, so a test can pin it. Unrelated to the fixture
+  # seams below: `select` reads real comments JSON on stdin and never stubs
+  # the tracker.
+  --now)
+    select_now="${2:-}"
     shift 2
     ;;
   # Test-only, and paired: a fixture that supplied claims but read the real
@@ -108,6 +117,32 @@ while [ $# -gt 0 ]; do
     ;;
   esac
 done
+
+# Every claim comment in a `gh issue view --json comments` payload, as
+# `<login> <age-in-seconds>`. Pure: the payload comes in on stdin, and `now`
+# is an argument, not the real clock. That lets `select` mode below, and the
+# tests in scripts/test-issue-claim.sh, run the exact filter production uses.
+select_claims() {
+  jq -r --arg marker "$marker" --argjson now "$1" '
+    .comments[]
+    | select(.body | startswith($marker))
+    | "\(.author.login) \(($now - (.createdAt | fromdateiso8601)) | floor)"
+  '
+}
+
+# `select` is the seam a test can drive directly: real comments JSON goes in,
+# the parsed rows come out. No tracker, no issue number. Production wires it
+# to `gh issue view --json comments` below instead of writing this filter
+# into that call. Break the filter, and a test fails here — not only a live
+# claim, silently, later.
+if [ "$mode" = "select" ]; then
+  [ -n "$select_now" ] || {
+    echo "issue-claim: select needs --now <unix-seconds>" >&2
+    exit 2
+  }
+  select_claims "$select_now"
+  exit $?
+fi
 
 if [ -z "$mode" ] || [ -z "$issue" ]; then
   echo "issue-claim: usage: issue-claim.sh check|claim <issue-number>" >&2
@@ -191,16 +226,14 @@ if [ -z "$me" ]; then
   proceed "ok  proceed (identity unknown)"
 fi
 
-# Every claim comment, as `<login> <age-in-seconds>`. The arithmetic is jq's:
-# `date` spells the same conversion two incompatible ways across macOS and
-# Linux, and this script is run from a clone on both.
+# Every claim comment, via `select_claims` above rather than a `--jq` program
+# embedded in this call.
 if [ "$use_fixture" -eq 1 ]; then
   claims="$fixture_claims"
-elif ! claims="$(gh issue view "$issue" --json comments --jq "
-    .comments[]
-    | select(.body | startswith(\"$marker\"))
-    | \"\(.author.login) \((now - (.createdAt | fromdateiso8601)) | floor)\"
-  " 2>/dev/null)"; then
+elif ! comments_json="$(gh issue view "$issue" --json comments 2>/dev/null)"; then
+  echo "note: could not read #$issue's comments. Proceeding (fail-open)." >&2
+  proceed "ok  proceed (comments unreadable)"
+elif ! claims="$(printf '%s' "$comments_json" | select_claims "$(date -u +%s)")"; then
   echo "note: could not read #$issue's comments. Proceeding (fail-open)." >&2
   proceed "ok  proceed (comments unreadable)"
 fi

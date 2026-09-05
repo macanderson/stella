@@ -166,6 +166,76 @@ else
   bad "--window-minutes did not reach the comparison: $out"
 fi
 
+# ── The parse itself ──────────────────────────────────────────────────────
+#
+# Every case above drives `--fixture-claims`: already-parsed `<login> <age>`
+# rows, never the jq filter that makes them. These drive `select` instead —
+# real `gh issue view --json comments` JSON, on stdin, through the real
+# filter. A typo in it (a dropped `.author.login`, a broken marker check) now
+# fails one of these cases, not nothing.
+NOW_SELECT=2000000000
+
+iso() { jq -n --argjson t "$1" '$t | todateiso8601'; }
+
+# comment <login> <body> <created-unix> — one comment object.
+comment() {
+  local login="$1" body="$2" created
+  created="$(iso "$3")"
+  printf '{"author":{"login":"%s"},"body":%s,"createdAt":%s}' \
+    "$login" "$(printf '%s' "$body" | jq -Rs .)" "$created"
+}
+
+# want_select <name> <expect-line> <json>.
+want_select() {
+  local name="$1" expect="$2" json="$3" out rc
+  out="$(printf '%s' "$json" | "$SCRIPT" select --now "$NOW_SELECT" 2>/dev/null)"
+  rc=$?
+  if [ "$out" = "$expect" ] && [ "$rc" -eq 0 ]; then
+    ok "$name"
+  else
+    bad "$name — wanted '$expect' (exit 0), got '$out' (exit $rc)"
+  fi
+}
+
+want_select "a live claim parses as <login> <age>" \
+  "grace 300" \
+  "{\"comments\":[$(comment grace "<!-- issue-claim --> grace" $((NOW_SELECT - 300)))]}"
+
+# A lapsed claim still parses correctly here — the window is judged by `check`
+# downstream, not by `select`.
+want_select "a lapsed claim still parses; the window is judged downstream" \
+  "grace 999999" \
+  "{\"comments\":[$(comment grace "<!-- issue-claim --> grace" $((NOW_SELECT - 999999)))]}"
+
+out="$(printf '{"comments":[%s]}' \
+  "$(comment grace "just an unrelated comment" $((NOW_SELECT - 10)))" \
+  | "$SCRIPT" select --now "$NOW_SELECT" 2>/dev/null)"
+rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 0 ]; then
+  ok "a comment that is not a claim produces no row"
+else
+  bad "a non-claim comment should produce no row, got '$out' (exit $rc)"
+fi
+
+# The witness: break the filter above by dropping the `.author.login`
+# interpolation (or the `startswith($marker)` filter) and re-run
+# `make issue-claim-test` — every `want_select` case above fails, naming the
+# parse. Restore it and the suite is green again. Captured as a red run
+# followed by a green one in this PR's description rather than claimed here.
+
+# A malformed timestamp must fail the parse rather than silently emit a wrong
+# age. Production treats a failed `select` as "comments unreadable" and
+# proceeds (fail-open), so this failing closed is what keeps that path from
+# reporting a wrong number.
+malformed_json='{"comments":[{"author":{"login":"grace"},"body":"<!-- issue-claim --> grace","createdAt":"not-a-date"}]}'
+out="$(printf '%s' "$malformed_json" | "$SCRIPT" select --now "$NOW_SELECT" 2>/dev/null)"
+rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$out" ]; then
+  ok "a malformed timestamp fails the parse rather than emitting a wrong age"
+else
+  bad "a malformed timestamp should fail closed, got exit $rc: '$out'"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf 'issue-claim: %d passed\n' "$pass"
