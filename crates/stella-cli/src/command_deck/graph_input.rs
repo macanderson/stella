@@ -15,6 +15,27 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent;
 
+/// Seed the GRAPH tab with the workspace's busiest neighborhood, off the
+/// driver task.
+///
+/// The read is SQLite over a store that can be hundreds of megabytes. Done on
+/// the driver task before the deck spawns, as `DeckOptions::initial_graph`
+/// invites, it cannot freeze a deck, since there is none yet, but it holds the
+/// first frame for as long as it takes. So the deck starts with no graph and
+/// this fills it in from the blocking pool, the same out-of-band refresh path
+/// a re-root answer takes. A workspace with no index sends nothing, and the
+/// tab shows its "run `stella init`" hint, as it does for any `None`.
+///
+/// Fire-and-forget by design: the deck does not wait on it, and a send that
+/// fails means the deck is already gone.
+pub(super) fn seed(workspace_root: std::path::PathBuf, in_tx: UnboundedSender<Inbound>) {
+    tokio::task::spawn_blocking(move || {
+        if let Some(snapshot) = agent::graph_snapshot(&workspace_root) {
+            let _ = in_tx.send(Inbound::GraphSnapshot(snapshot));
+        }
+    });
+}
+
 /// Answer a re-root request by requerying and pushing a fresh snapshot back,
 /// the same out-of-band refresh path `/init` uses.
 ///

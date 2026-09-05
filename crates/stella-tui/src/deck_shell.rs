@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{Event, KeyEventKind};
 use ratatui::backend::CrosstermBackend;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Paragraph, Widget};
@@ -654,7 +654,9 @@ fn write_scrollback(
 /// Run the command deck to completion. [`Inbound`] envelopes stream in over
 /// `inbound`; the user's [`WorkspaceInput`]s stream out over `submissions`.
 /// Returns when the inbound stream closes or the user quits, having always
-/// restored the terminal first.
+/// restored the terminal first. Returns an error when the key reader stops on
+/// its own — the terminal could not be read, or stdin closed — so the driver
+/// can say why the deck ended instead of reporting a quit.
 pub async fn run_deck(
     opts: DeckOptions,
     mut inbound: UnboundedReceiver<Inbound>,
@@ -746,26 +748,14 @@ pub async fn run_deck(
     // `spawn_shell_command`) — persists across every dispatch this loop makes.
     let shell_active = Arc::new(AtomicUsize::new(0));
 
-    // Blocking crossterm reader → async loop, with a shutdown flag.
-    let (key_tx, mut key_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    // Blocking crossterm reader → async loop, with a shutdown flag. The
+    // reader reports why it stopped, and the loop returns that report
+    // (`crate::key_reader`) — a lane that closes is never read as a quit.
     let shutdown = Arc::new(AtomicBool::new(false));
-    let reader_shutdown = shutdown.clone();
-    let reader = std::thread::spawn(move || {
-        while !reader_shutdown.load(Ordering::Relaxed) {
-            match event::poll(Duration::from_millis(50)) {
-                Ok(true) => match event::read() {
-                    Ok(ev) => {
-                        if key_tx.send(ev).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                },
-                Ok(false) => {}
-                Err(_) => break,
-            }
-        }
-    });
+    let (reader, mut key_rx) = crate::key_reader::spawn(shutdown.clone());
+    // Why the loop ended, when it ended on something other than a quit or
+    // the engine closing the stream. Returned after the terminal is restored.
+    let mut ended: io::Result<()> = Ok(());
 
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -831,7 +821,18 @@ pub async fn run_deck(
                 }
             }
             maybe_key = key_rx.recv() => {
-                match maybe_key {
+                let event = match crate::key_reader::event(maybe_key) {
+                    Ok(event) => event,
+                    // The reader stopped — a terminal crossterm could not
+                    // parse, a stdin that closed, a thread that died. The
+                    // session ends as it did before, and now says why.
+                    Err(error) => {
+                        debug.note(&error.to_string());
+                        ended = Err(error);
+                        break 'run;
+                    }
+                };
+                match event {
                     // `⌃V`: explicit clipboard pull — the only way a *bitmap*
                     // (a copied screenshot) reaches the deck, since bracketed
                     // paste never carries one. The image payload is stored
@@ -842,7 +843,7 @@ pub async fn run_deck(
                     // The capture itself is blocking OS I/O, so it runs on
                     // the blocking pool and the result returns on `clip_rx` —
                     // the draw loop never waits on the clipboard.
-                    Some(Event::Key(key))
+                    Event::Key(key)
                         if key.kind != KeyEventKind::Release && is_clipboard_pull(key) =>
                     {
                         let tx = clip_tx.clone();
@@ -857,7 +858,7 @@ pub async fn run_deck(
                     // terminals without `REPORT_EVENT_TYPES` this arm never
                     // fires and the repeat-gap fallback in the tick arm ends
                     // the hold instead (`crate::voice`).
-                    Some(Event::Key(key)) if key.kind == KeyEventKind::Release => {
+                    Event::Key(key) if key.kind == KeyEventKind::Release => {
                         if is_plain_space(key) {
                             let cmd = ui.voice.space_release(model.now_ms);
                             apply_voice_cmd(cmd, &mut ui, &submissions);
@@ -868,11 +869,11 @@ pub async fn run_deck(
                     // tap mode it is the second tap, which ends the capture
                     // (`crate::voice::VoiceUi::swallowed_space`). Esc
                     // abandons the capture in both.
-                    Some(Event::Key(key)) if ui.voice.swallows_space() && is_plain_space(key) => {
+                    Event::Key(key) if ui.voice.swallows_space() && is_plain_space(key) => {
                         let cmd = ui.voice.swallowed_space(model.now_ms);
                         apply_voice_cmd(cmd, &mut ui, &submissions);
                     }
-                    Some(Event::Key(key))
+                    Event::Key(key)
                         if ui.voice.esc_cancels()
                             && key.code == crossterm::event::KeyCode::Esc =>
                     {
@@ -880,7 +881,7 @@ pub async fn run_deck(
                             let _ = submissions.send(WorkspaceInput::VoiceCancel);
                         }
                     }
-                    Some(Event::Key(key)) => {
+                    Event::Key(key) => {
                         // Snapshot for the voice observation below: dispatch
                         // decides where the key goes, and the composer's own
                         // growth says whether a plain space became text.
@@ -925,7 +926,7 @@ pub async fn run_deck(
                     // each of which would have submitted a separate prompt.
                     // Routed by the UI: the agent-definition editor claims
                     // it while open (`DeckUi::paste`).
-                    Some(Event::Paste(text)) => {
+                    Event::Paste(text) => {
                         ui.paste(&text);
                         // A paste is typing, not holding.
                         ui.voice.interrupt();
@@ -941,7 +942,7 @@ pub async fn run_deck(
                     // same `apply_deck_action` a key's is: a wheel notch over
                     // a modal overlay re-enters the key dispatch (synthesized
                     // arrows), so its action can be anything a key's can.
-                    Some(Event::Mouse(mouse)) => {
+                    Event::Mouse(mouse) => {
                         ui.notice.dismiss();
                         let width = terminal.size()?.width;
                         let action = crate::mouse::handle_deck_mouse(mouse, width, &model, &mut ui);
@@ -958,9 +959,7 @@ pub async fn run_deck(
                         }
                     }
                     // Resize / focus change: the next draw picks them up.
-                    Some(_) => {}
-                    // Reader thread ended (stdin closed).
-                    None => break 'run,
+                    _ => {}
                 }
             }
             maybe_local = local_rx.recv(), if local_open => {
@@ -1022,7 +1021,7 @@ pub async fn run_deck(
         debug.note(&format!("final scrollback flush failed: {error}"));
     }
     debug.note("deck session end");
-    Ok(())
+    ended
 }
 
 #[cfg(test)]

@@ -641,12 +641,17 @@ pub(super) fn report_retired_vectors(
 /// `tokio::spawn`ed session task, and a bare `&mut dyn FnMut(_)` would make
 /// the whole future non-`Send` — the same trap `drive_index_blocking`
 /// documents above.
+///
+/// The pass itself runs on a thread of its own
+/// (`backfill::spawn_on_own_thread`): it is SQLite, file reads and HTTP
+/// interleaved, and as a task here it would hold this runtime's worker for
+/// every synchronous step. This task only relays what the thread reports.
 async fn backfill_vectors_quietly(
     root: &std::path::Path,
     status: &mut (dyn FnMut(InitLine) + Send),
     readiness: &mut (dyn FnMut(IndexReadiness) + Send),
 ) {
-    use crate::search_cmd::backfill::{BackfillOutcome, backfill_workspace_vectors};
+    use crate::search_cmd::backfill::{BackfillOutcome, spawn_on_own_thread};
     use crate::search_cmd::semantic::WarmOutcome;
 
     let stella_embed::Resolution::Configured(embedder) =
@@ -655,22 +660,36 @@ async fn backfill_vectors_quietly(
         return;
     };
 
+    // Read before the embedder crosses to its thread: the settled report at
+    // the end asks the store about this fingerprint.
+    let fingerprint = stella_embed::Embedder::fingerprint(embedder.as_ref()).id();
     let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
     // Every tick is the pass saying "still filling"; the settled report is
     // this function's last act, below, and belongs to nobody else — a pass
     // that declared itself settled from the inside would release the prompt
     // gate one batch before it was true.
-    let outcome = backfill_workspace_vectors(root, embedder.as_ref(), &mut |measured| {
-        readiness(measured);
-        if ticker.ready(Instant::now()) {
-            status(InitLine::Progress(format!(
-                "· semantic index: {} of {} files embedded…",
-                measured.indexed_files(),
-                measured.total_files
-            )));
+    let outcome = match spawn_on_own_thread(root.to_path_buf(), embedder) {
+        Ok(mut pass) => {
+            while let Some(measured) = pass.progress().await {
+                readiness(measured);
+                if ticker.ready(Instant::now()) {
+                    status(InitLine::Progress(format!(
+                        "· semantic index: {} of {} files embedded…",
+                        measured.indexed_files(),
+                        measured.total_files
+                    )));
+                }
+            }
+            pass.join().await.unwrap_or_else(|| {
+                BackfillOutcome::Unavailable(
+                    "the embedding pass ended without reporting".to_string(),
+                )
+            })
         }
-    })
-    .await;
+        Err(error) => BackfillOutcome::Unavailable(format!(
+            "cannot start the embedding pass's thread: {error}"
+        )),
+    };
 
     match &outcome {
         BackfillOutcome::Ran {
@@ -707,7 +726,6 @@ async fn backfill_vectors_quietly(
     // graph store. That is SQLite, so it runs on the blocking pool and not
     // on this task's worker. A report that could not run settles as unknown,
     // and unknown holds nothing. That is how `measure` fails too.
-    let fingerprint = stella_embed::Embedder::fingerprint(embedder.as_ref()).id();
     let report_root = root.to_path_buf();
     let measured =
         tokio::task::spawn_blocking(move || settled_readiness(&report_root, &fingerprint))

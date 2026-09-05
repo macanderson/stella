@@ -53,6 +53,7 @@ pub mod clipboard;
 pub mod composer;
 pub mod debug_log;
 pub mod input;
+pub mod key_reader;
 pub mod keymap;
 pub mod model;
 pub mod panel_guard;
