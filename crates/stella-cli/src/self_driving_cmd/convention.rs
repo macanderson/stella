@@ -190,7 +190,7 @@ mod tests {
 env:
   GH_TOKEN: ${{ github.token }}
   # Space-separated; adding any of these counts as typing the issue.
-  TYPE_LABELS: bug feature epic documentation question
+  TYPE_LABELS: bug feature chore documentation epic
 jobs:
   triage:
     steps:
@@ -213,7 +213,7 @@ jobs:
         assert_eq!(axis.source, ConventionSource::Enforced);
         assert_eq!(
             axis.members,
-            vec!["bug", "feature", "epic", "documentation", "question"]
+            vec!["bug", "feature", "chore", "documentation", "epic"]
         );
         assert_eq!(bound.convention.reserved, vec!["triage".to_owned()]);
     }
@@ -283,5 +283,30 @@ jobs:
 
         assert_eq!(bound.provenance, Provenance::Manifest);
         assert_eq!(bound.convention.axes[0].name, "kind");
+    }
+
+    /// Reads this repository's own checked-in
+    /// `.github/workflows/issue-triage.yml` — not a fixture — and checks
+    /// `TYPE_LABELS` against `/backlog-triage`'s five valid types
+    /// (`bug feature chore documentation epic`), no more and no less: a
+    /// `question` entry or a missing `chore` fails this test.
+    #[test]
+    fn the_real_workflow_type_labels_match_the_five_valid_types() {
+        // crates/stella-cli -> repository root.
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+
+        let bound = load(&repo_root);
+
+        assert_eq!(
+            bound.provenance,
+            Provenance::Discovered,
+            "expected TYPE_LABELS to be discoverable from the real workflow"
+        );
+        let mut members = bound.convention.axes[0].members.clone();
+        members.sort();
+        assert_eq!(
+            members,
+            vec!["bug", "chore", "documentation", "epic", "feature"]
+        );
     }
 }

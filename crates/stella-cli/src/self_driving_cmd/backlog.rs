@@ -947,7 +947,7 @@ mod tests {
         BacklogConvention {
             axes: vec![LabelAxis {
                 name: "type".into(),
-                members: ["bug", "feature", "epic", "documentation", "question"]
+                members: ["bug", "feature", "chore", "documentation", "epic"]
                     .iter()
                     .map(|s| (*s).to_owned())
                     .collect(),
