@@ -411,13 +411,24 @@ mod tests {
         fds
     }
 
-    /// Whether `pid` holds `fd` open, read from its `/proc` fd directory.
+    /// What the process at `/proc/<proc_entry>` has open at descriptor number
+    /// `fd`, as `/proc` names it — `pipe:[12345]` for a pipe — or `None` when
+    /// that number is not open.
     ///
-    /// Scoped to the child this test spawned, so it answers a question about
-    /// one known process rather than about the whole machine.
+    /// Names the object, not the number, so a descriptor that merely sits at
+    /// the same number reads as what it is. Used on `"self"` to record what
+    /// this process's two ends name, which is the yardstick the child's own
+    /// report is compared against.
+    ///
+    /// Pointing it at a *child* is what does not work, and the reason is the
+    /// timing rather than the identity: `/proc/<pid>/fd` read from the parent
+    /// can catch the child forked but not yet through `execve`, holding a copy
+    /// of this process's whole table — both pipe ends included, whatever
+    /// `FD_CLOEXEC` says, because the flag acts at `exec` and the `exec` has
+    /// not happened. See the test below for the run that established it.
     #[cfg(target_os = "linux")]
-    fn process_holds_fd(pid: u32, fd: i32) -> bool {
-        std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).is_ok()
+    fn fd_target(proc_entry: &str, fd: i32) -> Option<std::path::PathBuf> {
+        std::fs::read_link(format!("/proc/{proc_entry}/fd/{fd}")).ok()
     }
 
     /// A child `std::process::Command` spawns while the pipe is open must not
@@ -437,10 +448,29 @@ mod tests {
     /// `b29e934f` after passing on its own branch at `6f6e4d84` — the same
     /// code, decided by which thread was mid-spawn.
     ///
-    /// `process_holds_fd` asks the question the fix is actually about: after
-    /// `exec`, does *this* child hold the read end? Nothing another thread
-    /// does can change that answer. Both assertions still fail on a plain
-    /// `libc::pipe()`: the flag is absent, and the child keeps the fd.
+    /// **The child answers for itself, and the parent waits for it to exit.**
+    /// Three earlier versions asked `/proc/<child>/fd` from the parent right
+    /// after `spawn()` returned, on the premise that a returned `spawn()` means
+    /// a completed `execve`. It does not, and that premise took `main` red
+    /// three times: the parent can catch the child forked and not yet through
+    /// `execve`, still carrying a copy of this process's whole descriptor
+    /// table. `FD_CLOEXEC` is set on both ends the whole time and is simply not
+    /// due to act yet.
+    ///
+    /// A captured failure is what settled it, rather than a fourth argument.
+    /// The child the probe accused had `/proc/<pid>/exe` still naming this test
+    /// binary rather than a shell, and a table holding this process's sockets,
+    /// SQLite files and event descriptors alongside both pipe ends. Nothing
+    /// about `CLOEXEC` was broken; the question was asked too early.
+    ///
+    /// `output()` removes the window rather than narrowing it: the child has
+    /// exited before its answer is read, so there is no pre-`exec` state left
+    /// to observe. Comparing what it reports against what the parent recorded
+    /// keeps the identity property too — a descriptor the child opened at the
+    /// same number names something else and reads as a pass.
+    ///
+    /// The witness is intact: on a plain `libc::pipe()` the flag assertions
+    /// fail first, before the child is ever consulted.
     #[test]
     fn cloexec_pipe_closes_a_concurrent_childs_inherited_copy() {
         let fds = cloexec_pipe();
@@ -458,36 +488,69 @@ mod tests {
             );
         }
 
-        // `Command::spawn()` returns only once the child's `execve()` has
-        // finished: Rust blocks on its own close-on-exec pipe, which the exec
-        // is what closes. So by the time this returns, `/bin/sh` has already
-        // either kept `read_fd` (no `CLOEXEC`) or lost it. `sleep 5` keeps it
-        // alive past the probe below, so a kept copy cannot exit early and
-        // read as absent.
-        let mut child = std::process::Command::new("/bin/sh")
-            .args(["-c", "sleep 5"])
-            .spawn()
-            .expect("spawn a child while the pipe is open");
+        // Read what each end names while this process still owns both, so the
+        // comparison below is against this pipe rather than against a number.
+        #[cfg(target_os = "linux")]
+        let (read_names, write_names) = (
+            fd_target("self", read_fd).expect("the read end is open in this process"),
+            fd_target("self", write_fd).expect("the write end is open in this process"),
+        );
+
+        // The child reports its own descriptors, and `output()` waits for it to
+        // exit, so the answer is necessarily post-`exec`. Reading
+        // `/proc/<pid>/fd` from the parent instead races `execve`: it sees the
+        // forked-but-not-yet-exec'd table, which is a copy of this process's
+        // and therefore holds both ends whatever the flag says. That race is
+        // what took `main` red three times, and the run that proved it printed
+        // a child whose `/proc/<pid>/exe` was still this test binary and whose
+        // table carried this process's sockets and databases.
+        //
+        // The parent holds both ends open across the call, so the targets it
+        // recorded name this pipe and the child's report is comparable to them.
+        #[cfg(target_os = "linux")]
+        let probe = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "printf 'read=%s\\n' \"$(readlink /proc/self/fd/{read_fd} || true)\"; \
+                 printf 'write=%s\\n' \"$(readlink /proc/self/fd/{write_fd} || true)\""
+            ))
+            .output()
+            .expect("run the in-child descriptor probe");
 
         #[cfg(target_os = "linux")]
         {
             assert!(
-                !process_holds_fd(child.id(), read_fd),
-                "a child spawned while the pipe was open still held a live \
-                 copy of the read end"
+                probe.status.success(),
+                "the in-child probe did not run, so its silence proves nothing: {probe:?}"
             );
-            assert!(
-                !process_holds_fd(child.id(), write_fd),
-                "a child spawned while the pipe was open still held a live \
-                 copy of the write end"
+            let reported = String::from_utf8_lossy(&probe.stdout);
+            let named = |key: &str| {
+                reported
+                    .lines()
+                    .find_map(|line| line.strip_prefix(key))
+                    .map(str::to_owned)
+            };
+            assert_ne!(
+                named("read="),
+                Some(read_names.to_string_lossy().into_owned()),
+                "a child that exec'd while the pipe was open still held the \
+                 read end\nchild reported:\n{reported}parent: read_fd \
+                 {read_fd} -> {}",
+                read_names.display()
+            );
+            assert_ne!(
+                named("write="),
+                Some(write_names.to_string_lossy().into_owned()),
+                "a child that exec'd while the pipe was open still held the \
+                 write end\nchild reported:\n{reported}parent: write_fd \
+                 {write_fd} -> {}",
+                write_names.display()
             );
         }
 
         // SAFETY: both ends are still owned by this test.
         assert_eq!(unsafe { libc::close(read_fd) }, 0);
         assert_eq!(unsafe { libc::close(write_fd) }, 0);
-        let _ = child.kill();
-        let _ = child.wait();
     }
 
     #[test]
