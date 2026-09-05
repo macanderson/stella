@@ -1034,21 +1034,21 @@ mod tests {
         assert_eq!(rows[0].id, "nod_live");
     }
 
-    /// The whole loop against real stores in a temp workspace: seed a
-    /// memory (context.db), cite it (store.db), watch the strict >10 gate
-    /// hold at exactly 10, tip it at 11, and then watch the evidence gate
-    /// refuse the publication the citation streak just made eligible. No cwd
-    /// mutation — the `_in`/`list_rows` seams take the root directly.
+    /// The whole loop against real stores in a temp workspace. Seed a memory
+    /// (context.db). Cite it (store.db). Watch the strict >10 gate hold at 10
+    /// and tip at 11. Then watch the evidence gate refuse what those citations
+    /// just made eligible. The `_in`/`list_rows` seams take the root, so no
+    /// cwd is touched.
     ///
-    /// The two gates are independent and this proves both: eligibility is
-    /// earned by citations, and it buys the right to *ask*, not the right to
-    /// publish. `promote_in` mints `ProvenanceGrade::ModelCritique` as a
-    /// constant — a citation is a model's judgement, and counting citations is
-    /// aggregation, which never promotes a grade — so no streak, and no
-    /// `LocalHuman` typing the command, can carry this path to the
-    /// `EnvironmentObservation` a steering directive costs. The write half is
-    /// unreachable here by construction rather than by configuration, which is
-    /// why this asserts the refusal instead of a written record.
+    /// Both gates are proved here, and they are separate. Citations earn
+    /// eligibility. Eligibility buys the right to ask, not the right to
+    /// publish. `promote_in` sets the grade to
+    /// `ProvenanceGrade::ModelCritique` as a constant. A citation is a model's
+    /// judgement, and counting them is aggregation, which never lifts a grade.
+    /// So no streak reaches the `EnvironmentObservation` a steering directive
+    /// costs, and nor does a `LocalHuman` at the keyboard. Nothing here can
+    /// reach the write half at all. That is why this asserts the refusal
+    /// rather than a written record.
     #[tokio::test]
     async fn promotion_gate_and_rule_write_work_end_to_end() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -1096,11 +1096,10 @@ mod tests {
         drop(store);
         assert!(list_rows(root).unwrap()[0].eligible);
 
-        // Eligible, and still refused: the citation streak cleared the
-        // promotion gate and the evidence gate priced the directive above what
-        // a memory can offer. The refusal names both grades, so the person who
-        // typed the command learns what it would take rather than that it
-        // failed.
+        // Eligible, and still refused. The streak cleared the promotion gate.
+        // The evidence gate then priced the directive above what a memory can
+        // offer. The refusal names both grades, so whoever typed the command
+        // learns what it would take, not just that it failed.
         let err = promote_in(root, &id).unwrap_err();
         assert!(
             err.contains("steering_directive requires environment_observation"),
@@ -1111,9 +1110,9 @@ mod tests {
             "the refusal names the grade actually offered: {err}"
         );
 
-        // Nothing is written on a refusal — the gate is asked before the
-        // record is built, so a refused promotion leaves no file behind and no
-        // directory to hold one.
+        // Nothing is written on a refusal. The gate is asked before the record
+        // is built, so a refused promotion leaves no file and no directory to
+        // hold one.
         let rules_dir = root.join(".stella").join("rules");
         let written: Vec<std::path::PathBuf> = std::fs::read_dir(&rules_dir)
             .map(|entries| entries.filter_map(|e| e.ok().map(|e| e.path())).collect())
