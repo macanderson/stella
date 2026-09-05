@@ -64,7 +64,7 @@ fn walk_sql(root: Node, src: &[u8], out: &mut Vec<RelationDef>) {
             }
             _ => {}
         }
-        for idx in (0..node.child_count() as u32).rev() {
+        for idx in (0..node.child_count()).rev() {
             if let Some(child) = node.child(idx) {
                 stack.push(child);
             }
@@ -123,7 +123,7 @@ fn collect_columns(table: Node, src: &[u8], rel: &mut RelationDef) {
             }
             continue; // a column definition never nests another
         }
-        for idx in (0..node.child_count() as u32).rev() {
+        for idx in (0..node.child_count()).rev() {
             if let Some(child) = node.child(idx) {
                 stack.push(child);
             }

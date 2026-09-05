@@ -71,7 +71,7 @@ fn walk(root: Node, src: &[u8], passes: &Passes, app: Option<&str>, out: &mut St
             }
             _ => {}
         }
-        for idx in (0..node.child_count() as u32).rev() {
+        for idx in (0..node.child_count()).rev() {
             if let Some(child) = node.child(idx) {
                 stack.push(child);
             }
