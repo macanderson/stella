@@ -45,9 +45,9 @@ use std::path::Path;
 
 use colored::Colorize;
 
-use stella_core::ingest::record::SharingScope;
-use stella_core::ingest::refresh::same_statement;
-use stella_core::records::{Decision, DecisionEvent, decision};
+use stella_records::ingest::record::SharingScope;
+use stella_records::ingest::refresh::same_statement;
+use stella_records::records::{Decision, DecisionEvent, decision};
 
 use super::{FoundProposal, read_proposals, resolve_candidate, verdict_label};
 use crate::context_records::{
@@ -131,13 +131,13 @@ pub fn run_review(root: &Path, show_all: bool) -> Result<(), String> {
 enum Probed {
     /// The probe was re-run just now against the workspace.
     Fresh {
-        refutation: stella_core::ingest::record::Refutation,
+        refutation: stella_records::ingest::record::Refutation,
         /// The verdict the proposal file stores, when it disagrees with the
         /// one above — the tree moved under the claim, and that is news.
         superseded: Option<(String, String)>,
     },
     /// No machine could re-ask: the proposal's stored verdict, as stored.
-    Recorded(Option<stella_core::ingest::record::Refutation>),
+    Recorded(Option<stella_records::ingest::record::Refutation>),
 }
 
 impl Probed {
@@ -163,9 +163,9 @@ fn rank(verdict: Option<&str>) -> u8 {
 /// could.
 ///
 /// **A gated probe is never run here, whatever the record says about itself.**
-/// The sweep's rule ([`stella_core::records::honored_probe`]) admits a
+/// The sweep's rule ([`stella_records::records::honored_probe`]) admits a
 /// `command_succeeds` or `http_ok` only on a record the loader stamped
-/// [`stella_core::records::Trust::User`] — a *published* file in the user's own
+/// [`stella_records::records::Trust::User`] — a *published* file in the user's own
 /// `~/.stella/rules`, which nobody else can write. This reads a **proposal**,
 /// which has no tier at all: it is sitting in the tree awaiting a decision, and
 /// its `origin` may live in the file's `[defaults]` header rather than on the
@@ -175,7 +175,7 @@ fn rank(verdict: Option<&str>) -> u8 {
 /// reads, which is what makes re-asking on every review cheap enough to be
 /// unconditional.
 fn reprobe(root: &Path, found: &FoundProposal, now: &str) -> Probed {
-    use stella_core::ingest::record::ProbeKind;
+    use stella_records::ingest::record::ProbeKind;
 
     let stored = found.proposal.refutation.clone();
     let Some(probe) = found
@@ -314,7 +314,7 @@ fn print_proposal(
             Decision::Keep => format!("already kept ({})", state.at),
             Decision::Edit => format!("already edited and published ({})", state.at),
             Decision::Ignore => match state.cooldown_until.as_deref() {
-                Some(until) if stella_core::records::clock::is_before(now, until) => {
+                Some(until) if stella_records::records::clock::is_before(now, until) => {
                     format!("declined — will not be re-proposed until {until}")
                 }
                 Some(_) => "declined — the cooldown has lapsed".to_string(),
@@ -445,7 +445,7 @@ pub fn run_keep(
             )?;
             crate::context_records::append_promotion(
                 root,
-                stella_core::records::promotion::PromotionEvent {
+                stella_records::records::promotion::PromotionEvent {
                     seq: 0,
                     prev: String::new(),
                     at: now_rfc3339(),
@@ -459,7 +459,7 @@ pub fn run_keep(
                         record.record_id.as_deref().unwrap_or("<unstamped>")
                     ),
                     mode: governance.mode.as_str().to_string(),
-                    action: stella_core::records::promotion::LedgerAction::Superseded,
+                    action: stella_records::records::promotion::LedgerAction::Superseded,
                 },
             )?;
         }
@@ -530,14 +530,14 @@ pub fn run_keep(
 
 /// The record stored in a published file, exactly as the file spells it.
 ///
-/// A raw TOML read, deliberately not [`stella_core::records::load_context_file`]:
+/// A raw TOML read, deliberately not [`stella_records::records::load_context_file`]:
 /// the loader re-stamps for verification, and a supersession link must cite
 /// the `record_id` the file actually carries, not one recomputed today.
 /// `None` when the file cannot be read or parsed — the caller then falls back
 /// to the plain refusal rather than superseding something it cannot see.
-fn published_record_at(path: &Path) -> Option<stella_core::ingest::record::Record> {
+fn published_record_at(path: &Path) -> Option<stella_records::ingest::record::Record> {
     let contents = std::fs::read_to_string(path).ok()?;
-    let file: stella_core::ingest::record::ContextFile = toml::from_str(&contents).ok()?;
+    let file: stella_records::ingest::record::ContextFile = toml::from_str(&contents).ok()?;
     file.records.first().cloned()
 }
 
@@ -553,7 +553,7 @@ pub fn run_ignore(
     let proposal = &found.proposal;
 
     if let Some(cooldown) = cooldown
-        && stella_core::records::clock::duration_seconds(cooldown).is_none()
+        && stella_records::records::clock::duration_seconds(cooldown).is_none()
     {
         return Err(format!(
             "--cooldown \"{cooldown}\" is not an ISO-8601 duration (try P90D, P6M, PT12H)"

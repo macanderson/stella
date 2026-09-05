@@ -394,7 +394,7 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
     assert!(
         events.iter().any(|e| {
             e.proposal_lineage_id == format!("skill:{name}")
-                && e.action == stella_core::context_record::PromotionAction::Retired
+                && e.action == stella_records::context_record::PromotionAction::Retired
         }),
         "the demotion is a Retired promotion_event against the skill's lineage: {events:?}"
     );

@@ -51,10 +51,10 @@
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{plural, quiet, value};
 use crate::model::{RecallBudget, RecalledFrameRow};
+use crate::render::columns;
 use crate::render::row::*;
 use crate::theme;
 
@@ -434,7 +434,7 @@ impl RecallColumns {
         let metric = digits + " tok".len();
         let kind = frames
             .iter()
-            .map(|f| display_width(frame_kind(f)))
+            .map(|f| columns::width(frame_kind(f)))
             .max()
             .unwrap_or(RECALL_KIND_MIN)
             .clamp(RECALL_KIND_MIN, RECALL_KIND_MAX);
@@ -449,7 +449,7 @@ impl RecallColumns {
         let widest = frames
             .iter()
             .filter_map(|f| f.uri.as_deref())
-            .map(|u| display_width(&recall_location(u, RECALL_LOCATION_MAX)))
+            .map(|u| columns::width(&recall_location(u, RECALL_LOCATION_MAX)))
             .max()
             .unwrap_or(0);
 
@@ -522,7 +522,7 @@ impl LegColumns {
         Self {
             provider: legs
                 .iter()
-                .map(|(p, ..)| display_width(p))
+                .map(|(p, ..)| columns::width(p))
                 .max()
                 .unwrap_or(0)
                 .min(RECALL_LEG_MAX),
@@ -614,7 +614,7 @@ fn short_digest(digest: &str) -> String {
 }
 
 /// The first `cap` chars of `text`, whole — the char-boundary cut
-/// [`short_digest`] needs, as [`take_right`] is for the other end.
+/// [`short_digest`] needs, as [`columns::take_right`] is for the other end.
 fn prefix_chars(text: &str, cap: usize) -> &str {
     match text.char_indices().nth(cap) {
         Some((at, _)) => &text[..at],
@@ -631,13 +631,13 @@ fn recall_location(uri: &str, cap: usize) -> String {
     // Strip a scheme so `file:///…` and a bare path render alike; the scheme
     // is never the discriminating part of a recall row.
     let path = uri.split_once("://").map_or(uri, |(_, rest)| rest);
-    if display_width(path) <= cap {
+    if columns::width(path) <= cap {
         return path.to_string();
     }
     if cap == 0 {
         return String::new();
     }
-    let tail = take_right(path, cap - 1);
+    let tail = columns::take_right(path, cap - 1);
     // Cut on a separator so the elision lands between path segments rather
     // than mid-directory-name — but only when that leaves a real path behind.
     // Snapping to a separator that sits near the end would trade a readable
@@ -649,7 +649,7 @@ fn recall_location(uri: &str, cap: usize) -> String {
     // the snap on any path with a multi-byte segment in front of the cut.
     match tail
         .find('/')
-        .filter(|cut| display_width(&tail[..*cut]) <= cap / 3)
+        .filter(|cut| columns::width(&tail[..*cut]) <= cap / 3)
     {
         Some(cut) => format!("…{}", &tail[cut..]),
         None => format!("…{tail}"),
@@ -669,57 +669,22 @@ fn cell(text: &str, col: usize) -> String {
     let text = elide(text, col);
     format!(
         "{text}{}",
-        " ".repeat(col.saturating_sub(display_width(&text)))
+        " ".repeat(col.saturating_sub(columns::width(&text)))
     )
 }
 
 /// Truncate to `cap` display columns with a trailing `…`.
 ///
-/// The `…` is one column, so the kept text is budgeted `cap - 1`. A cut that
-/// lands mid-wide-character keeps the narrower text and lets [`cell`] pad the
-/// hole, rather than emitting a cell one column over its budget.
+/// Built on [`columns::take_left`], not [`columns::head`]. A cut right
+/// after a space would leave `"ab …"`. That trailing space is this table's
+/// own quirk to fix, so it stays here and not in the shared helper.
 fn elide(text: &str, cap: usize) -> String {
-    if display_width(text) <= cap {
+    if columns::width(text) <= cap {
         return text.to_string();
     }
     if cap == 0 {
         return String::new();
     }
-    let kept = take_left(text, cap - 1);
+    let kept = columns::take_left(text, cap - 1);
     format!("{}…", kept.trim_end())
-}
-
-/// The longest prefix of `text` that fits in `cap` display columns.
-fn take_left(text: &str, cap: usize) -> String {
-    let mut out = String::new();
-    let mut used = 0;
-    for ch in text.chars() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + w > cap {
-            break;
-        }
-        used += w;
-        out.push(ch);
-    }
-    out
-}
-
-/// The longest suffix of `text` that fits in `cap` display columns.
-fn take_right(text: &str, cap: usize) -> String {
-    let mut kept: Vec<char> = Vec::new();
-    let mut used = 0;
-    for ch in text.chars().rev() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + w > cap {
-            break;
-        }
-        used += w;
-        kept.push(ch);
-    }
-    kept.iter().rev().collect()
-}
-
-/// Columns `text` occupies on a terminal — the unit every width here is in.
-fn display_width(text: &str) -> usize {
-    UnicodeWidthStr::width(text)
 }

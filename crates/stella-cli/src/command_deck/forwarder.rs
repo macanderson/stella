@@ -13,6 +13,10 @@ use crate::agent;
 use crate::cache_insight::{InsightScope, cache_insight_for};
 use crate::memory::TurnFriction;
 
+/// Re-exported beside [`spawn_forwarder`], the function that takes one, so a
+/// caller of the seam picks up the type from the same place.
+pub(crate) use super::task_tap::SharedRevisions;
+
 /// What a lane's closed turn stream leaves behind for its owner.
 ///
 /// Two facts, not one, since #3962. `persistence_complete` was always the
@@ -73,6 +77,10 @@ pub(crate) fn warn_audit_record_incomplete(
 /// see [`stella_core::tasks::TaskBoard::seed_from_plan`] for why the two used
 /// to be unconnected, and what that cost. `None` for lanes with no board of
 /// their own.
+///
+/// `revisions` is the lane's plan-change gate. A failing gate board puts a
+/// change on it here, and the lane's own plan gate reads it — see
+/// `task_tap::plan_gate::revision` for why one gate serves both.
 pub(crate) fn spawn_forwarder(
     mut rx: UnboundedReceiver<AgentEvent>,
     execution: Option<(Arc<Store>, i64)>,
@@ -80,6 +88,7 @@ pub(crate) fn spawn_forwarder(
     inbound: UnboundedSender<Inbound>,
     lane: String,
     plan_board: Option<stella_tools::tasks::TaskBoardHandle>,
+    revisions: SharedRevisions,
 ) -> tokio::task::JoinHandle<LaneStreamEnd> {
     tokio::spawn(async move {
         let mut seq = 0u64;
@@ -93,12 +102,12 @@ pub(crate) fn spawn_forwarder(
         // forwarder, and a forwarder is one lane — every lane has a registry
         // and a channel of its own, so two lanes' thoughts cannot fuse.
         let mut reasoning = agent::ReasoningRun::default();
-        // The lane's standing plan revision, and the number the next one would
-        // take. Held here because this task is the one place a `GateBoard` and
-        // the lane's plan are both in view: the gate goes past on this stream
-        // and the plan is `plan_board`'s rows. Per lane and per turn, like the
-        // ledger above.
-        let mut revisions = stella_core::RevisionGate::default();
+        // The number the lane's next plan revision would take. Read off the
+        // gate's own proposals below rather than counted here. The change
+        // itself goes on `revisions`, which this task writes and the lane's
+        // plan gate reads: a gate board reaches this host on this stream and
+        // nowhere else, and the turn's plan graph lives in the plan gate and
+        // nowhere else.
         let mut plan_revision = stella_protocol::PlanRevision::FIRST;
         // Two independent latches, not one. A single shared flag meant an
         // early usage gap — the benign, self-healing condition — silenced any
@@ -242,6 +251,8 @@ pub(crate) fn spawn_forwarder(
                         super::task_tap::plan_gate::plan_tasks(guard.items())
                     });
                     revisions
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
                         .observe(plan_revision.next(), &planned, board)
                         .cloned()
                 }
@@ -467,6 +478,7 @@ mod tests {
             in_tx,
             "lead".to_string(),
             None,
+            SharedRevisions::default(),
         );
         registry.attach_events(stella_core::EventSender::new(tx.clone()));
         tx.send(AgentEvent::TurnComplete {
@@ -545,6 +557,7 @@ mod tests {
             in_tx,
             "lead".to_string(),
             None,
+            SharedRevisions::default(),
         );
         tx.send(AgentEvent::Text { text: "hi".into() }).unwrap();
         tx.send(AgentEvent::TurnComplete {
@@ -607,6 +620,7 @@ mod tests {
             in_tx,
             "lead".to_string(),
             None,
+            SharedRevisions::default(),
         );
         // Recall is the first event of the turn, queued after the forwarder
         // was spawned — exactly as `run_lead_turn` does it.
@@ -667,6 +681,7 @@ mod tests {
             in_tx,
             "lead".to_string(),
             None,
+            SharedRevisions::default(),
         );
         tx.send(AgentEvent::TurnComplete {
             model: "m".into(),
@@ -716,6 +731,7 @@ mod tests {
             in_tx,
             "lead".to_string(),
             Some(registry.task_board()),
+            SharedRevisions::default(),
         );
         tx.send(AgentEvent::GateBoard {
             board: board(vec![gate("fmt", GateState::Green)]),

@@ -1,0 +1,25 @@
+[package]
+name = "stella-records"
+description = "The context-record plane: the typed record taxonomy, the ingestion boundary that stamps and gates a proposal, and the registry that merges markdown rules and TOML records into one steering answer. Pure value logic, no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `hash::record_hash` and the token estimate the render budget spends.
+stella-protocol = { path = "../stella-protocol" }
+# `rules`, to read a rule file, and `steering`, for the candidate types
+# `adapt` maps onto. README.md says why this edge points the wrong way.
+stella-core = { path = "../stella-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# An integration test links dev-dependencies, not the library's own.
+toml = { workspace = true }

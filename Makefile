@@ -38,7 +38,8 @@ CARGO_SCOPE ?= --workspace
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     adr-numbering \
-                    command-docs website-inputs brand-case file-size god-files gate-parity left-behind \
+                    command-docs website-inputs brand-case file-size god-files gate-parity \
+                    guard-trigger-coverage left-behind \
                     role-names stat-portability module-reachability core-reachability \
                     typed-errors \
                     tool-error-class \
@@ -741,6 +742,14 @@ gate-parity: ## Assert AGENTS.md and CONTRIBUTING.md list the real gate steps (#
 .PHONY: gate-parity-test
 gate-parity-test: ## Test the gate-parity guard's failure directions (hermetic; not part of `gate`)
 	@./scripts/test-gate-parity.sh
+
+.PHONY: guard-trigger-coverage
+guard-trigger-coverage: ## Assert prose/hue-separation/transcript-surfaces each run unfiltered somewhere (#5448)
+	@python3 ./scripts/check-guard-trigger-coverage.py
+
+.PHONY: guard-trigger-coverage-test
+guard-trigger-coverage-test: ## Test the guard-trigger-coverage guard's failure directions (hermetic; not part of `gate`)
+	@python3 ./scripts/test-guard-trigger-coverage.py
 
 .PHONY: bench-suites
 bench-suites: ## Assert `make bench-test` runs every suite bench.yml runs, by derivation (#2847)

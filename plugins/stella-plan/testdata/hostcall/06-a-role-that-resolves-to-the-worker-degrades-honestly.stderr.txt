@@ -1,1 +1,1 @@
-stella-plan: the host did not serve the child_turn call: forbidden: role intent "planner" resolves to the worker's own seat, and a plugin may not spend the model whose work it is judging; name a tier that resolves elsewhere
+stella-plan: the host did not serve the child_turn call: forbidden: role intent "planner" is booked at the seat this session's own turns are booked at, and a plugin may not spend the model whose work it is judging; ask your host operator to bind the "plan" tier elsewhere

@@ -151,7 +151,7 @@ call site of the two doors above (#3576): `stella run --pipeline <variant>`
 builds its `HostCallGate` with `.with_child_turns(..)` over the session's own
 `SubAgentDispatcher` — the one `task_assign` runs on — so an installed plugin
 declaring `[loop] calls = ["child_turn"]` and a `[roles.<name>]` gets a real
-turn, read-only, attributed to the seat its tier resolves to, with what it
+turn, read-only, attributed to the seat its grant allows, with what it
 spent printed beside what it was refused
 (`crates/stella-cli/src/wrapper_plugin.rs`). `stella goal` and `stella fleet`
 reach it too, through `wrapper_plugin::round_driver_host` (#3833, #3882).
@@ -163,10 +163,13 @@ there was answered `Unavailable`. `ChildTurns::in_turn_lane` is the
 allocation that lifts it — `stella_core::turn_slots` partitions
 `turn_instance` by residue, so a plane counting only its own calls can never
 land where a door's rounds will, without either counter knowing the other's.
-One limit stands on every door that attaches the plane: the `verifier` tier is
-bound to no seat, so a plugin naming it is answered `Unavailable`
-rather than having its call attributed to a role the host never made
-(`ChildTurns::with_seat` is how a driver that wants it owns the claim).
+One limit stands on every door that attaches the plane. It is a consent
+question, not a naming one. A plugin may not spend at the seat the session's
+own turns use. It may not spend at a seat that decides whether the work is
+done, unless its manifest declares an `[oracle]`. Core reads both rules off
+`SeatGrant`, built from the manifest a person agreed to. Both are checked on
+the resolved seat, so `ChildTurns::with_seat` cannot hand over a seat the
+grant refuses.
 
 A plugin's points run *between* the parent's turns, where the tool registry's
 event sender used to be a sink — so a child's `step_usage` reached the run's

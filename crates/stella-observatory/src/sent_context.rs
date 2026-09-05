@@ -24,10 +24,16 @@
 //! Every block whose preimage came from the journal is re-hashed and compared
 //! against the digest the receipt recorded at emission, so a torn journal or a
 //! fabricated block surfaces as a mismatch instead of a plausible-looking lie.
-//! The two gap kinds — the system prefix and the assembled user/recall message
-//! — are stored as local bytes in `context_blocks.content`, so their check is
-//! tautological and is deliberately **not** counted as evidence: they report
-//! `digest_verified: null`, not `true`.
+//! The gap kinds ([`GAP_KINDS`]) are stored as local bytes in
+//! `context_blocks.content`, so their check is tautological and is **not**
+//! counted as evidence: they report `digest_verified: null`, not `true`.
+//!
+//! The skip is keyed on the block's **kind**, never on whether it happens to
+//! carry local bytes. A `tool_result` row with content in it contradicts the
+//! producer, and skipping its digest on that basis is how a tampered store
+//! would buy itself a `verified: true` — the exact lie this fold exists to
+//! prevent. Such a block is checked like any other and named in
+//! `local_content_anomalies`.
 //!
 //! # Reconstructable boundary
 //!
@@ -264,8 +270,8 @@ pub(crate) struct ManifestEntry {
     pub(crate) token_cost: Option<i64>,
     /// `sha256:<64 hex>` over the block's preimage, recorded at emission.
     pub(crate) content_digest: Option<String>,
-    /// Local-only preimage, present for the gap kinds the journal cannot
-    /// resolve (the system prefix and the assembled user/recall message).
+    /// Local-only preimage, present for the [`GAP_KINDS`] the journal cannot
+    /// resolve.
     pub(crate) content: Option<String>,
     /// The block's birth provenance (`context_blocks.call_id`).
     pub(crate) birth_call_id: Option<String>,
@@ -433,6 +439,23 @@ pub(crate) fn journal_era(conn: &Connection, id: i64) -> JournalEra {
     }
 }
 
+/// The block kinds whose preimage is captured locally at emission because the
+/// event journal never carries it: the system prefix, and every message the
+/// engine assembles rather than receives.
+///
+/// The producer's own list is `stella_core::receipts`'s `is_gap_kind`, which
+/// is private, so this is an acknowledged copy like the rest of the fold (see
+/// this module's header). A kind that drifts out of one list and not the other
+/// shows up as a `local_content_anomalies` entry rather than as silence.
+const GAP_KINDS: [&str; 6] = [
+    "system_prefix",
+    "user_goal",
+    "recalled_frame",
+    "steered",
+    "summary",
+    "attachment",
+];
+
 /// One message under construction — the regrouping target for every block
 /// sharing a `message_index`.
 struct Message {
@@ -456,6 +479,7 @@ pub(crate) fn reconstruct(
     let mut messages: Vec<Message> = Vec::new();
     let mut unresolved: Vec<String> = Vec::new();
     let mut mismatches: Vec<String> = Vec::new();
+    let mut local_anomalies: Vec<String> = Vec::new();
     let mut current: Option<i64> = None;
     // The effective system prompt this call was sent, gathered while folding:
     // the `system_prefix` blocks' exact bytes in manifest order, sectioned by
@@ -479,11 +503,19 @@ pub(crate) fn reconstruct(
                 .get_or_insert_with(String::new)
                 .push_str(&content);
         }
-        // Local gap content is stored bytes, so re-hashing it proves nothing;
-        // `None` says "not evidence" where `true` would claim it was.
-        let digest_verified = match &entry.content {
-            Some(_) => None,
-            None => Some(digest_matches(entry.content_digest.as_deref(), &content)),
+        // A gap kind's stored bytes re-hash to themselves, so the check proves
+        // nothing; `None` says "not evidence" where `true` would claim it was.
+        // Every other kind is checked, local bytes or not — bytes on one of
+        // those came from somewhere they should not have, which makes the
+        // digest the only thing left that can contradict them.
+        let is_gap = GAP_KINDS.contains(&kind);
+        if entry.content.is_some() && !is_gap {
+            local_anomalies.push(entry.block_id.clone());
+        }
+        let digest_verified = if is_gap {
+            None
+        } else {
+            Some(digest_matches(entry.content_digest.as_deref(), &content))
         };
         if digest_verified == Some(false) {
             mismatches.push(entry.block_id.clone());
@@ -549,9 +581,15 @@ pub(crate) fn reconstruct(
         }),
     };
     json!({
-        "verified": unresolved.is_empty() && mismatches.is_empty(),
+        "verified": unresolved.is_empty() && mismatches.is_empty() && local_anomalies.is_empty(),
         "unresolved": unresolved,
         "digest_mismatches": mismatches,
+        // Blocks carrying local bytes for a kind whose preimage belongs in the
+        // journal. Their digest still decides `digest_verified`; being here at
+        // all is the separate fact, and it withholds `verified` on its own
+        // because a block resolved from the row it is being checked against
+        // was never checked by anything.
+        "local_content_anomalies": local_anomalies,
         "journal_era": era.tag(),
         "digest_mismatch_severity": severity,
         "system_prompt": system_prompt,
@@ -771,6 +809,48 @@ mod tests {
         assert_eq!(out["messages"][1]["blocks"][0]["digest_verified"], true);
         assert_eq!(out["messages"][2]["role"], "tool");
         assert_eq!(out["messages"][2]["body"], "← tool_result c1\nfn a() {}");
+    }
+
+    /// The digest skip is keyed on the block's kind, so a `tool_result` row
+    /// carrying local bytes that contradict its recorded digest is caught.
+    /// Keyed on "does this row have content" — the old rule — the same block
+    /// reported `digest_verified: null`, stayed out of `digest_mismatches`,
+    /// and left the whole call reading `verified`.
+    #[test]
+    fn local_bytes_on_a_journal_kind_are_checked_rather_than_trusted() {
+        let tampered = r#"{"ok":{"content":"whatever the operator wanted to read"}}"#;
+        let entries = vec![ManifestEntry {
+            content_digest: Some(format!("sha256:{}", sha256_hex("the bytes actually sent"))),
+            content: Some(tampered.to_owned()),
+            ..entry("blk_res", "tool_result", 0)
+        }];
+
+        let out = reconstruct(
+            &entries,
+            &Preimages::index(&[]),
+            JournalEra::CompactionJournaled,
+            false,
+        );
+        assert_eq!(out["verified"], false, "{out}");
+        assert_eq!(out["digest_mismatches"], json!(["blk_res"]), "{out}");
+        assert_eq!(out["local_content_anomalies"], json!(["blk_res"]), "{out}");
+        assert_eq!(out["messages"][0]["blocks"][0]["digest_verified"], false);
+    }
+
+    /// The other half of the same rule: a gap kind's local bytes stay
+    /// unchecked, because re-hashing what the row itself stored proves
+    /// nothing, and it is not an anomaly to find them there.
+    #[test]
+    fn a_gap_kind_keeps_its_null_verdict_and_raises_no_anomaly() {
+        let out = reconstruct(
+            &[gap("blk_goal", "user_goal", 0, "fix the parser")],
+            &Preimages::index(&[]),
+            JournalEra::CompactionJournaled,
+            false,
+        );
+        assert_eq!(out["verified"], true, "{out}");
+        assert_eq!(out["local_content_anomalies"], json!([]), "{out}");
+        assert!(out["messages"][0]["blocks"][0]["digest_verified"].is_null());
     }
 
     /// **Witness for the "System prompt" view.** A reconstruction carries the

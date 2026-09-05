@@ -1070,6 +1070,13 @@
           ],
           "description": "The rung this verdict came to rest on (#1043). Absent on events\nrecorded before it existed, which is the one case a reader must handle\nas \"unknown\" rather than guess at — see [`LadderRung`] for why the\nguess is not available."
         },
+        "stamps": {
+          "description": "Who claimed what about this evidence, in the order the claims\narrived. The evidence fields above say what was observed; a stamp says\nwho observed it, so a second observer can agree, disagree, or abstain\non the same record rather than overwrite the first one's claim.\n\nEmpty on every snapshot recorded before stamps existed, and on every\nrun nobody stamped — an empty list emits no key, so a stored verdict is\nbyte-for-byte what it was.\n\n**Recorded only: no stamp changes the rung.** See [`VerdictStamp`].",
+          "items": {
+            "$ref": "#/$defs/VerdictStamp"
+          },
+          "type": "array"
+        },
         "test_infra": {
           "description": "Why the test run observed nothing, when it didn't (`timed_out`,\n`infra_failure`) — the #860 distinction between \"the suite failed\"\nand \"the suite could not be watched\".",
           "type": [
@@ -1962,6 +1969,31 @@
         }
       ]
     },
+    "StampAssessment": {
+      "description": "What one observer concluded about the work.\n\nFour values, not a bool. `NotDone` is a claim about the work.\n`Inconclusive` is a claim about the tool: it looked, and it could not tell.\n`LadderRung` splits `Unverified` from `Unverifiable` for that same reason.\n`NotApplicable` says there was nothing here to judge.\n\nClosed, like every nested vocabulary here. A token from a newer build\nfails the event. It is never read as a weaker one.",
+      "oneOf": [
+        {
+          "const": "done",
+          "description": "This observer holds the work done.",
+          "type": "string"
+        },
+        {
+          "const": "not_done",
+          "description": "This observer holds the work not done.",
+          "type": "string"
+        },
+        {
+          "const": "inconclusive",
+          "description": "This observer looked and could not tell. Never a claim that the work\nfell short.",
+          "type": "string"
+        },
+        {
+          "const": "not_applicable",
+          "description": "There was nothing here for this observer to judge.",
+          "type": "string"
+        }
+      ]
+    },
     "SteerCause": {
       "description": "What put the message into the turn, for [`AgentEvent::Steered`].\n\nThree different things emit that event and they are different pathologies\nwith different remedies: a person interrupting, the stuck-loop rung, and\nthe stalled-turn rung (#2022). Before this field the only way to tell them\napart was to match the English prose — and `STALL_STEER_PREFIX` *extends*\n`LOOP_STEER_PREFIX`, so even the prefix test was a substring test on a\nsentence (#3622). That is precisely the practice\n[`AgentEvent::LoopDetected`] was introduced to end for the loop rung.\n\nThe consequence was that \"the turn was steered\" was one bucket, so no\nconsumer could answer *how often does the stall rung actually fire* — the\nquestion that decides whether the rung earns its keep.",
       "oneOf": [
@@ -2406,6 +2438,67 @@
       "required": [
         "summary",
         "deterministic"
+      ],
+      "type": "object"
+    },
+    "VerdictStamp": {
+      "description": "One observer's claim about the evidence a verdict was decided from.\n\nA stamp is a record, never a vote. Nothing reads one to decide anything.\nThree `Done` stamps on an unverified snapshot leave it unverified. Counting\nagreement is how an ablated verifier scored every run a pass, with nothing\nto notice. Arbitration is a separate call, filed as its own issue.\n\nA stamp carries no signature. Integrity and identity are different threat\nmodels, and this type answers the second one. The host fills\n[`VerdictStamp::author`] from the manifest it loaded, so no plugin can\nspeak in another's name. [`VerdictStamp::preimage_hash`] ties the claim to\nthe evidence, not to a key.",
+      "properties": {
+        "assessment": {
+          "$ref": "#/$defs/StampAssessment",
+          "description": "What this observer concluded."
+        },
+        "author": {
+          "description": "Who made this claim. The host fills it from the manifest it loaded, so\nno plugin can name itself something else. `\"engine\"` is the host's own\ncall.",
+          "type": "string"
+        },
+        "author_version": {
+          "description": "The author's own version string, copied word for word. A reader may\nshow it. Nothing branches on it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decided_at_ms": {
+          "description": "When the claim was made, in milliseconds since the Unix epoch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duration_ms": {
+          "description": "How long this observer took, in milliseconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "evidence_refs": {
+          "description": "Pointers to the artifacts behind the summary, in the vocabulary\n`VerdictEvidence::evidence_refs` uses. A reader can go and check the\nclaim rather than take it on faith.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "preimage_hash": {
+          "description": "`sha256:<64 hex>` over the RFC 8785 canonical bytes of the snapshot\nthis claim was made against, with `stamps` dropped from the preimage.\n`LadderSnapshot::stamp_preimage` builds that object, and the\nrecord-hash primitive (ADR 0004) digests it. So one hashing rule\ncovers the tree.\n\nDropping `stamps` lets a later observer stamp the same record without\nbreaking the claims already on it. It also lets a replay prove the\nclaim was made against the evidence the run produced, and not against\na later edit of it.",
+          "type": "string"
+        },
+        "summary": {
+          "description": "One line saying what was checked and what it showed. Prose for a\nhuman — never parsed.",
+          "type": "string"
+        },
+        "timed_out": {
+          "default": false,
+          "description": "The observer ran out of time. Its assessment is then what it had when\nthe clock stopped. A timed-out `Inconclusive` and a considered one are\ndifferent facts.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "author",
+        "assessment",
+        "summary",
+        "preimage_hash",
+        "decided_at_ms",
+        "duration_ms"
       ],
       "type": "object"
     },

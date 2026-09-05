@@ -54,6 +54,7 @@ issue=""
 fixture_login=""
 fixture_claims=""
 fixture_prs=""
+fixture_prs_failed=0
 use_fixture=0
 
 while [ $# -gt 0 ]; do
@@ -83,6 +84,14 @@ while [ $# -gt 0 ]; do
     fixture_prs="${2:-}"
     use_fixture=1
     shift 2
+    ;;
+  # Test-only: simulates the `gh pr list` call itself failing, as opposed to
+  # succeeding with an empty result. --fixture-prs is meaningless paired with
+  # this — a failed query has no rows to fake.
+  --fixture-prs-failed)
+    fixture_prs_failed=1
+    use_fixture=1
+    shift
     ;;
   -h | --help)
     awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
@@ -136,13 +145,23 @@ fi
 # have caught the collisions this script was filed for: #5246 closed 44 issues
 # in one sweep, and none of them showed a thing on the issue itself.
 
+# prs_ok tracks whether this query actually ran, distinct from prs itself
+# being empty. "no PR closes it" is a claim about a list that was read; a
+# query that failed to even ask must never be reported in that shape.
+prs_ok=1
 if [ "$use_fixture" -eq 1 ]; then
-  prs="$fixture_prs"
+  if [ "$fixture_prs_failed" -eq 1 ]; then
+    prs=""
+    prs_ok=0
+  else
+    prs="$fixture_prs"
+  fi
 elif ! prs="$(gh pr list --state all --limit 100 --json number,state,body \
   --jq ".[] | select(.body | test(\"Closes #$issue\\\\b\")) | \"\(.number) \(.state)\"" 2>/dev/null)"; then
   echo "note: could not list pull requests. Proceeding (fail-open); the claim" >&2
   echo "      check below still runs." >&2
   prs=""
+  prs_ok=0
 fi
 
 if [ -n "$prs" ]; then
@@ -226,6 +245,9 @@ if [ -n "$held_by" ]; then
 fi
 
 if [ "$mode" = "check" ]; then
+  if [ "$prs_ok" -eq 0 ]; then
+    proceed "ok  proceed (PR list unreadable)"
+  fi
   proceed "ok  #$issue is unclaimed — no PR closes it and no live claim holds it."
 fi
 
