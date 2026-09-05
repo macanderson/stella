@@ -687,8 +687,9 @@ async fn a_declared_child_turn_runs_on_this_hosts_dispatcher() {
     assert_eq!(specs[0].role, stella_protocol::event::ModelCallRole::Plugin);
     assert_eq!(
         specs[0].seat.as_deref(),
-        Some("reviewer"),
-        "the plugin's own word is the attribution, and it reaches the trace"
+        Some("grading-wrapper/reviewer"),
+        "the plugin's own word, under the plugin's name, is the attribution, \
+         and it reaches the trace"
     );
     assert!(
         !specs[0].write_access,
@@ -968,8 +969,9 @@ async fn a_tier_spelled_like_the_workers_never_reaches_the_workers_seat() {
     );
     assert_eq!(
         specs[0].seat.as_deref(),
-        Some("grader"),
-        "and the plugin's own word is what the user's seat map is asked about"
+        Some("grading-wrapper/grader"),
+        "and the plugin's own word, under the plugin's name, is what the \
+         user's seat map is asked about"
     );
     assert!(
         wrapper.gate().refusals().is_empty(),
@@ -1061,8 +1063,9 @@ async fn the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane()
     );
     assert_eq!(
         specs[0].seat.as_deref(),
-        Some("verifier"),
-        "at the seat the plugin declared, which is what the receipt names"
+        Some("stella-goal/verifier"),
+        "at the seat the plugin declared, under the plugin's name, which is \
+         what the receipt names"
     );
     assert!(
         !specs[0].write_access,
