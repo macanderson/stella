@@ -14,6 +14,20 @@
 //! Split out of [`super`] instead of grown inside it: that file sits at its
 //! own 1500-line ceiling (AGENTS.md § "God files — plan around them, never
 //! into them"). New logic here lands in this sibling instead.
+//!
+//! ## Where the record lands
+//!
+//! [`Level::Debug`] is quiet. Too quiet: the operator's own default is
+//! `Warn`, and `--log-file` floors at `Info`. Left at that, this record
+//! reaches nobody. It only shows up once someone turns `-vv` on. That
+//! defeats the point — nobody knew to look yet.
+//!
+//! `DIAG_TARGET` (`stella::turn_files`) is on `diag_boot`'s
+//! `DURABLE_TARGETS` list now. Every `install` binds a sink to that list, no
+//! matter what filter the operator chose. So the record also lands in
+//! `.stella/private/diagnostics.jsonl` on every ordinary run, nothing
+//! switched on. `docs/spec/diagnostics.md` §6 "Durable targets" explains
+//! why; this module is the diagnostic that needed it first.
 
 use stella_diag::{Cx, Dx, Fields, Level, Record};
 
@@ -202,5 +216,34 @@ mod tests {
             records.find("agent.task.stale_lane").is_none(),
             "a completed task must stay silent"
         );
+    }
+
+    /// **Witness.** The full path an ordinary run takes: a `Dx` wired the way
+    /// `main` wires it, with no `-v`, no `--log-level`, no `--log-file` —
+    /// only [`crate::diag_boot::durable_sink`]. `note_stale_lane` still puts
+    /// its record on disk, which is what fails without it: before this, a
+    /// `Dx` built the same way kept nothing at `Debug`, and the walked-past
+    /// turn this test builds left no trace anywhere.
+    #[test]
+    fn note_stale_lane_reaches_disk_through_the_durable_sink_alone() {
+        let registry = stella_tools::ToolRegistry::new(std::env::temp_dir());
+        {
+            let handle = registry.task_board();
+            let mut board = handle.lock().unwrap();
+            board.create("investigate", None, None);
+            board.set_status("1", TaskStatus::InProgress).unwrap();
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dx = stella_diag::Dx::new(vec![crate::diag_boot::durable_sink(dir.path())]);
+        note_stale_lane(&dx, &registry, STALE_LANE_FILES);
+
+        let path = dir
+            .path()
+            .join(".stella")
+            .join("private")
+            .join("diagnostics.jsonl");
+        let text = std::fs::read_to_string(&path).expect("the durable file must exist");
+        assert!(text.contains("agent.task.stale_lane"), "{text}");
     }
 }

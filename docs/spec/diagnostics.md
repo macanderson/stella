@@ -321,6 +321,53 @@ Human-facing messages are unaffected either way: those are the presentation
 plane's `eprintln!`s, including the one naming a crash dump, and they never went
 through a sink.
 
+### 6.1 Durable targets: a record that must survive a quiet default
+
+`-v` and `--log-file` both need an operator to decide something in advance.
+They help once somebody has already gone looking. Some records exist to
+answer a different question: how often does this happen, before anyone
+knows to look? `agent.task.stale_lane` is one. It was added to measure a
+rate the task-board reinforcement question needs answered first. It is
+emitted at `Debug` so it costs nothing on a normal terminal — and that made
+it unreachable. The operator's own default is `Warn`. Even a raised
+`--log-file` floors at `Info` (§6's table). So the record only ever showed
+up in a session where `-vv` was already on. A rate nobody can observe
+without first suspecting it is not measured. It is guessed at.
+
+Lowering the default stderr filter is **not** the fix. A normal run stays
+quiet on purpose.
+
+The fix is a third kind of sink, beside stderr and `--log-file`. It is bound
+not to a *level* an operator chooses, but to a small, reviewed list of
+**targets** — `crates/stella-cli/src/diag_boot.rs`'s `DURABLE_TARGETS`, in
+the same `Filter` grammar §6 already defines
+(`"off,stella::turn_files=debug"`: everything off by default, this one
+target through at `debug`). Every `install` binds a sink to that list, on
+every run, no matter what the operator asked for. So a target on the list
+reaches disk on an ordinary run with nothing switched on — which is exactly
+what a measurement nobody thought to look for yet needs.
+
+It lands in `.stella/private/diagnostics.jsonl`, the same 0700 directory the
+crash ring (§7.4) already uses. The sink behind it is `LazyJsonlSink`, not
+the `JsonlSink` `--log-file` uses. `--log-file` opens its file the moment it
+is built, which is right: the operator asked for it, so an unwritable path
+is worth reporting at boot. A sink installed on *every* run needs the
+opposite property. `stella --version` in a directory that has never seen
+`.stella/` must not leave one behind. So `LazyJsonlSink` waits for the first
+write its bound filter actually admits before it opens anything, and a run
+that never fires under a durable target never touches disk.
+
+**Adding a target here follows the same budget §5.5 sets for
+`Redacted::reviewed`.** A target admitted at `debug` writes to disk on
+every ordinary run. That is the same question AGENTS.md #3 asks of a new hub
+telemetry column: did a human decide this is worth it? The write here stays
+on the local machine and never crosses a socket, but the review is the same
+one. A target earns a place on the list only when its record fires at most
+a handful of times per turn — never once per tool call, never once per
+token (§3.8). `stella::turn_files` carries `agent.task.stale_lane` and the
+rare `agent.files.unmeasurable` warning beside it, each at most once per
+turn boundary.
+
 ---
 
 ## 7. Correlation without spans
