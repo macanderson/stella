@@ -656,6 +656,75 @@ fn execution_journal_clips_long_bodies_unless_full() {
     assert_eq!(v[0]["body"].as_str().unwrap().chars().count(), long.len());
 }
 
+/// A child tool can color its own output, and that color reaches
+/// `output.ok.content` as-is. A browser cannot read the codes; they show
+/// up as junk on the page. `crate::journal::set_journal_body` must strip
+/// them before this route ever serves the body.
+///
+/// This fails without that strip: nothing else on the path removes a
+/// color code, so the body would still carry the raw
+/// `\u{1b}[32m…\u{1b}[0m` bytes.
+#[test]
+fn execution_journal_strips_ansi_escapes_from_tool_result_body() {
+    let ws = seeded_workspace();
+    Connection::open(ws.path().join(".stella/private/store.db"))
+        .unwrap()
+        .execute(
+            "INSERT INTO events (execution_id, seq, event_type, payload)
+             VALUES (2, 0, 'tool_result', ?1)",
+            [serde_json::json!({
+                "type": "tool_result",
+                "call_id": "c1",
+                "output": {"ok": {"content": "\u{1b}[32mok\u{1b}[0m\nline two"}},
+                "duration_ms": 1,
+                "speculated": false,
+            })
+            .to_string()],
+        )
+        .unwrap();
+    let response = respond(ws.path(), "/api/execution-journal?id=2");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let entry = &v[0];
+    assert_eq!(entry["body"], "ok\nline two");
+    assert!(!entry["body"].as_str().unwrap().contains('\u{1b}'));
+}
+
+/// The [`crate::journal::JOURNAL_BODY_CLIP`] budget must be spent on the
+/// *visible* text, not on color codes nobody sees. That is the half of the
+/// fix a page script alone could not reach, since the clip runs on the
+/// server, before any script sees the body.
+///
+/// The seeded body is almost all color codes, with a short visible tail.
+/// Scored before the strip, its raw length alone crosses
+/// [`crate::journal::JOURNAL_BODY_CLIP`], and the row comes back cut, with
+/// the cut free to land inside a code. Scored after the strip, the visible
+/// text is nowhere near the cap, so the row stays whole.
+#[test]
+fn execution_journal_clip_budget_is_measured_after_stripping() {
+    use crate::journal::JOURNAL_BODY_CLIP;
+    let ws = seeded_workspace();
+    let visible = "short result";
+    // 1000 copies of a 5-byte-invisible SGR escape: 5000 raw chars that strip
+    // to nothing, comfortably past JOURNAL_BODY_CLIP (4000) on their own.
+    let padded = format!("{}{visible}\u{1b}[0m", "\u{1b}[32m".repeat(1000));
+    assert!(padded.chars().count() > JOURNAL_BODY_CLIP);
+    Connection::open(ws.path().join(".stella/private/store.db"))
+        .unwrap()
+        .execute(
+            "INSERT INTO events (execution_id, seq, event_type, payload)
+             VALUES (2, 0, 'text', ?1)",
+            [serde_json::json!({"type": "text", "text": padded}).to_string()],
+        )
+        .unwrap();
+    let response = respond(ws.path(), "/api/execution-journal?id=2");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(
+        v[0]["body"], visible,
+        "the clip budget must be spent on visible text, not escape bytes"
+    );
+    assert_eq!(v[0]["truncated"], false);
+}
+
 /// The witness for sent-context inspection (#1475): the reconstructed message
 /// array carries the system prompt the receipt recorded, in wire order, and
 /// says so verifiably.

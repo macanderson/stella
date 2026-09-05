@@ -514,16 +514,30 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
     out
 }
 
-/// Attach `body` to a transcript entry, clipped to [`JOURNAL_BODY_CLIP`]
-/// unless `full`, and record which of the two happened.
+/// Attach `body` to a transcript entry, ANSI-stripped and clipped to
+/// [`JOURNAL_BODY_CLIP`] unless `full`, and record which of the two
+/// happened.
+///
+/// Every body this route serves passes through here — `text`/`reasoning`,
+/// `tool_start` args, `tool_result` output, `step_usage`'s `output_text`,
+/// and a `sub_agent`'s report. So this is the one place that has to strip
+/// ANSI escapes for all of them. A child tool can color its own output, and
+/// that output reaches this function as-is. Left unstripped it shows up as
+/// junk (`[0m[1m[32m Finished`) on a page, since a browser cannot read the
+/// codes the way a terminal does.
+///
+/// Strip **before** the clip, never after. A clip run first spends part of
+/// its budget on bytes nobody sees, and the cut can land inside a code,
+/// leaking a stray `[1;3` into a transcript that would otherwise show none.
 ///
 /// Shared with the sent-context messages (`sent_context`), so the transcript
 /// and the reconstruction can never disagree about what "clipped" means or
 /// where the cut falls.
 pub(crate) fn set_journal_body(entry: &mut Value, body: &str, full: bool) {
+    let body = stella_ansi::strip_ansi(body);
     let clipped = !full && body.chars().count() > JOURNAL_BODY_CLIP;
     entry["body"] = if clipped {
-        json!(truncate(body, JOURNAL_BODY_CLIP))
+        json!(truncate(&body, JOURNAL_BODY_CLIP))
     } else {
         json!(body)
     };

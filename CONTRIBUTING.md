@@ -249,6 +249,7 @@ rule of thumb is one sentence each:
 | Parse or validate a plugin manifest | `stella-plugin` |
 | Decide whether a human is present to answer a prompt | `stella-tty` |
 | Compute a unified diff | `stella-diff` |
+| Strip ANSI escape sequences from tool output | `stella-ansi` (a leaf with no dependencies at all, so `stella-tui` and `stella-observatory` can share it) |
 | Turn text into a vector, or compare two vectors | `stella-embed` |
 | The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
 
