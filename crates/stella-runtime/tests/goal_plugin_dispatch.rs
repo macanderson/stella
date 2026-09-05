@@ -13,28 +13,21 @@
 //! for the generic mechanism, now driven for enough rounds to prove "who
 //! decides done?" as well.
 //!
-//! # The seat this file binds by hand, and who binds it for real
+//! # Where the verifier's seat comes from
 //!
-//! `ChildTurns::default_seats()` does not serve the `verifier` tier this
-//! plugin's `[roles.verifier]` names — that stays a deliberate default, and
-//! `ChildTurns::with_seat`'s contract is that a host wanting the tier says so
-//! and owns the claim.
+//! Nothing here binds one. This plugin declares an `[oracle]`, so its grant
+//! books its child turns at `ModelCallRole::Verdict` — the responsibility
+//! `stella_core::goal` books its own independent verifier call against
+//! (`stella_runtime::wrapper::SeatGrant`).
 //!
-//! **`stella run`'s door now says so** (#3838):
-//! `stella_cli::wrapper_plugin::child_turn_plane` binds
-//! `verifier -> ModelCallRole::Verdict`, which is the same responsibility
-//! `stella_core::goal` books its own independent verifier call against. So
-//! this file's `.with_seat` call reproduces production wiring rather than
-//! standing in for wiring that does not exist, and the witness that the
-//! *shipped* door serves the *shipped* manifest lives with the door, in
-//! `crates/stella-cli/src/wrapper_plugin/tests.rs`
+//! The witness that the *shipped* door serves the *shipped* manifest lives
+//! with the door, in `crates/stella-cli/src/wrapper_plugin/tests.rs`
 //! (`the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane`).
 //!
-//! The second test below keeps its meaning unchanged and is not obsolete: it
-//! pins what a host that binds *no* seat does — a driver with no dispatcher of
-//! its own is still in exactly that state — namely that the plugin degrades
-//! honestly and the loop ends `Undecided` rather than crediting or blaming an
-//! assessment that was never made.
+//! The second test below pins what a host that serves **no child turns at
+//! all** does — a driver with no dispatcher of its own is in exactly that
+//! state — namely that the plugin degrades cleanly and the loop ends
+//! `Undecided` rather than crediting or blaming an assessment nobody made.
 //!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason, tracked in the same place
 //! (#3497).
@@ -182,21 +175,22 @@ fn signals() -> SignalValues {
     }
 }
 
-fn dispatch_with_seats(
+fn dispatch_serving(
     manifest: PluginManifest,
     dispatcher: VerifierDispatcher,
-    bind_verifier: bool,
+    child_turns: bool,
 ) -> WrapperDispatch {
-    let mut plane = ChildTurns::declare(&manifest, dispatcher);
-    if bind_verifier {
-        // No shipped host does this today — see the module doc. This test
-        // exercises the loop as it would run once a host does.
-        plane = plane.with_seat("verifier", ModelCallRole::Verdict);
-    }
+    let planes = if child_turns {
+        HostPlanes::none().with_child_turns(ChildTurns::declare(&manifest, dispatcher))
+    } else {
+        // A door with no dispatcher of its own installs no plane, so every
+        // `child_turn` ask is answered "this host does not do that".
+        HostPlanes::none()
+    };
     let gate = Arc::new(HostCallGate::declare(
         manifest.loop_grant.clone(),
         DEFAULT_HOST_MAX_CALLS,
-        Box::new(HostPlanes::none().with_child_turns(plane)),
+        Box::new(planes),
     ));
     let transport = transport(&manifest).serving(gate);
     WrapperDispatch::bind(manifest, Arc::new(transport))
@@ -211,7 +205,7 @@ fn dispatch_with_seats(
 #[tokio::test]
 async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() {
     let dispatcher = VerifierDispatcher::default();
-    let dispatch = dispatch_with_seats(manifest(), dispatcher.clone(), true);
+    let dispatch = dispatch_serving(manifest(), dispatcher.clone(), true);
     let mut driver = RecordingDriver::default();
 
     let report = dispatch
@@ -332,7 +326,7 @@ async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() 
         assert_eq!(
             spec.role,
             ModelCallRole::Verdict,
-            "the `verifier` role intent resolved to the seat this host bound it to"
+            "this plugin declares an [oracle], so its grant books the turn as a verdict call"
         );
         assert!(
             !spec.write_access,
@@ -356,19 +350,21 @@ async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() 
     }
 }
 
-/// **The gap made concrete.** No shipped host binds a `verifier` seat today
-/// (`ChildTurns::default_seats()` does not serve it), so this is the loop as
-/// it actually runs in the field: the plugin's `child_turn` ask degrades to
-/// `Unavailable`, `after_turn` reports no `met` measurement, `judge` abstains
-/// (`UndecidedReason::MeasurementMissing`) rather than crediting or blaming
-/// an assessment that was never made, and an abstention is terminal — `again`
-/// never holds an `Undecided` round open (`crates/stella-runtime/src/wrapper/verdict.rs`'s
-/// own doc comment: "There is no correction to author from evidence that
-/// decided nothing").
+/// **The degraded loop, on a door that runs no child turns.** A door with no
+/// dispatcher of its own installs no plane, so the plugin's `child_turn` ask
+/// is answered `Unavailable`, `after_turn` reports no `met` measurement,
+/// `judge` abstains (`UndecidedReason::MeasurementMissing`) rather than
+/// crediting or blaming an assessment nobody made, and an abstention is
+/// terminal — `again` never holds an `Undecided` round open
+/// (`crates/stella-runtime/src/wrapper/verdict.rs`'s own doc comment: "There
+/// is no correction to author from evidence that decided nothing").
+///
+/// What it pins: an ask this host cannot serve degrades into a stated
+/// abstention rather than a guess.
 #[tokio::test]
-async fn without_a_bound_verifier_seat_the_loop_ends_undecided_after_one_round() {
+async fn without_a_child_turn_plane_the_loop_ends_undecided_after_one_round() {
     let dispatcher = VerifierDispatcher::default();
-    let dispatch = dispatch_with_seats(manifest(), dispatcher.clone(), false);
+    let dispatch = dispatch_serving(manifest(), dispatcher.clone(), false);
     let mut driver = RecordingDriver::default();
 
     let report = dispatch

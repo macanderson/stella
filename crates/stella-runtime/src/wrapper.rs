@@ -88,6 +88,7 @@ mod error;
 mod framing;
 mod host_call;
 mod in_process;
+mod seat_grant;
 mod subprocess;
 mod test_run;
 mod verdict;
@@ -120,6 +121,7 @@ pub use host_call::{
     HostPlanes, NoHostCalls, PointChannel, RecallHost, RefusedCall,
 };
 pub use in_process::{InProcessWrapper, WrapperHandler};
+pub use seat_grant::{SeatGrant, SeatPermission};
 pub use subprocess::{
     AdmittedWrapper, DEFAULT_WRAPPER_TIMEOUT, MAX_WRAPPER_TIMEOUT, SubprocessWrapper,
     refuses_env_name,

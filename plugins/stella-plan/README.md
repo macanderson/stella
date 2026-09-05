@@ -96,15 +96,16 @@ does not settle — the built-in stage stays, and the plugin is opt-in behind
 carves the budget, runs the turn and settles once. `[loop] calls =
 ["child_turn"]` is the grant a human reads at install,
 `LoopGrant::permits_call` is the filter the host applies, and `[roles.planner]
-tier = "plan"` is the one role intent this plugin ever names — it resolves to
-`ModelCallRole::Plan` under the host's `default_seats()`, the same
-responsibility the built-in stage's own model call carries.
+tier = "plan"` is the one role intent this plugin ever names. The word is this
+plugin's own. The host compares it, routes the turn on it, and reads nothing
+into it; where the spend is booked comes from the grant a human consented to
+(`stella_runtime::wrapper::SeatGrant`).
 
 **Every way the ask can fail leaves the prompt exactly as it was.** The host
 offers no channel (`unavailable`), the manifest declares no such role intent
-(`undeclared`), the role resolves to the worker's own seat (`forbidden` — the
-independence rule, not expected for `planner`/`plan` but exercised by a
-vector regardless, since the code path is shared with every `child_turn`
+(`undeclared`), the seat is one no grant buys (`forbidden` — the independence
+rule, which no plugin can reach through the shipped door, and which a vector
+exercises regardless, since the code path is shared with every `child_turn`
 asker), the allowance is spent (`allowance-spent`), the host tried and the
 turn failed (`failed`), or nobody answered — each one contributes nothing and
 says why on stderr. A completed turn whose report simply does not parse as a

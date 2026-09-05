@@ -4,12 +4,15 @@
 //! for as long as it existed:
 //!
 //! > *A wrapper is handed a `ChildTurn` port, not a provider, not an `Engine`,
-//! > and not a credential. It names a **role intent** (`triage`, `planner`,
-//! > `witness_author`); the host resolves the intent against the user's BYOK
-//! > providers, carves the budget, attaches gate/steering/hooks, runs the turn,
-//! > and settles once. For an out-of-process wrapper this is a JSON request on
-//! > stdio and every model call is made by the host — AGENTS.md #3 and #3245 §3,
-//! > intact.*
+//! > and not a credential. It names a **role intent** […]; the host resolves the
+//! > intent against the user's BYOK providers, carves the budget, attaches
+//! > gate/steering/hooks, runs the turn, and settles once. For an
+//! > out-of-process wrapper this is a JSON request on stdio and every model
+//! > call is made by the host — AGENTS.md #3 and #3245 §3, intact.*
+//!
+//! The elision drops three example intents the spec listed. They read as a set
+//! core knows, and core knows none: an intent is any word the plugin's manifest
+//! declares.
 //!
 //! Every clause of that is a requirement, and this module is where each one is
 //! either enforced or declared missing.
@@ -46,6 +49,20 @@
 //! path, or a dollar amount, so none of them is a thing the host has to
 //! remember to ignore.
 //!
+//! # The name is the plugin's; the seat is the grant's
+//!
+//! A role intent is a word the plugin chose. This module compares it and never
+//! reads it. Which model runs the turn comes from the user's own seat map
+//! (`stella_cli::agent::seats`), keyed on that word, so a plugin may declare a
+//! `reviewer` or a `second-opinion` and be served as well as any other name.
+//!
+//! Where the *spend* is booked is a separate question, and the answer comes
+//! from [`SeatGrant`](super::SeatGrant) — the manifest a human read at install.
+//! A host may bind a tier to a seat of its own with [`ChildTurns::with_seat`];
+//! a tier it bound nothing for gets the grant's own seat. Either way the grant
+//! is asked whether the plugin may spend there, so a binding cannot hand over a
+//! seat the manifest never bought.
+//!
 //! # Three refusals, and they are different questions
 //!
 //! 1. **Undeclared** — the intent is not a `[roles.<name>]` key in the manifest
@@ -53,22 +70,20 @@
 //!    `BeforeTurnResponse::role`, restated at the value that arrives mid-point;
 //!    a socket that enforced it on one path and not the other would be
 //!    enforcing nothing.
-//! 2. **Unavailable** — the intent is declared, but its `tier` names no seat
-//!    this host serves. A declared gap the plugin is told about, with the
-//!    tiers that *are* served named in the detail.
-//! 3. **Forbidden** — the intent resolves to the **worker's** seat. This is the
-//!    security half and it is not buyable: a plugin whose job is to judge the
-//!    worker's output must not be able to spend the worker's own model to do
-//!    it. The staged pipeline's roster *reported* this loss for an operator's
-//!    own configuration (`Roster::independence_losses`;
-//!    `crates/stella-pipeline`, deleted in #3865) — an operator may choose it,
-//!    and a plugin may not.
+//! 2. **Unavailable** — the seat this host would book the turn at is one the
+//!    manifest never declared a job for. Fixable: the plugin declares the job,
+//!    a human consents to it, or the host binds the tier elsewhere.
+//! 3. **Forbidden** — the seat is one no grant buys. A plugin whose job is to
+//!    judge the session's work must not spend the model that did it. The staged
+//!    pipeline's roster *reported* this loss for an operator's own
+//!    configuration (`Roster::independence_losses`; `crates/stella-pipeline`,
+//!    deleted in #3865) — an operator may choose it, and a plugin may not.
 //!
-//! The third is compared on the **resolved seat**, never on the spelling of the
-//! tier, which is the lesson `independence_losses` records in prose: while
-//! every name was built in, name equality was seat equality, and the moment a
-//! host may bind its own tier ([`ChildTurns::with_seat`]) a plugin could
-//! otherwise nominate the worker under another name and nothing would notice.
+//! Both refusals are decided on the **resolved seat**, never on the spelling of
+//! the tier, which is the lesson `independence_losses` records in prose: while
+//! every name was built in, name equality was seat equality, and a host that
+//! binds its own tier ([`ChildTurns::with_seat`]) could otherwise hand over a
+//! refused seat under another name.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -80,6 +95,8 @@ use stella_plugin::{
     ChildTurnArgs, ChildTurnResult, HostCallFailure, HostCallRefusal, PluginManifest,
 };
 use stella_protocol::event::ModelCallRole;
+
+use super::{SeatGrant, SeatPermission};
 
 /// The host's own ceiling on child turns for one plugin, when a caller states
 /// none.
@@ -94,9 +111,9 @@ use stella_protocol::event::ModelCallRole;
 /// have.
 ///
 /// Four rather than one because the thing `child_turn` exists to restore is a
-/// research fan-out — `stella-research` replaces "a fan-out of read-only
-/// sub-agents answering triage's questions" — and a fan-out of one is a
-/// sequence. Small enough that a confused plugin cannot become a work session.
+/// fan-out: `plugins/stella-research` asks several read-only sub-agents one
+/// question each, and a fan-out of one is a sequence. Small enough that a
+/// confused plugin cannot become a work session.
 pub const DEFAULT_HOST_MAX_CHILD_TURNS: u32 = 4;
 
 /// What one performed child turn cost, and what it was booked against.
@@ -149,47 +166,19 @@ pub trait ChildTurnPlane: Send + Sync {
     async fn child_turn(&self, args: ChildTurnArgs) -> Result<ChildTurnResult, HostCallFailure>;
 }
 
-/// The seats this host serves a plugin's role intents from, before a caller
-/// binds any of its own.
-///
-/// Four, and the omission is the interesting part: **`verifier` is deliberately
-/// absent.** The seats it would resolve to are [`ModelCallRole::WitnessAuthor`]
-/// and [`ModelCallRole::Verdict`], and attributing a plugin's child turn to
-/// either would put a call on the receipt that the pipeline did not make —
-/// `Verdict` in particular is the model verdict #2584 removed *structurally*,
-/// which `Roster::apply` refuses to reassign. A host that genuinely wants to
-/// serve a verifier tier says so with [`ChildTurns::with_seat`] and owns the
-/// claim; it does not get it by default and then discover it on a receipt.
-///
-/// `worker` **is** here, and that is not a contradiction: it must resolve, so
-/// that naming it is answered [`HostCallRefusal::Forbidden`] ("you may not have
-/// this") rather than [`HostCallRefusal::Unavailable`] ("this host has nothing
-/// behind it"). The two send a plugin author to entirely different places, and
-/// hiding the independence rule behind the weaker one is how it would come to
-/// be seen as an accident of configuration.
-fn default_seats() -> BTreeMap<String, ModelCallRole> {
-    [
-        ("worker", ModelCallRole::Worker),
-        ("triage", ModelCallRole::Triage),
-        ("research", ModelCallRole::Research),
-        ("plan", ModelCallRole::Plan),
-    ]
-    .into_iter()
-    .map(|(tier, seat)| (tier.to_string(), seat))
-    .collect()
-}
-
-/// The child-turn plane: a manifest's declared role intents, this host's
-/// seats, its ceiling, and the dispatcher that actually runs the turn.
+/// The child-turn plane: a manifest's declared role intents, the seats its
+/// grant allows, this host's own bindings, its ceiling, and the dispatcher that
+/// actually runs the turn.
 ///
 /// Holds the manifest's `[roles]` rather than a list of names because the
 /// resolution is two hops — intent → declared `tier` → seat — and a plane
-/// holding only the first hop could not perform the independence check on the
-/// second, which is exactly the hole `Roster::independence_losses` documents.
+/// holding only the first hop could not check the second against the grant,
+/// which is exactly the hole `Roster::independence_losses` documents.
 pub struct ChildTurns<D> {
     plugin: String,
     dispatcher: D,
     roles: BTreeMap<String, String>,
+    grant: SeatGrant,
     seats: BTreeMap<String, ModelCallRole>,
     declared_max: Option<u32>,
     ceiling: u32,
@@ -249,7 +238,8 @@ impl<D> ChildTurns<D> {
             plugin: manifest.name.clone(),
             dispatcher,
             roles,
-            seats: default_seats(),
+            grant: SeatGrant::of(manifest),
+            seats: BTreeMap::new(),
             declared_max: manifest
                 .loop_grant
                 .max_child_turns
@@ -280,14 +270,13 @@ impl<D> ChildTurns<D> {
         self
     }
 
-    /// Bind one `tier` to the seat this host serves it from.
+    /// Bind one `tier` to the seat this host books it at.
     ///
-    /// Overrides the default table for that tier, and adds one the default
-    /// table does not carry (`verifier` is the standing example — see
-    /// `default_seats`). Binding a tier to [`ModelCallRole::Worker`] does not
-    /// buy a plugin the worker's seat: the independence refusal compares the
-    /// resolved seat, so renaming the worker only changes which word gets
-    /// refused.
+    /// A tier with no binding is booked at [`SeatGrant::default_seat`], so this
+    /// is for a host that can say something more exact than the grant can. It
+    /// buys the plugin nothing: [`Self::resolve`] still asks the grant about
+    /// whatever seat comes out, so a binding to a refused seat only changes
+    /// which word gets refused.
     #[must_use]
     pub fn with_seat(mut self, tier: impl Into<String>, seat: ModelCallRole) -> Self {
         self.seats.insert(tier.into(), seat);
@@ -358,9 +347,9 @@ impl<D> ChildTurns<D> {
     /// # Errors
     ///
     /// [`HostCallRefusal::Undeclared`] when the manifest declares no such role,
-    /// [`HostCallRefusal::Unavailable`] when its tier names no seat this host
-    /// serves, and [`HostCallRefusal::Forbidden`] when it resolves to the
-    /// worker's seat.
+    /// [`HostCallRefusal::Unavailable`] when the seat needs a job the manifest
+    /// never declared, and [`HostCallRefusal::Forbidden`] when no grant buys the
+    /// seat at all.
     pub fn resolve(&self, role: &str) -> Result<ModelCallRole, HostCallFailure> {
         let Some(tier) = self.roles.get(role) else {
             let declared = if self.roles.is_empty() {
@@ -377,27 +366,31 @@ impl<D> ChildTurns<D> {
                 ),
             ));
         };
-        let Some(&seat) = self.seats.get(tier) else {
-            return Err(HostCallFailure::new(
-                HostCallRefusal::Unavailable,
-                format!(
-                    "role intent \"{role}\" asks for the \"{tier}\" tier, which this host binds to \
-                     no responsibility; served tiers: {}",
-                    self.seats.keys().cloned().collect::<Vec<_>>().join(", ")
-                ),
-            ));
-        };
-        if seat == ModelCallRole::Worker {
-            return Err(HostCallFailure::new(
+        let seat = self
+            .seats
+            .get(tier)
+            .copied()
+            .unwrap_or_else(|| self.grant.default_seat());
+        match self.grant.permits(seat) {
+            SeatPermission::Granted => Ok(seat),
+            SeatPermission::Never => Err(HostCallFailure::new(
                 HostCallRefusal::Forbidden,
                 format!(
-                    "role intent \"{role}\" resolves to the worker's own seat, and a plugin may \
-                     not spend the model whose work it is judging; name a tier that resolves \
-                     elsewhere"
+                    "role intent \"{role}\" is booked at the seat this session's own turns are \
+                     booked at, and a plugin may not spend the model whose work it is judging; \
+                     ask your host operator to bind the \"{tier}\" tier elsewhere"
                 ),
-            ));
+            )),
+            SeatPermission::Undeclared => Err(HostCallFailure::new(
+                HostCallRefusal::Unavailable,
+                format!(
+                    "role intent \"{role}\" is booked at the seat a call deciding whether the work \
+                     is done is booked at, and plugin \"{}\" declares no [oracle], so nobody \
+                     consented to it deciding that",
+                    self.plugin
+                ),
+            )),
         }
-        Ok(seat)
     }
 
     fn record(&self, spend: ChildTurnSpend) {
@@ -638,17 +631,57 @@ mod tests {
         assert!(plane.spends().is_empty(), "a refusal spends nothing");
     }
 
-    /// The security half. Declared, resolvable, and still refused.
+    /// **The witness.** A role whose tier core has never heard of runs, and
+    /// the grant decides where the spend lands.
+    ///
+    /// Without this change the ask is refused `Unavailable`: core's table
+    /// served four words, `reviewer` was not one of them, and a plugin needing
+    /// a reviewer could not run a turn at all.
+    #[tokio::test]
+    async fn a_tier_core_has_never_heard_of_runs_at_the_grants_own_seat() {
+        let dispatcher = Recording::default();
+        let plane = ChildTurns::declare(
+            &manifest("[roles.reviewer]\ntier = \"reviewer\"", ""),
+            dispatcher.clone(),
+        );
+
+        let result = plane
+            .child_turn(ask("reviewer"))
+            .await
+            .expect("core holds no list of the words a plugin may use");
+        assert_eq!(result.role, "reviewer");
+        assert_eq!(
+            result.seat, "research",
+            "this manifest declares no [oracle], so the grant books it at the seat a read-only \
+             sub-agent call uses"
+        );
+
+        let specs = dispatcher
+            .specs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            specs[0].seat.as_deref(),
+            Some("reviewer"),
+            "the plugin's own word is what routes the turn to a model"
+        );
+    }
+
+    /// The security half. Declared, bound by the host, and still refused.
+    ///
+    /// The binding is what makes this a real ask: with no host binding the seat
+    /// comes from the grant, and the grant never picks this one.
     #[tokio::test]
     async fn a_role_intent_that_resolves_to_the_worker_is_forbidden() {
         let plane = ChildTurns::declare(
             &manifest("[roles.grader]\ntier = \"worker\"", ""),
             Recording::default(),
-        );
+        )
+        .with_seat("worker", ModelCallRole::Worker);
         let failure = plane
             .child_turn(ask("grader"))
             .await
-            .expect_err("the worker's seat is not for sale");
+            .expect_err("the seat the session's own turns use is not for sale");
         assert_eq!(failure.refusal, HostCallRefusal::Forbidden);
         assert!(plane.spends().is_empty());
     }
@@ -669,29 +702,39 @@ mod tests {
         assert_eq!(failure.refusal, HostCallRefusal::Forbidden);
     }
 
-    /// A tier this host binds to nothing is a declared gap the plugin is told
-    /// about, with the served tiers named — never a silent empty answer.
+    /// A seat that decides whether the work is done needs a manifest that
+    /// declared that job. A host binding alone does not buy one.
+    ///
+    /// Without this change nothing asked about the manifest: the same binding
+    /// ran the turn and booked a verdict nobody consented to.
     #[tokio::test]
-    async fn an_unserved_tier_names_the_tiers_that_are_served() {
+    async fn a_deciding_seat_needs_a_manifest_that_declared_the_job() {
         let plane = ChildTurns::declare(
-            &manifest("[roles.grader]\ntier = \"verifier\"", ""),
-            Recording::default(),
-        );
-        let failure = plane
-            .child_turn(ask("grader"))
-            .await
-            .expect_err("`verifier` binds to no seat by default");
-        assert_eq!(failure.refusal, HostCallRefusal::Unavailable);
-        assert!(failure.detail.contains("research"), "{failure}");
-
-        // ...and a host that wants it says so, and owns the claim.
-        let bound = ChildTurns::declare(
             &manifest("[roles.grader]\ntier = \"verifier\"", ""),
             Recording::default(),
         )
         .with_seat("verifier", ModelCallRole::WitnessAuthor);
+        let failure = plane
+            .child_turn(ask("grader"))
+            .await
+            .expect_err("this manifest declares no [oracle]");
+        assert_eq!(failure.refusal, HostCallRefusal::Unavailable);
+        assert!(failure.detail.contains("oracle"), "{failure}");
+        assert!(plane.spends().is_empty());
+
+        // ...and an arbiter that declared one is served, with no binding at
+        // all: its grant already says which seat its turns belong at.
+        let judging = PluginManifest::from_toml_str(
+            "name = \"arbiter\"\n\n[loop]\nparticipation = \"arbiter\"\nhooks = \
+             [\"Stop\"]\npoints = [\"after_turn\"]\ncalls = \
+             [\"child_turn\"]\n\n[requirements]\ndone = \"the goal is met\"\n\n[oracle]\nflip = \
+             \"required\"\n\n[oracle.command]\nargv = [\"true\"]\ntimeout_secs = \
+             5\n\n[subloop]\nstages = [\"verify\"]\n\n[roles.grader]\ntier = \"verifier\"",
+        )
+        .expect("the manifest loads");
+        let bound = ChildTurns::declare(&judging, Recording::default());
         let result = bound.child_turn(ask("grader")).await.expect("now served");
-        assert_eq!(result.seat, "witness_author");
+        assert_eq!(result.seat, "verdict");
     }
 
     /// The manifest's number is an ask; the ceiling is the host's.

@@ -162,16 +162,12 @@ requirement = "goal-met"
 check = "met >= 1"
 
 # The one role intent this plugin names. `tier = "verifier"` is the honest
-# name for what this call is — an independent assessment of the worker's own
-# turn — but no shipped host's `ChildTurns::declare` binds it today:
-# `default_seats()` serves `worker`/`triage`/`research`/`plan` and
-# deliberately not `verifier` (`child_turn.rs`'s own module doc names the
-# reason: attributing a plugin's child turn to `ModelCallRole::Verdict` would
-# put a call on the receipt the pipeline itself did not make, and a host that
-# wants to serve it must say so with `.with_seat` and own the claim). So this
-# call degrades to `HostCallRefusal::Unavailable` on every host running today
-# — a real, common, honestly-handled case, not a hypothetical one. See
-# README "Known gaps".
+# name for what this call is: an independent assessment of the worker's own
+# turn. The word is this plugin's own — the host compares it and reads nothing
+# into it. Where the spend is booked comes from the `[oracle]` above: a plugin
+# that declares one judges the turn, so its child turns are booked at
+# `ModelCallRole::Verdict`, the same responsibility `stella_core::goal` books
+# its own verifier call against (`SeatGrant`).
 [roles.verifier]
 tier = "verifier"
 
