@@ -904,11 +904,22 @@ fn fold_turn_extras(conn: &Connection, id: &str, turns: &mut [Value]) -> Result<
         }
     }
     let mut reflections: BTreeMap<i64, Value> = BTreeMap::new();
+    // `execution_reflection` gets a row for every finalized turn, graded or
+    // not, so the row's existence answers a different question from "did the
+    // model grade this turn". `HAS_SELF_REVIEW` is the predicate that tells
+    // them apart, and every other reader of this table applies it — without it
+    // here, `/api/session` returned an all-null verdict object for a turn that
+    // `/api/execution` reported as `reflection: null`.
     for row in session_group(
         conn,
         id,
-        "SELECT execution_id, delivered, self_rating FROM execution_reflection
-         WHERE execution_id IN (SELECT id FROM executions WHERE session_id = ?1)",
+        &format!(
+            "SELECT er.execution_id, er.delivered, er.self_rating
+             FROM execution_reflection er
+             WHERE er.execution_id IN (SELECT id FROM executions WHERE session_id = ?1)
+               AND {}",
+            crate::db::HAS_SELF_REVIEW
+        ),
         |r| {
             Ok(json!([
                 r.get::<_, i64>(0)?,
@@ -1110,6 +1121,42 @@ mod tests {
             json!(false),
             "with no registry record and no turns there is nothing to show: {theirs}"
         );
+    }
+
+    /// `execution_reflection` gets a row for every finalized turn, so a turn
+    /// nothing graded has one too. Keyed on the row's existence — the old
+    /// rule — this route handed the page an all-null verdict object for that
+    /// turn while `/api/execution` reported `reflection: null` for the very
+    /// same turn.
+    #[test]
+    fn a_turn_the_model_never_graded_carries_no_reflection() {
+        let conn = Connection::open_in_memory().expect("memory db");
+        conn.execute_batch(
+            "CREATE TABLE executions (id INTEGER PRIMARY KEY, session_id TEXT);
+             CREATE TABLE execution_reflection (
+               execution_id INTEGER PRIMARY KEY,
+               delivered INTEGER, self_rating INTEGER,
+               what_went_well TEXT NOT NULL DEFAULT '',
+               what_to_improve TEXT NOT NULL DEFAULT '',
+               critique TEXT NOT NULL DEFAULT '');
+             INSERT INTO executions VALUES (1, 'ses-1'), (2, 'ses-1');
+             -- The finalize row: a turn ended, nothing graded it.
+             INSERT INTO execution_reflection
+               (execution_id, delivered, self_rating) VALUES (1, NULL, NULL);
+             INSERT INTO execution_reflection
+               (execution_id, delivered, self_rating) VALUES (2, 1, 4);",
+        )
+        .expect("seed");
+
+        let mut turns = vec![json!({ "id": 1 }), json!({ "id": 2 })];
+        fold_turn_extras(&conn, "ses-1", &mut turns).expect("fold");
+        assert_eq!(
+            turns[0]["reflection"],
+            Value::Null,
+            "an ungraded turn owes the page nothing: {}",
+            turns[0]
+        );
+        assert_eq!(turns[1]["reflection"]["self_rating"], 4, "{}", turns[1]);
     }
 
     #[test]
