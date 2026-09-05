@@ -162,6 +162,7 @@ pub mod home;
 pub mod identity;
 pub mod integrity;
 pub mod journal;
+pub mod lane_frame;
 pub mod mcp_usage;
 pub mod notify;
 pub mod plan_graph;

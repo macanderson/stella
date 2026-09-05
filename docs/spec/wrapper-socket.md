@@ -385,12 +385,14 @@ model call is the host's (#3564). A `child_turn` names a role intent the
 manifest declared. The word is the plugin's own: the host compares it, routes
 the turn on it, and reads nothing into it. Where the spend is booked, and
 whether it may be spent there, come from `SeatGrant` — the manifest a person
-read at install. It **refuses outright any seat the session's own turns use** —
-a plugin may not spend the model whose work it is judging, which is the
-independence `Roster::independence_losses` merely *reports* for an operator's
-own configuration. A seat that decides whether the work is done needs a
-manifest declaring an `[oracle]`. `run_test` is still `unsupported` from every
-host in the tree.
+read at install. Every plugin's call is booked at `ModelCallRole::Plugin`, and
+its own word for the job rides beside it on the child's `sub_agent` bracket. It
+**refuses outright any seat the session's own turns use** — a plugin may not
+spend the model whose work it is judging, which is the independence
+`Roster::independence_losses` merely *reports* for an operator's own
+configuration. A seat that decides whether the work is done needs a manifest
+declaring an `[oracle]`. `run_test` is still `unsupported` from every host in
+the tree.
 
 **`child_turn` is bounded by its own manifest key, `[loop] max_child_turns`,
 clamped against `DEFAULT_HOST_MAX_CHILD_TURNS` (4).** Not `[loop] max_calls`,

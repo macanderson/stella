@@ -553,7 +553,7 @@ impl WorkJournal {
     }
 
     /// One reserved blob as of this session's tip.
-    fn blob_at_tip(&self, name: &str) -> Option<String> {
+    pub(crate) fn blob_at_tip(&self, name: &str) -> Option<String> {
         let tip = self.session_tip()?;
         self.git(&["show", &format!("{tip}:{}", journal_blob_path(name))])
             .ok()

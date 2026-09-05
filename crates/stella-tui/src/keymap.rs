@@ -554,10 +554,13 @@ pub const BINDINGS: &[Binding] = &[
         &["a_modified_enter_inserts_a_line_break_preserved_through_submit"],
     ),
     hinted(
-        "!cmd",
+        "$cmd",
         "run a shell command NOW (skips the queue)",
         Everywhere,
-        &["bang_prefix_runs_a_shell_command_immediately_never_enqueued"],
+        &[
+            "the_dollar_mark_runs_a_shell_command_immediately_never_enqueued",
+            "bang_prefix_runs_a_shell_command_immediately_never_enqueued",
+        ],
     ),
     hinted(
         "/",
@@ -653,10 +656,13 @@ pub const BINDINGS: &[Binding] = &[
         &["the_zoom_action_verbs_are_drawn_and_inert_and_never_reach_the_composer"],
     ),
     row(
-        ">text",
-        "steer the running turn — lands at the next step boundary",
+        ">text / !text",
+        "steer at the next step boundary · ! stops there first",
         Everywhere,
-        &["steering_sends_the_marker_the_driver_already_reads"],
+        &[
+            "steering_sends_the_marker_the_driver_already_reads",
+            "a_bang_at_a_running_lead_interrupts_the_turn_with_the_text",
+        ],
     ),
     row(
         "esc",
@@ -737,9 +743,10 @@ mod tests {
     /// their modal editor), `views/subagents.rs` (the overlay's own verbs), and
     /// `deck_shell.rs` (`⌃V`, claimed by the run loop above the pure key
     /// layer because the capture is blocking I/O).
-    fn witness_sources() -> [&'static str; 31] {
+    fn witness_sources() -> [&'static str; 32] {
         [
             include_str!("voice.rs"),
+            include_str!("deck_ui/tests/sigil.rs"),
             include_str!("deck_ui/tests/agents.rs"),
             include_str!("deck_ui/tests/composer.rs"),
             include_str!("deck_ui/tests/esc.rs"),

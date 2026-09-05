@@ -215,8 +215,8 @@
   priority — so a `P2` you add is both a rule break and a label that does not
   survive. The taxonomy below is what **triage** applies; read it to
   understand what the labels on an issue mean, not as a list to add yourself.
-- **The taxonomy, in this order.** First a priority (`P0`–`P4`),
-  then the `area:*` tag — several when the work genuinely spans areas — then
+- **The taxonomy, in this order.** First a priority (SCR-005's Directive names
+  the levels, and is the only place that does), then the `area:*` tag — several when the work genuinely spans areas — then
   exactly one `use-model:*` tag (`cheap` / `balanced` / `pro` / `ultra`)
   naming the cheapest model class that can do the work without sacrificing
   quality, then the `pain:*` tags for the pains the issue relieves

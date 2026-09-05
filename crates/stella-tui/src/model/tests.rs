@@ -339,6 +339,8 @@ fn an_auxiliary_call_never_supplies_the_opening_rules_model() {
     for (role, call_seq) in [
         (ModelCallRole::Summarization, 0),
         (ModelCallRole::Verdict, 0),
+        // A plugin's seat spent it, so it is not the engine's own call either.
+        (ModelCallRole::Plugin, 0),
         // Legacy sessions recorded no role at all. A call this build cannot
         // identify must not name the turn either — eliding beats asserting a
         // routing decision nothing recorded.

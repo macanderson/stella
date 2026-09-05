@@ -118,6 +118,22 @@ pub enum SubAgentPhase {
         /// rows carry the child's model and provider but not this.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<crate::ReasoningEffort>,
+        /// The seat this child was asked to run at.
+        ///
+        /// The requester's own word, and the key a user assigns a model to.
+        /// This is where the name of a plugin's job lives. The metering row
+        /// says only that some other participant spent the call. This word
+        /// says which one, and at which seat.
+        ///
+        /// `None` when nobody named a seat. A `delegate` sub-agent names
+        /// none. Nor does a child dispatched before seats existed, hence
+        /// `serde(default)`.
+        ///
+        /// Opaque by contract. It is compared, never parsed or matched
+        /// against a literal. A word no one has used before travels as well
+        /// as one shipped in an example.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seat: Option<String>,
     },
     /// The child turn ended. Emitted on every path, including a refusal.
     Finished {
@@ -172,6 +188,7 @@ mod tests {
             write_access: false,
             depth: 1,
             effort: Some(crate::ReasoningEffort::High),
+            seat: Some("reviewer".into()),
         };
         let json = serde_json::to_string(&started).unwrap();
         assert!(json.contains("\"phase\":\"started\""), "{json}");
@@ -180,11 +197,37 @@ mod tests {
         assert_eq!(back, started);
     }
 
+    /// The seat witness on this side of the boundary. A seat name core has
+    /// never heard of survives the wire. A consumer reads the role that ran
+    /// instead of one spelled into the reader. It fails against a bracket
+    /// with nowhere to put the word.
+    #[test]
+    fn a_seat_name_core_has_never_heard_of_survives_the_bracket() {
+        let started = SubAgentPhase::Started {
+            agent_id: "plugin:grader/second-opinion#0".into(),
+            instruction_preview: "does the diff drop the retry?".into(),
+            budget_usd: None,
+            write_access: false,
+            depth: 1,
+            effort: None,
+            seat: Some("second-opinion".into()),
+        };
+        let json = serde_json::to_string(&started).unwrap();
+        assert!(json.contains("\"seat\":\"second-opinion\""), "{json}");
+        match serde_json::from_str::<SubAgentPhase>(&json).unwrap() {
+            SubAgentPhase::Started { seat, .. } => {
+                assert_eq!(seat.as_deref(), Some("second-opinion"));
+            }
+            other => panic!("a started phase must parse as one: {other:?}"),
+        }
+    }
+
     #[test]
     fn a_started_with_no_pinned_effort_omits_the_field_and_old_journals_parse() {
-        // `effort` postdates the bracket (it used to live only on the
-        // in-memory spec), so a journaled `started` without the key must
-        // still parse, and an unpinned child must not write a null.
+        // `effort` and `seat` both postdate the bracket (each used to live
+        // only on the in-memory spec), so a journaled `started` without
+        // either key must still parse, and a child that pins neither must
+        // not write a null for them.
         let started = SubAgentPhase::Started {
             agent_id: "search-1".into(),
             instruction_preview: String::new(),
@@ -192,9 +235,11 @@ mod tests {
             write_access: false,
             depth: 1,
             effort: None,
+            seat: None,
         };
         let json = serde_json::to_string(&started).unwrap();
         assert!(!json.contains("effort"), "{json}");
+        assert!(!json.contains("seat"), "{json}");
         assert_eq!(
             serde_json::from_str::<SubAgentPhase>(&json).unwrap(),
             started
@@ -214,6 +259,7 @@ mod tests {
             write_access: false,
             depth: 1,
             effort: None,
+            seat: None,
         };
         let json = serde_json::to_string(&started).unwrap();
         assert!(!json.contains("budget_usd"), "{json}");
@@ -261,6 +307,7 @@ mod tests {
             write_access: false,
             depth: 1,
             effort: None,
+            seat: None,
         };
         let finished = SubAgentPhase::Finished {
             agent_id: "a".into(),

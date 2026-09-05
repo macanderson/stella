@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// The bang spelling of the shell mark, kept for one release: a bang with the
+/// command against it still runs it. `$` is the current spelling
+/// (`sigil::the_dollar_mark_runs_a_shell_command_immediately_never_enqueued`),
+/// and bang-then-space is the interrupt.
 #[test]
 fn bang_prefix_runs_a_shell_command_immediately_never_enqueued() {
     let model = model_with(&["lead"]);
@@ -29,6 +33,7 @@ fn bang_prefix_only_strips_the_single_dispatch_marker() {
 
 #[test]
 fn bang_prefix_beats_a_pending_ask_user_gate() {
+    // A marked line is never read as the gate's answer — `sigil::claims_submission`.
     let mut model = model_with(&["lead"]);
     model.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
