@@ -705,7 +705,10 @@ impl McpToolSet {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string();
-                    push_usage(ledger, McpUsageRecord::now(client.name(), raw_tool, reason));
+                    push_usage(
+                        ledger,
+                        McpUsageRecord::new(client.name(), raw_tool, reason, unix_now_ms()),
+                    );
                 }
                 output
             }
@@ -719,6 +722,24 @@ impl McpToolSet {
             ),
         }
     }
+}
+
+/// Unix milliseconds now — the `called_at_ms` a live MCP call stamps its
+/// [`McpUsageRecord`] on completion.
+///
+/// `stella-core` never carries a concrete time source of its own
+/// (`stella_core::ports::Clock`'s own doc comment says so, and
+/// [`McpUsageRecord::new`] takes the timestamp as a plain parameter rather
+/// than reading it), so this crate — already doing the network I/O the call
+/// represents — reads the wall clock and hands the constructor the value
+/// explicitly. Read at both call sites ([`McpToolSet::execute_mcp`] and
+/// [`resources::route`]) rather than once and reused, so each record's
+/// `called_at_ms` reflects when that specific call actually completed.
+pub(crate) fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Compose the wire name for a server/tool pair: `mcp__<server>__<tool>`.

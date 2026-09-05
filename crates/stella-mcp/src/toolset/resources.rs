@@ -133,7 +133,10 @@ pub(super) async fn route(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            push_usage(ledger, McpUsageRecord::now(server, raw_tool, reason));
+            push_usage(
+                ledger,
+                McpUsageRecord::new(server, raw_tool, reason, super::unix_now_ms()),
+            );
         }
         return Some(output);
     }
