@@ -335,7 +335,8 @@ if [ "$use_fixture" -eq 1 ]; then
 elif ! claims="$(gh issue view "$issue" --json comments --jq "
     .comments[]
     | select(.body | startswith(\"$marker\"))
-    | ((.body | split(\"\n\")[0] | split(\" \") | map(select(length > 0)))
+    | ((.body | split(\"\n\")[0] | gsub(\"\r\"; \"\") | split(\" \")
+        | map(select(length > 0)))
        + [\"-\", \"-\", \"-\"]) as \$word
     | \"\(.author.login) \(\$word[2]) \((now - (.createdAt | fromdateiso8601)) | floor)\"
   " 2>/dev/null)"; then
