@@ -293,7 +293,7 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
   | keyword, and a JSON object key | `SYNTAX_KEYWORD` | `#BFC1CC` |
   | string / char literal | `SYNTAX_STRING` | `#93D896` |
   | numeric literal | `SYNTAX_NUMBER` | `#8F70E8` |
-  | comment | `SYNTAX_COMMENT` | `#777782` |
+  | comment | `SYNTAX_COMMENT` | `#7C7C87` |
   | type position | `SYNTAX_TYPE` | `#2FD3C6` |
   | function or method name | `SYNTAX_FUNCTION` | `#E4408F` |
 
