@@ -228,10 +228,10 @@ the seat name travels beside the enum instead. `SubAgentPhase::Started`
 gained `seat`, filled from the `SubAgentSpec::seat` slice 0 already carries,
 and `ChildTurnSpend` names both the plugin and the seat.
 
-Slice 1's `SeatGrant::default_seat` returns `Plugin` now, which is the guess
-its own doc comment asked this slice to retire. Reading the declared job there
-picks `Verdict` for a judging plugin and `Research` for the rest, and both name
-a job core does.
+Slice 1's `SeatGrant::default_seat` returns `Plugin` for every grant. Reading
+the manifest's declared job instead picks `Verdict` for a judging plugin and
+`Research` for the rest, and both name a job core does — a guess that books a
+plugin's call at a core seat, which its own doc comment asks this slice to end.
 
 ### Slice 3 — stages are declared, named and ordered (gap B)
 
