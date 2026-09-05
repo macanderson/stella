@@ -124,9 +124,9 @@ pub use envelope::{
     InspectSection, InspectView, InstalledAgentEntry, IssueAction, IssueRow, JournalEra,
     LearnedProvenance, LearnedSource, McpLiveIdentity, McpLookupState, McpSearchItem,
     McpSearchOutcome, McpServerDetail, McpServerInfo, McpSignature, McpSourceTier, McpToolRow,
-    NotificationInfo, RecordedCallInfo, SeatRow, Secret, SessionInfo, SessionPhase, SkillOp,
-    SkillRow, SkillScope, SkillSearchHit, SkillsView, SplashCue, ToolDenial, ToolPolicyState,
-    ToolRow, ToolScope, WorkspaceInput,
+    NotificationInfo, RecordedCallInfo, RejectedSkillRow, SeatRow, Secret, SessionInfo,
+    SessionPhase, SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView, SplashCue, ToolDenial,
+    ToolPolicyState, ToolRow, ToolScope, WorkspaceInput,
 };
 pub use fleet_dashboard::{
     FleetControl, FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,

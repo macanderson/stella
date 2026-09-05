@@ -427,6 +427,10 @@ fn fixture_skills() -> SkillsView {
                 1,
             ),
         ],
+        // Empty, or a non-empty list adds a line and changes every golden
+        // frame here. `views::skills::tests` and `deck_ui::tests::skills`
+        // cover the rejected-skills review instead, as plain assertions.
+        rejections: vec![],
         status: Some("4 skills · 3 enabled".to_string()),
         busy: false,
         created: None,

@@ -3,7 +3,10 @@
 
 //! The SKILLS tab's dialog and row keys: the scope picker — where a skill an
 //! install or a create is about to produce gets written, project or user —
-//! the `ctrl+o` preview, and SPEC 9.2's learned-skill verbs, `r` and `x`.
+//! the `ctrl+o` preview, and SPEC 9.2's learned-skill verbs `r` and `x`.
+//!
+//! Also `!`, which opens the rejected-skills review — the reader/undo half
+//! `x` never had.
 //!
 //! Split from `deck_ui.rs` (#629's 1500-line ratchet) when the picker's
 //! movement was routed through [`list_nav`](crate::deck_ui::list_nav), the way
@@ -265,6 +268,53 @@ fn source_trace_markdown(learned: &crate::envelope::LearnedProvenance) -> String
     }
     out.push('\n');
     out
+}
+
+/// The rejected-skills review's keys: ↑/↓ choose, ⏎ / `u` reverses the
+/// highlighted rejection, esc closes.
+///
+/// One press, unlike `x reject` and `ctrl+x uninstall`. Reversing a
+/// rejection destroys nothing — it drops one entry, and the miner starts
+/// proposing the skill again on its next pass. A confirm step here would
+/// just be friction, with no destructive act to guard against.
+pub(super) fn handle_rejected_key(key: KeyEvent, ui: &mut DeckUi, sel: usize) -> DeckAction {
+    let count = ui.skills.view.rejections.len();
+    if count == 0 {
+        // The list emptied under an open dialog. Nothing left to choose, so
+        // close rather than show an empty picker.
+        ui.skills.prompt = None;
+        return DeckAction::Handled;
+    }
+    let sel = sel.min(count - 1);
+    match key.code {
+        KeyCode::Esc => {
+            ui.skills.prompt = None;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.skills.prompt = Some(SkillPrompt::Rejected {
+                sel: sel.saturating_sub(1),
+            });
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            ui.skills.prompt = Some(SkillPrompt::Rejected {
+                sel: (sel + 1).min(count - 1),
+            });
+            DeckAction::Handled
+        }
+        KeyCode::Enter | KeyCode::Char('u') => {
+            let row = ui.skills.view.rejections[sel].clone();
+            ui.skills.prompt = None;
+            ui.skills.searching = true;
+            ui.skills.status = Some(format!("un-rejecting {}…", row.name));
+            DeckAction::Send(WorkspaceInput::Skill(SkillOp::Unreject {
+                scope: row.scope,
+                mined_as: row.mined_as,
+            }))
+        }
+        _ => DeckAction::Handled,
+    }
 }
 
 /// The picker's own axis, which `list_nav` does not have: the two options sit

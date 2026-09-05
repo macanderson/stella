@@ -353,6 +353,7 @@ async fn main() -> std::io::Result<()> {
                 WorkspaceInput::Skill(_) => {
                     let _ = react_tx.send(Inbound::Skills(SkillsView {
                         rows: vec![],
+                        rejections: vec![],
                         status: Some("the demo has no skills on disk".to_string()),
                         busy: false,
                         created: None,

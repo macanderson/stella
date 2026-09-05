@@ -570,6 +570,7 @@ fn fixture_skills() -> SkillsView {
                 1,
             ),
         ],
+        rejections: vec![],
         status: Some("4 skills · 3 enabled".to_string()),
         busy: false,
         created: None,

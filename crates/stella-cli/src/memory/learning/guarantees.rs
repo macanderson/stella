@@ -19,9 +19,10 @@
 //!
 //! * the per-session cap, counted across the loop's own accounting;
 //! * a hand-edited file surviving a re-mine of the same lesson.
-//! * a rejected learned skill is not learned again (#5046) — the negative
-//!   signal is written by the SKILLS tab and read by the loop, and only a test
-//!   holding both ends shows the two mean the same fact.
+//! * a rejected learned skill is not learned again (#5046), and reversing
+//!   that rejection lets it be learned again. The SKILLS tab writes both
+//!   signals; the loop reads them. Only a test holding both ends shows they
+//!   mean the same fact.
 //!
 //! ## Every guarantee runs under BOTH loops
 //!
@@ -334,6 +335,66 @@ fn a_rejected_skill_is_not_learned_again() {
         assert!(
             skill_files(dir.path()).is_empty(),
             "{path:?}: the miner wrote a rejected skill straight back: {:?}",
+            skill_files(dir.path())
+        );
+    });
+}
+
+/// **The witness, the mirror of the test above.** Reversing a rejection from
+/// the SKILLS tab (`skill_manager::unreject`) teaches the learner the
+/// opposite fact. The very next mining pass, over the same log, writes the
+/// skill back.
+///
+/// A row reappearing would not prove that on its own — a hand-restored file
+/// would look the same on disk. Only the miner re-minting it from the log
+/// proves the *signal* was reversed, not just the file.
+#[test]
+fn reversing_a_rejection_lets_the_skill_be_learned_again() {
+    each_path(|path| {
+        let dir = workspace_with_log(&three_occurrences_of(RECURRING));
+        let mut memory = session(dir.path(), path);
+        memory.auto_create_skills(&log_path(dir.path()), true);
+        let mined = "prefer-updating-witness-test-assertions-e2010443";
+        assert_eq!(
+            skill_files(dir.path()),
+            vec![format!("{mined}.md")],
+            "{path:?}: the control must mine"
+        );
+
+        crate::skill_manager::reject(
+            stella_tui::SkillScope::Project,
+            mined,
+            1_700_000_000,
+            dir.path(),
+        )
+        .expect("reject");
+        assert!(
+            skill_files(dir.path()).is_empty(),
+            "{path:?}: the file is gone after rejecting"
+        );
+
+        // A later session must not write it back — the control for the
+        // reversal below, proving the rejection alone still holds.
+        let mut still_rejected = session(dir.path(), path);
+        still_rejected.auto_create_skills(&log_path(dir.path()), true);
+        assert!(
+            skill_files(dir.path()).is_empty(),
+            "{path:?}: control: a rejection with no reversal must still hold"
+        );
+
+        // Exactly what `!` → `u` does, driver-side.
+        crate::skill_manager::unreject(stella_tui::SkillScope::Project, mined, dir.path())
+            .expect("unreject");
+
+        // A THIRD session, over the same unchanged log: the reversal must
+        // reach the miner, not just the SKILLS tab's own list.
+        let mut later = session(dir.path(), path);
+        later.auto_create_skills(&log_path(dir.path()), true);
+        assert_eq!(
+            skill_files(dir.path()),
+            vec![format!("{mined}.md")],
+            "{path:?}: reversing the rejection did not let the skill be learned \
+             again: {:?}",
             skill_files(dir.path())
         );
     });
