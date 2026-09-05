@@ -1,4 +1,5 @@
-//! The composer marks: `$` runs a shell command, `!` interrupts the turn.
+//! The composer marks: `$` runs a shell command, `!` interrupts the turn, and
+//! `!!`/`!!!` interrupt it and keep the words.
 
 use super::*;
 
@@ -37,6 +38,7 @@ fn a_bang_at_a_running_lead_interrupts_the_turn_with_the_text() {
         DeckAction::Send(WorkspaceInput::Interrupt {
             agent: "lead".into(),
             texts: vec!["use short sentences".into()],
+            keep: None,
         })
     );
 }
@@ -76,6 +78,76 @@ fn the_dollar_mark_runs_a_shell_command_immediately_never_enqueued() {
     assert!(
         ui.notice.entries().is_empty(),
         "the current spelling is not deprecated"
+    );
+}
+
+/// **The witness for `!!`.** Two bangs interrupt exactly as one does, and the
+/// message carries the strength the driver saves the words at.
+///
+/// It fails on the old deck by construction. That deck owned only the first
+/// bang and read the second as part of a command, so `!! use short sentences`
+/// answered `DeckAction::Shell("! use short sentences")` and ran the sentence.
+#[test]
+fn two_bangs_interrupt_and_ask_for_the_words_to_be_kept_as_guidance() {
+    let model = lead(crate::AgentStatus::Running);
+    let mut ui = ready_ui();
+    assert_eq!(
+        submit("!! use short sentences", &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Interrupt {
+            agent: "lead".into(),
+            texts: vec!["use short sentences".into()],
+            keep: Some(crate::envelope::KeepStrength::Guidance),
+        })
+    );
+    assert!(
+        ui.notice.entries().iter().any(|n| n.contains("guidance")),
+        "a keystroke that keeps something says what it keeps: {:?}",
+        ui.notice.entries()
+    );
+}
+
+/// **The witness for `!!!`.** Three bangs ask for the rule strength.
+#[test]
+fn three_bangs_interrupt_and_ask_for_the_words_to_be_kept_as_a_rule() {
+    let model = lead(crate::AgentStatus::Running);
+    let mut ui = ready_ui();
+    assert_eq!(
+        submit("!!! do not force-push", &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Interrupt {
+            agent: "lead".into(),
+            texts: vec!["do not force-push".into()],
+            keep: Some(crate::envelope::KeepStrength::Rule),
+        })
+    );
+    assert!(
+        ui.notice.entries().iter().any(|n| n.contains("rule")),
+        "a keystroke that keeps a rule says so: {:?}",
+        ui.notice.entries()
+    );
+}
+
+/// The save must not depend on a turn being in flight, so a keep sigil at an
+/// idle lead still sends the message that carries it. The driver reads an
+/// interrupt with nothing to stop as "run this now".
+#[test]
+fn a_keep_sigil_at_an_idle_lead_still_carries_the_save() {
+    let model = lead(crate::AgentStatus::WaitingInput);
+    let mut ui = ready_ui();
+    assert_eq!(
+        submit("!! use short sentences", &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Interrupt {
+            agent: "lead".into(),
+            texts: vec!["use short sentences".into()],
+            keep: Some(crate::envelope::KeepStrength::Guidance),
+        })
+    );
+    assert!(
+        ui.notice
+            .entries()
+            .iter()
+            .any(|n| n.contains("nothing was running")),
+        "the deck says the words also went out as a prompt: {:?}",
+        ui.notice.entries()
     );
 }
 

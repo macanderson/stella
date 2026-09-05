@@ -136,6 +136,9 @@ use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
 
+/// Where a `!!`/`!!!` interrupt's saved record is written.
+mod keep_record;
+
 /// ISSUES-tab requests, served by the workspace's issue provider.
 mod issues;
 
@@ -1067,7 +1070,7 @@ pub async fn run_deck_session(
                     }
                     IdleWake::Input(input) => input,
                 };
-                match input {
+                match keep_record::intercept(input, &cfg.workspace_root, &in_tx) {
                     None => break 'session,
                     Some(WorkspaceInput::Quit) => break 'session,
                     // Worker controls work between lead turns too — the
@@ -1153,7 +1156,7 @@ pub async fn run_deck_session(
                     // the same "run this now" path.
                     Some(
                         WorkspaceInput::Steer { agent, texts }
-                        | WorkspaceInput::Interrupt { agent, texts },
+                        | WorkspaceInput::Interrupt { agent, texts, .. },
                     ) if !texts.is_empty() => {
                         match steer::steer_idle(&agent, &subs, &mut queue, texts, &in_tx) {
                             Some(first) => {
@@ -1934,7 +1937,7 @@ pub async fn run_deck_session(
                             },
                         );
                     }
-                    input = sub_rx.recv() => match input {
+                    input = sub_rx.recv() => match keep_record::intercept(input, &cfg.workspace_root, &in_tx) {
                         None | Some(WorkspaceInput::Quit) => break TurnEnd::Quit,
                         // The lead is busy — the prompt does NOT wait for it.
                         // It backlogs and immediately drains to a dedicated
@@ -2028,10 +2031,10 @@ pub async fn run_deck_session(
                         // The composer's red mode: stop at the boundary, run the
                         // words next. At a worker lane it lands as a steer — see
                         // the envelope's `Interrupt` doc.
-                        Some(WorkspaceInput::Interrupt { agent, texts }) if agent == LEAD =>
+                        Some(WorkspaceInput::Interrupt { agent, texts, .. }) if agent == LEAD =>
                             steer::interrupt_lead(&steering, &lead_pause, &mut queue, texts, &in_tx),
                         Some(WorkspaceInput::Steer { agent, texts }
-                            | WorkspaceInput::Interrupt { agent, texts }) =>
+                            | WorkspaceInput::Interrupt { agent, texts, .. }) =>
                             steer::steer_worker(&subs, &mut queue, &agent, texts, &in_tx),
                         // An explicit front-insert stays a front-insert even
                         // if a turn started before it arrived — the deck's

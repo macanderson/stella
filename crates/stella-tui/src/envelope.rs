@@ -836,6 +836,20 @@ pub struct InstalledAgentEntry {
     pub content: String,
 }
 
+/// How hard a bang-persistence sigil asks the record it saves to steer.
+///
+/// The two sigils differ by this field alone, so one write path serves both.
+/// `stella_tui::deck_ui::sigil` parses them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeepStrength {
+    /// `!!` — a `should` record. It steers, and a later explicit instruction
+    /// can still override it.
+    Guidance,
+    /// `!!!` — a `must` record at the precedence ceiling. It holds until
+    /// somebody retires it.
+    Rule,
+}
+
 /// What the deck sends back to the caller / engine. The single-session
 /// [`UserInput`] is wrapped with the target agent; new verbs cover the deck's
 /// workspace-level affordances (queueing, agent control, quit).
@@ -941,7 +955,17 @@ pub enum WorkspaceInput {
     /// the parked backlog. With no running turn it degrades to "run this
     /// now", and at a worker lane it lands as a steer — a lane's next prompt
     /// is the lead's, so there is nothing for the words to outrank there.
-    Interrupt { agent: AgentId, texts: Vec<String> },
+    ///
+    /// `keep` carries the bang-persistence sigils (`!!`, `!!!`): the same
+    /// stop, plus the words saved as a context record. It rides this message
+    /// rather than a second one so the stop and the save cannot separate — a
+    /// save whose stop was dropped, or a stop whose save was, is a failure the
+    /// person who typed it never sees. `None` at every other door.
+    Interrupt {
+        agent: AgentId,
+        texts: Vec<String>,
+        keep: Option<KeepStrength>,
+    },
     /// The composer's broadcast address (`>@all …`, `>@<session-id> …`,
     /// optionally `--deep`): send `message` to the other live sessions on
     /// this machine over their whistle sockets — every live one when

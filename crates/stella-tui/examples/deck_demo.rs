@@ -122,7 +122,7 @@ async fn main() -> std::io::Result<()> {
                 // soft-stop, so the interrupt degrades the way the envelope
                 // documents — the texts run next — echoed onto the lane the
                 // same way a steer is.
-                WorkspaceInput::Interrupt { agent, texts } => {
+                WorkspaceInput::Interrupt { agent, texts, .. } => {
                     for text in texts {
                         let _ = react_tx.send(Inbound::Event {
                             agent: agent.clone(),

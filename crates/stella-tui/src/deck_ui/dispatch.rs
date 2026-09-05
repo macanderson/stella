@@ -203,6 +203,7 @@ pub fn route(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> Option<Wo
                 return Some(WorkspaceInput::Interrupt {
                     agent,
                     texts: vec![text],
+                    keep: None,
                 });
             }
             ComposerMode::Dispatch => {}
@@ -461,6 +462,7 @@ mod tests {
             Some(WorkspaceInput::Interrupt {
                 agent: "lead".into(),
                 texts: vec!["stop — wrong branch".into()],
+                keep: None,
             })
         );
         assert_eq!(ui.composer_mode, None, "the override lasts one submission");
