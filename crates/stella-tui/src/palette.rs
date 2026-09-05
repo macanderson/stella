@@ -5,7 +5,7 @@
 //!
 //! ## What is a hex here, and what is not
 //!
-//! Sixteen of these constants are **not values at all** -- they are the
+//! Seventeen of these constants are **not values at all** -- they are the
 //! generated tokens under another name:
 //!
 //! ```text
@@ -14,6 +14,7 @@
 //! TEXT_PRIMARY TEXT_EMPHASIS      ->  token::TEXT SILVER_TYPE
 //! TEXT_SECONDARY TEXT_TERTIARY    ->  token::SILVER MUTED
 //! TEXT_DIM SUCCESS DANGER INK     ->  token::DIM GREEN RED BG
+//! WARNING                         ->  token::WARNING
 //! ```
 //!
 //! They were hand-typed copies of `design/tokens/stella-tokens.json`,
@@ -21,21 +22,21 @@
 //! repository loses limits to -- a number in two places, with a comment
 //! asking the next author to copy carefully. They are re-exports now, so
 //! editing the JSON moves the deck and there is no second value to forget.
+//! `WARNING` is the newest one. `amber` always held the same `verdict`
+//! clamp `SUCCESS`/`DANGER` hold. It just had no `rust` name, so the
+//! generator never made it a constant.
 //!
 //! The rest still carry their own hex, and each is a colour the token system
 //! has no home for yet rather than an oversight (#4058):
 //!
 //! - **The light theme.** `PAPER`, `SNOW`, `PAPER_RAISED`, `PAPER_HAIRLINE`,
-//!   `INK_MUTED`, `INK_DIM`, `INK_EMPHASIS`, and the three ink golds
-//!   (`BRAND_INK`, `BRAND_INK_DEEP`, `GOLD_INK`). The JSON declares four
-//!   `web-light` stops and they disagree with these: its `paper` is pure
-//!   white where the deck paints `#F4F4F6`, and its `ink` is `#141413`
-//!   where this file means the dark ground. Reconciling them is a design
-//!   decision about what the paper theme *is*, not a remap.
-//! - **`WARNING` and the three status inks.** `#E78D54` fails the gold hue
-//!   clamp (`g/r = 0.61`, against `0.78`) and is not a verdict either, so it
-//!   has no clamp role to declare -- and the clamp is exactly the guard that
-//!   should be deciding whether an amber this close to the accent may exist.
+//!   `INK_MUTED`, `INK_DIM`, `INK_EMPHASIS`, the three ink golds (`BRAND_INK`,
+//!   `BRAND_INK_DEEP`, `GOLD_INK`), and the three status inks (`SUCCESS_INK`,
+//!   `WARNING_INK`, `DANGER_INK`). The JSON's `web-light` stops disagree with
+//!   these: its `paper` is pure white where the deck paints `#F4F4F6`, and
+//!   its `ink` is `#141413` where this file means the dark ground.
+//!   Reconciling them is a design call about what the paper theme *is*, not
+//!   a remap. The three status inks wait on that same call.
 //! - **`VOID` and `HAIRLINE_STRONG`,** derived steps either side of the
 //!   declared ramp.
 //!
@@ -248,7 +249,7 @@ pub const SUCCESS: Color = token::GREEN;
 /// lands 39.1 deg from gold and 38.9 deg from danger -- so a reader can tell
 /// a warning from the mark *and* from a failure by hue, not just by glyph.
 /// It carries the same cool pull as its two neighbours (chroma 0.131).
-pub const WARNING: Color = Color::Rgb(0xE7, 0x8D, 0x54);
+pub const WARNING: Color = token::WARNING;
 
 /// Error / failed / removed. 6.06:1 on ground, OKLCH hue 12.8 (78.0 deg from
 /// the gold accent).

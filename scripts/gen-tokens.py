@@ -188,12 +188,20 @@ def check_clamp(
 def rust_tokens(doc: dict) -> list[dict]:
     """The tokens that reach the terminal, in declaration order.
 
-    A token declares a `rust` name when the TUI renders it. The web-only ones
-    -- the below-canvas backdrop, the gold-on-paper text stop, the five-step
-    light ramp and the four status inks -- do not, and must not: every entry in
-    the generated `ALL` table needs a 256-colour fallback pinned by
-    `stella-tui-theme`'s tests, and inventing an ANSI approximation of a paper
-    tint the terminal never draws would be an assertion about nothing.
+    A token declares a `rust` name when the TUI renders it. Eleven of the
+    JSON's stops still do not: `void`, `gold-ink`, the light page ramp
+    (`paper-text`, `paper-ground`, `paper-raised`, `paper-row`, `paper-seam`,
+    `ink-muted`), and the three status inks (`green-ink`, `amber-ink`,
+    `red-ink`). Every one of them sits on the decision
+    `crates/stella-tui/src/palette.rs`'s own module doc names: the deck's
+    paper theme is still a set of independently-derived hexes, not yet
+    reconciled against this ramp. Giving one a `rust` name before that lands
+    would force the generated `ALL`/`ansi16` tables to carry a value the
+    terminal does not actually paint yet, which is exactly the assertion
+    about nothing this rule exists to forbid. `amber` left this list once its
+    `verdict` clamp -- already shared with `red`/`green` -- got a `WARNING`
+    binding: it is the dark-ground stop, so it carries no part of the
+    undecided paper question the other eleven are waiting on.
 
     The alternative was to leave those values out of the system entirely, which
     is what `main` does -- and it means the only file that knows the site's

@@ -314,6 +314,11 @@ fn the_named_fallbacks_are_what_the_spec_says() {
         Color::LightGreen,
         "green to bright green"
     );
+    assert_eq!(
+        fallback::ansi16(token::WARNING),
+        Color::Yellow,
+        "warning to plain yellow, not gold's bright yellow"
+    );
 }
 
 /// The metals must not collapse into each other, or the 16-color frame loses
@@ -334,6 +339,11 @@ fn the_two_metals_stay_apart_at_16_colors() {
         fallback::ansi16(token::BG),
         fallback::ansi16(token::BORDER),
         "the ground and its seams degrade to the same colour"
+    );
+    assert_ne!(
+        fallback::ansi16(token::WARNING),
+        fallback::ansi16(token::GOLD),
+        "a warning and the mark degrade to the same colour"
     );
 }
 

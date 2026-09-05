@@ -38,6 +38,25 @@ fn every_text_tier_resolves_to_the_token_it_names() {
     assert_ne!(TEXT_TERTIARY, TEXT_DIM);
 }
 
+/// `WARNING` is the generated token, not a second hand-typed copy of it.
+///
+/// `token::WARNING` did not exist before this: `amber` held a `verdict`
+/// clamp in `design/tokens/stella-tokens.json` from the start, the same
+/// channel-free clamp `SUCCESS`/`DANGER` hold, but carried no `rust` name for
+/// `scripts/gen-tokens.py` to emit a constant from. Referencing
+/// `stella_tui_theme::token::WARNING` fails to compile against a tree that
+/// predates that binding — this is that reference.
+#[test]
+fn warning_is_the_generated_token_not_a_second_literal() {
+    use stella_tui_theme::token;
+
+    assert_eq!(
+        palette::WARNING,
+        token::WARNING,
+        "palette::WARNING must be the generated amber token, not an independent literal"
+    );
+}
+
 #[test]
 fn agent_color_is_stable_across_calls() {
     assert_eq!(agent_color("lead"), agent_color("lead"));

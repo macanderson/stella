@@ -34,7 +34,7 @@ Every screen exists to make these four claims visible without saying them:
 
 All values are `Color::Rgb`. Grays are neutral or one to two points blue above red. This is what keeps the scheme from reading warm or brown on cheap panels.
 
-The table is every token `design/tokens/stella-tokens.json` declares on the `tui` surface — the deck's own ramp. The palette is wider than this: the JSON carries a light ground, the four status inks and the site's below-canvas backdrop as well, and those are not the terminal's, so they are not here. `crates/stella-tui/tests/spec_palette.rs` holds both directions of that claim — every hex below is the value the token holds, and every `tui` token has a row.
+The table is every token `design/tokens/stella-tokens.json` declares on the `tui` surface — the deck's own ramp. The palette is wider than this: the JSON carries a light ground, the three ink-on-paper status colors and the site's below-canvas backdrop as well, and those are not the terminal's, so they are not here. `crates/stella-tui/tests/spec_palette.rs` holds both directions of that claim — every hex below is the value the token holds, and every `tui` token has a row.
 
 <!-- BEGIN palette -->
 
@@ -56,6 +56,7 @@ The table is every token `design/tokens/stella-tokens.json` declares on the `tui
 | `red` | `#E0687A` | fail, `-` diff sign, delete events, destructive |
 | `diff_add_bg` | `#10201A` | added diff row background |
 | `diff_del_bg` | `#241019` | removed diff row background |
+| `amber` | `#E78D54` | warning, needs-input |
 
 <!-- END palette -->
 
@@ -109,6 +110,7 @@ The stand-in for every token, by the ANSI name rather than by ratatui's spelling
 | `paper` | bright white |
 | `paper_panel` | bright white |
 | `paper_border` | white |
+| `amber` | yellow |
 
 <!-- END degradation -->
 
