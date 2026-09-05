@@ -17,7 +17,7 @@
 //! read straight from the store and reaches neither. Prompts, tool arguments
 //! and tool output are exactly the places #817 masks credentials out of, so
 //! **every string this module takes off an event goes through
-//! [`redact`](stella_core::redact::redact_secrets) before it is escaped** (see
+//! [`redact`](stella_learn::redact::redact_secrets) before it is escaped** (see
 //! [`Fold::clean`]). An unredacted transcript would have quietly reopened #817 in an
 //! artifact whose whole purpose is to be mailed to someone.
 //!
@@ -575,7 +575,7 @@ impl<'a> Fold<'a> {
 
     /// Mask any credential in an event-derived string (module doc, property 1).
     fn clean(&mut self, raw: &str) -> String {
-        let redaction = stella_core::redact::redact_secrets(raw);
+        let redaction = stella_learn::redact::redact_secrets(raw);
         if redaction.redacted {
             self.redacted = true;
         }

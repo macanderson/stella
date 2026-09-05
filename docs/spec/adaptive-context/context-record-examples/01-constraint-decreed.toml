@@ -50,7 +50,7 @@ tags        = ["build", "tooling"]
   mode               = "hard"
   guard_tool         = "Bash"
   # `*` is the matcher's only wildcard — every other character is a literal
-  # (stella-core/src/glob.rs). There is no alternation, so this cannot also
+  # (`stella-protocol/src/glob.rs`). There is no alternation, so this cannot also
   # cover yarn; that needs its own record. An earlier draft of this file used
   # "npm install*|npm ci*|yarn *", which is syntactically fine, reads correctly,
   # renders as [enforced], and matches no real command. See 08-witness.toml.

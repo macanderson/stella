@@ -410,7 +410,7 @@ pub(super) fn rank_hits(hits: &[SkillSearchHit], request: &str) -> Vec<String> {
 /// The system prompt for one-shot skill authoring.
 ///
 /// The invoke-directive paragraph is kept in lockstep with
-/// `stella_core::skills::invoke::parse_invoke_directives` — the four keys it
+/// `stella_core::skill_invocation::parse_invoke_directives` — the four keys it
 /// names are exactly the four the parser recognizes — and with the verbatim
 /// copy in `docs/prompts/skill-author.md`.
 const SKILL_AUTHOR_SYSTEM: &str = "You author `SKILL.md` files for a coding agent. A skill is reusable \
@@ -538,7 +538,7 @@ async fn create_skill_llm(
     };
     let content = extract_skill_md(&accounted.result.text);
     // 3. Validate it parses as a real skill, then write it as v1.
-    let name = match stella_core::skills::skill_from_file("SKILL.md", &content) {
+    let name = match stella_learn::skills::skill_from_file("SKILL.md", &content) {
         Ok(s) => s.name,
         Err(_) => {
             return (

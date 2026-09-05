@@ -68,7 +68,6 @@
 //! module closes.
 
 pub mod appraisal;
-pub mod invoke;
 pub mod paths;
 
 use std::collections::{HashMap, HashSet};
@@ -647,7 +646,7 @@ fn floor_char_boundary(text: &str, max: usize) -> usize {
 /// and the (budget-truncated) body.
 ///
 /// Split out of [`render_skills_section`]'s loop so the steering adapter
-/// (`crate::steering::adapt::skill_candidates`) estimates its token cost from
+/// (`stella_cli::memory::steering::skill_candidates`) estimates its token cost from
 /// the exact bytes the section will carry — a second copy of this format
 /// string would be a second producer of the same line shape, the defect #3334
 /// closed for recall lines.
@@ -695,7 +694,7 @@ pub fn render_skills_section(selected: &[SelectedSkill]) -> String {
 ///
 /// Split out of [`render_skills_section`]'s loop for the reason
 /// [`rendered_skill_block`] was: the steering adapter
-/// (`crate::steering::adapt::skill_drops`) must name the omitted skills, and
+/// (`stella_cli::memory::steering::skill_drops`) must name the omitted skills, and
 /// a second copy of this arithmetic would be a second answer to "what fits"
 /// — the ledger would then under- or over-report a cut the prompt actually
 /// made (#3358, the #3334 single-producer discipline).

@@ -1,9 +1,18 @@
-//! Shared glob matcher for rule guards (`rules.rs`), hook matchers
-//! (`hooks.rs`) and `stella_records::records::select` — ports `matchGlob` from
-//! `packages/mcp-config/src/permissions.ts`: `*` is the only wildcard,
-//! every other character is a literal. No `regex` dependency: this crate
-//! has none, and the language is small enough that a hand-written segment
-//! matcher is clearer than pulling one in for one wildcard character.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The glob matcher three crates share: rule guards
+//! (`stella_learn::rules`), hook matchers (`stella_core::hooks`) and record
+//! selection (`stella_records::records::select`).
+//!
+//! It ports `matchGlob` from `packages/mcp-config/src/permissions.ts`. `*`
+//! is the only wildcard and every other character is a literal. There is no
+//! `regex` dependency: the language is small enough that a hand-written
+//! segment matcher is clearer than pulling one in for one wildcard.
+//!
+//! It sits here because a matcher two callers copy is a matcher that
+//! drifts, and the engine and the learning plane must answer the same
+//! pattern the same way.
 
 /// `true` if `value` matches `pattern`. Exact string equality when
 /// `pattern` has no `*`; `"*"` alone always matches. Otherwise the pattern

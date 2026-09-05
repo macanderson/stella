@@ -14,7 +14,7 @@
 //! spaces, and the corpus may be worded naturally because #2358 is fixed.**
 //! `partition_known` diverts a store-restatement to the mining log instead of
 //! dropping it, so recurrence survives dedup by construction, and the miners'
-//! `min_similarity` (0.4) is measured in `stella_core::mining::terms` space
+//! `min_similarity` (0.4) is measured in `stella_learn::mining::terms` space
 //! rather than inherited from the store's dedup constant — see
 //! [`the_dedup_and_clustering_predicates_hold_the_declared_relationship`] for
 //! the relationship, asserted with this corpus's own strings.
@@ -38,7 +38,7 @@
 
 use std::path::Path;
 
-use stella_core::skills::{self, SkillMineConfig, SkillObservation};
+use stella_learn::skills::{self, SkillMineConfig, SkillObservation};
 
 use super::summary::ReplaySummary;
 use super::trace::*;
@@ -370,7 +370,7 @@ fn registry_lesson_texts() -> Vec<String> {
 ///
 /// `stella_store::SIMILARITY_THRESHOLD` (0.5) is measured over
 /// `forget::tokens`, which keeps a file path as one token; the miners'
-/// `min_similarity` (0.4) is measured over `stella_core::mining::terms`, which
+/// `min_similarity` (0.4) is measured over `stella_learn::mining::terms`, which
 /// shatters the same path into five terms. The same pair of lessons scores
 /// differently under each, so neither number may be "aligned" with the other
 /// or moved without re-measuring in its own space — the measurements live on
@@ -384,7 +384,7 @@ fn the_dedup_and_clustering_predicates_hold_the_declared_relationship() {
     let mining = SkillMineConfig::default();
     assert_eq!(
         mining.min_similarity,
-        stella_core::rules::MineConfig::default().min_similarity,
+        stella_learn::rules::MineConfig::default().min_similarity,
         "the skills and rules miners cluster one observation pool; a rule \
          threshold drifting from the skill threshold would make one artifact \
          class see recurrence the other cannot"

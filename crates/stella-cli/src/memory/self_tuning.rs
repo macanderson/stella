@@ -1,6 +1,6 @@
 //! Self-tuning — the I/O half of the eval-driven effort bandit (#831, first
 //! slice). It sits beside [`crate::memory::rules_mining`]: the pure selection
-//! math is [`stella_core::self_tuning`]; this module reads loop-bench results,
+//! math is [`stella_learn::self_tuning`]; this module reads loop-bench results,
 //! folds each trial into a reward sample, asks the core which arm won, and — on
 //! a confident win — writes the winning worker reasoning-effort to settings and
 //! appends a reversible [`RollbackRecord`] to an append-only ledger under
@@ -23,7 +23,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use stella_core::self_tuning::{
+use stella_learn::self_tuning::{
     ArmSamples, ArmStats, Decision, RewardWeights, RollbackRecord, SelectionConfig, TaskOutcome,
     reward, select_winner,
 };
@@ -354,7 +354,7 @@ pub(crate) fn promote(
     workspace_root: &Path,
     scope: SettingsScope,
     chosen: ReasoningEffort,
-    promotion: &stella_core::self_tuning::Promotion,
+    promotion: &stella_learn::self_tuning::Promotion,
 ) -> Result<PriorState, String> {
     let path = scope.path(workspace_root)?;
     let mut cfg = load_scope_engine_config(&path);

@@ -12,7 +12,7 @@
 //! every rejection back for the SKILLS tab's `!` review. [`unreject`] drops
 //! one, so the miner can propose the skill again.
 //!
-//! `stella_core::skills::render_skill_markdown` is byte-pinned, so the mined
+//! `stella_learn::skills::render_skill_markdown` is byte-pinned, so the mined
 //! identity and the turn cannot become frontmatter; they go where the parent's
 //! header says state outside the `SKILL.md` goes — the per-scope sidecar.
 //! Do not copy the traces there too: they are read back out of the file's own
@@ -20,16 +20,16 @@
 
 use std::path::Path;
 
-use stella_core::skills::SkillRejection;
+use stella_learn::skills::SkillRejection;
 use stella_tui::{LearnedProvenance, LearnedSource, RejectedSkillRow, SkillScope};
 
 use super::{
     LearnedRecord, RejectedSkill, ScopeState, list_scope, read_state, scope_root, slugify,
     uninstall, write_state,
 };
-use stella_core::skills::SkillOrigin;
+use stella_learn::skills::SkillOrigin;
 
-/// The heading `stella_core::skills::render_skill_markdown` writes above a
+/// The heading `stella_learn::skills::render_skill_markdown` writes above a
 /// mined skill's source traces. Matched literally, because that is the only
 /// contract between the two halves — the renderer is byte-pinned, so the
 /// heading cannot drift out from under this without a failing test there.
@@ -428,7 +428,7 @@ mod tests {
     /// bytes the learner puts on disk, so the provenance parser below is
     /// reading the real format rather than one this test invented.
     fn write_learned_skill(dir: &Path, name: &str, lesson: &str, traces: &[u64]) {
-        let candidate = stella_core::skills::SkillCandidate {
+        let candidate = stella_learn::skills::SkillCandidate {
             name: name.to_string(),
             // What `mine_skill_candidates` now writes: the lesson's own
             // words, not the occurrence count (#5335). The count moved into
@@ -446,7 +446,7 @@ mod tests {
                 newest.sort_unstable_by(|a, b| b.cmp(a));
                 newest
                     .into_iter()
-                    .map(|at| stella_core::skills::SkillEvidence {
+                    .map(|at| stella_learn::skills::SkillEvidence {
                         reference: format!("reflection:{at}"),
                         occurred_at: at,
                         snippet: lesson.to_string(),
@@ -458,7 +458,7 @@ mod tests {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(
             dir.join(format!("{name}.md")),
-            stella_core::skills::render_skill_markdown(&candidate),
+            stella_learn::skills::render_skill_markdown(&candidate),
         )
         .unwrap();
     }
@@ -471,7 +471,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "money amounts must be stored as minor units";
-        let name = stella_core::skills::candidate_id(lesson);
+        let name = stella_learn::skills::candidate_id(lesson);
         write_learned_skill(&ws.join(".stella/skills"), &name, lesson, &[100, 200, 300]);
 
         let rows = enumerate(&ws);
@@ -502,7 +502,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "run the migration before the integration suite";
-        let name = stella_core::skills::candidate_id(lesson);
+        let name = stella_learn::skills::candidate_id(lesson);
         write_learned_skill(&ws.join(".stella/skills"), &name, lesson, &[7, 8]);
         record_learned(SkillScope::Project, &name, &name, Some(37), &ws).unwrap();
 
@@ -523,7 +523,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "money amounts must be stored as minor units";
-        let mined = stella_core::skills::candidate_id(lesson);
+        let mined = stella_learn::skills::candidate_id(lesson);
         let hash = mined.rsplit_once('-').unwrap().1.to_string();
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[100, 200, 300]);
 
@@ -552,7 +552,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "feature flags default closed";
-        let mined = stella_core::skills::candidate_id(lesson);
+        let mined = stella_learn::skills::candidate_id(lesson);
         let hash = mined.rsplit_once('-').unwrap().1.to_string();
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[1, 2, 3]);
 
@@ -618,7 +618,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "money amounts must be stored as minor units";
-        let mined = stella_core::skills::candidate_id(lesson);
+        let mined = stella_learn::skills::candidate_id(lesson);
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[100, 200, 300]);
 
         reject(SkillScope::Project, &mined, 1_700_000_000, &ws).unwrap();
@@ -645,7 +645,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "terraform plans belong in review before anyone applies them";
-        let mined = stella_core::skills::candidate_id(lesson);
+        let mined = stella_learn::skills::candidate_id(lesson);
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[1, 2, 3]);
         rename(SkillScope::Project, &mined, "review-plans", &ws).unwrap();
 
@@ -683,7 +683,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "keep generated bindings out of version control";
-        let mined = stella_core::skills::candidate_id(lesson);
+        let mined = stella_learn::skills::candidate_id(lesson);
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[1, 2, 3]);
         reject(SkillScope::Project, &mined, 3, &ws).unwrap();
         // Re-create it by hand, then delete it the ordinary way.
@@ -702,7 +702,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "money amounts must be stored as minor units";
-        let mined = stella_core::skills::candidate_id(lesson);
+        let mined = stella_learn::skills::candidate_id(lesson);
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[100, 200, 300]);
         reject(SkillScope::Project, &mined, 1_700_000_000, &ws).unwrap();
         assert_eq!(rejections(&ws).len(), 1, "the control must reject");
@@ -725,7 +725,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "terraform plans belong in review before anyone applies them";
-        let mined = stella_core::skills::candidate_id(lesson);
+        let mined = stella_learn::skills::candidate_id(lesson);
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[1, 2, 3]);
         rename(SkillScope::Project, &mined, "review-plans", &ws).unwrap();
         reject(SkillScope::Project, "review-plans", 5, &ws).unwrap();
@@ -754,7 +754,7 @@ mod tests {
         let (td, _home, _lock) = scratch();
         let ws = td.path().join("ws");
         let lesson = "reach for ripgrep instead of grep in this repository";
-        let mined = stella_core::skills::candidate_id(lesson);
+        let mined = stella_learn::skills::candidate_id(lesson);
         write_learned_skill(&ws.join(".stella/skills"), &mined, lesson, &[1, 2, 3]);
         rename(SkillScope::Project, &mined, "prefer-ripgrep", &ws).unwrap();
         reject(SkillScope::Project, "prefer-ripgrep", 9, &ws).unwrap();

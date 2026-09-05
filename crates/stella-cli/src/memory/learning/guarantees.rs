@@ -295,7 +295,7 @@ fn the_sweep_covers_every_restatement_suppressing_surface() {
 /// append-only log that produced it, writes nothing.
 ///
 /// Asserted end to end rather than on the miner alone. The miner's
-/// own unit tests (`stella_core::skills::tests`) prove it honours a
+/// own unit tests (`stella_learn::skills::tests`) prove it honours a
 /// `SkillRejection`; what those cannot prove is that the rejection the SKILLS
 /// tab writes is a rejection the *loop* reads — a correct filter the loop calls
 /// with an empty slice is exactly the shipped behaviour, and exactly the bug
@@ -910,7 +910,7 @@ fn a_well_evidenced_rule_activates_and_reaches_the_loader() {
         mined.guard.is_none(),
         "a mined rule arrived with a guard: {mined:?}"
     );
-    assert_eq!(mined.tier(), stella_core::rules::RuleTier::Prompt);
+    assert_eq!(mined.tier(), stella_learn::rules::RuleTier::Prompt);
 }
 
 /// The rules miner is off with the flag off, exactly like the rest of the

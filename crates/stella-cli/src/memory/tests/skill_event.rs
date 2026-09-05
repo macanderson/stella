@@ -305,7 +305,7 @@ async fn a_directive_less_auto_selected_skill_scopes_nothing() {
 /// its `effort:` is the one the turn honors when both declare one.
 #[test]
 fn an_invoked_skill_effort_outranks_an_auto_selected_one() {
-    use stella_core::skills::invoke::SkillInvocationMode;
+    use stella_core::skill_invocation::SkillInvocationMode;
     let auto_scope = crate::extensions::SkillTurnScope {
         slug: "auto".to_string(),
         allowed_tools: None,

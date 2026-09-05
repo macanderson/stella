@@ -92,7 +92,7 @@ which heading the record renders under.
 
 ### Why grouping by force matters
 
-The current renderer (`crates/stella-core/src/rules.rs:387`) emits every rule under one
+The current renderer (`crates/stella-learn/src/rules.rs:387`) emits every rule under one
 header — `## Workspace rules (binding — follow exactly; guarded rules are
 hard-blocked)` — so a `may`-force preference and a `must`-force constraint are
 indistinguishable, and a fact about a staging URL is presented as something to

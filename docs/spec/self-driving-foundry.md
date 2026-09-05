@@ -57,7 +57,7 @@ each row is a dependency of a later section.
 | Service supervision (launchd/systemd, `RunAtLoad`, opt-in `KeepAlive`, resolver shim, `resume-all`) | `stella daemon install/uninstall/resume-all`, `crates/stella-cli/src/daemon/service.rs` | Shipped (#1587). The self-driving shell loop still carries its own macOS-only duplicate installer. |
 | Branch-pinned SUT builds, cached by commit | `sut.py`, `sut_build.py` (detached worktree + zigbuild) in the [arenabench repo](https://github.com/macanderson/arenabench), GUI branch picker | Shipped. `sut_ref` is match-level only and does not round-trip TOML (§5.2). |
 | Match configuration and artifacts (seats, attempts, `stella-events.jsonl` per trial, `result.json`, reward at `verifier_result.rewards.reward`) | `{config,model,runner,telemetry}.py` in the arenabench repo | Shipped. |
-| Paired statistical comparison with guard metrics and a `GuardBlocked` verdict | `crates/stella-core/src/comparison.rs` + `self_tuning::select_winner` | Shipped, deterministic, unused by arenabench (§5.4). |
+| Paired statistical comparison with guard metrics and a `GuardBlocked` verdict | `crates/stella-learn/src/comparison.rs` + `self_tuning::select_winner` | Shipped, deterministic, unused by arenabench (§5.4). |
 | Byte-exact model-call reconstruction, digest-verified | `crates/stella-store/src/reconstruct.rs` | Shipped. |
 | Full-transcript trace capture with reward labels | trace capture was `crates/stella-cli/src/trace.rs` (#1042); reward labelling is `crates/stella-cli/src/reward.rs` (#1043) | **Half gone, and the other half is the opposite of what this row used to say.** Trace capture was deleted with the pipeline (#3852) and has no replacement, so no standalone trace corpus accumulates. Reward labelling *survives*: it was relocated into `stella-cli` rather than deleted, and `stella dataset export` is its consumer. |
 | SFT dataset exporter with named acceptance predicate and manifest | `stella dataset export`, `crates/stella-cli/src/dataset_cmd.rs` (#872, #2083, #2123) | Shipped, and carries both things this row once said it lacked. `DatasetRecord::reward` is an `Option<RewardLabel>` with its policy; `DatasetRecord::calls` carries the reconstructed transcript, admitted only when `Reconstruction::is_verified` vouches for it, with `transcript_verified` / `transcript_mismatch_severity` recording the exception and `--include-unverified-transcripts` as the stated opt-in. `DATASET_SCHEMA_VERSION` is `3`. |
@@ -315,7 +315,7 @@ whose engine points at the served checkpoint
 ### 5.4 The promotion gate
 
 Bridge arenabench's per-trial metrics into
-`stella_core::comparison::ArmTrials` and let the existing engine decide:
+`stella_learn::comparison::ArmTrials` and let the existing engine decide:
 
 - **Pairing is enforced** — a task counts only when every arm ran it;
   unpaired tasks are reported, never silently dropped.

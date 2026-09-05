@@ -53,7 +53,7 @@ co-equal evidence.
 ## Decision 1 — `RuleEnforcement::Informational` → `DirectiveEnforcement` (RATIFIED 2026-07-24)
 
 The legacy context-as-code enum `RuleEnforcement`
-(`crates/stella-core/src/rules/metadata.rs:31-38`) has **three** values —
+(`crates/stella-learn/src/rules/metadata.rs:31-38`) has **three** values —
 `informational | advisory | blocking`. The ratified `DirectiveEnforcement` has
 **two** (`advisory | blocking`, ADR 0007). ADR 0007's ratified 4→2 mapping was
 over a *different* vocabulary (`observe | advisory | required | blocking`);

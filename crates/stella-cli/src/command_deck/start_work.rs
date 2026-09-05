@@ -71,7 +71,7 @@ use std::path::Path;
 use std::process::Command;
 
 use stella_core::plan_graph::PlanGraph;
-use stella_core::rules::{ProposedAction, Rule, evaluate_guards};
+use stella_learn::rules::{ProposedAction, Rule, evaluate_guards};
 use stella_protocol::issue::{Issue, IssueKey, IssueProvider};
 use stella_protocol::plan_graph::TaskNode;
 use stella_protocol::tokens::estimate_tokens_for_bytes;
@@ -366,7 +366,7 @@ fn coupled_files(root: &Path, issue: &Issue) -> Vec<String> {
 /// The workspace RULEs that apply to this plan: those whose Tier-2 guard
 /// refuses a write to one of the coupled files.
 ///
-/// A guard evaluation, not a text search — `stella_core::rules::evaluate_guards`
+/// A guard evaluation, not a text search — `stella_learn::rules::evaluate_guards`
 /// is the same function the tool boundary runs, so a rule listed here is one
 /// that will actually fire on the work, and a rule that would not fire is not
 /// listed as though it steered anything.

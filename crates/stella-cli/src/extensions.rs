@@ -27,7 +27,7 @@ use stella_core::extensions::{
     AgentDef, CommandDef, ExtensionKind, SyncEntry, SyncSource, agent_from_file, command_from_file,
     command_from_toml, expand_command, merge_by_name, plan_extension_sync,
 };
-use stella_core::skills::Skill;
+use stella_learn::skills::Skill;
 use stella_tui::SlashCommand;
 
 /// The other-agent directories the sync adopts from, in precedence order
@@ -64,7 +64,7 @@ fn definition_name_for(path: &Path, kind: ExtensionKind) -> String {
     std::fs::read_to_string(&file)
         .ok()
         .and_then(|raw| {
-            stella_core::rules::parse_frontmatter(&raw)
+            stella_learn::rules::parse_frontmatter(&raw)
                 .data
                 .get("name")
                 .map(|n| n.trim().to_string())
@@ -688,7 +688,7 @@ pub struct SkillTurnScope {
     pub effort: Option<stella_protocol::ReasoningEffort>,
     /// `context:` — how the skill asked to run. In-session, fork-mode runs
     /// scoped in place today; the fresh-context surface is the CLI verb.
-    pub mode: stella_core::skills::invoke::SkillInvocationMode,
+    pub mode: stella_core::skill_invocation::SkillInvocationMode,
 }
 
 /// Parse a skill's invoke directives from its own file.
@@ -699,9 +699,9 @@ pub struct SkillTurnScope {
 /// directives — the same no-directive tolerance the parser itself guarantees,
 /// so a vanished file can only ever *widen* back to plain context, never
 /// invent a grant.
-pub fn invoke_directives_for(skill: &Skill) -> stella_core::skills::invoke::InvokeDirectives {
+pub fn invoke_directives_for(skill: &Skill) -> stella_core::skill_invocation::InvokeDirectives {
     std::fs::read_to_string(&skill.source_path)
-        .map(|raw| stella_core::skills::invoke::parse_invoke_directives(&raw))
+        .map(|raw| stella_core::skill_invocation::parse_invoke_directives(&raw))
         .unwrap_or_default()
 }
 
@@ -709,9 +709,9 @@ pub fn invoke_directives_for(skill: &Skill) -> stella_core::skills::invoke::Invo
 /// directive at all.
 pub fn skill_turn_scope(
     slug: &str,
-    directives: &stella_core::skills::invoke::InvokeDirectives,
+    directives: &stella_core::skill_invocation::InvokeDirectives,
 ) -> Option<SkillTurnScope> {
-    use stella_core::skills::invoke::SkillInvocationMode;
+    use stella_core::skill_invocation::SkillInvocationMode;
     let carries_directive = directives.mode == SkillInvocationMode::Fork
         || directives.allowed_tools.is_some()
         || directives.model.is_some()
@@ -761,9 +761,9 @@ impl CustomExtensions {
             crate::memory::load_workspace_skills_with_authority(workspace_root, include_workspace);
         for diag in &loaded_skills.diagnostics {
             let why = match diag.problem {
-                stella_core::skills::SkillProblem::MissingName => "no usable name",
-                stella_core::skills::SkillProblem::MissingDescription => "no description",
-                stella_core::skills::SkillProblem::EmptyBody => "empty body",
+                stella_learn::skills::SkillProblem::MissingName => "no usable name",
+                stella_learn::skills::SkillProblem::MissingDescription => "no description",
+                stella_learn::skills::SkillProblem::EmptyBody => "empty body",
             };
             problems.push(format!("{}: {why}", diag.path));
         }
@@ -886,9 +886,9 @@ impl CustomExtensions {
                 let directives = invoke_directives_for(skill);
                 let scope = skill_turn_scope(&skill.name, &directives);
                 let prompt = if scope.is_some() {
-                    stella_core::skills::invoke::render_invocation_message(
+                    stella_core::skill_invocation::render_invocation_message(
                         &skill.name,
-                        &stella_core::skills::invoke::substitute_arguments(
+                        &stella_core::skill_invocation::substitute_arguments(
                             &skill.body,
                             args.trim(),
                         ),

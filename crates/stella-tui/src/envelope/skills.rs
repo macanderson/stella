@@ -2,7 +2,7 @@
 //!
 //! Split out of `envelope.rs` (#3493) under #629's 1500-line ratchet. The
 //! rows are a driver snapshot, deliberately decoupled from
-//! `stella_core::skills::Skill` so this crate stays independent of the skills
+//! `stella_learn::skills::Skill` so this crate stays independent of the skills
 //! engine; the driver owns the disk, `npx`, and the model, and the deck emits
 //! a [`SkillOp`] and folds the refreshed snapshot back.
 
@@ -27,7 +27,7 @@ impl SkillScope {
 }
 
 /// One installed-skill row in the SKILLS tab — a driver snapshot, deliberately
-/// decoupled from `stella_core::skills::Skill` so the TUI crate stays
+/// decoupled from `stella_learn::skills::Skill` so the TUI crate stays
 /// independent of the skills engine (the driver maps one to the other).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillRow {

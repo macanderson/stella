@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use stella_core::rules::{LoadRulesOptions, RuleFile, RuleSource, rule_search_dirs};
+use stella_learn::rules::{LoadRulesOptions, RuleFile, RuleSource, rule_search_dirs};
 use stella_records::ingest::record::{ProbeKind, Verdict};
 use stella_records::records::{
     self, DecisionEvent, Facts, LoadedRecord, Registry, Trust, decision, load_context_file,
@@ -506,7 +506,7 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
 /// # One read per package, so the name survives the read
 ///
 /// This used to flatten every contributed directory into the `Vec<String>` a
-/// [`stella_core::rules::RuleSource`] takes, which threw the
+/// [`stella_learn::rules::RuleSource`] takes, which threw the
 /// plugin's name away at the boundary: downstream saw a path, and "which plugin
 /// gave me this?" was answerable only by matching that path against a package
 /// directory (#3567). Reading each package's directory on its own keeps the

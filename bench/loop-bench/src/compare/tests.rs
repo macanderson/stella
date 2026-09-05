@@ -1,7 +1,7 @@
 //! Unit tests for the `--compare` fold: what a distilled trial contributes to
 //! an arm, and what the comparison makes of it.
 
-use stella_core::comparison::{ComparisonConfig, ComparisonVerdict, Metric, compare};
+use stella_learn::comparison::{ComparisonConfig, ComparisonVerdict, Metric, compare};
 
 use super::*;
 

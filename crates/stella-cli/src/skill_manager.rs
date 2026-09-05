@@ -22,7 +22,7 @@
 //!
 //! ## State that isn't in the `SKILL.md`
 //!
-//! `stella_core::skills::Skill` carries no enabled/version/pin state, so this
+//! `stella_learn::skills::Skill` carries no enabled/version/pin state, so this
 //! module keeps it in a per-scope sidecar `<skills_dir>/.stella-skills.json`
 //! (invisible to the shallow recall walk, which only reads `*.md` and
 //! `<slug>/SKILL.md`). Enabled/disabled and the pinned version live there;
@@ -39,7 +39,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use stella_core::skills::{Skill, SkillOrigin, skill_from_file_with_origin};
+use stella_learn::skills::{Skill, SkillOrigin, skill_from_file_with_origin};
 use stella_tui::{SkillRow, SkillScope};
 
 pub use learned::{record_learned, reject, rejected_rows, rejections, rename, unreject};
@@ -71,14 +71,14 @@ pub struct ScopeState {
 /// What a learned skill's `SKILL.md` cannot carry.
 ///
 /// The rendered file is byte-pinned by
-/// `stella_core::skills::migration_contract::rendered_skill_bytes_are_pinned`
+/// `stella_learn::skills::migration_contract::rendered_skill_bytes_are_pinned`
 /// — every mined file already on disk must re-render identically — so
 /// provenance the lifecycle needs but the format never had goes where the
 /// module header already says this kind of state goes: the per-scope sidecar,
 /// beside `disabled` and `pins`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LearnedRecord {
-    /// The `stella_core::skills::candidate_id` the miner minted this skill
+    /// The `stella_learn::skills::candidate_id` the miner minted this skill
     /// under — the `was <hash>` half of the row, and the key a rejection is
     /// recorded against. Survives every rename, which is exactly why it is
     /// stored rather than re-derived from the (renamed) file.
@@ -92,7 +92,7 @@ pub struct LearnedRecord {
 }
 
 /// One rejected learned skill — the durable half of `x reject teaches the
-/// learner`, mapped to `stella_core::skills::SkillRejection` by
+/// learner`, mapped to `stella_learn::skills::SkillRejection` by
 /// [`rejections`] and read by the miner on its next pass.
 ///
 /// Filesystem-first (ADR-008) and beside the skills it is about, so a
