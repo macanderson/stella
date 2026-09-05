@@ -64,8 +64,10 @@ fn every_code_execution_gate_is_reachable_by_one_grep() {
 /// had nothing to grant.
 #[test]
 fn an_untrusted_project_cannot_switch_a_plugin_on() {
-    let mut project = crate::settings::Settings::default();
-    project.active_plugins = Some(vec!["vera".to_string()]);
+    let project = crate::settings::Settings {
+        active_plugins: Some(vec!["vera".to_string()]),
+        ..Default::default()
+    };
     let user = crate::settings::Settings::default();
     let managed = crate::settings::Settings::default();
 
