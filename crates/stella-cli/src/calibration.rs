@@ -26,13 +26,24 @@
 //!
 //! # What produces the verdicts this reads
 //!
-//! Nothing in this workspace, any more. The built-in staged pipeline was the
-//! only in-tree emitter of [`AgentEvent::Verdict`] and was deleted in #3865;
-//! `Verdict` stays on the wire as `RecordedOnly` because it is the natural
-//! event a verification plugin re-emits (`stella-protocol`'s consumer ledger,
-//! #3790). So this instrument reads two populations and no third: sessions
-//! recorded while the built-in ladder still ran, and streams an installed
-//! verification plugin writes now.
+//! Three populations, not the two the built-in pipeline's deletion (#3865)
+//! left behind. The oldest is sessions recorded while that pipeline's own
+//! ladder still ran. The newest is this host's own: `stella goal --pipeline`
+//! keeps one event channel open across its whole round loop, so
+//! `crate::agent::goal::goal_wrapped` can publish
+//! [`stella_runtime::wrapper::DispatchReport::verdict_evidence`] as an
+//! [`AgentEvent::Verdict`] after every round `judge` decides, and land it on
+//! the run's own execution row. That call is mechanical and synchronous —
+//! never a model (`stella_runtime::wrapper::verdict`'s module doc) — so it
+//! does not blur the line this instrument measures. `stella run --pipeline`
+//! and `stella fleet --pipeline` cannot do the same today: each of their
+//! rounds opens and closes its own execution row before `judge` ever runs, so
+//! nothing they could send afterward has a live channel left to reach — a gap
+//! tracked as a follow-up issue rather than closed here. The third
+//! population, still hypothetical, is a verification plugin re-emitting its
+//! own `Verdict` some other way. `Verdict` staying `RecordedOnly` on
+//! `stella-protocol`'s consumer ledger (#3790) was always about *this*
+//! crate's own read, not about whether anything writes.
 //!
 //! That is why [`render_calibration`] says so out loud when it folds no
 //! verdict at all. A report of "0 passes, 0 false positives" reads exactly

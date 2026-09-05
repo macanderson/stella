@@ -471,9 +471,14 @@ agent_event_tags! {
         &[];
     // `Verdict` additionally folds the session model's verification state
     // (`stella-tui/src/model.rs`) into the one-line textline verdict — still
-    // rendering, still no branch, still no selecting surface. It stays on the
-    // wire because it is the natural event a verification plugin re-emits;
-    // #3790 confirms that assumption when the wire contract is settled.
+    // rendering, still no branch, still no selecting surface. `RecordedOnly`
+    // is about this crate's readers, not about whether anything writes.
+    // `stella-cli`'s `agent::goal::goal_wrapped` now publishes one per judged
+    // round. It converts `stella_runtime::wrapper::DispatchReport` rather
+    // than re-deriving a verdict — a different producer than the
+    // verification plugin #3790 anticipated. `run` and `fleet`'s wrapper
+    // doors cannot do the same yet: each round's execution row closes
+    // before a verdict exists to send.
     Verdict => "verdict",
         ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];
