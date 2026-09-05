@@ -546,7 +546,8 @@ pub fn render_recall_line(line: &RecallLine<'_>) -> String {
 /// line declares.
 ///
 /// The CLI renders a memory as `- [nod_…] <label> — <body>`, a context record
-/// as `- <statement> ^<handle>[ [enforced]]` (`records::render::bullet`), and
+/// as `- <statement> ^<handle>[ [enforced]]`
+/// (`stella_records::records::render::bullet`), and
 /// every other frame kind as `- <label> — <body>`. All three are parsed;
 /// anything else yields `(None, None)` rather than a guess, because a wrong
 /// `memory_id` is worse than an absent one — it is the join key the
@@ -578,10 +579,11 @@ fn parse_recall_item(segment: &str) -> (Option<String>, Option<String>) {
 
 /// The trailing `^handle` of a rendered record bullet, sigil included.
 ///
-/// `records::render::bullet` writes `<statement> ^<handle>` with an optional
-/// ` [enforced]` marker after it, so the handle is the line's last token
-/// (after peeling that marker) and must look exactly like what
-/// `records::handle::slug` can emit — lowercase, digits, `-`. Anchoring to
+/// `stella_records::records::render::bullet` writes `<statement> ^<handle>`
+/// with an optional ` [enforced]` marker after it, so the handle is the line's
+/// last token (after peeling that marker) and must look exactly like what
+/// `stella_records::records::handle::slug` can emit — lowercase, digits, `-`.
+/// Anchoring to
 /// the tail and validating the charset is what keeps a prose line that merely
 /// *contains* a caret from minting a false join key.
 fn record_handle_of(line: &str) -> Option<String> {
@@ -919,7 +921,7 @@ struct FrameBody<'a> {
 /// content-addressed id and the byte-stable hash it derives from.
 ///
 /// The hash reuses the canonical scheme ADR 0004 ratified —
-/// [`crate::context_record::hash::record_hash`]: strip nulls, RFC 8785 JCS,
+/// [`stella_protocol::hash::record_hash`]: strip nulls, RFC 8785 JCS,
 /// sha256, `sha256:` prefix. A second hashing scheme in one codebase is two
 /// answers to "are these the same bytes", so this calls the existing one rather
 /// than growing a parallel canonicalizer next to [`block_id`]'s streamed
@@ -934,7 +936,7 @@ struct FrameBody<'a> {
 /// shape (owned scalars and strings) does not happen — but a receipt is
 /// telemetry, and no frame identity is worth failing a turn over.
 fn frame_identity(body: &FrameBody<'_>) -> Option<CompiledContextFrameBuilt> {
-    let frame_hash = crate::context_record::hash::record_hash(body).ok()?;
+    let frame_hash = stella_protocol::hash::record_hash(body).ok()?;
     let hex = frame_hash.strip_prefix("sha256:")?;
     Some(CompiledContextFrameBuilt {
         compiled_frame_id: format!("cf_{}", &hex[..24]),

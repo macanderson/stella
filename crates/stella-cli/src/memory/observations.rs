@@ -37,8 +37,10 @@
 use std::path::Path;
 
 use stella_context::{AppendOutcome, ContextStore, LedgerAppend};
-use stella_core::context_record::{LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ObservationSource};
 use stella_core::redact::redact_secrets;
+use stella_records::context_record::{
+    LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ObservationSource,
+};
 
 use super::ReflectionLesson;
 
@@ -193,7 +195,7 @@ fn append_observation(store: &ContextStore, lesson: &ReflectionLesson) -> LineOu
     match store.append_record(LedgerAppend {
         record_id: &record.record_id,
         lineage_id: &record.lineage_id,
-        record_kind: stella_core::context_record::ContextRecordKind::Observation.as_str(),
+        record_kind: stella_records::context_record::ContextRecordKind::Observation.as_str(),
         record_hash: &record.record_hash,
         schema_version: LIFECYCLE_SCHEMA_VERSION,
         body: &body,
@@ -218,7 +220,7 @@ pub(crate) fn all_observations(store: &ContextStore, limit: usize) -> Vec<Observ
         // observation invisible once the log grew past the bound (#818). Under
         // the bound this returns the same set in the same order.
         .records_of_kind_newest(
-            stella_core::context_record::ContextRecordKind::Observation.as_str(),
+            stella_records::context_record::ContextRecordKind::Observation.as_str(),
             limit,
         )
         .unwrap_or_default()

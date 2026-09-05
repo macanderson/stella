@@ -43,8 +43,8 @@ use std::path::Path;
 use colored::Colorize;
 use serde::Serialize;
 
-use stella_core::context_record::RecordStatus;
-use stella_core::records::{Disposition, Entry, Registry, Severity};
+use stella_records::context_record::RecordStatus;
+use stella_records::records::{Disposition, Entry, Registry, Severity};
 
 use crate::context_records::{
     SweepCache, now_rfc3339, probe_everything, registry_with_cache, rule_files,
@@ -127,14 +127,14 @@ pub fn run_validate(root: &Path, format: QueryFormat) -> Result<(), String> {
     // Regulated tier: a project record armed to block must hold a ledger
     // grant — an armed guard nobody accountably approved is exactly what the
     // tier exists to prevent.
-    if governance.mode == stella_core::records::promotion::GovernanceMode::Regulated {
-        let grants = stella_core::records::promotion::blocking_grants(&promotions);
+    if governance.mode == stella_records::records::promotion::GovernanceMode::Regulated {
+        let grants = stella_records::records::promotion::blocking_grants(&promotions);
         let ungoverned: Vec<String> = registry
             .entries
             .iter()
             .filter(|entry| {
                 entry.is_enforced()
-                    && entry.record.trust == stella_core::records::trust::Trust::Project
+                    && entry.record.trust == stella_records::records::trust::Trust::Project
                     && !grants.contains_key(&entry.record.record.lineage_id)
             })
             .map(|entry| format!("^{}", entry.record.handle))
@@ -403,7 +403,7 @@ fn print_diagnostics(registry: &Registry) {
 }
 
 /// The record's steering force, as a string.
-fn force_of(_registry: &Registry, entry: &stella_core::records::Entry) -> &'static str {
+fn force_of(_registry: &Registry, entry: &stella_records::records::Entry) -> &'static str {
     entry
         .record
         .record
@@ -433,7 +433,7 @@ struct RecordRow {
 }
 
 impl RecordRow {
-    fn from_entry(entry: &stella_core::records::Entry) -> Self {
+    fn from_entry(entry: &stella_records::records::Entry) -> Self {
         let record = &entry.record.record;
         Self {
             handle: entry.record.handle.clone(),

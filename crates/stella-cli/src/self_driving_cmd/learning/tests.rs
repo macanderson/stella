@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use stella_context::{ContextDelta, ContextStore, MemoryInput};
-use stella_core::context_record::{
+use stella_records::context_record::{
     EvidencePool, ObservationRecord, ObservationSource, ProposalRecord, ProposalScore,
     RecordProposalKind, RecordProposalStatus, confidence_from_score,
 };

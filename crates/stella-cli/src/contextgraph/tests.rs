@@ -1106,7 +1106,7 @@ async fn recall_via_host_is_cgp_composition_conformant() {
 
 /// The three observations CGP §14 defines for retrieval attribution (A2) are
 /// `selected`, `rendered`, and `cited`. Stella's ledger vocabulary
-/// (`stella_core::context_record::ContextUseKind`) is the *same* three, spelled
+/// (`stella_records::context_record::ContextUseKind`) is the *same* three, spelled
 /// the same way — which is not a coincidence and is worth protecting.
 ///
 /// The two are not interchangeable, and the difference is the point:
@@ -1138,7 +1138,7 @@ async fn recall_via_host_is_cgp_composition_conformant() {
 /// ADR 0004 exists to prevent.
 #[test]
 fn the_ledger_names_the_same_three_attribution_observations_as_the_protocol() {
-    use stella_core::context_record::ContextUseKind;
+    use stella_records::context_record::ContextUseKind;
 
     // CGP's three observations, as their field names appear on the wire.
     let protocol = ["selected", "rendered", "cited"];
@@ -1181,7 +1181,7 @@ fn the_ledger_names_the_same_three_attribution_observations_as_the_protocol() {
     );
 }
 
-/// `stella_core::context_record::Representation` is a **second** declaration of
+/// `stella_records::context_record::Representation` is a **second** declaration of
 /// the representation vocabulary CGP owns normatively (ADR 0005, `SPEC.md` §6.4
 /// P1–P5). It exists because `stella-core` deliberately carries no
 /// `contextgraph-types` dependency — the record/lifecycle layer is host-owned
@@ -1201,7 +1201,7 @@ fn the_ledger_names_the_same_three_attribution_observations_as_the_protocol() {
 #[test]
 fn the_host_record_layer_spells_representations_the_way_the_protocol_does() {
     use contextgraph_types::Representation as Wire;
-    use stella_core::context_record::Representation as Record;
+    use stella_records::context_record::Representation as Record;
 
     for (record, wire) in [
         (Record::Full, Wire::Full),
