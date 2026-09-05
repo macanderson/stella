@@ -1,16 +1,22 @@
 //! `/export` — export **one session's** telemetry as a ZIP archive of raw
-//! JSON dumps plus a self-contained HTML dashboard.
+//! JSON dumps plus two self-contained HTML documents: a metrics dashboard and
+//! the session transcript.
 //!
 //! The archive lives at `.stella/exports/` and is named with the microsecond
 //! timestamp of the **last log entry** included (the data's own clock, not the
-//! user's submission time). The HTML is fully static — no external CSS/JS,
-//! everything inlined — so it can be opened offline, emailed, or committed
-//! alongside a PR as evidence.
+//! user's submission time). Both documents are fully static — no external
+//! CSS/JS, everything inlined — so either can be opened offline, emailed, or
+//! committed alongside a PR as evidence.
 //!
-//! The dashboard surfaces the metrics that actually change software quality:
-//! resolve rate, cost-per-resolved-task, token efficiency, tool-call
-//! frequency, retry patterns, and file-edit heat — the same data `stella
-//! stats` summarizes in a table, but visually and interactively.
+//! `dashboard.html` surfaces the metrics that actually change software
+//! quality: resolve rate, cost-per-resolved-task, token efficiency,
+//! tool-call frequency, retry patterns, and file-edit heat — the same data
+//! `stella stats` summarizes in a table, but visually and interactively.
+//!
+//! It links to `transcript.html` rather than embedding it. That document is
+//! [`transcript::render`]'s own [`stella_transcript::html::render_page`]
+//! output — the same renderer `stella observe` uses. Both draw one row
+//! grammar, and each keeps its own CSS.
 //!
 //! **Scope is a safety property here, not a convenience** (#2558). Until the
 //! session argument existed, this module dumped the entire workspace store:
@@ -102,9 +108,11 @@ pub fn export_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf
     // the dashboard are still worth having, and an empty transcript reports
     // itself on the page rather than pretending the session was silent.
     let journal = store.session_events(session_id).unwrap_or_default();
-    let transcript = transcript::render(&journal, &execution_prompts(&dumps));
+    let transcript = transcript::render(&journal, &execution_prompts(&dumps), session_id);
 
-    // Build the self-contained HTML dashboard.
+    // Build the self-contained HTML dashboard. It links to the transcript
+    // rather than embedding it — see `transcript::render`'s doc for why the
+    // two are separate documents.
     let html = render_dashboard(
         &usage_stats,
         &dumps,
@@ -136,6 +144,12 @@ pub fn export_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf
     }
     // The dashboard.
     zip.add_file(&format!("{folder}/dashboard.html"), html.as_bytes())?;
+    // The session transcript. A complete page on its own, so it reads fine
+    // even if nobody opens `dashboard.html` first.
+    zip.add_file(
+        &format!("{folder}/transcript.html"),
+        transcript.html.as_bytes(),
+    )?;
     // A manifest with the watermark, the scope, and the table list.
     //
     // `session` and `excluded` are the archive's provenance: without them a
@@ -184,10 +198,10 @@ pub async fn export_command(workspace_root: &Path, session_id: &str) -> String {
             "Export Session Telemetry — archive written to {}\n\
              Scope: this session ({session_id}) only — the archive is safe to attach to a \
              PR or email without disclosing your other runs in this workspace. The ZIP \
-             holds a `dashboard.html` (open in any browser), raw JSON dumps of this \
-             session's telemetry tables, and a `manifest.json` naming the session and \
-             what was excluded. The timestamped folder name matches the last log entry's \
-             timestamp.",
+             holds a `dashboard.html` (metrics — open in any browser), a `transcript.html` \
+             (the replayed session), raw JSON dumps of this session's telemetry tables, \
+             and a `manifest.json` naming the session and what was excluded. The \
+             timestamped folder name matches the last log entry's timestamp.",
             path.display()
         ),
         Ok(Err(e)) | Err(e) => format!("export failed: {e}"),
@@ -240,18 +254,38 @@ fn redact_dump(json: &str) -> String {
     }
 }
 
-/// Recursively replace every string value in `value` with its redacted form.
-fn redact_json_strings(value: &mut serde_json::Value) {
+/// Recursively replace every string value in `value` with its redacted
+/// form. Returns whether anything was actually masked. [`redact_dump`]
+/// ignores that return value; `transcript::redact_run` uses it to say, on
+/// the dashboard, whether the transcript needed masking at all.
+fn redact_json_strings(value: &mut serde_json::Value) -> bool {
     match value {
         serde_json::Value::String(text) => {
             let redaction = stella_learn::redact::redact_secrets(text);
             if redaction.redacted {
                 *text = redaction.text;
+                true
+            } else {
+                false
             }
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(redact_json_strings),
-        serde_json::Value::Object(map) => map.values_mut().for_each(redact_json_strings),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+        serde_json::Value::Array(items) => {
+            let mut any = false;
+            for item in items.iter_mut() {
+                any |= redact_json_strings(item);
+            }
+            any
+        }
+        serde_json::Value::Object(map) => {
+            let mut any = false;
+            for v in map.values_mut() {
+                any |= redact_json_strings(v);
+            }
+            any
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            false
+        }
     }
 }
 
@@ -448,18 +482,15 @@ fn render_dashboard(
     let stats_json =
         script_json(&serde_json::to_string(usage_stats).unwrap_or_else(|_| "[]".into()));
 
-    // What the transcript panel says about itself, above its first row.
-    let transcript_provenance = transcript.provenance();
-    let transcript_rows = comma(transcript.rendered as i64);
-    // An empty transcript is a real state, not a bug: a session whose events
-    // were never persisted, or one recorded by a build old enough that none of
-    // them replay. Say which, rather than rendering a blank panel that reads
-    // as a broken page.
-    let transcript_body = if transcript.rendered > 0 {
-        transcript.body.clone()
+    // The caption under the link to `transcript.html`: what it does and
+    // does not hold, so a reader can check the claim before opening it.
+    // An empty transcript is a real state, not a bug.
+    let transcript_caption = escape_html(&transcript.provenance());
+    let transcript_note = if transcript.rendered > 0 {
+        String::new()
     } else {
-        "<p class=\"empty\">No replayable events were recorded for this session. \
-         The metrics tab and the archive's <code>raw/</code> dumps are unaffected.</p>"
+        " No replayable events were recorded for this session; the metrics \
+         below and the archive's <code>raw/</code> dumps are unaffected."
             .to_string()
     };
 
@@ -716,109 +747,21 @@ fn render_dashboard(
      --text-3 body is the intended contrast: the name is the one thing in that
      line a reader is meant to see. */
 
-  /* ── The transcript ─────────────────────────────────────────────────────
-     Every entry is `.ev` with three parts: a timestamp, a kind label, and
-     content. Kept identical across kinds so the eye scans the left two
-     columns once and never re-learns the row.
-
-     It takes the tokens above rather than a palette of its own — the rule
-     this page runs on is that colour is meaning, so `--ok`/`--bad` mark a
-     verdict and nothing else takes a hue. A transcript is the densest thing
-     here and would have been the easiest place to break that. */
-  .tabs {{ display: flex; gap: var(--sp1); margin-bottom: var(--sp2); flex-wrap: wrap;
-          position: sticky; top: 0; background: var(--ground); padding: var(--sp1) 0; z-index: 5;
-          border-bottom: 1px solid var(--hairline); }}
-  .tab {{ font: inherit; cursor: pointer; background: var(--surface); color: var(--text-2);
-         border: 1px solid var(--hairline-strong); border-radius: var(--radius);
-         padding: 6px var(--sp2); }}
-  .tab[aria-selected="true"] {{ color: var(--text); border-color: var(--control-edge); }}
-  .tab .n {{ color: var(--text-3); font-size: var(--fs-micro); }}
-  .tab:focus-visible {{ outline: 2px solid var(--accent-edge); outline-offset: 2px; }}
-  .panel {{ display: none; }} .panel.on {{ display: block; }}
-
-  .ev {{ margin: 0 0 3px; padding: 5px var(--sp1); border-left: 2px solid transparent;
-        background: var(--surface); border-radius: var(--radius); }}
-  .t {{ color: var(--text-3); font-variant-numeric: tabular-nums; margin-right: 10px;
-       font-size: var(--fs-micro); white-space: pre; }}
-  .lbl {{ display: inline-block; min-width: 74px; color: var(--text-3);
-         font-size: var(--fs-micro); letter-spacing: .14em; margin-right: var(--sp1); }}
-  .meta {{ color: var(--text-2); font-size: var(--fs-micro); margin-left: 92px; }}
-  .ev.stage {{ background: transparent; border-left-color: var(--control-edge);
-              margin: var(--sp2) 0 6px; padding-top: var(--sp1);
-              border-top: 1px solid var(--hairline); }}
-  .ev.stage b {{ letter-spacing: .14em; text-transform: uppercase; font-size: var(--fs-sm); }}
-  .ev.step {{ background: var(--sunken); }}
-  .ev.say .prose, .ev.user .prose, .ev.think .prose {{
-    margin-left: 92px; white-space: pre-wrap; word-break: break-word; max-width: 78ch; }}
-  .ev.say {{ border-left-color: var(--accent-edge); }}
-  .ev.user {{ border-left-color: var(--control-edge); }}
-  .ev.think .prose {{ color: var(--text-2); font-style: italic; }}
-  /* The two places a hue is earned: a verdict passed, or something failed. */
-  .ev.verdict {{ border-left-color: var(--ok); }}
-  .ev.proof {{ border-left-color: var(--accent-edge); }}
-  .ev.err, .ev.tool.err, .ev.verdict.err {{ border-left-color: var(--bad); }}
-  details.ev {{ padding: 0; border-left-color: var(--hairline-strong); }}
-  details.ev summary {{ cursor: pointer; padding: 5px var(--sp1); list-style: none; }}
-  details.ev summary::-webkit-details-marker {{ display: none; }}
-  details.ev summary:hover {{ background: var(--sunken); }}
-  details.ev[open] summary {{ border-bottom: 1px solid var(--hairline); }}
-  .ev pre {{ margin: 0; padding: var(--sp1) 10px var(--sp1) 100px; white-space: pre-wrap;
-            word-break: break-word; font: inherit; overflow-x: auto; }}
-  pre.in {{ color: var(--text); background: var(--sunken); }}
-  pre.out {{ color: var(--text-2); border-top: 1px dashed var(--hairline);
-            max-height: 340px; overflow: auto; }}
-  pre.out.err {{ color: var(--bad); }}
-  pre.out.pending {{ color: var(--text-3); font-style: italic; }}
-  /* Only the fallback for diff text that parses to no hunks at all. */
-  pre.diff {{ color: var(--text-2); max-height: 300px; overflow: auto; }}
-
-  /* Unified diff — git's shape, drawn the way a reviewer reads it and
-     byte-for-byte the component the Observatory uses
-     (`crates/stella-observatory/src/assets/index.html`). This archive is
-     attached to a pull request as evidence and read beside that dashboard, so
-     the two must not render one edit two ways. Old and new line numbers get
-     their own gutters, the sigil gets a third, and the change is carried by a
-     tinted ROW rather than by a coloured glyph — hue is never the only signal
-     (BRAND.md), and it is the only signal that survives a monochrome print. */
-  /* Square, like everything else on this page: a rounded corner says
-     "surface" where a hairline says "boundary", and this page is boundaries
-     (`the_dashboard_is_monospace_and_square` enforces it). */
-  .dx {{ overflow-x: auto; border: 1px solid var(--hairline);
-        background: var(--sunken); margin: var(--sp1) 10px var(--sp1) 100px; }}
-  .dx-hunk {{ min-width: 100%; }}
-  .dx-hunk + .dx-hunk {{ border-top: 1px solid var(--hairline); }}
-  .dx-at {{ color: var(--text-3); background: var(--raised); padding: 3px 12px;
-           white-space: pre; border-bottom: 1px solid var(--hairline); }}
-  .dx-line {{ display: grid; grid-template-columns: 52px 52px 22px minmax(max-content, 1fr);
-             color: var(--text-2); }}
-  .dx-line > span {{ padding: 0 6px; white-space: pre; }}
-  .dx-line .no, .dx-line .nn {{ color: var(--text-3); text-align: right;
-    font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }}
-  .dx-line .sg {{ text-align: center; -webkit-user-select: none; user-select: none; }}
-  .dx-line.add {{ background: rgba(116, 201, 145, .10); color: var(--text); }}
-  .dx-line.add .sg {{ color: var(--ok); }}
-  .dx-line.rem {{ background: rgba(224, 104, 122, .10); color: var(--text); }}
-  .dx-line.rem .sg {{ color: var(--bad); }}
-  /* Word-level highlight: the exact changed tokens inside a paired
-     removal/addition, a stronger wash of the same hue the row already
-     carries — never a third colour, so the rule stays "the row's tint says
-     which side, the token's tint says which part". */
-  .dx-line.add .ww {{ background: rgba(116, 201, 145, .34); }}
-  .dx-line.rem .ww {{ background: rgba(224, 104, 122, .34); }}
-  /* The elision sits between the hunks it replaces, so it has to read as
-     unmistakably not a line of the file: raised ground, centred, no gutter. */
-  .dx-fold {{ color: var(--text-3); background: var(--raised); text-align: center;
-             padding: 2px 12px; -webkit-user-select: none; user-select: none; }}
-  .dx-hunk + .dx-fold, .dx-fold + .dx-hunk {{ border-top: 1px solid var(--hairline); }}
-  .empty {{ color: var(--text-2); padding: 10px 0; }}
-
-  /* Under 720px the 92px indent costs more than it buys — the label becomes a
-     row of its own and every indent collapses to the gutter. */
-  @media (max-width: 720px) {{
-    .lbl {{ min-width: 0; display: block; margin: 0 0 2px; }}
-    .meta, .ev .prose {{ margin-left: 0; }}
-    .ev pre {{ padding-left: 10px; }}
-  }}
+  /* ── The transcript link ───────────────────────────────────────────────
+     The session transcript is its own document, `transcript.html`, rendered
+     by `stella_transcript::html::render_page` — the same renderer `stella
+     observe` draws through. Kept as a separate document rather than an
+     embedded fragment: the shared renderer's stylesheet and this one define
+     six of the same class names differently (`.dot`, `.step`, `.t`, …) and
+     neither is namespaced, so embedding the fragment here would cross-talk
+     both directions. Two documents, one link between them, is what lets both
+     keep their own CSS closed. */
+  .transcript-link {{ background: var(--surface); border: 1px solid var(--hairline);
+                     border-radius: var(--radius); padding: var(--sp2); margin-bottom: var(--sp2); }}
+  .transcript-link a {{ color: var(--text); font-weight: 600; text-decoration: none;
+                       border-bottom: 1px solid var(--accent-edge); }}
+  .transcript-link a:hover {{ border-bottom-color: var(--text); }}
+  .transcript-link .watermark {{ margin: var(--sp1) 0 0; }}
 
   /* A stated preference for less motion wins. Every transition on this page
      reports a state change rather than carrying information, so removing them
@@ -829,9 +772,7 @@ fn render_dashboard(
 
   /* Print. The module doc tells you to attach this to a PR or email it, and a
      dark instrument printed on paper is a black rectangle that empties a
-     cartridge. The panels are forced open because `display:none` cannot be
-     paged: without this, printing the report gives you whichever single tab
-     happened to be selected. */
+     cartridge. */
   @media print {{
     :root {{
       --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
@@ -841,9 +782,7 @@ fn render_dashboard(
       --accent-wash: transparent;
     }}
     body {{ padding: 0; }}
-    .tabs {{ display: none; }}
-    .panel {{ display: block !important; }}
-    .ev, table, .chart-container {{ break-inside: avoid; }}
+    table, .chart-container {{ break-inside: avoid; }}
   }}
 </style>
 </head>
@@ -861,22 +800,11 @@ fn render_dashboard(
   <div class="kpi"><div class="label">Tokens Out</div><div class="value">{total_output_fmt}</div><div class="sub">generated</div></div>
 </div>
 
-<div class="tabs" role="tablist">
-  <button class="tab" data-target="transcript" role="tab" aria-selected="true">Transcript <span class="n">{transcript_rows}</span></button>
-  <button class="tab" data-target="metrics" role="tab" aria-selected="false">Metrics</button>
+<div class="transcript-link">
+  <a href="transcript.html">Open the session transcript →</a>
+  <div class="watermark">{transcript_caption}</div>{transcript_note}
 </div>
 
-<!-- `on` is set HERE, not by the script. The tabs are a convenience; the
-     archive is evidence, and a reader with scripts disabled must not open it
-     to a blank page — which is exactly what a JS-assigned initial class gives
-     them, since the CSP already forbids the page every other resource. The
-     script re-asserts this class on load and then owns it. -->
-<section id="transcript" class="panel on" role="tabpanel">
-  <div class="watermark">{transcript_provenance}</div>
-  {transcript_body}
-</section>
-
-<section id="metrics" class="panel" role="tabpanel">
 <div id="insights"></div>
 
 <h2>Cost &amp; Efficiency by Model</h2>
@@ -901,7 +829,6 @@ fn render_dashboard(
 <div class="chart-container">
   <div id="outcome-chart" class="bar-chart"></div>
 </div>
-</section>
 
 <div class="footer">
   Exported by <span class="wordmark">stella<span class="star">*</span></span> <code>/export</code> · {total_runs} executions ·
@@ -925,22 +852,6 @@ const FILES = {files_json};
 // the sink, which is the only place that knows the value is about to
 // become markup.
 const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
-
-// ── Tabs ────────────────────────────────────────────────────────────────
-// The transcript opens first: it is what the archive is for, and the metrics
-// are the summary of it. Everything is in the document either way — the tabs
-// only choose what is displayed, so Ctrl-F still finds a tool call on the tab
-// you are not looking at.
-(function tabs() {{
-  const buttons = [...document.querySelectorAll('.tab')];
-  const panels = [...document.querySelectorAll('.panel')];
-  const show = id => {{
-    panels.forEach(p => p.classList.toggle('on', p.id === id));
-    buttons.forEach(b => b.setAttribute('aria-selected', String(b.dataset.target === id)));
-  }};
-  buttons.forEach(b => b.addEventListener('click', () => show(b.dataset.target)));
-  if (buttons.length) show(buttons[0].dataset.target);
-}})();
 
 // ── KPI insights — surface the patterns that change quality ─────────────
 (function insights() {{

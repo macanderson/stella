@@ -152,11 +152,13 @@ SURFACES: list[Surface] = [
         ident="export-html",
         path="crates/stella-cli/src/export/transcript.rs",
         entry=HTML,
-        shared=False,
-        issue=4270,
+        shared=True,
+        issue=None,
         note="The `/export` archive's readable half. Folds "
-        "`Store::session_events` itself and emits its own HTML; carries the "
-        "#817 redaction pass the shared renderer cannot host.",
+        "`Store::session_events` into a `stella_transcript::model::Run`, "
+        "redacts the whole tree (the #817 pass the shared renderer cannot "
+        "host itself), and renders it via `html::render_page` into its own "
+        "`transcript.html` archive member.",
     ),
 ]
 
