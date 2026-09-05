@@ -7,7 +7,7 @@
 //! deck cuts the mark off, sends the usual [`WorkspaceInput::Interrupt`], and
 //! tags it with the strength it was asked for. The tag is spent here.
 //!
-//! [`intercept`] runs in front of both read points in the driver. It does not
+//! `intercept` runs in front of both read points in the driver. It does not
 //! sit in the arms that take an interrupt:
 //!
 //! - **A bad write must not eat the stop.** A save that fails hands the
