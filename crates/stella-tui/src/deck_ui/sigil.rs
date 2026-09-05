@@ -31,6 +31,7 @@
 
 use super::*;
 use crate::envelope::KeepStrength;
+use crate::envelope::broadcast::Bangs;
 
 /// The mark a line starts with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,28 +60,26 @@ enum Mark {
 /// Bangs past the third are not a fourth strength — `!!!!` is refused as a
 /// mark rather than read as the strongest one, because guessing which of two
 /// meanings a typo intended is how a stray keystroke publishes a rule.
+///
+/// The bang run itself is read by [`crate::envelope::broadcast::bangs`], which
+/// the room address (`>>> @agents !!! …`) reads too. One grammar, so the same
+/// keystrokes mean the same thing wherever they are typed.
 fn parse(text: &str) -> Option<(Mark, &str)> {
     let head = text.trim_start();
     if let Some(rest) = head.strip_prefix('$') {
         return Some((Mark::Shell, rest.trim()));
     }
-    let bangs = head.chars().take_while(|c| *c == '!').count();
-    if bangs == 0 {
-        return None;
+    match crate::envelope::broadcast::bangs(head) {
+        Bangs::Absent | Bangs::TooMany => None,
+        // The old spelling owns only the first bang: the rest of the run
+        // belongs to the command's own text.
+        Bangs::Attached => Some((Mark::LegacyShell, head[1..].trim())),
+        Bangs::Sigil { keep: None, rest } => Some((Mark::Steer, rest)),
+        Bangs::Sigil {
+            keep: Some(strength),
+            rest,
+        } => Some((Mark::Keep(strength), rest)),
     }
-    let rest = &head[bangs..];
-    if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
-        // The old spelling, which owns only the first bang: the rest of the
-        // run belongs to the command's own text.
-        return Some((Mark::LegacyShell, head[1..].trim()));
-    }
-    let mark = match bangs {
-        1 => Mark::Steer,
-        2 => Mark::Keep(KeepStrength::Guidance),
-        3 => Mark::Keep(KeepStrength::Rule),
-        _ => return None,
-    };
-    Some((mark, rest.trim()))
 }
 
 /// Whether a marked line beats a gate that is waiting for an answer.

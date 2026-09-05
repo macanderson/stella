@@ -252,7 +252,14 @@ pub static CAPABILITIES: &[Capability] = &[
                         fans the same text into the session's live worker lanes \
                         (`a_deep_whistle_reaches_the_lead_and_every_live_lane`), and the deck's \
                         `>@all` / `>@<id>` address broadcasts from inside a session \
-                        (`the_broadcast_address_parses_its_target_depth_and_message`)",
+                        (`the_broadcast_address_parses_its_target_depth_and_message`). The room \
+                        form `>>> @agents !!! <text>` carries a stop as well as the words: every \
+                        live session takes the interrupt, the sender included \
+                        (`a_room_broadcast_stops_every_live_session_and_the_sender`), a stalled \
+                        socket holds up its own row alone \
+                        (`a_stalled_session_does_not_hold_up_the_others_stop`), and the record is \
+                        written once for the workspace \
+                        (`a_broadcast_writes_one_record_for_the_workspace`)",
             witness: "a_message_sent_over_a_deck_sessions_socket_reaches_its_next_turn",
         },
         // Not "serve has POST /v1/turns/{id}/steer, so it is covered". It has
@@ -714,11 +721,14 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 15] {
+    fn cli_sources() -> [&'static str; 16] {
         [
             // The deck's session-scoped whistle relay (#4768) — home of the
             // `turn.whistle` witness.
             include_str!("../../stella-cli/src/command_deck/whistle.rs"),
+            // Where a bang mark is saved — home of the `turn.whistle` row's
+            // one-record-per-workspace witness.
+            include_str!("../../stella-cli/src/command_deck/keep_record/tests.rs"),
             include_str!("../../stella-cli/src/agent/tests.rs"),
             // Home of `a_piped_stdin_text_run_denies_every_consumer_of_the_human_present_fact`
             // — the `turn.run` CLI witness since the staged pipeline's own
@@ -894,6 +904,31 @@ mod tests {
             witness_exists(&api_sources(), cited),
             "the row cites {cited}, which no swept serve source defines"
         );
+    }
+
+    /// The whistle row names three more tests than its `witness` field can
+    /// hold, because the room broadcast is three claims: every live session
+    /// stops, one stalled socket costs the others nothing, and the workspace
+    /// gets one record. Each name is checked here, so a citation cannot decay
+    /// into a test nothing answers to.
+    #[test]
+    fn the_whistle_row_cites_the_room_broadcast_witnesses() {
+        let row = capability("turn.whistle").expect("the row is declared");
+        let SurfacePosture::Shipped { mechanism, .. } = row.cli else {
+            panic!("turn.whistle's CLI posture moved — a row that ships this names its witnesses");
+        };
+        let sources = cli_sources();
+        for cited in [
+            "a_room_broadcast_stops_every_live_session_and_the_sender",
+            "a_stalled_session_does_not_hold_up_the_others_stop",
+            "a_broadcast_writes_one_record_for_the_workspace",
+        ] {
+            assert!(mechanism.contains(cited), "the row stopped citing {cited}");
+            assert!(
+                witness_exists(&sources, cited),
+                "the row cites {cited}, which no swept CLI source defines"
+            );
+        }
     }
 
     /// The unwitnessed-claims ratchet: exact equality, so witnessing a row

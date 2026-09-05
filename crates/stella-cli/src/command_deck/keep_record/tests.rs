@@ -103,6 +103,46 @@ fn a_write_that_fails_still_hands_back_the_stop_and_says_so() {
     );
 }
 
+/// **The witness for the room's record.** A broadcast at every live
+/// session writes one record for this workspace, and hands the broadcast on
+/// with the mark spent — so the fan-out cannot ask a target to write it
+/// again.
+#[test]
+fn a_broadcast_writes_one_record_for_the_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let room = |keep| {
+        Some(WorkspaceInput::Whistle(stella_tui::Broadcast {
+            message: "Never force-push to main.".into(),
+            session: None,
+            deep: true,
+            interrupt: true,
+            keep,
+        }))
+    };
+
+    let passed = intercept(room(Some(KeepStrength::Rule)), root.path(), &tx);
+
+    assert_eq!(passed, room(None), "the mark is spent, the stop travels");
+    let registry = crate::context_records::load_registry(root.path());
+    let kept: Vec<_> = registry
+        .entries
+        .iter()
+        .filter(|entry| entry.record.record.statement == "Never force-push to main.")
+        .collect();
+    assert_eq!(kept.len(), 1, "one workspace, one record");
+    assert!(notes(&mut rx).iter().any(|n| n.contains("a rule (must)")));
+
+    // The fan-out hands each target this same message. Reading it again must
+    // write nothing.
+    let again = intercept(passed, root.path(), &tx);
+    assert_eq!(again, room(None));
+    assert!(
+        notes(&mut rx).is_empty(),
+        "a spent mark writes nothing on a second read"
+    );
+}
+
 /// An unmarked message is not this file's job. It passes as it came.
 #[test]
 fn an_unmarked_message_passes_straight_through() {

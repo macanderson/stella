@@ -25,6 +25,12 @@ pub(crate) struct WhistleRequest {
     /// as the lead-only whistle that sender meant.
     #[serde(default)]
     pub(crate) deep: bool,
+    /// Stop the session's running turn and run this text next, rather than
+    /// only adding it at the next boundary — the room form of the composer's
+    /// bang (`>>> @agents ! …`). Absent from an older sender's frame,
+    /// which decodes as the plain steer that sender meant.
+    #[serde(default)]
+    pub(crate) interrupt: bool,
 }
 
 /// The receiving session's answer: the message was queued.
@@ -83,20 +89,23 @@ mod tests {
         let sent = WhistleRequest {
             text: "stop the compile, let CI handle the gate".to_string(),
             deep: true,
+            interrupt: true,
         };
         write_frame(&mut a, &sent).await.unwrap();
         let received: WhistleRequest = read_frame(&mut b).await.unwrap();
         assert_eq!(received.text, sent.text);
         assert!(received.deep);
+        assert!(received.interrupt);
     }
 
-    /// A frame from a sender that predates `deep` carries no such key, and
-    /// decodes as the lead-only whistle that sender meant.
+    /// A frame from a sender that predates these keys carries neither, and
+    /// decodes as the lead-only steer that sender meant.
     #[test]
     fn a_frame_without_the_deep_key_is_a_lead_only_whistle() {
         let received: WhistleRequest =
             serde_json::from_str(r#"{"text":"read the failing test"}"#).unwrap();
         assert!(!received.deep);
+        assert!(!received.interrupt);
     }
 
     #[tokio::test]

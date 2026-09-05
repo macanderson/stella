@@ -35,7 +35,7 @@ pub(crate) async fn run(message: &str, session_ids: &[String], deep: bool) -> Re
         return Err("stella whistle: message must not be empty".to_string());
     }
     let registry = SessionRegistry::open_default();
-    let outcomes = broadcast(&registry, message, session_ids, deep, None).await;
+    let outcomes = broadcast(&registry, message, session_ids, deep, false, None).await;
     if outcomes.is_empty() {
         println!(
             "no {} to whistle at",
@@ -68,11 +68,14 @@ pub(crate) async fn run(message: &str, session_ids: &[String], deep: bool) -> Re
 /// among them, a sequential sweep made "broadcast" mean "wait". A stale
 /// socket now delays only its own row. `deep` asks each session to reach
 /// its worker lanes too ([`super::tap::Whistleable::push_deep`]).
+/// `interrupt` asks it to stop the turn it is running. The words then run
+/// next there ([`super::tap::Whistleable::interrupt`]).
 pub(crate) async fn broadcast(
     registry: &SessionRegistry,
     message: &str,
     session_ids: &[String],
     deep: bool,
+    interrupt: bool,
     exclude: Option<&str>,
 ) -> Vec<(SessionRecord, Delivery)> {
     let targets: Vec<SessionRecord> = targets(registry, session_ids)
@@ -87,7 +90,7 @@ pub(crate) async fn broadcast(
     let outcomes = futures_util::future::join_all(
         targets
             .iter()
-            .map(|record| deliver_one(registry, record, &wrapped, deep)),
+            .map(|record| deliver_one(registry, record, &wrapped, deep, interrupt)),
     )
     .await;
     targets.into_iter().zip(outcomes).collect()
@@ -147,6 +150,7 @@ async fn deliver_one(
     record: &SessionRecord,
     text: &str,
     deep: bool,
+    interrupt: bool,
 ) -> Delivery {
     use tokio::net::UnixStream;
     use tokio::time::timeout;
@@ -164,6 +168,7 @@ async fn deliver_one(
     let request = WhistleRequest {
         text: text.to_string(),
         deep,
+        interrupt,
     };
     if write_frame(&mut stream, &request).await.is_err() {
         return Delivery::Unreachable("failed to send".to_string());
@@ -186,6 +191,7 @@ async fn deliver_one(
     _record: &SessionRecord,
     _text: &str,
     _deep: bool,
+    _interrupt: bool,
 ) -> Delivery {
     Delivery::Unreachable(
         "agent whistle needs a Unix domain socket — not supported on this platform yet".to_string(),
@@ -249,17 +255,25 @@ mod tests {
         registry.upsert(&unreachable).unwrap();
 
         assert_eq!(
-            deliver_one(&registry, &reachable, "test", false).await,
+            deliver_one(&registry, &reachable, "test", false, false).await,
             Delivery::Delivered
         );
         assert!(matches!(
-            deliver_one(&registry, &unreachable, "test", false).await,
+            deliver_one(&registry, &unreachable, "test", false, false).await,
             Delivery::Unreachable(_)
         ));
 
         // The broadcast reaches both at once, reports each in target order,
         // and leaves out the session that is broadcasting.
-        let mut outcomes = broadcast(&registry, "test", &[], false, Some("ses-unreachable")).await;
+        let mut outcomes = broadcast(
+            &registry,
+            "test",
+            &[],
+            false,
+            false,
+            Some("ses-unreachable"),
+        )
+        .await;
         outcomes.sort_by(|a, b| a.0.id.cmp(&b.0.id));
         assert_eq!(outcomes.len(), 1, "the excluded session is not a target");
         assert_eq!(outcomes[0].0.id, "ses-reachable");
@@ -286,7 +300,7 @@ mod tests {
             r.id = id.to_string();
             registry.upsert(&r).unwrap();
         }
-        let outcomes = broadcast(&registry, "test", &[], false, None).await;
+        let outcomes = broadcast(&registry, "test", &[], false, false, None).await;
         let mut got: Vec<&str> = outcomes.iter().map(|(r, _)| r.id.as_str()).collect();
         got.sort_unstable();
         assert_eq!(got, ids, "every target is reported, none dropped");
