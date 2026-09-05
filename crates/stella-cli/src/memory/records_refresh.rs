@@ -27,8 +27,8 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
-use stella_core::ingest::record::Tier;
-use stella_core::records::Registry;
+use stella_records::ingest::record::Tier;
+use stella_records::records::Registry;
 
 impl super::SessionMemory {
     /// The registry swap counter the re-query fingerprint folds.
@@ -124,7 +124,7 @@ fn newly_broken(old: Option<&Registry>, fresh: &Registry) -> Option<String> {
 /// could not bind into the byte-stable prefix: each changed or new pinned
 /// record, stating what applies now and what waits for the next session.
 fn pinned_changes(old: Option<&Registry>, fresh: &Registry) -> Option<String> {
-    let unchanged = |entry: &stella_core::records::Entry| {
+    let unchanged = |entry: &stella_records::records::Entry| {
         old.is_some_and(|old| {
             old.entries.iter().any(|prior| {
                 prior.record.record.lineage_id == entry.record.record.lineage_id

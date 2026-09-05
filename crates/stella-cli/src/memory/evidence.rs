@@ -39,10 +39,10 @@
 //! workspace that the next turn could use.
 
 use stella_context::{AppendOutcome, ContextStore, LedgerAppend};
-use stella_core::context_record::{
+use stella_core::redact::redact_secrets;
+use stella_records::context_record::{
     ContextRecordKind, LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ObservationSource,
 };
-use stella_core::redact::redact_secrets;
 use stella_store::MemoryCitationRow;
 
 /// The longest observation text either source will emit.

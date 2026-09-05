@@ -49,10 +49,10 @@ force = "may"
         .to_string(),
         contributed_by: None,
     };
-    memory.set_record_registry(stella_core::records::registry::load(
+    memory.set_record_registry(stella_records::records::registry::load(
         &[],
         &[record_file],
-        &stella_core::records::Facts::default(),
+        &stella_records::records::Facts::default(),
     ));
     (dir, memory)
 }

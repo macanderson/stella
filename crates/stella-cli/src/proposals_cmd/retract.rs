@@ -32,7 +32,7 @@
 //!
 //! # What makes it take effect
 //!
-//! `stella_core::records::registry`'s loader refuses to select a record whose
+//! `stella_records::records::registry`'s loader refuses to select a record whose
 //! status is anything but active, so the retracted rule stops reaching the
 //! cached prefix `assemble_system_prompt` renders on the next load. No new
 //! filter is needed on `load_workspace_rules`: the standing is carried on the
@@ -49,8 +49,8 @@
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
-use stella_core::context_record::RecordStatus;
-use stella_core::ingest::record::{ContextFile, Record};
+use stella_records::context_record::RecordStatus;
+use stella_records::ingest::record::{ContextFile, Record};
 
 /// One published record, with the file it shares and where that file lives.
 struct Published {
@@ -222,7 +222,7 @@ fn record_retraction(workspace_root: &Path, lineage_id: &str, reason: &str) -> R
     )?;
     crate::context_records::append_promotion(
         workspace_root,
-        stella_core::records::promotion::PromotionEvent {
+        stella_records::records::promotion::PromotionEvent {
             seq: 0,
             prev: String::new(),
             at: crate::context_records::now_rfc3339(),
@@ -233,7 +233,7 @@ fn record_retraction(workspace_root: &Path, lineage_id: &str, reason: &str) -> R
             proposer,
             reason: format!("retracted by `stella proposals retract`: {}", reason.trim()),
             mode: governance.mode.as_str().to_string(),
-            action: stella_core::records::promotion::LedgerAction::Retired,
+            action: stella_records::records::promotion::LedgerAction::Retired,
         },
     )
     .map(|_| ())

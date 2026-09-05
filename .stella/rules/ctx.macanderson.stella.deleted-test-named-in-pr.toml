@@ -3,6 +3,8 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.deleted-test-named-in-pr"
+record_id = "rec_macanderson_stella_deleted_test_named_in_pr_3db5b98f8e84"
+record_hash = "sha256:a769e9153665fcecdeb65ece470da12fe8fcf2691dde93eb48a42b7b5ebe9559"
 kind = "rule"
 statement = "Deleting a test is permitted but must be named in the PR description so an invisible deletion becomes a sentence a reviewer reads."
 origin = "imported"
@@ -24,11 +26,19 @@ force = "must"
 precedence = 100
 
 [record.steering.applies_to]
-# Retargeted from the extractor's ["pull-request", "delete-test"], neither
-# of which is a ratified task name.
-tasks = ["test", "review"]
+# The extractor proposed tasks = ["pull-request", "delete-test"], neither of
+# which is a ratified task name. The task "test" stood in for them and was far
+# wider than this rule: it selected every turn that used the word, including
+# the phrase "witness test" that three other records carry, so this `hard`
+# record met two `soft` ones at equal precedence and its guard stayed
+# suspended. The words below name the deletion this rule is about.
+tasks = ["review"]
 keywords = [
     "deleted test",
+    "deleting a test",
+    "delete a test",
+    "test deletion",
+    "removed test",
     "PR description",
 ]
 

@@ -12,10 +12,10 @@
 use std::path::Path;
 
 use colored::Colorize;
-use stella_core::records::promotion::{
+use stella_records::records::promotion::{
     Governance, GovernanceMode, PromotionEvent, blocking_grants, policy_version,
 };
-use stella_core::records::trust::Trust;
+use stella_records::records::trust::Trust;
 
 use crate::context_records::{
     GOVERNANCE_FILE, PROMOTION_LEDGER, append_promotion, load_registry, now_rfc3339,
@@ -242,7 +242,7 @@ pub(crate) fn run_promote(
             proposer,
             reason: reason.to_string(),
             mode: governance.mode.as_str().to_string(),
-            action: stella_core::records::promotion::LedgerAction::Grant,
+            action: stella_records::records::promotion::LedgerAction::Grant,
         },
     )?;
     println!(

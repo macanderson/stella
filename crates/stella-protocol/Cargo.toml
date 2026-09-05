@@ -22,6 +22,10 @@ serde_json.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 schemars = { workspace = true, optional = true }
+# `hash::record_hash`: two crates hash with it, and `context_event.rs`
+# pins the same bytes one file over.
+sha2.workspace = true
+serde_json_canonicalizer.workspace = true
 
 # The wire-contract exporter. `required-features` keeps it out of a default
 # build entirely, so the binary only exists when someone asks for the schema.
@@ -32,6 +36,3 @@ required-features = ["schema"]
 
 [dev-dependencies]
 serde_json.workspace = true
-# Test-only: pins the golden RFC 8785 (JCS) bytes of the lifecycle event bodies.
-# Same crate + version stella-core hashes with, so the preimages agree.
-serde_json_canonicalizer.workspace = true

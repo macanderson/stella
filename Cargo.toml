@@ -11,6 +11,7 @@ members = [
   "crates/stella-tty",
   "crates/stella-protocol",
   "crates/stella-core",
+  "crates/stella-records",
   "crates/stella-model",
   "crates/stella-store",
   "crates/stella-tools",
@@ -45,7 +46,7 @@ members = [
 exclude = [".stella-examples"]
 
 [workspace.package]
-version = "0.9.326"
+version = "0.9.327"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
