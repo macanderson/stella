@@ -7,6 +7,7 @@
 //! * no sharing or scope widens without an explicit act.
 
 use super::*;
+use stella_protocol::provenance::{ImpactClass, PromotionRefusal, ProvenanceGrade};
 use stella_records::context_record::{
     EvidencePool, ObservationRecord, ObservationSource, ProposalScore, RecordProposalKind,
     RecordProposalStatus, confidence_from_score,
@@ -357,47 +358,81 @@ fn published_rules(workspace_root: &std::path::Path) -> String {
         .join("\n")
 }
 
-/// **The witness for `human_review`.** A person read this statement and
-/// confirmed it, and the rule that confirmation publishes says so.
+/// Keep `candidate_id` as a person would, and return the grade the evidence
+/// gate weighed for the rule it declined to write.
 ///
-/// Before the keep path derived a grade from the decision, nothing in the
-/// workspace constructed `ProvenanceGrade::HumanReview` on any path, so a
-/// reviewer's sign-off changed no artifact anywhere. Here the proposal's own
-/// evidence is one reflection lesson from one task — `model_critique`, the
-/// weakest rung — and the published record has to read stronger than that.
-#[test]
-fn a_kept_directive_is_published_on_the_reviewers_own_grade() {
-    let (dir, store) = store();
-    let root = dir.path();
-    let proposal = seed_directive(&store, "prefer-rg-abcd1234", &["task-a"]);
-    assert_eq!(
-        proposal.provenance,
-        Some(stella_protocol::provenance::ProvenanceGrade::ModelCritique),
-        "the fixture must start below human review, or the assertion below \
-         proves nothing"
-    );
-
-    decide_in(
-        &store,
+/// A keep on a mined directive is refused: a rule steers whoever runs the next
+/// turn, so `Published::Rule` is priced at `EnvironmentObservation`, which is
+/// above every rung this surface can supply. The refusal carries the grade the
+/// gate was asked with, which is the value both witnesses below are about.
+fn grade_weighed_by_keeping(
+    store: &ContextStore,
+    root: &std::path::Path,
+    candidate_id: &str,
+) -> ProvenanceGrade {
+    let published = decide_in(
+        store,
         Some(root),
-        "prefer-rg-abcd1234",
+        candidate_id,
         PromotionAction::Confirmed,
         Some(DirectiveEnforcement::Advisory),
         None,
         "kept",
     )
     .expect("keep");
+    match published {
+        Some(RulePublication::Refused(PromotionRefusal::EvidenceTooWeak {
+            impact,
+            required,
+            actual,
+        })) => {
+            assert_eq!(impact, ImpactClass::SteeringDirective);
+            assert_eq!(required, ProvenanceGrade::EnvironmentObservation);
+            assert_eq!(
+                published_rules(root),
+                "",
+                "the gate refused the write, so nothing may be on disk"
+            );
+            actual
+        }
+        other => panic!("expected the evidence gate to refuse the rule, got {other:?}"),
+    }
+}
 
-    let published = published_rules(root);
-    assert!(
-        published.contains("human_review"),
-        "a rule a person read and confirmed was published on the model's \
-         opinion alone:\n{published}"
+/// **The witness for `human_review`.** A person read this statement and
+/// confirmed it, and the grade the keep stands on says so.
+///
+/// Before the keep path derived a grade from the decision, nothing in the
+/// workspace constructed `ProvenanceGrade::HumanReview` on any path, so a
+/// reviewer's sign-off changed no artifact anywhere. Here the proposal's own
+/// evidence is one reflection lesson from one task — `model_critique`, the
+/// weakest rung — and the keep has to weigh stronger than that.
+///
+/// It still publishes nothing, which `grade_weighed_by_keeping` asserts: a
+/// sign-off is accountability rather than a measurement, and a rule costs a
+/// measurement. What changed is which claim the refusal is about.
+#[test]
+fn a_kept_directive_stands_on_the_reviewers_own_grade() {
+    let (dir, store) = store();
+    let root = dir.path();
+    let proposal = seed_directive(&store, "prefer-rg-abcd1234", &["task-a"]);
+    assert_eq!(
+        proposal.provenance,
+        Some(ProvenanceGrade::ModelCritique),
+        "the fixture must start below human review, or the assertion below \
+         proves nothing"
+    );
+
+    assert_eq!(
+        grade_weighed_by_keeping(&store, root, "prefer-rg-abcd1234"),
+        ProvenanceGrade::HumanReview,
+        "a rule a person read and confirmed was weighed on the model's \
+         opinion alone"
     );
 }
 
 /// …and a proposal already mined across three tasks is not talked *down* by
-/// being read. The published grade is the stronger of the two derivations, so
+/// being read. The grade is the stronger of the two derivations, so
 /// `trajectory_abstraction` survives a keep that supplies `human_review`.
 #[test]
 fn keeping_a_mined_directive_does_not_cost_it_the_rung_it_earned() {
@@ -410,23 +445,12 @@ fn keeping_a_mined_directive_does_not_cost_it_the_rung_it_earned() {
     );
     assert_eq!(
         proposal.provenance,
-        Some(stella_protocol::provenance::ProvenanceGrade::TrajectoryAbstraction)
+        Some(ProvenanceGrade::TrajectoryAbstraction)
     );
 
-    decide_in(
-        &store,
-        Some(root),
-        "prefer-rg-beef5678",
-        PromotionAction::Confirmed,
-        Some(DirectiveEnforcement::Advisory),
-        None,
-        "kept",
-    )
-    .expect("keep");
-
-    let published = published_rules(root);
-    assert!(
-        published.contains("trajectory_abstraction"),
-        "a keep must not weaken the grade the evidence earned:\n{published}"
+    assert_eq!(
+        grade_weighed_by_keeping(&store, root, "prefer-rg-beef5678"),
+        ProvenanceGrade::TrajectoryAbstraction,
+        "a keep must not weaken the grade the evidence earned"
     );
 }

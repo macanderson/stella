@@ -124,7 +124,8 @@ pub fn run_proposals(cmd: &ProposalsCmd) -> Result<(), String> {
             Some(DirectiveEnforcement::Advisory),
             None,
             reason,
-        ),
+        )
+        .map(|_| ()),
         ProposalsCmd::Edit { id, body, reason } => decide_in(
             &store,
             Some(&workspace_root),
@@ -133,7 +134,8 @@ pub fn run_proposals(cmd: &ProposalsCmd) -> Result<(), String> {
             Some(DirectiveEnforcement::Advisory),
             Some(body.clone()),
             reason,
-        ),
+        )
+        .map(|_| ()),
         ProposalsCmd::Ignore { id, reason } => decide_in(
             &store,
             Some(&workspace_root),
@@ -142,7 +144,8 @@ pub fn run_proposals(cmd: &ProposalsCmd) -> Result<(), String> {
             None,
             None,
             reason,
-        ),
+        )
+        .map(|_| ()),
         ProposalsCmd::Retract { id, reason } => retract::retract_rule(&workspace_root, id, reason),
         ProposalsCmd::Refresh => refresh(&store, &workspace_root),
     }
@@ -383,6 +386,7 @@ fn decide(
         edited_body,
         reason,
     )
+    .map(|_| ())
 }
 
 /// Record a decision, and — for a kept **directive** — materialize the rule
@@ -393,6 +397,13 @@ fn decide(
 /// auto-activation below the confidence bar precisely so a person decides, and
 /// a "keep" that recorded an event without writing the rule would be a decision
 /// with no effect.
+///
+/// Returns what the rule write did, so a caller can read the gate's answer —
+/// including the grade it weighed — rather than only the line it printed.
+/// `None` when this decision materialized nothing: a knowledge proposal, an
+/// ignore, or a store with no workspace under it. A write that errored is
+/// `None` too, and is printed where it happened: the decision still stands,
+/// and a later pass can re-apply it.
 fn decide_in(
     store: &ContextStore,
     workspace_root: Option<&std::path::Path>,
@@ -401,7 +412,7 @@ fn decide_in(
     enforcement: Option<DirectiveEnforcement>,
     edited_body: Option<String>,
     reason: &str,
-) -> Result<(), String> {
+) -> Result<Option<RulePublication>, String> {
     let proposal = resolve_proposal(store, candidate_id)?;
 
     // `PromotionActor::User` because a person typed this command. That is also
@@ -424,11 +435,14 @@ fn decide_in(
     // is a projection of it. If the write fails the decision still stands and a
     // later pass can re-apply it, which is the right way round — the reverse
     // would leave a rule on disk that no event explains.
-    if let (Some(root), RecordProposalKind::Directive, PromotionAction::Confirmed) =
-        (workspace_root, proposal.proposal_kind, action)
-    {
-        materialize_directive(root, &proposal, &event);
-    }
+    let materialized =
+        if let (Some(root), RecordProposalKind::Directive, PromotionAction::Confirmed) =
+            (workspace_root, proposal.proposal_kind, action)
+        {
+            materialize_directive(root, &proposal, &event).ok()
+        } else {
+            None
+        };
 
     println!(
         "  {} {} {}",
@@ -436,7 +450,7 @@ fn decide_in(
         action.as_str(),
         proposal.candidate_id.bold()
     );
-    Ok(())
+    Ok(materialized)
 }
 
 /// Write the rule a kept directive proposal describes into `.stella/rules/`.
@@ -450,16 +464,26 @@ fn decide_in(
 /// An edit replaces the body and nothing else; the id is unchanged, so editing
 /// does not orphan the proposal's lineage.
 ///
-/// **The published grade is the stronger of two answers.** A person got
-/// here by reading the statement and confirming it. A rule that recorded only
+/// **The grade this stands on is the stronger of two answers.** A person got
+/// here by reading the statement and confirming it. A grade that recorded only
 /// what the mining folded to would drop that reading. Then no path could ever
 /// reach `ProvenanceGrade::HumanReview`. `published_grade` keeps the stronger
 /// half, so a mined proposal is not talked down by being read.
+///
+/// A reviewer's sign-off does not buy the write. A rule steers whoever runs
+/// the next turn, so the gate prices it at
+/// `ProvenanceGrade::EnvironmentObservation` — above both the rung a keep
+/// supplies and the rung a mined pattern earns. So a keep on either publishes
+/// nothing and says why, and the grade the gate weighed is the one the refusal
+/// names.
+///
+/// Returns that answer as well as printing it, so a caller can read which
+/// grade was weighed.
 fn materialize_directive(
     workspace_root: &std::path::Path,
     proposal: &ProposalRecord,
     event: &PromotionEventRecord,
-) {
+) -> Result<RulePublication, String> {
     let candidate = stella_learn::rules::RuleCandidate {
         id: proposal.candidate_id.clone(),
         text: event
@@ -475,22 +499,23 @@ fn materialize_directive(
         score: 0,
     };
     // The stronger of what the evidence folded to and what the reviewer's own
-    // decision earns, carried onto the published record so the rule on disk
-    // still says what it stands on (#2782) — and asked against the evidence
-    // gate on the way. `LocalHuman` because a person typed this command; the
-    // authority does not lift a weak grade, and is not meant to. The refusal is
-    // printed where the keep was typed, so a person who decided to publish
-    // learns that nothing was published and why.
+    // decision earns, carried onto the record so the rule still says what it
+    // stands on (#2782) — and asked against the evidence gate on the way.
+    // `LocalHuman` because a person typed this command; the authority does not
+    // lift a weak grade, and is not meant to. The refusal is printed where the
+    // keep was typed, so a person who decided to publish learns that nothing
+    // was published and why.
     let grade = published_grade(
         proposal.provenance,
         decision_grade(event.actor, event.action),
     );
-    match crate::memory::rules_mining::write_rule(
+    let outcome = crate::memory::rules_mining::write_rule(
         workspace_root,
         &candidate,
         grade,
         stella_protocol::provenance::PublicationAuthority::LocalHuman,
-    ) {
+    );
+    match &outcome {
         Ok(RulePublication::Written(path)) => {
             println!("    {} wrote {}", "·".dimmed(), path.display());
             if let Some(grade) = grade {
@@ -508,7 +533,7 @@ fn materialize_directive(
             crate::promotion_gate::refusal_line(
                 crate::promotion_gate::Published::Rule,
                 &candidate.id,
-                &refusal,
+                refusal,
             )
         ),
         Err(reason) => println!(
@@ -517,6 +542,7 @@ fn materialize_directive(
             candidate.id
         ),
     }
+    outcome
 }
 
 /// Append a promotion event to the ledger.
