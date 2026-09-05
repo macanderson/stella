@@ -33,13 +33,15 @@
 //! catches drift in a power somebody already thought of. A driver that grew
 //! an entirely new capability nobody listed would pass it.
 //!
-//! The gate that would refuse such a call now exists. `stella-cli`'s
-//! `plugin_authz` turns an installed list into a rule, and its
-//! `the_shipped_selfdriving_grant_is_exactly_what_the_gate_enforces` puts
-//! this manifest in front of it. The hole here stays open. The rule judges
-//! one thing: a call Stella makes for the plugin. Stella starts no program
-//! in this package, so it makes none. `scripts/self-driving.sh` runs as you.
-//! To close the hole, the loop has to become a program Stella drives.
+//! The gate that would refuse such a call exists, and it is asked.
+//! `stella-cli`'s `plugin_authz` turns an installed list into a rule, and its
+//! `the_shipped_selfdriving_grant_is_exactly_what_the_gate_enforces` puts this
+//! manifest in front of it. The package ships `main.py` and
+//! `[driver.process]` names it, so Stella starts a program here and performs
+//! its asks as `Principal::Plugin("stella-selfdriving")` — the rule judges a
+//! real call. It judges the tracker read and nothing else, because that is the
+//! one verb the host serves; every power after the claim is still
+//! `scripts/self-driving.sh`, running as you.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -312,5 +314,42 @@ fn the_prompt_shows_the_driver_grant_and_its_deliberate_limits() {
     assert!(
         !text.contains("release_"),
         "a release verb is not on the driver channel at B0-B6: {text}"
+    );
+}
+
+/// **The package starts a program, and the prompt names it before install.**
+///
+/// A reader who is shown a capability list but not the program that will run
+/// on their machine has been shown the smaller half of the question. The
+/// prompt says which program, how long it may run, and what of the operator's
+/// environment it inherits.
+#[test]
+fn the_prompt_names_the_program_stella_will_start() {
+    let text = consent_text();
+
+    assert!(
+        text.contains("runs as a process on your machine"),
+        "the prompt must say a program runs, and which:\n{text}"
+    );
+    assert!(
+        text.contains("main.py"),
+        "the program's own name is what a reader can go and read:\n{text}"
+    );
+    assert!(
+        !text.contains("is not started by Stella"),
+        "the package starts a program now, so the prompt must not say otherwise:\n{text}"
+    );
+    // The environment line beside it. A driver that inherits nothing but
+    // `PATH` is a fact a reader weighs alongside the capability list.
+    assert!(
+        text.contains("it inherits these environment variables and no others: PATH"),
+        "{text}"
+    );
+    // And the program is in the tree the prompt is a claim about.
+    assert!(
+        repo_root()
+            .join("plugins/stella-selfdriving/main.py")
+            .is_file(),
+        "the manifest names a program that must exist"
     );
 }

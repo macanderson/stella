@@ -597,9 +597,9 @@ fn driver_say(manifest: &PluginManifest) -> Vec<String> {
     // Before the capability list, and before the empty-list early return: a
     // driver's process is the thing a host actually starts, so a declaration
     // that asks for no capability at all still puts a program on the reader's
-    // machine. Absence is said too — `plugins/stella-selfdriving` declares the
-    // grant for a loop a person starts by hand, and a reader must be able to
-    // tell that from one Stella will spawn.
+    // machine. Absence is said too — a package can declare the grant for a loop
+    // a person starts by hand, and a reader must be able to tell that from one
+    // Stella will spawn.
     match &driver.process {
         Some(process) => lines.extend(process_say(process)),
         None => lines.push(

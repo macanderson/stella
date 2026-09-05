@@ -26,11 +26,11 @@
 //!
 //! # What a session does today
 //!
-//! Every capability answers `unsupported` ([`NoDriverCapabilities`]), so a
-//! driver's first ask degrades rather than doing anything. That is the real
-//! state until #3599's B1–B6 land, and this module does not paper over it: the
-//! refusals are printed, in the driver's own vocabulary, so an operator sees
-//! exactly which asks this build could not serve.
+//! [`capabilities::HostDriverCapabilities`] serves the tracker read and answers
+//! `unsupported` for the rest, so a driver's ask for an unbuilt verb degrades
+//! rather than dying. This module does not paper over that: the refusals are
+//! printed, in the driver's own vocabulary and under the plugin's own name, so
+//! an operator sees exactly which asks this build could not serve and for whom.
 //!
 //! Scheduling is absent. One invocation opens one session and
 //! reports what the driver said to do next; who re-opens it after a
@@ -50,11 +50,13 @@ use std::time::Duration;
 
 use stella_plugin::{DriveNext, DriveRequest, PluginManifest};
 use stella_runtime::wrapper::{
-    DEFAULT_DRIVER_MAX_CALLS, DriverCallGate, NoDriverCapabilities, SubprocessDriver,
+    DEFAULT_DRIVER_MAX_CALLS, DriverCallGate, DriverCapabilities, SubprocessDriver,
 };
 
+use crate::plugin_authz::PluginGates;
 use crate::plugin_cmd::roster::PluginRoster;
 
+pub(crate) mod capabilities;
 pub(crate) mod session_log;
 
 /// An installed driver, bound to the process the host will start.
@@ -65,30 +67,38 @@ pub(crate) mod session_log;
 pub(crate) struct ResolvedDriver {
     /// The manifest that declared it — the grant the gate is built from.
     manifest: PluginManifest,
+    /// The install-time capability rule this plugin is held to, built from the
+    /// roster the binder already had open. Carried here so a caller does not
+    /// have to load the roster a second time to construct the capabilities.
+    gates: Option<PluginGates>,
     /// The transport, before any gate is attached.
     driver: SubprocessDriver,
 }
 
 /// A driver with its capability gate attached, ready to open a session.
 pub(crate) struct BoundDriver {
+    /// The manifest name, so a refusal says whose ask was refused.
+    plugin: String,
     driver: SubprocessDriver,
     gate: Arc<DriverCallGate>,
 }
 
 impl ResolvedDriver {
-    /// Attach the capability gate the manifest's grant is checked against.
+    /// Attach the capability gate the manifest's grant is checked against, and
+    /// the capabilities that run behind it.
     ///
     /// The gate is kept beside the driver rather than moved into it, for
     /// [`crate::wrapper_plugin::BoundWrapper`]'s reason: nothing else can read
     /// [`DriverCallGate::refusals`] once the session has ended.
-    pub(crate) fn serving(self) -> BoundDriver {
+    pub(crate) fn serving(self, capabilities: Box<dyn DriverCapabilities>) -> BoundDriver {
         let grant = self.manifest.driver.clone().unwrap_or_default();
         let gate = Arc::new(DriverCallGate::declare(
             grant,
             DEFAULT_DRIVER_MAX_CALLS,
-            Box::new(NoDriverCapabilities),
+            capabilities,
         ));
         BoundDriver {
+            plugin: self.manifest.name.clone(),
             driver: self.driver.serving(Arc::clone(&gate)),
             gate,
         }
@@ -98,6 +108,12 @@ impl ResolvedDriver {
     /// before spending anything on it.
     pub(crate) fn program(&self) -> &str {
         self.driver.program()
+    }
+
+    /// The install-time capability rule this plugin is held to, for the
+    /// capabilities that will be asked to perform its calls.
+    pub(crate) fn gates(&self) -> Option<&PluginGates> {
+        self.gates.as_ref()
     }
 }
 
@@ -136,13 +152,17 @@ impl BoundDriver {
     }
 
     /// Every ask this session could not serve, in the order they were made,
-    /// in `RefusedDriverCall`'s own words rather than a second phrasing of
-    /// them.
+    /// in `RefusedDriverCall`'s own words with the plugin named in front.
+    ///
+    /// The name is what the gate itself cannot supply: it is built from one
+    /// manifest's grant and never learns whose. An operator reading a log of
+    /// refusals with no name in it cannot tell which installed plugin asked
+    /// for something it was not granted.
     pub(crate) fn refusals(&self) -> Vec<String> {
         self.gate
             .refusals()
             .iter()
-            .map(ToString::to_string)
+            .map(|refused| format!("plugin \"{}\": {refused}", self.plugin))
             .collect()
     }
 }
@@ -268,6 +288,10 @@ fn bind_with(
     }
     Ok(ResolvedDriver {
         manifest: installed.manifest.clone(),
+        // Built from the same roster the search ran over, so the rule a driver
+        // call is held to is the one this workspace installed rather than one
+        // a second load might have read differently.
+        gates: PluginGates::from_roster(roster),
         driver: admitted.driver,
     })
 }
