@@ -156,6 +156,19 @@ impl ZaiProvider {
             .flatten();
         let mut calls = Vec::with_capacity(unary_calls.len());
         for (index, call) in unary_calls.into_iter().enumerate() {
+            // The same refusal the streaming path makes, so the two delivery
+            // paths cannot drift on it. The id is what the next turn's
+            // `tool_result` is matched against, and it cannot be invented
+            // here. Two calls in one turn both keyed `""` pair up with the
+            // wrong results in `stella-core`'s loop evidence.
+            if call.id.is_empty() {
+                return Err(crate::http::malformed_tool_call_error(
+                    label,
+                    index,
+                    &call.function.name,
+                    &["id"],
+                ));
+            }
             let truncated = Some(index) == truncated_index;
             let input: Value = stream::tool_call_input(
                 label,
