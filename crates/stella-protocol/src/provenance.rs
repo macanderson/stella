@@ -55,7 +55,7 @@
 //!
 //! # Where it lives
 //!
-//! `stella-core` derives a grade from the observation records it owns,
+//! `stella-records` derives every grade this workspace produces.
 //! `stella-parity`'s evolution ledger types its `evidence` column as one, and
 //! `stella-cli` renders it where a human decides. A type crossing crate
 //! boundaries belongs in this crate by `invariant #1`, and by `invariant #4` it
@@ -86,9 +86,17 @@ pub enum ProvenanceGrade {
     ModelCritique,
     /// A person read it and signed off. Accountable, and still a judgement —
     /// it does not become a measurement by being human.
+    ///
+    /// Derived by `stella_records`' `decision_grade` when a user confirms a
+    /// proposal. It rides onto the record that confirmation publishes.
     HumanReview,
     /// A pattern mined across runs: statistical, not proven. Enough to trial a
     /// hint, never enough to publish something that can fail a build.
+    ///
+    /// Derived by `stella_records`' `EvidencePool::from_observations` when
+    /// the evidence spans three distinct tasks. AGENTS.md says a prompt hint
+    /// may be tried out from a mined trajectory. That is why the three
+    /// smallest impact classes floor here.
     TrajectoryAbstraction,
     /// A command's exit status, a build result, a number measured out of
     /// `stella-events.jsonl`. The environment answered, rather than a model
@@ -96,6 +104,10 @@ pub enum ProvenanceGrade {
     EnvironmentObservation,
     /// A witness test that went fail → pass, or a guard that fails the gate.
     /// The only grade that authorises a blocking guard or an executable tool.
+    ///
+    /// Nothing here derives it. That is a declared gap (`#5955`), not an
+    /// oversight: the fail-to-pass witness that earns it is run by a
+    /// verification plugin, and none ships in this repository.
     DeterministicProof,
 }
 

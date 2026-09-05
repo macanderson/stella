@@ -26,11 +26,28 @@
 //!
 //! The pool folds with [`ProvenanceGrade::weakest`], so the hop from
 //! observations to a proposal can lose strength and never gain it.
+//!
+//! Three of the five grades are derived here: [`observation_grade`] for one
+//! observation, [`EvidencePool::from_observations`] for a pattern across
+//! tasks, and [`decision_grade`] for a person's sign-off.
+
+use std::collections::BTreeSet;
 
 use stella_protocol::provenance::ProvenanceGrade;
 
 use super::hash::record_hash;
-use super::lifecycle::{ObservationRecord, ObservationSource};
+use super::kind::PromotionAction;
+use super::lifecycle::{ObservationRecord, ObservationSource, PromotionActor};
+
+/// How many distinct tasks a pool must span before it is a mined pattern
+/// rather than a set of opinions.
+///
+/// Three, matching spec §7's distinct-task floor and the number both miners
+/// already use to call a proposal eligible. It lives here rather than in
+/// settings because `context.promotion.inferred_directive.min_distinct_tasks`
+/// is a file a person edits, and a project that lowers its own promotion bar
+/// must not thereby lower what its evidence is worth.
+pub const TRAJECTORY_ABSTRACTION_MIN_DISTINCT_TASKS: u32 = 3;
 
 /// The evidence grade an observation of this source carries.
 ///
@@ -104,11 +121,41 @@ impl EvidencePool {
     /// re-derived from its content first — see [`EvidenceIntegrityError`] —
     /// and an unhashable record fails the same way, since a record the
     /// canonical hash cannot cover is one nothing can vouch for either.
+    ///
+    /// The fold is then lifted to [`ProvenanceGrade::TrajectoryAbstraction`]
+    /// when the observations span
+    /// [`TRAJECTORY_ABSTRACTION_MIN_DISTINCT_TASKS`] distinct `task_id`s and
+    /// folded weaker than that.
+    ///
+    /// # Why the lift is not laundering
+    ///
+    /// Combining evidence can only weaken it, and the lift is not a
+    /// combination. It is a second claim: the observations each say what
+    /// happened in one task, and the pool says the same thing recurred across
+    /// several. That claim is derived against the trajectory corpus, and
+    /// re-deriving against another source is the one move that promotes a
+    /// grade.
+    ///
+    /// Four properties bound it, and all four are mechanical:
+    ///
+    /// - The lift is a `max`, so a pool of tool outcomes keeps the stronger
+    ///   grade it already had.
+    /// - It **caps at** [`ProvenanceGrade::TrajectoryAbstraction`]. However
+    ///   often a pattern recurs, it can never authorise a steering directive,
+    ///   a blocking guard, or an executable tool.
+    /// - Its floor is a constant here, not the `min_distinct_tasks` setting,
+    ///   so lowering a project's promotion bar cannot lower this one.
+    /// - It counts the observations' own `task_id`s, never a caller's
+    ///   `ProposalScore`. Thirty restatements inside one task fold to
+    ///   [`ProvenanceGrade::ModelCritique`] and stay there, which is spec §7.
     pub fn from_observations<'a>(
         observations: impl IntoIterator<Item = &'a ObservationRecord>,
     ) -> Result<Option<Self>, EvidenceIntegrityError> {
         let mut grade: Option<ProvenanceGrade> = None;
         let mut observation_ids = Vec::new();
+        // Borrowed rather than cloned, and never stored: only the size
+        // outlives the fold, and only to decide the lift.
+        let mut tasks: BTreeSet<&str> = BTreeSet::new();
         for observation in observations {
             let recomputed = record_hash(observation).map_err(|err| EvidenceIntegrityError {
                 record_id: observation.record_id.clone(),
@@ -128,14 +175,20 @@ impl EvidencePool {
                 None => observed,
             });
             observation_ids.push(observation.record_id.clone());
+            tasks.insert(observation.task_id.as_str());
         }
-        Ok(grade.map(|grade| Self {
-            grade,
+        let distinct_tasks = tasks.len() as u32;
+        Ok(grade.map(|folded| Self {
+            grade: if distinct_tasks >= TRAJECTORY_ABSTRACTION_MIN_DISTINCT_TASKS {
+                folded.max(ProvenanceGrade::TrajectoryAbstraction)
+            } else {
+                folded
+            },
             observation_ids,
         }))
     }
 
-    /// The grade this evidence folds to.
+    /// The grade this evidence stands on.
     #[must_use]
     pub fn grade(&self) -> ProvenanceGrade {
         self.grade
@@ -152,6 +205,63 @@ impl EvidencePool {
     #[must_use]
     pub fn into_parts(self) -> (ProvenanceGrade, Vec<String>) {
         (self.grade, self.observation_ids)
+    }
+}
+
+/// The evidence grade a governance decision itself supplies.
+///
+/// A total function of the pair, for the reason [`observation_grade`] is a
+/// total function of its source: nothing stores this, so there is no second
+/// copy to drift from the event that decided it.
+///
+/// Exactly one pair answers with a grade. A person confirming a proposal has
+/// read the claim and put their name to it, which is
+/// [`ProvenanceGrade::HumanReview`] as that rung defines itself. Every other
+/// pair answers `None`:
+///
+/// - The system acting under policy is not a person, whatever it decides.
+/// - Rejecting, retiring or reverting is a decision *against* the claim, and
+///   supplies no evidence for it.
+/// - Proposing and auto-activating happen before or without a reading.
+/// - Publishing moves a record that some earlier decision already graded.
+#[must_use]
+pub fn decision_grade(actor: PromotionActor, action: PromotionAction) -> Option<ProvenanceGrade> {
+    match (actor, action) {
+        (PromotionActor::User, PromotionAction::Confirmed) => Some(ProvenanceGrade::HumanReview),
+        (PromotionActor::System, _) => None,
+        (
+            PromotionActor::User,
+            PromotionAction::Proposed
+            | PromotionAction::AutoActivated
+            | PromotionAction::Published
+            | PromotionAction::Rejected
+            | PromotionAction::Retired
+            | PromotionAction::Reverted,
+        ) => None,
+    }
+}
+
+/// The grade a published artifact stands on: the stronger of what its
+/// evidence folded to and what the decision to publish it supplies.
+///
+/// This is a `max` where [`ProvenanceGrade::weakest`] is a `min`, and the
+/// difference is what the two are ranging over. `weakest` folds one pool of
+/// evidence for one claim, where agreement is correlation and must not add up.
+/// Here there are two derivations against two sources — a trajectory corpus
+/// and a person — and re-deriving a claim against another source is the one
+/// move that promotes a grade. Refusing to see the second source would leave
+/// [`ProvenanceGrade::HumanReview`] a rung nothing can ever stand on.
+///
+/// A missing half is not a weak half: `None` on either side leaves the other
+/// unchanged, and `None` on both stays `None`.
+#[must_use]
+pub fn published_grade(
+    evidence: Option<ProvenanceGrade>,
+    decision: Option<ProvenanceGrade>,
+) -> Option<ProvenanceGrade> {
+    match (evidence, decision) {
+        (Some(evidence), Some(decision)) => Some(evidence.max(decision)),
+        (only, None) | (None, only) => only,
     }
 }
 

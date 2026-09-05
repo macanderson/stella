@@ -236,8 +236,13 @@ fn new_evidence_appends_a_revision_rather_than_replacing() {
 /// byte-identity guarantee holds the file's own bytes silent on it. Here two
 /// candidates are mined from evidence of each kind, and the
 /// grades read back out of the ledger must differ exactly as the sources did.
+///
+/// Both fixtures span three tasks. So the opined one reads
+/// `trajectory_abstraction`, not `model_critique`. A lesson seen in three
+/// separate tasks is a mined pattern. That is stronger than one opinion. It
+/// is still weaker than the build result beside it.
 #[test]
-fn peek_grade_by_candidate_distinguishes_environment_observation_from_model_critique() {
+fn peek_grade_by_candidate_distinguishes_an_observed_skill_from_an_opined_one() {
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = dir.path();
     let private = workspace_root.join(".stella").join("private");
@@ -291,7 +296,7 @@ fn peek_grade_by_candidate_distinguishes_environment_observation_from_model_crit
     );
     assert_eq!(
         grades.get(&opinion_candidate).map(|g| g.as_str()),
-        Some("model_critique")
+        Some("trajectory_abstraction")
     );
     assert_ne!(
         grades.get(&build_candidate),
