@@ -44,6 +44,11 @@ contextgraph-host.workspace = true
 # see the exact-version note in the root manifest.
 contextgraph-trace.workspace = true
 stella-core = { path = "../stella-core" }
+# The context-record plane — the typed taxonomy, the ingestion boundary, and
+# the registry the prompt's rule block renders from. It left `stella-core`
+# because the engine reached it through one hash call and nothing else;
+# `stella context`, `stella ingest` and the memory plane are its real callers.
+stella-records = { path = "../stella-records" }
 # The self-driving loop's deterministic decision core (AIMD, the aperture
 # ladder, the dry-streak oracle, the dedup digest, the ledger folds), extracted
 # to a leaf crate (#1613) so `stella-observatory`'s dashboard shares the exact

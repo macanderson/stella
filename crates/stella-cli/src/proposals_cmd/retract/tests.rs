@@ -9,8 +9,8 @@
 
 use super::*;
 
-use stella_core::records::Channel;
 use stella_core::rules::RuleCandidate;
+use stella_records::records::Channel;
 
 const LESSON: &str = "Always run the database migration before starting the integration suite.";
 
@@ -137,7 +137,7 @@ fn the_retraction_is_appended_to_the_hash_chained_ledger() {
         .expect("the ledger still verifies after the append");
     let retirement = events
         .iter()
-        .find(|e| e.action == stella_core::records::promotion::LedgerAction::Retired)
+        .find(|e| e.action == stella_records::records::promotion::LedgerAction::Retired)
         .expect("a retirement event");
     assert!(retirement.lineage_id.ends_with(&candidate.id));
     assert_eq!(retirement.from, "active");

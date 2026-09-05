@@ -70,18 +70,22 @@ and compose into a red `main`. Two doors close that, mirroring
   the one caller that must not get this mercy: a post-merge canary is
   exactly asking whether drift already reached `main`, and the base-relative
   reading would forgive the thing it exists to catch.
-- `--update` alone leaves every unit's ceiling where it stands; only
-  `--update --retighten` lowers a ceiling to its current mean, as a
-  deliberate, separately-landed pass. Retightening on every `--update` run
-  is what put every unit at exactly its ceiling with zero headroom in the
-  first place.
+- `--update` alone leaves every unit's ceiling where it stands, except for a
+  unit a file move took a header out of or into: that entry is re-based
+  against the same files' lengths in the base tree, because a move changes a
+  mean with nobody having written a word, and without that a crate can never
+  be split out of another. Only `--update --retighten` lowers every ceiling
+  to its current mean, as a deliberate, separately-landed pass. Retightening
+  on every `--update` run is what put every unit at exactly its ceiling with
+  zero headroom in the first place.
 
 Usage:
 
     ./scripts/check-prose.py [--update] [--adopt=NAME] [--report] [ROOT]
 
     --update      lower the count baseline; leave every unit's header-length
-                  ceiling where it stands (`make prose-update`)
+                  ceiling where it stands, apart from a unit a file move
+                  re-based (`make prose-update`)
     --retighten   with --update, also lower every unit's header-length
                   ceiling to its current mean -- a deliberate, separate pass
                   (`make prose-retighten`)
@@ -285,7 +289,15 @@ DENSITY_HEADER = """\
 # `//!` block in that crate's Rust files, recorded in hundredths so the
 # comparison is integer arithmetic. A unit may lower its mean; it may never
 # raise it, and a unit absent from this list is held to 12.00. Lower one with
-# `make prose-retighten`; `make prose-update` never touches this file.
+# `make prose-retighten`.
+#
+# `make prose-update` writes here only for a unit a file move touched, and
+# only up to that unit's own mean. Extracting a crate moves headers from one
+# unit to another with nobody having written a word, and both means change --
+# the source unit's because below-average files left it, the new unit's
+# because it did not exist. Judging those against the same files' old lengths
+# is what keeps this a ratchet on prose rather than a bar on splitting a
+# crate.
 #
 # Mean header length rather than comment share, because share is a bad proxy on
 # its own: a well-documented pure-function crate should be comment-heavy, and
@@ -328,12 +340,15 @@ GRADE_HEADER = """\
 """
 
 
-def renamed_paths(root: Path) -> dict[str, str]:
-    """Old path -> new path, for every file git sees as renamed against HEAD.
+def renamed_paths(root: Path, commit: str = "HEAD") -> dict[str, str]:
+    """Old path -> new path, for every file git sees as renamed against `commit`.
 
-    Only `--update` consults this. The plain check judges the tree as it
-    stands, so a move fails until someone runs `--update` — the same workflow
-    the file-size ratchet has.
+    The count and grade ratchets consult this from `--update` alone, against
+    HEAD: the plain check judges the tree as it stands, so a move fails until
+    someone runs `--update` — the same workflow the file-size ratchet has.
+    The density ratchet also consults it from the plain check, against the
+    base commit, because a unit's mean is arithmetic over a file *set* and a
+    move changes that set without anyone writing a word.
 
     Fails open at every unknown (no git, no HEAD, an unreadable tree): an
     empty map means no entry is carried, which is the behaviour this had
@@ -350,7 +365,7 @@ def renamed_paths(root: Path) -> dict[str, str]:
     """
     try:
         proc = subprocess.run(
-            ["git", "diff", "-M", "--name-status", "HEAD"],
+            ["git", "diff", "-M", "--name-status", commit],
             cwd=root,
             capture_output=True,
             text=True,
@@ -469,7 +484,7 @@ def density(root: Path, paths: list[str]) -> dict[str, int]:
     for path in paths:
         if not path.endswith(".rs") or not path.startswith(DENSITY_UNIT_ROOT):
             continue
-        unit = "/".join(path.split("/")[:2])
+        unit = unit_of(path)
         try:
             text = (root / path).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -636,12 +651,47 @@ def resolve_base_commit(root: Path, absolute: bool) -> str:
     return _git(root, ["rev-parse", "--verify", "--quiet", "HEAD^1^{commit}"])
 
 
-def base_tracked_paths(root: Path, commit: str, unit: str) -> list[str]:
-    """Every `.rs` path under `unit/` that `git ls-tree` names at `commit`."""
+def unit_of(path: str) -> str:
+    """The density unit a path belongs to -- `crates/<crate>`."""
+    return "/".join(path.split("/")[:2])
+
+
+def units_a_move_touched(moved: dict[str, str]) -> set[str]:
+    """Every density unit a rename took a `.rs` file out of or into."""
+    units: set[str] = set()
+    for old, new in moved.items():
+        if old.endswith(".rs"):
+            units.add(unit_of(old))
+        if new.endswith(".rs"):
+            units.add(unit_of(new))
+    return units
+
+
+def base_tracked_paths(
+    root: Path, commit: str, unit: str, paths: list[str], moved: dict[str, str]
+) -> list[str]:
+    """Where each of this unit's current `.rs` files lived at `commit`.
+
+    A file the unit still holds maps to itself, or to its old path when
+    `moved` (old -> new) says it was renamed in. A file that did not exist at
+    `commit` maps to nothing and drops out, because `git show` cannot read it.
+
+    Restricting the base measurement to the files the unit holds *now* is what
+    lets a crate split pass. Extracting a crate moves a set of headers from one
+    unit to another; nobody wrote a word, yet both means change -- the source
+    unit's because below-average files left it, the new unit's because it did
+    not exist and is held to `NEW_UNIT_MEAN`. Reading the same files' old
+    lengths answers "did this change grow a header?" instead of "did this
+    change move a file?".
+    """
     if not commit:
         return []
-    out = _git(root, ["ls-tree", "-r", "--name-only", commit, "--", unit])
-    return [p for p in out.splitlines() if p]
+    came_from = {new: old for old, new in moved.items()}
+    return [
+        came_from.get(path, path)
+        for path in paths
+        if path.endswith(".rs") and unit_of(path) == unit
+    ]
 
 
 def density_at_commit(root: Path, commit: str, unit: str, paths: list[str]) -> int:
@@ -948,11 +998,27 @@ def main() -> int:
             return 1
         # A unit absent from the density baseline is held to NEW_UNIT_MEAN, so
         # `.get(unit, NEW_UNIT_MEAN)` is what stops a new crate grandfathering
-        # its own headers the first time anyone runs --update.
+        # its own headers the first time anyone runs --update. A unit a move
+        # touched is judged against the same files' lengths at HEAD instead --
+        # see `base_tracked_paths` for why a set change is not a prose change.
+        rebased = {
+            unit: density_at_commit(
+                root,
+                "HEAD",
+                unit,
+                base_tracked_paths(root, "HEAD", unit, tracked, moved),
+            )
+            for unit in units_a_move_touched(moved)
+            if unit in per_unit
+        }
+
+        def unit_ceiling(unit: str) -> int:
+            return max(density_baseline.get(unit, NEW_UNIT_MEAN), rebased.get(unit, 0))
+
         loosened = {
-            unit: (density_baseline.get(unit, NEW_UNIT_MEAN), mean)
+            unit: (unit_ceiling(unit), mean)
             for unit, mean in per_unit.items()
-            if mean > density_baseline.get(unit, NEW_UNIT_MEAN)
+            if mean > unit_ceiling(unit)
         }
         if loosened:
             print(
@@ -1012,17 +1078,28 @@ def main() -> int:
         # headroom: the reclaim is unconditional and global, so clearing one
         # crate's drift silently removes every other crate's slack too. Split
         # the same way `check-file-size.sh --update`/`--retighten` are:
-        # `--update` alone leaves `DENSITY_BASELINE` untouched (nothing here
-        # can have grown past it, or the refusal above would have already
-        # fired), and `--retighten` is the deliberate, separately-landed pass
-        # that reclaims slack across every unit at once.
+        # `--update` alone touches only the units a move re-based, and
+        # `--retighten` is the deliberate, separately-landed pass that reclaims
+        # slack across every unit at once.
         if "--retighten" in flagset:
             tightened = {
-                unit: min(mean, density_baseline.get(unit, NEW_UNIT_MEAN))
+                unit: min(mean, max(density_baseline.get(unit, NEW_UNIT_MEAN), rebased.get(unit, 0)))
                 for unit, mean in per_unit.items()
             }
             write_density_baseline(density_path, tightened)
             density_msg = f"{DENSITY_BASELINE} retightened to {len(tightened)} unit(s)."
+        elif rebased:
+            # A crate split moves headers between units, and both means change
+            # with nobody having written a word. The entry follows the files,
+            # exactly as the count and grade entries above do -- capped at the
+            # unit's own mean, so a move can never buy a unit more room than
+            # the headers it now holds.
+            carried = dict(density_baseline)
+            for unit in sorted(rebased):
+                carried[unit] = min(per_unit[unit], unit_ceiling(unit))
+                print(f"check-prose: re-based {unit} to {carried[unit] / 100:.2f} mean lines")
+            write_density_baseline(density_path, carried)
+            density_msg = f"{DENSITY_BASELINE} re-based {len(rebased)} moved unit(s)."
         else:
             density_msg = f"{DENSITY_BASELINE} left alone -- pass --retighten to reclaim slack."
         print(f"check-prose: {BASELINE} retightened to {sum(merged.values())}, {density_msg}")
@@ -1037,13 +1114,14 @@ def main() -> int:
     # the drift a canary exists to catch.
     absolute = "--absolute" in flagset
     base_commit = resolve_base_commit(root, absolute)
+    base_moves = renamed_paths(root, base_commit) if base_commit else {}
     over = []
     for unit, mean in sorted(per_unit.items()):
         ceiling = density_baseline.get(unit, NEW_UNIT_MEAN)
         if mean <= ceiling:
             continue
         if base_commit:
-            base_paths = base_tracked_paths(root, base_commit, unit)
+            base_paths = base_tracked_paths(root, base_commit, unit, tracked, base_moves)
             ceiling = max(ceiling, density_at_commit(root, base_commit, unit, base_paths))
         if mean > ceiling:
             over.append((unit, ceiling, mean))

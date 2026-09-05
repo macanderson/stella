@@ -8,8 +8,8 @@
 
 use super::*;
 use stella_context::ContextStore;
-use stella_core::context_record::ObservationSource;
 use stella_core::rules::RuleGuard;
+use stella_records::context_record::ObservationSource;
 
 fn store() -> (tempfile::TempDir, ContextStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -148,7 +148,7 @@ fn a_written_rule_file_is_prompt_only() {
         "mined rules publish as TOML context records"
     );
     let contents = std::fs::read_to_string(&path).expect("read back");
-    let loaded = stella_core::records::load_context_file(&path.display().to_string(), &contents)
+    let loaded = stella_records::records::load_context_file(&path.display().to_string(), &contents)
         .expect("the published record loads");
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].record.statement, LESSON);

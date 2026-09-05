@@ -82,7 +82,7 @@ is chosen *over* YAML, not as a lighter spelling of it:
 
 **The change is hash-neutral.** `record_hash` is RFC 8785 canonical JSON over
 the *serialised record struct*, with `record_hash` removed from the preimage
-(`crates/stella-core/src/context_record/hash.rs`). The on-disk surface never enters
+(`crates/stella-protocol/src/hash.rs`). The on-disk surface never enters
 that preimage. Moving from Markdown to TOML therefore changes no `record_id` and
 no `record_hash`, and no revision is minted by the migration itself. This is the
 property that makes the decision reversible in practice rather than only on

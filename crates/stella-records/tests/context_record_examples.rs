@@ -30,10 +30,10 @@
 
 use std::path::PathBuf;
 
-use stella_core::ingest::record::ContextFile;
-use stella_core::records::{RecordFinding, load_context_file};
+use stella_records::ingest::record::ContextFile;
+use stella_records::records::{RecordFinding, load_context_file};
 
-/// The shipped record schema tag ([`stella_core::ingest::record::SCHEMA_TAG`],
+/// The shipped record schema tag ([`stella_records::ingest::record::SCHEMA_TAG`],
 /// spelled out so a tag change shows up here as a decision, not an accident).
 const RECORD_SCHEMA: &str = "context-record/v0.1";
 

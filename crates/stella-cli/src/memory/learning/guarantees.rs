@@ -641,7 +641,7 @@ fn the_typed_path_records_why_it_promoted() {
     let mut memory = session(dir.path(), Loop::Typed);
     memory.auto_create_skills(&log_path(dir.path()), true);
 
-    use stella_core::context_record::RecordProposalKind;
+    use stella_records::context_record::RecordProposalKind;
     let proposals = crate::memory::proposals::all_proposals(&memory.store, 100);
 
     // Two proposals for one lesson: a knowledge proposal (the skill that was
@@ -726,7 +726,7 @@ fn a_declined_proposal_is_not_re_promoted() {
     crate::proposals_cmd::decide_for_test(
         &memory.store,
         "prp_knowledge_prefer-updating-witness-test-assertions-e2010443",
-        stella_core::context_record::PromotionAction::Rejected,
+        stella_records::context_record::PromotionAction::Rejected,
         "not a convention, just a habit",
     )
     .expect("ignore");
@@ -757,14 +757,14 @@ fn reversing_a_decline_lets_the_proposal_promote_again() {
     crate::proposals_cmd::decide_for_test(
         &memory.store,
         id,
-        stella_core::context_record::PromotionAction::Rejected,
+        stella_records::context_record::PromotionAction::Rejected,
         "declined",
     )
     .expect("ignore");
     crate::proposals_cmd::decide_for_test(
         &memory.store,
         id,
-        stella_core::context_record::PromotionAction::Confirmed,
+        stella_records::context_record::PromotionAction::Confirmed,
         "actually, keep it",
     )
     .expect("keep");
@@ -805,7 +805,7 @@ fn a_forgotten_lesson_cannot_return_as_a_rule() {
         crate::memory::proposals::all_proposals(&memory.store, 500)
             .into_iter()
             .filter(|proposal| {
-                proposal.proposal_kind == stella_core::context_record::RecordProposalKind::Directive
+                proposal.proposal_kind == stella_records::context_record::RecordProposalKind::Directive
             })
             .count()
     };
@@ -905,7 +905,7 @@ fn auto_activation_is_refused_when_the_evidence_is_only_reflection_prose() {
         assert!(
             crate::proposals_cmd::promotion_events(&memory.store)
                 .iter()
-                .all(|event| event.actor != stella_core::context_record::PromotionActor::System),
+                .all(|event| event.actor != stella_records::context_record::PromotionActor::System),
             "pass {pass} recorded an automatic promotion in the ledger"
         );
     }

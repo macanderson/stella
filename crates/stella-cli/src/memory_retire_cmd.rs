@@ -7,7 +7,7 @@
 //! Neither command deletes anything.
 
 use stella_context::ContextStore;
-use stella_core::context_record::PromotionAction;
+use stella_records::context_record::PromotionAction;
 
 use crate::memory::{retirement, uses};
 

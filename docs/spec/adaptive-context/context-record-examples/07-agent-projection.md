@@ -120,7 +120,7 @@ or dropped. The decision reaches the prompt; the reasoning does not.
 Not for explainability. The handle is the **attribution key**, and without it the
 feedback loop cannot close.
 
-`ContextUseKind` (`crates/stella-core/src/context_record/context_use.rs:19`) is a
+`ContextUseKind` (`crates/stella-records/src/context_record/context_use.rs:19`) is a
 three-stage funnel:
 
 | Stage | Means | Deterministic? |
