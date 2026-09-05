@@ -48,8 +48,8 @@ use std::sync::{Arc, OnceLock};
 
 use colored::Colorize;
 use stella_diag::{
-    Bound, Cx, Dx, Filter, JsonlSink, Level, LevelFilter, Parsed, Record, Sink, TerminalGated,
-    TextSink, diag,
+    Bound, Cx, Dx, Filter, JsonlSink, LazyJsonlSink, Level, LevelFilter, Parsed, Record, Sink,
+    TerminalGated, TextSink, diag,
 };
 
 use crate::cli::GlobalArgs;
@@ -58,6 +58,52 @@ use crate::cli::GlobalArgs;
 /// the floor. A file nobody reads until something breaks may as well contain
 /// enough to explain it; stderr stays at `warn` so a normal run is quiet.
 const FILE_FLOOR: LevelFilter = LevelFilter::Info;
+
+/// Targets that reach [`durable_sink`] on every run. `-v`, `--log-level` and
+/// `STELLA_LOG` cannot silence them and cannot raise them either. See
+/// `docs/spec/diagnostics.md` §6 "Durable targets" for why this list exists
+/// and what belongs on it.
+///
+/// Adding a target here is a design decision, not a call-site convenience.
+/// Write the reason in that document first, the same rule §5.5 sets for
+/// `Redacted::reviewed`. A target listed here writes to disk on every
+/// ordinary run with nothing switched on, so it earns the same review a new
+/// hub telemetry column gets under AGENTS.md #3. The write stays on this
+/// machine; the question is still "does a human agree this is worth it".
+///
+/// `stella::turn_files` is `agent.task.stale_lane` and the rare
+/// `agent.files.unmeasurable` warning beside it. Both fire at most once per
+/// turn, never once per tool call and never once per token.
+const DURABLE_TARGETS: &str = "off,stella::turn_files=debug";
+
+/// Where [`durable_sink`] writes: the same 0700 directory the crash ring
+/// already uses ([`crash_dir`]), so an operator who knows to look there for a
+/// crash dump finds this file beside it.
+fn durable_diagnostics_path(workspace_root: &Path) -> PathBuf {
+    crash_dir(workspace_root).join("diagnostics.jsonl")
+}
+
+/// The sink [`install`] adds on every run, no matter what filter the
+/// operator chose. A diagnostic that exists to measure an ordinary run's own
+/// rate cannot wait on `-v` or `--log-file` — both are a flag someone must
+/// decide to set in advance. Lowering the default stderr filter is not the
+/// fix either: §6 of `docs/spec/diagnostics.md` keeps a normal run quiet on
+/// purpose.
+///
+/// [`LazyJsonlSink`], not [`JsonlSink::file`]. This sink is built on every
+/// run, `stella --version` in a bare directory included. Only a run whose
+/// target actually fires — today, a turn that ends with its lead's task lane
+/// still occupied — may create `.stella/private/`.
+///
+/// Split out of [`install`] so a test can build one alone. `install` also
+/// installs the process-wide panic hook and races [`BOOTED`]; a test over
+/// sink wiring wants neither.
+pub(crate) fn durable_sink(workspace_root: &Path) -> Bound {
+    Bound::new(
+        Filter::parse(DURABLE_TARGETS).filter,
+        Arc::new(LazyJsonlSink::new(durable_diagnostics_path(workspace_root))) as Arc<dyn Sink>,
+    )
+}
 
 /// The process's diagnostic handle and the workspace it is reporting on.
 ///
@@ -142,6 +188,10 @@ pub(crate) fn install(globals: &GlobalArgs, workspace_root: &Path) -> Arc<Dx> {
             Err(error) => log_file_error = Some(error),
         }
     }
+
+    // Unconditional: durability for the targets §6's list names does not
+    // depend on `filter` at all — see `durable_sink`'s doc comment.
+    sinks.push(durable_sink(workspace_root));
 
     let dx = Arc::new(Dx::new(sinks));
     // Losing this race means another thread booted first; take that one, so
@@ -374,6 +424,88 @@ mod tests {
             crash_dir(Path::new("/w")),
             Path::new("/w/.stella/private"),
             "a crash dump must land in the 0700 directory trace.rs establishes"
+        );
+    }
+
+    /// **Sanity half of the witness below.** `agent.task.stale_lane` is a
+    /// `Debug` record and the operator's own default filter is `Warn` — the
+    /// arrangement that drops the record everywhere without `durable_sink`.
+    #[test]
+    fn the_operators_default_filter_would_drop_a_stale_lane_record() {
+        let default_filter = resolve_filter(&globals(&[])).filter;
+        assert!(!default_filter.admits("stella::turn_files", Level::Debug));
+    }
+
+    /// **Witness.** `durable_sink` keeps the record the test above shows
+    /// every other sink drops, and it does so with nothing switched on — no
+    /// `-v`, no `--log-level`, no `--log-file`. Fails without `durable_sink`:
+    /// nothing else an ordinary `install` builds admits `stella::turn_files`
+    /// at any level.
+    #[test]
+    fn durable_sink_keeps_a_stale_lane_record_an_ordinary_run_would_otherwise_drop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Through `Dx::emit`, the same door every real call site uses —
+        // proof the wiring works end to end, not just that the filter
+        // would allow it.
+        let dx = Dx::new(vec![durable_sink(dir.path())]);
+        dx.emit(Record::new(
+            Level::Debug,
+            "agent.task.stale_lane",
+            "stella::turn_files",
+            Cx::EMPTY,
+            stella_diag::Fields::new().with("files_changed", 3_u64),
+        ));
+
+        let path = dir
+            .path()
+            .join(".stella")
+            .join("private")
+            .join("diagnostics.jsonl");
+        let text = std::fs::read_to_string(&path).expect("the durable file must exist");
+        assert!(text.contains("agent.task.stale_lane"), "{text}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "the durable file is owner-only, like every other sink"
+            );
+        }
+    }
+
+    /// `DURABLE_TARGETS` is a hand-written filter spec, not operator input —
+    /// a typo in it would silently widen or narrow the durable guarantee
+    /// with no `warn` record to notice it by, unlike a bad `STELLA_LOG`
+    /// clause.
+    #[test]
+    fn durable_targets_parses_with_no_bad_clauses() {
+        assert!(Filter::parse(DURABLE_TARGETS).bad.is_empty());
+    }
+
+    /// The whole reason `durable_sink` is scoped by target rather than
+    /// admitting every `Debug` record: `stella::diag_bridge` emits one
+    /// `Debug` record per tool call and per media chunk, and durably
+    /// persisting that on every ordinary run is the noise §6 refuses to
+    /// accept for stderr, now on disk instead.
+    #[test]
+    fn durable_sink_ignores_a_debug_record_from_an_unlisted_target() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bound = durable_sink(dir.path());
+        assert!(!bound.filter().admits("stella::diag_bridge", Level::Debug));
+    }
+
+    /// **Witness.** The durable sink is installed on every run — `stella
+    /// --version` in a directory that has never seen `.stella/` included —
+    /// so it must not itself create `.stella/private/` there. Only a run
+    /// that actually emits under a durable target may.
+    #[test]
+    fn durable_sink_creates_nothing_for_a_run_that_never_emits_under_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _bound = durable_sink(dir.path());
+        assert!(
+            !dir.path().join(".stella").exists(),
+            "building the sink alone must not touch disk"
         );
     }
 

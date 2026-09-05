@@ -19,7 +19,7 @@
 //! the pair down.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -105,6 +105,14 @@ impl Bound {
     }
 }
 
+/// One record, serialized as a single JSON line — shared by [`JsonlSink`] and
+/// [`LazyJsonlSink`] so the two spellings of "JSONL" cannot drift apart.
+fn jsonl_line(record: &Record) -> Result<Vec<u8>, SinkError> {
+    let mut line = serde_json::to_vec(record).map_err(|_| SinkError::Encode)?;
+    line.push(b'\n');
+    Ok(line)
+}
+
 /// One JSON object per line.
 ///
 /// The machine-readable shape, and the one `--log-file` writes. The `Mutex`
@@ -140,8 +148,7 @@ impl JsonlSink {
 
 impl Sink for JsonlSink {
     fn write(&self, record: &Record) -> Result<(), SinkError> {
-        let mut line = serde_json::to_vec(record).map_err(|_| SinkError::Encode)?;
-        line.push(b'\n');
+        let line = jsonl_line(record)?;
         let mut out = self.out.lock().map_err(|_| SinkError::Poisoned)?;
         out.write_all(&line)?;
         Ok(())
@@ -149,6 +156,59 @@ impl Sink for JsonlSink {
 
     fn flush(&self) -> Result<(), SinkError> {
         self.out.lock().map_err(|_| SinkError::Poisoned)?.flush()?;
+        Ok(())
+    }
+}
+
+/// One JSON object per line, in a file this sink opens only when its first
+/// record arrives.
+///
+/// [`JsonlSink::file`] opens its file the moment the sink is built. That is
+/// right for `--log-file`: the operator asked for it, so a bad path is
+/// worth a report at boot, not a silent failure on the first write. It is
+/// wrong for a sink installed on *every* run, whether or not it ever fires.
+/// `docs/spec/diagnostics.md` §6's durable-target list needs a sink like
+/// this one: a plain `stella --version` in a bare directory must not leave
+/// behind an empty `.stella/private/` it never needed. This sink calls
+/// `private::open_append` on the first write its [`Bound`] filter admits,
+/// and not before, so a run that never fires under a bound target never
+/// touches disk.
+pub struct LazyJsonlSink {
+    path: PathBuf,
+    file: Mutex<Option<Box<dyn Write + Send>>>,
+}
+
+impl LazyJsonlSink {
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            file: Mutex::new(None),
+        }
+    }
+}
+
+impl Sink for LazyJsonlSink {
+    fn write(&self, record: &Record) -> Result<(), SinkError> {
+        let line = jsonl_line(record)?;
+        let mut slot = self.file.lock().map_err(|_| SinkError::Poisoned)?;
+        if slot.is_none() {
+            *slot = Some(Box::new(private::open_append(&self.path)?) as Box<dyn Write + Send>);
+        }
+        // `slot` was just set to `Some` on the branch above if it was not
+        // already — this always matches, and an `if let` says so without
+        // reaching for `.unwrap()`/`.expect()` to state it.
+        if let Some(file) = slot.as_mut() {
+            file.write_all(&line)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), SinkError> {
+        let mut slot = self.file.lock().map_err(|_| SinkError::Poisoned)?;
+        if let Some(file) = slot.as_mut() {
+            file.flush()?;
+        }
         Ok(())
     }
 }
@@ -549,6 +609,58 @@ mod tests {
             !error.to_string().contains("ada"),
             "the path survived: {error}"
         );
+    }
+
+    /// **Witness.** A sink installed on every run must not touch disk on a
+    /// run whose target never fires. `JsonlSink::file` opens eagerly and
+    /// cannot make that promise; this is why a lazy sink exists.
+    #[test]
+    fn a_lazy_sink_creates_nothing_until_its_first_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("diagnostics.jsonl");
+        let sink = LazyJsonlSink::new(&path);
+        assert!(!path.exists(), "building the sink must not touch disk");
+
+        sink.write(&a_record()).expect("write");
+        assert!(path.exists(), "the first write must create the file");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(text.lines().count(), 1);
+    }
+
+    #[test]
+    fn a_lazy_sink_appends_across_writes_owner_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("diagnostics.jsonl");
+        let sink = LazyJsonlSink::new(&path);
+        sink.write(&a_record()).expect("write");
+        sink.write(&a_record()).expect("write");
+        sink.flush().expect("flush");
+
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(
+            text.lines().count(),
+            2,
+            "the second write must append, not truncate"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "a durable diagnostics file is owner-only");
+        }
+    }
+
+    /// A flush before anything was ever written must not itself create the
+    /// file — `LazyJsonlSink`'s whole point is staying silent on disk for a
+    /// run its bound target never reaches, and `Dx::flush` runs on every
+    /// process exit.
+    #[test]
+    fn flushing_an_unwritten_lazy_sink_creates_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("diagnostics.jsonl");
+        let sink = LazyJsonlSink::new(&path);
+        sink.flush().expect("flush");
+        assert!(!path.exists());
     }
 
     #[test]
