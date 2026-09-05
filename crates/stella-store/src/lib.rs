@@ -134,6 +134,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 mod ddl;
 mod dispatch;
 mod error;
+mod git_env;
 mod migrations;
 mod private;
 mod receipts;
