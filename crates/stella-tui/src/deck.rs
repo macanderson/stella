@@ -647,7 +647,7 @@ impl WorkspaceModel {
                 }
             }
             Inbound::Event { agent, event } => self.apply_event(agent, event),
-            // Local `!` output: transcript only. See `Inbound::ShellEvent` for
+            // Local `$` output: transcript only. See `Inbound::ShellEvent` for
             // why this must not go through `apply_event` — the status it would
             // derive (`Running`) has nothing to park it. An unknown id is a
             // no-op rather than an auto-register: the caller only ever names a

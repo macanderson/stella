@@ -14,9 +14,9 @@
 //! [`MidTurnPrompt::Ask`] raises a routing card (three routes, one keystroke
 //! each), and [`MidTurnPrompt::AlwaysSpawn`] is the old silent fork.
 //!
-//! Whatever the policy, a submission that states its own routing is never
-//! second-guessed: an explicit `>`, a slash command, a `!` shell line, and
-//! the first prompt after a double-Esc hold all carry their own intent.
+//! Whatever the policy, a submission that states its own route is never
+//! second-guessed. A `>`, a slash command, a `$` shell line, a `!` interrupt,
+//! and the first prompt after a double-Esc hold all say where they go.
 
 use super::composer_mode::{self, ComposerMode};
 use super::*;
@@ -116,12 +116,13 @@ fn broadcast(text: &str) -> Option<WorkspaceInput> {
     })
 }
 
-/// Whether `text` states its own routing and must not be second-guessed.
+/// Whether `text` states its own route and must not be second-guessed.
+///
+/// `$` and `!` never reach here. [`super::sigil::dispatch`] answers a marked
+/// line first. The rule is about the four marks, so all four are listed.
 fn carries_its_own_intent(text: &str) -> bool {
     let head = text.trim_start();
-    // `!` never reaches here (shell dispatch precedes it), but listing it
-    // keeps the rule readable as "the three markers".
-    head.starts_with('>') || head.starts_with('/') || head.starts_with('!')
+    head.starts_with('>') || head.starts_with('/') || head.starts_with('!') || head.starts_with('$')
 }
 
 /// A lead-bound prompt typed at a finished lane, with the lane named in
@@ -755,7 +756,7 @@ mod tests {
     /// A prompt that already says where it goes is not asked about again.
     #[test]
     fn stated_intent_is_never_second_guessed() {
-        for text in ["> steer me", "/help", "!ls", "  > padded"] {
+        for text in ["> steer me", "/help", "!ls", "$ ls", "  > padded"] {
             assert!(
                 carries_its_own_intent(text),
                 "{text:?} states its own route"
