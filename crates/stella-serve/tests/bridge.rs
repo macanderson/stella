@@ -514,20 +514,35 @@ async fn a_host_that_never_streams_is_unchanged() {
 /// Fragments count as progress against the reverse-request deadline: a host
 /// that keeps streaming past the configured window must not have its turn cut
 /// as "unanswered" — the deadline measures silence, not elapsed time.
+///
+/// This test races two real clocks against each other. `Session::start`
+/// drives the turn on its own OS thread with its own `tokio` runtime (see
+/// that fn's doc comment for why). So a paused clock in this test cannot
+/// reach the deadline's sleep, which ticks on the other thread. The margin
+/// below only needs to survive scheduler delay, not the whole deadline, so a
+/// generous margin is enough.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_streaming_host_resets_the_reverse_request_deadline() {
-    let deadline = Duration::from_millis(120);
+    // 300ms gaps against a 1s deadline: 3.3x slack per gap. A loaded CI
+    // runner delaying either side of a gap by a few tens of milliseconds
+    // must not false-fail this test — a 60ms gap against a 120ms deadline
+    // gave that delay only 60ms to hide in; 300ms against 1s gives it 700ms.
+    // `gap < deadline` still holds, so a single gap can never trip the
+    // deadline on its own; `6 * gap` (1.8s) still clears `deadline` (1s), so
+    // the turn only survives past the deadline if resetting it on progress
+    // is real.
+    let deadline = Duration::from_millis(1000);
     let mut session = Session::start(spec_with_deadline("keep streaming", deadline));
 
     let mut outcome = None;
     while let Some(frame) = session.next_frame().await {
         match frame {
             ServerFrame::ProviderRequest { request_id, .. } => {
-                // Stream fragments for ~3x the deadline, each gap well inside
-                // it, then answer. Under a fixed total window this turn would
-                // have been killed after `deadline`.
+                // Stream fragments for ~1.8x the deadline, each gap well
+                // inside it, then answer. Under a fixed total window this
+                // turn would have been killed after `deadline`.
                 for n in 0..6 {
-                    tokio::time::sleep(Duration::from_millis(60)).await;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
                     session
                         .resolve_provider_delta(
                             &request_id,
