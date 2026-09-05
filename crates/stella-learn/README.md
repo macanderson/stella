@@ -14,6 +14,9 @@ Five module trees do the work.
   it once. One copy is the point.
 - `comparison` and `self_tuning` — is arm B better than arm A? One report
   shape and one stats test, for every A/B this project runs.
+- `holdout` — the schedule that makes the arm they compare against. On some
+  turns it names one item to leave out, so that item gets a control arm. The
+  item is an opaque id, so one schedule serves skills, memories and rules.
 - `redact` — strip secrets out of text before it leaves the machine.
 
 ## Boundary
@@ -54,6 +57,7 @@ clause (b). `stella-records` needs the rule parser and the redactor, and
 | Change what counts as a secret | `src/redact.rs` |
 | Change the A/B report shape | `src/comparison/report.rs` |
 | Change the stats test | `src/self_tuning.rs` |
+| Change how often a holdout fires, or which item it picks | `src/holdout.rs` |
 
 ## God files — do not add lines
 

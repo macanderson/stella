@@ -81,7 +81,7 @@ pub(super) fn skill_promotion(
 /// The per-artifact holdout rate in force for a workspace
 /// (`context.retrieval.artifact_holdout_rate`).
 ///
-/// A second read of the same block [`session_retrieval_settings`] returns,
+/// A second read of the same block `session_retrieval_settings` returns,
 /// for the one caller that needs the number without a session: the deck's
 /// boot disclosure runs before any `SessionMemory` exists. It degrades to the
 /// shipped default for the reason that read does — a typo in a ranking knob
