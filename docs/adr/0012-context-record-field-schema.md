@@ -58,7 +58,7 @@ a Context PR at all: the provider-hosted record is authoritative for workspace
 scope and is never materialized into a rule file unless a separate repository
 publication is approved (`docs/spec/adaptive-context/context-pr.md` §2). That channel remains deferred.
 
-Implemented as `stella_core::records::publication_dir`.
+Implemented as `stella_records::records::publication_dir`.
 
 ## Decision 2 — The surface keeps `personal`, and maps to the ledger's `user`
 
@@ -80,7 +80,7 @@ ADR 0009 froze the *ledger* vocabulary, not the file surface, and the file
 surface is what humans hand-edit. Two vocabularies with one documented mapping
 beats one vocabulary that reads wrong in one of its two homes.
 
-Implemented as `stella_core::ingest::record::SharingScope`, with the mapping
+Implemented as `stella_records::ingest::record::SharingScope`, with the mapping
 documented on the type.
 
 ## Decision 3 — `set_id` is a citation *namespace*, not a citation
@@ -118,7 +118,7 @@ Two properties this has to have, and does:
   break the prompt cache on an unrelated rename. The final tiebreak is the
   content-derived `record_id`.
 
-Implemented as `stella_core::records::handle::assign_handles`.
+Implemented as `stella_records::records::handle::assign_handles`.
 
 ## Decision 5 — `applies_to.tasks` is a closed vocabulary with a loud warning
 
@@ -149,7 +149,7 @@ outright would be worse — the statement is still policy, and a `must` record
 injects regardless of task matching — so the record loads and carries a
 `RecordFinding::UnknownTask`.
 
-Adding a task name is an edit to `stella_core::records::KNOWN_TASKS` and a line
+Adding a task name is an edit to `stella_records::records::KNOWN_TASKS` and a line
 in this ADR: a vocabulary that grows without a decision is an open
 vocabulary with extra steps.
 
@@ -174,7 +174,7 @@ deadline:
 | `review_every` | re-probe on this cadence | probe runs; verdict decides |
 | `ttl` | this claim's shelf life | `on_expiry`, default demote-to-stale |
 
-Implemented in `stella_core::records::sweep`.
+Implemented in `stella_records::records::sweep`.
 
 ## Decision 7 — `tags` is kept, for human browsing only
 

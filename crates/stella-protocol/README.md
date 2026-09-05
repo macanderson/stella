@@ -232,7 +232,7 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
 - **The golden JCS vector in `context_event.rs` is meant to break — on three
   of the four edits, not all four.** Renaming, retyping, or adding a
   field of `CompiledContextFrameBuilt` breaks the golden line, because those
-  canonical bytes are the preimage `stella_core::context_record::hash` builds
+  canonical bytes are the preimage `stella_protocol::hash` builds
   `record_hash` from. **Reordering does not**: RFC 8785 (JCS) sorts object
   keys lexicographically, so two structurally-identical values serialize to
   the same bytes regardless of field declaration order. The dev-dep pins the
