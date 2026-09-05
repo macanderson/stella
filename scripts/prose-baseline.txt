@@ -4344,13 +4344,6 @@ scripts/check-releases-published.sh bare-issue-citation 1
 scripts/check-releases-published.sh issue-reference 3
 scripts/check-rendering-facts.sh issue-reference 2
 scripts/check-repro-wiring.sh issue-reference 5
-scripts/check-role-names.sh bare-issue-citation 1
-scripts/check-role-names.sh filler-adverb 1
-scripts/check-role-names.sh historical-reference 2
-scripts/check-role-names.sh honesty-declaration 2
-scripts/check-role-names.sh interface-jargon 1
-scripts/check-role-names.sh issue-reference 13
-scripts/check-role-names.sh rust-jargon 6
 scripts/check-stat-portability.sh bare-issue-citation 1
 scripts/check-stat-portability.sh issue-reference 5
 scripts/check-tokens.py filler-adverb 1

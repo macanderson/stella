@@ -1,0 +1,62 @@
+name: dod-recheck
+
+# Re-read a DoD checklist the moment the checklist changes (#6079).
+#
+# `dod-check` judges the linked issue's checklist, and fires on pull request
+# events. Those are two different objects. Ticking the last box on the issue —
+# the remedy the failure message names — raises no pull request event, so the
+# red `dod / dod` stands until someone touches the pull request.
+#
+# This workflow is the missing event. `scripts/dod-recheck.sh` finds the open
+# pull requests whose body names the edited issue and runs the failed check
+# again on each. The new run reports under the same name on the same commit,
+# which is all the branch rules read — so nothing here has to report a check
+# against a head this event does not own.
+#
+# Same shape as `main-red-clear.yml`, for the same bug one gate over: a check
+# that was right when it ran, on a commit with no event left to correct it.
+
+on:
+  issues:
+    types: [edited]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: The issue number whose pull requests should be re-checked
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # To read each open pull request's body and head commit.
+  pull-requests: read
+  # To run the failed check again. This is the scope an agent session does not
+  # hold, which is why the re-run lives in a workflow rather than in the
+  # session that ticked the box.
+  actions: write
+
+# One sweep per issue. A cancelled sweep costs nothing: the next one asks the
+# same questions and re-runs whatever is still failing.
+concurrency:
+  group: dod-recheck-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: true
+
+jobs:
+  recheck:
+    name: re-read the checklist the issue edit changed
+    # A title-only edit changes no checklist. GitHub sends `changes.body` only
+    # when the body moved, so this drops half the traffic before it starts a
+    # runner.
+    if: >-
+      github.event_name != 'issues'
+      || github.event.changes.body != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Re-run the dod check on every pull request naming this issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: ./scripts/dod-recheck.sh "$ISSUE"

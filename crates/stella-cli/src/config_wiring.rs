@@ -26,8 +26,8 @@
 //! product to be wrong.
 //!
 //! The shape stays a `Vec` rather than collapsing to one struct because the
-//! rows come back in slice 5 (#3909) as **plugin-declared seats**, resolved
-//! the same way and rendered by the same `/models` dialog.
+//! rows come back as **plugin-declared seats**, resolved the same way and
+//! rendered by the same `/models` dialog (#6088).
 //! [`RoleWiring::role`] is a `String` for that reason: the deck's
 //! `envelope::roles::role_table` already renders a row for a role it has never
 //! heard of, so a seat needs no new plumbing here — only a row.
@@ -36,13 +36,13 @@ use crate::engine_config::{ModelSpec, model_spec_for, tuning_for};
 use crate::settings::AgentEngineConfig;
 use stella_protocol::ReasoningEffort;
 
-/// The one role core has. Seats a plugin declares join this list in #3909.
+/// The one role core has. Seats a plugin declares join this list in #6088.
 pub const DEFAULT_ROLE: &str = "default";
 
 /// One role's resolved wiring.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoleWiring {
-    /// The role's name — [`DEFAULT_ROLE`], or (from #3909) a plugin-declared
+    /// The role's name — [`DEFAULT_ROLE`], or (from #6088) a plugin-declared
     /// seat. A `String` because core does not enumerate the possibilities.
     pub role: String,
     /// Provider id and the slug as it goes on the wire.

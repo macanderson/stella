@@ -5,7 +5,7 @@ status: living
 origin: delegation-to-DoD steering pattern, 2025–2026
 trigger: declaring any issue or task complete
 autonomy: L2
-enforcement: AGENTS.md standing-decisions block (imported by CLAUDE.md); .github/ISSUE_TEMPLATE/task.yml with mandatory DoD checklist; dod-check merge gate — a PR must link the issue it closes and every linked DoD item must be ticked before it can merge; dod-close-guard reopens an issue closed as completed while DoD items remain unchecked. Both are reusable workflows implemented once in oxagen and called by the other four repos (ADR-039).
+enforcement: AGENTS.md standing-decisions block (imported by CLAUDE.md); .github/ISSUE_TEMPLATE/task.yml with mandatory DoD checklist; dod-check merge gate — a PR must claim to close an issue (or reference one with `Refs #N` without claiming to close it) and every issue it claims to close must have its DoD fully ticked before it can merge; dod-close-guard reopens an issue closed as completed while DoD items remain unchecked. Both are reusable workflows implemented once in oxagen and called by the other four repos (ADR-039).
 ---
 
 ## Directive
@@ -48,6 +48,18 @@ description so that every use is enumerable (`is:pr label:no-issue`): an
 escape hatch nobody can audit becomes the default path. Reach for it when
 filing an issue would be pure ceremony, never to skip a DoD that should have
 been written.
+
+A pull request that advances an issue without finishing it links that issue
+with `Refs #N` instead of `Closes #N`. `Refs` does not close, so the merge
+gate does not hold that PR against `#N`'s DoD — there is nothing here for it
+to verify, because the PR is not claiming the work is done. A PR may carry
+both: `Closes #A` closes and is gated on `#A`'s DoD; `Refs #B` beside it is
+recorded as a reference and never enforced. A PR whose body disclaims a
+close in prose ("this PR does not close #N") is read the same way as a bare
+mention — it is not a claim to close, and is not gated on `#N` either, even
+though GitHub's own closing-keyword parser has no notion of negation and may
+still close `#N` on merge regardless of the "not". That is a gap in GitHub's
+parser, not something this gate can veto from the PR side.
 
 Issues predating the task template have no DoD section at all. The close
 guard notes them and leaves them closed rather than reopening the historical

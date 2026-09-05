@@ -91,7 +91,6 @@ python3 ./scripts/check-adr-numbering.py
 python3 ./scripts/check-guard-trigger-coverage.py
 python3 ./scripts/check-priority-scheme.py
 ./scripts/check-left-behind.sh
-./scripts/check-role-names.sh
 python3 ./scripts/check-retired-model-keys.py
 ./scripts/check-stat-portability.sh
 python3 ./scripts/check-module-reachability.py

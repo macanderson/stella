@@ -42,29 +42,52 @@ const DEFAULT_PROVIDER: &str = "openai";
 /// — the recorder stops accumulating even if the stop never arrives.
 const MAX_CAPTURE_SECS: u32 = 120;
 
-/// Whether dictation is switched on for this workspace (`voice.enabled`) —
-/// threaded into `DeckOptions` so the deck's machine never arms when holding
-/// space is meant to type spaces.
-pub(super) fn enabled(cfg: &Config) -> bool {
-    Settings::load(&cfg.workspace_root)
-        .ok()
-        .and_then(|s| s.voice.as_ref().and_then(|v| v.enabled))
-        .unwrap_or(false)
+/// The two `[voice]` values the deck is handed at start, read from one load
+/// of the settings stack.
+///
+/// One struct rather than one resolver per field: `run_deck_session` fills
+/// two `DeckOptions` fields from these, and a resolver per field read and
+/// merged the user, managed and project settings files once per field. The
+/// next voice setting is a field here, not a third load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct VoiceOptions {
+    /// Whether dictation is switched on for this workspace (`voice.enabled`),
+    /// so the deck's machine never arms when holding space is meant to type
+    /// spaces.
+    pub(super) enabled: bool,
+    /// Which spacebar gesture dictates (`voice.mode`).
+    pub(super) mode: stella_tui::voice::VoiceMode,
 }
 
-/// Which spacebar gesture dictates (`voice.mode`), threaded into
-/// `DeckOptions` beside [`enabled`].
-///
-/// Validated here rather than stored typed, the house convention for a slug
-/// in settings: an unreadable value falls back to the default gesture, so a
-/// typo costs the mode a person asked for and never dictation itself.
-pub(super) fn mode(cfg: &Config) -> stella_tui::voice::VoiceMode {
-    Settings::load(&cfg.workspace_root)
-        .ok()
-        .and_then(|s| s.voice.as_ref().and_then(|v| v.mode.clone()))
-        .as_deref()
-        .and_then(stella_tui::voice::VoiceMode::parse)
-        .unwrap_or_default()
+impl VoiceOptions {
+    /// Read both values from `cfg`'s workspace, loading the settings stack
+    /// once.
+    pub(super) fn load(cfg: &Config) -> Self {
+        Self::from_loaded(Settings::load(&cfg.workspace_root).as_ref())
+    }
+
+    /// The pure half of [`Self::load`]: what one load of the settings stack
+    /// resolves to.
+    ///
+    /// An unreadable stack yields the defaults, dictation off on the hold
+    /// gesture, exactly as an absent `[voice]` section does: the deck must
+    /// start whatever a settings file holds, and the parse error is already
+    /// reported where the settings are loaded for everything else.
+    ///
+    /// The gesture is validated here rather than stored typed, the house
+    /// convention for a slug in settings: an unreadable value falls back to
+    /// the default gesture, so a typo costs the mode a person asked for and
+    /// never dictation itself.
+    fn from_loaded(loaded: Result<&Settings, &String>) -> Self {
+        let voice = loaded.ok().and_then(|settings| settings.voice.as_ref());
+        Self {
+            enabled: voice.and_then(|v| v.enabled).unwrap_or(false),
+            mode: voice
+                .and_then(|v| v.mode.as_deref())
+                .and_then(stella_tui::voice::VoiceMode::parse)
+                .unwrap_or_default(),
+        }
+    }
 }
 
 /// One in-flight capture, or nothing. Held by `run_deck_session` across the
@@ -585,6 +608,52 @@ mod tests {
             .unwrap();
         assert!(model_at < lang_at && lang_at < file_at);
         assert!(text.ends_with("\r\n--B--\r\n"));
+    }
+
+    /// **The witness for the one-load resolver.** Both deck values come out
+    /// of one loaded stack, and a stack that cannot be read yields the defaults: dictation
+    /// off, on the hold gesture. Driven through `Settings::load_from` on a
+    /// file that is not JSON, so the unreadable case is the real one and not
+    /// a hand-built `Err`.
+    #[test]
+    fn an_unreadable_settings_stack_yields_dictation_off_on_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{ this is not json").unwrap();
+        let loaded = Settings::load_from(std::slice::from_ref(&path));
+        assert!(loaded.is_err(), "the fixture must be unreadable");
+        assert_eq!(
+            VoiceOptions::from_loaded(loaded.as_ref()),
+            VoiceOptions {
+                enabled: false,
+                mode: stella_tui::voice::VoiceMode::Hold,
+            }
+        );
+    }
+
+    #[test]
+    fn a_readable_voice_section_fills_both_deck_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"voice": {"enabled": true, "mode": "tap"}}"#).unwrap();
+        let loaded = Settings::load_from(std::slice::from_ref(&path));
+        assert_eq!(
+            VoiceOptions::from_loaded(loaded.as_ref()),
+            VoiceOptions {
+                enabled: true,
+                mode: stella_tui::voice::VoiceMode::Tap,
+            }
+        );
+        // A gesture slug nobody defined costs the gesture, never dictation.
+        std::fs::write(&path, r#"{"voice": {"enabled": true, "mode": "hum"}}"#).unwrap();
+        let loaded = Settings::load_from(std::slice::from_ref(&path));
+        assert_eq!(
+            VoiceOptions::from_loaded(loaded.as_ref()),
+            VoiceOptions {
+                enabled: true,
+                mode: stella_tui::voice::VoiceMode::Hold,
+            }
+        );
     }
 
     #[test]

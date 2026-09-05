@@ -9,8 +9,8 @@
 //!
 //! - The `sub_agent` bracket in the `events` journal (`Started`/`Finished`,
 //!   `stella_protocol::SubAgentPhase`) carries the child's task, budget,
-//!   depth, write access, pinned reasoning effort, start/finish timestamps,
-//!   final status, cost, steps and summary. This is a sanctioned `events`
+//!   depth, write access, pinned reasoning effort, seat, start/finish
+//!   timestamps, final status, cost, steps and summary. This is a sanctioned `events`
 //!   read in the same sense as `sessions::execution_tendencies`: the filter
 //!   is `execution_id`-first, served by the store's `UNIQUE (execution_id,
 //!   seq)` index; a cross-execution children view would need a store-side
@@ -20,6 +20,17 @@
 //!   the child's calls actually ran on, token totals, and wall-clock per
 //!   call. A store older than v33 has no `sub_agent_id` column and degrades
 //!   to bracket-only rows, not an error.
+//!
+//! # The seat is read, never guessed
+//!
+//! `seat` is the word the requester used for the job this child did. A
+//! plugin picks it, so this page cannot hold a list of the ones it might
+//! see. The row copies whatever the bracket says and shows it. A name no
+//! build here has ever shipped draws the same row as `reviewer` does.
+//!
+//! `null` means nobody named a seat. A `delegate` child names none, and
+//! neither does a journal written before seats existed. The row says so
+//! rather than inventing one.
 //!
 //! A child with no `Finished` row reports `status: null` — the fold does not
 //! guess whether it is still running or its parent died mid-flight; the
@@ -75,6 +86,7 @@ pub(crate) fn execution_subagents(conn: &Connection, id: i64) -> Result<Value, D
                 let entry = json!({
                     "agent_id": agent_id,
                     "instruction_preview": payload.get("instruction_preview").cloned().unwrap_or(Value::Null),
+                    "seat": payload.get("seat").cloned().unwrap_or(Value::Null),
                     "effort": payload.get("effort").cloned().unwrap_or(Value::Null),
                     "budget_usd": payload.get("budget_usd").cloned().unwrap_or(Value::Null),
                     "write_access": payload.get("write_access").cloned().unwrap_or(json!(false)),
@@ -106,6 +118,7 @@ pub(crate) fn execution_subagents(conn: &Connection, id: i64) -> Result<Value, D
                     agents.push(json!({
                         "agent_id": agent_id,
                         "instruction_preview": Value::Null,
+                        "seat": Value::Null,
                         "effort": Value::Null,
                         "budget_usd": Value::Null,
                         "write_access": false,
@@ -175,6 +188,7 @@ pub(crate) fn execution_subagents(conn: &Connection, id: i64) -> Result<Value, D
             agents.push(json!({
                 "agent_id": agent_id,
                 "instruction_preview": Value::Null,
+                "seat": Value::Null,
                 "effort": Value::Null,
                 "budget_usd": Value::Null,
                 "write_access": false,
@@ -396,6 +410,56 @@ mod tests {
         assert_eq!(
             audit["cost_usd"], 0.002,
             "an unfinished child's spend is the metering sum"
+        );
+    }
+
+    /// **The seat witness.** A child that ran at a seat no build here has
+    /// ever shipped reaches the turn page carrying that word.
+    ///
+    /// It fails on the code before this change for a structural reason: the
+    /// projection had no `seat` key at all, so the row read `undefined` for
+    /// every child and the page could not draw the name whatever it was.
+    ///
+    /// The second child pins the other half. A `delegate` names no seat, and
+    /// the row must say `null` rather than borrow the sibling's word.
+    #[test]
+    fn a_seat_this_build_has_never_seen_reaches_the_row() {
+        let conn = conn();
+        event(
+            &conn,
+            11,
+            1,
+            "2026-09-05 10:00:00",
+            json!({
+                "phase": "started", "agent_id": "plugin:grader/second-opinion#0",
+                "instruction_preview": "does the diff drop the retry?",
+                "write_access": false, "depth": 1,
+                "seat": "grader/second-opinion",
+            }),
+        );
+        event(
+            &conn,
+            11,
+            2,
+            "2026-09-05 10:00:01",
+            json!({
+                "phase": "started", "agent_id": "search-1",
+                "instruction_preview": "find the retry policy",
+                "write_access": false, "depth": 1,
+            }),
+        );
+
+        let out = execution_subagents(&conn, 11).expect("fold");
+        let agents = out["agents"].as_array().expect("agents");
+        assert_eq!(agents.len(), 2, "{out}");
+        assert_eq!(
+            agents[0]["seat"], "grader/second-opinion",
+            "the bracket's own word, copied rather than matched: {out}"
+        );
+        assert_eq!(
+            agents[1]["seat"],
+            Value::Null,
+            "a child that named no seat gets none: {out}"
         );
     }
 

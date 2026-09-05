@@ -800,22 +800,26 @@ pub async fn run_deck_session(
     // default (`stella-dark`).
     theme_cmd::apply_persisted(cfg);
 
+    let dictation = voice::VoiceOptions::load(cfg);
     let opts = DeckOptions {
         debug_log_path: debug_log_path(),
         slash_commands: deck_slash_commands(&custom),
-        initial_graph: agent::graph_snapshot(&cfg.workspace_root),
+        // Seeded below, once the deck is up: reading the graph is SQLite, and
+        // reading it here delayed the first frame by however long it took.
+        initial_graph: None,
         recent_path: Some(palette_recent_path(&cfg.workspace_root)),
         no_anim,
         accessible,
         mouse_capture: mouse,
         mid_turn_prompt: steer::mid_turn_prompt_policy(cfg),
-        voice_enabled: voice::enabled(cfg),
-        voice_mode: voice::mode(cfg),
+        voice_enabled: dictation.enabled,
+        voice_mode: dictation.mode,
     };
     // The deck owns its channel ends and runs on its own thread, so nothing
     // the driver blocks on can hold a keystroke (`deck_thread`).
     let deck =
         deck_thread::spawn(opts, deck_rx, sub_tx).map_err(|e| format!("deck thread: {e}"))?;
+    graph_input::seed(cfg.workspace_root.clone(), in_tx.clone());
 
     // The launch cinematic: hold the splash's battle loop open over session
     // init and release it once BOTH async legs — the background code-graph

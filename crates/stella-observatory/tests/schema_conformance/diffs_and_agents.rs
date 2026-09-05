@@ -189,6 +189,14 @@ fn the_turn_page_folds_a_delegates_bracket_and_metering_against_the_real_schema(
     assert_eq!(a["tokens_in"], 300, "{out}");
     assert!(a["started_ts"].is_string(), "{out}");
     assert!(a["finished_ts"].is_string(), "{out}");
+    // The seat rides the same bracket. This child is a `delegate`, which
+    // names none, so the value is null — but the KEY must be there, or the
+    // page reads `undefined` for every child and can draw no seat at all.
+    assert!(
+        a.get("seat").is_some(),
+        "the row carries a seat field: {out}"
+    );
+    assert!(a["seat"].is_null(), "a delegate names no seat: {out}");
 }
 
 /// **The witness for #4628.** A turn names the deck lanes it dispatched, and

@@ -995,6 +995,7 @@ mod tool_report;
 pub use tool_report::ToolReportRow;
 // Drain observability: last-attempt record + cursor/backlog readers (#464).
 pub mod drain_state;
+mod orphans;
 // Project re-key: merge a forked path-derived identity into the stable one (#408).
 mod rekey;
 
@@ -1119,7 +1120,7 @@ mod tests {
         }
     }
 
-    fn source_row(source_rowid: i64, cost: f64) -> crate::SourceTelemetryRow {
+    pub(super) fn source_row(source_rowid: i64, cost: f64) -> crate::SourceTelemetryRow {
         crate::SourceTelemetryRow {
             source_rowid,
             execution_id: 1,

@@ -126,6 +126,11 @@ mod plan_economics;
 #[path = "deck_render_snapshots/voice.rs"]
 mod voice;
 
+/// The SETTINGS tab's SEATS pane. See [`graph`]'s doc for the `#[path]`, and
+/// [`plan_economics`]'s for why this line is appended.
+#[path = "deck_render_snapshots/settings_seats.rs"]
+mod settings_seats;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.

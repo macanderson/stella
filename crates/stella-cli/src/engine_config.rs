@@ -617,10 +617,10 @@ pub fn state_from_settings(
     let agents = EngineRole::ALL
         .iter()
         .map(|role| {
-            // One role, so one arm. The `match` survives the collapse
-            // deliberately: slice 5 (#3909) re-populates this from the live
-            // session's plugin seats, and a `match` is where each new row's
-            // source lands.
+            // One role, so one arm. The `match` survives the collapse so a
+            // second editable agent has somewhere to declare where its
+            // overrides come from. Plugin seats did not become one: they are
+            // `seats` below, an open map the deck reads beside this list.
             let agent = match role {
                 EngineRole::Default => engine.agent(),
             };

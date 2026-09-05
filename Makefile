@@ -41,7 +41,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
                     guard-trigger-coverage priority-scheme left-behind \
-                    role-names retired-model-keys \
+                    retired-model-keys \
                     stat-portability module-reachability core-reachability \
                     typed-errors \
                     tool-error-class \
@@ -816,10 +816,6 @@ left-behind: ## Assert every TODO/FIXME/XXX/HACK in code names a tracking issue 
 left-behind-update: ## Regenerate the left-behind baseline (it should stay empty)
 	@./scripts/check-left-behind.sh --update
 
-.PHONY: role-names
-role-names: ## Assert the agent-config role names match across Rust, Python and JS (#1449)
-	@./scripts/check-role-names.sh
-
 .PHONY: retired-model-keys
 retired-model-keys: ## Assert no shipping Rust spells a retired pipeline_<role>_model key (#6061)
 	@python3 ./scripts/check-retired-model-keys.py
@@ -940,6 +936,18 @@ main-red-claim: ## Ask whether somebody is already repairing a red `main` (reads
 .PHONY: main-red-claim-test
 main-red-claim-test: ## Test the red-main claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
 	./scripts/test-main-red-claim.sh
+
+# The same staleness one gate over: `dod-check` reads the linked issue's
+# checklist and fires on pull request events, so ticking the last box on the
+# issue leaves the red check standing (#6079). CI runs the check again on an
+# issue edit; this prints what it would re-run, and changes nothing.
+.PHONY: dod-recheck
+dod-recheck: ## List the failing `dod / dod` checks an issue's PRs still carry: make dod-recheck N=6079
+	@./scripts/dod-recheck.sh --dry-run $(N)
+
+.PHONY: dod-recheck-test
+dod-recheck-test: ## Test the DoD re-check, both negative controls included (hermetic; not part of `gate`)
+	./scripts/test-dod-recheck.sh
 
 .PHONY: issue-claim
 issue-claim: ## Ask whether somebody is already implementing an issue: make issue-claim N=5045

@@ -114,7 +114,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)
-                         #   + left-behind + role-names
+                         #   + left-behind
                          #   + retired-model-keys (no shipping Rust
                          #     spells a key #3908 retired)
                          #   + stat-portability + module-reachability
@@ -313,6 +313,24 @@ or takes the label off it. Both fail open, and running it twice re-runs nothing
 the first pass cleared. `make clear-main-red-holds` prints what a sweep would
 re-run without re-running it; `make main-red-hold-test` covers the clearing
 half beside the blocking one.
+
+**The same staleness reaches `dod-check`, one gate over.** That check reads the
+linked issue's checklist and fires on pull request events, so the object it
+judges and the events it hears are two different things. Tick the last box on
+the issue — the remedy its own failure message names — and nothing happens. The
+red `dod / dod` is still the last run on that commit. On 2026-09-05 four pull
+requests sat red on that check alone, and three had to be nudged by editing a
+pull request body somebody else wrote (`#6079`). `dod-recheck.yml` is the missing
+event: on an edit to any issue it runs `scripts/dod-recheck.sh`, which finds the
+open pull requests whose body names that issue and runs the failed check again
+on each. Running the old run again, rather than reporting a new check, is what
+settles the awkward half — the new run lands under the same name on the same
+commit, so nothing here has to report a check against a head the issue event
+does not own. The failure is the scope too: a pull request whose `dod / dod`
+already passes is left alone, which is what stops one body edit fanning out
+over every pull request that ever named the issue. It fails open, like the rest
+of this chain. `make dod-recheck N=6079` prints what a sweep would re-run;
+`make dod-recheck-test` covers it, both negative controls included.
 
 The chain has a third link, and it is not a workflow: **before you repair a
 red `main`, check whether somebody already is.** On 2026-08-24 three sessions
@@ -1559,7 +1577,10 @@ macanderson org repos.
 - **[SCR-003](docs/scr/SCR-003-dod-verified-close.md) — Definition of
   done:** An issue closes only when every DoD checklist item is satisfied
   and verified. Reference-grade includes tests, code comments, docs, and
-  CI — not just the implementation.
+  CI — not just the implementation. A PR that advances an issue without
+  finishing it links it with `Refs #N` rather than `Closes #N`: `Refs`
+  does not close, so the merge gate does not hold that PR against the
+  issue's DoD. A PR may carry both, and is gated only on what it closes.
 - **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Residue:**
   Before declaring any task complete, file a GitHub issue for every
   follow-up, tech-debt item, or logical next step you noticed. Apply ONLY

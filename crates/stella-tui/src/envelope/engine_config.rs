@@ -17,13 +17,13 @@
 /// stopped steering anything. An overlay tab that writes a dead key is worse
 /// than a missing tab — it reports success.
 ///
-/// It stays an enum rather than collapsing into a bare struct because the
-/// pane's replacement is a **list**, not a single row: slice 5 (#3909) turns
-/// this into rows from the live session — the installed plugins' declared
-/// seats, each with its assigned model or `default` — the way
-/// `views/tools.rs` already sources MCP and custom tools. Keeping the
-/// role-indexed shape is what lets that land without re-plumbing
-/// `EngineConfigState`.
+/// It stays an enum rather than collapsing into a bare struct because a
+/// second editable agent would be one more name in this list rather than a new
+/// shape everywhere. The plugin seats are not in it: they are
+/// [`EngineConfigState::seats`], an open list the SEATS pane draws beside the
+/// resolved roles ([`crate::views::seats::rows`]), the way `views/tools.rs`
+/// sources MCP and custom tools. This enum indexes
+/// `agent_engine_config.agents` and nothing more.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EngineRole {
     Default,

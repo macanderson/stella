@@ -86,7 +86,7 @@ pub fn configured_role_pins(
     // both: settings can no longer express a model for either, so publishing a
     // pin for them would be the deck reporting an intent nothing recorded.
     // They now render unconfigured, which is what they are — and what a
-    // plugin's declared seat will replace in #3909.
+    // plugin's declared seat will replace in #6088.
     [PipelineRole::Worker]
         .into_iter()
         .map(|slot| {

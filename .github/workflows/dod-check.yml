@@ -16,7 +16,12 @@ name: dod-check
 
 on:
   pull_request:
-    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+    # `ready_for_review` because a PR opened as a draft and later marked ready
+    # never re-ran the check, so it kept whatever verdict its draft head got
+    # (oxagen#2638). The caller owns this list; the implementation cannot add
+    # an event on our behalf.
+    types:
+      [opened, edited, reopened, ready_for_review, synchronize, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -25,4 +30,4 @@ permissions:
 
 jobs:
   dod:
-    uses: macanderson/oxagen/.github/workflows/dod-check.yml@acf3509c0012240362e8af8eb91bb1aad6f9a428 # oxagen main, #2643
+    uses: macanderson/oxagen/.github/workflows/dod-check.yml@f4c13eb924f6b2ac63da2e12d0504d7c2278af7f # oxagen main, #2663
