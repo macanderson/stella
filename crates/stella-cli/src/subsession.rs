@@ -23,6 +23,7 @@
 //! `task_assign` requests are reported on its lane instead of spawning.
 
 mod closeout;
+mod lane_events;
 mod notify;
 
 use std::collections::HashMap;
@@ -308,6 +309,7 @@ impl SubSessions {
                 prompt: String::new(),
                 notify_title: String::new(),
                 dispatched_by: None,
+                board_task: None,
             },
         )
         .0
@@ -651,6 +653,15 @@ pub(crate) struct SubSessionSpec {
     /// which is most of them — no turn asked for those, and claiming one would
     /// invent a parent.
     pub dispatched_by: Option<i64>,
+    /// The board task this lane was assigned, for a `task_assign` worker.
+    /// Every event the lane sends is stamped with it, so the task's ledger and
+    /// cost hold the work its worker really did.
+    ///
+    /// `None` for a `req:<n>` lane: a prompt from the composer is filed
+    /// against no task, and a lane that borrowed a board id would put its work
+    /// in a stranger's ledger. [`lane_events`] holds why this is a constant
+    /// rather than a read of the lane's own board.
+    pub board_task: Option<stella_protocol::TaskId>,
 }
 
 /// Build the worker prompt for a `task_assign` spawn: the task's identity,
@@ -1106,8 +1117,13 @@ async fn run_worker(
         registry.hook_bus(),
     );
     // Registry-born events (task board, sub-agent lifecycle) ride this
-    // lane's own channel, so the lane's live view and its journal agree.
-    registry.attach_events(stella_core::EventSender::new(tx.clone()));
+    // lane's own channel, so the lane's live view and its journal agree — and
+    // they carry the board task this lane was assigned, which is what puts a
+    // delegated task's evidence and cost in its own ledger. The engine is
+    // driven through this same sender below, for the reason
+    // `lane_events::open_lane_stream` gives.
+    let events = lane_events::open_lane_stream(spec, &tx);
+    registry.attach_events(events.clone());
     // `Arc` so the same gate can be published for the turn as well as
     // borrowed by it: a lane parked at Pause must not keep spending inside a
     // sub-agent it dispatched, and this lane has a dispatcher (installed
@@ -1135,9 +1151,13 @@ async fn run_worker(
         .with_gate(gate.as_ref())
         .with_steering(tap.as_ref());
         // The run-terminal `Complete` this lane's deck row settles on is
-        // synthesized by its forwarder when the stream closes (#3379), so the
-        // turn is driven on the plain sender exactly as before.
-        let turn = engine.run_turn(&mut messages, &mut budget, &tx);
+        // synthesized by its forwarder when the stream closes (#3379), so this
+        // sender needs no ending wrapper — only the lane's task tag, which is
+        // why the turn is driven on it rather than on the raw channel. A raw
+        // channel is wrapped in a second, unattached sender inside the engine,
+        // and the lane would then tag its registry's events and none of its
+        // engine's — the shape `open_turn_streams_raw` names.
+        let turn = engine.run_turn_with_sender(&mut messages, &mut budget, &events);
         // A dropped sender (driver gone at session teardown) must not read
         // as a stop — only an actual signal cancels, so the wait parks
         // forever on a closed channel and the turn always wins the race.
@@ -1154,6 +1174,11 @@ async fn run_worker(
     // No boundary is left to steer at: a steer from here on is refused by
     // `SubSessions::steer` and re-parked, the same latch the lead sets.
     tap.mark_settling();
+    // The lane's tagging sender is one more clone of this channel, and its
+    // work ended when the engine returned. Holding it would leave the
+    // forwarder's `recv()` pending forever and wedge the lane after the deck
+    // painted it done — the same drop the lead turn owes its re-query adapter.
+    drop(events);
     let persistence_complete = close_turn_stream(&registry, tx, forwarder)
         .await
         .persistence_complete;
@@ -1286,6 +1311,9 @@ pub(crate) fn spawn_prompt_lane(text: String, subs: &mut SubSessions, ctx: LaneC
         // function's callers: the drain's backlog and the agents page's
         // `SpawnLane` are each a person's own words, never a delegation.
         dispatched_by: None,
+        // ...and neither is filed against a board task, so this lane's work
+        // belongs in no task's ledger.
+        board_task: None,
     };
     launch(subs, &lane, spec, ctx);
     lane
@@ -1389,6 +1417,9 @@ pub(crate) fn spawn_task_worker(queued: &QueuedSpawn, subs: &mut SubSessions, ct
             prompt_line(&req.subject, 40)
         ),
         dispatched_by: queued.dispatched_by,
+        // The one task this lane exists to work, so every event it sends is
+        // that task's evidence and that task's cost.
+        board_task: Some(stella_protocol::TaskId::new(req.task_id.clone())),
     };
     launch(subs, &lane, spec, ctx);
 }
