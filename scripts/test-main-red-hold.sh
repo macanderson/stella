@@ -180,6 +180,29 @@ if [ $? -eq 2 ]; then ok "clearing: a flag missing its value exits 2, not 0"; el
 out="$("$CLEAR" --nonsense 2>&1)"
 if [ $? -eq 2 ]; then ok "clearing: an unknown flag exits 2, not 0"; else bad "clearing: an unknown flag did not exit 2"; fi
 
+# A sweep nothing calls clears nothing, so the wiring is part of the fix. The
+# three cases below read the workflow files. On a tree where recovery does not
+# call the sweep, they fail.
+holds_text() { # holds_text <name> <file> <pattern>
+  local name="$1" file="$repo_root/.github/workflows/$2" pattern="$3"
+  if [ -f "$file" ] && grep -q -- "$pattern" "$file"; then
+    ok "$name"
+  else
+    bad "$name — $2 does not carry '$pattern'"
+  fi
+}
+
+holds_text "the canary sweeps on the run that closes the issue" \
+  main-canary.yml "clear-main-red-holds.sh"
+
+holds_text "...and holds the write scope that a re-run needs" \
+  main-canary.yml "actions: write"
+
+# The canary closes with `GITHUB_TOKEN`, and no event from that token starts a
+# workflow. So the issue event is the second path, not the only one.
+holds_text "a person closing the issue by hand starts a sweep too" \
+  main-red-clear.yml "types: \[closed, unlabeled\]"
+
 printf '\n'
 if [ "$fail" -eq 0 ]; then
   printf '\033[32mmain-red-hold-test: OK\033[0m — %d checks passed\n' "$pass"
