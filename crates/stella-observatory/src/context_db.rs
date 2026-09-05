@@ -17,7 +17,7 @@
 //!   missing file, table, or column is a state — each section degrades to an
 //!   empty payload and fills in the moment a session migrates the store.
 //! - **Folds are linked, never copied.** Record bodies deserialize through
-//!   `stella_core::context_record`'s own types, and selection health goes
+//!   `stella_records::context_record`'s own types, and selection health goes
 //!   through the same `fold_selection_health` the CLI runs — pure decision
 //!   logic over owned data (AGENTS.md #2), the same bargain that lets this
 //!   crate link the self-driving fold. What *is* re-implemented here is the
@@ -36,7 +36,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 use serde_json::{Value, json};
-use stella_core::context_record::{
+use stella_records::context_record::{
     ContextUse, ContextUseFeedback, PromotionAction, PromotionEventRecord, ProposalRecord,
     SelectionHealthPolicy, fold_selection_health,
 };

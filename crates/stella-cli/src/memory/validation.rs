@@ -39,7 +39,7 @@
 use std::path::Path;
 
 use stella_context::ContextStore;
-use stella_core::context_record::{
+use stella_records::context_record::{
     Confidence, ContextEvaluationMethod, ContextInfluenceStage, ContextOutcomeRelation,
     ContextRecordKind, ContextUse, ContextUseEvaluation, ContextUseFeedback,
 };

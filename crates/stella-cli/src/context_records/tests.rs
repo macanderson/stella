@@ -1,7 +1,7 @@
 //! The I/O half, against real files.
 
 use super::*;
-use stella_core::records::{Channel, Decision};
+use stella_records::records::{Channel, Decision};
 
 /// A proposal file as `stella ingest` writes one.
 fn write_proposal_file(root: &Path, lineage: &str, statement: &str, probe_path: &str) {
@@ -290,7 +290,7 @@ fn decisions_are_append_only_and_replay_to_the_same_state() {
 
     let read_back = read_decisions(root.path());
     assert_eq!(read_back, vec![first.clone(), second.clone()]);
-    let states = stella_core::records::decision::fold(&read_back);
+    let states = stella_records::records::decision::fold(&read_back);
     assert_eq!(states["cand-1"].decision, Decision::Ignore);
     assert_eq!(states["cand-2"].decision, Decision::Keep);
 
@@ -432,8 +432,8 @@ fn the_published_path_maps_back_to_its_lineage() {
 }
 
 /// One enforcement grant, with the chain fields left for `next_line` to stamp.
-fn grant(lineage: &str, reason: &str) -> stella_core::records::promotion::PromotionEvent {
-    stella_core::records::promotion::PromotionEvent {
+fn grant(lineage: &str, reason: &str) -> stella_records::records::promotion::PromotionEvent {
+    stella_records::records::promotion::PromotionEvent {
         seq: 0,
         prev: String::new(),
         at: "2026-08-04T09:00:00Z".into(),
@@ -444,17 +444,17 @@ fn grant(lineage: &str, reason: &str) -> stella_core::records::promotion::Promot
         proposer: None,
         reason: reason.into(),
         mode: "solo".into(),
-        action: stella_core::records::promotion::LedgerAction::Grant,
+        action: stella_records::records::promotion::LedgerAction::Grant,
     }
 }
 
 /// The event that revokes a grant — the one whose removal from the tail turns
 /// a blocking record back on with nothing in the file to show for it (#5327).
-fn retirement(lineage: &str) -> stella_core::records::promotion::PromotionEvent {
-    stella_core::records::promotion::PromotionEvent {
+fn retirement(lineage: &str) -> stella_records::records::promotion::PromotionEvent {
+    stella_records::records::promotion::PromotionEvent {
         from: "active".into(),
         to: "archived".into(),
-        action: stella_core::records::promotion::LedgerAction::Retired,
+        action: stella_records::records::promotion::LedgerAction::Retired,
         reason: "the source stopped asserting it".into(),
         ..grant(lineage, "unused")
     }
@@ -481,7 +481,7 @@ fn appending_a_promotion_extends_the_chain_and_leaves_the_reviewed_dir_clean() {
     let (_, text) = promotion_ledger_text(root.path());
     assert_eq!(
         events[1].prev,
-        stella_core::records::promotion::line_digest(text.lines().next().unwrap()),
+        stella_records::records::promotion::line_digest(text.lines().next().unwrap()),
         "the second event links to the exact bytes of the first"
     );
 
@@ -662,7 +662,7 @@ fn a_ledger_truncated_after_it_was_read_is_refused() {
 
     // The chain alone still says it is fine — that is the defect.
     assert!(
-        stella_core::records::promotion::parse_and_verify(&kept).is_ok(),
+        stella_records::records::promotion::parse_and_verify(&kept).is_ok(),
         "precondition: the hash chain cannot see a truncated tail"
     );
 

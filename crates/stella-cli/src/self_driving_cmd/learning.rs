@@ -21,7 +21,7 @@
 
 use std::path::Path;
 
-use stella_core::context_record::ContextRecordKind;
+use stella_records::context_record::ContextRecordKind;
 
 /// The learning artifacts under one state root, counted at one instant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

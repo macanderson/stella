@@ -10,12 +10,12 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use stella_context::{ContextDelta, MemoryInput};
-use stella_core::context_record::{ProposalScore, confidence_from_score};
 use stella_core::skills::appraisal::EvalEvidence;
 use stella_core::skills::{
     self, AutoCreateConfig, AutoCreateDecision, SkillMineConfig, SkillObservation,
 };
 use stella_protocol::{AgentEvent, MemoryClass, Provider};
+use stella_records::context_record::{ProposalScore, confidence_from_score};
 
 use super::{
     LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, TurnEvidence, reflect_on_turn,
@@ -1046,7 +1046,7 @@ impl SessionMemory {
             .into_iter()
             .filter(|i| {
                 declined.get(&i.proposal.lineage_id)
-                    != Some(&stella_core::context_record::PromotionAction::Rejected)
+                    != Some(&stella_records::context_record::PromotionAction::Rejected)
             })
             .filter(|i| {
                 i.proposal
@@ -1082,8 +1082,11 @@ impl SessionMemory {
     /// a tool call.
     fn induce_rules(
         &mut self,
-        observations: &[stella_core::context_record::ObservationRecord],
-        declined: &std::collections::HashMap<String, stella_core::context_record::PromotionAction>,
+        observations: &[stella_records::context_record::ObservationRecord],
+        declined: &std::collections::HashMap<
+            String,
+            stella_records::context_record::PromotionAction,
+        >,
         quiet: bool,
     ) -> Vec<AgentEvent> {
         let existing = crate::rules::load_workspace_rules_unfiltered(&self.workspace_root);
@@ -1098,7 +1101,7 @@ impl SessionMemory {
 
         for rule in induced {
             if declined.get(&rule.proposal.lineage_id)
-                == Some(&stella_core::context_record::PromotionAction::Rejected)
+                == Some(&stella_records::context_record::PromotionAction::Rejected)
             {
                 continue;
             }
@@ -1171,14 +1174,14 @@ impl SessionMemory {
     /// Writing it at all closes a gap this path had since it shipped. The
     /// lifecycle's contract is that replaying `promotion_event` records in
     /// order reproduces the loop's governance state exactly
-    /// ([`PromotionEventRecord`](stella_core::context_record::PromotionEventRecord)),
+    /// ([`PromotionEventRecord`](stella_records::context_record::PromotionEventRecord)),
     /// and auto-activation wrote a rule file into
     /// `.stella/rules/` with no event to explain it — so a replay reconstructed
     /// a workspace missing every rule the loop had activated on its own. The
     /// review surface's own `keep` has always recorded one
     /// (`proposals_cmd::decide`).
     ///
-    /// [`PromotionActor::System`](stella_core::context_record::PromotionActor)
+    /// [`PromotionActor::System`](stella_records::context_record::PromotionActor)
     /// because no person was asked, which is also
     /// what makes the enforcement below un-escalatable:
     /// `PromotionEventRecord::new` refuses a system actor blocking
@@ -1186,9 +1189,9 @@ impl SessionMemory {
     /// a tool call even if someone later changes the argument.
     fn record_auto_activation(
         &self,
-        proposal: &stella_core::context_record::ProposalRecord,
+        proposal: &stella_records::context_record::ProposalRecord,
     ) -> Option<AgentEvent> {
-        use stella_core::context_record::{
+        use stella_records::context_record::{
             DirectiveEnforcement, PromotionAction, PromotionActor, PromotionEventRecord,
         };
         let event = PromotionEventRecord::new(
