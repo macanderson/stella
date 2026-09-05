@@ -451,3 +451,151 @@ async fn a_plugin_is_refused_through_the_assembled_stack_and_the_user_is_not() {
     );
     assert_eq!(leaf.reached.lock().unwrap().len(), 1);
 }
+
+/// The repository root, derived from the crate this test lives in.
+///
+/// `CARGO_MANIFEST_DIR` is `<repo>/crates/stella-cli`, so the root is two
+/// levels up — the same derivation `crates/stella-cli/tests/self_driving_consent.rs`
+/// uses to reach the shipped manifest.
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the crate sits two levels under the repository root")
+        .to_path_buf()
+}
+
+/// **The shipped grant, against the shipped gate.** Every test above writes
+/// its own fixture manifest, so until this one no manifest this repository
+/// actually ships had ever been put in front of the rule that enforces it —
+/// and the widest grant in the tree is `plugins/stella-selfdriving`, which
+/// asks for `bash` and `write_file` at destructive and `process_spawn` at
+/// high.
+///
+/// `crates/stella-cli/tests/self_driving_consent.rs` is where the hole was
+/// named. That test pairs each declared power with the file that performs it,
+/// and its module doc says the pairing is an enumeration: a driver that grew a
+/// power nobody listed would still pass. Closing that needs the loader binding
+/// a declaration to a gate under `Principal::Plugin`, which is what
+/// [`super::PluginGates`] does. This is the check that binding made writable.
+///
+/// The grades are read out of the manifest rather than restated here, so an
+/// entry added later is covered the day it is added.
+///
+/// What it does not claim: that a self-driving run is held to this grant.
+/// Nothing in that package is a program Stella starts, so no call is ever
+/// attributed to the plugin and the rule is built without being asked —
+/// `scripts/self-driving.sh` runs as you. Closing that needs the loop to
+/// become a program Stella drives.
+#[test]
+fn the_shipped_selfdriving_grant_is_exactly_what_the_gate_enforces() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT"]);
+    let root = std::env::temp_dir().join(format!(
+        "stella-selfdriving-authz-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("temp root");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let text = std::fs::read_to_string(repo_root().join("plugins/stella-selfdriving/plugin.toml"))
+        .expect("the shipped self-driving manifest");
+    let manifest = stella_plugin::PluginManifest::from_toml_str(&text)
+        .expect("the shipped manifest must parse");
+    let dir = stella_home::resolve_project_plugins_dir(&root).join(&manifest.name);
+    std::fs::create_dir_all(&dir).expect("plugin dir");
+    std::fs::write(dir.join("plugin.toml"), &text).expect("install the shipped manifest");
+
+    let gate = crate::agent::tool_stack::session_gate(&root);
+    let plugin = Principal::Plugin(manifest.name.clone());
+
+    // An empty list installs no rule at all, which would make every assertion
+    // below pass by allowing everything.
+    assert!(
+        !manifest.capabilities.is_empty(),
+        "this manifest is a grant; a copy of it declaring nothing is a different document"
+    );
+
+    // Every declared entry binds, at exactly the grade a human was shown.
+    for capability in &manifest.capabilities {
+        assert_eq!(
+            gate.check(
+                &contract(&capability.tool, capability.risk),
+                &plugin,
+                &json!({})
+            )
+            .expect("a decision"),
+            AuthzDecision::Allow,
+            "`{}` is declared at {} and must bind",
+            capability.tool,
+            capability.risk.as_str()
+        );
+    }
+
+    // Asked for above the grade that was accepted, a declared tool is refused.
+    let mut below_the_top = 0;
+    for capability in &manifest.capabilities {
+        if capability.risk == RiskLevel::Destructive {
+            continue;
+        }
+        below_the_top += 1;
+        let refused = gate
+            .check(
+                &contract(&capability.tool, RiskLevel::Destructive),
+                &plugin,
+                &json!({}),
+            )
+            .expect("a decision");
+        assert!(
+            matches!(&refused, AuthzDecision::Deny { reason } if reason.contains(&capability.tool)),
+            "`{}` was accepted at {} and must be refused at destructive: {refused:?}",
+            capability.tool,
+            capability.risk.as_str()
+        );
+    }
+    assert!(
+        below_the_top > 0,
+        "every declared entry sits at destructive, so the over-grade check proved nothing"
+    );
+
+    // A tool nobody asked for is refused, and the refusal names both sides so
+    // an author fixes the manifest instead of guessing.
+    let undeclared = "delete_file";
+    assert!(
+        !manifest
+            .capabilities
+            .iter()
+            .any(|capability| capability.tool == undeclared),
+        "this manifest now declares `{undeclared}`; pick a tool it does not ask for"
+    );
+    let refused = gate
+        .check(
+            &contract(undeclared, RiskLevel::Destructive),
+            &plugin,
+            &json!({}),
+        )
+        .expect("a decision");
+    assert!(
+        matches!(&refused, AuthzDecision::Deny { reason } if reason.contains(&manifest.name)
+            && reason.contains(undeclared)),
+        "the shipped grant does not include `{undeclared}`: {refused:?}"
+    );
+
+    // Anti-vacuity: the call the plugin was refused is the operator's to make,
+    // and this gate does not touch it.
+    assert_eq!(
+        gate.check(
+            &contract(undeclared, RiskLevel::Destructive),
+            &Principal::User,
+            &json!({})
+        )
+        .expect("a decision"),
+        AuthzDecision::Allow
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
