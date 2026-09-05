@@ -444,10 +444,11 @@ pub struct WorkspaceModel {
 ///
 /// [`Self::Triage`] takes no *observed* pin — [`Self::of`] never returns it,
 /// because the engine makes no triage call since the staged pipeline left
-/// this workspace. It survives as a slot because the `/models`
-/// dialog still pins a model to the `triage` settings key
-/// ([`crate::views::models_card`]'s `slot_of`), and that key is a separate
-/// vocabulary from the call roles a receipt records.
+/// this workspace. Nothing pins one either: `configured_role_pins` stopped
+/// naming it once its settings key stopped steering anything, and the
+/// `/models` dialog stopped naming it once it dropped the retired-role word
+/// table it read the name from. The enum keeps it pending the whole slot's
+/// retirement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PipelineRole {
     Triage,
