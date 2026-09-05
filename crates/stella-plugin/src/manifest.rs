@@ -564,7 +564,7 @@ impl PluginManifest {
         if self.name.trim().is_empty() {
             return Err(ManifestError::EmptyName);
         }
-        crate::panel::validate_plugin_name(&self.name)?;
+        crate::drawable::validate_plugin_name(&self.name)?;
         // The host builds `<plugin>/<role>` seat keys out of this name
         // (`doc:roleless-core` §8.4, `crate::seat_key`). A `/` in either half
         // would spell a key some other plugin owns, so each half is refused a

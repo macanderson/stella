@@ -24,6 +24,15 @@
 //!   - [`HookEvent::PreCompact`] — runs before an overflow-summarization
 //!     round. A `deny` decision vetoes the round; a `modify` decision may
 //!     inject summarization instructions.
+//!   - [`HookEvent::UserPromptSubmit`] — runs when the user submits a
+//!     prompt, before any turn exists. Fired **host-side**, on
+//!     [`HookEvent::SessionStart`]'s own terms: this module only declares
+//!     the event and its payload. A `deny` rejects the prompt with the
+//!     hook's reason; a `modify` may rewrite the prompt text.
+//!   - [`HookEvent::SubagentStart`] / [`HookEvent::SubagentStop`] — run
+//!     around a child turn (`stella_core::subagent::run_sub_agent`).
+//!     Observe-only: nothing here vetoes or rewrites the child, mirroring
+//!     `PostToolUse`'s posture.
 //!   - [`HookEvent::PreIssueWork`] — runs before the self-driving loop works
 //!     an issue, and outside any turn. A `deny` decision makes the loop skip
 //!     that issue and move on, which is how a person holds an agent off work
@@ -236,6 +245,24 @@ pub struct Hooks {
     )]
     pub pre_compact: Option<Vec<HookMatcher>>,
     #[serde(
+        rename = "UserPromptSubmit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub user_prompt_submit: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "SubagentStart",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subagent_start: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "SubagentStop",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subagent_stop: Option<Vec<HookMatcher>>,
+    #[serde(
         rename = "PreIssueWork",
         default,
         skip_serializing_if = "Option::is_none"
@@ -357,6 +384,9 @@ impl Hooks {
             HookEvent::PostToolUse => &self.post_tool_use,
             HookEvent::Stop => &self.stop,
             HookEvent::PreCompact => &self.pre_compact,
+            HookEvent::UserPromptSubmit => &self.user_prompt_submit,
+            HookEvent::SubagentStart => &self.subagent_start,
+            HookEvent::SubagentStop => &self.subagent_stop,
             HookEvent::PreIssueWork => &self.pre_issue_work,
             HookEvent::PostIssueWork => &self.post_issue_work,
             HookEvent::DriveRunStart => &self.drive_run_start,
@@ -382,7 +412,8 @@ impl Hooks {
 }
 
 pub use payload::{
-    HookIssueInfo, HookIssueOutcome, HookPayload, HookPullRequestInfo, HookRunInfo, HookToolInfo,
+    HookIssueInfo, HookIssueOutcome, HookPayload, HookPullRequestInfo, HookRunInfo,
+    HookSubAgentInfo, HookSubAgentResult, HookToolInfo,
 };
 
 /// One hook command's raw execution result — returned even on non-zero
@@ -1230,5 +1261,76 @@ mod tests {
         assert!(!json.contains("finalText"));
         let back: HookPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back, pre_compact);
+    }
+
+    /// `UserPromptSubmit`, `SubagentStart` and `SubagentStop` are
+    /// session-shaped, not tool-shaped: a configured matcher is ignored
+    /// exactly as `Stop`'s and `PreCompact`'s are.
+    #[test]
+    fn the_2836_events_ignore_the_matcher_field() {
+        let matchers = vec![HookMatcher {
+            matcher: Some("write_file".to_string()),
+            hooks: vec![HookAction::new("echo hi")],
+        }];
+        for event in [
+            HookEvent::UserPromptSubmit,
+            HookEvent::SubagentStart,
+            HookEvent::SubagentStop,
+        ] {
+            assert_eq!(
+                select_matchers(event, &matchers, None).len(),
+                1,
+                "{event:?} must run every action regardless of the matcher"
+            );
+        }
+    }
+
+    /// The three new settings keys deserialize off a real `settings.json`
+    /// shape and their payload constructors carry the right fields,
+    /// round-tripping byte for byte.
+    #[test]
+    fn the_2836_events_deserialize_and_build_payloads() {
+        let json = r#"{
+            "UserPromptSubmit": [ { "hooks": [{ "command": "log-prompt" }] } ],
+            "SubagentStart": [ { "hooks": [{ "command": "log-subagent-start" }] } ],
+            "SubagentStop": [ { "hooks": [{ "command": "log-subagent-stop" }] } ]
+        }"#;
+        let hooks: Hooks = serde_json::from_str(json).unwrap();
+        assert_eq!(hooks.matchers_for(HookEvent::UserPromptSubmit).len(), 1);
+        assert_eq!(hooks.matchers_for(HookEvent::SubagentStart).len(), 1);
+        assert_eq!(hooks.matchers_for(HookEvent::SubagentStop).len(), 1);
+
+        let submit = HookPayload::user_prompt_submit("/proj", "fix the flaky test");
+        let json = serde_json::to_string(&submit).unwrap();
+        assert!(json.contains("\"event\":\"UserPromptSubmit\""));
+        assert!(json.contains("\"prompt\":\"fix the flaky test\""));
+        let back: HookPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, submit);
+
+        let info = HookSubAgentInfo {
+            agent_id: "search-1".into(),
+            instruction_preview: "find the retry policy".into(),
+            depth: 1,
+        };
+        let start = HookPayload::subagent_start("/proj", info.clone());
+        let json = serde_json::to_string(&start).unwrap();
+        assert!(json.contains("\"event\":\"SubagentStart\""));
+        assert!(json.contains("\"agentId\":\"search-1\""));
+        assert!(!json.contains("subagentResult"));
+        let back: HookPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, start);
+
+        let result = HookSubAgentResult {
+            status: stella_protocol::SubAgentStatus::Completed,
+            summary: "found it in retry.rs".into(),
+            cost_usd: 0.02,
+            steps: 3,
+        };
+        let stop = HookPayload::subagent_stop("/proj", info, result);
+        let json = serde_json::to_string(&stop).unwrap();
+        assert!(json.contains("\"event\":\"SubagentStop\""));
+        assert!(json.contains("\"status\":\"completed\""));
+        let back: HookPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, stop);
     }
 }

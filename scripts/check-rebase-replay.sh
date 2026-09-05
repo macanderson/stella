@@ -165,6 +165,40 @@ if [ -z "$suspects" ]; then
   exit 0
 fi
 
+# A net diff can be empty for two different reasons, and only one is a hazard.
+# The branch edited the path and undid it, or created and deleted it — what
+# this guard is for. Or the BASE branch renamed or deleted the path and the
+# branch absorbed that through a merge, so the path leaves the diff with
+# nobody on the branch having removed anything.
+#
+# Tree state alone cannot separate them: a file the branch created and then
+# deleted is absent at the merge base and absent at head, the same signature
+# an inherited rename leaves. What differs is WHO removed it. A branch-authored
+# removal is a non-merge commit in this range that deletes the path; an
+# inherited one is not in the range at all, because merging the base advances
+# the merge base past it.
+#
+# So a suspect is dropped only when it is gone at head AND no commit of the
+# branch's own took it away. The replay hazard cannot hide there: it needs the
+# branch to contribute the removal a rebase would keep.
+kept=""
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  if ! git cat-file -e "$head:$path" 2>/dev/null &&
+    [ -z "$(git_c log --no-merges --diff-filter=D --format=%H "$base..$head" -- "$path")" ]; then
+    continue
+  fi
+  kept="${kept}${path}"$'\n'
+done <<EOF
+$suspects
+EOF
+suspects="$(printf '%s' "$kept" | sed '/^$/d')"
+
+if [ -z "$suspects" ]; then
+  echo "check-rebase-replay: OK — every path missing from the branch's diff was renamed or deleted by the base branch, not by this branch."
+  exit 0
+fi
+
 found=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue

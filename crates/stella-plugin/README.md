@@ -271,10 +271,14 @@ before it crosses.
   (`PanelGrant`, `PanelDenial`, `PanelLease`, `PanelFrame`): a plugin leased a
   rectangle of the screen, returning styled lines or a cell diff each tick
   (`design/tui-v2/SPEC.md` §12). Two of that section's rules are the types
-  rather than a host's care — `PanelText` wraps a private `String` that refuses
-  every control character, so no plugin emits an escape sequence in any
-  language, and `PanelRect` carries an extent with no origin, so a frame cannot
-  name a cell of Stella's own chrome.
+  rather than a host's care — `PanelText` wraps a private `String` that turns
+  away every control `char` and every bidi one, so no plugin emits an escape
+  sequence or flips its own text, and `PanelRect` carries an extent with no
+  origin, so a frame cannot name a cell of Stella's own chrome.
+- `src/drawable.rs` — the two rules behind that first one, and the argument for
+  where each line sits: what a screen runs (`Cc`), and what reorders the text
+  after it (the bidi `char`s). `PanelText::new` asks both; a plugin's `name`
+  asks the first.
 - `src/seat.rs` — `seat_key`, the one place a `<plugin>/<role>` seat key is
   built (`doc:roleless-core` §8.4). The host joins the two halves; a plugin
   sends only its bare role name, so no plugin can name a seat another plugin

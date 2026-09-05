@@ -3383,7 +3383,7 @@ version = "0.9.330"
 
 [[package]]
 name = "stella-learn"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "proptest",
  "serde",

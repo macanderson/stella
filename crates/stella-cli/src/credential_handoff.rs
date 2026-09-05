@@ -431,6 +431,30 @@ mod tests {
         std::fs::read_link(format!("/proc/{proc_entry}/fd/{fd}")).ok()
     }
 
+    /// The `(device, inode)` pair naming the object `fd` refers to, or `None`
+    /// when `fd` is not open.
+    ///
+    /// Identifies the object rather than the descriptor number, so a sibling
+    /// test taking the number the instant it is freed reads as a different
+    /// pair rather than as the same pipe.
+    ///
+    /// Read through `MetadataExt` rather than a raw `libc::stat`, because
+    /// `dev_t` is signed on macOS and unsigned on Linux, so no single
+    /// conversion of `st_dev` compiles clean on both, while `dev()` and
+    /// `ino()` are `u64` on every Unix. `daemon.rs`'s `inherited_lock_fd`
+    /// reads a borrowed descriptor the same way.
+    fn fd_identity(fd: i32) -> Option<(u64, u64)> {
+        use std::os::unix::fs::MetadataExt;
+
+        // SAFETY: the descriptor is borrowed, never owned — `ManuallyDrop`
+        // keeps `File`'s destructor from closing an fd this only looks at.
+        // `metadata` is an `fstat`, which reports EBADF for a descriptor that
+        // is not open rather than doing anything with it.
+        let probe = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+        let stat = probe.metadata().ok()?;
+        Some((stat.dev(), stat.ino()))
+    }
+
     /// A child `std::process::Command` spawns while the pipe is open must not
     /// keep the read end alive. Rust marks `CLOEXEC` only on fds it made
     /// itself; a raw `libc` fd is invisible to that bookkeeping, so a plain
@@ -789,6 +813,8 @@ mod tests {
         let fds = cloexec_pipe();
         let (read_fd, write_fd) = (fds[0], fds[1]);
 
+        let pipe = fd_identity(read_fd).expect("the read end is open before the call");
+
         // Invalid UTF-8 waits unread in the pipe. If a credential byte were
         // read before hardening, the error below would be the UTF-8 failure.
         // SAFETY: two-byte source buffer, matching count, valid fd.
@@ -806,31 +832,25 @@ mod tests {
         // proving no credential bytes were read first.
         assert_eq!(err, "synthetic hardening failure");
 
-        // The fail-closed path still consumed ownership of the read end. Probe
-        // the open-file description, not the freed fd *number*: with the last
-        // reader gone, writing to the retained write end fails with EPIPE.
-        // (A raw `fcntl(read_fd, F_GETFD) == -1` check would be racy under the
-        // parallel test harness — a sibling test can reuse the number the
-        // instant it is freed, and `fcntl` would then report that fd's flags.)
+        // The fail-closed path still consumed ownership of the read end. Ask
+        // whether `read_fd` still names *this* pipe, rather than whether the
+        // number is open at all: a sibling test can take the number the
+        // instant it is freed, so `fcntl(read_fd, F_GETFD)` succeeding would
+        // report that fd's flags and prove nothing. The write end is held
+        // here, so the pipe cannot be freed and its inode cannot be handed to
+        // anything else while this runs — the recorded pair can only come back
+        // from a read end left open.
         //
-        // The open-file-description probe carries a second race of its own:
-        // a sibling test's `fork`+`exec`, landing in the window between this
-        // pipe's creation and the hardener's close, can inherit the read end
-        // and keep a live reader around after this test dropped its own
-        // copy — the write then returns `1` instead of `-1`, not an error.
-        // `cloexec_pipe` above closes that window by marking the fd
-        // close-on-exec at creation, so a concurrently exec'd child never
-        // holds a copy to begin with.
-        // Rust ignores SIGPIPE process-wide, so the write returns EPIPE rather
-        // than raising a signal.
-        // SAFETY: one-byte source buffer, matching count, still-owned write fd.
-        assert_eq!(
-            unsafe { libc::write(write_fd, [0_u8].as_ptr().cast(), 1) },
-            -1
-        );
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::EPIPE)
+        // Identity is a fact about this process alone, which the `EPIPE` probe
+        // this replaces is not: writing to the retained write end asks whether
+        // *any* process still holds a read end, and `CLOEXEC` clears an
+        // inherited copy at `exec` rather than at `fork`, so a sibling forking
+        // between `cloexec_pipe` and the write keeps a live copy in flight and
+        // the write succeeds.
+        assert_ne!(
+            fd_identity(read_fd),
+            Some(pipe),
+            "the fail-closed path left the read end open"
         );
 
         // SAFETY: we still own the write end; close it to avoid leaking the fd.
