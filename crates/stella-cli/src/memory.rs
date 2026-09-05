@@ -875,7 +875,7 @@ impl SessionMemory {
     /// of, and there are four ways to be one: the plane control's coin,
     /// steering switched off, losing the last top-k seat to a higher-scoring
     /// sibling, and the per-artifact holdout naming this skill
-    /// ([`Self::holdout_skill`]). All four are recorded, which is why this
+    /// ([`Self::apply_holdout`]). All four are recorded, which is why this
     /// reads the selection pass rather than `selected_skills` — that one
     /// returns nothing at all on a suppressed turn, by design.
     ///
