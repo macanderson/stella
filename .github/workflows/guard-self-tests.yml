@@ -195,6 +195,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-dependabot-pip-dirs.sh
 
+      - name: which PRs an issue edit re-checks, and which it leaves alone
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-dod-recheck.sh
+
       # Was in UNHOSTED_SELF_TESTS until #4443: 14 of its 38 cases failed
       # everywhere, not just outside a Linux dev box as first suspected — the
       # fixture built a synthetic repo shaped `stella-core/src/`, and
