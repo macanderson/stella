@@ -1,0 +1,17 @@
+# grid golden · cjk_and_emoji_content
+# a Japanese turn name/prompt/answer and an emoji, at a width narrow enough to force a cut
+# width 56 · rendered through grid::to_plain, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-transcript --test grid_snapshots
+
+╭─ 🔧 設定を更新 ──────────────────────────────────── ─╮
+│  you  設定ファイルを更新して絵文字のラベルを直してく
+│       ださい 🎉
+│
+│ 0:00 ▾ edit_file   設定/config.toml  +1 −1[9ms] [$0.00
+│        │ ± 設定/config.toml +1 −1  ▾
+│        │ @@ -1,1 +1,1 @@
+│        │   1     − 名前 = "旧いラベル"
+│        │       1 + 名前 = "新しいラベル" 🎉
+│
+│  agent  設定を更新しました ✅
+╰─ ✓ done ───── [1 steps] [0:00] [4.0k→120] [$0.0006] ─╯

@@ -1,0 +1,18 @@
+# grid golden · notes_with_and_without_detail
+# a context note with three detail rows, opened, beside a budget note with none — only the first draws a fold marker
+# width 100 · rendered through grid::to_plain, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-transcript --test grid_snapshots
+
+╭─ recall-and-budget ──────────────────────────────────────────────────────────────────────────── ─╮
+│  you  keep going
+│
+│ ◆    ▾ recalled 3 memories
+│        stella-transcript-golden-frame.md
+│        grid-gutter-widths.md
+│        append-only-streaming.md
+│ 0:00 ▸ bash        cargo build -p stella-transcript                       [226ms] [1 ln] [$0.0006]
+│ $      budget: 40% remaining
+│      ▸ bash        cargo test -p stella-transcript                        [226ms] [1 ln] [$0.0006]
+│
+│  agent  Both crates build and the suite passes.
+╰─ ✓ done ───────────────────────────────────────────────── [2 steps] [0:02] [8.0k→240] [$0.0012] ─╯

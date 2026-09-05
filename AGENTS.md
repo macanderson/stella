@@ -106,6 +106,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     from that declaration)
                          #   + god-files
                          #   + gate-parity
+                         #   + schema-tier-parity (a -schema step runs at the
+                         #     same rung as its base step; #5139)
                          #   + guard-trigger-coverage (prose, hue-separation
                          #     and transcript-surfaces each run with no
                          #     paths: filter in at least one workflow)
@@ -444,6 +446,40 @@ partitioning by crate, directory or owner, ask whether anything in the set has
 to change atomically. `rg -l 'INTENTIONALLY DUPLICATED'` names today's only
 such twin.
 
+**A stacked PR's evidence is the same CI run — but confirm it started.** No
+workflow's `pull_request:` trigger carries a `branches:` filter (`push:`
+triggers do, and only for the workflows above's own post-merge behavior), so a
+PR whose base is another branch rather than `main` is meant to start the same
+required contexts as a `main`-based one, and normally does: a throwaway PR
+opened against a fresh non-`main` base on 2026-09-05 started `ci`, `msrv`,
+`docs-guards`, `file-size`, `guard-self-tests`, `dependency-review`,
+`duplicate-claims`, `rebase-replay`, `main-red-hold`, `bench`, `empty-diff` and
+`dod-check` within 20 seconds of opening.
+
+It did not always. A PR based on `fix/4917-observatory-plugin-skills` once
+started only `cla` (`pull_request_target`) — every `pull_request`-triggered
+workflow never ran at all, nine days before the throwaway PR above proved the
+opposite. `gh api repos/<repo>/commits/<sha>/check-suites` is what tells the
+two apart: for that PR's head commit, across its whole time on a non-`main`
+base, GitHub created exactly three `github-actions` check suites (two `cla`
+runs and one manually dispatched `ci`) and none for `ci`/`msrv`/`file-size`/the
+rest — the `pull_request` event was never delivered for those workflow files,
+so there was nothing to fail or even skip. Closing and reopening the PR did
+not recover it. No repository setting explains it: `actions/permissions`
+allows every action, and this repository's one ruleset targets only the
+`main` branch — so treat it as a rare platform gap rather than a policy, and
+use the check-suites query above to tell the two apart if it recurs.
+
+**If `gh pr checks` on a stacked PR shows only `cla`/`Sourcery review`, its CI
+evidence has not started yet — a hand-run `workflow_dispatch` of the missing
+workflow is not a substitute**, because it runs the branch head rather than
+the merge commit that would actually land, which is exactly the gap a
+hand-dispatched stand-in left open the day this was first observed. Push a
+new commit (a fresh
+`synchronize` event is a second attempt) or wait for the branch this PR is
+stacked on to merge and retarget it at `main`, which is what produces a real
+run.
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
@@ -464,8 +500,26 @@ Four rungs, each a superset of the one above:
 | --- | --- | --- |
 | `make guards-fast` | the toolchain-free guards + `lockfile-sync` + `fmt --check` — nothing compiles at all | — |
 | `make guards` | ...plus `wire-schema`, whose two schema exporters do compile | — |
-| `make check` | ...plus clippy | clippy |
-| `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
+| `make check` | ...plus clippy — `lint` and `lint-schema`, both. No rustdoc at all | clippy |
+| `make gate` | ...plus rustdoc and the tests — `doc-warnings` and `doc-warnings-schema`, both | clippy, rustdoc, test |
+
+A `-schema` step and its base step move together across `check`. Both run
+there, or neither does. That rule went unwritten, and it broke: `lint` ran
+at `check`; `lint-schema` did not. So `GATE=fast git push`, and a hand-run
+`make check`, never reached the three `schema`-gated crates. A broken
+import there passed here and failed only in CI.
+`schema-tier-parity` (`scripts/check-schema-tier-parity.sh`) now holds every
+such pair to that rule. It reads `GATE_STEPS`/`CHECK_STEPS`, so a future pair
+that splits the same way fails here first, not in CI. `doc-warnings-schema`
+stays `gate`-only on purpose, paired with `doc-warnings`: at `check`, rustdoc
+never runs, for either feature set.
+
+`doc-warnings-schema` also wipes its own doc output before each run
+(`cargo clean --doc`, for the three schema crates only). `cargo doc`'s own
+freshness check can call a stale prior run "up to date" — and print nothing
+— even after the source changed. That let a broken doc link in
+`stella-plugin` pass a local `make doc-warnings-schema`, and show up only
+after a hand-run `rm -rf target/doc`.
 
 **Every rung needs `shellcheck` on `PATH`, and it is not vendored.** It is the
 gate's one external binary, so a machine or container image without it stops at

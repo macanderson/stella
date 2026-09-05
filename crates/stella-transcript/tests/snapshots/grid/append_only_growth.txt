@@ -1,0 +1,41 @@
+# grid golden · append_only_growth
+# render_turn_lines at 0..=3 steps while the turn runs, then finished — every earlier line survives unchanged into the next stage
+# width 100 · rendered through grid::to_plain, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-transcript --test grid_snapshots
+
+── after 0 steps (running) ──
+╭─ widen-matrix ───────────────────────────────────────────────────────────────────────────────── ─╮
+│  you  widen the fixture matrix, crate by crate
+│
+
+── after 1 step (running) ──
+╭─ widen-matrix ───────────────────────────────────────────────────────────────────────────────── ─╮
+│  you  widen the fixture matrix, crate by crate
+│
+│ 0:00 ▸ bash        cargo test -p crate-0                                  [226ms] [1 ln] [$0.0006]
+
+── after 2 steps (running) ──
+╭─ widen-matrix ───────────────────────────────────────────────────────────────────────────────── ─╮
+│  you  widen the fixture matrix, crate by crate
+│
+│ 0:00 ▸ bash        cargo test -p crate-0                                  [226ms] [1 ln] [$0.0006]
+│      ▸ bash        cargo test -p crate-1                                  [226ms] [1 ln] [$0.0006]
+
+── after 3 steps (running) ──
+╭─ widen-matrix ───────────────────────────────────────────────────────────────────────────────── ─╮
+│  you  widen the fixture matrix, crate by crate
+│
+│ 0:00 ▸ bash        cargo test -p crate-0                                  [226ms] [1 ln] [$0.0006]
+│      ▸ bash        cargo test -p crate-1                                  [226ms] [1 ln] [$0.0006]
+│      ▸ bash        cargo test -p crate-2                                  [226ms] [1 ln] [$0.0006]
+
+── finished (3 steps + answer) ──
+╭─ widen-matrix ───────────────────────────────────────────────────────────────────────────────── ─╮
+│  you  widen the fixture matrix, crate by crate
+│
+│ 0:00 ▸ bash        cargo test -p crate-0                                  [226ms] [1 ln] [$0.0006]
+│      ▸ bash        cargo test -p crate-1                                  [226ms] [1 ln] [$0.0006]
+│      ▸ bash        cargo test -p crate-2                                  [226ms] [1 ln] [$0.0006]
+│
+│  agent  Every crate in the matrix now has a fixture.
+╰─ ✓ done ──────────────────────────────────────────────── [3 steps] [0:00] [12.0k→360] [$0.0018] ─╯

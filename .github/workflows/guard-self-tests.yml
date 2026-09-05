@@ -203,6 +203,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-gate-parity.sh
 
+      - name: schema-tier-parity guard failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-schema-tier-parity.sh
+
       - name: guard-trigger-coverage guard failure directions
         if: ${{ !cancelled() }}
         run: python3 ./scripts/test-guard-trigger-coverage.py
