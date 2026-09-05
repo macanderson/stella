@@ -119,12 +119,12 @@ pub use deck_ui::{
     SkillsPanel, TypeAhead, handle_deck_key, ingest_inbound,
 };
 pub use envelope::{
-    AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, EngineAgentState,
-    EngineConfigState, EngineRole, EntityField, EntityHit, GRAPH_SERVER, Inbound, InspectMessage,
-    InspectSection, InspectView, InstalledAgentEntry, IssueAction, IssueRow, JournalEra,
-    KeepStrength, LearnedProvenance, LearnedSource, McpLiveIdentity, McpLookupState, McpSearchItem,
-    McpSearchOutcome, McpServerDetail, McpServerInfo, McpSignature, McpSourceTier, McpToolRow,
-    NotificationInfo, RecordedCallInfo, RejectedSkillRow, SeatRow, Secret, SessionInfo,
+    AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, Broadcast,
+    EngineAgentState, EngineConfigState, EngineRole, EntityField, EntityHit, GRAPH_SERVER, Inbound,
+    InspectMessage, InspectSection, InspectView, InstalledAgentEntry, IssueAction, IssueRow,
+    JournalEra, KeepStrength, LearnedProvenance, LearnedSource, McpLiveIdentity, McpLookupState,
+    McpSearchItem, McpSearchOutcome, McpServerDetail, McpServerInfo, McpSignature, McpSourceTier,
+    McpToolRow, NotificationInfo, RecordedCallInfo, RejectedSkillRow, SeatRow, Secret, SessionInfo,
     SessionPhase, SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView, SplashCue, ToolDenial,
     ToolPolicyState, ToolRow, ToolScope, WorkspaceInput,
 };

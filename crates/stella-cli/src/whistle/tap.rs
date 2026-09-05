@@ -24,6 +24,21 @@ pub(crate) trait Whistleable: Send + Sync {
     fn push_deep(&self, text: String) {
         self.push(text);
     }
+
+    /// Queue `text` and stop the running turn, so the words run next rather
+    /// than only riding along — the room form of the composer's bang
+    /// (`>>> @agents ! …`).
+    ///
+    /// The default delivers the words and stops nothing, which is all a tap
+    /// with no stop to latch can do: the text still lands, and no caller is
+    /// told a turn halted when none did.
+    fn interrupt(&self, text: String, deep: bool) {
+        if deep {
+            self.push_deep(text);
+        } else {
+            self.push(text);
+        }
+    }
 }
 
 /// A minimal steering tap for a non-interactive (non-deck) session: `stella run`
@@ -50,6 +65,20 @@ impl Whistleable for HeadlessSteerTap {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .push(text);
     }
+
+    /// The words first, then the stop. The boundary drains steering before it
+    /// reads the stop (`stella_core::driver::step_boundary::consult_hosts`),
+    /// so this order is what puts the text in the turn it halts.
+    ///
+    /// The latch holds until the run ends, as `SteeringTap`'s does. A door
+    /// with no deck is one arc: `stella run` is a turn, and a `stella goal`
+    /// round that aborts ends the arc (`stella_core::goal`). So "stop" here
+    /// means the session stops, which is what a person broadcasting a bang
+    /// asked every session to do.
+    fn interrupt(&self, text: String, _deep: bool) {
+        self.push(text);
+        self.soft_stop.store(true, Ordering::SeqCst);
+    }
 }
 
 impl stella_core::ports::TurnSteering for HeadlessSteerTap {
@@ -63,9 +92,8 @@ impl stella_core::ports::TurnSteering for HeadlessSteerTap {
     }
 
     fn soft_stop_requested(&self) -> bool {
-        // Whistle never sets this (see the module docs on scope) — it
-        // stays wired only because the port requires it, and reading
-        // `false` forever is correct for a tap nothing latches.
+        // Latched by an interrupt whistle alone (`Whistleable::interrupt`).
+        // A plain steer rides along and never stops the turn.
         self.soft_stop.load(Ordering::SeqCst)
     }
 }
@@ -84,10 +112,21 @@ mod tests {
         assert!(tap.drain_steering().is_empty());
     }
 
+    /// **The witness for the stop at a door with no deck.** A plain steer
+    /// rides along; an interrupt puts the words in the turn and then halts
+    /// it, in that order.
     #[test]
-    fn soft_stop_is_never_requested() {
+    fn only_an_interrupt_stops_a_headless_turn() {
         let tap = HeadlessSteerTap::default();
-        tap.push("anything".to_string());
-        assert!(!tap.soft_stop_requested());
+        tap.push("ride along".to_string());
+        assert!(!tap.soft_stop_requested(), "a steer stops nothing");
+
+        tap.interrupt("stop touching main".to_string(), true);
+        assert_eq!(
+            tap.drain_steering(),
+            vec!["ride along", "stop touching main"],
+            "the words are in the turn the stop halts"
+        );
+        assert!(tap.soft_stop_requested());
     }
 }
