@@ -91,6 +91,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + guard-trigger-coverage (prose, hue-separation
                          #     and transcript-surfaces each run with no
                          #     paths: filter in at least one workflow)
+                         #   + priority-scheme (the issue priority scheme is
+                         #     stated once, in SCR-005, and the triage guard's
+                         #     regex covers exactly the levels it names)
                          #   + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
@@ -1435,6 +1438,6 @@ macanderson org repos.
   follow-up, tech-debt item, or logical next step you noticed. Apply ONLY
   the `triage` label.
 - **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
-  separation of duties:** Never apply priority (`P0`–`P4`) or size labels —
+  separation of duties:** Never apply a priority or size label —
   a dedicated triage agent owns sizing and priority; a guard workflow
   strips creator-applied priorities.

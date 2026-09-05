@@ -39,7 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity \
-                    guard-trigger-coverage left-behind \
+                    guard-trigger-coverage priority-scheme left-behind \
                     role-names stat-portability module-reachability core-reachability \
                     typed-errors \
                     tool-error-class \
@@ -750,6 +750,14 @@ guard-trigger-coverage: ## Assert prose/hue-separation/transcript-surfaces each 
 .PHONY: guard-trigger-coverage-test
 guard-trigger-coverage-test: ## Test the guard-trigger-coverage guard's failure directions (hermetic; not part of `gate`)
 	@python3 ./scripts/test-guard-trigger-coverage.py
+
+.PHONY: priority-scheme
+priority-scheme: ## Assert the issue priority scheme is stated once, in SCR-005 (#5216)
+	@python3 ./scripts/check-priority-scheme.py
+
+.PHONY: priority-scheme-test
+priority-scheme-test: ## Test the priority-scheme guard's failure directions (hermetic; not part of `gate`)
+	@python3 ./scripts/test-priority-scheme.py
 
 .PHONY: bench-suites
 bench-suites: ## Assert `make bench-test` runs every suite bench.yml runs, by derivation (#2847)
