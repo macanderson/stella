@@ -1,6 +1,3 @@
-//! The wrapper socket's wire contract, asserted rather than promised.
-//!
-
 //! The panel channel's wire contract — `design/tui-v2/SPEC.md` §12.
 //!
 //! Split from `wire_contract.rs` when that file met the 1500-line ceiling
@@ -11,10 +8,11 @@
 //!
 //! Held to the identical contract as every other channel here: byte-for-byte
 //! in both directions (AGENTS.md #4), every closed vocabulary pinned on both
-//! sides, and every table refusing a key it does not know. Two rules are this
-//! channel's own and are witnessed rather than asserted in prose — a frame
-//! cannot address a cell outside its lease, and cannot carry an escape
-//! sequence in any language.
+//! sides, and every table refusing a key it does not know. Three rules are
+//! this channel's own and are witnessed rather than asserted in prose — a
+//! frame cannot address a cell outside its lease, cannot carry an escape
+//! sequence in any language, and cannot reorder its own glyphs against the
+//! bytes it sent.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -277,6 +275,67 @@ fn a_panel_frame_carrying_an_escape_sequence_does_not_decode() {
     let json = "{\"point\":\"frame\",\"body\":{\"protocol_version\":1,\"tick\":1,\
                 \"paint\":{\"lines\":[{\"spans\":[{\"text\":\"\\u001b[31mred\"}]}]}}}";
     assert!(serde_json::from_str::<PanelResponse>(json).is_err());
+}
+
+/// A panel's glyphs read in the order its bytes are in, in Rust and on the wire.
+///
+/// The test above covers the escape-sequence class. This covers the second
+/// one: `U+202E` RIGHT-TO-LEFT OVERRIDE and its siblings reorder the glyphs
+/// after them, so a frame can render text whose visual reading is not its
+/// content — the Trojan Source shape (CVE-2021-42574). Nothing escapes the
+/// leased rectangle, because the host clips every blit; the harm is that a
+/// panel is chrome a person agreed to trust, and this is text that means one
+/// thing and reads as another inside it.
+///
+/// Either half alone is a hole. [`PanelText::new`] is the only door in Rust,
+/// and `Deserialize` routes through it, so a host never holds a reordered
+/// frame to inspect.
+#[test]
+fn a_panel_frame_carrying_a_bidi_override_does_not_decode() {
+    // The whole refused set, written as the JSON escapes a plugin's own encoder
+    // would put on the pipe rather than as Rust literals.
+    for hazard in [
+        "\\u061c", "\\u200e", "\\u200f", "\\u202a", "\\u202b", "\\u202c", "\\u202d", "\\u202e",
+        "\\u2066", "\\u2067", "\\u2068", "\\u2069",
+    ] {
+        let json = format!(
+            "{{\"point\":\"frame\",\"body\":{{\"protocol_version\":1,\"tick\":1,\
+             \"paint\":{{\"diff\":[{{\"row\":0,\"col\":0,\"text\":\"gates {hazard}neerg\"}}]}}}}}}"
+        );
+        let err = serde_json::from_str::<PanelResponse>(&json)
+            .expect_err("a bidi override must not decode as drawable glyphs");
+        assert!(
+            err.to_string().contains("bidi formatting character"),
+            "the refusal must say why, got {err}"
+        );
+    }
+
+    // The same refusal on the other frame shape, so neither of them is the
+    // soft one.
+    let lines = "{\"point\":\"frame\",\"body\":{\"protocol_version\":1,\"tick\":1,\
+                 \"paint\":{\"lines\":[{\"spans\":[{\"text\":\"\\u202egates\"}]}]}}}";
+    assert!(serde_json::from_str::<PanelResponse>(lines).is_err());
+
+    // The Rust half: the constructor is the door, and it names the character
+    // and its position in `char`s rather than bytes.
+    assert!(PanelText::new("gates: 3 \u{202e}neerg").is_err());
+    let err = PanelText::new("\u{2726}\u{202e}").expect_err("a bidi override is not drawable");
+    assert!(err.to_string().contains("U+202E"), "got {err}");
+    assert!(err.to_string().contains("position 1"), "got {err}");
+
+    // What the rule keeps, and why it keeps it: `U+200D` ZWJ builds the emoji
+    // sequences and `U+200C` ZWNJ is ordinary Persian and Indic text.
+    for kept in [
+        "\u{200b}",
+        "\u{200c}",
+        "\u{200d}",
+        "\u{1f469}\u{200d}\u{1f4bb}",
+    ] {
+        assert!(
+            PanelText::new(kept).is_ok(),
+            "{kept:?} is allowed by the rule this test pins"
+        );
+    }
 }
 
 /// Every closed vocabulary the panel channel adds, on both sides.

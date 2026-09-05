@@ -208,6 +208,48 @@ git -C "$r" commit -qam "edit f"
 want "R8 an absent base ref is a failure naming the shallow checkout" \
   expect-fail "$r" origin/nonexistent "fetch-depth"
 
+# ── 9. A rename the base branch made, absorbed through a merge ───────────────
+#
+# The branch edits a file. Upstream moves it. The branch merges that, then
+# re-lands the work at the new path.
+#
+# The old path drops out of the branch's diff, but the branch did not remove
+# it. A rebase has no copy of it to revert. It replays the edit onto a tree
+# with no such path, and conflicts loudly.
+#
+# The record-plane extraction made two of these in one morning. Both branches
+# had followed the move correctly.
+r="$(new_repo moved_upstream)"
+mkdir -p "$r/old"
+printf 'alpha\n' >"$r/old/bar.txt"
+git -C "$r" add old/bar.txt
+git -C "$r" commit -qm "add old/bar.txt"
+git -C "$r" checkout -q -b b
+printf 'beta\n' >"$r/old/bar.txt"
+git -C "$r" commit -qam "B: edit old/bar.txt"
+
+git -C "$r" checkout -q main
+mkdir -p "$r/new"
+git -C "$r" mv old/bar.txt new/bar.txt
+git -C "$r" commit -qm "upstream: move bar.txt to new/"
+
+git -C "$r" checkout -q b
+git -C "$r" merge -q --no-edit main -m "merge main" >/dev/null 2>&1
+printf 'beta\n' >"$r/new/bar.txt"
+git -C "$r" commit -qam "B: re-land the edit at the new path" >/dev/null 2>&1
+want "R9 a path the base branch renamed, absorbed by a merge, is not flagged" \
+  expect-pass "$r" main "check-rebase-replay: OK"
+
+# ...and the branch's work really did survive the move, so R9 is not passing
+# because the edit was lost.
+if [ "$(cat "$r/new/bar.txt")" = "beta" ]; then
+  pass=$((pass + 1))
+  echo "ok   R9b the edit survived the rename rather than being dropped"
+else
+  fail=$((fail + 1))
+  echo "FAIL R9b new/bar.txt reads $(cat "$r/new/bar.txt"), so the edit did not survive"
+fi
+
 echo
 echo "passed ${pass}, failed ${fail}"
 [ "$fail" -eq 0 ]
