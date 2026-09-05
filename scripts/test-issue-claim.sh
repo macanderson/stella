@@ -107,6 +107,30 @@ want "an unknown identity proceeds" \
 want "a claim with an unreadable age is ignored" \
   expect-proceed "is unclaimed" check "ada" "grace notanumber" ""
 
+# A query that never ran is not proof the list was empty. The unfixed script
+# prints "no PR closes it" whether it read the list or failed to ask. That
+# let a duplicate start while a real pull request already closed the issue
+# and sat open, green and ready to merge. This case is the fail→pass witness:
+# it fails on the unfixed script, because the printed line is false, and it
+# passes on the fixed script, because the line names the failure instead.
+out="$("$SCRIPT" check 5045 \
+  --fixture-login ada --fixture-claims "" --fixture-prs-failed 2>&1)"
+rc=$?
+case "$rc,$out" in
+0,*"no PR closes it"*)
+  bad "a failed PR-list query claimed to have read the list: $out"
+  ;;
+0,*"PR list unreadable"*)
+  ok "a failed PR-list query proceeds without claiming no PR closes it"
+  ;;
+0,*)
+  bad "a failed PR-list query proceeded with unexpected wording: $out"
+  ;;
+*)
+  bad "a failed PR-list query blocked — expected exit 0, got $rc: $out"
+  ;;
+esac
+
 # ── claim mode ───────────────────────────────────────────────────────────────
 
 want "claim posts when the issue is free" \

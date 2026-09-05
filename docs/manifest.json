@@ -674,6 +674,18 @@
       "status": "living",
       "title": "Steering Context Records"
     },
+    "search-tool": {
+      "path": "docs/spec/search-tool.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "status": "implemented",
+      "title": "search \u2014 one tool that replaces six, ranked and budget-bound"
+    },
     "self-driving-foundry": {
       "path": "docs/spec/self-driving-foundry.md",
       "sections": [

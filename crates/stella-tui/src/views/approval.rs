@@ -66,6 +66,7 @@ use stella_tui_theme::{glyph, token};
 
 use stella_tools::registry::approval::{ApprovalRequest, ApprovalResponse};
 
+use crate::render::columns;
 use crate::views::cards::truncate_cols;
 
 /// Matches the question overlay's width so the two mid-turn asks read as one
@@ -390,6 +391,8 @@ fn hints(mode: ApprovalMode) -> &'static str {
 /// through JSON to reach it — these two fields are named members of a Rust
 /// struct, and the projection's row width is its own rather than the card's.
 fn field(label: &str, value: &str, inner_w: usize) -> Line<'static> {
+    // `label` is always one of this file's own words ("gate", "reason").
+    // It is always ASCII, so `chars().count()` is already its width.
     let room = inner_w.saturating_sub(label.chars().count() + 3).max(8);
     Line::from(vec![
         Span::styled(format!(" {label} "), Style::new().fg(token::MUTED)),
@@ -401,9 +404,11 @@ fn field(label: &str, value: &str, inner_w: usize) -> Line<'static> {
 fn editor_row(text: &str, inner_w: usize) -> Line<'static> {
     let room = inner_w.saturating_sub(6).max(8);
     // Show the tail: a person typing past the field's width needs to see
-    // what they are typing now.
-    let shown: String = if text.chars().count() > room {
-        text.chars().skip(text.chars().count() - room).collect()
+    // what they are typing now. The reason is free typed text, so this
+    // window is spent in columns. A `char` count can cut a glyph in half
+    // or leave the row too wide.
+    let shown = if columns::width(text) > room {
+        columns::take_right(text, room)
     } else {
         text.to_string()
     };
@@ -648,5 +653,22 @@ mod tests {
             render(&open(), false, area, &mut buf);
             render(&open(), true, area, &mut buf);
         }
+    }
+
+    /// The tail window stays inside `inner_w` for a CJK reason.
+    ///
+    /// Old code did `text.chars().skip(chars_count - room)`. With 30 CJK
+    /// glyphs (30 chars, 60 columns) and a 20-column `room`, that skip
+    /// dropped only 10 chars and kept 20 glyphs — 40 columns. Twice the
+    /// budget.
+    #[test]
+    fn a_wide_character_reason_keeps_the_editor_tail_inside_its_width() {
+        let text = "圈".repeat(30);
+        let inner_w = 26; // room = inner_w - 6 = 20
+        let line = editor_row(&text, inner_w);
+        assert!(
+            line.width() <= inner_w,
+            "editor row overran its {inner_w}-column budget: {line:?}"
+        );
     }
 }

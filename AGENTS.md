@@ -87,7 +87,11 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     are declared, and ci.yml's filter is built
                          #     from that declaration)
                          #   + god-files
-                         #   + gate-parity + left-behind + role-names
+                         #   + gate-parity
+                         #   + guard-trigger-coverage (prose, hue-separation
+                         #     and transcript-surfaces each run with no
+                         #     paths: filter in at least one workflow)
+                         #   + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
                          #     reachable from the engine's step path; down-only)
@@ -172,8 +176,16 @@ ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
 `prose` exists to judge — alongside the hermetic suites that prove a guard can
 still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
 one does is checked, by `gate-parity` against every `run:` in
-`.github/workflows/`. That workflow's `gate-steps` job — named `gate steps no
-other workflow runs` — is now one of `main`'s required status checks too,
+`.github/workflows/`. That check stops at "does some workflow run it" — it
+says nothing about which files reach it, so a `paths:` filter narrowing
+`guard-self-tests.yml`'s `pull_request:` trigger to `docs/**` would still read
+as green, and the three steps would run nowhere for a scripts-only pull
+request. Nothing held that absence in place except a comment.
+`guard-trigger-coverage` reads the trigger back: each of the three must run
+with no `paths:`/`paths-ignore:` filter in at least one workflow, so a later
+edit narrowing this one cannot reopen the gap silently. That workflow's
+`gate-steps` job — named `gate steps no other workflow runs` — is now one of
+`main`'s required status checks too,
 added after a red run of it merged into `main` and reddened every open PR.
 
 A fifth workflow, `deck-fit.yml`, owns the decks under
@@ -280,6 +292,17 @@ loudly: no `gh`, an unreachable tracker, an unreadable identity, two open
 a claim check that can block a repair is worse than the duplication it
 prevents. `make main-red-claim` asks by hand; `make main-red-claim-test`
 covers it, standing-down branch included.
+
+A claim carries a third fact, a session word, because one person runs several
+agent sessions and the login cannot tell them apart. On 2026-09-02 three
+sessions of one author each read the others' claims as their own, each
+proceeded, and each opened a pull request splitting the same file the same
+way, eight minutes apart. The word is `STELLA_CLAIM_SESSION` when a fleet sets
+it, and otherwise a token kept in the clone's git dir, which answers per
+worktree; `./scripts/main-red-claim.sh session` prints the one this clone
+claims under. A run that has no word, and a claim comment written before the
+word existed, both proceed on the old author-only rule, since an unknown here
+proceeds like every other.
 
 **The same collision happens over an issue, and `scripts/issue-claim.sh` is
 the same mechanic pointed at one.** Two sessions implemented #5045 in
@@ -480,7 +503,7 @@ enforces that rather than any file in this tree.
 
 The hook derives `CARGO_SCOPE` from the pushed diff via
 `scripts/impacted-crates.sh`, so a change confined to one crate compiles and
-tests that crate and its dependents rather than all 27 members (#1135). It
+tests that crate and its dependents rather than every member (#1135). It
 widens to the whole workspace for a push to `main`, a tag, a diff touching a
 workspace-root manifest / `Cargo.lock` / a build script / the gate machinery,
 and for anything it cannot narrow with confidence. Two escape hatches sit
@@ -762,11 +785,11 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    paths it actually names. Anything else is in the crate because somebody put
    it there, and belongs in its own.
 
-   Reachability from the **crate root** is not this: `search.rs`, `records/`
-   and `skills/` are all reachable from `lib.rs`, which is why
-   `module-reachability` passes on every one of them, and how a 15k-LOC
-   subsystem lands here behind a `pub mod` line. That is how the record plane
-   arrived (#5113).
+   Reachability from the **crate root** is not this: `search.rs` and `skills/`
+   are both reachable from `lib.rs`, which is why `module-reachability` passes
+   on either, and how a 15k-LOC subsystem lands here behind a `pub mod` line.
+   That is how the record plane arrived, and it has since left for
+   `stella-records` (#5113, #5117).
 
    A `#[cfg(test)]` reference does **not** count. A subsystem the engine
    touches only from its own tests is a subsystem the engine does not need —
@@ -907,7 +930,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-five crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-six crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -934,6 +957,7 @@ the files you must plan around (see below).
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
 | Render a session transcript — folds, digests, diffs, chips — on the web or a character grid | [`stella-transcript`](crates/stella-transcript/README.md) | **Near-leaf: [`stella-diff`](crates/stella-diff/README.md) is its only workspace dependency.** One information model, two renderers, no I/O. Both surfaces render from the same folds and the same diff rows — the Observatory used to re-implement the TUI's painter in JavaScript, and that copy had drifted to having no diff rendering at all. |
 | Turn text into a vector, or compare two vectors honestly | [`stella-embed`](crates/stella-embed/README.md) | **A leaf with NO workspace-crate dependencies** — the `Embedder` seam, the fingerprint every stored vector is stamped with, the `SimilarityPosture` a backend must declare, and a pure deterministic ranker. Shared by [`stella-context`](crates/stella-context/README.md) (retrieval) and [`stella-graph`](crates/stella-graph/README.md) (semantic code search) so neither has to depend on the other. |
+| Change the record plane — the typed record taxonomy, the ingestion boundary, or the registry that merges markdown rules and TOML records | [`stella-records`](crates/stella-records/README.md) | Pure value logic, no I/O. It left `stella-core` because the engine reached the whole plane through one hash call, which now goes to `stella_protocol::hash::record_hash`. It still depends on `stella-core` for the markdown rule parser the registry reads, and the re-layering epic tracks inverting that edge. |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
@@ -1047,7 +1071,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs` |
 
-The other twenty crates carry no god files — keep it that way. Each crate's
+The other twenty-one crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

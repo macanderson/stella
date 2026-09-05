@@ -47,13 +47,13 @@
 //! content-derived id is for. Supersession is for replacing a claim with a
 //! different one and stays with the ingest path that mints those links.
 //!
-//! [s]: stella_core::ingest::record::Record::stamp
+//! [s]: stella_records::ingest::record::Record::stamp
 
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 
-use stella_core::ingest::record::{AppliesTo, ContextFile, Record};
+use stella_records::ingest::record::{AppliesTo, ContextFile, Record};
 
 /// What the caller asked to change. Every field is `None` for "leave it".
 ///
@@ -223,9 +223,9 @@ fn describe(record: &Record) -> String {
 /// lineage id, matching `stella context explain`'s resolution so the two verbs
 /// take the same names.
 fn find<'r>(
-    registry: &'r stella_core::records::Registry,
+    registry: &'r stella_records::records::Registry,
     needle: &str,
-) -> Result<&'r stella_core::records::Entry, String> {
+) -> Result<&'r stella_records::records::Entry, String> {
     let wanted = needle.trim_start_matches('^');
     registry
         .entries

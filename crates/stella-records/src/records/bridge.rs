@@ -2,7 +2,7 @@
 //!
 //! `docs/spec/adaptive-context/context-pr.md` §11 maps the enforcement ladder onto a two-tier engine
 //! that already exists: Tier 1 renders into the prompt, Tier 2 blocks at the tool
-//! boundary through [`evaluate_guards`][super::super::rules::evaluate_guards]. TOML
+//! boundary through [`evaluate_guards`][stella_core::rules::evaluate_guards]. TOML
 //! records carry the same deny-shaped guard fields markdown rules do — and until
 //! this module, nothing evaluated them. A `hard`-mode record was a comment.
 //!
@@ -48,8 +48,8 @@
 
 use super::super::context_record::kind::Origin;
 use super::super::ingest::record::{EnforcementMode, Record, TruthBasis};
-use super::super::rules::{Rule, RuleGuard};
 use super::{LoadedRecord, Trust};
+use stella_core::rules::{Rule, RuleGuard};
 
 /// Why a record that asked to block was not armed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,7 +147,7 @@ fn self_attested(record: &Record, trust: Trust) -> bool {
 
 /// Whether a guard's fields amount to something [`evaluate_guards`][ev] can act on.
 ///
-/// [ev]: super::super::rules::evaluate_guards
+/// [ev]: stella_core::rules::evaluate_guards
 fn concrete(guard: &RuleGuard) -> bool {
     // `allow_command_glob` is absent: an exception alone denies
     // nothing, so a record carrying only one would advertise Tier 2 while

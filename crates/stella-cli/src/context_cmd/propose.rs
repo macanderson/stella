@@ -39,8 +39,8 @@ use std::process::Command;
 
 use colored::Colorize;
 
-use stella_core::ingest::record::{LinkRelation, SharingScope};
-use stella_core::records::{Entry, Registry, Severity};
+use stella_records::ingest::record::{LinkRelation, SharingScope};
+use stella_records::records::{Entry, Registry, Severity};
 
 /// `stella context propose <rule>`.
 pub fn run_propose(root: &Path, needle: &str, commit: bool) -> Result<(), String> {

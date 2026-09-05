@@ -128,7 +128,7 @@ use slash_commands::{DeckCommand, handle_agents_input, run_deck_command};
 use crate::memory::{SessionMemory, TurnFriction};
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, handle_agent_create};
-pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
+pub(crate) use forwarder::{SharedRevisions, close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
 

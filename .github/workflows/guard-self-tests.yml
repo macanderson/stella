@@ -93,6 +93,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-transcript-surfaces.py
 
+      # The three steps above run here because this trigger carries no
+      # `paths:` filter at all -- that is what lets them fire on a
+      # scripts-only pull request. Nothing enforced that absence except a
+      # comment, so this reads it back: at least one workflow must run each
+      # of the three with an unfiltered `pull_request:` trigger, or a future
+      # edit narrowing this one would silently reopen the gap (#5448).
+      - name: each guard above still runs with no paths filter somewhere
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-guard-trigger-coverage.py
+
   self-tests:
     name: guard self-tests
     runs-on: ubuntu-latest
@@ -192,6 +202,10 @@ jobs:
       - name: gate-parity guard failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-gate-parity.sh
+
+      - name: guard-trigger-coverage guard failure directions
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/test-guard-trigger-coverage.py
 
       - name: the zsh completion installer
         if: ${{ !cancelled() }}

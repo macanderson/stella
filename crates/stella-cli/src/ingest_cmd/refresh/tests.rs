@@ -3,12 +3,12 @@
 
 use std::path::Path;
 
-use stella_core::context_record::{Origin, RecordStatus};
-use stella_core::ingest::lineage;
-use stella_core::ingest::record::{
+use stella_records::context_record::{Origin, RecordStatus};
+use stella_records::ingest::lineage;
+use stella_records::ingest::record::{
     ContextFile, Defaults, Provenance, Record, RecordKind, SharingScope,
 };
-use stella_core::ingest::refresh::AssertedClaim;
+use stella_records::ingest::refresh::AssertedClaim;
 
 use super::*;
 
@@ -97,7 +97,7 @@ fn a_dropped_claim_is_retired_and_an_unchanged_one_is_untouched() {
     assert_eq!(events.len(), 1);
     assert_eq!(
         events[0].action,
-        stella_core::records::promotion::LedgerAction::Retired
+        stella_records::records::promotion::LedgerAction::Retired
     );
     assert_eq!(events[0].lineage_id, "ctx.acme.web.deploy");
     assert!(
@@ -238,7 +238,7 @@ fn two_retirements_in_one_file_both_survive_on_disk() {
         records.push(record);
     }
     let file = ContextFile {
-        schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
+        schema: stella_records::ingest::record::SCHEMA_TAG.to_string(),
         set_id: "acme.web".to_string(),
         ingest_run_id: None,
         defaults: None,

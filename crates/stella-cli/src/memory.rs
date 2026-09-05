@@ -378,7 +378,7 @@ pub struct SessionMemory {
     /// refreshed mid-session when the rule files' bytes move — see
     /// [`records_refresh`]. Behind a lock because the freshness check runs at
     /// the re-query boundary, where the turn holds this memory by `&`.
-    record_registry: std::sync::RwLock<Option<stella_core::records::Registry>>,
+    record_registry: std::sync::RwLock<Option<stella_records::records::Registry>>,
     /// Bumped on every mid-session registry swap and folded into the
     /// re-query fingerprint, so a swap forces exactly one re-query at the
     /// next boundary — path drift alone would never notice it.
