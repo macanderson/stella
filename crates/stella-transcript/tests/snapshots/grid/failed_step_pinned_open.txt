@@ -1,0 +1,15 @@
+# grid golden · failed_step_pinned_open
+# the first of two turns, not the last, failed — Zoom::Turns would otherwise collapse it, but the failure pins the step open
+# width 100 · rendered through grid::to_plain, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-transcript --test grid_snapshots
+
+╭─ run-suite ──────────────────────────────────────────────────────────────────────────────────── ─╮
+│  you  run the loop-detect suite
+│
+│ 0:00 ▾ bash        cargo test -p stella-core loop_detect  ✗ failed        [226ms] [5 ln] [$0.0006]
+│        │ running 4 tests
+│        │ test loop_detect::tests::detects_a_two_cycle_repeat ... FAILED
+│        │ failures:
+│        │     loop_detect::tests::detects_a_two_cycle_repeat
+│        │ test result: FAILED. 3 passed; 1 failed; 0 ignored
+╰─ ✗ failed ─────────────────────────────────────────────── [1 steps] [0:06] [4.0k→120] [$0.0006] ─╯
