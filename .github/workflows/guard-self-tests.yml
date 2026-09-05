@@ -172,6 +172,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-dead-code-allows.sh
 
+      - name: retired model key guard directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-retired-model-keys.sh
+
       - name: deck path guard directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-deck-paths.sh

@@ -425,10 +425,10 @@ pub(crate) struct EngineWiring {
     /// [`ModelRef`] the pins route to (adapters bind their model id at
     /// construction, so each distinct ref needs its own instance).
     pub(crate) extra_providers: Vec<(ModelRef, Box<dyn Provider>)>,
-    /// The model `Role::Worker`/`Role::Plan` actually resolve to: the
-    /// worker's own `pipeline_worker_model`/`agents.worker.*` pin when one
-    /// is configured and its provider is credentialed (issue #276), else
-    /// the session default this wiring was built with. Callers building the
+    /// The model `Role::Worker` actually resolves to: the configured
+    /// `default_model` / `agents.default.model` pin when one is set and its
+    /// provider is credentialed (issue #276), else the session default this
+    /// wiring was built with. Callers building the
     /// worker's own [`EngineConfig`] (catalog-based context-window and
     /// reasoning-capability clamps) must key off THIS, not `cfg` directly.
     pub(crate) worker_model: ModelRef,
@@ -946,19 +946,15 @@ pub(crate) struct ReflectionRoute {
     pub(crate) posture: crate::memory::ReflectionPosture,
 }
 
-/// Resolve where post-turn reflection dispatches (#1847): the configured
-/// triage model when it is routable, else `None` — ride the worker.
+/// Resolve where post-turn reflection dispatches (#1847): the session's own
+/// configured model when it is routable, else `None` — ride the worker.
 ///
-/// Reflection ran on the WORKER model from the day it shipped, with a 2048
-/// output-token allowance and no effort pin, while `crate::memory`'s own
-/// module doc called it "one cheap model call". Nothing routed it to a cheap
-/// tier. The triage pin (`pipeline_triage_model`/`agents.triage.*`) is
-/// already the posture's declaration of "the cheap, fast model", so
-/// reflection rides that declaration rather than adding a second cheap-model
-/// knob the two settings could drift apart on.
+/// It rode a cheap triage tier until that role was retired; the body's
+/// comment carries why the choice was made and where it may go next. What is
+/// read now is `default_model` / `agents.default.model`.
 ///
 /// Every miss is soft, matching [`resolve_cross_family_verifier`] and
-/// `pin_role`: no engine settings, no triage spec, an uncredentialed
+/// `pin_role`: no engine settings, no model spec, an uncredentialed
 /// provider, or an adapter that will not build all yield `None`, and the
 /// caller keeps dispatching on the worker exactly as every reflection call
 /// always has. A triage spec that resolves to the session default model is
@@ -968,10 +964,10 @@ pub(crate) struct ReflectionRoute {
 /// adapter" rule the wiring's `pin_role` applies) — but the pin still chose
 /// that model, so its posture still rides out.
 ///
-/// Returns the triage agent's **posture** alongside the adapter, and returns
-/// it even in the same-model case where no adapter is needed. Reflection runs
-/// on the model this pin selected, so `agents.triage.reasoning` /
-/// `agents.triage.effort` are the settings that govern the call — before
+/// Returns the agent's **posture** alongside the adapter, and returns it even
+/// in the same-model case where no adapter is needed. Reflection runs on the
+/// model this pin selected, so `agents.default.reasoning` /
+/// `agents.default.effort` are the settings that govern the call — before
 /// #2174 they chose the model and then could not reach it, so an operator who
 /// switched thinking off still paid for a reasoning stream billed against
 /// reflection's output cap.
