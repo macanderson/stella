@@ -127,7 +127,7 @@ const GAP: usize = 3;
 /// unassigned plugin seat stays `None` and renders as `default`.
 ///
 /// The editable rows start at `state.roles.len()`. Rows before that are
-/// resolved roles, read-only here (see [`seat_at`]). Rows from it on are
+/// resolved roles, read-only here (see `seat_at`). Rows from it on are
 /// `state.seats`, in the same order, so a combined row index always finds the
 /// right seat.
 #[must_use]
@@ -800,6 +800,20 @@ mod tests {
         let text = draw(&ui_with(Some(state)), 90, 12);
         assert!(text.contains("anthropic/claude-opus-5"), "{text}");
         assert!(!text.contains("no installed plugin"), "{text}");
+    }
+
+    /// The fold names nothing. A driver that calls the session's own role
+    /// something other than `default` gets that word back, which is what
+    /// proves the row is read rather than written here — a fold that
+    /// hardcoded `"default"` would pass every other test above and still
+    /// fail this one.
+    #[test]
+    fn the_leading_row_is_named_by_the_driver_not_by_this_pane() {
+        let state = snapshot(
+            vec![resolved("lead", "zai/glm-5.2", "default_model")],
+            vec![],
+        );
+        assert_eq!(keys(&state), ["lead"]);
     }
 
     /// A snapshot the driver sent no rows in draws the hint, not an invented
