@@ -178,13 +178,13 @@ fn refresh(store: &ContextStore, workspace_root: &std::path::Path) -> Result<(),
         // rejected in the SKILLS tab would disagree with the loop it is
         // standing in for.
         &crate::skill_manager::rejections(workspace_root),
-        &stella_core::skills::SkillMineConfig::default(),
+        &stella_learn::skills::SkillMineConfig::default(),
     );
     crate::memory::rules_mining::induce_rule_proposals(
         store,
         &observations,
         &crate::rules::load_workspace_rules_unfiltered(workspace_root),
-        &stella_core::rules::MineConfig::default(),
+        &stella_learn::rules::MineConfig::default(),
     );
     let after = current_proposals(store).len();
 
@@ -329,7 +329,7 @@ fn list(store: &ContextStore, all: bool, limit: usize) -> Result<(), String> {
 ///
 /// Matches the candidate id first, then the full lineage id. The candidate id
 /// can be ambiguous by construction: the skills and rules miners share
-/// `stella_core::mining`, so one lesson derives the same `<slug>-<hash8>` for
+/// `stella_learn::mining`, so one lesson derives the same `<slug>-<hash8>` for
 /// both — a knowledge proposal and a directive proposal can genuinely wear the
 /// same candidate id. Rather than pick one, this refuses and prints the lineage
 /// ids to disambiguate with, because silently deciding the wrong artifact is
@@ -451,7 +451,7 @@ fn materialize_directive(
     proposal: &ProposalRecord,
     edited_body: Option<&str>,
 ) {
-    let candidate = stella_core::rules::RuleCandidate {
+    let candidate = stella_learn::rules::RuleCandidate {
         id: proposal.candidate_id.clone(),
         text: edited_body.unwrap_or(&proposal.body).to_string(),
         description: proposal.title.clone(),

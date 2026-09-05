@@ -1,9 +1,9 @@
 //! Tests for the skill-appraisal ledger: the gate's evidence source, the
 //! held-candidate queue, and the retirement sweep.
 
-use stella_core::self_tuning::TaskOutcome;
-use stella_core::skills::SkillOrigin;
-use stella_core::skills::appraisal::{DemotionReason, KeepSkillReason, SkillVerdict};
+use stella_learn::self_tuning::TaskOutcome;
+use stella_learn::skills::SkillOrigin;
+use stella_learn::skills::appraisal::{DemotionReason, KeepSkillReason, SkillVerdict};
 
 use super::*;
 
@@ -62,11 +62,11 @@ fn the_newest_verdict_per_skill_wins() {
     let helping = SkillAppraisal {
         skill: "s".into(),
         verdict: SkillVerdict::Helps { lift: 1.0 },
-        report: stella_core::comparison::compare(
+        report: stella_learn::comparison::compare(
             &[],
-            &stella_core::comparison::ComparisonConfig::new(
+            &stella_learn::comparison::ComparisonConfig::new(
                 "without_skill",
-                stella_core::comparison::Metric::PassRate,
+                stella_learn::comparison::Metric::PassRate,
             ),
         ),
         harm: None,

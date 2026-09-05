@@ -18,9 +18,9 @@ use super::{Audit, Durable, audit, runtime};
 
 /// Mark an issue the loop tried and could not resolve.
 ///
-/// The whole issue rather than its key, because the escalation record is
-/// stamped into the body and the count in the body it already has is what
-/// says whether this is the first attempt or the last.
+/// The whole issue rather than its key, because the caller already holds it
+/// and a later reader of this signature should not have to guess which half
+/// of it is wanted.
 pub(super) fn escalate(
     durable: &Durable,
     settings: &crate::settings::Settings,
@@ -34,7 +34,6 @@ pub(super) fn escalate(
         provider,
         key,
         why,
-        &issue.body,
         &cfg.escalation,
         &cfg.attribution.issue_comment,
     )) {
@@ -137,7 +136,6 @@ pub(super) fn assess_one(
              priority it wrote — the drive runner's login is not on the \
              guard's list. Add it to TRIAGE_LOGINS in the guard workflow, or \
              set the priority from an allowed login",
-            &full.body,
             &cfg.escalation,
             &cfg.attribution.issue_comment,
         )?;
@@ -160,7 +158,6 @@ pub(super) fn assess_one(
             &issue.key,
             "triage could not place this issue in the configured vocabulary — \
              it needs a human to label it",
-            &body,
             &cfg.escalation,
             &cfg.attribution.issue_comment,
         )?;

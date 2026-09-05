@@ -50,7 +50,7 @@
 //! tool arguments in `tool_calls`.
 //!
 //! Every string leaf of every record and of the manifest passes through
-//! [`stella_core::redact::redact_secrets`] *after* assembly, so a field added
+//! [`stella_learn::redact::redact_secrets`] *after* assembly, so a field added
 //! later cannot route around it, and output is written 0600 into a 0700
 //! directory. Nothing here reads a clock — the manifest's watermark comes from
 //! the store — and every ordering is a stable key, so the same store and
@@ -64,7 +64,7 @@ use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use stella_core::redact::{PLACEHOLDER, redact_secrets};
+use stella_learn::redact::{PLACEHOLDER, redact_secrets};
 use stella_protocol::AgentEvent;
 use stella_store::{FinishedExecution, MismatchSeverity, RecordedCall, Store};
 
@@ -318,7 +318,7 @@ pub struct DatasetRecord {
     pub reward: Option<RewardLabel>,
     /// Whether redaction actually replaced something anywhere in this record.
     /// Recorded so "this was redacted" is a visible fact rather than an
-    /// assumption (the `stella_core::redact` posture).
+    /// assumption (the `stella_learn::redact` posture).
     pub redacted: bool,
 }
 
@@ -505,7 +505,7 @@ fn run_export(args: &ExportArgs) -> Result<(), String> {
         repo,
         filter,
         redaction: RedactionStamp {
-            function: "stella_core::redact::redact_secrets".to_string(),
+            function: "stella_learn::redact::redact_secrets".to_string(),
             placeholder: PLACEHOLDER.to_string(),
             behavior_digest: redaction_behavior_digest(),
         },

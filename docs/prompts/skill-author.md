@@ -49,7 +49,7 @@ A skill that is a runnable procedure (invoked as `stella skill run <slug>` or `/
 
 The second paragraph teaches the **skill-function** vocabulary — the four
 optional frontmatter keys `parse_invoke_directives`
-(`crates/stella-core/src/skills/invoke.rs`) recognizes:
+(`crates/stella-core/src/skill_invocation.rs`) recognizes:
 
 | Key | Values | What it does at invocation |
 |---|---|---|

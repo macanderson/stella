@@ -8,7 +8,7 @@
 //! emit, through that same call. So the cost the budget sees and the bytes
 //! the prompt pays for cannot drift.
 //!
-//! The skill adapters stay in `stella_core::steering::adapt`, next to the
+//! The skill adapters live in `stella_cli::memory::steering`, next to the
 //! code they read. These two moved here with the record plane. They
 //! were the last thing that made the engine name a record type.
 

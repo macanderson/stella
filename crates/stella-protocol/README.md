@@ -6,11 +6,19 @@ request/response envelopes, and the `Provider` trait itself. `stella run
 --output-format stream-json` is a `serde_json` serialization of `AgentEvent`,
 one line per event, so this crate is the workspace's public wire contract.
 
-**Types only — zero logic, zero I/O.** Nothing here opens a socket, reads a
-file, or spawns a task. The only functions that exist are total, allocation-
-light helpers over their own data (`AgentEvent::type_tag`,
-`ProviderError::is_retryable`, `ContextUsage::is_consistent`,
-`classify_media_type`). The crate also depends on **no other workspace crate**,
+**Types first, and zero I/O.** Nothing here opens a socket, reads a file, or
+spawns a task. Most functions are total, allocation-light helpers over their
+own data (`AgentEvent::type_tag`, `ProviderError::is_retryable`,
+`ContextUsage::is_consistent`, `classify_media_type`).
+
+Three modules are not that shape, and they are here on a narrower rule: a
+**shared primitive** two crates on either side of a boundary must compute
+identically. `hash::record_hash`, `glob::match_glob` and
+`frontmatter::parse_frontmatter` each had two callers that a re-layering put
+in different crates, and a copy in each would be a copy that drifts. Each is
+pure, total, and depends on nothing outside the standard library. A helper
+that only one crate calls does not qualify, and a function that decides what
+the program does next never does. The crate also depends on **no other workspace crate**,
 and must not: `stella-core` depends on `stella-protocol`, so importing a core
 type here is a dependency cycle. That is why several fields mirror a
 `stella-core` type instead of re-exporting it — `AgentEvent::LoopDetected::kind`
@@ -62,9 +70,10 @@ Already visible in the tree:
 ## Boundary — does this change belong here?
 
 A change belongs here exactly when it is a serde type — or a field on one —
-that two crates must agree on across a crate or process boundary, plus at most
-a total, allocation-light helper over that type's own data in the mold of the
-four the intro names. The test an agent can apply before writing: if the diff
+that two crates must agree on across a crate or process boundary, plus a
+total, allocation-light helper: either over that type's own data in the mold
+of the four the intro names, or a shared primitive on the narrower rule the
+intro states. The test an agent can apply before writing: if the diff
 needs an `await`, a clock, a filesystem or network touch, a dependency beyond
 `serde`/`serde_json`/`thiserror`/`async-trait`, or a `match` that decides what
 the program *does* next, it does not belong here. Every type added pays its way
@@ -136,6 +145,7 @@ round-trip tests travel with its supporting type, not with `kind.rs`.
 | [`src/role.rs`](src/role.rs) | `Role` (worker/triage/plan/research/verifier/embed/vision/image/video) and `ModelRef`. |
 | [`src/error.rs`](src/error.rs) | `ProviderError` and its retry classification. |
 | [`src/cache.rs`](src/cache.rs) | `CacheCause` and the one-line hint each carries, so the CLI receipt and the deck panel print identical wording. |
+| [`src/hash.rs`](src/hash.rs), [`src/glob.rs`](src/glob.rs), [`src/frontmatter.rs`](src/frontmatter.rs) | The three shared primitives: a record's canonical `sha256:` digest (ADR 0004), the `*`-only glob a rule guard and a hook matcher both match on, and the `---` header parser every markdown file in the workspace carries. Each has callers in two crates that must agree byte for byte. |
 | [`src/plan_graph.rs`](src/plan_graph.rs) | The plan graph (SPEC §7.4): `PlanNode`, `TaskNode`, `PlanEdge` with its `[:NEXT]`/`[:THEN]` `PlanEdgeKind`, the one-based `PlanRevision`, and the never-blank `DivergenceCause` a `Divergence` carries. The rules are the types — there is no `r0`, and a cause that says nothing is refused on the wire. `stella_core::plan_graph` owns every decision made with them. |
 
 ## Key concepts

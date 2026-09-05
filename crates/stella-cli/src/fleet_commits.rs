@@ -183,7 +183,8 @@ impl ToolExecutor for CommitObserver<'_> {
 /// and complete there, catching even a commit made outside Stella's repo
 /// tools.
 ///
-/// The **shared tree** — the default — has no such luxury, which is what this
+/// A **shared-tree** task — the mode a plan has to name for itself, since ADR
+/// 0027 made the worktree the default — has no such luxury, which is what this
 /// module exists for: the answer is the set of advances this worker was
 /// *observed* making, each read inside a window no sibling can commit
 /// through.

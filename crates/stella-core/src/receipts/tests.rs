@@ -363,7 +363,7 @@ fn both_automatic_steer_rungs_file_as_one_receipt_kind() {
 /// own goal until this arm existed.
 #[test]
 fn an_invoked_skill_body_and_a_wake_report_are_steering_not_the_users_goal() {
-    let invocation = crate::skills::invoke::render_invocation_message("triage", "read the log");
+    let invocation = crate::skill_invocation::render_invocation_message("triage", "read the log");
     assert_eq!(user_block_kind(&invocation), BlockKind::Steered);
 
     let wake = format!(

@@ -15,7 +15,7 @@ status: implemented
 Stella reads markdown files with a `key: value` header. The parser reads one
 line at a time. It cannot hold a key with keys under it. So it notes the
 child key names and moves on. See `Frontmatter::nested_keys` in
-`crates/stella-core/src/rules.rs`.
+`crates/stella-protocol/src/frontmatter.rs`.
 
 Two loaders read that header. They answer the nested case in two ways.
 

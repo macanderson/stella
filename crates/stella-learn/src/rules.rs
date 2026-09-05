@@ -17,7 +17,7 @@
 //! once at assembly, renders the Tier-1 section into its system prompt, and
 //! arms Tier-2 guards at the tool boundary by registering an
 //! [`evaluate_guards`] policy handler on the tool registry's
-//! `tool.call.requested` blocking chain ([`crate::bus`],
+//! `tool.call.requested` blocking chain (`stella_core::bus`,
 //! `stella-tools::registry`) — a violation denies the call and returns the
 //! rule text to the model.
 //!
@@ -25,7 +25,7 @@
 //!
 //! Discovering rule files means reading a directory and its file contents —
 //! real I/O, which `stella-core` never performs directly. [`RuleSource`] is
-//! the injectable discovery port, mirroring how [`crate::ports::ToolExecutor`]
+//! the injectable discovery port, mirroring how `stella_core::ports::ToolExecutor`
 //! is the injectable *execution* port: a concrete implementation backed by
 //! real `std::fs` calls belongs to `stella-cli` (or `stella-tools`), never
 //! here. Everything downstream of a `RuleSource` — frontmatter parsing,
@@ -53,18 +53,22 @@
 //!     `already-exists`, and publishing the candidate as a TOML context
 //!     record. That belongs to `stella-cli`.
 //!
-//! What IS ported: the full mining algorithm — lexical clustering, salience
-//! override, dedup against existing rules, guard inference from consistent
-//! file evidence, and ranking (all pure decision logic, see
-//! [`mine_candidates`]) — plus the pure half of `promoteCandidate`: deciding
-//! what a promotion attempt *would* do given the caller's own
-//! `approve`/`file_exists` facts ([`decide_promotion`]). The markdown
-//! renderer that once sat beside it was retired when publication moved to
-//! TOML context records (ADR 0011).
+//! What IS ported: the whole miner, in [`mine_candidates`]. It groups
+//! lessons by word, lets a salient one through alone, drops what a rule
+//! already says, reads a guard off the files, and ranks the rest. All of it
+//! is plain decision logic. [`decide_promotion`] comes too: it says what a
+//! promotion would do, given the caller's own `approve` and `file_exists`
+//! facts. The markdown renderer beside it was retired when publishing moved
+//! to TOML context records (ADR 0011).
 
 use std::collections::HashMap;
 
-use crate::glob::match_glob;
+use stella_protocol::glob::match_glob;
+
+/// The header parser, under the name rule callers already use. It sits in
+/// `stella-protocol` so the engine can read the same header out of an agent
+/// file and a slash command.
+pub use stella_protocol::frontmatter::{Frontmatter, parse_frontmatter};
 
 // Types (ports `rules/types.ts`)
 
@@ -179,151 +183,6 @@ pub struct RuleFile {
 /// [`rule_search_dirs`]).
 pub trait RuleSource: Send + Sync {
     fn read_rule_files(&self, dirs: &[String]) -> Vec<RuleFile>;
-}
-
-/// Frontmatter split from a markdown file's body (TS: `Frontmatter`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Frontmatter {
-    pub data: HashMap<String, String>,
-    /// Keys which appeared more than once, in first-duplicate order. The
-    /// last scalar still wins in `data` for legacy compatibility; consumers
-    /// that need schema validation can reject the ambiguity explicitly.
-    pub duplicate_keys: Vec<String>,
-    /// Keys that appeared **indented under another key** — a YAML nested
-    /// mapping this single-line parser cannot represent.
-    ///
-    /// Recorded rather than acted on here, for the same reason as
-    /// `duplicate_keys`: this parser is shared with skills and extensions, and
-    /// what a nested key *means* differs per consumer. [`rule_from_file`]
-    /// refuses to load a rule that has any.
-    ///
-    /// Why this matters (ADR 0011, Consequences): the parser strips
-    /// indentation, so `docs/spec/adaptive-context/context-pr.md` §6.1's own example
-    ///
-    /// ```text
-    /// scope:
-    ///   repository_id: repo_stella
-    /// ```
-    ///
-    /// used to promote `repository_id` to the top level as a sibling of
-    /// `record_id`, leave `scope` empty, and report nothing. The record loaded,
-    /// wearing a scope it did not have. That is the same failure shape as a
-    /// guard script printing OK while skipping most of its inputs — the output
-    /// says success and the work did not happen.
-    pub nested_keys: Vec<String>,
-    pub body: String,
-}
-
-/// Strip one pair of matching surrounding quotes (`"…"` or `'…'`).
-pub(crate) fn strip_matched_quotes(value: &str) -> &str {
-    if value.len() >= 2
-        && ((value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\'')))
-    {
-        &value[1..value.len() - 1]
-    } else {
-        value
-    }
-}
-
-/// Split `---\n…\n---\nbody` into single-line key/value frontmatter plus
-/// body text. No frontmatter fence ⇒ the whole (trimmed) input is the body
-/// with empty data. Ports `parseFrontmatter` in `markdown-registry.ts`
-/// (leading-BOM strip, quote-stripping on values), and additionally
-/// flattens a YAML block sequence — a key with an empty scalar followed by
-/// `- item` lines — onto that key as a comma-separated value, so list-typed
-/// fields reach consumers in one shape no matter how the author wrote them.
-///
-/// A key **indented under another key** is recorded in
-/// [`Frontmatter::nested_keys`] rather than silently promoted to the top level.
-/// See that field's docs for why the silent promotion was a defect and not a
-/// convenience.
-pub fn parse_frontmatter(raw: &str) -> Frontmatter {
-    let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
-    if !text.starts_with("---") {
-        return Frontmatter {
-            body: text.trim().to_string(),
-            ..Frontmatter::default()
-        };
-    }
-    let Some(rel_end) = text.get(3..).and_then(|rest| rest.find("\n---")) else {
-        return Frontmatter {
-            body: text.trim().to_string(),
-            ..Frontmatter::default()
-        };
-    };
-    let end = 3 + rel_end;
-    let header = text[3..end].trim();
-    let after_fence = &text[end + 4..];
-    let body = after_fence
-        .strip_prefix("\r\n")
-        .or_else(|| after_fence.strip_prefix('\n'))
-        .unwrap_or(after_fence)
-        .trim()
-        .to_string();
-
-    let mut data = HashMap::new();
-    let mut duplicate_keys = Vec::new();
-    let mut nested_keys = Vec::new();
-    // The key whose scalar value was empty on its own line — the head of a
-    // possible YAML block sequence (`tools:` followed by `- Read` lines).
-    let mut pending_list_key: Option<String> = None;
-    // The indentation the block's own keys sit at, taken from the first key seen.
-    // Anything deeper is a nested mapping. Read from the file rather than assumed
-    // to be zero so a frontmatter block someone indented wholesale still parses.
-    let mut base_indent: Option<usize> = None;
-    for line in header.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let indent = line.len() - line.trim_start().len();
-        // A `- item` line under an empty-valued key is a block-sequence
-        // element: flatten it onto that key. Without a pending key the
-        // line falls through to the scalar path (and is skipped when it
-        // has no colon), exactly as before.
-        if let Some(item) = trimmed.strip_prefix("- ")
-            && let Some(key) = &pending_list_key
-        {
-            let item = strip_matched_quotes(item.trim());
-            if !item.is_empty() {
-                let entry: &mut String = data.entry(key.clone()).or_default();
-                if !entry.is_empty() {
-                    entry.push_str(", ");
-                }
-                entry.push_str(item);
-            }
-            continue;
-        }
-        let Some(colon) = trimmed.find(':') else {
-            continue;
-        };
-        let key = trimmed[..colon].trim();
-        let value = strip_matched_quotes(trimmed[colon + 1..].trim());
-        if key.is_empty() {
-            continue;
-        }
-        let base = *base_indent.get_or_insert(indent);
-        if indent > base {
-            // A nested mapping. Record it and DO NOT promote it: writing it to
-            // `data` is what made a mangled record look like a valid one.
-            if !nested_keys.iter().any(|seen| seen == key) {
-                nested_keys.push(key.to_string());
-            }
-            continue;
-        }
-        if data.contains_key(key) && !duplicate_keys.iter().any(|seen| seen == key) {
-            duplicate_keys.push(key.to_string());
-        }
-        data.insert(key.to_string(), value.to_string());
-        pending_list_key = value.is_empty().then(|| key.to_string());
-    }
-    Frontmatter {
-        data,
-        duplicate_keys,
-        nested_keys,
-        body,
-    }
 }
 
 fn file_stem(path: &str) -> String {

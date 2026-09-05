@@ -58,7 +58,12 @@ Iterating on a single crate is much faster than the whole workspace:
 ```bash
 cargo test  -p stella-core       # just the engine
 cargo clippy -p stella-tools --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc -p stella-tools --no-deps --document-private-items
 ```
+
+That last command is `make doc-warnings CARGO_SCOPE="-p stella-tools"` — it
+catches a private intra-doc link before CI does. Neither `cargo build` nor
+`cargo clippy` compiles docs, so neither one sees it.
 
 ### The gate — run before every push
 

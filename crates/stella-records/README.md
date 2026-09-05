@@ -25,18 +25,17 @@ engine did not use it. The engine reached the whole plane through one hash
 call, and that call now goes to `stella_protocol::hash::record_hash`. The
 engine names no record type at all.
 
-It depends on `stella-protocol` for that hash and for the token estimate
-the render budget spends. It also depends on `stella-core`, for two things:
+It takes three things from `stella-protocol`: that hash, the token estimate
+the render budget spends, and the glob a record selector matches paths on.
 
-- `rules` — the markdown rule parser. The registry merges markdown rules
-  and TOML records under one order, so it has to read a rule file.
-- `steering` — the candidate types `adapt` maps onto.
+It takes two from `stella-learn`. One is `rules`, the markdown rule parser:
+the registry merges markdown rules and TOML records under one order, so it
+has to read a rule file. The other is `redact`, to scrub a record body. That
+edge is fine. `stella-learn` is a near-leaf over `stella-protocol`, and the
+rule parser was lifted out of the engine so both sides could take it.
 
-That second edge points the wrong way, and the re-layering epic tracks
-the fix. `rules`
-could not come along: it reads `glob` and `mining`, and `mining` is shared
-with `skills`, which is engine code. The fix is to lift the rule parser
-into a crate both sides can take.
+One edge still points the wrong way. `stella-core` holds the candidate types
+`adapt` maps onto. The re-layering epic tracks the fix.
 
 ## Where a change goes
 

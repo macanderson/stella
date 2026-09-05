@@ -583,7 +583,7 @@ async fn the_recall_block_carries_frames_skills_and_records_together() {
         })
         .await
         .unwrap();
-    let record_file = stella_core::rules::RuleFile {
+    let record_file = stella_learn::rules::RuleFile {
         path: ".stella/rules/ctx.acme.staging.toml".to_string(),
         contents: r#"
 schema = "context-record/v0.1"
@@ -899,7 +899,7 @@ fn a_matched_record_evicted_by_the_budget_is_reported() {
             50 - i
         ));
     }
-    let record_file = stella_core::rules::RuleFile {
+    let record_file = stella_learn::rules::RuleFile {
         path: ".stella/rules/ctx.acme.toml".to_string(),
         contents,
         contributed_by: None,

@@ -1,7 +1,7 @@
 //! The skill-appraisal ledger — the durable half of the measured promote/retire
 //! gate (#1067, #1068).
 //!
-//! `stella-core`'s [`stella_core::skills::appraisal`] decides; this module is
+//! `stella-core`'s [`stella_learn::skills::appraisal`] decides; this module is
 //! where the evidence lives between sessions, because neither direction of that
 //! gate can be answered from one turn:
 //!
@@ -52,8 +52,8 @@ use std::path::Path;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use stella_context::ContextStore;
-use stella_core::skills::SkillCandidate;
-use stella_core::skills::appraisal::{
+use stella_learn::skills::SkillCandidate;
+use stella_learn::skills::appraisal::{
     AppraisalConfig, DemotionDecision, EvalEvidence, SkillAppraisal, SkillTrial, appraise,
     decide_demotion,
 };
@@ -73,7 +73,7 @@ pub const TRIALS_FILE: &str = "skill_trials.jsonl";
 /// One key for the whole window, and it is not the same decision as *which
 /// turns enter the window*. Live turns are unique by construction — nobody
 /// sends the same prompt twice — so a per-turn key would put one trial in each
-/// stratum, and [`stella_core::comparison`] counts a task only when every arm
+/// stratum, and [`stella_learn::comparison`] counts a task only when every arm
 /// ran it. Every stratum would then be unpaired and the window would produce no
 /// evidence at all. Under one key nothing is dropped and the comparison
 /// degrades to the unpaired two-sample test it actually is.
@@ -235,7 +235,7 @@ struct StoredTrial {
 /// provenance must never be enough to retire something.
 pub fn sweep(
     workspace_root: &Path,
-    origins: &HashMap<String, stella_core::skills::SkillOrigin>,
+    origins: &HashMap<String, stella_learn::skills::SkillOrigin>,
     config: &AppraisalConfig,
 ) -> Vec<(SkillAppraisal, DemotionDecision)> {
     let mut by_skill: HashMap<String, Vec<SkillTrial>> = HashMap::new();
@@ -254,7 +254,7 @@ pub fn sweep(
         let origin = origins
             .get(&name)
             .copied()
-            .unwrap_or(stella_core::skills::SkillOrigin::Workspace);
+            .unwrap_or(stella_learn::skills::SkillOrigin::Workspace);
         let decision = decide_demotion(origin, &appraisal);
         out.push((appraisal, decision));
     }

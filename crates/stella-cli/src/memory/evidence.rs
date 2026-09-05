@@ -39,7 +39,7 @@
 //! workspace that the next turn could use.
 
 use stella_context::{AppendOutcome, ContextStore, LedgerAppend};
-use stella_core::redact::redact_secrets;
+use stella_learn::redact::redact_secrets;
 use stella_records::context_record::{
     ContextRecordKind, LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ObservationSource,
 };

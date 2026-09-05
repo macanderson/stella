@@ -1,15 +1,17 @@
 ---
 title: Agent Fleets
-description: Run many tasks at once with parallel workers in one shared tree, coordinated by file claims. Turn on worktree isolation per task when you need it.
+description: Run many tasks at once with parallel workers, each in its own git worktree. Put a task in the shared tree when you want file claims and a warm cache instead.
 ---
 
 `stella fleet` runs many tasks at once. Each task gets its own full stella worker. By
-default, all the workers share one tree: every worker runs in the repository root,
+default, each worker also gets its own git worktree on its own branch, kept separate
+from your working copy and from every other worker. That is what stops one worker
+switching branches and reverting another's uncommitted files.
+
+A task marked `isolation = "shared_tree"` runs in the repository root instead,
 coordinated by cooperative file claims. If two workers try to touch the same file, the
 conflict shows up right away and names which worker is holding it. Commits from
-different workers interleave on one branch, and the build cache stays warm. A task
-marked `isolation = "isolated"` instead gets its own git worktree on its own branch,
-kept separate from your working copy and from every other worker.
+different workers interleave on one branch, and the build cache stays warm.
 
 ```bash
 stella fleet \
@@ -27,10 +29,11 @@ stella fleet \
    first. Plans are checked before anything runs. A duplicate id, a task that depends on
    itself, an unknown dependency, or a dependency cycle gets rejected, and stella names
    the task or cycle that caused it.
-2. **Share or isolate.** By default, every worker runs directly in the repository root,
-   using the cooperative file claims described [below](#file-claims--cooperative-locks).
-   A task marked `isolation = "isolated"` instead gets a fresh git worktree under
-   `.stella/worktrees/<slug>`, branched from a pinned base commit. That base is the
+2. **Isolate or share.** By default, every worker gets a fresh git worktree under
+   `.stella/worktrees/<slug>`, branched from a pinned base commit. A task marked
+   `isolation = "shared_tree"` runs directly in the repository root instead, using the
+   cooperative file claims described [below](#file-claims--cooperative-locks). The
+   pinned base is the
    current `HEAD` or `--base-ref`, locked to a specific commit at the start of the run so
    later commits can't shift it. The worktree lands on a `fleet/<slug>-<hash>` branch.
    The 16-character hash keeps re-runs, which reuse task ids like `t1`, from colliding
@@ -112,14 +115,13 @@ The task fields the plan parser accepts:
     Ids of tasks that must succeed before this one starts. This is what decides the wave
     order. Every id must name a task in the same plan.
   </OptionCard>
-  <OptionCard name="isolation" defaultValue="shared_tree">
-    `shared_tree` runs directly in the repo root, using cooperative file claims.
-    `isolated` gets its own worktree on its own branch. Choose this when the work is
-    genuinely meant to diverge, like several competing attempts at the same files, or a
-    task that changes checkout state in ways that would affect other workers. File
-    claims can't help there, since conflict is the whole point. The trade-off is real:
-    each worktree starts with a cold build cache, and any conflicts get pushed to when
-    you merge the work back.
+  <OptionCard name="isolation" defaultValue="isolated">
+    `isolated` gets its own worktree on its own branch, so no worker can revert
+    another's uncommitted files. It costs a cold build cache per tree, and it pushes
+    conflicts out to when you merge the work back. `shared_tree` runs directly in the
+    repo root, using cooperative file claims. Choose that when the tasks touch
+    different files, none of them switches branches, and a warm cache is worth more
+    than the separation.
   </OptionCard>
   <OptionCard name="claims" defaultValue="[]">
     Paths, relative to the workspace root, held as file locks for the length of the
@@ -229,7 +231,7 @@ stella fleet --plan release-prep.toml --max-concurrency 2 --watch
 
 <CardGrid size="md">
   <OptionCard name="<task>..." required>
-    One or more task prompts, each becoming its own shared-tree task. Required unless
+    One or more task prompts, each becoming its own task in its own worktree. Required unless
     you pass `--plan`; you can't use both at once.
   </OptionCard>
   <OptionCard name="--plan <FILE>">
@@ -241,7 +243,7 @@ stella fleet --plan release-prep.toml --max-concurrency 2 --watch
     self-driving governor's number: machine probes crossed with the learned cap.
   </OptionCard>
   <OptionCard name="--base-ref <ref>" defaultValue="current HEAD">
-    The git ref that `isolation = "isolated"` worktrees branch from. It's locked to a
+    The git ref that worker worktrees branch from. It's locked to a
     specific commit at the start of the run, so later commits can't shift the base.
     Shared-tree tasks ignore this flag.
   </OptionCard>

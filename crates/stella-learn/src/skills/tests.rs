@@ -1281,3 +1281,28 @@ fn a_wordless_lesson_mines_no_candidate() {
         );
     }
 }
+
+/// The other half of `stella_core::skill_invocation`'s directive round-trip.
+///
+/// A skill author writes one file and two parsers read it. `invoke` reads
+/// the directive keys; this parser reads name, description and body. Neither
+/// may choke on the other's keys, and after the plane split the two parsers
+/// sit in different crates, so the halves are pinned on both sides.
+#[test]
+fn skill_parsing_tolerates_every_invocation_directive_key() {
+    let raw = "---\n\
+               name: release-notes\n\
+               description: Write release notes\n\
+               context: fork\n\
+               allowed-tools: task_list, get_state list_state\n\
+               model: gpt-5.2\n\
+               effort: High\n\
+               max-risk: high\n\
+               ---\n\
+               Lead with user impact for $ARGUMENTS.\n";
+    let skill = skill_from_file("skills/release-notes/SKILL.md", raw)
+        .expect("directive keys must not break skill parsing");
+    assert_eq!(skill.name, "release-notes");
+    assert_eq!(skill.description, "Write release notes");
+    assert!(skill.body.contains("$ARGUMENTS"));
+}

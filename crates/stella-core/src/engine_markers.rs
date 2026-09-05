@@ -50,7 +50,7 @@
 /// `RESTORE_MARKER_PREFIX` (`restore.rs`, #2685),
 /// `READ_DIGEST_MARKER_PREFIX` (`compaction/read_digest.rs`, #3806),
 /// `WAKE_MARKER` (`waiting.rs`), `SKILL_INVOCATION_PREFIX`
-/// (`skills/invoke.rs`, #2682) and `DEADLINE_MARKER_PREFIX`
+/// (`skill_invocation.rs`, #2682) and `DEADLINE_MARKER_PREFIX`
 /// (`driver/deadline_notice.rs`) — so the table is correct by definition for
 /// the markers it lists; tests keep it complete.
 pub const ENGINE_MARKERS: &[&str] = &[
@@ -62,7 +62,7 @@ pub const ENGINE_MARKERS: &[&str] = &[
     crate::restore::RESTORE_MARKER_PREFIX,
     crate::compaction::read_digest::READ_DIGEST_MARKER_PREFIX,
     crate::waiting::WAKE_MARKER,
-    crate::skills::invoke::SKILL_INVOCATION_PREFIX,
+    crate::skill_invocation::SKILL_INVOCATION_PREFIX,
     crate::driver::deadline_notice::DEADLINE_MARKER_PREFIX,
 ];
 

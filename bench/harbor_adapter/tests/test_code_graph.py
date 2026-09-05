@@ -1,7 +1,8 @@
 """Unit tests for :mod:`stella_harbor.code_graph`'s pure parsers.
 
-``from_stdout`` and ``unavailable`` are the only place a trial's metadata
-learns what ``stella init`` actually did in the container. Before #3669 the
+``from_stdout``, ``from_result`` and ``unavailable`` are the only place a
+trial's metadata learns what ``stella init`` did in the container, and
+``disclose`` is the only place a run log learns it. Before #3669 the
 semantic-index outcome was not parsed at all — a trial could not say whether
 embeddings were built, skipped for want of a backend, or attempted and
 incomplete, because the parser structurally could not emit any of the three.
@@ -34,6 +35,9 @@ pytest.importorskip("harbor", reason="Harbor is required to produce its own mess
 
 from harbor.agents.installed.base import (  # noqa: E402 - after importorskip by design
     NonZeroAgentExitCodeError,
+)
+from harbor.environments.base import (  # noqa: E402 - after importorskip by design
+    ExecResult,
 )
 
 from stella_harbor import StellaAgent  # noqa: E402 - after importorskip by design
@@ -285,3 +289,169 @@ class TestUnavailableAgainstHarbor:
         recovered = code_graph.unavailable(raised.value)["stderr"]
         assert recovered == "x" * 1000 + " ... [truncated]"
         assert recovered != long_stderr
+
+
+class TestFromResult:
+    """The exec that returned instead of raising.
+
+    Harbor raises on a non-zero exit, so the plain agent exec is covered by
+    ``TestUnavailableAgainstHarbor`` above. The credential branch drives the
+    Compose client itself and *returns* the command's exit code, so the code
+    has to be read off the result. Read only stdout and a failed init lands in
+    ``no_summary_line``, the state a clean init that printed no graph line
+    gets.
+    """
+
+    def test_a_clean_exit_is_classified_from_stdout_as_before(self) -> None:
+        result = ExecResult(
+            return_code=0,
+            stdout="✓ code graph: 6 symbols, 3 imports across 1 file\n",
+            stderr=None,
+        )
+        assert code_graph.from_result(result)["state"] == "reported"
+
+    def test_a_missing_return_code_is_read_as_a_clean_exit(self) -> None:
+        result = SimpleNamespace(stdout="✓ code graph: 0 symbols\n")
+        assert code_graph.from_result(result)["state"] == "reported"
+
+    def test_a_nonzero_exit_carries_the_code_and_both_streams(self) -> None:
+        result = ExecResult(return_code=1, stdout=_STDOUT, stderr=_STDERR)
+        summary = code_graph.from_result(result)
+        assert summary["state"] == "nonzero_exit"
+        assert summary["exit_code"] == "1"
+        assert summary["stdout"] == _STDOUT
+        assert summary["stderr"] == _STDERR
+
+    def test_a_nonzero_exit_is_not_a_quiet_one(self) -> None:
+        """The property the defect turned on, stated directly."""
+        failed = code_graph.from_result(
+            ExecResult(return_code=1, stdout=_STDOUT, stderr=_STDERR)
+        )
+        quiet = code_graph.from_result(
+            ExecResult(return_code=0, stdout=_STDOUT, stderr=None)
+        )
+        assert failed != quiet
+        assert failed["state"] != quiet["state"]
+
+    def test_long_output_keeps_its_tail(self) -> None:
+        """The reason is on the last lines, so the last lines are what is kept."""
+        stdout = "noise\n" * 400 + "the reason it failed"
+        summary = code_graph.from_result(
+            ExecResult(return_code=2, stdout=stdout, stderr=None)
+        )
+        assert summary["stdout"].endswith("the reason it failed")
+        assert summary["stdout"].startswith("[earlier output cut] ")
+        assert len(summary["stdout"]) < len(stdout)
+        assert summary["stderr"] == ""
+
+
+class TestDisclose:
+    """A failed step reaches the run log as well as the trial's metadata."""
+
+    def test_a_nonzero_exit_is_printed_with_what_init_said(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        summary = code_graph.from_result(
+            ExecResult(return_code=1, stdout=_STDOUT, stderr=_STDERR)
+        )
+        assert code_graph.disclose(summary) is summary
+        printed = capsys.readouterr().err
+        assert "code graph unavailable" in printed
+        assert "exited 1" in printed
+        assert _STDERR in printed
+
+    def test_a_healthy_step_prints_nothing(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code_graph.disclose(code_graph.from_stdout("✓ code graph: 0 symbols\n"))
+        assert capsys.readouterr().err == ""
+
+    def test_a_caught_exception_is_printed_once(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Harbor's message already quotes both streams; it is not repeated."""
+        message = (
+            "Command failed (exit 1): /usr/local/bin/stella init\n"
+            f"stdout: {_STDOUT}\n"
+            f"stderr: {_STDERR}"
+        )
+        code_graph.disclose(code_graph.unavailable(RuntimeError(message)))
+        assert capsys.readouterr().err.count(_STDERR) == 1
+
+
+class _NonZeroReturningEnvironment:
+    """The credential branch's environment: init exits 1 and nothing raises.
+
+    ``_stella_secure_exec_with_stdin`` is the adapter's own test hook, taken
+    by :mod:`stella_harbor.setup_exec` before it builds a Compose argv. What
+    it answers is the shape ``communicate_with_release`` builds from a real
+    client: an ``ExecResult`` whose ``return_code`` is the command's.
+    """
+
+    def __init__(self) -> None:
+        self.task_env_config = SimpleNamespace(workdir="/app")
+        self.commands: list[list[str]] = []
+
+    async def _stella_secure_exec_with_stdin(
+        self, *, command: list[str], env: dict[str, str], stdin: bytes
+    ) -> ExecResult:
+        self.commands.append(command)
+        return ExecResult(return_code=1, stdout=_STDOUT, stderr=_STDERR)
+
+
+class TestBuildCodeGraphOnTheReturningBranch:
+    """The witness, through the production call site.
+
+    Strip ``from_result`` and ``disclose`` back out and this summary is
+    ``{"state": "no_summary_line", "detail": "`stella init` exited without a
+    'code graph:' line (1 line(s) of stdout)"}`` — no exit code, no stderr,
+    nothing printed. Neither field is reachable from stdout, so the assertions
+    below cannot pass without the change.
+    """
+
+    def test_the_exit_code_and_the_message_reach_the_metadata(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        environment = _NonZeroReturningEnvironment()
+        agent = StellaAgent.__new__(StellaAgent)
+        agent._configured_value = (
+            lambda name, default=None: "voyage-secret"
+            if name == "VOYAGE_API_KEY"
+            else None
+        )
+
+        asyncio.run(StellaAgent._build_code_graph(agent, environment))
+
+        assert environment.commands, "init never reached the environment"
+        summary = agent._code_graph_summary
+        assert summary["state"] == "nonzero_exit"
+        assert summary["exit_code"] == "1"
+        assert summary["stderr"] == _STDERR
+        assert summary["stdout"] == _STDOUT
+        assert _STDERR in capsys.readouterr().err
+
+
+class TestUnavailableLiftsStdout:
+    """Harbor's message carries stdout too, and it was being discarded.
+
+    A second pattern rather than a third group on the first one: a Harbor
+    release that renames or reorders one section then costs that field alone,
+    where one pattern over all three would match nothing and take the exit
+    code down with it.
+    """
+
+    def test_stdout_is_lifted_into_its_own_field(self) -> None:
+        message = (
+            "Command failed (exit 1): /usr/local/bin/stella init\n"
+            f"stdout: {_STDOUT}\n"
+            f"stderr: {_STDERR}"
+        )
+        result = code_graph.unavailable(RuntimeError(message))
+        assert result["stdout"] == _STDOUT
+        assert result["stderr"] == _STDERR
+
+    def test_a_message_with_no_sections_yields_no_stdout_field(self) -> None:
+        result = code_graph.unavailable(
+            RuntimeError("Command timed out after 300 seconds")
+        )
+        assert "stdout" not in result

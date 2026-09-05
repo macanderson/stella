@@ -904,6 +904,14 @@ self-driving-test: ## Test the self-driving control logic — digest, AIMD, aper
 	cargo build -q -p stella-cli --bin stella
 	STELLA_BIN="$(CURDIR)/target/debug/stella" ./scripts/test-self-driving.sh
 
+.PHONY: session-isolation-test
+# Pins STELLA_BIN for `self-driving-test`'s reason: the harness prefers
+# target/release over target/debug, so a stale release build would win over the
+# code under test.
+session-isolation-test: ## Test that two dispatched workers get their own trees (hermetic; not part of `gate`)
+	cargo build -q -p stella-cli --bin stella
+	STELLA_BIN="$(CURDIR)/target/debug/stella" ./scripts/test-session-isolation.sh
+
 .PHONY: smoke-artifact-test
 smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic broken artifacts (hermetic; not part of `gate`)
 	./scripts/test-smoke-artifact.sh

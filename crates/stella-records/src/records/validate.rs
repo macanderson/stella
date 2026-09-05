@@ -22,7 +22,7 @@
 //!
 //! # Why overlap detection errs toward reporting
 //!
-//! `stella_core::glob` implements one wildcard: `*`. Deciding whether two such
+//! `stella_protocol::glob` implements one wildcard: `*`. Deciding whether two such
 //! globs can match a common path is decidable but fiddly, and the two failure
 //! directions are not symmetric. A missed overlap means a real conflict resolves
 //! silently — the thing §12 forbids. A spurious overlap means a warning about two
@@ -42,8 +42,8 @@ use super::super::ingest::gate::atomicity_validation;
 use super::super::ingest::record::{AppliesTo, EnforcementMode, Record};
 use super::select::shared_triggers;
 use super::{KNOWN_TASKS, LoadedRecord, RecordFinding, Trust};
-use stella_core::glob::match_glob;
-use stella_core::redact::redact_secrets;
+use stella_learn::redact::redact_secrets;
+use stella_protocol::glob::match_glob;
 
 /// Glob metacharacters that are **literals** in this engine's matcher. A guard
 /// written with them expresses an intent the matcher will not honor, so it silently
@@ -453,7 +453,7 @@ fn overlapping_triggers(left: &AppliesTo, right: &AppliesTo) -> Option<String> {
 /// `a_path_scope_and_a_task_scope_stay_silent` pins the resulting silence.
 /// `docs/spec/adaptive-context/context-pr.md` §12 states the same rule.
 ///
-/// The match goes to `stella_core::glob::match_glob`, the matcher
+/// The match goes to `stella_protocol::glob::match_glob`, the matcher
 /// [`super::select::applies_this_turn`] uses for the path dimension, so the
 /// answer agrees with the code that decides whether both records fire.
 /// Ratified task names are bare verbs, so this arm fires on keywords in
