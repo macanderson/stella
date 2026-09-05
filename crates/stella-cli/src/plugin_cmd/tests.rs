@@ -1102,6 +1102,91 @@ fn list_names_a_drivers_program_and_the_credential_it_will_not_get() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A driver plugin's manifest, minimal enough that `install`'s reconciliation
+/// against the package's own directory listing (`tools/`, `skills/`,
+/// `records/`) has nothing to check — a bare `[driver]` grant plus the
+/// process that will hold the session.
+fn driving_manifest_text(name: &str) -> String {
+    format!(
+        "name = \"{name}\"\n\n\
+         [driver]\ncalls = [\"backlog_next\"]\nmax_calls = 4\n\
+         [driver.process]\nargv = [\"${{plugin_dir}}/drive.sh\"]\ntimeout_secs = 5\n"
+    )
+}
+
+/// A driver plugin that can actually run. `stella plugin drive` starts
+/// `drive.sh`, which reads the request and answers with a fixed `sleep`.
+/// A plain shell script, not the `stella-runtime` fixture binary: that one
+/// belongs to another crate, so its `CARGO_BIN_EXE_*` is not visible here.
+#[cfg(unix)]
+fn driving_package(dir: &Path, name: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let source = dir.join(format!("src-{name}"));
+    std::fs::create_dir_all(&source).expect("fixture dir");
+    std::fs::write(
+        source.join(roster::MANIFEST_FILE),
+        driving_manifest_text(name),
+    )
+    .expect("fixture manifest");
+    let script = source.join("drive.sh");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\n\
+         read -r _line\n\
+         printf '{\"point\":\"drive\",\"body\":{\"next\":{\"sleep\":{\"secs\":9}}}}\\n'\n",
+    )
+    .expect("fixture driver script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("fixture script is executable");
+    source
+}
+
+/// **The witness.** Before this change, `stella plugin drive` printed a
+/// session's outcome and dropped it. Nothing named the plugin, the session
+/// id, or how it ended. This runs the real `drive` entrypoint against an
+/// installed fixture and reads the record back off disk — the same record
+/// a person finds months later, not a value the test happens to still
+/// hold in memory.
+#[cfg(unix)]
+#[test]
+fn a_driver_session_leaves_a_durable_record_of_what_it_asked_and_how_it_ended() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT"]);
+    // SAFETY: the env lock above is held for the whole mutate-read-restore
+    // window, and `EnvRestore` puts the prior value back on drop.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let root = temp_root("drive-record");
+    let source = driving_package(&root, "watcher");
+    let settings = Settings::default();
+    install(&root, &source, PluginScope::Project, true, &settings).expect("install must succeed");
+
+    assert!(
+        crate::driver_plugin::session_log::read_sessions(&root).is_empty(),
+        "nothing recorded before any session ran"
+    );
+
+    drive(&root, "watcher").expect("a session that sleeps is not an error");
+
+    let sessions = crate::driver_plugin::session_log::read_sessions(&root);
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    let entry = &sessions[0];
+    assert_eq!(entry.plugin, "watcher");
+    assert!(!entry.session_id.is_empty(), "{entry:?}");
+    assert!(entry.program.ends_with("drive.sh"), "{entry:?}");
+    assert!(
+        entry.refusals.is_empty(),
+        "the fixture never asks for a capability: {entry:?}"
+    );
+    assert_eq!(
+        entry.outcome,
+        crate::driver_plugin::session_log::DriverSessionOutcome::Sleep { secs: 9 }
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // A plugin is a package: the tools, skills and records it ships (#3380). Those
 // tests live in `contributions.rs`, split out when this file crossed the
 // 1500-line ceiling (#4440).

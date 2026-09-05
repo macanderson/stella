@@ -37,6 +37,12 @@
 //! [`DriveNext::Sleep`] is #3599's B2 `LoopStep` machine, and inventing a
 //! sleeper here would be inventing the loop this channel exists to be driven
 //! by.
+//!
+//! # Where a session goes once it ends
+//!
+//! `plugin_cmd::drive` reads [`BoundDriver::refusals`] and the session's own
+//! result and hands both to [`session_log::record`], so a session survives
+//! its own terminal.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -48,6 +54,8 @@ use stella_runtime::wrapper::{
 };
 
 use crate::plugin_cmd::roster::PluginRoster;
+
+pub(crate) mod session_log;
 
 /// An installed driver, bound to the process the host will start.
 ///
