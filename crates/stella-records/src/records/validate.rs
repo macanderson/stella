@@ -57,16 +57,16 @@
 //! `paths = ["deny.toml"]` is what this catches; `refactor` beside
 //! `crates/**` is what it stays silent on, and
 //! `a_path_scope_and_a_task_scope_stay_silent` pins that silence. The question
-//! goes to `super::super::glob::match_glob`, the matcher
+//! goes to `stella_core::glob::match_glob`, the matcher
 //! [`super::select::applies_this_turn`] uses for the path dimension, so the
 //! answer agrees with the code that decides whether both records fire. Ratified
 //! task names are bare verbs, so this arm fires on keywords in practice.
 
-use super::super::glob::match_glob;
 use super::super::ingest::gate::atomicity_validation;
 use super::super::ingest::record::{AppliesTo, EnforcementMode, Record};
 use super::select::shared_triggers;
 use super::{KNOWN_TASKS, LoadedRecord, RecordFinding, Trust};
+use stella_core::glob::match_glob;
 use stella_core::redact::redact_secrets;
 
 /// Glob metacharacters that are **literals** in this engine's matcher. A guard
