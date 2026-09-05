@@ -3184,7 +3184,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-autonomy"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "proptest",
  "serde",
@@ -3194,7 +3194,7 @@ dependencies = [
 
 [[package]]
 name = "stella-cli"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "clap",
@@ -3249,7 +3249,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3266,7 +3266,7 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3284,7 +3284,7 @@ dependencies = [
 
 [[package]]
 name = "stella-diag"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "proptest",
  "serde",
@@ -3295,14 +3295,14 @@ dependencies = [
 
 [[package]]
 name = "stella-diff"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "stella-embed"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3316,7 +3316,7 @@ dependencies = [
 
 [[package]]
 name = "stella-engine"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "serde",
@@ -3328,7 +3328,7 @@ dependencies = [
 
 [[package]]
 name = "stella-fleet"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3348,7 +3348,7 @@ dependencies = [
 
 [[package]]
 name = "stella-graph"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3378,11 +3378,11 @@ dependencies = [
 
 [[package]]
 name = "stella-home"
-version = "0.9.329"
+version = "0.9.330"
 
 [[package]]
 name = "stella-mcp"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3404,7 +3404,7 @@ dependencies = [
 
 [[package]]
 name = "stella-model"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3428,7 +3428,7 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "libc",
  "rusqlite",
@@ -3450,7 +3450,7 @@ dependencies = [
 
 [[package]]
 name = "stella-parity"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "stella-protocol",
  "stella-serve",
@@ -3458,7 +3458,7 @@ dependencies = [
 
 [[package]]
 name = "stella-plugin"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "proptest",
  "schemars",
@@ -3471,7 +3471,7 @@ dependencies = [
 
 [[package]]
 name = "stella-protocol"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "schemars",
@@ -3484,7 +3484,7 @@ dependencies = [
 
 [[package]]
 name = "stella-records"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "serde",
  "serde_json",
@@ -3497,7 +3497,7 @@ dependencies = [
 
 [[package]]
 name = "stella-runtime"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3518,7 +3518,7 @@ dependencies = [
 
 [[package]]
 name = "stella-serve"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3536,7 +3536,7 @@ dependencies = [
 
 [[package]]
 name = "stella-store"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "base64 0.23.1",
  "libc",
@@ -3553,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tools"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3579,7 +3579,7 @@ dependencies = [
 
 [[package]]
 name = "stella-transcript"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "proptest",
  "serde",
@@ -3599,11 +3599,11 @@ dependencies = [
 
 [[package]]
 name = "stella-tty"
-version = "0.9.329"
+version = "0.9.330"
 
 [[package]]
 name = "stella-tui"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "arboard",
  "crossterm",
@@ -3630,7 +3630,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tui-theme"
-version = "0.9.329"
+version = "0.9.330"
 dependencies = [
  "ratatui",
 ]
