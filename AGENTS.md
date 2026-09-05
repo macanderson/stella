@@ -1577,7 +1577,10 @@ macanderson org repos.
 - **[SCR-003](docs/scr/SCR-003-dod-verified-close.md) — Definition of
   done:** An issue closes only when every DoD checklist item is satisfied
   and verified. Reference-grade includes tests, code comments, docs, and
-  CI — not just the implementation.
+  CI — not just the implementation. A PR that advances an issue without
+  finishing it links it with `Refs #N` rather than `Closes #N`: `Refs`
+  does not close, so the merge gate does not hold that PR against the
+  issue's DoD. A PR may carry both, and is gated only on what it closes.
 - **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Residue:**
   Before declaring any task complete, file a GitHub issue for every
   follow-up, tech-debt item, or logical next step you noticed. Apply ONLY
