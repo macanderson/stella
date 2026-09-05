@@ -55,8 +55,137 @@ fn recall_latency_reaches_the_execution_detail() {
         detail["recall"][0]["used_ann_index"], false,
         "and that the accelerator did not fire, which is a different problem"
     );
-    assert_eq!(detail["recall"][0]["frames"], 1);
     assert_eq!(detail["recall"][0]["tokens"], 90);
+}
+
+/// A recall reaches the dashboard as the frames it named, not just a count.
+///
+/// `json_array_length` turns `frames` into one number. That number says
+/// nothing about which frame, which provider, what it cost, or whether it
+/// can be checked.
+///
+/// A plain count check would pass on an old build too. So this test reads
+/// the first frame's own fields instead. On an old build, `frames` is the
+/// number `1`, and `frames[0]` reads as `null`. Every check below fails on
+/// that build and passes on this one.
+#[test]
+fn recall_names_the_frame_it_recalled_not_only_its_count() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let store = Store::open(dir.path()).expect("store");
+    let id = store
+        .begin_execution("run", "recall detail", "anthropic", "opus")
+        .expect("begin");
+    store
+        .record_event(
+            id,
+            0,
+            &AgentEvent::ContextRecall {
+                frames: vec![
+                    ContextFrameRef {
+                        id: Some("nod_1".into()),
+                        citation_label: "auth module".into(),
+                        provider: "workspace-memory".into(),
+                        source: "stella-context".into(),
+                        kind: "memory".into(),
+                        uri: Some("crates/stella-core/src/driver.rs".into()),
+                        method: Some("dense".into()),
+                        token_cost: 812,
+                        block_id: None,
+                        content_digest: Some("sha256:deadbeef".into()),
+                    },
+                    ContextFrameRef {
+                        id: Some("sym_2".into()),
+                        citation_label: "fn review".into(),
+                        provider: "code-graph".into(),
+                        source: "code-graph".into(),
+                        kind: "symbol".into(),
+                        uri: None,
+                        method: None,
+                        token_cost: 96,
+                        block_id: None,
+                        // No digest: per `docs/spec/adaptive-context/context-reuse.md`
+                        // §1 such a frame is not verifiable, and the projection must
+                        // report the absence rather than a blank.
+                        content_digest: None,
+                    },
+                ],
+                provider_mix: vec![
+                    ProviderShare {
+                        provider: "workspace-memory".into(),
+                        frames: 1,
+                    },
+                    ProviderShare {
+                        provider: "code-graph".into(),
+                        frames: 1,
+                    },
+                ],
+                tokens: 908,
+                usage: Some(ContextUsage {
+                    budget_requested: 2_000,
+                    budget_consumed: 908,
+                    as_of: "2026-08-27T00:00:00Z".into(),
+                    providers: vec![
+                        ContextProviderUsage {
+                            provider_id: "workspace-memory".into(),
+                            frames_served: 1,
+                            frames_rejected: 0,
+                            token_cost: 812,
+                        },
+                        ContextProviderUsage {
+                            provider_id: "code-graph".into(),
+                            frames_served: 1,
+                            frames_rejected: 1,
+                            token_cost: 96,
+                        },
+                    ],
+                }),
+                latency_ms: 0,
+                used_ann_index: None,
+            },
+        )
+        .expect("recall event");
+
+    let detail: serde_json::Value =
+        serde_json::from_slice(&respond(dir.path(), &format!("/api/execution?id={id}")).body)
+            .expect("json");
+    let recall = &detail["recall"][0];
+
+    assert_eq!(
+        recall["frames"].as_array().map(Vec::len),
+        Some(2),
+        "every recalled frame, not a count of them: {detail}"
+    );
+    let first = &recall["frames"][0];
+    assert_eq!(first["citation_label"], "auth module");
+    assert_eq!(first["kind"], "memory");
+    assert_eq!(first["provider"], "workspace-memory");
+    assert_eq!(first["source"], "stella-context");
+    assert_eq!(first["token_cost"], 812);
+    assert_eq!(
+        first["content_digest"], "sha256:deadbeef",
+        "a verifiable frame reports its digest: {detail}"
+    );
+    let second = &recall["frames"][1];
+    assert_eq!(second["citation_label"], "fn review");
+    assert!(
+        second
+            .get("content_digest")
+            .is_none_or(serde_json::Value::is_null),
+        "a frame with no digest is not verifiable and must not render a \
+         fabricated one: {detail}"
+    );
+
+    let usage = &recall["usage"];
+    assert_eq!(usage["budget_requested"], 2_000);
+    assert_eq!(usage["budget_consumed"], 908);
+    let legs = usage["providers"].as_array().expect("provider legs");
+    assert_eq!(legs.len(), 2);
+    assert_eq!(legs[1]["provider_id"], "code-graph");
+    assert_eq!(
+        legs[1]["frames_rejected"], 1,
+        "a rejected frame never reaches the frame list, so the budget \
+         report is the only place a misdeclaring provider shows up: {detail}"
+    );
 }
 
 /// A stream recorded before the field existed must read as "not measured",
