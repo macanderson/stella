@@ -77,6 +77,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
 use crate::envelope::{EngineConfigState, RoleWiringRow, role_table};
+use crate::render::columns;
 use crate::theme;
 use crate::views::cards;
 
@@ -86,8 +87,49 @@ use crate::views::cards;
 /// standard card's 52 usable columns.
 const MODELS_CARD_W: u16 = 72;
 
-/// Width of the dimmed left label column — the longest role word plus room.
+/// The narrowest the dimmed left label column ever gets — a floor, not the
+/// width.
+///
+/// It was the width while `default` was the only word the driver could send.
+/// A plugin names its own seat (`<plugin-id>/<role>`), so no constant here can
+/// know how wide the widest word is, and padding to a fixed minimum does not
+/// cut: a wider word abutted the model column with no gap and pushed the line
+/// past the card's own border. [`label_w`] measures instead.
 const LABEL_W: usize = 10;
+
+/// Columns kept between the label and the model, so the two never abut.
+const LABEL_GAP: usize = 2;
+
+/// The header's own label words, in the order [`header_rows`] draws them.
+///
+/// Named here so [`render`] can measure them into the same label column the
+/// role rows use without restating what the header says.
+const HEADER_LABELS: [&str; 2] = ["session", "auto"];
+
+/// The label column for the table being drawn: its widest word plus
+/// [`LABEL_GAP`], floored at [`LABEL_W`] and capped at half the card so the
+/// model column cannot be squeezed out by one long seat key.
+///
+/// Measured over the words actually drawn, the way [`crate::views::seats`]'
+/// `column_widths` measures its own rows. Every row of one table reads this
+/// one answer — a header row padded to a different width than the role rows
+/// beneath it is a table with two left edges.
+fn label_w<'a>(words: impl Iterator<Item = &'a str>, inner_w: usize) -> usize {
+    let widest = words.map(columns::width).max().unwrap_or(0);
+    let cap = (inner_w / 2).max(LABEL_W);
+    (widest + LABEL_GAP).clamp(LABEL_W, cap)
+}
+
+/// `word` laid into a label column of `label_w` columns.
+///
+/// Cut to fit before padding, because [`label_w`] is capped: a seat key wider
+/// than the cap would otherwise widen its own row and shift the table.
+fn label_cell(word: &str, label_w: usize) -> String {
+    columns::pad(
+        &cards::truncate_cols(word, label_w.saturating_sub(LABEL_GAP)),
+        label_w,
+    )
+}
 
 /// The only role this dialog has a **word** for: the settings key the driver
 /// sends it under, and the word the deck says out loud for it.
@@ -145,6 +187,7 @@ fn role_rows(
     row: &RoleWiringRow,
     word: &str,
     inner_w: usize,
+    label_w: usize,
     accessible: bool,
 ) -> Vec<Line<'static>> {
     let dim = Style::new().fg(token::MUTED);
@@ -163,20 +206,20 @@ fn role_rows(
     }
 
     let head = vec![
-        Span::styled(format!("{word:<LABEL_W$}"), dim),
+        Span::styled(label_cell(word, label_w), dim),
         Span::styled(
-            cards::truncate_cols(&row.model, inner_w.saturating_sub(LABEL_W)),
+            cards::truncate_cols(&row.model, inner_w.saturating_sub(label_w)),
             Style::new().fg(token::TEXT),
         ),
     ];
     let mut rows = vec![Line::from(head)];
-    for line in wrap_parts(&parts, inner_w.saturating_sub(LABEL_W)) {
+    for line in wrap_parts(&parts, inner_w.saturating_sub(label_w)) {
         rows.push(Line::from(vec![
-            Span::raw(" ".repeat(LABEL_W)),
+            Span::raw(" ".repeat(label_w)),
             Span::styled(line, dim),
         ]));
     }
-    rows.extend(next_session_row(row, inner_w, accessible));
+    rows.extend(next_session_row(row, inner_w, label_w, accessible));
     rows
 }
 
@@ -186,7 +229,12 @@ fn role_rows(
 /// In the WARN tone rather than the dim one every other detail row uses,
 /// because it is the one line here that is *not* describing what is running —
 /// and the failure it exists to prevent is a reader taking it for one that is.
-fn next_session_row(row: &RoleWiringRow, inner_w: usize, accessible: bool) -> Vec<Line<'static>> {
+fn next_session_row(
+    row: &RoleWiringRow,
+    inner_w: usize,
+    label_w: usize,
+    accessible: bool,
+) -> Vec<Line<'static>> {
     let Some(next) = row.next_session.as_deref() else {
         return Vec::new();
     };
@@ -198,9 +246,9 @@ fn next_session_row(row: &RoleWiringRow, inner_w: usize, accessible: bool) -> Ve
         ))];
     }
     vec![Line::from(vec![
-        Span::raw(" ".repeat(LABEL_W)),
+        Span::raw(" ".repeat(label_w)),
         Span::styled(
-            cards::truncate_cols(&text, inner_w.saturating_sub(LABEL_W)),
+            cards::truncate_cols(&text, inner_w.saturating_sub(label_w)),
             Style::new().fg(theme::WARN),
         ),
     ])]
@@ -215,6 +263,7 @@ fn next_session_row(row: &RoleWiringRow, inner_w: usize, accessible: bool) -> Ve
 fn header_rows(
     model: &WorkspaceModel,
     state: &EngineConfigState,
+    label_w: usize,
     accessible: bool,
 ) -> Vec<Line<'static>> {
     let dim = Style::new().fg(token::MUTED);
@@ -239,12 +288,49 @@ fn header_rows(
             ))
         } else {
             Line::from(vec![
-                Span::styled(format!("{label:<LABEL_W$}"), dim),
+                Span::styled(label_cell(label, label_w), dim),
                 Span::styled(value, Style::new().fg(token::TEXT)),
             ])
         }
     };
-    vec![row("session", session), row("auto", autos), Line::default()]
+    vec![
+        row(HEADER_LABELS[0], session),
+        row(HEADER_LABELS[1], autos),
+        Line::default(),
+    ]
+}
+
+/// The card's body: the header rows, then one block per role the driver sent.
+///
+/// [`render`] and its tests both fold through here, so a test cannot pass on
+/// rows the dialog would not print — and the label column cannot be measured
+/// one way for the frame and another for the assertion.
+fn body_rows(
+    model: &WorkspaceModel,
+    state: &EngineConfigState,
+    inner_w: usize,
+    accessible: bool,
+) -> Vec<Line<'static>> {
+    // Folded, not looked up (#3472). Looking each key up in [`KNOWN`] would
+    // drop any row under a key it does not list. A role a plugin adds would
+    // then run and spend while this dialog said it did not exist.
+    let table = role_table(state, &KNOWN);
+    // One width for the whole card, measured over the header's own labels as
+    // well as the roles', so every row shares a left edge.
+    let label_w = label_w(
+        HEADER_LABELS
+            .iter()
+            .copied()
+            .chain(table.iter().map(|entry| entry.word)),
+        inner_w,
+    );
+    let mut rows = header_rows(model, state, label_w, accessible);
+    for entry in &table {
+        rows.extend(role_rows(
+            entry.row, entry.word, inner_w, label_w, accessible,
+        ));
+    }
+    rows
 }
 
 /// Render the model-routing dialog over `frame`.
@@ -266,16 +352,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
             "routing has not been resolved yet",
             dim,
         ))),
-        Some(state) => {
-            rows.extend(header_rows(model, state, ui.accessible));
-            // Folded, not looked up (#3472). Looking each key up in [`KNOWN`]
-            // would drop any row under a key it does not list. A role a
-            // plugin adds would then run and spend while this dialog said it
-            // did not exist.
-            for entry in role_table(state, &KNOWN) {
-                rows.extend(role_rows(entry.row, entry.word, inner_w, ui.accessible));
-            }
-        }
+        Some(state) => rows.extend(body_rows(model, state, inner_w, ui.accessible)),
     }
 
     // The title carries the count so a pending edit is visible on the frame
@@ -346,14 +423,10 @@ mod tests {
             .join("\n")
     }
 
-    /// The body `render` builds, without a terminal: the same fold over the
-    /// same table, so a test cannot pass on rows the dialog would not print.
+    /// The body `render` builds, without a terminal — the production fold
+    /// itself, so a test cannot pass on rows the dialog would not print.
     fn body_of(model: &WorkspaceModel, state: &EngineConfigState, accessible: bool) -> String {
-        let mut lines = header_rows(model, state, accessible);
-        for entry in role_table(state, &KNOWN) {
-            lines.extend(role_rows(entry.row, entry.word, 68, accessible));
-        }
-        text_of(&lines)
+        text_of(&body_rows(model, state, 68, accessible))
     }
 
     fn rendered(model: &WorkspaceModel, accessible: bool) -> String {
@@ -392,7 +465,7 @@ mod tests {
             "agents.default.model",
         );
         row.next_session = Some("openai/gpt-5.5".to_string());
-        let lines = role_rows(&row, "lead", 68, false);
+        let lines = role_rows(&row, "lead", 68, LABEL_W, false);
         let text = text_of(&lines);
 
         assert!(
@@ -411,8 +484,47 @@ mod tests {
     #[test]
     fn a_role_with_no_pending_edit_stays_silent() {
         let row = wiring("default", "zai/glm-5.2", "medium", "default_model");
-        let text = text_of(&role_rows(&row, "lead", 68, false));
+        let text = text_of(&role_rows(&row, "lead", 68, LABEL_W, false));
         assert!(!text.contains("next session"), "{text}");
+    }
+
+    /// **The witness for the seat-key overflow.** A plugin seat key is wider
+    /// than the label column `default` sized, and `{:<W$}` pads to a minimum
+    /// without cutting — so the key ran straight into the model with no gap
+    /// and carried the row past the card's own border.
+    ///
+    /// The two never abut, and the header's label moves out to the same
+    /// column so the card keeps one left edge.
+    #[test]
+    fn a_seat_key_wider_than_the_label_column_still_keeps_its_gap() {
+        let mut state = state();
+        state.roles.push(wiring(
+            "acme/reviewer",
+            "anthropic/claude-opus-5",
+            "provider default",
+            "seat_models.acme/reviewer",
+        ));
+        let text = body_of(&WorkspaceModel::new(), &state, false);
+
+        assert!(
+            !text.contains("acme/revieweranthropic"),
+            "the seat key abuts its model with no gap:\n{text}"
+        );
+        assert!(
+            text.contains("acme/reviewer  anthropic/claude-opus-5"),
+            "the seat key and its model are one padded column apart:\n{text}"
+        );
+        // The header shares the widened column rather than keeping the old
+        // one — two left edges in one card is the same defect seen twice.
+        assert!(
+            text.contains("session        "),
+            "the header label did not widen with the table:\n{text}"
+        );
+        let widest = text.lines().map(columns::width).max().unwrap_or(0);
+        assert!(
+            widest <= 68,
+            "a row ran past the card's inner width ({widest} > 68):\n{text}"
+        );
     }
 
     /// Copy law (D6): the deck's one word labels its row rather than the
