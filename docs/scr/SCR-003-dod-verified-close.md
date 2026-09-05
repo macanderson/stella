@@ -50,16 +50,16 @@ filing an issue would be pure ceremony, never to skip a DoD that should have
 been written.
 
 A pull request that advances an issue without finishing it links that issue
-with `Refs #N` instead of `Closes #N`. `Refs` deliberately does not close, so
-the merge gate does not hold that PR against `#N`'s DoD — there is nothing
-here for it to verify, because the PR is not claiming the work is done. A PR
-may carry both: `Closes #A` closes and is gated on `#A`'s DoD; `Refs #B`
-beside it is recorded as a reference and never enforced. A PR whose body
-disclaims a close in prose ("this PR does not close #N") is read the same way
-as a bare mention — it is not a claim to close, and is not gated on `#N`
-either, even though GitHub's own closing-keyword parser has no notion of
-negation and may still close `#N` on merge regardless of the "not". That is a
-gap in GitHub's parser, not something this gate can veto from the PR side.
+with `Refs #N` instead of `Closes #N`. `Refs` does not close, so the merge
+gate does not hold that PR against `#N`'s DoD — there is nothing here for it
+to verify, because the PR is not claiming the work is done. A PR may carry
+both: `Closes #A` closes and is gated on `#A`'s DoD; `Refs #B` beside it is
+recorded as a reference and never enforced. A PR whose body disclaims a
+close in prose ("this PR does not close #N") is read the same way as a bare
+mention — it is not a claim to close, and is not gated on `#N` either, even
+though GitHub's own closing-keyword parser has no notion of negation and may
+still close `#N` on merge regardless of the "not". That is a gap in GitHub's
+parser, not something this gate can veto from the PR side.
 
 Issues predating the task template have no DoD section at all. The close
 guard notes them and leaves them closed rather than reopening the historical
