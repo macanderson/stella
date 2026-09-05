@@ -365,7 +365,12 @@ fn every_recalling_driver_routes_its_block_through_the_opening_seam() {
         ("agent.rs", include_str!("../../agent.rs")),
         ("agent/goal.rs", include_str!("../../agent/goal.rs")),
         ("command_deck.rs", include_str!("../../command_deck.rs")),
-        ("fleet_cmd.rs", include_str!("../../fleet_cmd.rs")),
+        // The fleet worker's recall lives one level down: `fleet_cmd.rs` sits
+        // at the size ceiling, so its steering seam is a sibling module.
+        (
+            "fleet_cmd/steering.rs",
+            include_str!("../../fleet_cmd/steering.rs"),
+        ),
     ];
 
     for (name, source) in DRIVERS {

@@ -21,6 +21,13 @@
 //! autonomous worker runs on the built-in surface alone), recall is skipped
 //! in favor of latency, and delegation is not recursive — a worker's own
 //! `task_assign` requests are reported on its lane instead of spawning.
+//!
+//! Skipping recall settles the mid-turn re-query here too: a worker that was
+//! handed no opening context has nothing to ask the steering plane again
+//! about, so it attaches no `SteeringRequery` and the port stays off. Turning
+//! recall on for this lane is the decision, and the re-query rides along once
+//! it is made — #6122 is where that is being weighed, with the latency number
+//! the v1 scope claimed but never measured.
 
 mod closeout;
 mod lane_events;
@@ -162,7 +169,7 @@ impl SubSessions {
     /// [`run_worker`] re-enters whatever transcript it finds there rather than
     /// starting from the prompt. A fresh dispatch would therefore wake up
     /// inside a dead lane's conversation — the one thing per-lane durability
-    /// (#3233) must not make possible.
+    /// must not make possible.
     ///
     /// So the counter starts above the highest `req:<n>` the store has already
     /// recorded for this session. The refs under `{session}__…` are that

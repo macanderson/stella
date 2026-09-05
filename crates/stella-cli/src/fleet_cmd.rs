@@ -19,8 +19,9 @@
 //! like every other door**, though (#3947): the byte-stable prefix (workspace
 //! memories + enforced rules) and the volatile recall block (recalled frames,
 //! selected skills, matched context records, today's date) both reach it — see
-//! [`worker_recall_block`], which states what each half can offer inside an
-//! isolated worktree and why arming the A/B control per worker is correct. The
+//! [`steering::WorkerSteering`], which states what each half can offer inside
+//! an isolated worktree, why arming the A/B control per worker is correct, and
+//! how the turn asks the plane again once its work drifts. The
 //! withheld surfaces are the *tool* ones, and they are withheld for a stdin
 //! reason rather than a token one; an unattended lane is precisely where the
 //! repository's published steering should still apply.
@@ -68,7 +69,7 @@ use stella_fleet::{
     MonitorError, Plan, SystemGhCli, SystemGitCli, Task, TaskId, TimeoutReason, WatchConfig,
     WorkerControls, WorkerOutcome, WorktreeManager,
 };
-use stella_protocol::{AgentEvent, CompletionMessage, PrStatus};
+use stella_protocol::{AgentEvent, PrStatus};
 use stella_tools::ToolRegistry;
 use stella_tools::hook_runner::HostHookRunner;
 use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
@@ -660,69 +661,6 @@ fn worker_event_sender(tx: &mpsc::UnboundedSender<AgentEvent>) -> stella_core::E
     stella_core::EventSender::new(tx.clone()).pairing_stage_complete()
 }
 
-/// The volatile steering block for one fleet attempt: recalled frames, the
-/// selected skills, the matched context records, and today's date.
-///
-/// Fleet workers used to get the byte-stable prefix alone (#3947) — workspace
-/// memories and enforced rules — while every human-facing door also got this
-/// block. The omission read as deliberate but was stated nowhere, and it was
-/// not harmless: [`agent::build_system_prompt`]'s environment block
-/// deliberately keeps today's date OUT of the stable prefix *because* it rides
-/// here (#2901), so a worker carried the knowledge-cutoff clause — "treat
-/// anything that may have moved since as unverified" — with nothing to measure
-/// "since" against.
-///
-/// Rooted at the attempt's own `root` rather than `cfg.workspace_root`, for
-/// the same reason [`agent::open_store`] is above: an isolated task runs in a
-/// linked worktree, and parallel workers must not contend on one SQLite
-/// writer. What that root can offer differs by task, and both answers are
-/// correct — a fresh worktree carries `.stella/rules/*.toml` (the one tracked
-/// part of `.stella/`) and still reaches the user-global `~/.stella/skills`,
-/// but has no `.stella/private/context.db`, so there the block is records and
-/// date and costs no retrieval at all.
-///
-/// The A/B recall control is armed here, as in every other driver. Parallel
-/// workers do not corrupt the schedule by doing so: the suppression counter is
-/// durable and each process claims a distinct number, so the arms interleave
-/// into one workspace-wide sequence — which is the case
-/// `SessionMemory::arm_recall_control`'s docs already name when they list "a
-/// fleet task" among the one-turn-per-process surfaces a per-session counter
-/// could never schedule.
-///
-/// Injects the block here and returns what the attempt still owes it: the
-/// recall telemetry, which the caller sends once its event channel exists,
-/// and the turn scopes this attempt's directive-carrying skills ask for,
-/// which the caller mounts over the tool stack it assembles below. Both ride
-/// [`crate::memory::inject_opening_recall`] rather than the bare block
-/// injection, so an autonomous worker cannot be the one door where a
-/// selected skill's `allowed-tools` grant and `effort` are dropped.
-async fn worker_recall_block(
-    root: &Path,
-    cfg: &Config,
-    active_rules: &rules::ResolvedRules,
-    prompt: &str,
-    messages: &mut Vec<CompletionMessage>,
-) -> crate::memory::OpeningRecall {
-    // `warn: false`, the Command Deck's choice for the Command Deck's reason:
-    // with `--watch` a live grid owns the terminal, and a per-worker store
-    // warning would be N-fold noise painted over it.
-    let Some(mut memory) =
-        crate::memory::SessionMemory::open_for_session(root, false, &cfg.authority, active_rules)
-    else {
-        return crate::memory::OpeningRecall::default();
-    };
-    memory.arm_recall_control();
-    // A fleet attempt recalls before its engine has messages, so there is no
-    // conversation to derive touched paths from — the empty anchor set is the
-    // honest argument here, and the same scoping the prompt alone always gave.
-    let recalled = memory.recall_block_reported(prompt, &[]).await;
-    // `memory` is dropped here, and deliberately not carried to the reflection
-    // below: this handle is rooted at the attempt's own tree, and a lesson
-    // written through it would land in a database that is deleted with the
-    // worktree. [`mine_attempt_lesson`] opens its own, at the invocation root.
-    crate::memory::inject_opening_recall(messages, recalled)
-}
-
 /// The task boundary a fleet attempt stamps onto every lesson it mines.
 ///
 /// The plan's task id — not the attempt, and not the claim-holder identity
@@ -744,8 +682,8 @@ fn attempt_task_boundary(task: &Task) -> String {
 }
 
 /// Mine one fleet attempt's turn into the workspace's memory — the steering
-/// *out* of an unattended lane, where [`worker_recall_block`] is the steering
-/// in (#3956).
+/// *out* of an unattended lane, where [`steering::WorkerSteering`] is the
+/// steering in (#3956).
 ///
 /// Every other door does this: `stella run`, `/goal` and the REPL all keep
 /// their `SessionMemory` alive past the turn and reflect on it. A fleet attempt
@@ -1019,7 +957,17 @@ async fn run_task(
     // What it leaves to announce — the recall receipt and a row per injected
     // skill — is carried to the channel opened below, which this attempt's
     // telemetry rides; the same split `agent::goal` documents.
-    let recall = worker_recall_block(root, &cfg, &active_rules, &task.prompt, &mut messages).await;
+    // The handle stays open for the length of the turn so the engine can ask
+    // the plane again when the work drifts. It is dropped below, beside the
+    // sender it feeds.
+    let (worker_steering, recall) = steering::WorkerSteering::open(
+        root,
+        &cfg.authority,
+        &active_rules,
+        &task.prompt,
+        &mut messages,
+    )
+    .await;
     // This attempt's directive-carrying skills, mounted for the whole turn
     // beside the stack they narrow — the same seam every other door takes.
     // The guards drop with this function, so the narrowing lifts
@@ -1029,6 +977,9 @@ async fn run_task(
     let _skill_spans = recall.mount_skill_spans(&skill_plane);
     let skill_effort = recall.skill_effort();
     let recall_events = recall.events;
+    // The opening block's own handles, so the first mid-turn answer repeats
+    // none of its frames, skills or records.
+    let recall_produced = recall.produced;
     // Everything the engine appends past here is this attempt's own work; the
     // reflection gate reads only that slice, so a turn that called no tool
     // spends no model call on being mined (`turn_warrants_reflection`).
@@ -1096,6 +1047,20 @@ async fn run_task(
     // This attempt's durability, on the same lane and for the same reason.
     attempt_durability.announce(&tx, resume_note);
 
+    // The proactive re-query. The engine consults it at every step boundary;
+    // the adapter's hysteresis makes an undrifted attempt free. Seeded from
+    // `messages` so the opening block is never re-injected, from that block's
+    // own handles so the first answer does not repeat its frames, and given
+    // this lane's sender so its own recall is metered. Assembled through
+    // `requery_for_turn` rather than by hand, which is what makes the
+    // telemetry impossible to forget.
+    let requery = crate::memory::requery_for_turn(
+        worker_steering.memory(),
+        &messages,
+        worker_event_sender(&tx),
+        recall_produced,
+    );
+
     // The task's control lines (stella-fleet's `WorkerControls`), composed
     // with the dispatch-drop line from `EngineWorker::run` — see
     // `stop_or_abandoned` for why the two closed-channel cases read in
@@ -1139,7 +1104,16 @@ async fn run_task(
             let hooks = cfg.hooks.as_ref();
             let seams =
                 lane_capabilities::fleet_attempt(hooks, &hook_runner, &calibration, gate.as_ref());
-            let engine = Engine::assemble(&*provider, &scoped, config, &TokioSleeper, seams);
+            let mut engine = Engine::assemble(&*provider, &scoped, config, &TokioSleeper, seams);
+            // Attached above the arms, not inside one: a `--pipeline` round
+            // drives this same engine, so a wrapped attempt re-queries too.
+            // It rides here rather than in `fleet_attempt`'s seam set because
+            // the port is built per attempt from this worker's own
+            // `WorkerSteering`, which the lane's capability constructor has no
+            // handle on.
+            if let Some(requery) = &requery {
+                engine = engine.with_requery(requery);
+            }
             // A fleet worker owns its lane's stage vocabulary — the opener is
             // here; the closer rides `worker_event_sender` below, ahead of
             // the engine's `TurnComplete` (#3416, #3428).
@@ -1263,6 +1237,13 @@ async fn run_task(
             budget.session_spent_usd(),
         );
     }
+    // The re-query adapter holds a clone of this lane's sender, so it comes
+    // down before the sender does or the renderer awaited below waits on a
+    // channel that never closes. The memory handle goes with it: it is rooted
+    // at the attempt's own tree, and the reflection further down opens its own
+    // at the invocation root for that reason.
+    drop(requery);
+    drop(worker_steering);
     drop(tx);
     let rendered = renderer.await.unwrap_or_default();
     claims.release_all();
@@ -1491,6 +1472,7 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
 mod branch_watch;
 mod durability;
 mod isolation_notice;
+mod steering;
 mod wrapped;
 
 /// Where the fleet command's plan-shape belongs in docs/tests: a plan file is
