@@ -3484,7 +3484,7 @@ dependencies = [
 
 [[package]]
 name = "stella-records"
-version = "0.9.325"
+version = "0.9.326"
 dependencies = [
  "serde",
  "serde_json",
