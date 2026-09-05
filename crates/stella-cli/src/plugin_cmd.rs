@@ -183,6 +183,8 @@ fn session_id() -> String {
 ///
 /// The session's identifier is minted here and echoed into the driver's own
 /// telemetry, so a driver's records and the host's can be joined afterwards.
+/// Before this returns, the plugin, the refusals, and the ending are all
+/// written down through [`crate::driver_plugin::session_log::record`].
 ///
 /// # Errors
 ///
@@ -193,7 +195,10 @@ fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
     let name = checked_name(name)?;
     let mut warn = |line: String| eprintln!("  ! {line}");
     let resolved = crate::driver_plugin::resolve(workspace_root, name, &mut warn)?;
-    println!("driver \"{name}\": starting `{}`", resolved.program());
+    // Saved now, before `serving()` consumes `resolved`: the record below
+    // needs it once the session has closed.
+    let program = resolved.program().to_string();
+    println!("driver \"{name}\": starting `{program}`");
 
     let session = session_id();
     let bound = resolved.serving();
@@ -209,12 +214,30 @@ fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
         );
     }
     let next = bound.open(&session);
+    let refusals = bound.refusals();
 
     // Printed whichever way the session ended. A driver that asked for a
     // capability and then failed is the case where the refusals matter most:
     // they are usually why it failed.
-    for refusal in bound.refusals() {
+    for refusal in &refusals {
         eprintln!("  ! {refusal}");
+    }
+
+    // Written down whichever way the session ended. A write that fails is
+    // reported, but never fails the session — the same rule
+    // `self_driving_cmd::audit` uses for its own ledger.
+    if let Err(error) = crate::driver_plugin::session_log::record(
+        workspace_root,
+        &crate::driver_plugin::session_log::DriverSessionRecord {
+            at: crate::timefmt::rfc3339_utc_now(),
+            plugin: name.to_string(),
+            session_id: session.clone(),
+            program,
+            refusals,
+            outcome: crate::driver_plugin::session_log::DriverSessionOutcome::from_result(&next),
+        },
+    ) {
+        eprintln!("  ! {error}");
     }
 
     match next? {
