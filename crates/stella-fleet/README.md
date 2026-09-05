@@ -217,6 +217,41 @@ The arithmetic is a pure function, `decide` ([`decide`](src/monitor.rs)),
 so the 2h cumulative cap, the 20m stall window and the 10m startup grace are
 table-tested with an injected `Clock` instead of a real wait (L-E4).
 
+## Session isolation — what a dispatch grants, and what it does not
+
+Two agent sessions in one working tree are one branch switch away from losing
+each other's work. The switch puts the tracked files back and leaves the
+untracked ones alone. What is left is a tree holding a new module that nothing
+declares, and no error anywhere saying why.
+
+Isolation belongs to whoever hands out the working directory, because a session
+cannot take a tree it was not given. Two dispatchers here do hand one out:
+
+- A task marked `isolation = "isolated"` gets a `git worktree` of its own, cut
+  by `WorktreeManager::create` before its worker starts. Nothing a sibling does
+  to its own checkout can reach it.
+- Each unit of `stella self-driving work` gets one too, through the same
+  manager in a namespace of its own
+  (`crates/stella-cli/src/self_driving_cmd/work.rs`).
+
+`scripts/test-session-isolation.sh` is the witness. It dispatches two workers
+against a throwaway repository through the real fleet path, then runs the loss
+against the trees the dispatch handed out: an uncommitted edit in one tree, a
+forced branch switch in the other, and a look at whether the edit is still
+there. Give both workers one tree and the suite goes red.
+
+Two gaps:
+
+- **A shared tree is the default, and it shares.** Path claims stop two workers
+  writing one file. They say nothing about `git checkout`, which rewrites every
+  tracked file at once. A plan whose tasks switch branches has to ask for
+  `isolation = "isolated"`.
+- **An outside harness has to isolate at launch.** Nothing here decides where a
+  person, or another tool, starts `stella`. An interactive deck that finds a
+  live peer in its checkout prints one line naming it and the branch it holds
+  (`crates/stella-cli/src/command_deck/shared_checkout.rs`). It never refuses,
+  because a session told to stop has nowhere to go.
+
 ## Gotchas
 
 - **Fleet commits always name explicit pathspecs.** `WorktreeManager::commit_paths`

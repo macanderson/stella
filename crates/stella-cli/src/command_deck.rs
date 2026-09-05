@@ -106,6 +106,7 @@ mod session_override;
 mod sessions_view;
 mod settings_io;
 mod settle;
+mod shared_checkout;
 mod slash_commands;
 mod slash_pump;
 mod steering;
@@ -537,6 +538,8 @@ pub async fn run_deck_session(
         None => stella_store::SessionRecord::new(workspace_path.clone(), workspace_name.clone()),
     };
     let _ = session_registry.upsert(&session_record);
+    // One line when another live session already holds this checkout.
+    shared_checkout::announce(&session_registry, &session_record, &cfg.workspace_root);
     // What the record's terminal status will be at exit (last turn wins);
     // quitting with a pending backlog overrides to Paused below — the work
     // is durable now, so an exit with prompts waiting is a pause, not loss.
