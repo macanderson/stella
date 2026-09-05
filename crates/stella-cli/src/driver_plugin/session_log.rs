@@ -29,7 +29,7 @@
 //! If the record fails to write, that failure is reported. The session
 //! still counts as done. An operator has already seen the outcome on
 //! screen, so a disk error should not take it away. See
-//! [`crate::self_driving_cmd::audit`]'s own docs for the same rule.
+//! `self_driving_cmd::audit`'s own docs for the same rule.
 
 use std::path::Path;
 
@@ -86,7 +86,7 @@ impl DriverSessionOutcome {
 /// One driver session, as a fact on disk.
 ///
 /// Serde-first, so a test checks a value instead of parsing a sentence —
-/// the same rule [`crate::self_driving_cmd::audit::AuditEntry`] follows.
+/// the same rule `self_driving_cmd::audit::AuditEntry` follows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct DriverSessionRecord {
     /// When the session was opened, RFC3339 UTC.
