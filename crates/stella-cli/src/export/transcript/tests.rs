@@ -1,18 +1,27 @@
-//! Tests for [`crate::export::transcript`] — the fold from a session's event
-//! journal to the archive's readable half.
+//! Tests for [`crate::export::transcript`] — the redacting fold from a
+//! session's event journal to a [`stella_transcript::model::Run`], plus the
+//! call into [`stella_transcript::html::render_page`].
 //!
-//! Four of these are witnesses for properties stated in the module doc, and
-//! each is written so that removing the property it guards turns it red rather
-//! than merely reducing coverage — see the comment on each.
+//! Most of these check the **run**, not the rendered HTML. Rendering itself
+//! is `stella-transcript`'s own job, and it owns its own tests for what a
+//! `Run` looks like. This crate still owns what the fold puts *into* the
+//! run: one message per turn, a measured (not invented) elapsed clock, no
+//! event dropped, and no credential anywhere in the tree. Break any of
+//! those and these tests go red no matter how well `html::render_page`
+//! draws the result. A few tests at the bottom check the rendered document
+//! directly, for the properties that only show up once the two are wired
+//! together.
 
 use std::collections::HashMap;
 
-use stella_protocol::{AgentEvent, StageKind, ToolCall, ToolOutput};
+use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
 use stella_store::{SessionEventRecord, SessionJournal};
 
 use super::*;
 
-/// A journal from `(ts, event)` pairs, all in one execution.
+/// A journal from `(ts, event)` pairs, all in one execution. The timestamp is
+/// never read by this fold (module doc, property 2) — it exists only because
+/// [`SessionEventRecord`] carries one.
 fn journal(events: Vec<(&str, AgentEvent)>) -> SessionJournal {
     SessionJournal {
         events: events
@@ -51,53 +60,72 @@ fn delta(s: &str) -> AgentEvent {
     AgentEvent::TextDelta { delta: s.into() }
 }
 
-/// How many times `needle` occurs in `haystack`.
-fn count(haystack: &str, needle: &str) -> usize {
-    haystack.matches(needle).count()
+/// Fold `journal` the same way [`render`] does, stopping short of redaction
+/// and the call into `html::render_page` — the seam these tests assert
+/// against, so a rendering change in `stella-transcript` cannot turn one of
+/// them red.
+fn fold_run(journal: &SessionJournal, prompts: &HashMap<i64, String>, session_id: &str) -> Run {
+    let mut fold = Fold::new(prompts, session_id);
+    for record in &journal.events {
+        fold.push(record);
+    }
+    fold.finish_turn(Status::Ok);
+    fold.run
 }
 
+fn tool_start(call_id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
+    AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: call_id.into(),
+            name: name.into(),
+            input,
+        },
+        sub_agent_id: None,
+        task_id: None,
+    }
+}
+
+fn tool_result(call_id: &str, output: ToolOutput, duration_ms: u64) -> AgentEvent {
+    AgentEvent::ToolResult {
+        call_id: call_id.into(),
+        output,
+        duration_ms,
+        speculated: false,
+        sub_agent_id: None,
+        task_id: None,
+    }
+}
+
+// ── One message, one clock, nothing dropped ─────────────────────────────
+
 #[test]
-fn an_assistant_message_streamed_as_deltas_renders_exactly_once() {
-    // THE witness for module-doc property 3. The engine streams prose as
-    // `text_delta` fragments and then emits one consolidated `text` carrying
-    // the same prose. A fold that coalesces the delta run AND renders the
-    // `text` draws the message twice — and the duplicate reads, to anyone
-    // holding the artifact rather than the stream, as a second paid model
-    // call that never happened.
-    //
-    // Delete the `pending_text.clear()` in the `Text` arm and this goes red
-    // with two `ev say` rows: that line IS the property.
-    let out = render(
+fn a_streamed_message_collapses_to_the_turns_answer_once() {
+    // `AgentEvent::Text`'s own contract says a consumer must REPLACE any
+    // accumulated preview, never append to it. `set_answer` overwrites
+    // `turn.answer` rather than appending, which is what this checks.
+    // Change it to an append and the prose shows up twice.
+    let run = fold_run(
         &at(vec![
             delta("Step 1 done: "),
             delta("the tree is clean."),
             text("Step 1 done: the tree is clean."),
         ]),
         &no_prompts(),
+        "s",
     );
-
-    assert_eq!(out.rendered, 1, "one message is one row:\n{}", out.body);
+    assert_eq!(run.turns.len(), 1);
     assert_eq!(
-        count(&out.body, r#"class="ev say""#),
-        1,
-        "exactly one assistant row:\n{}",
-        out.body
-    );
-    assert_eq!(
-        count(&out.body, "Step 1 done: the tree is clean."),
-        1,
-        "the prose appears once, not twice:\n{}",
-        out.body
+        run.turns[0].answer.as_deref(),
+        Some("Step 1 done: the tree is clean.")
     );
 }
 
 #[test]
-fn a_delta_run_with_no_consolidating_text_is_still_rendered() {
-    // The other half of the same property, and the reason the fix cannot be
-    // "always drop the deltas": a killed or errored turn leaves a delta run
-    // whose `Text` never arrives. Dropping it silently would lose the last
-    // thing the model said — usually the most interesting row in the file.
-    let out = render(
+fn an_unconsolidated_delta_run_still_reaches_the_answer() {
+    // A killed or errored turn leaves a delta run whose `Text` never
+    // arrives. `append_answer` writes straight into `turn.answer` as each
+    // delta lands, so nothing needs an explicit flush to survive this case.
+    let run = fold_run(
         &at(vec![
             delta("I am about to "),
             delta("run the tests"),
@@ -107,22 +135,18 @@ fn a_delta_run_with_no_consolidating_text_is_still_rendered() {
             },
         ]),
         &no_prompts(),
+        "s",
     );
-
-    assert!(
-        out.body.contains("I am about to run the tests"),
-        "an unconsolidated delta run survives:\n{}",
-        out.body
+    assert_eq!(
+        run.turns[0].answer.as_deref(),
+        Some("I am about to run the tests")
     );
-    assert_eq!(count(&out.body, r#"class="ev say""#), 1, "as one row");
+    assert_eq!(run.turns[0].status, Status::Error, "the error flips it");
 }
 
 #[test]
-fn a_reasoning_run_coalesces_into_one_thinking_row() {
-    // `Reasoning` really is a fragment stream with no consolidated sibling, so
-    // unlike prose it always flushes — the opposite handling from the test
-    // above, which is exactly why they are separate buffers.
-    let out = render(
+fn a_reasoning_run_coalesces_into_one_prose_block() {
+    let run = fold_run(
         &at(vec![
             AgentEvent::Reasoning {
                 delta: "The commit is ".into(),
@@ -133,346 +157,17 @@ fn a_reasoning_run_coalesces_into_one_thinking_row() {
             text("Found it."),
         ]),
         &no_prompts(),
+        "s",
     );
-
-    assert_eq!(count(&out.body, r#"class="ev think""#), 1, "{}", out.body);
-    assert!(
-        out.body.contains("The commit is not on master."),
-        "{}",
-        out.body
-    );
+    assert_eq!(run.turns[0].prose.len(), 1, "{:?}", run.turns[0].prose);
+    assert_eq!(run.turns[0].prose[0].text, "The commit is not on master.");
 }
 
 #[test]
-fn a_tool_result_is_named_by_its_call_and_takes_its_verdict_from_the_tag() {
-    // Witness for module-doc property 4, and for the trap recorded in the
-    // tool-event wire notes: `ToolResult` carries NO error field and never
-    // has, so a consumer that looks for one renders every failed call as a
-    // success. The name and arguments live on the `ToolStart` sharing the
-    // `call_id`; the `ToolOutput::Error` tag is the only verdict.
-    let out = render(
-        &at(vec![
-            AgentEvent::ToolStart {
-                call: ToolCall {
-                    call_id: "c1".into(),
-                    name: "bash".into(),
-                    input: serde_json::json!({"command": "git status"}),
-                },
-                sub_agent_id: None,
-                task_id: None,
-            },
-            AgentEvent::ToolResult {
-                call_id: "c1".into(),
-                output: ToolOutput::error("fatal: not a git repository"),
-                duration_ms: 40,
-                speculated: false,
-                sub_agent_id: None,
-                task_id: None,
-            },
-        ]),
-        &no_prompts(),
-    );
-
-    assert_eq!(
-        out.rendered, 1,
-        "call and result are one row:\n{}",
-        out.body
-    );
-    assert!(
-        out.body.contains(r#"class="ev tool err""#),
-        "the Error tag flips the row to failed:\n{}",
-        out.body
-    );
-    assert!(
-        out.body.contains("<b>bash</b>"),
-        "named from its call:\n{}",
-        out.body
-    );
-    // And named ONCE. `rendered == 1` counts rows; this counts headers, which
-    // is what a reader actually sees — a result patched into its call's row but
-    // carrying a second `<b>bash</b>` would satisfy the row count and still
-    // print the tool's name twice per call all the way down the document. That
-    // is the defect the arena's transcript shipped
-    // (`arenabench/ui/lib/transcript-view.ts::mergeToolRows`), and the reason to
-    // pin the property here rather than trust the row count to imply it.
-    assert_eq!(
-        count(&out.body, "<b>bash</b>"),
-        1,
-        "the tool is named once per call:\n{}",
-        out.body
-    );
-    assert!(
-        out.body.contains("git status"),
-        "arguments come from ToolCall::input:\n{}",
-        out.body
-    );
-    assert!(
-        out.body.contains("fatal: not a git repository"),
-        "the failure text is shown:\n{}",
-        out.body
-    );
-    assert!(
-        !out.body.contains("no result recorded"),
-        "the pending placeholder was replaced:\n{}",
-        out.body
-    );
-}
-
-/// The witness for #4699: a delegate's call is named apart from the lead's in
-/// the archive, and the lead's own carries no attribution at all.
-#[test]
-fn a_delegates_call_is_named_apart_from_the_leads() {
-    let out = render(
-        &at(vec![
-            AgentEvent::ToolStart {
-                call: ToolCall {
-                    call_id: "lead".into(),
-                    name: "bash".into(),
-                    input: serde_json::json!({"command": "git status"}),
-                },
-                sub_agent_id: None,
-                task_id: None,
-            },
-            AgentEvent::ToolResult {
-                call_id: "lead".into(),
-                output: ToolOutput::Ok {
-                    content: "clean".into(),
-                    data: None,
-                },
-                duration_ms: 10,
-                speculated: false,
-                sub_agent_id: None,
-                task_id: None,
-            },
-            AgentEvent::ToolStart {
-                call: ToolCall {
-                    call_id: "child".into(),
-                    name: "search".into(),
-                    input: serde_json::json!({"query": "retry"}),
-                },
-                sub_agent_id: Some("d:1".into()),
-                task_id: None,
-            },
-            AgentEvent::ToolResult {
-                call_id: "child".into(),
-                output: ToolOutput::Ok {
-                    content: "retry.rs".into(),
-                    data: None,
-                },
-                duration_ms: 20,
-                speculated: false,
-                sub_agent_id: Some("d:1".into()),
-                task_id: None,
-            },
-        ]),
-        &no_prompts(),
-    );
-
-    assert!(
-        out.body.contains("<b>search · agent d:1</b>"),
-        "the delegate's own call did not name it:\n{}",
-        out.body
-    );
-    assert!(
-        out.body.contains("<b>bash</b>"),
-        "the lead's own call must carry no delegate tag:\n{}",
-        out.body
-    );
-}
-
-#[test]
-fn a_call_that_never_returned_says_so_rather_than_looking_successful() {
-    // A killed run leaves `tool_start` with no `tool_result`. The row must
-    // read as unfinished; an empty output pane would read as a tool that ran
-    // and printed nothing.
-    let out = render(
-        &at(vec![AgentEvent::ToolStart {
-            call: ToolCall {
-                call_id: "c9".into(),
-                name: "bash".into(),
-                input: serde_json::json!({"command": "sleep 600"}),
-            },
-            sub_agent_id: None,
-            task_id: None,
-        }]),
-        &no_prompts(),
-    );
-
-    assert!(
-        out.body.contains("no result recorded"),
-        "an unreturned call is marked:\n{}",
-        out.body
-    );
-}
-
-#[test]
-fn a_credential_in_the_event_stream_never_reaches_the_transcript() {
-    // THE witness for module-doc property 1, and the one with teeth: the
-    // transcript is a THIRD egress sink that #817's `redact_dump` does not
-    // reach, because it is folded from `session_events` rather than from the
-    // dumps. Remove the `clean` call on either the tool arguments or the
-    // prose and this goes red — which is the point, since the archive exists
-    // to be mailed to someone.
-    let secret = "ghp_016C7e4a9b2d3f5081726354ABCDabcd1234";
-    let out = render(
-        &at(vec![
-            AgentEvent::ToolStart {
-                call: ToolCall {
-                    call_id: "c1".into(),
-                    name: "bash".into(),
-                    input: serde_json::json!({"command": format!("curl -H 'token: {secret}'")}),
-                },
-                sub_agent_id: None,
-                task_id: None,
-            },
-            AgentEvent::ToolResult {
-                call_id: "c1".into(),
-                output: ToolOutput::Ok {
-                    content: format!("echoed {secret}"),
-                    data: None,
-                },
-                duration_ms: 10,
-                speculated: false,
-                sub_agent_id: None,
-                task_id: None,
-            },
-            text(&format!("I used {secret} to authenticate.")),
-        ]),
-        &no_prompts(),
-    );
-
-    assert!(
-        !out.body.contains("ghp_016C7e4a9b2d3f5081726354"),
-        "a credential reached the transcript:\n{}",
-        out.body
-    );
-    assert!(
-        out.body.contains("[redacted]"),
-        "and it was masked rather than dropped:\n{}",
-        out.body
-    );
-    assert!(out.redacted, "the page reports that masking happened");
-}
-
-#[test]
-fn the_elapsed_column_counts_whole_seconds_and_invents_no_precision() {
-    // Witness for module-doc property 2. `events.ts` takes SQLite's
-    // second-resolution `CURRENT_TIMESTAMP` at every writer, so a tenth of a
-    // second in this column would be a number the renderer made up. The
-    // per-call duration below IS millisecond-precise and is printed as such —
-    // the two must not be confused, which is why both are asserted here.
-    let out = render(
-        &journal(vec![
-            (
-                "2026-08-09 12:00:00",
-                AgentEvent::Stage {
-                    name: StageKind::Triage.into(),
-                    scope: stella_protocol::StageScope::Run,
-                },
-            ),
-            ("2026-08-09 12:00:34", text("thirty-four seconds later")),
-            ("2026-08-09 12:02:14", text("two minutes fourteen")),
-        ]),
-        &no_prompts(),
-    );
-
-    assert!(
-        out.body.contains(r#"<span class="t">    0s</span>"#),
-        "{}",
-        out.body
-    );
-    assert!(
-        out.body.contains(r#"<span class="t">   34s</span>"#),
-        "{}",
-        out.body
-    );
-    assert!(
-        out.body.contains(r#"<span class="t">  134s</span>"#),
-        "{}",
-        out.body
-    );
-    assert!(
-        !out.body.contains(".0s</span>"),
-        "no fabricated decisecond in the elapsed column:\n{}",
-        out.body
-    );
-}
-
-#[test]
-fn the_elapsed_clock_crosses_a_day_boundary() {
-    // The reason the column goes through a civil-date conversion at all
-    // rather than subtracting the HH:MM:SS fields: a session running over
-    // midnight would otherwise report a large negative elapsed time.
-    let out = render(
-        &journal(vec![
-            ("2026-08-09 23:59:50", text("before midnight")),
-            ("2026-08-10 00:00:10", text("after midnight")),
-        ]),
-        &no_prompts(),
-    );
-
-    assert!(
-        out.body.contains(r#"<span class="t">   20s</span>"#),
-        "{}",
-        out.body
-    );
-}
-
-#[test]
-fn an_unreadable_timestamp_holds_the_previous_reading() {
-    // A row's position in the stream is authoritative; a jump back to 0s
-    // mid-transcript would read as the start of a second run.
-    let out = render(
-        &journal(vec![
-            ("2026-08-09 12:00:00", text("first")),
-            ("2026-08-09 12:00:12", text("twelve")),
-            ("", text("no timestamp")),
-        ]),
-        &no_prompts(),
-    );
-
-    assert_eq!(
-        count(&out.body, r#"<span class="t">   12s</span>"#),
-        2,
-        "the unreadable row holds 12s rather than resetting:\n{}",
-        out.body
-    );
-}
-
-#[test]
-fn each_turn_opens_with_the_prompt_that_started_it() {
-    // The prompt is a column on `executions`, not an event, so it reaches the
-    // transcript from the (already redacted) dump. A transcript that opened
-    // with the model's answer would be missing the question.
-    let mut prompts = HashMap::new();
-    prompts.insert(1, "find my lost commit".to_string());
-    prompts.insert(2, "now merge it to master".to_string());
-
-    let mut events = at(vec![text("looking")]).events;
-    events.push(SessionEventRecord {
-        execution_id: 2,
-        seq: 0,
-        ts: "2026-08-09 12:00:05".into(),
-        event: text("merging"),
-    });
-    let out = render(&SessionJournal { events, skipped: 0 }, &prompts);
-
-    assert!(out.body.contains("find my lost commit"), "{}", out.body);
-    assert!(out.body.contains("now merge it to master"), "{}", out.body);
-    assert_eq!(
-        count(&out.body, r#"class="ev user""#),
-        2,
-        "one prompt row per turn, not per event:\n{}",
-        out.body
-    );
-}
-
-#[test]
-fn every_event_kind_renders_rather_than_being_silently_dropped() {
-    // A transcript that quietly skipped the variants it has no bespoke arm
-    // for would be a summary claiming to be a replay — and the reader could
-    // not tell. The catch-all renders the wire tag plus the whole payload.
-    let out = render(
+fn every_event_kind_becomes_a_note_rather_than_being_silently_dropped() {
+    // The catch-all this fold's completeness rests on: an event kind with no
+    // backbone arm still carries its wire tag and its whole payload.
+    let run = fold_run(
         &at(vec![
             AgentEvent::ProviderFallback {
                 from: "anthropic".into(),
@@ -485,267 +180,359 @@ fn every_event_kind_renders_rather_than_being_silently_dropped() {
             },
         ]),
         &no_prompts(),
+        "s",
     );
-
-    assert_eq!(out.rendered, 2, "both rendered:\n{}", out.body);
-    assert!(
-        out.body.contains("provider_fallback"),
-        "the wire tag is shown, so a reader can grep raw/ for it:\n{}",
-        out.body
-    );
-    assert!(
-        out.body.contains("529 overloaded"),
-        "and the whole payload with it:\n{}",
-        out.body
-    );
-    assert!(out.body.contains("fix: the thing"), "{}", out.body);
-}
-
-#[test]
-fn an_oversized_payload_is_cut_and_says_that_it_was() {
-    // Truncation is fine; silent truncation is not. An elided transcript that
-    // looks complete is worse evidence than a short one that states the cut.
-    let huge = "x".repeat(MAX_EMBEDDED_BYTES + 5_000);
-    let out = render(
-        &at(vec![
-            AgentEvent::ToolStart {
-                call: ToolCall {
-                    call_id: "c1".into(),
-                    name: "bash".into(),
-                    input: serde_json::json!({"command": "cat build.log"}),
-                },
-                sub_agent_id: None,
-                task_id: None,
-            },
-            AgentEvent::ToolResult {
-                call_id: "c1".into(),
-                output: ToolOutput::Ok {
-                    content: huge,
-                    data: None,
-                },
-                duration_ms: 10,
-                speculated: false,
-                sub_agent_id: None,
-                task_id: None,
-            },
-        ]),
-        &no_prompts(),
-    );
-
-    assert!(
-        out.body.contains("bytes truncated"),
-        "the cut is stated:\n{}",
-        &out.body[..out.body.len().min(400)]
-    );
-}
-
-#[test]
-fn truncation_never_splits_a_utf8_character() {
-    // The byte budget is a size limit, and slicing a multi-byte sequence in
-    // half panics — on exactly the output (a tree-drawing tool, a non-English
-    // file) that a fixture of ASCII would never produce.
-    let multibyte = "é".repeat(MAX_EMBEDDED_BYTES);
-    let clipped = clip(&multibyte);
-    assert!(clipped.contains("bytes truncated"));
-    assert!(clipped.chars().count() > 0);
-}
-
-#[test]
-fn markup_in_the_event_stream_cannot_escape_its_row() {
-    // Every string here is chosen by a model, an MCP server or a repository.
-    // The page has a `default-src 'none'` CSP, but escaping at the sink is
-    // what keeps the row structure intact rather than relying on it.
-    let out = render(
-        &at(vec![text("</pre><img src=x onerror=alert(1)>")]),
-        &no_prompts(),
-    );
-
-    assert!(
-        !out.body.contains("<img"),
-        "markup neutralized:\n{}",
-        out.body
+    let notes = &run.turns[0].notes;
+    assert_eq!(notes.len(), 2, "both became notes: {notes:?}");
+    assert_eq!(
+        notes[0].summary, "provider_fallback",
+        "the wire tag is shown"
     );
     assert!(
-        out.body.contains("&lt;img"),
-        "and shown as text:\n{}",
-        out.body
+        notes[0].detail.iter().any(|l| l.contains("529 overloaded")),
+        "and the whole payload with it: {:?}",
+        notes[0].detail
     );
+    assert_eq!(notes[1].summary, "commit");
+    assert!(notes[1].detail.iter().any(|l| l.contains("fix: the thing")));
 }
 
 #[test]
 fn an_unreplayable_event_is_counted_rather_than_hidden() {
     // `SessionJournal::skipped` is the store's count of rows that no longer
-    // parse as an `AgentEvent` (a stream recorded before a variant existed).
-    // A reader must be able to tell a quiet session from a lossy read.
+    // parse as an `AgentEvent`. A reader must be able to tell a quiet
+    // session from a lossy read.
     let out = render(
         &SessionJournal {
             events: Vec::new(),
             skipped: 3,
         },
         &no_prompts(),
+        "s",
     );
-
     assert_eq!(out.unparseable, 3);
     assert!(
         out.provenance().contains("older build"),
-        "stated on the page: {}",
+        "{}",
         out.provenance()
+    );
+}
+
+// ── Tool calls ────────────────────────────────────────────────────────────
+
+#[test]
+fn a_tool_result_is_named_by_its_call_and_takes_its_verdict_from_the_tag() {
+    // `ToolResult` carries no `error` field and never has — the `ToolOutput`
+    // tag is the only verdict, and the name/arguments live on the matching
+    // `ToolStart`.
+    let run = fold_run(
+        &at(vec![
+            tool_start("c1", "bash", serde_json::json!({"command": "git status"})),
+            tool_result("c1", ToolOutput::error("fatal: not a git repository"), 40),
+        ]),
+        &no_prompts(),
+        "s",
+    );
+    let steps = &run.turns[0].steps;
+    assert_eq!(steps.len(), 1, "call and result are one step");
+    let call = steps[0].call.as_ref().expect("the step carries its call");
+    assert_eq!(call.tool, ToolKind::Bash);
+    assert_eq!(
+        call.status,
+        Status::Error,
+        "the Error tag flips the call to failed"
+    );
+    assert_eq!(call.header_object, "git status");
+    assert!(
+        call.output
+            .lines
+            .iter()
+            .any(|l| l.contains("fatal: not a git repository")),
+        "{:?}",
+        call.output.lines
+    );
+}
+
+#[test]
+fn a_delegates_call_is_named_apart_from_the_leads() {
+    // The witness for #4699: a delegate's call carries `sub_agent_id`; the
+    // lead's own carries none.
+    let child_start = AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "child".into(),
+            name: "search".into(),
+            input: serde_json::json!({"query": "retry"}),
+        },
+        sub_agent_id: Some("d:1".into()),
+        task_id: None,
+    };
+    let child_result = AgentEvent::ToolResult {
+        call_id: "child".into(),
+        output: ToolOutput::ok("retry.rs"),
+        duration_ms: 20,
+        speculated: false,
+        sub_agent_id: Some("d:1".into()),
+        task_id: None,
+    };
+    let run = fold_run(
+        &at(vec![
+            tool_start("lead", "bash", serde_json::json!({"command": "git status"})),
+            tool_result("lead", ToolOutput::ok("clean"), 10),
+            child_start,
+            child_result,
+        ]),
+        &no_prompts(),
+        "s",
+    );
+    let steps = &run.turns[0].steps;
+    assert_eq!(steps[0].call.as_ref().unwrap().sub_agent_id, None);
+    assert_eq!(
+        steps[1].call.as_ref().unwrap().sub_agent_id.as_deref(),
+        Some("d:1")
+    );
+}
+
+#[test]
+fn a_call_that_never_returned_stays_running_rather_than_looking_successful() {
+    // A killed run leaves `tool_start` with no `tool_result`. The step must
+    // read as unfinished — an empty, `Ok`-status output would read as a tool
+    // that ran and printed nothing.
+    let run = fold_run(
+        &at(vec![tool_start(
+            "c9",
+            "bash",
+            serde_json::json!({"command": "sleep 600"}),
+        )]),
+        &no_prompts(),
+        "s",
+    );
+    let call = run.turns[0].steps[0].call.as_ref().unwrap();
+    assert_eq!(call.status, Status::Running);
+}
+
+#[test]
+fn a_result_whose_call_was_never_recorded_still_renders() {
+    // This journal never saw the matching `tool_start` — a `?after_seq` page,
+    // or a store whose early rows were pruned. The completeness contract
+    // this fold exists to hold forbids treating the correlation miss as a
+    // reason to drop the result.
+    let run = fold_run(
+        &at(vec![tool_result("ghost", ToolOutput::ok("survived"), 5)]),
+        &no_prompts(),
+        "s",
+    );
+    let steps = &run.turns[0].steps;
+    assert_eq!(steps.len(), 1, "the orphan result still becomes a step");
+    let call = steps[0].call.as_ref().unwrap();
+    assert!(call.output.lines.iter().any(|l| l == "survived"));
+}
+
+#[test]
+fn an_oversized_tool_output_is_clipped_and_says_so() {
+    let huge = "x".repeat(MAX_EMBEDDED_BYTES + 5_000);
+    let run = fold_run(
+        &at(vec![
+            tool_start(
+                "c1",
+                "bash",
+                serde_json::json!({"command": "cat build.log"}),
+            ),
+            tool_result("c1", ToolOutput::ok(huge), 10),
+        ]),
+        &no_prompts(),
+        "s",
+    );
+    let call = run.turns[0].steps[0].call.as_ref().unwrap();
+    let joined = call.output.lines.join("\n");
+    assert!(joined.contains("bytes truncated"), "{joined}");
+    assert!(
+        joined.len() < MAX_EMBEDDED_BYTES + 200,
+        "the output was actually cut, not just labelled"
     );
 }
 
 // ── File diffs ──────────────────────────────────────────────────────────
 
-/// A `FileChange` carrying a unified diff of `adds` single-line additions.
-fn a_rewrite(adds: usize) -> AgentEvent {
-    let body: String = (1..=adds).map(|i| format!("+line {i}\n")).collect();
-    AgentEvent::FileChange {
-        path: "src/big.rs".into(),
-        kind: stella_protocol::FileChangeKind::Modified,
-        added: adds as u32,
-        removed: 0,
-        diff: Some(format!(
-            "--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,{adds} @@\n{body}"
-        )),
-        minimal: true,
-        task_id: None,
-    }
-}
-
 #[test]
-fn a_file_diff_renders_as_a_gutter_diff_rather_than_a_wall_of_text() {
-    // The archive is attached to a pull request as evidence and read beside
-    // the Observatory. This row used to be a `<pre>` of raw diff text — no
-    // line numbers, no row tint, nothing a reviewer could scan — so the same
-    // edit read two different ways in two artifacts of one run.
-    let out = render(&at(vec![a_rewrite(4)]), &no_prompts());
-    assert!(out.body.contains(r#"<div class="dx">"#), "{}", out.body);
-    assert!(
-        out.body.contains(r#"<span class="nn">1</span>"#),
-        "the new-side gutter numbers the added lines:\n{}",
-        out.body
-    );
-    assert!(
-        count(&out.body, r#"class="dx-line add"#) == 4,
-        "one tinted row per addition:\n{}",
-        out.body
-    );
-    assert!(
-        !out.body.contains(r#"<pre class="diff">"#),
-        "the raw-text fallback is for unparseable diffs only:\n{}",
-        out.body
-    );
-}
-
-#[test]
-fn a_modified_line_pair_highlights_only_the_changed_token() {
-    // A whole-line tint answers "did this line change"; a reviewer's real
-    // question is "what in it changed". Reuses
-    // `stella_transcript::word::highlight` — the same pass the transcript
-    // surfaces use — rather than a second tokenizer that could drift from it.
-    let event = AgentEvent::FileChange {
-        path: "app/main.tex".into(),
-        kind: stella_protocol::FileChangeKind::Modified,
-        added: 1,
-        removed: 1,
-        diff: Some(
-            "--- a/app/main.tex\n+++ b/app/main.tex\n\
-             @@ -1,1 +1,1 @@\n\
-             -\\setlength{\\parindent}{15pt}\n\
-             +\\setlength{\\parindent}{12pt}\n"
-                .to_string(),
-        ),
-        minimal: true,
-        task_id: None,
-    };
-    let out = render(&at(vec![event]), &no_prompts());
-    assert!(
-        out.body.contains(r#"<span class="ww">15pt</span>"#),
-        "the removed token should carry the word tint:\n{}",
-        out.body
-    );
-    assert!(
-        out.body.contains(r#"<span class="ww">12pt</span>"#),
-        "the added token should carry the word tint:\n{}",
-        out.body
-    );
-    assert!(
-        !out.body
-            .contains(r#"<span class="ww">\setlength{\parindent}{</span>"#),
-        "the unchanged prefix must not be tinted:\n{}",
-        out.body
-    );
-}
-
-#[test]
-fn an_unpaired_addition_carries_no_word_tint() {
-    // `a_rewrite` below is additions with no matching removals — there is
-    // nothing to compare each line against, so the honest answer is a plain
-    // line tint and zero word spans.
-    let out = render(&at(vec![a_rewrite(4)]), &no_prompts());
-    assert!(
-        !out.body.contains(r#"class="ww""#),
-        "an unpaired line has nothing to diff against:\n{}",
-        out.body
-    );
-}
-
-#[test]
-fn a_long_file_diff_shows_its_beginning_and_its_end_and_marks_the_middle() {
-    // Only the changed lines, never the whole file, and never more of them
-    // than the shared cap — with the elision stated where it happened. A
-    // rewrite used to contribute up to 64 KiB of `+` lines to a file someone
-    // opens in a browser, cut at a byte boundary that could land mid-hunk.
-    let adds = stella_diff::view::VIEW_CAP * 3;
-    let out = render(&at(vec![a_rewrite(adds)]), &no_prompts());
-    // The sigil lives in its own gutter column, so the text cell is the bare
-    // line — which is exactly what makes the rendering copy-pasteable.
-    assert!(
-        out.body.contains(r#"<span class="tx">line 1</span>"#),
-        "the change's first line survives"
-    );
-    assert!(
-        out.body
-            .contains(&format!(r#"<span class="tx">line {adds}</span>"#)),
-        "and so does its last — the point of showing both ends"
-    );
-    assert!(
-        out.body.contains(r#"class="dx-fold""#) && out.body.contains("not shown"),
-        "with the elision stated rather than silent"
-    );
-    let drawn = count(&out.body, r#"class="dx-line"#);
-    assert!(
-        drawn <= stella_diff::view::VIEW_CAP,
-        "{drawn} rows drawn against a cap of {}",
-        stella_diff::view::VIEW_CAP
-    );
-    // The gutter on the far side of the elision names the file's real lines.
-    assert!(
-        out.body
-            .contains(&format!(r#"<span class="nn">{adds}</span>"#)),
-        "the tail's line numbers are not restarted from 1"
-    );
-}
-
-#[test]
-fn a_diff_that_parses_to_no_hunks_still_renders_as_readable_text() {
-    // A headerless pseudo-diff carries no coordinates, so it has no hunks to
-    // draw. Rendering nothing at all would be the worst outcome: the row
-    // would claim a file changed and then show nothing of the change.
-    let out = render(
-        &at(vec![AgentEvent::FileChange {
-            path: "notes.txt".into(),
-            kind: stella_protocol::FileChangeKind::Modified,
-            added: 1,
-            removed: 0,
-            diff: Some("+just a bare line".into()),
-            minimal: true,
-            task_id: None,
-        }]),
+fn a_file_change_attaches_to_the_call_that_produced_it() {
+    let run = fold_run(
+        &at(vec![
+            tool_start("c1", "edit_file", serde_json::json!({"path": "src/big.rs"})),
+            tool_result("c1", ToolOutput::ok("ok"), 5),
+            AgentEvent::FileChange {
+                path: "src/big.rs".into(),
+                kind: stella_protocol::FileChangeKind::Modified,
+                added: 3,
+                removed: 1,
+                diff: Some(
+                    "--- a/src/big.rs\n+++ b/src/big.rs\n@@ -1,1 +1,3 @@\n-old\n+new1\n+new2\n+new3\n"
+                        .into(),
+                ),
+                minimal: true,
+                task_id: None,
+            },
+        ]),
         &no_prompts(),
+        "s",
+    );
+    let call = run.turns[0].steps[0].call.as_ref().unwrap();
+    assert_eq!(call.files.len(), 1);
+    assert_eq!(call.files[0].extent.added, Some(3));
+    assert_eq!(call.files[0].extent.removed, Some(1));
+    assert!(
+        call.files[0]
+            .patch
+            .as_ref()
+            .expect("a diff was supplied")
+            .text
+            .contains("+new1")
+    );
+}
+
+// ── Elapsed clock ─────────────────────────────────────────────────────────
+
+#[test]
+fn step_offsets_sum_from_measured_durations_not_from_the_journal_clock() {
+    // Module-doc property 2, made structural: this fold never reads
+    // `events.ts`, so every event in this journal shares one timestamp and
+    // the offsets below can only have come from `duration_ms`.
+    let run = fold_run(
+        &at(vec![
+            tool_start("a", "bash", serde_json::json!({"command": "one"})),
+            tool_result("a", ToolOutput::ok(""), 1500),
+            tool_start("b", "bash", serde_json::json!({"command": "two"})),
+            tool_result("b", ToolOutput::ok(""), 2500),
+        ]),
+        &no_prompts(),
+        "s",
+    );
+    let steps = &run.turns[0].steps;
+    assert_eq!(steps[0].offset_ms, 0);
+    assert_eq!(steps[1].offset_ms, 1500);
+    assert_eq!(run.turns[0].duration_ms, 4000);
+}
+
+// ── Turns ───────────────────────────────────────────────────────────────
+
+#[test]
+fn each_turn_opens_with_the_prompt_that_started_it() {
+    let mut prompts = HashMap::new();
+    prompts.insert(1, "find my lost commit".to_string());
+    prompts.insert(2, "now merge it to master".to_string());
+
+    let mut events = at(vec![text("looking")]).events;
+    events.push(SessionEventRecord {
+        execution_id: 2,
+        seq: 0,
+        ts: "2026-08-09 12:00:05".into(),
+        event: text("merging"),
+    });
+    let run = fold_run(&SessionJournal { events, skipped: 0 }, &prompts, "s");
+
+    assert_eq!(run.turns.len(), 2);
+    assert_eq!(run.turns[0].prompt, "find my lost commit");
+    assert_eq!(run.turns[1].prompt, "now merge it to master");
+}
+
+#[test]
+fn the_row_budget_caps_steps_and_notes_and_reports_the_overflow() {
+    let events: Vec<AgentEvent> = (0..MAX_ROWS + 5)
+        .map(|i| AgentEvent::Commit {
+            sha: format!("sha{i}"),
+            message: format!("m{i}"),
+        })
+        .collect();
+    let out = render(&at(events), &no_prompts(), "s");
+    assert_eq!(out.rendered, MAX_ROWS);
+    assert_eq!(out.overflow, 5);
+}
+
+// ── Redaction ──────────────────────────────────────────────────────────
+
+#[test]
+fn a_credential_anywhere_in_the_run_is_masked_by_the_whole_tree_pass() {
+    // THE witness for module-doc property 1: `redact_run` serializes the
+    // whole built run and redacts every string in it, so a credential in the
+    // prompt, a tool argument, a tool result, and the answer are all caught
+    // by the same pass rather than by four separate call sites.
+    let secret = "ghp_016C7e4a9b2d3f5081726354ABCDabcd1234";
+    let mut prompts = HashMap::new();
+    prompts.insert(1, format!("use {secret} to auth"));
+
+    let mut run = fold_run(
+        &at(vec![
+            tool_start(
+                "c1",
+                "bash",
+                serde_json::json!({"command": format!("curl -H 'token: {secret}'")}),
+            ),
+            tool_result("c1", ToolOutput::ok(format!("echoed {secret}")), 10),
+            text(&format!("I used {secret} to authenticate.")),
+        ]),
+        &prompts,
+        "s",
+    );
+
+    let redacted = redact_run(&mut run);
+    assert!(redacted, "the pass reports that masking happened");
+    let json = serde_json::to_string(&run).unwrap();
+    assert!(!json.contains(secret), "a credential survived redaction");
+    assert!(json.contains("[redacted]"), "masked, not dropped");
+}
+
+#[test]
+fn a_run_with_no_credential_reports_no_redaction() {
+    let mut run = fold_run(
+        &at(vec![text("nothing sensitive here")]),
+        &no_prompts(),
+        "s",
+    );
+    assert!(!redact_run(&mut run));
+}
+
+// ── End to end: the rendered document ────────────────────────────────────
+
+#[test]
+fn the_rendered_document_needs_no_script_to_read() {
+    let out = render(&SessionJournal::default(), &no_prompts(), "s");
+    assert!(
+        !out.html.contains("<script"),
+        "the transcript is pure markup and CSS:\n{}",
+        out.html
+    );
+    assert!(out.html.starts_with("<!DOCTYPE html>"));
+}
+
+#[test]
+fn a_credential_never_reaches_the_rendered_document() {
+    let secret = "ghp_016C7e4a9b2d3f5081726354ABCDabcd1234";
+    let out = render(
+        &at(vec![text(&format!("I used {secret} to authenticate."))]),
+        &no_prompts(),
+        "s",
     );
     assert!(
-        out.body.contains("just a bare line"),
-        "the change is still shown:\n{}",
-        out.body
+        !out.html.contains(secret),
+        "a credential reached the rendered document"
+    );
+    assert!(out.html.contains("[redacted]"));
+    assert!(out.redacted);
+}
+
+#[test]
+fn markup_in_the_event_stream_cannot_escape_its_row() {
+    // Every string here is chosen by a model, an MCP server or a repository.
+    // `stella_transcript::html::escape` is what neutralizes it; this checks
+    // the fold actually hands the text to the renderer rather than
+    // pre-formatting it into markup of its own.
+    let out = render(
+        &at(vec![text("</pre><img src=x onerror=alert(1)>")]),
+        &no_prompts(),
+        "s",
+    );
+    assert!(
+        !out.html.contains("<img"),
+        "markup neutralized:\n{}",
+        out.html
     );
 }
