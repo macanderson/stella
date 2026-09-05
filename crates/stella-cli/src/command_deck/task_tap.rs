@@ -12,7 +12,7 @@ use crate::subsession::SupervisorMsg;
 
 pub(crate) mod plan_gate;
 
-pub(crate) use plan_gate::PlanSetup;
+pub(crate) use plan_gate::{PlanSetup, SharedRevisions};
 
 /// Hands `task_assign`'s spawn requests to the driver's supervisor channel,
 /// and turns the board into a **scope**: the same board traffic is what the
@@ -312,6 +312,7 @@ mod tests {
         PlanSetup {
             goal: goal.to_string(),
             policy: crate::settings::PlanReviewPolicy::default(),
+            revisions: SharedRevisions::default(),
         }
     }
 
@@ -802,6 +803,7 @@ mod tests {
                     enabled: true,
                     min_steps: 2,
                 },
+                revisions: SharedRevisions::default(),
             },
             None,
         );
@@ -836,6 +838,7 @@ mod tests {
                     enabled: false,
                     min_steps: 3,
                 },
+                revisions: SharedRevisions::default(),
             },
             None,
         );
@@ -869,6 +872,7 @@ mod tests {
                 min_steps: 9,
             }
             .for_run(true),
+            revisions: SharedRevisions::default(),
         };
         let (registry, ran, mut rx, events) = gated(1, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());

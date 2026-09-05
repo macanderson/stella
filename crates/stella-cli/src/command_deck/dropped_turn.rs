@@ -322,6 +322,7 @@ mod tests {
             in_tx,
             LEAD.to_string(),
             None,
+            SharedRevisions::default(),
         );
         registry.attach_events(stella_core::EventSender::new(tx.clone()));
         tx.send(priced_step_usage(cost_usd)).expect("in flight");
