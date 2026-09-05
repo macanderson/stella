@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use stella_core::context_record::RecordProposalStatus;
-use stella_core::ingest::{ContextFile, ProbeKind, Verdict};
+use stella_records::context_record::RecordProposalStatus;
+use stella_records::ingest::{ContextFile, ProbeKind, Verdict};
 
 use stella_protocol::{
     CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason, ProviderError,
@@ -30,9 +30,9 @@ fn claim(json: serde_json::Value) -> Claim {
 
 fn defaults() -> Defaults {
     Defaults {
-        sharing_scope: Some(stella_core::ingest::SharingScope::Repository),
+        sharing_scope: Some(stella_records::ingest::SharingScope::Repository),
         origin: Some(Origin::Imported),
-        status: Some(stella_core::context_record::RecordStatus::Active),
+        status: Some(stella_records::context_record::RecordStatus::Active),
         review_every: None,
         provenance: None,
     }
@@ -333,7 +333,7 @@ fn a_bench_shaped_claim_keeps_its_task_selector() {
 #[test]
 fn the_prompt_spells_the_ratified_task_vocabulary() {
     let prompt = system_prompt();
-    for task in stella_core::records::KNOWN_TASKS {
+    for task in stella_records::records::KNOWN_TASKS {
         assert!(prompt.contains(task), "the prompt omits `{task}`");
     }
     assert!(prompt.starts_with(SYSTEM_PROMPT), "the contract is intact");
@@ -626,7 +626,7 @@ fn a_truncated_reply_is_retried_with_a_larger_budget_instead_of_failing() {
             let doc = NamedDoc {
                 rel: "AGENTS.md".to_string(),
                 content: "# Conventions\nThis repository uses pnpm.\n".to_string(),
-                tier: stella_core::ingest::Tier::Primary,
+                tier: stella_records::ingest::Tier::Primary,
             };
             let chunk = Chunk {
                 text: doc.content.clone(),
@@ -760,7 +760,7 @@ fn extraction_writes_a_valid_proposal_file_end_to_end() {
     let written = root.join(&summary.written_to);
     let body = std::fs::read_to_string(&written).expect("proposals written");
     let parsed: ContextFile = toml::from_str(&body).expect("valid TOML surface");
-    assert_eq!(parsed.schema, stella_core::ingest::SCHEMA_TAG);
+    assert_eq!(parsed.schema, stella_records::ingest::SCHEMA_TAG);
     assert_eq!(parsed.proposals.len(), 2);
 
     // The eligible constraint was probed and supported; the procedure was
@@ -829,7 +829,7 @@ fn a_built_proposal_serializes_to_the_toml_surface() {
     let body = toml::to_string_pretty(&file).expect("serialize");
     let parsed: ContextFile = toml::from_str(&body).expect("round-trip");
     assert_eq!(parsed.proposals.len(), 1);
-    assert_eq!(parsed.schema, stella_core::ingest::SCHEMA_TAG);
+    assert_eq!(parsed.schema, stella_records::ingest::SCHEMA_TAG);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -989,7 +989,7 @@ fn the_promotion_tier_is_stamped_explicitly_on_every_proposal() {
     );
     assert_eq!(
         pinned.record.steering.as_ref().and_then(|s| s.tier),
-        Some(stella_core::ingest::record::Tier::Pinned)
+        Some(stella_records::ingest::record::Tier::Pinned)
     );
 
     let scoped = build(
@@ -1004,7 +1004,7 @@ fn the_promotion_tier_is_stamped_explicitly_on_every_proposal() {
     );
     assert_eq!(
         scoped.record.steering.as_ref().and_then(|s| s.tier),
-        Some(stella_core::ingest::record::Tier::Scoped)
+        Some(stella_records::ingest::record::Tier::Scoped)
     );
 
     let retrieved = build(
@@ -1018,6 +1018,6 @@ fn the_promotion_tier_is_stamped_explicitly_on_every_proposal() {
     );
     assert_eq!(
         retrieved.record.steering.as_ref().and_then(|s| s.tier),
-        Some(stella_core::ingest::record::Tier::Retrieved)
+        Some(stella_records::ingest::record::Tier::Retrieved)
     );
 }

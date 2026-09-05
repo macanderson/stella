@@ -32,7 +32,7 @@ a clock.
 | 2 | Skill learning | `SessionMemory::auto_create_skills` — `learning.rs:372` (typed `:606`, lexical `:756`) → `stella_core::skills::mine_skill_candidates` (`crates/stella-core/src/skills.rs:650`), `decide_auto_creation` (`:833`) | none |
 | 3 | Rules mining | `extract_reflection_observations` (`crates/stella-cli/src/memory/observations.rs:81`) → `induce_rule_proposals` (`crates/stella-cli/src/memory/rules_mining.rs:104`) → `write_rule` (`:188`) | none |
 | 4 | Tool foundry | `stella_core::detect_tool_gaps` — `crates/stella-core/src/tool_foundry.rs:198`; CLI adapter `crates/stella-cli/src/tool_foundry.rs:56` | none, **by design** |
-| 5 | Selection / lifecycle | `four_class_certification` and `time_lapse_certification` — `crates/stella-core/src/records/tests.rs:462`, `:709` | none — landed in #2306 |
+| 5 | Selection / lifecycle | `four_class_certification` and `time_lapse_certification` — `crates/stella-records/src/records/tests.rs:462`, `:709` | none — landed in #2306 |
 
 So exactly one seam needs a test double, and the double already exists:
 `ScriptedProvider` appeared in 42 files across `stella-core`, `stella-pipeline`,
@@ -316,7 +316,7 @@ Two further caveats:
   so a committed derivative fails the gate on its own.
 - **Every derived statement passes the ingest quarantine.** Transcript text is
   user content and model output — precisely what `origin_is_untrusted`
-  (`crates/stella-core/src/ingest/gate.rs:30`) exists to classify. Derived
+  (`crates/stella-records/src/ingest/gate.rs:30`) exists to classify. Derived
   statements go through `gate_proposal` (`:124`) and `quarantine_for` (`:78`)
   with the origin marked untrusted.
 - **Nothing derived is committed or exported.** The committed CI corpus stays

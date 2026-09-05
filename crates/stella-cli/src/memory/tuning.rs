@@ -88,13 +88,13 @@ pub(super) fn skill_promotion(
 /// workspace.
 pub(crate) fn selection_health_policy(
     workspace_root: &std::path::Path,
-) -> stella_core::context_record::SelectionHealthPolicy {
+) -> stella_records::context_record::SelectionHealthPolicy {
     let efficacy = crate::settings::Settings::load(workspace_root)
         .ok()
         .and_then(|s| s.context)
         .map(|c| c.efficacy)
         .unwrap_or_default();
-    stella_core::context_record::SelectionHealthPolicy {
+    stella_records::context_record::SelectionHealthPolicy {
         min_attributable_uses: efficacy.min_attributable_uses,
         not_helpful_ratio_threshold: efficacy.not_helpful_ratio_threshold,
         min_attribution_confidence: efficacy.min_attribution_confidence,

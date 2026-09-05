@@ -256,7 +256,8 @@ fn a_recall_block_splits_per_item_and_resolves_memory_frames_to_their_records() 
 #[test]
 fn a_record_bullet_resolves_to_its_handle_sigil_included() {
     // The volatile record channel renders `- <statement> ^<handle>` with an
-    // optional ` [enforced]` marker (records::render::bullet). The handle —
+    // optional ` [enforced]` marker (stella_records::records::render::bullet).
+    // The handle —
     // sigil included — is the id the block row carries, because it is the
     // exact string the citation ledger stores for a record: the join from a
     // rendered record to its citation works verbatim, which is what makes
@@ -674,7 +675,7 @@ fn a_changed_prompt_changes_the_frame_hash() {
 }
 
 /// The RFC 8785 canonical bytes of a value — the same canonicalizer
-/// `context_record::hash` builds `record_hash` preimages with.
+/// `stella_protocol::hash` builds `record_hash` preimages with.
 fn jcs<T: serde::Serialize>(value: &T) -> String {
     serde_json_canonicalizer::to_string(value).expect("canonicalizes")
 }
