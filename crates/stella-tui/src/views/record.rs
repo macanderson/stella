@@ -29,6 +29,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use stella_tui_theme::token;
 
+use crate::render::columns;
+
 /// The separator between one labelled value and the next.
 ///
 /// Spoken, ` · ` is a pause rather than a word, which is what a field boundary
@@ -88,11 +90,12 @@ pub(crate) fn identity(
 
 /// Clip a span run to `width` display columns, marking a clip with an ellipsis.
 ///
-/// Char-counted rather than measured with `unicode-width`, matching what the
-/// grid views' own truncation already does; every label here is ASCII and the
-/// values are the same strings the tables were clipping before.
+/// Measured in display columns, same as `render::columns`. An identity can
+/// be a tool name, an issue key, or an entry's own name — text this crate
+/// did not write. The source table already clipped it by column before
+/// accessible mode turned it into this one row.
 pub(crate) fn truncate_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
-    let total: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let total: usize = spans.iter().map(|s| columns::width(&s.content)).sum();
     if total <= width {
         return spans;
     }
@@ -103,7 +106,7 @@ pub(crate) fn truncate_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Spa
     let mut out: Vec<Span<'static>> = Vec::new();
     let mut used = 0usize;
     for span in spans {
-        let len = span.content.chars().count();
+        let len = columns::width(&span.content);
         if used + len <= budget {
             used += len;
             out.push(span);
@@ -111,7 +114,7 @@ pub(crate) fn truncate_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Spa
         }
         let take = budget - used;
         if take > 0 {
-            let head: String = span.content.chars().take(take).collect();
+            let head = columns::take_left(&span.content, take);
             out.push(Span::styled(head, span.style));
         }
         break;
@@ -170,5 +173,21 @@ mod tests {
     fn a_row_that_fits_is_left_exactly_as_it_was() {
         let spans = vec![Span::raw("abc".to_string())];
         assert_eq!(truncate_spans(spans.clone(), 3), spans);
+    }
+
+    /// A CJK identity clips to the pane by column, not by char.
+    ///
+    /// 20 CJK glyphs are 20 chars but 40 columns. Old code cut the row to
+    /// 19 *chars* of glyph plus an ellipsis — 38 columns wide plus the
+    /// 2-column prefix, well past a 20-column pane. L-T4's line-exact
+    /// scroll needs this to never happen.
+    #[test]
+    fn a_wide_character_identity_clips_to_columns_not_chars() {
+        let wide_name = "圈".repeat(20);
+        let line = record_line(identity(wide_name, false, token::GOLD), &[], 20);
+        assert!(
+            line.width() <= 20,
+            "row overran its 20-column budget: {line:?}"
+        );
     }
 }

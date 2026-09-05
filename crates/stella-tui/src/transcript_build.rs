@@ -430,6 +430,13 @@ impl RunBuilder {
 /// frames. The header rail is one line shared with the status word and the
 /// chips, so this is deliberately terse; the prompt itself is rendered in full
 /// on the `you` row directly below and is never what this replaces.
+///
+/// `MAX_CHARS` shapes the identifier's own length, not a pane's — this is a
+/// content cap the shared [`stella_transcript`] model carries, read by both
+/// the grid and the HTML renderer, and the grid one re-elides `Turn::name`
+/// to its live column budget with its own `head_cells` (`unicode_width`
+/// aware) before drawing it. A `char` cap here is the right unit for "how
+/// much of the prompt survives into the name."
 fn slug(prompt: &str) -> String {
     const MAX_WORDS: usize = 4;
     const MAX_CHARS: usize = 28;

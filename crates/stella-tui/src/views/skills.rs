@@ -50,6 +50,7 @@ use stella_tui_theme::token;
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::{DeckUi, SkillsFocus};
 use crate::envelope::SkillRow;
+use crate::render::columns;
 
 /// Draw the tab into `area`, then float whichever dialog is open above it.
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
@@ -134,10 +135,11 @@ fn render_search_box(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     };
     let used: usize = spans.iter().map(Span::width).sum();
     let inner_w = area.width.saturating_sub(2) as usize;
-    if used + right.chars().count() < inner_w {
-        spans.push(Span::raw(
-            " ".repeat(inner_w - used - right.chars().count()),
-        ));
+    // `right` is fixed words plus a decimal count. Every glyph in it
+    // (`·`, `…`) is one column, so `chars().count()` is already its width.
+    let right_w = right.chars().count();
+    if used + right_w < inner_w {
+        spans.push(Span::raw(" ".repeat(inner_w - used - right_w)));
         spans.push(Span::styled(right, if focused { muted } else { dim }));
     }
     Paragraph::new(Line::from(spans))
@@ -198,81 +200,6 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
 
     let sel = ui.skills.sel.min(rows.len() - 1);
     let width = inner.width as usize;
-    let row_line = |(i, row): &(usize, &SkillRow)| -> Line<'static> {
-        let is_sel = *i == sel && focused;
-        let marker = if is_sel { "▸ " } else { "  " };
-        let boxed = if row.enabled { "[x] " } else { "[ ] " };
-        let box_style = if row.enabled {
-            Style::new().fg(token::GOLD)
-        } else {
-            dim
-        };
-        let ver = if row.latest > row.version {
-            format!("v{}/{}", row.version, row.latest)
-        } else {
-            format!("v{}", row.version)
-        };
-        // A contributed skill names its package instead of a version and a
-        // scope: neither is a thing it has (`skill_manager::contributed_rows`),
-        // and whose it is is the column a reader of this row actually needs.
-        //
-        // A learned row names the grade of the evidence that promoted it
-        // (#4871) when the ledger still has one — the same `snake_case` token
-        // `stella proposals` prints, so a reader learns one vocabulary rather
-        // than two. Absent for a skill mined before the ledger existed, or
-        // under the shipped lexical loop, which records no proposal at all —
-        // there is no grade to name, not a missing feature.
-        let meta = match (&row.contributed_by, row.origin.as_str()) {
-            (Some(plugin), _) => format!(" via {plugin} "),
-            (None, "auto") => match &row.evidence_grade {
-                Some(grade) => format!(" learned · {grade} "),
-                None => " learned ".to_string(),
-            },
-            (None, _) => format!(" {ver} · {} ", row.scope.label()),
-        };
-        let name = format!("{:<24}", row.name);
-        let used = marker.chars().count()
-            + boxed.chars().count()
-            + name.chars().count()
-            + meta.chars().count();
-        let desc_room = width.saturating_sub(used + 3);
-        // A learned row spends its last column on **provenance** rather than
-        // on a description (SPEC 9.2), because provenance carries the turn and
-        // the identity `r rename` has to keep, and the description does not.
-        //
-        // That trade used to be free: the description a mined skill carried
-        // was `Learned from N observations.`, the trace count said less
-        // precisely. Since #5335 it is the lesson's own first sentence, so
-        // there is now a real thing on the other side of the choice — #5425
-        // is where whether this column should prefer it gets decided. The
-        // full prose is in the body either way, one `ctrl+o` away. *This*
-        // column and not a right-aligned one: the right edge of an installed
-        // row is where per-skill economics land (#4337).
-        let tail = provenance(row).unwrap_or_else(|| row.description.clone());
-        let desc = if desc_room >= 6 && !tail.is_empty() {
-            format!("  {}", truncate(&tail, desc_room))
-        } else {
-            String::new()
-        };
-        let mut line = Line::from(vec![
-            Span::styled(marker, Style::new().fg(token::GOLD)),
-            Span::styled(boxed, box_style),
-            Span::styled(name, text),
-            Span::styled(
-                meta,
-                if row.origin == "auto" {
-                    Style::new().fg(token::GOLD)
-                } else {
-                    muted
-                },
-            ),
-            Span::styled(desc, muted),
-        ]);
-        if is_sel {
-            line.style = Style::new().bg(token::HL);
-        }
-        line
-    };
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     let budget = inner.height as usize;
@@ -286,8 +213,8 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let authored_budget = budget.saturating_sub(learned_rows).max(1);
     let sel_pos = authored.iter().position(|(i, _)| *i == sel).unwrap_or(0);
     let start = window_start(authored.len(), sel_pos, authored_budget);
-    for entry in authored.iter().skip(start).take(authored_budget) {
-        lines.push(row_line(entry));
+    for (i, row) in authored.iter().skip(start).take(authored_budget) {
+        lines.push(installed_row_line(row, *i == sel && focused, width));
     }
     if !learned.is_empty() && lines.len() < budget {
         lines.push(Line::from(vec![
@@ -298,11 +225,99 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         let room = budget.saturating_sub(lines.len());
         let lsel = learned.iter().position(|(i, _)| *i == sel).unwrap_or(0);
         let lstart = window_start(learned.len(), lsel, room.max(1));
-        for entry in learned.iter().skip(lstart).take(room) {
-            lines.push(row_line(entry));
+        for (i, row) in learned.iter().skip(lstart).take(room) {
+            lines.push(installed_row_line(row, *i == sel && focused, width));
         }
     }
     Paragraph::new(lines).render(inner, buf);
+}
+
+/// One row of the installed list: enabled box, name, version/scope or
+/// provenance, description — fitted to `width` display columns.
+///
+/// A named function rather than a closure over `render_installed`'s locals,
+/// so a test can compose one row and measure [`Line::width`] directly against
+/// `width`, which is exactly what a CJK or emoji name, plugin id, or
+/// description needs checked: none of them are text this crate authored.
+fn installed_row_line(row: &SkillRow, is_sel: bool, width: usize) -> Line<'static> {
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+    let marker = if is_sel { "▸ " } else { "  " };
+    let boxed = if row.enabled { "[x] " } else { "[ ] " };
+    let box_style = if row.enabled {
+        Style::new().fg(token::GOLD)
+    } else {
+        dim
+    };
+    let ver = if row.latest > row.version {
+        format!("v{}/{}", row.version, row.latest)
+    } else {
+        format!("v{}", row.version)
+    };
+    // A contributed skill names its package instead of a version and a
+    // scope: neither is a thing it has (`skill_manager::contributed_rows`),
+    // and whose it is is the column a reader of this row actually needs.
+    //
+    // A learned row names the grade of the evidence that promoted it
+    // (#4871) when the ledger still has one — the same `snake_case` token
+    // `stella proposals` prints, so a reader learns one vocabulary rather
+    // than two. Absent for a skill mined before the ledger existed, or
+    // under the shipped lexical loop, which records no proposal at all —
+    // there is no grade to name, not a missing feature.
+    let meta = match (&row.contributed_by, row.origin.as_str()) {
+        (Some(plugin), _) => format!(" via {plugin} "),
+        (None, "auto") => match &row.evidence_grade {
+            Some(grade) => format!(" learned · {grade} "),
+            None => " learned ".to_string(),
+        },
+        (None, _) => format!(" {ver} · {} ", row.scope.label()),
+    };
+    // `columns::pad`, not `{:<24}`. `row.name` is a skill's own name,
+    // chosen by a user or by `stella` itself. Rust's own pad fills by
+    // char, so a CJK or emoji name overshoots the 24-column target.
+    let name = columns::pad(&row.name, 24);
+    let used = columns::width(marker)
+        + columns::width(boxed)
+        + columns::width(&name)
+        + columns::width(&meta);
+    let desc_room = width.saturating_sub(used + 3);
+    // A learned row spends its last column on **provenance** rather than
+    // on a description (SPEC 9.2), because provenance carries the turn and
+    // the identity `r rename` has to keep, and the description does not.
+    //
+    // That trade used to be free: the description a mined skill carried
+    // was `Learned from N observations.`, the trace count said less
+    // precisely. Since #5335 it is the lesson's own first sentence, so
+    // there is now a real thing on the other side of the choice — #5425
+    // is where whether this column should prefer it gets decided. The
+    // full prose is in the body either way, one `ctrl+o` away. *This*
+    // column and not a right-aligned one: the right edge of an installed
+    // row is where per-skill economics land (#4337).
+    let tail = provenance(row).unwrap_or_else(|| row.description.clone());
+    let desc = if desc_room >= 6 && !tail.is_empty() {
+        format!("  {}", columns::head(&tail, desc_room))
+    } else {
+        String::new()
+    };
+    let mut line = Line::from(vec![
+        Span::styled(marker, Style::new().fg(token::GOLD)),
+        Span::styled(boxed, box_style),
+        Span::styled(name, text),
+        Span::styled(
+            meta,
+            if row.origin == "auto" {
+                Style::new().fg(token::GOLD)
+            } else {
+                muted
+            },
+        ),
+        Span::styled(desc, muted),
+    ]);
+    if is_sel {
+        line.style = Style::new().bg(token::HL);
+    }
+    line
 }
 
 /// SPEC 9.2's learned-skill provenance line — `from N traces · turn M ·
@@ -383,15 +398,20 @@ fn render_search(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         let bar = popularity_bar(hit.installs_rank, peak);
         let metric = hit.installs.clone();
         let install = if is_sel { "↵ install" } else { "" };
-        let right_w = bar.chars().count()
+        // `metric` and the id below come from a registry, not this crate.
+        // A foreign registry can format an install count or an owner/repo
+        // id however it likes. So every width here is a display column,
+        // never `marker.len()`'s byte count or a plain `.chars().count()`.
+        let right_w = columns::width(&bar)
             + usize::from(!bar.is_empty())
-            + metric.chars().count()
+            + columns::width(&metric)
             + usize::from(!metric.is_empty())
-            + install.chars().count()
+            + columns::width(install)
             + 2;
-        let name = truncate_skill_id(&hit.id, width.saturating_sub(marker.len() + right_w).max(4));
+        let marker_w = columns::width(marker);
+        let name = truncate_skill_id(&hit.id, width.saturating_sub(marker_w + right_w).max(4));
         let pad = width
-            .saturating_sub(marker.len() + name.chars().count() + right_w)
+            .saturating_sub(marker_w + columns::width(&name) + right_w)
             .max(1);
         let mut spans = vec![
             Span::styled(marker, Style::new().fg(token::GOLD)),
@@ -532,34 +552,21 @@ fn centered_row(inner: Rect) -> Rect {
 /// gives way to an ellipsis first. Falls back to a plain tail-ellipsis when
 /// even `@skill` cannot fit.
 fn truncate_skill_id(id: &str, max: usize) -> String {
-    if id.chars().count() <= max || max == 0 {
-        return truncate(id, max);
+    if columns::width(id) <= max || max == 0 {
+        return columns::head(id, max);
     }
     if let Some(at) = id.rfind('@') {
         let skill = &id[at..]; // "@skill"
-        let skill_w = skill.chars().count();
+        let skill_w = columns::width(skill);
         // Keep the whole @skill tail plus an ellipsis, filling the rest with the
         // head of owner/repo — but only when that leaves real owner context.
         if skill_w + 2 <= max {
             let owner_room = max - skill_w - 1; // room minus the ellipsis
-            let owner_head: String = id[..at].chars().take(owner_room).collect();
+            let owner_head = columns::take_left(&id[..at], owner_room);
             return format!("{owner_head}…{skill}");
         }
     }
-    truncate(id, max)
-}
-
-/// Truncate to `max` chars with a trailing ellipsis, char-safe.
-fn truncate(s: &str, max: usize) -> String {
-    if max == 0 {
-        return String::new();
-    }
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let head: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{head}…")
-    }
+    columns::head(id, max)
 }
 
 #[cfg(test)]
@@ -1195,6 +1202,89 @@ mod tests {
         assert!(
             buffer_text(&buf).contains("fetching"),
             "loading state shown"
+        );
+    }
+
+    /// A CJK skill name stays inside the installed row's width budget.
+    ///
+    /// Old code used `{:<24}`, which fills by char. A name of 12 wide
+    /// glyphs is already 24 columns, but old code still added
+    /// `24 - 12 = 12` more chars of fill — 36 columns for a 24-column
+    /// budget. Checked with `Line::width()`, backed by [`unicode_width`]
+    /// directly, never through `render::columns` itself.
+    #[test]
+    fn a_wide_character_name_keeps_the_installed_row_inside_its_width() {
+        use unicode_width::UnicodeWidthStr;
+
+        let wide_name = "圈".repeat(12);
+        assert_eq!(
+            UnicodeWidthStr::width(wide_name.as_str()),
+            24,
+            "the fixture: 12 double-width glyphs, 24 columns, 12 chars"
+        );
+        let row = row(&wide_name, SkillScope::Project, true, 1, 1);
+        // Tight enough that the old pad's 36-column name alone overruns
+        // it, before the description even joins the row. The fixed part
+        // of the new, correct row is only 44 columns.
+        let width = 55;
+        let line = installed_row_line(&row, false, width);
+        assert!(
+            line.width() <= width,
+            "row overran its {width}-column budget: {line:?}"
+        );
+    }
+
+    /// The same fixture, but checking what a person would see: an
+    /// over-wide name pushes the row's later cells outward, so
+    /// `desc_room` comes up short. At this 55-column width, a char-spent
+    /// `desc_room` is 0 — below the 6-column floor — so no description
+    /// shows at all. Spent in columns, `desc_room` is 8, and it shows.
+    #[test]
+    fn a_wide_character_name_still_leaves_room_for_the_description() {
+        let wide_name = "圈".repeat(12);
+        let row = row(&wide_name, SkillScope::Project, true, 1, 1);
+        let line = installed_row_line(&row, false, 55);
+        let rendered: String = line
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            rendered.contains("does a thing") || rendered.contains('…'),
+            "the description column should still show something at a \
+             60-column width: {rendered:?}"
+        );
+    }
+
+    /// A registry hit's `owner/repo@skill` id can hold non-ASCII text.
+    /// This crate does not control a foreign registry. The elide must stay
+    /// inside its column budget, not its char budget.
+    ///
+    /// Old code used `id.chars().count()` and `.chars().take()`. An id can
+    /// sit well under its char budget but over its column budget, and old
+    /// code would then keep it whole.
+    #[test]
+    fn truncate_skill_id_spends_its_budget_in_columns() {
+        use unicode_width::UnicodeWidthStr;
+
+        let id = format!("acme/{}@extract", "文".repeat(5));
+        assert!(
+            id.chars().count() < 20,
+            "the fixture: well under 20 chars, comfortably over 20 columns"
+        );
+        assert!(
+            UnicodeWidthStr::width(id.as_str()) > 20,
+            "the fixture: over 20 columns"
+        );
+        let cut = truncate_skill_id(&id, 20);
+        assert!(
+            UnicodeWidthStr::width(cut.as_str()) <= 20,
+            "elided id overran its 20-column budget: {cut:?}"
+        );
+        assert!(
+            cut.ends_with("@extract"),
+            "the @skill tail is kept whole: {cut:?}"
         );
     }
 }

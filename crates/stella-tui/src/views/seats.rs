@@ -55,6 +55,7 @@ use ratatui::widgets::{Paragraph, Widget, Wrap};
 use stella_tui_theme::token;
 
 use crate::envelope::SeatRow;
+use crate::render::columns;
 
 /// Shown when the driver has not delivered an engine snapshot yet — a race
 /// right after startup, or a driver error. The same shape (and the same
@@ -173,7 +174,10 @@ pub fn render(seats: Option<&[SeatRow]>, area: Rect, buf: &mut Buffer) {
 /// already the head of every key beside it; the model next; the seat key last,
 /// down to [`MIN_KEY_CELLS`] and no further.
 fn columns(rows: &[SeatRow], width: usize) -> (usize, usize) {
-    let cells = |s: &str| s.chars().count();
+    // A seat key, a model slug, and a plugin name are all text a plugin
+    // manifest chose (`doc:roleless-core` §8.4). This pane has no say in
+    // it. So every width here is a display column, never a `char`.
+    let cells = columns::width;
     let mut key_w = rows.iter().map(|r| cells(&r.key)).max().unwrap_or(0);
     let mut model_w = rows
         .iter()
@@ -202,22 +206,15 @@ fn columns(rows: &[SeatRow], width: usize) -> (usize, usize) {
     (key_w, model_w)
 }
 
-/// `s` cut to `width` cells, with an ellipsis where it was cut.
+/// `s` cut to `width` display columns, with an ellipsis where it was cut.
 fn fit(s: &str, width: usize) -> String {
-    if s.chars().count() <= width {
-        return s.to_string();
-    }
-    let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
-    out.push('…');
-    out
+    columns::head(s, width)
 }
 
-/// `s` padded to `width` cells. `format!("{s:width$}")` counts bytes, which
-/// pads a key holding a non-ASCII character short.
+/// `s` padded to `width` display columns. `format!("{s:width$}")` counts
+/// `char`s, which under-pads a key holding a CJK or emoji glyph.
 fn pad(s: &str, width: usize) -> String {
-    let mut out = s.to_string();
-    out.push_str(&" ".repeat(width.saturating_sub(s.chars().count())));
-    out
+    columns::pad(s, width)
 }
 
 /// One muted line of explanation where the rows would have been.
@@ -356,5 +353,56 @@ mod tests {
         let row = text.lines().nth(1).unwrap_or_default().to_string();
         assert!(row.contains("stella-plan/planner"), "{row}");
         assert!(!row.contains("from stella-plan"), "{row}");
+    }
+
+    /// A CJK seat key is measured in the columns it draws, not its chars.
+    /// A plugin can name a role however it likes.
+    ///
+    /// 13 CJK glyphs are 13 chars but 26 columns — the same 13 chars as the
+    /// ASCII key, whose 13 chars are also 13 columns. Old code would still
+    /// call the shared key column 13, leaving the CJK row 13 columns over
+    /// its padded budget.
+    #[test]
+    fn columns_measures_a_wide_character_key_in_display_columns() {
+        let wide_key = "圈".repeat(13);
+        let rows = [
+            seat("acme/reviewer", Some("m"), "acme"),
+            seat(&wide_key, Some("m"), "acme2"),
+        ];
+        assert_eq!(columns(&rows, 90), (26, 1));
+    }
+
+    /// The same rows, rendered: the CJK row's `from` column lands where
+    /// the ASCII row's does, because the key column was sized to the
+    /// widest key's real columns, not its char count.
+    ///
+    /// Checked by buffer column index, not by string search. A wide glyph
+    /// fills two buffer cells — the glyph, then an empty one — so a byte
+    /// offset in flattened text is not a column index once one is on
+    /// screen.
+    #[test]
+    fn a_wide_character_key_does_not_shift_a_shared_column() {
+        let wide_key = "圈".repeat(13);
+        let rows = [
+            seat("acme/reviewer", Some("m"), "acme"),
+            seat(&wide_key, Some("m"), "acme2"),
+        ];
+        let area = Rect::new(0, 0, 90, 12);
+        let mut buf = Buffer::empty(area);
+        render(Some(&rows), area, &mut buf);
+        let (key_w, model_w) = columns(&rows, area.width as usize);
+        let from_col = 1 + key_w + GAP + model_w + GAP;
+        let ascii_row_y = 1; // row 0 is the head strip
+        let wide_row_y = 2;
+        assert_eq!(
+            buf.cell((from_col as u16, ascii_row_y)).map(|c| c.symbol()),
+            Some("f"),
+            "the ascii row's `from` should start at the shared column"
+        );
+        assert_eq!(
+            buf.cell((from_col as u16, wide_row_y)).map(|c| c.symbol()),
+            Some("f"),
+            "the CJK row's `from` shifted off the shared column"
+        );
     }
 }

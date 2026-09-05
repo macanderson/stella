@@ -51,6 +51,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 use stella_tui_theme::token;
 
+use crate::render::columns;
 use crate::start_work::{StartWork, StartWorkDraft};
 
 /// The overlay's share of the deck's width, and the two bounds on it.
@@ -63,8 +64,8 @@ const WIDTH_SHARE: u16 = 5;
 const WIDTH_MIN: u16 = 56;
 const WIDTH_MAX: u16 = 100;
 
-/// Longest a quoted RULE runs before it is cut.
-const RULE_QUOTE_CHARS: usize = 44;
+/// Longest a quoted RULE runs, in display columns, before it is cut.
+const RULE_QUOTE_COLS: usize = 44;
 
 /// Draw the overlay over `area`. Nothing here reads the panel's mode — the
 /// caller decides the overlay is open, exactly as the send-to-prompt
@@ -188,7 +189,7 @@ fn sources(draft: &StartWorkDraft, inner: usize, lines: &mut Vec<Line<'static>>)
         let quoted = format!(
             "RULE {} \"{}\"",
             applied.id,
-            truncate(&flatten(&applied.text), RULE_QUOTE_CHARS)
+            truncate(&flatten(&applied.text), RULE_QUOTE_COLS)
         );
         lines.push(Line::from(Span::styled(
             format!("          {}", truncate(&quoted, inner.saturating_sub(10))),
@@ -324,10 +325,14 @@ fn actions(panel: &StartWork) -> Line<'static> {
 /// that runs into its own tag reads as one string.
 fn row(left: &str, right: &str, left_style: Style, inner: usize) -> Line<'static> {
     let field = inner.saturating_sub(1);
-    let left = truncate(left, field.saturating_sub(right.chars().count() + 2));
+    // `left` is a task subject or the verify line, written by a model or
+    // a user. So its elide, and the fill after it, both spend `field` in
+    // display columns.
+    let right_w = columns::width(right);
+    let left = truncate(left, field.saturating_sub(right_w + 2));
     let gap = field
-        .saturating_sub(left.chars().count())
-        .saturating_sub(right.chars().count());
+        .saturating_sub(columns::width(&left))
+        .saturating_sub(right_w);
     Line::from(vec![
         Span::styled(left, left_style),
         Span::raw(" ".repeat(gap)),
@@ -358,16 +363,9 @@ fn compact(tokens: u64) -> String {
     }
 }
 
-/// Cut to `max` characters (never bytes), with an ellipsis when it cuts.
+/// Cut to `max` display columns, with an ellipsis when it cuts.
 fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    if max <= 1 {
-        return "…".to_string();
-    }
-    let head: String = s.chars().take(max - 1).collect();
-    format!("{head}…")
+    columns::head(s, max)
 }
 
 #[cfg(test)]
@@ -541,9 +539,15 @@ mod tests {
         assert!(text(&panel).contains("no tracker connected"));
     }
 
+    /// `truncate` spends `max` in display columns, never bytes or chars.
+    ///
+    /// Renamed from `truncate_cuts_on_characters_not_bytes`. That old name
+    /// kept 3 whole glyphs at `max` 4 — a char count. Here `max` is a
+    /// column budget, and a CJK glyph is 2 columns, so only one glyph
+    /// plus the ellipsis fits.
     #[test]
-    fn truncate_cuts_on_characters_not_bytes() {
-        assert_eq!(truncate("日本語のテキスト", 4), "日本語…");
+    fn truncate_spends_its_budget_in_display_columns() {
+        assert_eq!(truncate("日本語のテキスト", 4), "日…");
         assert_eq!(truncate("short", 40), "short");
     }
 
@@ -552,5 +556,28 @@ mod tests {
         assert_eq!(compact(999), "999");
         assert_eq!(compact(60_000), "60k");
         assert_eq!(compact(1_250_000), "1.2M");
+    }
+
+    /// A CJK task subject keeps its contract tag flush at the row's own
+    /// width, instead of drifting past it.
+    ///
+    /// `left` here is 20 CJK glyphs — 20 chars, 40 columns. A char-counted
+    /// gap sees "20" where the row spent 40, so old code pads with 20
+    /// extra columns it never had, and the row runs past `inner`.
+    #[test]
+    fn a_wide_character_subject_keeps_the_tag_flush_at_the_rows_width() {
+        let left = "圈".repeat(20);
+        let right = "graph · det";
+        let inner = 60;
+        let line = row(&left, right, Style::new(), inner);
+        assert!(
+            line.width() <= inner,
+            "row overran its {inner}-column budget: {line:?}"
+        );
+        assert_eq!(
+            line.spans.last().map(|s| s.content.as_ref()),
+            Some(right),
+            "the tag should render whole: {line:?}"
+        );
     }
 }
