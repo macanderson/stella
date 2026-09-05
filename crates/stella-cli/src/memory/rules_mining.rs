@@ -16,7 +16,7 @@
 //!
 //! A skill informs; a rule is injected into the system prefix as an
 //! instruction. Spec §5.4 puts inferred directives under the stricter regime,
-//! and two rules follow:
+//! and three rules follow:
 //!
 //! 1. **The inferred guard is stripped, always.** `rules::infer_guard` can
 //!    derive a `RuleGuard` from consistent file evidence, and a rule carrying
@@ -26,7 +26,15 @@
 //!    path" forbids. It is stripped here, unconditionally, and tested — not
 //!    left to the accident that reflection observations happen to carry no
 //!    files today.
-//! 2. **Auto-activation needs real confidence.** A skill lands as soon as it is
+//! 2. **The evidence gate is asked before anything is written.**
+//!    A rule is a steering directive, and the policy in
+//!    [`stella_protocol::provenance`] prices that at
+//!    `EnvironmentObservation`. Reflection lessons grade `ModelCritique`, so
+//!    a rule mined from them is refused today and stays a proposal. That is
+//!    the policy noticing something real, not a bug: the loop was publishing
+//!    instructions on a model's opinion about its own run. A holdout
+//!    comparison over recorded turns is the producer that pays the bar.
+//! 3. **Auto-activation needs real confidence.** A skill lands as soon as it is
 //!    eligible. A rule additionally needs `confidence >=
 //!    context.promotion.inferred_directive.auto_activate_at_confidence` (85 by
 //!    default), which three observations across three tasks do not reach — they
@@ -38,13 +46,14 @@ use std::path::Path;
 
 use stella_context::ContextStore;
 use stella_learn::rules::{self, EvidenceSource, MineConfig, RawObservation, Rule, RuleCandidate};
-use stella_protocol::provenance::ProvenanceGrade;
+use stella_protocol::provenance::{PromotionRefusal, ProvenanceGrade, PublicationAuthority};
 use stella_records::context_record::{
     EvidencePool, ObservationRecord, ProposalRecord, ProposalScore, RecordProposalKind,
     RecordProposalStatus, confidence_from_score,
 };
 
 use super::proposals::record_proposal;
+use crate::promotion_gate::{self, Published};
 
 /// A mined rule candidate together with the durable proposal recorded for it.
 pub(crate) struct InducedRule {
@@ -187,31 +196,65 @@ pub(crate) fn workspace_rules_dir(workspace_root: &Path) -> std::path::PathBuf {
     workspace_root.join(".stella").join("rules")
 }
 
-/// Publish a mined rule as a TOML context record under `.stella/rules/`,
-/// never clobbering.
+/// What happened to a rule the loop tried to publish.
 ///
-/// `Ok(Some(path))` when a file was written; `Ok(None)` when one already
-/// exists (on either the record surface or the retired markdown one — that
-/// file still loads, and a TOML twin would double-inject it); `Err` when the
-/// record cannot be built or written, which the caller must surface rather
-/// than fold into "already exists". The no-clobber posture checks the
-/// **filesystem** rather than a loaded list: the rules loader silently skips
-/// unreadable files and directories, so a list-membership test would have the
-/// same blind spot [#737](https://github.com/macanderson/stella/issues/737)
-/// describes on the skills side — and the write itself is `create_new` inside
+/// Three outcomes rather than an `Option`, because a reader has to tell "a
+/// file already sat there" from "the evidence did not pay for this" — they
+/// look the same from the outside and mean opposite things. The refusal is
+/// carried as the protocol's own [`PromotionRefusal`], so the caller renders
+/// the grade that was needed beside the grade that was offered instead of
+/// inventing a sentence.
+///
+/// A refusal is not an `Err`: nothing failed. The gate answered, and the
+/// caller has to say so. Folding it into the error arm would let a caller
+/// print "could not publish" for a decision the policy made on purpose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RulePublication {
+    /// The record was written here.
+    Written(std::path::PathBuf),
+    /// A file was already at the publication path, and was left alone.
+    AlreadyPresent,
+    /// The evidence gate said no. Nothing was written.
+    Refused(PromotionRefusal),
+}
+
+/// Publish a mined rule as a TOML context record under `.stella/rules/`, if
+/// the evidence pays for it — and never clobbering.
+///
+/// [`RulePublication::AlreadyPresent`] covers both the record surface and the
+/// retired markdown one: that file still loads, and a TOML twin would
+/// double-inject it. `Err` is only for a record that cannot be built or
+/// written, which the caller must surface rather than fold into "already
+/// exists". The no-clobber posture checks the **filesystem** rather than a
+/// loaded list: the rules loader silently skips unreadable files and
+/// directories, so a list-membership test would have the same blind spot
+/// [#737](https://github.com/macanderson/stella/issues/737) describes on the
+/// skills side — and the write itself is `create_new` inside
 /// [`crate::context_records::write_record`], because the exists checks here
 /// are advisory and racy.
-/// Publish a mined rule as a context record.
 ///
 /// `evidence_grade` is the grade of the proposal being published (#2782). It
 /// is a parameter rather than something this function derives, because the
 /// evidence is two hops back: only the caller holding the proposal knows it,
 /// and a rule file that does not carry it cannot recover it later.
+///
+/// `authority` is who is publishing — a person who typed `stella proposals
+/// keep`, or the loop activating a rule on its own. Both are asked, because a
+/// rule steers whoever runs the next turn either way.
+///
+/// **This is where the evidence gate is asked.** A rule loads into the
+/// system prefix as an instruction, so the ledger's `framework` row calls it a
+/// steering directive, and the policy prices that at
+/// [`ProvenanceGrade::EnvironmentObservation`]. Reflection lessons grade
+/// [`ProvenanceGrade::ModelCritique`], so a rule mined from them is refused
+/// here and stays a proposal somebody can read. The grade that pays is the
+/// one a measured holdout produces.
 pub(crate) fn write_rule(
     workspace_root: &Path,
     candidate: &RuleCandidate,
     evidence_grade: Option<ProvenanceGrade>,
-) -> Result<Option<std::path::PathBuf>, String> {
+    authority: PublicationAuthority,
+) -> Result<RulePublication, String> {
     let candidate = without_inferred_guard(candidate.clone());
     let set_id = crate::ingest_cmd::derive_set_id(workspace_root);
     let record = crate::context_records::inferred_rule_record(
@@ -226,7 +269,7 @@ pub(crate) fn write_rule(
         .join(format!("{}.md", candidate.id))
         .exists()
     {
-        return Ok(None);
+        return Ok(RulePublication::AlreadyPresent);
     }
     let Some(path) = crate::context_records::publication_path(
         workspace_root,
@@ -236,10 +279,16 @@ pub(crate) fn write_rule(
         return Err("cannot determine where to publish this record".to_string());
     };
     if path.exists() {
-        return Ok(None);
+        return Ok(RulePublication::AlreadyPresent);
+    }
+    // The gate, asked last of the three questions and before the only write:
+    // a workspace that already holds this rule is publishing nothing, so it
+    // hears "already there" rather than a refusal it can do nothing about.
+    if let Err(refusal) = promotion_gate::admits(Published::Rule, evidence_grade, authority) {
+        return Ok(RulePublication::Refused(refusal));
     }
     crate::context_records::write_record(&path, &set_id, &record)?;
-    Ok(Some(path))
+    Ok(RulePublication::Written(path))
 }
 
 #[cfg(test)]

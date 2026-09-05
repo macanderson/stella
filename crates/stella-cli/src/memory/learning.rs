@@ -17,6 +17,7 @@ use stella_learn::skills::{
 use stella_protocol::{AgentEvent, MemoryClass, Provider};
 use stella_records::context_record::{ProposalScore, confidence_from_score};
 
+use super::rules_mining::RulePublication;
 use super::{
     LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, TurnEvidence, reflect_on_turn,
     skill_paths_on_disk,
@@ -1124,12 +1125,17 @@ impl SessionMemory {
             if !self.include_workspace_skills {
                 continue;
             }
+            // `Agent`: nobody is in the loop for an auto-activation. The
+            // evidence gate is asked inside the writer, and on
+            // reflection-mined evidence it says no — so this arm reports the
+            // refusal rather than a rule nobody may publish.
             match super::rules_mining::write_rule(
                 &self.workspace_root,
                 &rule.candidate,
                 rule.proposal.provenance,
+                stella_protocol::provenance::PublicationAuthority::Agent,
             ) {
-                Ok(Some(path)) => {
+                Ok(RulePublication::Written(path)) => {
                     if let Some(event) = self.record_auto_activation(&rule.proposal) {
                         promoted.push(event);
                     }
@@ -1146,7 +1152,22 @@ impl SessionMemory {
                 // now and no event is owed: a promotion announced once per
                 // reflection turn for as long as the file exists would be a
                 // row claiming a change that stopped happening turns ago.
-                Ok(None) => {}
+                Ok(RulePublication::AlreadyPresent) => {}
+                // The evidence did not pay for a directive. The proposal is
+                // still in the ledger and still reviewable; what is refused
+                // is publishing it as an instruction on its own.
+                Ok(RulePublication::Refused(refusal)) if !quiet => {
+                    println!(
+                        "  {} {}",
+                        "·".dimmed(),
+                        crate::promotion_gate::refusal_line(
+                            crate::promotion_gate::Published::Rule,
+                            &rule.candidate.id,
+                            &refusal,
+                        )
+                    );
+                }
+                Ok(RulePublication::Refused(_)) => {}
                 // A lesson the record surface refuses (an overlong or
                 // multi-line statement) stays a reviewable proposal; saying
                 // nothing here would read as "activated".
