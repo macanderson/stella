@@ -76,6 +76,7 @@ async fn whistle_over_the_socket(socket: &std::path::Path, message: &str) {
         &crate::whistle::wire::WhistleRequest {
             text: message.to_string(),
             deep: false,
+            interrupt: false,
         },
     )
     .await

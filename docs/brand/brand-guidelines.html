@@ -270,8 +270,8 @@ retired or is not a live token.</p>
 <tr><td>--st-silver-type</td><td>#BFC1CC</td><td>syntax types, tertiary labels</td></tr>
 <tr><td>--st-text</td><td>#E8E8EC</td><td>primary text on dark, in the deck</td></tr>
 <tr><td>--st-paper-text</td><td>#F4F1EA</td><td>primary text on dark, off the deck: the web surfaces and the cut assets — the wordmark SVGs and the OG card</td></tr>
-<tr><td>--st-muted</td><td>#777782</td><td>secondary text</td></tr>
-<tr><td>--st-dim</td><td>#4B4B56</td><td>hints, captions, line numbers</td></tr>
+<tr><td>--st-muted</td><td>#7C7C87</td><td>secondary text</td></tr>
+<tr><td>--st-dim</td><td>#5F5F6A</td><td>hints, captions, line numbers</td></tr>
 <tr><td>--st-green</td><td>#74C991</td><td>pass, additive diff sign</td></tr>
 <tr><td>--st-red</td><td>#E0687A</td><td>fail, destructive, removal diff sign</td></tr>
 <tr><td>--st-amber</td><td>#E78D54</td><td>warning</td></tr>
@@ -325,8 +325,8 @@ light mode the ground and the type swap; the gold budget stays the same.</p>
 <p>Every ratio below is printed by <code>scripts/check-contrast.py</code>, which
 states each pairing's measured number and the threshold its <em>role</em> is
 held to — 4.5:1 for body text, 3:1 for large text and graphical objects, and an
-explicit exemption for logotypes. Two of these rows are unflattering and are
-here for that reason.</p>
+explicit exemption for logotypes. Every row below clears its floor; the ratchet
+in <code>scripts/contrast-baseline.txt</code> holds no pairing today (#4063).</p>
 <table>
 <tr><th>pair</th><th>contrast</th><th>held to</th></tr>
 <tr><td>text on bg</td><td>16.19:1</td><td>pass (4.5)</td></tr>
@@ -336,21 +336,21 @@ here for that reason.</p>
 <tr><td>silver on bg</td><td>8.58:1</td><td>pass (4.5)</td></tr>
 <tr><td>green on bg</td><td>9.90:1</td><td>pass (4.5)</td></tr>
 <tr><td>red on bg</td><td>6.06:1</td><td>pass (4.5)</td></tr>
-<tr><td>muted on bg</td><td>4.47:1</td><td><b>under AA</b> (needs 4.5)</td></tr>
-<tr><td>muted on panel</td><td>4.32:1</td><td><b>under AA</b> (needs 4.5)</td></tr>
-<tr><td>dim on bg</td><td>2.30:1</td><td><b>under</b> the 3:1 decorative floor</td></tr>
-<tr><td>comment on panel</td><td>2.64:1</td><td><b>under</b> the 3:1 decorative floor</td></tr>
+<tr><td>muted on bg</td><td>4.79:1</td><td>pass (4.5)</td></tr>
+<tr><td>muted on panel</td><td>4.64:1</td><td>pass (4.5)</td></tr>
+<tr><td>dim on bg</td><td>3.14:1</td><td>pass (3.0)</td></tr>
 <tr><td>ink on paper</td><td>18.40:1</td><td>pass (4.5)</td></tr>
-<tr><td>dim on paper</td><td>8.61:1</td><td>pass (4.5)</td></tr>
+<tr><td>dim on paper</td><td>6.15:1</td><td>pass (4.5)</td></tr>
 <tr><td>gold on paper</td><td>1.65:1</td><td>exempt — the <em>mark</em> only</td></tr>
 <tr><td>border on bg</td><td>1.31:1</td><td>exempt — a divider, not information</td></tr>
 </table>
-<p class="m" style="font-size:12px;margin-top:8px"><b>muted</b> misses AA by
-0.03, and the number is stated rather than rounded up: nothing a reader must
-read at small size goes in muted, which is for a secondary label sitting beside
-its own subject. <b>dim</b> and <b>comment</b> are below the decorative floor by
-design — a line number and a code comment are furniture, and raising them would
-cost the code panel its hierarchy.</p>
+<p class="m" style="font-size:12px;margin-top:8px"><b>muted</b> and <b>dim</b>
+were re-cut to clear their floors (#4063); nothing a reader must read at small
+size still belongs in muted, which stays a secondary label sitting beside its
+own subject, and dim stays furniture — a line number, a hint, chrome rather
+than prose. A third row, <b>comment</b>, sat here below its floor too; the
+token had no paint site anywhere in the tree, so it was retired rather than
+re-cut (#4946) and the row is gone rather than fixed.</p>
 <p><b>Gold body text on paper is forbidden at 1.65:1</b>, and gold <em>text</em>
 on light is <code>--st-gold-ink #725A00</code>. The <b>mark</b> is a different
 question and takes the same full-strength gold on both grounds: v3.0 and v4.0

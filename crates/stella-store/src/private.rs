@@ -257,27 +257,62 @@ fn settled_generated_ignore(path: &Path) -> Result<(Vec<u8>, u32)> {
     })
 }
 
-/// Where this workspace's `.stella` lives, honouring the state-root redirect.
+/// The workspace-private files that stay with the **tree** they describe,
+/// whatever the state-root redirect says.
+///
+/// `codegraph.db` is a parsed image of the files under the workspace root. The
+/// same tree always produces the same index, and a different tree produces a
+/// different one, so the index belongs wherever the files are. Everything else
+/// under `.stella/private/` records what a *session* learned — the reflection
+/// log, the telemetry store, the recalled context — and outliving the worktree
+/// that produced it is the whole point of the redirect
+/// (`stella_home::WORKSPACE_STATE_ROOT_ENV`).
+///
+/// Redirected, the index of a throwaway worktree was written over the index of
+/// the repository the redirect names. A person searching their own checkout
+/// then got answers about a tree they were not looking at, and two work units
+/// running at once shared one writable database, which is how a code graph is
+/// corrupted in a way that survives being reopened.
+pub const TREE_ANCHORED_STATE: [&str; 1] = ["codegraph.db"];
+
+/// Which root holds `name`: the tree it describes, or the session state root.
+fn state_anchor(workspace_root: &Path, name: &str) -> PathBuf {
+    if TREE_ANCHORED_STATE.contains(&name) {
+        workspace_root.to_path_buf()
+    } else {
+        stella_home::workspace_state_root(workspace_root)
+    }
+}
+
+/// Where this workspace's `.stella` lives for `name`.
 ///
 /// The read probes ask this before they decide there is nothing here. They
 /// used to join `.stella` onto the workspace root directly, which is the same
 /// path the writers take only while no redirect is set: under one, a probe
 /// looked in the throwaway worktree, found nothing, and reported no state to a
 /// caller whose state was sitting in the repository the whole time (#4394).
-fn state_dot_dir(workspace_root: &Path) -> PathBuf {
-    stella_home::workspace_state_root(workspace_root).join(".stella")
+fn state_dot_dir(workspace_root: &Path, name: &str) -> PathBuf {
+    state_anchor(workspace_root, name).join(".stella")
 }
 
+/// The `.stella` holding this workspace's session state, created if missing.
+///
+/// The state root, not the working directory. These are the same directory for
+/// an ordinary session and deliberately different for a turn executing in a
+/// throwaway git worktree: the code is disposable, the learning is not. See
+/// `stella_home::WORKSPACE_STATE_ROOT_ENV`, and [`TREE_ANCHORED_STATE`] for
+/// the one kind of file that stays with the code instead.
 pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathBuf, bool)> {
-    // The state root, not the working directory.
-    //
-    // These are the same directory for an ordinary session and deliberately
-    // different for a turn executing in a throwaway git worktree: the code is
-    // disposable, the learning is not. Everything beneath here — the
-    // reflection log, the telemetry store, the code graph — follows the
-    // override, so a worktree cannot take a session's memory with it when it
-    // is removed. See `stella_home::WORKSPACE_STATE_ROOT_ENV`.
-    let dir = stella_home::workspace_state_root(workspace_root).join(".stella");
+    ensure_state_dir(&stella_home::workspace_state_root(workspace_root).join(".stella"))
+}
+
+/// The `.stella` holding `name`, created if missing.
+fn ensure_workspace_state_dir_for(workspace_root: &Path, name: &str) -> Result<(PathBuf, bool)> {
+    ensure_state_dir(&state_dot_dir(workspace_root, name))
+}
+
+fn ensure_state_dir(dir: &Path) -> Result<(PathBuf, bool)> {
+    let dir = dir.to_path_buf();
     let created = match std::fs::symlink_metadata(&dir) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -416,7 +451,7 @@ fn migrate_legacy_files(dot: &Path, private: &Path, names: &[String]) -> Result<
 /// migrating an owner-safe legacy file from the mixed `.stella` directory.
 pub fn workspace_private_state_path(workspace_root: &Path, name: &str) -> Result<PathBuf> {
     validate_state_name(name)?;
-    let (dot, _) = ensure_workspace_state_dir(workspace_root)?;
+    let (dot, _) = ensure_workspace_state_dir_for(workspace_root, name)?;
     let private = dot.join(WORKSPACE_PRIVATE_DIR);
     ensure_workspace_generated_ignore(&dot)?;
     migrate_legacy_files(&dot, &private, &[name.to_string()])?;
@@ -467,9 +502,12 @@ pub fn append_workspace_private_line(
 
 /// Resolve a workspace-private SQLite family. A closed, single-file legacy DB
 /// can migrate atomically. Live WAL/SHM families fail closed and stay put.
+///
+/// A name in [`TREE_ANCHORED_STATE`] resolves under `workspace_root`.
+/// Everything else resolves under the state root the redirect names.
 pub fn workspace_private_sqlite_path(workspace_root: &Path, name: &str) -> Result<PathBuf> {
     validate_state_name(name)?;
-    let (dot, _) = ensure_workspace_state_dir(workspace_root)?;
+    let (dot, _) = ensure_workspace_state_dir_for(workspace_root, name)?;
     let private = dot.join(WORKSPACE_PRIVATE_DIR);
     ensure_workspace_generated_ignore(&dot)?;
     let sidecars = [format!("{name}-wal"), format!("{name}-shm")];
@@ -506,11 +544,11 @@ pub fn existing_workspace_private_state_path(
     name: &str,
 ) -> Result<Option<PathBuf>> {
     validate_state_name(name)?;
-    let dot = state_dot_dir(workspace_root);
+    let dot = state_dot_dir(workspace_root, name);
     if !path_entry_exists(&dot)? {
         return Ok(None);
     }
-    ensure_workspace_state_dir(workspace_root)?;
+    ensure_workspace_state_dir_for(workspace_root, name)?;
     let private = dot.join(WORKSPACE_PRIVATE_DIR);
     let target = private.join(name);
     if path_entry_exists(&target)? {
@@ -530,16 +568,19 @@ pub fn existing_workspace_private_state_path(
 /// Locate an existing workspace-private SQLite database without creating an
 /// empty one. A safe closed legacy database migrates atomically; a legacy
 /// database with live sidecars fails closed.
+///
+/// Anchored the same way [`workspace_private_sqlite_path`] is, so a reader and
+/// a writer of one name always look in one directory.
 pub fn existing_workspace_private_sqlite_path(
     workspace_root: &Path,
     name: &str,
 ) -> Result<Option<PathBuf>> {
     validate_state_name(name)?;
-    let dot = state_dot_dir(workspace_root);
+    let dot = state_dot_dir(workspace_root, name);
     if !path_entry_exists(&dot)? {
         return Ok(None);
     }
-    ensure_workspace_state_dir(workspace_root)?;
+    ensure_workspace_state_dir_for(workspace_root, name)?;
     let target = dot.join(WORKSPACE_PRIVATE_DIR).join(name);
     let legacy_family_exists = path_entry_exists(&dot.join(name))?
         || path_entry_exists(&dot.join(format!("{name}-wal")))?

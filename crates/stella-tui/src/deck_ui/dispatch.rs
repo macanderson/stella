@@ -74,9 +74,13 @@ impl DispatchRoute {
 /// else: prose, custom (⚡) commands (they expand into prompts driver-side),
 /// and the turn-coupled builtins (`/clear`, `/init`, `/reload`, …), which all
 /// keep their queue behavior.
+///
+/// A broadcast address (`>@all …`, `>>> @agents !!! …`) takes the same route
+/// for the same reason: it is about other sessions, so it must not wait on
+/// this one's turn. Its grammar lives in [`crate::envelope::broadcast`].
 pub(super) fn sideband(ui: &DeckUi, text: &str) -> Option<WorkspaceInput> {
-    if let Some(input) = broadcast(text) {
-        return Some(input);
+    if let Some(broadcast) = crate::envelope::broadcast::parse(text) {
+        return Some(WorkspaceInput::Whistle(broadcast));
     }
     let head = text.split_whitespace().next()?;
     if !head.starts_with('/') {
@@ -88,32 +92,6 @@ pub(super) fn sideband(ui: &DeckUi, text: &str) -> Option<WorkspaceInput> {
         .map(|_| WorkspaceInput::Command {
             text: text.trim().to_string(),
         })
-}
-
-/// The broadcast address: `>@all <message>` reaches every other live
-/// session on this machine, `>@<session-id> <message>` one of them, and
-/// `--deep` right after the address reaches their worker lanes too. Read
-/// ahead of the `>` steer marker, which it extends — a steer aimed at the
-/// room rather than at this session's turn. `None` for an
-/// address with no message: there is nothing to send, so the text keeps its
-/// ordinary route and the user sees what they typed.
-fn broadcast(text: &str) -> Option<WorkspaceInput> {
-    let rest = text.trim_start().strip_prefix(">@")?;
-    let (address, rest) = rest.split_once(char::is_whitespace)?;
-    let (deep, message) = match rest.trim_start().strip_prefix("--deep") {
-        Some(after) if after.is_empty() || after.starts_with(char::is_whitespace) => {
-            (true, after.trim())
-        }
-        _ => (false, rest.trim()),
-    };
-    if address.is_empty() || message.is_empty() {
-        return None;
-    }
-    Some(WorkspaceInput::Whistle {
-        message: message.to_string(),
-        session: (address != "all").then(|| address.to_string()),
-        deep,
-    })
 }
 
 /// Whether `text` states its own route and must not be second-guessed.
@@ -706,52 +684,21 @@ mod tests {
         );
     }
 
-    /// **The witness for the broadcast address.** `>@all` reaches every
-    /// other session, `>@<id>` one of them, `--deep` reaches their lanes, and
-    /// an address with nothing to say keeps its ordinary route.
+    /// Both broadcast addresses leave by the queue-free route, so neither
+    /// waits on this session's turn. The grammar itself is proved where it
+    /// lives (`crate::envelope::broadcast`).
     #[test]
-    fn the_broadcast_address_parses_its_target_depth_and_message() {
-        assert_eq!(
-            broadcast(">@all stop touching the release branch"),
-            Some(WorkspaceInput::Whistle {
-                message: "stop touching the release branch".into(),
-                session: None,
-                deep: false,
-            })
-        );
-        assert_eq!(
-            broadcast("  >@ses-17-9 --deep run the tests first"),
-            Some(WorkspaceInput::Whistle {
-                message: "run the tests first".into(),
-                session: Some("ses-17-9".into()),
-                deep: true,
-            })
-        );
-        assert_eq!(
-            broadcast(">@all --deeper is a word"),
-            Some(WorkspaceInput::Whistle {
-                message: "--deeper is a word".into(),
-                session: None,
-                deep: false,
-            }),
-            "only the exact flag is a flag"
-        );
-        for text in [
-            ">@all",
-            ">@all   ",
-            ">@ --deep",
-            "> @all hello",
-            "@all hello",
-        ] {
-            assert_eq!(broadcast(text), None, "{text:?} is not a broadcast");
-        }
+    fn a_broadcast_leaves_by_the_queue_free_route() {
         let ui = DeckUi::default();
+        for text in [">@all go", ">>> @agents !!! do not force-push"] {
+            assert!(
+                matches!(sideband(&ui, text), Some(WorkspaceInput::Whistle(_))),
+                "{text:?} is queue-free, like a sideband command"
+            );
+        }
         assert!(
-            matches!(
-                sideband(&ui, ">@all go"),
-                Some(WorkspaceInput::Whistle { .. })
-            ),
-            "the broadcast is queue-free, like a sideband command"
+            sideband(&ui, "and now the tests").is_none(),
+            "a plain prompt keeps its ordinary route"
         );
     }
 

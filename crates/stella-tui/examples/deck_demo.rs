@@ -136,7 +136,8 @@ async fn main() -> std::io::Result<()> {
                 // The composer's broadcast address. The demo has no other
                 // sessions to reach, so it answers the way the driver does
                 // with nothing live to whistle at — one chrome note.
-                WorkspaceInput::Whistle { message, .. } => {
+                WorkspaceInput::Whistle(broadcast) => {
+                    let message = broadcast.message;
                     let _ = react_tx.send(Inbound::Event {
                         agent: "lead".to_string(),
                         event: stella_protocol::AgentEvent::Text {

@@ -37,8 +37,8 @@ The system is **flat**. There are no 50→950 ramps: v5.0 deletes both the brand
 | `--st-silver-type` | `#BFC1CC` | syntax types, tertiary labels |
 | `--st-text` | `#E8E8EC` | primary text on dark, in the deck |
 | `--st-paper-text` | `#F4F1EA` | primary text on dark, off the deck — the web surfaces and the cut assets, so this is the one you want for a page |
-| `--st-muted` | `#777782` | secondary text |
-| `--st-dim` | `#4B4B56` | hints, captions, line numbers |
+| `--st-muted` | `#7C7C87` | secondary text |
+| `--st-dim` | `#5F5F6A` | hints, captions, line numbers |
 | `--st-green` | `#74C991` | pass, additive diff sign |
 | `--st-red` | `#E0687A` | fail, destructive, removal diff sign |
 | `--st-amber` | `#E78D54` | warning — the one status the core palette does not otherwise name |
@@ -73,8 +73,8 @@ Two clamps govern any colour work you do on top of this: gold must satisfy `g >=
 - Contrast facts to respect, all measured by `scripts/check-contrast.py`:
   - `text` on `bg` **16.19:1**; `gold` on `bg` **11.99:1**; `gold` on `panel` **11.60:1** — gold is a first-class text colour on dark.
   - `ink` on `gold` **11.15:1** — this is why a filled gold button takes ink, not white.
-  - `ink` on `paper` **18.40:1**; `dim` on `paper` **8.61:1**.
-  - `muted` on `bg` **4.47:1** — fractionally *under* the 4.5 AA floor, and stated rather than rounded. Do not put anything a reader must read at small size in `muted`; it is for secondary labels beside their own subject.
+  - `ink` on `paper` **18.40:1**; `dim` on `paper` **6.15:1**.
+  - `muted` on `bg` **4.79:1**; `muted` on `panel` **4.64:1**; `dim` on `bg` **3.14:1** — all three clear the AA and large-text floors their roles are held to. `scripts/contrast-baseline.txt` holds no pairing today.
   - `gold` on `paper` **1.65:1** — unusable for text or graphics, and licensed for the **mark alone** under the WCAG logotype exemption. Gold *text* on light is `--st-gold-ink`.
 
 ## typography

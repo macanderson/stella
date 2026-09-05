@@ -716,7 +716,7 @@ pub async fn run_deck_session(
         let _ = deck_tx.send(system_notice(notice));
     }
     steering::announce_withheld(cfg, &in_tx);
-    let whistle = whistle::DeckWhistle::spawn(&session_record.id);
+    let whistle = whistle::DeckWhistle::spawn(&session_record.id, sub_tx.clone());
     // An idle lead is waiting on the human, not queued behind a supervisor —
     // asserted outright, since the startup chrome above no longer folds it to
     // `Running` (see `system_notice`).
@@ -1110,15 +1110,10 @@ pub async fn run_deck_session(
                     }
                     // The composer's broadcast address — other sessions'
                     // whistle sockets, reported as one note (`whistle`).
-                    Some(WorkspaceInput::Whistle {
-                        message,
-                        session,
-                        deep,
-                    }) => {
+                    Some(WorkspaceInput::Whistle(broadcast)) => {
                         whistle::broadcast_from_deck(
-                            message,
-                            session,
-                            deep,
+                            broadcast,
+                            &whistle,
                             &session_record.id,
                             &in_tx,
                         );
@@ -2019,8 +2014,8 @@ pub async fn run_deck_session(
                         }
                         // A broadcast never waits on the lead's turn: it is
                         // about other sessions (`whistle`).
-                        Some(WorkspaceInput::Whistle { message, session, deep }) => {
-                            whistle::broadcast_from_deck(message, session, deep, &session_record.id, &in_tx);
+                        Some(WorkspaceInput::Whistle(broadcast)) => {
+                            whistle::broadcast_from_deck(broadcast, &whistle, &session_record.id, &in_tx);
                         }
                         // The agents page's new-task prompt: a lane now,
                         // exactly as at idle — the lead's turn is untouched.

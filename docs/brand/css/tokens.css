@@ -45,8 +45,8 @@
   --st-silver: #A9AAB5;
   --st-silver-type: #BFC1CC;
   --st-text: #E8E8EC;
-  --st-muted: #777782;
-  --st-dim: #4B4B56;
+  --st-muted: #7C7C87;
+  --st-dim: #5F5F6A;
   --st-green: #74C991;
   --st-red: #E0687A;
   --st-diff-add: #10201A;
@@ -129,7 +129,7 @@
   --stella-fg: var(--stella-ink);
   --stella-surface: #F9F6EF;
   --stella-border: #E6E3DD;
-  --stella-muted-fg: #4B4B56;
+  --stella-muted-fg: #5F5F6A;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* gold that passes on light */
   /* The mark itself — shapes, not text. v5.0 retires the darker light cut:
@@ -152,7 +152,7 @@
   --stella-fg: var(--stella-paper);
   --stella-surface: #0F0F12;
   --stella-border: #26262C;
-  --stella-muted-fg: #777782;
+  --stella-muted-fg: #7C7C87;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand);
   --stella-mark-shape: var(--stella-brand);
@@ -163,7 +163,7 @@
     --stella-fg: var(--stella-paper);
     --stella-surface: #0F0F12;
     --stella-border: #26262C;
-    --stella-muted-fg: #777782;
+    --stella-muted-fg: #7C7C87;
     --stella-accent: var(--stella-brand);
     --stella-accent-text: var(--stella-brand);
     --stella-mark-shape: var(--stella-brand);

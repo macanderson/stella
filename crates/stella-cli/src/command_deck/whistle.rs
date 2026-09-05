@@ -18,6 +18,11 @@
 //! deck is delivered rather than refused, and lands in front of the model the
 //! moment the next turn opens.
 //!
+//! A whistle can also carry a stop (`>>> @agents ! …`). That one does
+//! not go into a tap here: it leaves as `WorkspaceInput::Interrupt` down the
+//! driver's own input channel, so a whistled stop and a typed `!` take one
+//! path through the backlog and the pause gate rather than two.
+//!
 //! # Why this is a sibling module
 //!
 //! `command_deck.rs` is a grandfathered god file closed to growth (AGENTS.md
@@ -28,15 +33,17 @@
 
 use std::sync::{Arc, Mutex, Weak};
 
+use tokio::sync::mpsc::UnboundedSender;
+
 use crate::subsession::SteeringTap;
 use crate::whistle::tap::Whistleable;
+use stella_tui::WorkspaceInput;
 
 /// The publication point a deck session's whistle socket writes into.
 ///
 /// Held by the driver loop for the session's lifetime. Steers reach the
 /// running turn's tap when there is one and it can still act on them, and are
 /// held for the next turn otherwise.
-#[derive(Default)]
 pub(super) struct DeckWhistle {
     /// The turn currently able to drain a steer.
     ///
@@ -57,13 +64,30 @@ pub(super) struct DeckWhistle {
     /// This session's bound socket. Replaced when the deck switches sessions;
     /// dropping it unbinds and removes the socket file.
     listener: Mutex<Option<crate::whistle::SessionListener>>,
+    /// The driver's own input channel — the one the deck sends keystrokes
+    /// down. A delivered interrupt leaves by it as
+    /// [`WorkspaceInput::Interrupt`], so the stop, the front insert and the
+    /// resume are the path a typed `!` already takes
+    /// (`command_deck::steer::interrupt_lead`) rather than a second one.
+    input: UnboundedSender<WorkspaceInput>,
 }
 
 impl DeckWhistle {
+    /// A relay bound to no socket, writing interrupts into `input`.
+    fn new(input: UnboundedSender<WorkspaceInput>) -> Self {
+        Self {
+            live: Mutex::default(),
+            pending: Mutex::default(),
+            lanes: Mutex::default(),
+            listener: Mutex::default(),
+            input,
+        }
+    }
+
     /// Bind `session_id`'s whistle socket and keep it for as long as the
     /// returned relay is held.
-    pub(super) fn spawn(session_id: &str) -> Arc<Self> {
-        let relay = Arc::new(Self::default());
+    pub(super) fn spawn(session_id: &str, input: UnboundedSender<WorkspaceInput>) -> Arc<Self> {
+        let relay = Arc::new(Self::new(input));
         relay.rebind(session_id);
         relay
     }
@@ -120,11 +144,17 @@ impl DeckWhistle {
         }
     }
 
-    /// [`Self::deliver`] to the lead, and the same text into every worker
-    /// lane still able to drain one. Lanes that ended are dropped from the
-    /// list on the way past, so it never grows with a session's history.
+    /// [`Self::deliver`] to the lead, then [`Self::deliver_lanes`] to the
+    /// workers it drives.
     fn deliver_deep(&self, text: String) {
         self.deliver(text.clone());
+        self.deliver_lanes(text);
+    }
+
+    /// The same text into every worker lane still able to drain one. Lanes
+    /// that ended are dropped from the list on the way past, so it never
+    /// grows with a session's history.
+    fn deliver_lanes(&self, text: String) {
         let mut lanes = self.lanes.lock().unwrap_or_else(|p| p.into_inner());
         lanes.retain(|lane| lane.upgrade().is_some());
         for tap in lanes.iter().filter_map(Weak::upgrade) {
@@ -132,6 +162,31 @@ impl DeckWhistle {
                 tap.push(text.clone());
             }
         }
+    }
+
+    /// Stop the lead's turn and run `text` next — the room form of the
+    /// composer's bang (`>>> @agents ! …`).
+    ///
+    /// The words leave as [`WorkspaceInput::Interrupt`] rather than going
+    /// into a tap here. The driver owns the backlog and the pause gate, and
+    /// its arms already know how to stop a running turn, run the words at
+    /// rest, and hand a lane a steer instead. `keep` is `None`: the record
+    /// was written once by the session that sent the line, so a target that
+    /// wrote another would give one sentence a copy per machine.
+    ///
+    /// A deep interrupt also reaches the live lanes, as words rather than as
+    /// a stop. A lane's next prompt is the lead's, so a stop there would have
+    /// nothing to run next. The envelope's `Interrupt` doc reads a worker
+    /// lane the same way.
+    fn interrupt_lead(&self, text: String, deep: bool) {
+        if deep {
+            self.deliver_lanes(text.clone());
+        }
+        let _ = self.input.send(WorkspaceInput::Interrupt {
+            agent: super::LEAD.to_string(),
+            texts: vec![text],
+            keep: None,
+        });
     }
 }
 
@@ -145,26 +200,50 @@ impl crate::subsession::LaneTapSink for DeckWhistle {
 }
 
 /// The deck's half of the composer's broadcast address (`>@all …`,
-/// `>@<session-id> …`): send `message` to the other live sessions on this
-/// machine over their whistle sockets, off the driver's event pump, and
-/// report every outcome as one chrome note. This session is never a target
-/// of its own broadcast — a steer meant for the room lands here through the
-/// composer's ordinary route, not through its own socket.
+/// `>>> @agents !!! …`): send the words to the live sessions on this machine
+/// over their whistle sockets, off the driver's event pump, and report every
+/// outcome as one chrome note.
+///
+/// A steer never reaches this session over its own socket — words meant for
+/// the room land here through the composer's ordinary route. **A stop does.**
+/// A person who tells every agent on the machine to stop means their own one
+/// too, so an interrupt addressed to the room is delivered here in process,
+/// through the relay's own [`DeckWhistle::interrupt_lead`], while the socket
+/// fan-out still skips this session. An interrupt addressed to one other id
+/// leaves this session alone.
 pub(super) fn broadcast_from_deck(
-    message: String,
-    session: Option<String>,
-    deep: bool,
+    broadcast: stella_tui::Broadcast,
+    relay: &Arc<DeckWhistle>,
     own_session: &str,
     in_tx: &tokio::sync::mpsc::UnboundedSender<stella_tui::Inbound>,
 ) {
     let own = own_session.to_string();
     let in_tx = in_tx.clone();
+    let here = broadcast.interrupt
+        && broadcast
+            .session
+            .as_deref()
+            .is_none_or(|id| id == own_session);
+    if here {
+        relay.interrupt_lead(broadcast.message.clone(), broadcast.deep);
+    }
     tokio::spawn(async move {
         let registry = stella_store::SessionRegistry::open_default();
-        let ids: Vec<String> = session.into_iter().collect();
-        let outcomes =
-            crate::whistle::cmd::broadcast(&registry, &message, &ids, deep, Some(&own)).await;
-        let _ = in_tx.send(super::chrome_note(crate::whistle::cmd::summary(&outcomes)));
+        let ids: Vec<String> = broadcast.session.into_iter().collect();
+        let outcomes = crate::whistle::cmd::broadcast(
+            &registry,
+            &broadcast.message,
+            &ids,
+            broadcast.deep,
+            broadcast.interrupt,
+            Some(&own),
+        )
+        .await;
+        let mut note = crate::whistle::cmd::summary(&outcomes);
+        if here {
+            note.push_str("\nstopping this session too — the room includes you");
+        }
+        let _ = in_tx.send(super::chrome_note(note));
     });
 }
 
@@ -189,12 +268,26 @@ impl Whistleable for RelayHandle {
             relay.deliver_deep(text);
         }
     }
+
+    fn interrupt(&self, text: String, deep: bool) {
+        if let Some(relay) = self.0.upgrade() {
+            relay.interrupt_lead(text, deep);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use stella_core::ports::TurnSteering;
+    use tokio::sync::mpsc::UnboundedReceiver;
+
+    /// A relay bound to no socket, with the driver channel an interrupt
+    /// leaves by.
+    fn relay() -> (Arc<DeckWhistle>, UnboundedReceiver<WorkspaceInput>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (Arc::new(DeckWhistle::new(tx)), rx)
+    }
 
     /// **The witness (#4768).** A whistle delivered while the deck sits idle
     /// is in the next turn's tap the moment that turn opens.
@@ -205,7 +298,7 @@ mod tests {
     /// go at all.
     #[test]
     fn a_steer_that_arrives_between_turns_opens_the_next_one() {
-        let relay = Arc::new(DeckWhistle::default());
+        let (relay, _driver) = relay();
         RelayHandle(Arc::downgrade(&relay)).push("read the failing test".to_string());
 
         let tap = relay.mint_turn_tap();
@@ -216,7 +309,7 @@ mod tests {
     /// the whole point of the socket being reachable mid-turn.
     #[test]
     fn a_steer_during_a_turn_reaches_the_turn_that_is_running() {
-        let relay = Arc::new(DeckWhistle::default());
+        let (relay, _driver) = relay();
         let tap = relay.mint_turn_tap();
         RelayHandle(Arc::downgrade(&relay)).push("stop the compile".to_string());
 
@@ -232,7 +325,7 @@ mod tests {
     /// rule `steer_lead` already applies to a typed `>`.
     #[test]
     fn a_steer_at_a_settling_turn_waits_for_the_next_one() {
-        let relay = Arc::new(DeckWhistle::default());
+        let (relay, _driver) = relay();
         let settling = relay.mint_turn_tap();
         settling.mark_settling();
         RelayHandle(Arc::downgrade(&relay)).push("next time, run the tests".to_string());
@@ -273,7 +366,8 @@ mod tests {
             .build()
             .expect("runtime")
             .block_on(async {
-                let relay = DeckWhistle::spawn("dw1");
+                let (tx, _driver) = tokio::sync::mpsc::unbounded_channel();
+                let relay = DeckWhistle::spawn("dw1", tx);
                 let mut stream = tokio::net::UnixStream::connect(&socket)
                     .await
                     .expect("the deck session must have bound a whistle socket");
@@ -282,6 +376,7 @@ mod tests {
                     &crate::whistle::wire::WhistleRequest {
                         text: "the deck is listening".to_string(),
                         deep: false,
+                        interrupt: false,
                     },
                 )
                 .await
@@ -309,7 +404,7 @@ mod tests {
     #[test]
     fn a_deep_whistle_reaches_the_lead_and_every_live_lane() {
         use crate::subsession::LaneTapSink as _;
-        let relay = Arc::new(DeckWhistle::default());
+        let (relay, _driver) = relay();
         let lead = relay.mint_turn_tap();
         let lane_a: Arc<SteeringTap> = Arc::default();
         let lane_b: Arc<SteeringTap> = Arc::default();
@@ -355,7 +450,7 @@ mod tests {
     /// a queue nothing will read again.
     #[test]
     fn a_finished_turns_tap_stops_receiving() {
-        let relay = Arc::new(DeckWhistle::default());
+        let (relay, _driver) = relay();
         drop(relay.mint_turn_tap());
         RelayHandle(Arc::downgrade(&relay)).push("the next turn should know".to_string());
 
@@ -363,5 +458,185 @@ mod tests {
             relay.mint_turn_tap().drain_steering(),
             vec!["the next turn should know"]
         );
+    }
+
+    /// One session with a bound socket, and the relay behind it.
+    #[cfg(unix)]
+    fn live_session(
+        registry: &stella_store::SessionRegistry,
+        id: &str,
+    ) -> (Arc<DeckWhistle>, UnboundedReceiver<WorkspaceInput>) {
+        listed(registry, id);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (DeckWhistle::spawn(id, tx), rx)
+    }
+
+    /// Put one live session in the registry. It binds no socket of its own,
+    /// so on its own it is a target `stella whistle` cannot reach.
+    #[cfg(unix)]
+    fn listed(registry: &stella_store::SessionRegistry, id: &str) {
+        let mut record = stella_store::SessionRecord::new("ws".to_string(), "name".to_string());
+        record.id = id.to_string();
+        record.status = stella_store::SessionStatus::InProgress;
+        registry.upsert(&record).expect("register the session");
+    }
+
+    /// The words of the one interrupt a driver channel was handed.
+    #[cfg(unix)]
+    fn taken(rx: &mut UnboundedReceiver<WorkspaceInput>) -> Vec<String> {
+        match rx.try_recv() {
+            Ok(WorkspaceInput::Interrupt { texts, keep, .. }) => {
+                assert!(keep.is_none(), "the record is written once, by the sender");
+                texts
+            }
+            other => panic!("expected one interrupt, got {other:?}"),
+        }
+    }
+
+    /// The chrome notes the driver was told to show.
+    #[cfg(unix)]
+    fn notes(rx: &mut tokio::sync::mpsc::UnboundedReceiver<stella_tui::Inbound>) -> String {
+        let mut out = Vec::new();
+        while let Ok(inbound) = rx.try_recv() {
+            if let stella_tui::Inbound::Event {
+                event: stella_protocol::AgentEvent::Text { text },
+                ..
+            } = inbound
+            {
+                out.push(text);
+            }
+        }
+        out.join("\n")
+    }
+
+    /// A short home under `/tmp`: a `sockaddr_un` path is capped at about a
+    /// hundred bytes, and the platform temp dir is already half of that on
+    /// macOS. The session ids are short for the same reason.
+    #[cfg(unix)]
+    fn short_home() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix("bc")
+            .tempdir_in("/tmp")
+            .expect("home")
+    }
+
+    /// **The witness for the room broadcast.** `>>> @agents !!! …`
+    /// stops every live session on this machine, and the one that sent it.
+    /// Two fixture sessions take the stop over their real sockets, carrying
+    /// the words; the sender takes the same stop in process rather than
+    /// through its own socket; a session that bound none is reported and
+    /// costs the others nothing.
+    ///
+    /// A broadcast that carries only words gives none of the three an
+    /// interrupt to receive, which is what makes this a witness.
+    #[cfg(unix)]
+    #[test]
+    fn a_room_broadcast_stops_every_live_session_and_the_sender() {
+        let _env = crate::test_env::lock();
+        let home = short_home();
+        let _home = crate::test_env::home_sandbox(home.path());
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let registry = stella_store::SessionRegistry::open_default();
+                let (_one, mut one_rx) = live_session(&registry, "bc1");
+                let (_two, mut two_rx) = live_session(&registry, "bc2");
+                listed(&registry, "bc3");
+                let (sender, mut sender_rx) = live_session(&registry, "bc0");
+                let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+
+                broadcast_from_deck(
+                    stella_tui::Broadcast {
+                        message: "do not force-push".to_string(),
+                        session: None,
+                        deep: true,
+                        interrupt: true,
+                        keep: Some(stella_tui::KeepStrength::Rule),
+                    },
+                    &sender,
+                    "bc0",
+                    &in_tx,
+                );
+
+                // The sender's own stop is in hand before any socket is
+                // touched. The rest cross the accept loops' own tasks.
+                assert_eq!(
+                    taken(&mut sender_rx),
+                    vec!["do not force-push".to_string()],
+                    "the room includes the session that spoke"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+                for rx in [&mut one_rx, &mut two_rx] {
+                    let texts = taken(rx);
+                    assert_eq!(texts.len(), 1);
+                    assert!(
+                        texts[0].ends_with("do not force-push"),
+                        "the words ride with the stop: {texts:?}"
+                    );
+                }
+
+                let said = notes(&mut in_rx);
+                assert!(said.contains("delivered    bc1"), "{said}");
+                assert!(said.contains("delivered    bc2"), "{said}");
+                assert!(said.contains("unreachable  bc3"), "{said}");
+                assert!(
+                    !said.contains("bc0"),
+                    "the sender is no socket target: {said}"
+                );
+                assert!(said.contains("stopping this session too"), "{said}");
+            });
+    }
+
+    /// **The witness for the fan-out.** A session whose socket takes
+    /// the frame and never answers holds up its own row alone. The live
+    /// session has its stop long before the stalled one's ack timeout is
+    /// anywhere near spent.
+    #[cfg(unix)]
+    #[test]
+    fn a_stalled_session_does_not_hold_up_the_others_stop() {
+        let _env = crate::test_env::lock();
+        let home = short_home();
+        let _home = crate::test_env::home_sandbox(home.path());
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let registry = stella_store::SessionRegistry::open_default();
+                let (_live, mut live_rx) = live_session(&registry, "st1");
+                // A socket nobody accepts on: connecting works, the frame is
+                // written, and no ack ever comes.
+                listed(&registry, "st2");
+                registry.prepare_sidecar("st2").expect("sidecar");
+                let _stalled = tokio::net::UnixListener::bind(registry.whistle_socket_path("st2"))
+                    .expect("bind the stalled socket");
+                let (sender, _sender_rx) = live_session(&registry, "st0");
+                let (in_tx, _in_rx) = tokio::sync::mpsc::unbounded_channel();
+
+                broadcast_from_deck(
+                    stella_tui::Broadcast {
+                        message: "stop touching main".to_string(),
+                        session: None,
+                        deep: false,
+                        interrupt: true,
+                        keep: None,
+                    },
+                    &sender,
+                    "st0",
+                    &in_tx,
+                );
+
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                let texts = taken(&mut live_rx);
+                assert!(
+                    texts[0].ends_with("stop touching main"),
+                    "the live session is not made to wait: {texts:?}"
+                );
+            });
     }
 }

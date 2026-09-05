@@ -13,18 +13,18 @@ use stella_protocol::tool::ToolOutput;
 /// Where an existing index lives, for every reader that queries one.
 /// `None` when this workspace has no code graph.
 ///
-/// Delegates to the store rather than joining the path itself, because
-/// `.stella/private/` is not always literally under the workspace root and a
-/// join cannot know that. `STELLA_WORKSPACE_STATE_ROOT`
-/// (`stella_home::WORKSPACE_STATE_ROOT_ENV`) redirects it so a throwaway
-/// worktree keeps its private state outside the tree that is about to be
-/// deleted, and the same resolver migrates a legacy `.stella/codegraph.db`
-/// into `.stella/private/` on the way past.
+/// Delegates to the store rather than joining the path. `.stella/private/` is
+/// not always right under the workspace root, and a join cannot know that. The
+/// same resolver moves a legacy `.stella/codegraph.db` into `.stella/private/`
+/// on the way past. It is also the one place that picks the root a file belongs
+/// to (`stella_store::TREE_ANCHORED_STATE`). The index stays with the tree it
+/// describes. `STELLA_WORKSPACE_STATE_ROOT` moves a session's own state out of
+/// a throwaway worktree, and leaves the index alone.
 ///
-/// A bare join here saw neither. Under a redirect the session built its index
-/// through the store and mounted its watcher, its CGP host and its deck on an
-/// empty database at the literal path, so a `stella self-driving` turn's own
-/// edits were indexed nowhere the queries looked (#4394).
+/// A bare join here saw none of that. Under a redirect the session built its
+/// index through the store and mounted its watcher, its CGP host and its deck
+/// on an empty database at the literal path, so a `stella self-driving` turn's
+/// own edits were indexed nowhere the queries looked (#4394).
 ///
 /// The **read-only** resolver, not the writable one [`open_or_build`] takes:
 /// every caller here is answering a query, and a lookup in a workspace with

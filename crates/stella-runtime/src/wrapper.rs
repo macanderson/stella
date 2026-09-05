@@ -121,7 +121,7 @@ pub use driver_call::{
     DEFAULT_DRIVER_MAX_CALLS, DriverCallGate, DriverCapabilities, DriverSession,
     NoDriverCapabilities, RefusedDriverCall,
 };
-pub use driver_subprocess::{AdmittedDriver, SubprocessDriver};
+pub use driver_subprocess::{AdmittedDriver, MAX_SLEEP_SECS, SubprocessDriver};
 pub use error::{DriverError, WrapperError};
 pub use host_call::{
     DEFAULT_HOST_MAX_CALLS, DEFAULT_RECALL_FRAMES, HostCallChannel, HostCallGate, HostCapabilities,

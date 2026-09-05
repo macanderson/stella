@@ -186,6 +186,7 @@ echo "     What to do:" >&2
 echo "       - Fixing main? Add the \`$escape_label\` label to this PR and" >&2
 echo "         re-run. That is the designed way through, not a workaround." >&2
 echo "       - Otherwise: wait. The canary closes its issue by itself the" >&2
-echo "         moment main composes again, and this check goes green with no" >&2
+echo "         moment main composes again, and re-runs this check on every" >&2
+echo "         open PR as it does, so it goes green with no push and no" >&2
 echo "         action from you." >&2
 exit 1

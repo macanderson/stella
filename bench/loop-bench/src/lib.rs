@@ -11,7 +11,7 @@
 //! | `solved` | the verifier passed it; reward wins | no |
 //! | `NOT-RUN` | the task (or one of its trials) was requested but harbor never produced a trial dir | **yes** |
 //! | `UNREADABLE` | the stream had lines but not one parsed as an event — schema drift or plumbing, not loop evidence | no |
-//! | `STUCK-LOOP` | the engine's own `loop_detected` fired and the task did not pass | **yes** |
+//! | `STUCK-LOOP` | the engine's loop ladder **aborted** the turn and the task did not pass | **yes** |
 //! | `BUDGET-CAP` | the harness's `STELLA_SPEND_LIMIT` denied the turn — a cost decision, not a loop defect | no |
 //! | `SILENT-DEATH` | zero tool calls and no terminal event: the loop vanished | **yes** |
 //! | `ZERO-WORK` | zero tool calls with a stated terminal event | **yes** |
@@ -26,6 +26,31 @@
 //! address. `STUCK-LOOP` outranks `BUDGET-CAP` because a loop that cycles
 //! until the cap trips is exactly the defect this harness exists to catch —
 //! the cap firing is a symptom there, not the cause.
+//!
+//! # A steer is not a stuck loop
+//!
+//! The engine emits `loop_detected` at both ends of its ladder. `aborted:
+//! false` says it warned the model and let the turn go on. `aborted: true`
+//! says the warning did not take and the turn ended there. Only the second is
+//! a loop the engine could not get out of, so only the second is
+//! `STUCK-LOOP`.
+//!
+//! Reading the abort alone costs the gate nothing, because the ladder
+//! escalates by itself: a turn may spend at most two warnings
+//! (`stella_core::driver::loop_escalation::MAX_LOOP_STEERS`), and every
+//! detection after that ends the turn. A model that keeps cycling always
+//! reaches `aborted: true`.
+//!
+//! A detection whose event carries no `aborted` field counts as an abort. An
+//! outcome the stream does not state must keep the gating meaning it has,
+//! rather than read as a recovery nobody recorded.
+//!
+//! The evidence is nightly run 33387694069. Its `overfull-hbox` trial fired
+//! one detection, `aborted: false`. The next call answered the warning with a
+//! different command; the turn then ran 99 more tool calls, 78 of them
+//! distinct, edited files 14 times, and died on harbor's 750-second ceiling.
+//! Across the four red nights from 2026-08-31 to 2026-09-05, 11 of 16 trials
+//! fired a detection and two of those ever aborted.
 //!
 //! # `CRASHED`, and why it sits where it does (#1299)
 //!
@@ -115,10 +140,15 @@ pub struct TrialReport {
     /// The turn ended without executing a single tool call. Paired with a
     /// non-pass, this is the "chose nothing" death the hardening work targets.
     pub zero_work: bool,
-    /// `loop_detected` events from the engine's own loop detector — the turn
-    /// was caught cycling. Any non-zero count on a non-pass is a `STUCK-LOOP`
-    /// verdict and gates red (#611).
+    /// `loop_detected` events from the engine's own loop detector — every
+    /// time the turn was caught cycling, warnings and aborts alike. This is
+    /// the count an operator reads; `loop_aborted` is the count the gate
+    /// reads.
     pub loop_detected: u32,
+    /// The share of `loop_detected` that ended the turn: `aborted: true`,
+    /// plus any detection whose event states no outcome at all. A non-zero
+    /// count on a non-pass is the `STUCK-LOOP` verdict and gates red.
+    pub loop_aborted: u32,
     /// A `budget_denied` event reached the stream: the harness's own
     /// `STELLA_SPEND_LIMIT` cap stopped the turn. `BUDGET-CAP` verdict, excluded
     /// from the gate — a cost decision is not a loop defect (#611).
@@ -204,6 +234,14 @@ impl TrialReport {
         self.parsed_lines == 0 && self.unparsable_lines > 0
     }
 
+    /// Detections the turn survived: the engine warned, the model changed
+    /// course, and the turn carried on. Reported on the row, never gated —
+    /// the ladder working is not a defect. See the crate docs.
+    #[must_use]
+    pub fn loop_steered(&self) -> u32 {
+        self.loop_detected.saturating_sub(self.loop_aborted)
+    }
+
     /// Harbor recorded this trial as having raised: it did not finish, whatever
     /// its reward says. See the crate docs for why this is read off harbor's
     /// record rather than inferred from the stream (#1299).
@@ -222,7 +260,7 @@ impl TrialReport {
             "NOT-RUN"
         } else if self.unreadable() {
             "UNREADABLE"
-        } else if self.loop_detected > 0 {
+        } else if self.loop_aborted > 0 {
             "STUCK-LOOP"
         } else if self.budget_capped {
             "BUDGET-CAP"
@@ -264,7 +302,7 @@ impl TrialReport {
         if self.unreadable() {
             return false;
         }
-        if self.loop_detected > 0 {
+        if self.loop_aborted > 0 {
             return true;
         }
         if self.budget_capped {
@@ -446,6 +484,7 @@ pub fn fold_steps(steps: &[TrialReport]) -> TrialReport {
         folded.model_calls = folded.model_calls.saturating_add(step.model_calls);
         folded.tool_calls = folded.tool_calls.saturating_add(step.tool_calls);
         folded.loop_detected = folded.loop_detected.saturating_add(step.loop_detected);
+        folded.loop_aborted = folded.loop_aborted.saturating_add(step.loop_aborted);
         folded.retries = folded.retries.saturating_add(step.retries);
         folded.parsed_lines = folded.parsed_lines.saturating_add(step.parsed_lines);
         folded.unparsable_lines = folded
@@ -510,7 +549,15 @@ pub fn distill_events(task: &str, raw: &str) -> TrialReport {
                     r.stages.push(s.to_string());
                 }
             }
-            Some("loop_detected") => r.loop_detected += 1,
+            Some("loop_detected") => {
+                r.loop_detected += 1;
+                // Only an explicit `aborted: false` buys a detection out of
+                // the gate: that is the engine saying it warned the model and
+                // the turn went on. Silence is not a recovery.
+                if ev.get("aborted").and_then(Value::as_bool) != Some(false) {
+                    r.loop_aborted += 1;
+                }
+            }
             Some("budget_denied") => r.budget_capped = true,
             Some("complete") => r.terminal_event = true,
             Some("error") => {
@@ -707,6 +754,17 @@ pub fn print_table(reports: &[TrialReport]) {
             println!(
                 "{:>26}└ vanished in stage `{stage}` (no terminal event)",
                 ""
+            );
+        }
+        // A warning the turn survived is a real thing that happened: the model
+        // did cycle, and the ladder is why it stopped. It is not the gate's
+        // business, so it rides the row as a note rather than taking the
+        // verdict column.
+        if r.loop_steered() > 0 {
+            println!(
+                "{:>26}└ steered off {} detected loop(s); the turn carried on",
+                "",
+                r.loop_steered()
             );
         }
         // The crash line prints even for a row whose verdict is something

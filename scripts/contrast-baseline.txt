@@ -11,6 +11,3 @@
 # for every pairing and the ground it is measured on.
 #
 # This file records the debt #4423 found; it is meant to reach empty.
-dim bg 2.30
-muted bg 4.47
-muted panel 4.32

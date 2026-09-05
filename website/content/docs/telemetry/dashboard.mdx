@@ -189,7 +189,11 @@ matching `<timestamp>/` folder:
   model, token usage, tool usage, files touched, and run outcomes. Open it
   offline, email it, or attach it to a PR as a receipt for what an agent
   run did and cost. Its totals cover only the exported session, and it
-  names that session and what was left out at the top of the page
+  names that session and what was left out at the top of the page. It
+  links to `transcript.html` rather than embedding it
+- `<timestamp>/transcript.html`: the session **replayed** — every prompt,
+  model message, tool call, and file diff, in order. A second
+  self-contained page, drawn by the same renderer `stella observe` uses
 - `<timestamp>/manifest.json`: the watermark (as `exported_at`), the
   exported `session` id, row counts per table, and an `excluded` count of
   what was left out

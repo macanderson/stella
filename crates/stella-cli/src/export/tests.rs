@@ -184,7 +184,7 @@ fn the_cache_insight_reads_per_call_rows_not_a_token_average() {
         "now",
         "ses-x",
         &ExportExclusions::default(),
-        &transcript::render(&Default::default(), &Default::default()),
+        &transcript::render(&Default::default(), &Default::default(), "ses-x"),
     );
 
     assert!(
@@ -232,7 +232,7 @@ fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
         "now",
         "ses-x",
         &ExportExclusions::default(),
-        &transcript::render(&Default::default(), &Default::default()),
+        &transcript::render(&Default::default(), &Default::default(), "ses-x"),
     );
 
     // The payload does reach the page — escaping at the sink, not
@@ -271,29 +271,26 @@ fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
 }
 
 #[test]
-fn the_transcript_is_readable_with_scripts_disabled() {
-    // The tabs hide inactive panels with `display:none` and the script adds
-    // the `on` class — so a JS-assigned initial class opens the archive to a
-    // blank page for any reader with scripts off. That is a nuisance in a live
-    // dashboard and a failure in an artifact whose stated job is to be
-    // attached to a PR as evidence, which is why the class is emitted here and
-    // the script only takes over afterwards.
+fn the_dashboard_links_to_the_transcript_document() {
+    // The transcript is its own self-contained `transcript.html`, rendered
+    // by `stella_transcript::html::render_page`. A plain link needs no
+    // script to reach it, which a tabbed panel would.
     let html = render_dashboard(
         &[],
         &[],
         "now",
         "ses-x",
         &ExportExclusions::default(),
-        &transcript::render(&Default::default(), &Default::default()),
+        &transcript::render(&Default::default(), &Default::default(), "ses-x"),
     );
 
     assert!(
-        html.contains(r#"<section id="transcript" class="panel on""#),
-        "the transcript panel is visible before any script runs"
+        html.contains(r#"href="transcript.html""#),
+        "the dashboard links to the transcript document"
     );
     assert!(
-        html.contains(r#"data-target="transcript" role="tab" aria-selected="true""#),
-        "and its tab reads as selected without JS"
+        !html.contains("class=\"panel"),
+        "no script-gated panel remains for the transcript"
     );
 }
 
@@ -675,8 +672,8 @@ fn the_archive_carries_the_session_transcript_and_only_that_session() {
         "another session's tool call reached the transcript"
     );
     assert!(
-        find_subsequence(&bytes, br#"class="ev tool""#).is_some(),
-        "the transcript rendered in the dashboard's row grammar"
+        find_subsequence(&bytes, br#"<details class="step""#).is_some(),
+        "the transcript rendered through the shared renderer's row grammar"
     );
 }
 
@@ -723,7 +720,7 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         "2026-01-01 00:00:00",
         "ses-x",
         &ExportExclusions::default(),
-        &transcript::render(&Default::default(), &Default::default()),
+        &transcript::render(&Default::default(), &Default::default(), "ses-x"),
     );
 
     // Dark: the instrument ramp, achromatic chrome, the brand hue only as
@@ -735,7 +732,7 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         "--hairline: #26262C;",
         "--text: #E8E8EC;",
         "--text-2: #A9AAB5;",
-        "--text-3: #777782;",
+        "--text-3: #7C7C87;",
         "--accent: #E8E8EC;",
         "--identity: #EFC53F;",
         "--ok: #74C991;",
@@ -820,7 +817,7 @@ fn the_dashboard_is_monospace_and_square() {
         "2026-01-01 00:00:00",
         "ses-x",
         &ExportExclusions::default(),
-        &transcript::render(&Default::default(), &Default::default()),
+        &transcript::render(&Default::default(), &Default::default(), "ses-x"),
     );
 
     // The face comes from the `--mono` token, not a hardcoded shorthand. This
@@ -879,7 +876,7 @@ fn the_dashboard_spells_the_wordmark_lowercase() {
         "2026-01-01 00:00:00",
         "ses-x",
         &ExportExclusions::default(),
-        &transcript::render(&Default::default(), &Default::default()),
+        &transcript::render(&Default::default(), &Default::default(), "ses-x"),
     );
 
     assert!(

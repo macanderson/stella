@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# Hermetic tests for scripts/check-main-red-hold.sh.
+# Hermetic tests for the two halves of the red-main hold.
+# `check-main-red-hold.sh` blocks a merge while `main` is broken.
+# `clear-main-red-holds.sh` clears those blocks once it is not.
 #
 #   ./scripts/test-main-red-hold.sh     (or: make main-red-hold-test)
 #
@@ -12,6 +14,10 @@
 # life passing, because main is usually green, so nothing else would ever
 # exercise the branch it exists for.
 #
+# The clearing half has the same gap. It is built for the moment `main` gets
+# fixed. Nothing else reaches that moment, since a green `main` leaves no
+# stale hold to clear.
+#
 # Not a `make gate` step, matching `main-canary-test`: the thing
 # under test is a CI-only guard that asks the issue tracker a question, and
 # the gate is hermetic and offline by contract.
@@ -21,6 +27,7 @@ set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd -P)"
 SCRIPT="$repo_root/scripts/check-main-red-hold.sh"
+CLEAR="$repo_root/scripts/clear-main-red-holds.sh"
 
 pass=0
 fail=0
@@ -28,10 +35,10 @@ fail=0
 ok()  { printf '  \033[32m✓\033[0m %s\n' "$*"; pass=$((pass + 1)); }
 bad() { printf '  \033[31m✗\033[0m %s\n' "$*"; fail=$((fail + 1)); }
 
-# One assertion shape: run with both fixture seams pinned and compare the exit
-# code. An expected failure must also name its reason, because "exit 1" is
-# satisfied by a typo in the script just as well as by the defect the case is
-# about — the same discipline test-install-zsh-completions.sh applies.
+# One shape for every case: pin both fixture seams, then check the exit code.
+# A case that expects a failure names its reason too. A typo in the script
+# exits 1 just as well as the defect does. `test-install-zsh-completions.sh`
+# holds the same line.
 want() { # want <name> <expect-pass|expect-block> <want-substring> <issues> <labels>
   local name="$1" expect="$2" want_text="$3" issues="$4" labels="$5"
   local out rc
@@ -93,6 +100,108 @@ if [ $? -eq 2 ]; then ok "a flag missing its value exits 2, not 0"; else bad "a 
 
 out="$("$SCRIPT" --nonsense 2>&1)"
 if [ $? -eq 2 ]; then ok "an unknown flag exits 2, not 0"; else bad "an unknown flag did not exit 2"; fi
+
+printf '\n\033[1mclearing — a recovered main un-blocks the pull requests it stopped\033[0m\n'
+
+# The stale-hold state, as fixtures. `main` is fixed, so no issue is open.
+# Three pull requests are open. Two still carry a failed hold on the head
+# they have now. That is the shape of 2026-09-05, when ten pull requests
+# were stuck on a check that would have passed.
+recovered_prs="5903 aaaaaaa
+5899 bbbbbbb
+5894 ccccccc"
+stale_runs="aaaaaaa 33951700124
+ccccccc 33950666389"
+
+# Every case checks the exit code too. This script runs inside the canary. A
+# non-zero exit there would say `main` is broken when it builds.
+clear_says() { # clear_says <name> <want-substring> <issues> <prs> <runs>
+  local name="$1" want_text="$2" issues="$3" prs="$4" runs="$5"
+  local out rc
+  out="$("$CLEAR" --fixture-open-issues "$issues" --fixture-open-prs "$prs" \
+    --fixture-stale-runs "$runs" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    bad "$name — expected exit 0 (fail-open), got $rc: $out"
+    return
+  fi
+  case "$out" in
+  *"$want_text"*) ok "$name" ;;
+  *) bad "$name — wanted '$want_text': $out" ;;
+  esac
+}
+
+clear_lacks() { # clear_lacks <name> <unwanted-substring> <issues> <prs> <runs>
+  local name="$1" unwanted="$2" issues="$3" prs="$4" runs="$5"
+  local out
+  out="$("$CLEAR" --fixture-open-issues "$issues" --fixture-open-prs "$prs" \
+    --fixture-stale-runs "$runs" 2>&1)"
+  case "$out" in
+  *"$unwanted"*) bad "$name — said '$unwanted' when it should not: $out" ;;
+  *) ok "$name" ;;
+  esac
+}
+
+# The witness. Before this fix, nothing ran the hold again. The failure from
+# the outage stayed the last word on that commit. The pull request could not
+# merge until someone pushed to it.
+#
+# Each case names the run as well as the pull request. Running the wrong run
+# would still look like a sweep, and would clear nothing.
+clear_says "a recovered main re-runs the hold on the first stale PR" \
+  "5903 (head aaaaaaa, run 33951700124)" "" "$recovered_prs" "$stale_runs"
+
+clear_says "...and on every other PR still carrying a stale failure" \
+  "5894 (head ccccccc, run 33950666389)" "" "$recovered_prs" "$stale_runs"
+
+# A green hold is already the right answer. Running it again would spend a
+# job to change nothing.
+clear_lacks "a PR whose hold already passes is left alone" \
+  "5899" "" "$recovered_prs" "$stale_runs"
+
+clear_says "the summary counts what it swept" \
+  "cleared the hold on 2 of 3 open pull request" "" "$recovered_prs" "$stale_runs"
+
+# The negative control, and the worse direction. Clearing a hold while `main`
+# is still broken would drop the signal, not the leftovers.
+clear_says "an open main-red issue keeps every hold in place" \
+  "main is still known-broken (5901)" "5901" "$recovered_prs" "$stale_runs"
+
+clear_lacks "...and re-runs nothing at all while it stands" \
+  "re-run the hold" "5901" "$recovered_prs" "$stale_runs"
+
+# No open pull request is a state, not an error.
+clear_says "a repository with no open pull request says so and stops" \
+  "cleared the hold on 0 of 0 open pull request" "" "" ""
+
+out="$("$CLEAR" --limit 2>&1)"
+if [ $? -eq 2 ]; then ok "clearing: a flag missing its value exits 2, not 0"; else bad "clearing: a flag missing its value did not exit 2"; fi
+
+out="$("$CLEAR" --nonsense 2>&1)"
+if [ $? -eq 2 ]; then ok "clearing: an unknown flag exits 2, not 0"; else bad "clearing: an unknown flag did not exit 2"; fi
+
+# A sweep nothing calls clears nothing, so the wiring is part of the fix. The
+# three cases below read the workflow files. On a tree where recovery does not
+# call the sweep, they fail.
+holds_text() { # holds_text <name> <file> <pattern>
+  local name="$1" file="$repo_root/.github/workflows/$2" pattern="$3"
+  if [ -f "$file" ] && grep -q -- "$pattern" "$file"; then
+    ok "$name"
+  else
+    bad "$name — $2 does not carry '$pattern'"
+  fi
+}
+
+holds_text "the canary sweeps on the run that closes the issue" \
+  main-canary.yml "clear-main-red-holds.sh"
+
+holds_text "...and holds the write scope that a re-run needs" \
+  main-canary.yml "actions: write"
+
+# The canary closes with `GITHUB_TOKEN`, and no event from that token starts a
+# workflow. So the issue event is the second path, not the only one.
+holds_text "a person closing the issue by hand starts a sweep too" \
+  main-red-clear.yml "types: \[closed, unlabeled\]"
 
 printf '\n'
 if [ "$fail" -eq 0 ]; then

@@ -7,6 +7,11 @@
 //! deck cuts the mark off, sends the usual [`WorkspaceInput::Interrupt`], and
 //! tags it with the strength it was asked for. The tag is spent here.
 //!
+//! The room form is the same mark with an address in front (`>>> @agents !!!
+//! …`). It is written here too, and only here: the sessions it stops
+//! are handed the words with the mark spent, so a rule meant for one
+//! workspace is one file rather than one per session.
+//!
 //! `intercept` runs in front of both read points in the driver. It does not
 //! sit in the arms that take an interrupt:
 //!
@@ -53,6 +58,16 @@ pub(super) fn intercept(
                 texts,
                 keep: None,
             })
+        }
+        // A broadcast (`>>> @agents !!! …`) is the same mark aimed at the
+        // room. The write happens here, once, for this workspace — targets
+        // are handed the stop with the mark already spent, so one sentence
+        // cannot become a copy per session.
+        Some(WorkspaceInput::Whistle(mut broadcast)) => {
+            if let Some(keep) = broadcast.keep.take() {
+                save(root, keep, std::slice::from_ref(&broadcast.message), in_tx);
+            }
+            Some(WorkspaceInput::Whistle(broadcast))
         }
         other => other,
     }
