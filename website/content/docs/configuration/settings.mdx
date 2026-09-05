@@ -633,8 +633,10 @@ what confirmation a blocking directive needs. Confidence values are on a `0`–`
     The measurement compares turns the skill's trigger matched *and* it was injected against
     turns the trigger matched and it was not. The second arm comes from two holdouts: the A/B
     recall control (`context.retrieval.ab_recall_rate`), which withholds the whole steering
-    plane, and the per-skill holdout (`context.retrieval.artifact_holdout_rate`), which
-    withholds one matched skill and leaves the rest of the turn alone. Set both to `0` and
+    plane, and the per-artifact holdout (`context.retrieval.artifact_holdout_rate`), which
+    withholds one matched artifact and leaves the rest of the turn alone. That holdout
+    serves memories, skills and records in turn, so a skill's own arm comes round every
+    third time it fires. Set both to `0` and
     there is no baseline to measure against: appraisals stay `Insufficient`, and nothing is
     promoted or retired on measurement.
   </OptionCard>

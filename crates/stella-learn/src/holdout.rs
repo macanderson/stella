@@ -16,6 +16,9 @@
 //! skill, a memory, or a mined rule. [`crate::comparison`] keeps an arm
 //! opaque the same way, so one schedule serves all three.
 //!
+//! One item goes per turn, so the three take the schedule in turn. [`arm`]
+//! says whose turn it is.
+//!
 //! A holdout costs the user a little quality, on purpose. [`disclosure`] is
 //! the one sentence that says so.
 
@@ -44,6 +47,27 @@ pub fn is_scheduled(turn: u64, rate: u32) -> bool {
 pub fn ordinal(turn: u64, rate: u32) -> Option<u64> {
     let rate = u64::from(rate);
     (rate > 1 && turn.is_multiple_of(rate)).then(|| turn / rate - 1)
+}
+
+/// Which of `arms` populations the `ordinal`-th holdout acts on, or `None`
+/// when there are no populations to act on.
+///
+/// One item goes per turn, and a turn has more than one kind of thing to
+/// hold back. Hold one of each back together and every control turn for a
+/// memory is also a control turn for a skill, so neither arm can say which
+/// withholding the outcome belongs to. Taking the populations in turn keeps
+/// the turn readable and still gives each one an arm.
+///
+/// Opaque, like the rest of this file. An arm is a position in the caller's
+/// list. The caller owns what sits at each position.
+#[must_use]
+pub fn arm(ordinal: u64, arms: usize) -> Option<usize> {
+    if arms == 0 {
+        return None;
+    }
+    // The cast back is exact: the rest of the division is smaller than the
+    // number of arms, which came from a `usize`.
+    Some((ordinal % arms as u64) as usize)
 }
 
 /// Which item the `ordinal`-th holdout holds back, or `None` when there is
@@ -114,6 +138,21 @@ mod tests {
             assert_eq!(ordinal(4, rate), None, "rate {rate}");
             assert_eq!(disclosure(rate, "skill"), None, "rate {rate}");
         }
+    }
+
+    /// Each population gets the schedule in turn, and the rotation comes
+    /// back round.
+    #[test]
+    fn the_arms_take_the_schedule_in_turn() {
+        let arms: Vec<Option<usize>> = (0..4).map(|n| arm(n, 3)).collect();
+        assert_eq!(arms, vec![Some(0), Some(1), Some(2), Some(0)]);
+    }
+
+    /// A caller with no populations holds nothing back.
+    #[test]
+    fn no_arms_is_no_holdout() {
+        assert_eq!(arm(0, 0), None);
+        assert_eq!(arm(9, 0), None);
     }
 
     /// The rotation is the point. Three holdouts over three items cover all

@@ -23,11 +23,11 @@
 //! # One trial ledger, three kinds
 //!
 //! [`TRIALS_FILE`] holds a row per artifact per turn, keyed by
-//! [`stella_learn::ledger::ArtifactKind`] and an id. Skills are the only kind
-//! with a producer today. A memory record and a mined rule are recalled by
-//! `memory::recall`, which reports no join, so each needs a seam of its own
-//! before it can be written here. The key is shared so that when those seams
-//! land there is one ledger to read rather than three.
+//! [`stella_learn::ledger::ArtifactKind`] and an id. All three kinds have a
+//! producer: `SessionMemory::record_skill_trials` writes the skill rows, and
+//! `SessionMemory::record_context_trials` (`memory::trials`) writes the
+//! memory and rule rows from what each render offered and showed. One key,
+//! so [`sweep`] reads one ledger rather than three.
 //!
 //! [`LEGACY_TRIALS_FILE`] holds the rows a build that only knew skills wrote:
 //! a `skill` field and no kind. [`sweep`] reads both files and
@@ -219,7 +219,8 @@ pub fn queued_candidates(workspace_root: &Path) -> Vec<QueuedCandidate> {
 /// measured against itself. Wider and the baseline fills with turns the
 /// artifact could not have affected, which measures those turns rather than the
 /// artifact. For a skill that population is the skills whose trigger matched
-/// the prompt.
+/// the prompt; for a memory it is what the recall query answered; for a rule
+/// it is the records that applied to the turn's facts.
 pub fn record_turn(
     workspace_root: &Path,
     kind: ArtifactKind,
