@@ -741,6 +741,19 @@ export interface LadderSnapshot {
    */
   rung?: LadderRung | null;
   /**
+   * Who claimed what about this evidence, in the order the claims
+   * arrived. The evidence fields above say what was observed; a stamp says
+   * who observed it, so a second observer can agree, disagree, or abstain
+   * on the same record rather than overwrite the first one's claim.
+   *
+   * Empty on every snapshot recorded before stamps existed, and on every
+   * run nobody stamped — an empty list emits no key, so a stored verdict is
+   * byte-for-byte what it was.
+   *
+   * **Recorded only: no stamp changes the rung.** See [`VerdictStamp`].
+   */
+  stamps?: VerdictStamp[];
+  /**
    * Why the test run observed nothing, when it didn't (`timed_out`,
    * `infra_failure`) — the #860 distinction between "the suite failed"
    * and "the suite could not be watched".
@@ -1233,6 +1246,19 @@ export type StageName = string;
 export type StageScope = "turn" | "run";
 
 /**
+ * What one observer concluded about the work.
+ *
+ * Four values, not a bool. `NotDone` is a claim about the work.
+ * `Inconclusive` is a claim about the tool: it looked, and it could not tell.
+ * `LadderRung` splits `Unverified` from `Unverifiable` for that same reason.
+ * `NotApplicable` says there was nothing here to judge.
+ *
+ * Closed, like every nested vocabulary here. A token from a newer build
+ * fails the event. It is never read as a weaker one.
+ */
+export type StampAssessment = "done" | "not_done" | "inconclusive" | "not_applicable";
+
+/**
  * What put the message into the turn, for [`AgentEvent::Steered`].
  *
  * Three different things emit that event and they are different pathologies
@@ -1519,6 +1545,76 @@ export interface VerdictEvidence {
    * One line naming what was checked and what it showed.
    */
   summary: string;
+}
+
+/**
+ * One observer's claim about the evidence a verdict was decided from.
+ *
+ * A stamp is a record, never a vote. Nothing reads one to decide anything.
+ * Three `Done` stamps on an unverified snapshot leave it unverified. Counting
+ * agreement is how an ablated verifier scored every run a pass, with nothing
+ * to notice. Arbitration is a separate call, filed as its own issue.
+ *
+ * A stamp carries no signature. Integrity and identity are different threat
+ * models, and this type answers the second one. The host fills
+ * [`VerdictStamp::author`] from the manifest it loaded, so no plugin can
+ * speak in another's name. [`VerdictStamp::preimage_hash`] ties the claim to
+ * the evidence, not to a key.
+ */
+export interface VerdictStamp {
+  /**
+   * What this observer concluded.
+   */
+  assessment: StampAssessment;
+  /**
+   * Who made this claim. The host fills it from the manifest it loaded, so
+   * no plugin can name itself something else. `"engine"` is the host's own
+   * call.
+   */
+  author: string;
+  /**
+   * The author's own version string, copied word for word. A reader may
+   * show it. Nothing branches on it.
+   */
+  author_version?: string | null;
+  /**
+   * When the claim was made, in milliseconds since the Unix epoch.
+   */
+  decided_at_ms: number;
+  /**
+   * How long this observer took, in milliseconds.
+   */
+  duration_ms: number;
+  /**
+   * Pointers to the artifacts behind the summary, in the vocabulary
+   * `VerdictEvidence::evidence_refs` uses. A reader can go and check the
+   * claim rather than take it on faith.
+   */
+  evidence_refs?: string[];
+  /**
+   * `sha256:<64 hex>` over the RFC 8785 canonical bytes of the snapshot
+   * this claim was made against, with `stamps` dropped from the preimage.
+   * `LadderSnapshot::stamp_preimage` builds that object, and the
+   * record-hash primitive (ADR 0004) digests it. So one hashing rule
+   * covers the tree.
+   *
+   * Dropping `stamps` lets a later observer stamp the same record without
+   * breaking the claims already on it. It also lets a replay prove the
+   * claim was made against the evidence the run produced, and not against
+   * a later edit of it.
+   */
+  preimage_hash: string;
+  /**
+   * One line saying what was checked and what it showed. Prose for a
+   * human — never parsed.
+   */
+  summary: string;
+  /**
+   * The observer ran out of time. Its assessment is then what it had when
+   * the clock stopped. A timed-out `Inconclusive` and a considered one are
+   * different facts.
+   */
+  timed_out?: boolean;
 }
 
 /**

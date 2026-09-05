@@ -42,6 +42,7 @@ fn snapshot(rung: Option<LadderRung>) -> LadderSnapshot {
         no_test_surface: false,
         errored_commands: 0,
         verifier_independent: None,
+        stamps: vec![],
     }
 }
 
