@@ -62,7 +62,7 @@ fn between<'a>(css: &'a str, start: &str, end: &str) -> &'a str {
 }
 
 /// `css` with every `/* … */` comment removed. These blocks carry more prose
-/// than declarations, and that prose quotes contrast ratios (`4.43:1`) and
+/// than declarations, and that prose quotes contrast ratios (`4.13:1`) and
 /// measurements (`needs: 6.84`) — so a parser that splits on `:` before
 /// stripping comments reads a sentence as a declaration and, worse, swallows
 /// the real declaration that follows it.

@@ -252,7 +252,7 @@
     },
     {
       "name": "muted",
-      "hex": "#777782",
+      "hex": "#7C7C87",
       "clamp": "neutral-gray",
       "css": "--st-muted",
       "rust": "MUTED",
@@ -262,7 +262,7 @@
     },
     {
       "name": "dim",
-      "hex": "#4B4B56",
+      "hex": "#5F5F6A",
       "clamp": "neutral-gray",
       "css": "--st-dim",
       "rust": "DIM",

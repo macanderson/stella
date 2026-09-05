@@ -528,16 +528,16 @@ fn render_dashboard(
     --void: #050507; --ground: #0A0A0C; --surface: #0F0F12; --raised: #17171B;
     --hairline: #26262C; --hairline-strong: #35353D;
     --identity: #EFC53F; --identity-ink: #0A0A0C;
-    --text: #E8E8EC; --text-2: #A9AAB5; --text-3: #777782;
+    --text: #E8E8EC; --text-2: #A9AAB5; --text-3: #7C7C87;
     --ok: #74C991; --warn: #E78D54; --bad: #E0687A;
-    --c1: #E8E8EC; --c2: #A9AAB5; --c3: #777782; --c4: #4B4B56;
-    --neutral-mark: #4B4B56;
+    --c1: #E8E8EC; --c2: #A9AAB5; --c3: #7C7C87; --c4: #5F5F6A;
+    --neutral-mark: #5F5F6A;
     --ink: #0A0A0C;
     --accent: #E8E8EC;
     --accent-wash: rgba(232,232,236,.08);
     --accent-edge: rgba(232,232,236,.38);
     --sunken: #0A0A0C;
-    --control-edge: #777782;
+    --control-edge: #7C7C87;
 
     /* One face. The product lives in a terminal, so the brand speaks in
        monospace — and this artifact is a measurement, where a proportional
@@ -607,16 +607,16 @@ fn render_dashboard(
       --void: #E8E8EC; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
       --hairline: #E9E9EE; --hairline-strong: #D0D0D8;
       --identity: #725a00; --identity-ink: #FFFFFF;
-      --text: #0A0A0C; --text-2: #4B4B56; --text-3: #777782;
+      --text: #0A0A0C; --text-2: #5F5F6A; --text-3: #7C7C87;
       --ok: #006933; --warn: #8a3f00; --bad: #96213C;
-      --c1: #0A0A0C; --c2: #4B4B56; --c3: #777782; --c4: #A9AAB5;
+      --c1: #0A0A0C; --c2: #5F5F6A; --c3: #7C7C87; --c4: #A9AAB5;
       --neutral-mark: #A9AAB5;
       --ink: #FFFFFF;
       --accent: #0A0A0C;
       --accent-wash: rgba(10,10,12,.06);
       --accent-edge: rgba(10,10,12,.28);
       --sunken: #F7F7FA;
-      --control-edge: #777782;
+      --control-edge: #7C7C87;
     }}
   }}
   :root[data-theme="light"] {{
@@ -624,16 +624,16 @@ fn render_dashboard(
     --void: #E8E8EC; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
     --hairline: #E9E9EE; --hairline-strong: #D0D0D8;
     --identity: #725a00; --identity-ink: #FFFFFF;
-    --text: #0A0A0C; --text-2: #4B4B56; --text-3: #777782;
+    --text: #0A0A0C; --text-2: #5F5F6A; --text-3: #7C7C87;
     --ok: #006933; --warn: #8a3f00; --bad: #96213C;
-    --c1: #0A0A0C; --c2: #4B4B56; --c3: #777782; --c4: #A9AAB5;
+    --c1: #0A0A0C; --c2: #5F5F6A; --c3: #7C7C87; --c4: #A9AAB5;
     --neutral-mark: #A9AAB5;
     --ink: #FFFFFF;
     --accent: #0A0A0C;
     --accent-wash: rgba(10,10,12,.06);
     --accent-edge: rgba(10,10,12,.28);
     --sunken: #F7F7FA;
-    --control-edge: #777782;
+    --control-edge: #7C7C87;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   html {{ color-scheme: dark; }}

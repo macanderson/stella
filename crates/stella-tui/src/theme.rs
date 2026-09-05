@@ -84,9 +84,9 @@ pub const TEXT_PRIMARY: Color = palette::TEXT_PRIMARY;
 /// This tier is `silver`, and it used to answer to a second name — `MUTED`,
 /// with [`text_secondary`] spelled `muted()`. That name was one tier off its
 /// own value: it resolved here, to `stella_tui_theme::token::SILVER` `#A9AAB5`,
-/// while `token::MUTED` `#777782` is the tier below and the paper theme's
-/// secondary ink `#5E5E69` was a third colour again — three constants, one
-/// word, until #4966 removed this one and #5001 renamed the paper stop to
+/// while `token::MUTED` is the tier below and the paper theme's secondary ink
+/// `#5E5E69` was a third colour again — three constants, one word, until
+/// #4966 removed this one and #5001 renamed the paper stop to
 /// [`crate::palette::INK_MUTED`]. A call site
 /// reaching for "the muted tier" and writing `muted()` got silver, and
 /// `crate::diff`'s `gutter` is where that happened: `design/tui-v2/SPEC.md`
@@ -96,14 +96,15 @@ pub const TEXT_PRIMARY: Color = palette::TEXT_PRIMARY;
 /// [`TEXT_TERTIARY`] (which *is* `token::MUTED`) → [`TEXT_DIM`], so the tier a
 /// call site asks for is the tier it gets.
 pub const TEXT_SECONDARY: Color = palette::TEXT_SECONDARY;
-/// Tertiary text (labels, captions). 4.47:1 on [`GROUND`] — just under the
-/// AA body floor, so this is the caption/UI tier and anything a reader must
-/// read at 13px takes [`TEXT_SECONDARY`].
+/// Tertiary text (labels, captions). 4.79:1 on [`GROUND`] — clears the AA
+/// body floor; it stays the caption/UI tier and anything a reader must read
+/// at 13px on a raised row still takes [`TEXT_SECONDARY`].
 pub const TEXT_TERTIARY: Color = palette::TEXT_TERTIARY;
-/// The dim tier — 2.30:1, below every text floor. **Chrome only, never
-/// words**: the unfilled progress groove. It has its own value now rather
-/// than aliasing [`TEXT_TERTIARY`], which is why the three progress call
-/// sites that painted *words* with it moved up a tier.
+/// The dim tier — 3.14:1, clearing the 3:1 large-text/graphical floor and
+/// still below the 4.5:1 body floor. **Chrome only, never words**: the
+/// unfilled progress groove. It has its own value now rather than aliasing
+/// [`TEXT_TERTIARY`], which is why the three progress call sites that
+/// painted *words* with it moved up a tier.
 pub const TEXT_DIM: Color = palette::TEXT_DIM;
 
 // Semantic (base + bright). The palette carries one value per status; the

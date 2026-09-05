@@ -22,8 +22,8 @@
   --st-silver-type: #BFC1CC; /* syntax types, tertiary labels */
   --st-text: #E8E8EC; /* primary text on dark, in the deck */
   --st-paper-text: #F4F1EA; /* primary text on dark, off the deck */
-  --st-muted: #777782; /* secondary text */
-  --st-dim: #4B4B56; /* hints, captions, line numbers */
+  --st-muted: #7C7C87; /* secondary text */
+  --st-dim: #5F5F6A; /* hints, captions, line numbers */
   --st-green: #74C991; /* pass, additive diff sign */
   --st-red: #E0687A; /* fail, destructive, removal diff sign */
   --st-diff-add: #10201A; /* added diff row background */

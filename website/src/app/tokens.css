@@ -62,8 +62,8 @@
   --st-silver: #a9aab5; /* secondary emphasis, incoming context */
   --st-silver-type: #bfc1cc; /* syntax types, tertiary labels */
   --st-text: #e8e8ec; /* primary text on dark, in the deck */
-  --st-muted: #777782; /* secondary text */
-  --st-dim: #4b4b56; /* hints, captions, line numbers */
+  --st-muted: #7c7c87; /* secondary text */
+  --st-dim: #5f5f6a; /* hints, captions, line numbers */
   --st-green: #74c991; /* pass, additive diff sign */
   --st-red: #e0687a; /* fail, destructive, removal diff sign */
   --st-diff-add: #10201a; /* added diff row background */
@@ -151,8 +151,8 @@
   --stella-signal-ink: var(--st-gold-ink); /* gold TEXT on the paper ground, 6.02:1 */
   --stella-text: var(--st-paper-text); /* 16.19:1 on canvas */
   --stella-text-2: var(--st-silver); /* 8.58:1 — the safe small-text tone */
-  --stella-text-3: var(--st-muted); /* 4.47:1 — caption/UI tier, under AA body */
-  --stella-text-dim: var(--st-dim); /* 2.30:1 — chrome only, never words */
+  --stella-text-3: var(--st-muted); /* 4.79:1 — caption/UI tier (#4063) */
+  --stella-text-dim: var(--st-dim); /* 3.14:1 — chrome only, never words */
   --stella-paper-2: var(--st-paper-ground); /* the warm paper ground */
   --stella-paper-3: var(--st-paper-raised); /* paper surface */
   --stella-paper-row: var(--st-paper-row); /* paper hover / raised */

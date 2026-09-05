@@ -79,13 +79,13 @@ PAPER = "#F4F1EA"  # text — primary text on dark
 # composited onto whatever page carries it, and white is the ground that makes
 # no assumption about which. It is the one value here that is not a token.
 PAPER_BG = "#FFFFFF"
-MUTED_ON_DARK = "#777782"  # muted
+MUTED_ON_DARK = "#7C7C87"  # muted
 # `dim` rather than `muted` on light. Both are tokens; this one is the pairing
-# that measures — 8.61:1 on the white above against muted's 4.43:1, which is
-# under AA. The checker reads `dim` on the `paper` token as 8.40:1 and licenses
+# that measures — 6.30:1 on the white above against muted's 4.13:1, which is
+# under AA. The checker reads `dim` on the `paper` token as 6.15:1 and licenses
 # no light pairing for `muted` at all, which is the same verdict arrived at
 # from the other side.
-MUTED_ON_LIGHT = "#4B4B56"  # dim
+MUTED_ON_LIGHT = "#5F5F6A"  # dim
 
 # JetBrains Mono advances 0.6em per glyph, which is what lets every string's
 # width be known before it is drawn.
