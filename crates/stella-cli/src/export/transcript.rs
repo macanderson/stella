@@ -36,8 +36,8 @@
 //! **3. Drop nothing.** The shared run model has no slot for most of the
 //! wire's event kinds: a stage boundary, a provider fallback, a verdict, and
 //! more. Each of those becomes a [`Note`] — its wire tag as the summary, its
-//! whole payload as the fold-out detail ([`push_note`]). A reader can read
-//! what happened even for a kind this crate has never named, and can grep
+//! whole payload as the fold-out detail ([`Fold::push_note`]). A reader can
+//! read what happened even for a kind this crate has never named, and can grep
 //! `raw/` for the tag. A transcript that quietly skipped what it did not
 //! recognize would be a summary pretending to be a replay.
 

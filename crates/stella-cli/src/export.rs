@@ -256,7 +256,7 @@ fn redact_dump(json: &str) -> String {
 
 /// Recursively replace every string value in `value` with its redacted
 /// form. Returns whether anything was actually masked. [`redact_dump`]
-/// ignores that return value; [`transcript::redact_run`] uses it to say, on
+/// ignores that return value; `transcript::redact_run` uses it to say, on
 /// the dashboard, whether the transcript needed masking at all.
 fn redact_json_strings(value: &mut serde_json::Value) -> bool {
     match value {
