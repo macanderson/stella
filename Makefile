@@ -933,6 +933,20 @@ issue-claim: ## Ask whether somebody is already implementing an issue: make issu
 issue-claim-test: ## Test the issue-claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
 	./scripts/test-issue-claim.sh
 
+# Not a GATE_STEPS member -- one file, one narrow shape (#3459). The real
+# enforcement is its self-test's own live-tree case (F in
+# test-dependabot-pip-dirs.sh, "this repository's real dependabot.yml
+# passes"), which runs in guard-self-tests.yml on every PR: a future edit
+# that repoints a pip directory: at an empty one fails that case the same
+# way it would fail this target run by hand.
+.PHONY: dependabot-pip-dirs
+dependabot-pip-dirs: ## Assert every pip directory: in .github/dependabot.yml holds a manifest
+	@./scripts/check-dependabot-pip-dirs.sh
+
+.PHONY: dependabot-pip-dirs-test
+dependabot-pip-dirs-test: ## Test the dependabot pip-directory guard (hermetic; not part of `gate`)
+	./scripts/test-dependabot-pip-dirs.sh
+
 .PHONY: check
 check: $(CHECK_STEPS) ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy (default and schema features), no rustdoc and no tests
 	@./scripts/check-hooks-installed.sh
