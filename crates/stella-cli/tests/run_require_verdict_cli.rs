@@ -40,6 +40,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
+use stella_protocol::{AgentEvent, LadderRung};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -478,6 +479,94 @@ async fn goal_takes_the_flag_and_exits_by_the_goals_own_result() {
         Some(0),
         "a met goal whose last-round verdict is Met exits 0 under the flag: \
          {stdout}\n{stderr}"
+    );
+}
+
+/// **Witness.** Before this change, nothing in production built an
+/// `AgentEvent::Verdict`. `judge`'s answer stayed inside the
+/// `DispatchReport` this door printed to stderr, and never reached the
+/// store. `crate::dataset_cmd::reward_label` reads exactly that event and
+/// nothing else, so it found none, and `stella dataset export`'s `reward`
+/// column was null for every real run.
+///
+/// The goal door, not the plain `stella run` one: each round of a plain
+/// `stella run --pipeline` opens and closes its own execution row before
+/// the wrapper's verdict is even decided, so nothing this door's dispatch
+/// judges afterward has a live channel left to reach. That gap is tracked
+/// separately. `stella goal`'s round driver keeps one channel open across
+/// its whole loop, so its round-boundary send lands before that channel
+/// closes.
+///
+/// This test enumerates every execution the run left behind, because a
+/// wrapped goal run also opens the plugin's own child-turn row beside the
+/// worker's — and reads each one back with `Store::execution_events`, the
+/// same reader `dataset export` uses.
+#[tokio::test]
+async fn goal_wrapped_records_the_verdict_event_the_dataset_export_reads() {
+    let server = mock_one_round_goal_loop().await;
+    let ws = tempfile::tempdir().expect("workspace");
+    install_goal_fixture(ws.path());
+    std::fs::write(ws.path().join("lib.rs"), "pub fn hello() {}\n").expect("source file");
+
+    let (code, _stdout, stderr) = stella(
+        ws.path(),
+        &server.uri(),
+        &[
+            "goal",
+            "--pipeline",
+            "goal-verdict-fixture-v1",
+            "say the work is done, then stop",
+        ],
+    );
+    assert_eq!(code, Some(0), "a met goal exits 0: {stderr}");
+
+    let store = stella_store::Store::open(ws.path()).expect("open the workspace store");
+    let finished = store
+        .finished_executions_after(0, 10)
+        .expect("read finished executions");
+    assert!(!finished.is_empty(), "the run left no finished execution");
+    let mut verdicts: Vec<(bool, stella_protocol::VerdictEvidence)> = Vec::new();
+    for execution in &finished {
+        let journal = store
+            .execution_events(execution.execution_id)
+            .expect("read an execution's journal");
+        verdicts.extend(
+            journal
+                .events
+                .iter()
+                .filter_map(|record| match &record.event {
+                    AgentEvent::Verdict { passed, evidence } => Some((*passed, evidence.clone())),
+                    _ => None,
+                }),
+        );
+    }
+    assert_eq!(
+        verdicts.len(),
+        1,
+        "the fixture's single round judges exactly one verdict: {verdicts:?}"
+    );
+    let (passed, evidence) = verdicts
+        .pop()
+        .expect("the wrapper's judged verdict must reach the store as an AgentEvent::Verdict");
+    assert!(
+        passed,
+        "this door's `judge` is vacuously Met on the empty rule every steering-grade \
+         plugin declares (see GOAL_PLUGIN_TOML)"
+    );
+    let rung = evidence
+        .ladder
+        .as_deref()
+        .and_then(|snapshot| snapshot.rung);
+    assert_eq!(
+        rung,
+        Some(LadderRung::Waived),
+        "a met rule with no requirement settles on the ladder's `waived` rung — nothing \
+         was asked for, so nothing here scores a reward"
+    );
+    assert!(
+        !evidence.deterministic,
+        "waived carries no oracle evidence either way — reward_label discards it rather \
+         than crediting a check that never ran"
     );
 }
 

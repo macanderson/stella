@@ -9,10 +9,13 @@
 #
 # ── What the suite is for ────────────────────────────────────────────────────
 #
-# The guard became a gate step carrying four pre-existing failures, so its
-# ratchet is the only thing standing between "this palette has known debt" and
-# "this palette has a permission slip". Two directions have to hold at once and
-# they fail independently:
+# The guard became a gate step carrying four pre-existing failures, and its
+# ratchet was what stood between "this palette has known debt" and "this
+# palette has a permission slip" until the palette was re-cut and it emptied.
+# It is meant to stay empty, and these tests exercise its writing paths
+# against fixtures they seed themselves rather than against whatever the real
+# ratchet happens to hold. Two directions have to hold at once and they fail
+# independently:
 #
 #   * a colour that gets DARKER than its recorded ratio fails, and `--update`
 #     refuses to write the lower number;
@@ -45,13 +48,35 @@ pass=0
 fail=0
 
 # A throwaway root holding this repository's real token file, so every pairing
-# in PAIRINGS resolves, plus the baseline the guard reads and writes.
+# in PAIRINGS resolves, plus a copy of the real ratchet. Right for a case that
+# wants "whatever the repository's own baseline says today" -- N1/N2 and R1
+# below, none of which cares how many entries that is.
 # $1 = case name. Echoes the root path.
 new_root() {
   local dir="$TMP/$1"
   mkdir -p "$dir/design/tokens" "$dir/scripts"
   cp "$repo_root/$TOKENS_REL" "$dir/$TOKENS_REL"
   cp "$repo_root/$BASELINE_REL" "$dir/$BASELINE_REL"
+  echo "$dir"
+}
+
+# The other shape: a root whose baseline the case writes itself instead of
+# copying. A case that needs "an already-baselined pairing at a known ratio"
+# cannot lean on the real repository's ratchet holding one -- the palette was
+# re-cut and the ratchet emptied, and the tests below still need to exercise
+# its "already recorded" branches against something. $1 = case name, remaining
+# args = one "fg bg ratio" line per already-baselined pairing the case wants.
+# Echoes the root path.
+seeded_root() {
+  local dir="$TMP/$1"
+  shift
+  mkdir -p "$dir/design/tokens" "$dir/scripts"
+  cp "$repo_root/$TOKENS_REL" "$dir/$TOKENS_REL"
+  : >"$dir/$BASELINE_REL"
+  local line
+  for line in "$@"; do
+    printf '%s\n' "$line" >>"$dir/$BASELINE_REL"
+  done
   echo "$dir"
 }
 
@@ -125,8 +150,9 @@ want "U2 --update refuses to grandfather it" \
   expect-fail "$r" "new sub-threshold pairing: silver on bg" "--update"
 entry_is "U3 the refused --update wrote no entry" "$r" silver bg absent
 
-# The other half: a pairing that IS baselined and got darker still.
-r="$(new_root darkened)"
+# The other half: a pairing that IS baselined and got darker still. Seeded
+# rather than copied from the real ratchet, which now holds nothing.
+r="$(seeded_root darkened "muted bg 4.47")"
 repaint "$r" muted "#6E6E79"
 want "U4 a baselined pairing that got darker is flagged with both numbers" \
   expect-fail "$r" "darker than the 4.47:1 the ratchet holds it to"
@@ -140,29 +166,34 @@ entry_is "U6 the refused --update left the floor where it was" "$r" muted bg 4.4
 #
 # `dim` rather than `comment`, which carried this case until #4946 retired that
 # token — it was a colour with no paint site on any surface, so its ratchet row
-# guarded nothing. `dim` is the other pairing held to the 3.0 decorative floor,
-# and it is a live tier: hints, keybinding rows and the terminal's line numbers.
+# guarded nothing. `dim` is the other pairing held to the 3.0 decorative floor.
 # It appears in a second pairing (`dim on paper`, at 4.5), and #5A5A66 leaves
 # that one at 6.63:1 — well clear, so this case moves the pairing it is about
-# and nothing else.
-r="$(new_root lightened)"
+# and nothing else. Seeded with the one entry the case needs, since the real
+# ratchet has since retightened past it.
+r="$(seeded_root lightened "dim bg 2.30")"
 repaint "$r" dim "#5A5A66"
 want "D1 a pairing that improved but still fails passes the check" expect-pass "$r" "held by the ratchet"
-want "D2 --update raises its floor" expect-pass "$r" "retightened to 3 pairing(s)" "--update"
+want "D2 --update raises its floor" expect-pass "$r" "retightened to 1 pairing(s)" "--update"
 entry_is "D3 the floor is what was really measured" "$r" dim bg 2.91
 
 # Over the threshold: the entry must go, and the check must say so rather than
 # pass — a baselined pairing nobody needs is a standing permission slip.
-# `muted` is on the ledger twice and this clears both, so the count drops by two.
-r="$(new_root cleared)"
+# Seeded with three entries: `muted` twice, `dim` once. Repainting `muted`
+# clears both its rows. `dim` stays a hair under 3.0, just above its seeded
+# floor so `--update` does not refuse for the wrong reason. Clearing `muted`'s
+# two leaves `dim`'s row behind — proof the file emptied for the right
+# reason, not by accident.
+r="$(seeded_root cleared "muted bg 4.47" "muted panel 4.32" "dim bg 2.30")"
 repaint "$r" muted "#7A7A85"
+repaint "$r" dim "#5A5A65"
 want "D4 a pairing that cleared its threshold is reported, not passed" \
   expect-fail "$r" "clears its threshold now"
 want "D5 --update drops it" expect-pass "$r" "retightened to 1 pairing(s)" "--update"
 entry_is "D6 the cleared pairing is gone" "$r" muted bg absent
 
 # ── B: bootstrap runs once ───────────────────────────────────────────────────
-r="$(new_root bootstrap_guard)"
+r="$(seeded_root bootstrap_guard "muted bg 4.47")"
 want "B1 --bootstrap refuses when the ratchet already exists" \
   expect-fail "$r" "refusing to bootstrap" "--bootstrap"
 entry_is "B2 the refused --bootstrap left the ratchet intact" "$r" muted bg 4.47

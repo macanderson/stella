@@ -170,3 +170,35 @@ fn a_different_fingerprint_still_counts_as_pending() {
         "a fingerprint that has embedded nothing must still see the file as pending"
     );
 }
+
+/// **The witness for `code_graph_chunk_vectors_coverage`.** The coverage
+/// predicate asks, per file, whether a chunk row exists under the fingerprint
+/// for the file's current hash. Before the index existed the planner answered
+/// from `code_graph_chunk_vectors_fp` and walked every chunk row of the
+/// fingerprint, vector blob included, once per file. On one workspace that
+/// made a single count eleven seconds, and the readiness gate asks for it
+/// after every embedding batch. The plan is the fact this test pins: the
+/// chunk-table step of the count must probe the coverage index, never scan
+/// the fingerprint one.
+#[test]
+fn the_coverage_predicate_probes_its_own_index_not_the_fingerprint_scan() {
+    let (_ws, conn) = indexed_workspace(&[("a.rs", "fn alpha() {}\n")]);
+    let mut stmt = conn
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM code_graph_files f WHERE {NEEDS_CHUNK_PASS}"
+        ))
+        .expect("prepare");
+    let plan: Vec<String> = stmt
+        .query_map([FP], |row| row.get::<_, String>(3))
+        .expect("plan")
+        .collect::<Result<_, _>>()
+        .expect("rows");
+    let chunk_step = plan
+        .iter()
+        .find(|step| step.contains("code_graph_chunk_vectors"))
+        .unwrap_or_else(|| panic!("no chunk-table step in the plan: {plan:?}"));
+    assert!(
+        chunk_step.contains("code_graph_chunk_vectors_coverage"),
+        "the coverage check must probe its covering index; the plan chose {chunk_step:?}"
+    );
+}

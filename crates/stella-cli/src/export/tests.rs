@@ -735,7 +735,7 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
         "--hairline: #26262C;",
         "--text: #E8E8EC;",
         "--text-2: #A9AAB5;",
-        "--text-3: #777782;",
+        "--text-3: #7C7C87;",
         "--accent: #E8E8EC;",
         "--identity: #EFC53F;",
         "--ok: #74C991;",

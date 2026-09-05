@@ -10,13 +10,27 @@
 //! (`command_deck::steer::interrupt_lead`).
 //!
 //! The bang ran shell commands before this. The bang family takes it back:
-//! `!!` and `!!!` will mean "stop, and keep this rule". So `!ls` still runs
-//! `ls` for one more release, and it says where the shell mark went. `! ls`
-//! does not. A space after the bang is what the family shares.
+//! `!!` and `!!!` mean "stop, and keep this". So `!ls` still runs `ls` for one
+//! more release, and it says where the shell mark went. `! ls` does not. A
+//! space after the last bang is what the family shares.
+//!
+//! Counting the bangs is how hard the words push:
+//!
+//! | Input | Meaning |
+//! |---|---|
+//! | `! text` | stop the turn, run `text` next |
+//! | `!! text` | the same stop, and keep `text` as guidance the agent should follow |
+//! | `!!! text` | the same stop, and keep `text` as a rule it must follow |
+//!
+//! What "keep" writes is a context record, which every later session in this
+//! workspace loads through the ordinary record plane. The deck only says which
+//! strength was asked for; the driver owns the write
+//! (`command_deck::keep_record`).
 //!
 //! Split out of [`super`], a god file closed to growth.
 
 use super::*;
+use crate::envelope::KeepStrength;
 
 /// The mark a line starts with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,28 +42,45 @@ enum Mark {
     LegacyShell,
     /// `!` then a space: stop the running turn and run the rest next.
     Steer,
+    /// `!!` or `!!!` then a space: the same stop, and keep the rest as a
+    /// context record at this strength.
+    Keep(KeepStrength),
 }
 
 /// The mark `text` carries, and the words after it. `None` when the line
 /// carries no mark and is a plain prompt.
 ///
-/// A bang is a [`Mark::Steer`] only when a space follows it. That space is
-/// the whole difference between `! use short sentences` and `!ls`. It is also
-/// the shape the whole family shares. And it leaves the old shell spelling
-/// people's hands already type. Nobody writes `! ls` for a shell command.
+/// A bang run is a mark only when a space follows it. That space is the whole
+/// difference between `! use short sentences` and `!ls`, and it is what the
+/// whole family shares. It also leaves the old shell spelling people's hands
+/// already type: nobody writes `! ls` for a shell command, and `!!important`
+/// still reaches the shell as `!important`.
+///
+/// Bangs past the third are not a fourth strength — `!!!!` is refused as a
+/// mark rather than read as the strongest one, because guessing which of two
+/// meanings a typo intended is how a stray keystroke publishes a rule.
 fn parse(text: &str) -> Option<(Mark, &str)> {
     let head = text.trim_start();
     if let Some(rest) = head.strip_prefix('$') {
         return Some((Mark::Shell, rest.trim()));
     }
-    // Only the first bang is the mark. A command whose own text starts with a
-    // bang keeps it: `!important` is typed as `!!important`.
-    let rest = head.strip_prefix('!')?;
-    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-        Some((Mark::Steer, rest.trim()))
-    } else {
-        Some((Mark::LegacyShell, rest.trim()))
+    let bangs = head.chars().take_while(|c| *c == '!').count();
+    if bangs == 0 {
+        return None;
     }
+    let rest = &head[bangs..];
+    if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+        // The old spelling, which owns only the first bang: the rest of the
+        // run belongs to the command's own text.
+        return Some((Mark::LegacyShell, head[1..].trim()));
+    }
+    let mark = match bangs {
+        1 => Mark::Steer,
+        2 => Mark::Keep(KeepStrength::Guidance),
+        3 => Mark::Keep(KeepStrength::Rule),
+        _ => return None,
+    };
+    Some((mark, rest.trim()))
 }
 
 /// Whether a marked line beats a gate that is waiting for an answer.
@@ -85,6 +116,7 @@ pub(super) fn dispatch(ui: &mut DeckUi, model: &WorkspaceModel, text: String) ->
             DeckAction::Shell(rest)
         }
         Mark::Steer => steer(ui, model, rest),
+        Mark::Keep(strength) => keep(ui, model, rest, strength),
     }
 }
 
@@ -110,6 +142,50 @@ fn steer(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckAction {
     DeckAction::Send(WorkspaceInput::Interrupt {
         agent: agent.meta.id.clone(),
         texts: vec![text],
+        keep: None,
+    })
+}
+
+/// `!! text` and `!!! text`: the interrupt above, with the words kept.
+///
+/// The save must not depend on what the session happens to be doing, so this
+/// sends the interrupt whether or not a turn is running. With nothing to stop,
+/// the driver reads that message as "run this now" — what a bang has always
+/// meant at rest — and writes the record either way. A deck with no agent at
+/// all has no interrupt to send and falls back to the plain prompt route; the
+/// composer is not reachable before the lead registers, so that arm is
+/// totality rather than a case anyone sees.
+///
+/// The note says what is being kept, not that it was kept: the write happens
+/// driver-side, and only the driver can report how it went.
+fn keep(
+    ui: &mut DeckUi,
+    model: &WorkspaceModel,
+    text: String,
+    strength: KeepStrength,
+) -> DeckAction {
+    let Some(agent) = model
+        .agents
+        .get(ui.focused)
+        .or_else(|| model.agents.first())
+    else {
+        return super::submit_prompt(ui, model, text);
+    };
+    let running = agent.status == crate::AgentStatus::Running;
+    let keeping = match strength {
+        KeepStrength::Guidance => "keeping that as guidance for this workspace",
+        KeepStrength::Rule => "keeping that as a rule for this workspace",
+    };
+    let tail = if running {
+        "stopping at the next step boundary"
+    } else {
+        "nothing was running, so it also went out as a prompt"
+    };
+    note(ui, &format!("{keeping} — {tail}"));
+    DeckAction::Send(WorkspaceInput::Interrupt {
+        agent: agent.meta.id.clone(),
+        texts: vec![text],
+        keep: Some(strength),
     })
 }
 
@@ -146,6 +222,30 @@ mod tests {
             Some((Mark::LegacyShell, "!important"))
         );
         assert_eq!(parse("!"), Some((Mark::Steer, "")));
+    }
+
+    /// Counting the bangs is the strength, and the space still separates the
+    /// family from the old shell spelling.
+    #[test]
+    fn the_bang_count_says_how_hard_the_words_push() {
+        assert_eq!(
+            parse("!! use short sentences"),
+            Some((Mark::Keep(KeepStrength::Guidance), "use short sentences"))
+        );
+        assert_eq!(
+            parse("!!! do not force-push"),
+            Some((Mark::Keep(KeepStrength::Rule), "do not force-push"))
+        );
+        assert_eq!(parse("!!ls"), Some((Mark::LegacyShell, "!ls")));
+        assert_eq!(parse("!!"), Some((Mark::Keep(KeepStrength::Guidance), "")));
+    }
+
+    /// A fourth bang is a typo, not a fourth strength. It carries no mark, so
+    /// the line goes out as the prompt it reads as.
+    #[test]
+    fn a_fourth_bang_is_not_a_stronger_rule() {
+        assert_eq!(parse("!!!! do not force-push"), None);
+        assert!(!claims_submission("!!!! do not force-push"));
     }
 
     #[test]

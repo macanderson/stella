@@ -65,9 +65,19 @@ fn every_observation_source_grades_to_one_named_thing() {
         observation_grade(ObservationSource::ReflectionLesson),
         ProvenanceGrade::ModelCritique
     );
-    assert_eq!(
-        observation_grade(ObservationSource::MemoryCitation),
-        ProvenanceGrade::ModelCritique
+}
+
+/// `ObservationSource::MemoryCitation` is retired: this payload once
+/// deserialized to `Ok(MemoryCitation)`, the one option only tests could ever
+/// construct, since nothing wrote a real one. The same bytes are now a parse
+/// error, which states plainly that the source does not exist to name.
+#[test]
+fn memory_citation_is_retired_and_no_longer_parses() {
+    let parsed: Result<ObservationSource, _> = serde_json::from_str(r#""memory_citation""#);
+    assert!(
+        parsed.is_err(),
+        "MemoryCitation was retired, since no real turn ever produced one — \
+         the wire form must not resurrect it"
     );
 }
 
@@ -105,7 +115,8 @@ fn a_proposal_carries_the_grade_of_the_observations_behind_it() {
 /// **The laundering case, at the hop rather than in the abstract.** Three
 /// reflection lessons agreeing across three separate tasks is the strongest
 /// shape the mining path can produce from model critique alone — it clears the
-/// distinct-task floor, and it still must not authorise a tool.
+/// distinct-task floor, so it is graded as the mined pattern it is, and it
+/// still must not authorise a tool.
 #[test]
 fn three_agreeing_reflections_across_three_tasks_still_cannot_publish_a_tool() {
     let observations = [
@@ -131,23 +142,46 @@ fn three_agreeing_reflections_across_three_tasks_still_cannot_publish_a_tool() {
         "the fixture must clear the existing anti-poisoning floor, so the \
          refusal below is the grade's doing and not the floor's"
     );
-    assert_eq!(proposal.provenance, Some(ProvenanceGrade::ModelCritique));
+    assert_eq!(
+        proposal.provenance,
+        Some(ProvenanceGrade::TrajectoryAbstraction),
+        "a pattern across three distinct tasks is what that rung names"
+    );
 
     let refusal = authorises(
         proposal.provenance,
         PublicationAuthority::LocalHuman,
         ImpactClass::ExecutableTool,
     )
-    .expect_err("an eligible proposal graded on critique alone still cannot publish a tool");
+    .expect_err("an eligible proposal mined from critique still cannot publish a tool");
     assert!(
         refusal.reason().contains("deterministic_proof"),
         "{}",
         refusal.reason()
     );
+
+    authorises(
+        proposal.provenance,
+        PublicationAuthority::Agent,
+        ImpactClass::PromptHint,
+    )
+    .expect("…and the hint it may be trialled as is now reachable");
+
+    authorises(
+        proposal.provenance,
+        PublicationAuthority::LocalHuman,
+        ImpactClass::SteeringDirective,
+    )
+    .expect_err("the lift caps below the grade a directive that steers requires");
 }
 
 /// One weak observation weakens a pool that is otherwise measured — the fold
 /// is a floor, not an average, so a critique cannot be outvoted.
+///
+/// Spread across three tasks the pool is also a mined pattern and is graded as
+/// one, which is still short of the measurement two thirds of it came from.
+/// Recurrence buys the rung below; it never buys back the one the critique
+/// cost.
 #[test]
 fn a_single_critique_weakens_a_pool_of_measurements() {
     let observations = [
@@ -159,7 +193,45 @@ fn a_single_critique_weakens_a_pool_of_measurements() {
         .expect("constructor-built observations hash clean")
         .expect("a non-empty pool");
 
+    assert_eq!(pool.grade(), ProvenanceGrade::TrajectoryAbstraction);
+    assert!(pool.grade() < ProvenanceGrade::EnvironmentObservation);
+}
+
+/// The same three lessons inside **one** task do not lift, so the lift reads
+/// distinct tasks and never occurrences — spec §7 at the grade rather than at
+/// the eligibility floor.
+#[test]
+fn three_restatements_inside_one_task_do_not_lift() {
+    let observations = [
+        observation(ObservationSource::ReflectionLesson, "task-a", "prefer rg"),
+        observation(ObservationSource::ReflectionLesson, "task-a", "rg again"),
+        observation(
+            ObservationSource::ReflectionLesson,
+            "task-a",
+            "rg once more",
+        ),
+    ];
+    let pool = EvidencePool::from_observations(&observations)
+        .expect("constructor-built observations hash clean")
+        .expect("a non-empty pool");
+
     assert_eq!(pool.grade(), ProvenanceGrade::ModelCritique);
+}
+
+/// A pool of measurements spanning three tasks keeps the stronger grade it
+/// already had — the lift is a `max`, so it can never talk evidence down.
+#[test]
+fn the_lift_never_weakens_a_pool_of_measurements() {
+    let observations = [
+        observation(ObservationSource::ToolOutcome, "task-a", "exit 1"),
+        observation(ObservationSource::ToolOutcome, "task-b", "exit 1"),
+        observation(ObservationSource::ToolOutcome, "task-c", "exit 1"),
+    ];
+    let pool = EvidencePool::from_observations(&observations)
+        .expect("constructor-built observations hash clean")
+        .expect("a non-empty pool");
+
+    assert_eq!(pool.grade(), ProvenanceGrade::EnvironmentObservation);
 }
 
 /// No observations is no grade, and that has to reach the record rather than
@@ -241,4 +313,115 @@ fn a_forged_observation_cannot_mint_a_grade() {
         .expect_err("a hash that does not cover this content must refuse to fold");
     assert_eq!(err.record_id, forged.record_id);
     assert_eq!(err.stored, forged.record_hash);
+}
+
+/// One person confirming one proposal is the whole of `human_review` — the
+/// system deciding is not a person, and a decision *against* a claim supplies
+/// no evidence for it.
+#[test]
+fn only_a_person_confirming_supplies_a_review_grade() {
+    assert_eq!(
+        decision_grade(PromotionActor::User, PromotionAction::Confirmed),
+        Some(ProvenanceGrade::HumanReview)
+    );
+    assert_eq!(
+        decision_grade(PromotionActor::System, PromotionAction::Confirmed),
+        None,
+        "the loop acting under policy is not a person reading a claim"
+    );
+    assert_eq!(
+        decision_grade(PromotionActor::User, PromotionAction::Rejected),
+        None,
+        "a decision against a claim is not evidence for it"
+    );
+    assert_eq!(
+        decision_grade(PromotionActor::System, PromotionAction::AutoActivated),
+        None
+    );
+}
+
+/// The published grade keeps the stronger of the two derivations, and a
+/// missing half leaves the other alone rather than pulling it down.
+#[test]
+fn a_review_lifts_a_critique_and_never_talks_a_pattern_down() {
+    assert_eq!(
+        published_grade(
+            Some(ProvenanceGrade::ModelCritique),
+            Some(ProvenanceGrade::HumanReview)
+        ),
+        Some(ProvenanceGrade::HumanReview),
+        "a person read a claim that had only a model's opinion behind it"
+    );
+    assert_eq!(
+        published_grade(
+            Some(ProvenanceGrade::TrajectoryAbstraction),
+            Some(ProvenanceGrade::HumanReview)
+        ),
+        Some(ProvenanceGrade::TrajectoryAbstraction),
+        "being read must not cost a mined pattern the rung it earned"
+    );
+    assert_eq!(
+        published_grade(Some(ProvenanceGrade::ModelCritique), None),
+        Some(ProvenanceGrade::ModelCritique)
+    );
+    assert_eq!(
+        published_grade(None, Some(ProvenanceGrade::HumanReview)),
+        Some(ProvenanceGrade::HumanReview)
+    );
+    assert_eq!(published_grade(None, None), None, "absent stays absent");
+}
+
+/// **Every rung is reachable, or the gap is declared.**
+///
+/// A grade nothing constructs neither authorises nor blocks anything; it only
+/// moves where the real boundary sits, and three `ImpactClass` floors sit on
+/// rungs only this sweep keeps reachable. Each arm below calls a real
+/// production derivation and asserts what it yields, so a rung that stops
+/// being produced fails here rather than going quiet.
+///
+/// The `match` is exhaustive on purpose: a sixth grade is a compile error in
+/// this file, which is the question its author has to answer before the enum
+/// can grow.
+#[test]
+fn every_grade_is_produced_or_its_gap_is_declared() {
+    let mined = [
+        observation(ObservationSource::ReflectionLesson, "task-a", "prefer rg"),
+        observation(ObservationSource::ReflectionLesson, "task-b", "rg again"),
+        observation(
+            ObservationSource::ReflectionLesson,
+            "task-c",
+            "rg once more",
+        ),
+    ];
+
+    for &grade in ProvenanceGrade::ALL {
+        let produced = match grade {
+            ProvenanceGrade::ModelCritique => {
+                observation_grade(ObservationSource::ReflectionLesson)
+            }
+            ProvenanceGrade::HumanReview => {
+                decision_grade(PromotionActor::User, PromotionAction::Confirmed)
+                    .expect("a user confirmation is graded")
+            }
+            ProvenanceGrade::TrajectoryAbstraction => EvidencePool::from_observations(&mined)
+                .expect("constructor-built observations hash clean")
+                .expect("a non-empty pool")
+                .grade(),
+            ProvenanceGrade::EnvironmentObservation => {
+                observation_grade(ObservationSource::ToolOutcome)
+            }
+            // Declared gap (`#5955`). The fail-to-pass witness that earns
+            // this rung is run by a verification plugin, and none ships here,
+            // so producing it in this workspace would mean asserting it —
+            // the one move the provenance policy forbids.
+            ProvenanceGrade::DeterministicProof => continue,
+        };
+        assert_eq!(
+            produced,
+            grade,
+            "the production path named for {} yields {} instead",
+            grade.as_str(),
+            produced.as_str()
+        );
+    }
 }

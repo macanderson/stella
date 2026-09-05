@@ -12,7 +12,7 @@ use crate::package::ContributionKind;
 use crate::panel::{PanelDenial, PanelSurface};
 use crate::runtime::ProcessBlock;
 use crate::wire::WrapperPoint;
-use crate::wrapper::{HostStage, Signal, SignalKind, StageName};
+use crate::wrapper::{HostStage, Signal, SignalKind, StageBand, StageName};
 
 /// A manifest failed to parse or failed validation.
 ///
@@ -904,6 +904,29 @@ pub enum ManifestError {
     DuplicateWrapperStage {
         /// The stage that appeared twice.
         stage: StageName,
+    },
+
+    /// A stage in an earlier band was written below one in a later band.
+    ///
+    /// A host walks the bands in order, so this manifest's own two stages
+    /// would run in the opposite order to the one it wrote them in. The
+    /// graph check that follows reads the written order, so it would be
+    /// proving something about an order the run does not take. Moving the
+    /// line up is the whole fix.
+    #[error(
+        "[wrapper] declares stage \"{stage}\" in band {band} after \"{after}\" in band \
+         {after_band}: write the stages in band order (early, then normal, then late), \
+         because that is the order a turn runs them in"
+    )]
+    StageBandOutOfOrder {
+        /// The stage written out of band order.
+        stage: StageName,
+        /// The band it asked for.
+        band: StageBand,
+        /// The stage above it.
+        after: StageName,
+        /// The band that stage is in.
+        after_band: StageBand,
     },
 
     /// A `[[wrapper.stages]]` entry named a blank stage.

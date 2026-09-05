@@ -24,7 +24,7 @@
   --ground:#0A0A0C;--text:#E8E8EC;--text-2:#A9AAB5;
   --ok:#74C991;--bad:#E0687A;--identity:#EFC53F}
 @media (prefers-color-scheme:light){:root{
-  --ground:#FFFFFF;--text:#0A0A0C;--text-2:#4B4B56;
+  --ground:#FFFFFF;--text:#0A0A0C;--text-2:#5F5F6A;
   --ok:#006933;--bad:#96213C;--identity:#725a00}}
 body{margin:0;padding:48px;background:var(--ground);color:var(--text);
   font:13px/1.55 "JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}

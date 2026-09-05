@@ -171,6 +171,16 @@ explanation.
     var always overrides this, either direction, for one launch. See
     [The project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
   </OptionCard>
+  <OptionCard name="run.active_plugins">
+    Which installed plugins take part in every turn, in the order they run. Installing
+    a plugin puts it on disk and leaves it inert; a name here is what makes it join a
+    turn, and taking the name out puts the turn back as it was. `--pipeline <id>` still
+    wins for one run — it means "run with exactly this". A name that is not installed,
+    or that `[plugins]` has switched off, runs nothing and says so once at start-up.
+    The order is written down rather than taken from the order you installed things, so
+    two clones of a repository compose the same turn. **A project's own `stella.toml`
+    is honored here only when the project is trusted**, because a name here makes    stella start a program.
+  </OptionCard>
 </CardGrid>
 
 ```toml title="stella.toml"
@@ -178,6 +188,7 @@ explanation.
 create_worktrees = "ask"
 ignore_gitignore = "on"
 auto_trust_project = false
+active_plugins = ["stella-plan", "vera"]
 ```
 
 `run.recap` and `run.trace_capture` do nothing. Setting either one is not a typo and is

@@ -1,9 +1,9 @@
-//! Phase 4 deliverable 2: citations and tool outcomes are evidence sources
-//! alongside reflection lessons — without changing what citation already means.
+//! Phase 4 deliverable 2: a failed tool call is an evidence source, alongside
+//! reflection lessons. `evidence.rs`'s module doc covers the other source,
+//! `MemoryCitation`. It is retired, and this module does not test it.
 
 use stella_context::{AppendOutcome, ContextStore};
 use stella_records::context_record::{ContextRecordKind, ObservationRecord, ObservationSource};
-use stella_store::MemoryCitationRow;
 
 use super::*;
 
@@ -15,15 +15,6 @@ fn store() -> (tempfile::TempDir, ContextStore) {
     (dir, store)
 }
 
-fn citation(memory_id: &str, score: i64, truthful: bool, remark: &str) -> MemoryCitationRow {
-    MemoryCitationRow {
-        memory_id: memory_id.into(),
-        useful_score: score,
-        truthful,
-        remark: remark.into(),
-    }
-}
-
 fn observations(store: &ContextStore) -> Vec<ObservationRecord> {
     store
         .records_of_kind(ContextRecordKind::Observation.as_str(), 100)
@@ -31,48 +22,6 @@ fn observations(store: &ContextStore) -> Vec<ObservationRecord> {
         .into_iter()
         .filter_map(|row| serde_json::from_str(&row.body).ok())
         .collect()
-}
-
-#[test]
-fn a_negative_citation_becomes_a_citation_sourced_observation() {
-    let (_dir, store) = store();
-    let outcome = citation_observation(
-        &store,
-        &citation("nod_a", 1, false, "the path it names was deleted"),
-        "task1",
-        AT,
-    );
-
-    assert_eq!(outcome, Some(AppendOutcome::Appended));
-    let observations = observations(&store);
-    assert_eq!(observations.len(), 1);
-    assert_eq!(observations[0].source, ObservationSource::MemoryCitation);
-    assert!(
-        observations[0]
-            .text
-            .contains("the path it names was deleted")
-    );
-    assert_eq!(observations[0].task_id, "task1");
-}
-
-#[test]
-fn a_positive_citation_is_not_mined_because_it_would_cite_itself() {
-    let (_dir, store) = store();
-    // Spec §7: a proposal may not cite itself. "This memory was right" is the
-    // memory restating its own claim.
-    let outcome = citation_observation(&store, &citation("nod_a", 5, true, "spot on"), "task1", AT);
-
-    assert_eq!(outcome, None);
-    assert!(observations(&store).is_empty());
-}
-
-#[test]
-fn a_citation_with_no_remark_records_nothing() {
-    let (_dir, store) = store();
-    let outcome = citation_observation(&store, &citation("nod_a", 1, false, "   "), "task1", AT);
-
-    assert_eq!(outcome, None);
-    assert!(observations(&store).is_empty());
 }
 
 #[test]
@@ -116,13 +65,12 @@ fn repeated_failures_of_one_tool_cluster_under_one_candidate() {
 #[test]
 fn re_appending_the_same_evidence_is_a_replay() {
     let (_dir, store) = store();
-    let row = citation("nod_a", 1, false, "wrong");
     assert_eq!(
-        citation_observation(&store, &row, "task1", AT),
+        tool_outcome_observation(&store, "run_tests", "linker not found", "task1", AT),
         Some(AppendOutcome::Appended)
     );
     assert_eq!(
-        citation_observation(&store, &row, "task1", AT),
+        tool_outcome_observation(&store, "run_tests", "linker not found", "task1", AT),
         Some(AppendOutcome::AlreadyPresent),
         "content-derived ids must absorb a re-scan as a replay"
     );
@@ -183,8 +131,8 @@ fn bounded_never_splits_a_multibyte_character() {
 
 #[test]
 fn the_citation_loops_own_thresholds_are_untouched() {
-    // The deliverable keeps citation semantics. This module must not have
-    // introduced a second quarantine path or moved the shipped constants.
+    // Removing the citation observation source must not move these
+    // shipped constants.
     assert_eq!(stella_store::QUARANTINE_NEGATIVES_THRESHOLD, 2);
     assert_eq!(stella_store::PROMOTION_CITATIONS_REQUIRED, 10);
     assert_eq!(stella_store::POSITIVE_SCORE_MIN, 3);

@@ -513,12 +513,16 @@ pub(crate) async fn run_goal_wrapped_turn(
                     kind: None,
                 };
             }
-            // SPEC 8.1's board, on the stream the deck and the recorded journal
-            // both read. Emitted per round rather than once at the end: a
-            // held-open wrapper re-judges every round, so the board a reader
-            // sees beside round 2's work has to be round 2's — one board at the
-            // end would report the last round's gates over the whole run.
-            //
+            // The training label's only producer, and the board just below
+            // it. A held-open wrapper re-judges every round. So the pair a
+            // reader sees beside round 2's work has to be round 2's — sent
+            // once at the end, either one would report only the last
+            // round's verdict.
+            let _ = tx.send(AgentEvent::Verdict {
+                passed: report.met(),
+                evidence: report.verdict_evidence(),
+            });
+            // SPEC 8.1's board — the same verdict rendered per requirement.
             // Nothing was re-run to produce it (`stella_runtime::wrapper::gate_board`).
             let _ = tx.send(AgentEvent::GateBoard {
                 board: report.board.clone(),

@@ -569,6 +569,8 @@ impl PluginManifest {
         // (`doc:roleless-core` §8.4, `crate::seat_key`). A `/` in either half
         // would spell a key some other plugin owns, so each half is refused a
         // `/` where it is written, not where the two are joined.
+        // Checked here rather than at install alone, because a plugin already
+        // on disk is read by every later run.
         if self.name.contains(crate::SEAT_SEPARATOR) {
             return Err(ManifestError::NameCarriesSeatSeparator {
                 name: self.name.clone(),

@@ -24,7 +24,7 @@
 │ │  ⏎               open it — a diff, a lane, a message's full text               ⏎               on PLAN: zoom the step — contract, evidence, planned vs … │ │
 │ │  ⌫               back up one level; never reaches a running turn               esc             on the zoom: back to PLAN, on the step you zoomed         │ │
 │ │  ⇞ ⇟ · Home End  a page · the ends                                             r s b i ⌥       on the zoom: re-run checks · split · hand off · promote … │ │
-│ │  tab / ⇧tab      the next / previous tab                                       >text / !text   steer at the next step boundary · ! stops there first     │ │
+│ │  tab / ⇧tab      the next / previous tab                                       >text / !text   steer at the boundary · ! stops · !! !!! keep the words   │ │
 │ │  q / esc         close any overlay                                             esc             steer: your draft + queue go INTO the running turn        │ │
 │ │                                                                                esc esc         cancel NOW & hold — nothing runs until your next prompt   │ │
 │ │                                                                                ?               this sheet                                                │ │

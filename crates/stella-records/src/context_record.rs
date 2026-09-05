@@ -93,7 +93,10 @@ pub use outcome::{
     CompletionAssessment, CompletionStatus, CorrectnessAssessment, CorrectnessStatus,
     OutcomeAssessment, OutcomeAssessmentLevel, OutcomeReason,
 };
-pub use provenance::{EvidencePool, observation_grade};
+pub use provenance::{
+    EvidencePool, TRAJECTORY_ABSTRACTION_MIN_DISTINCT_TASKS, decision_grade, observation_grade,
+    published_grade,
+};
 pub use representation::{
     ContentFidelity, FrameContentSpec, InlineContentRequirement, MinimumContentFidelity,
     Representation, validate_directive_minimum_fidelity,

@@ -56,6 +56,11 @@ pub fn detect_truecolor() -> bool {
 ///   The deck's own table (`stella-tui`'s `FALLBACKS`) has always shipped
 ///   bright green and bright red. The v1 deck and a v2 surface must not
 ///   disagree about a status colour.
+/// - [`token::WARNING`] takes plain yellow, not bright: bright yellow is
+///   already gold's stand-in, and a warning that collapsed onto it at
+///   sixteen colours would read as the mark. The deck's own `FALLBACKS`
+///   table matches this pairing by 16-index (`(WARNING, 173, 3)` — ANSI 3
+///   is plain yellow, 11 is bright).
 /// - The diff tints go to black rather than to a green and a red background.
 ///   At 16 colours a tint is not available; only a wash is, and a wash on
 ///   every changed row would spend the palette's whole red budget on a healthy
@@ -75,6 +80,7 @@ pub fn ansi16(color: Color) -> Color {
         token::MUTED | token::DIM => Color::DarkGray,
         token::GREEN => Color::LightGreen,
         token::RED => Color::LightRed,
+        token::WARNING => Color::Yellow,
         // The light-theme stops. They reach the terminal only when a paper
         // theme is active, and at sixteen colours a paper ground *is* white —
         // there is no lighter tier to distinguish panel from canvas, so they

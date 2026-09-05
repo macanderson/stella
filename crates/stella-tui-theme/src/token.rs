@@ -116,11 +116,11 @@ pub const SILVER_TYPE: Color = Color::Rgb(0xBF, 0xC1, 0xCC);
 /// Primary text on dark, in the deck. `#E8E8EC`
 pub const TEXT: Color = Color::Rgb(0xE8, 0xE8, 0xEC);
 
-/// Secondary text. `#777782`
-pub const MUTED: Color = Color::Rgb(0x77, 0x77, 0x82);
+/// Secondary text. `#7C7C87`
+pub const MUTED: Color = Color::Rgb(0x7C, 0x7C, 0x87);
 
-/// Hints, captions, line numbers. `#4B4B56`
-pub const DIM: Color = Color::Rgb(0x4B, 0x4B, 0x56);
+/// Hints, captions, line numbers. `#5F5F6A`
+pub const DIM: Color = Color::Rgb(0x5F, 0x5F, 0x6A);
 
 /// Pass, additive diff sign. `#74C991`
 pub const GREEN: Color = Color::Rgb(0x74, 0xC9, 0x91);
@@ -145,6 +145,9 @@ pub const PAPER_PANEL: Color = Color::Rgb(0xF9, 0xF6, 0xEF);
 
 /// Light border. `#E6E3DD`
 pub const PAPER_BORDER: Color = Color::Rgb(0xE6, 0xE3, 0xDD);
+
+/// Warning: the one status the core palette does not name. `#E78D54`
+pub const WARNING: Color = Color::Rgb(0xE7, 0x8D, 0x54);
 
 // ── The walkable table ─────────────────────────────────────────────
 
@@ -195,6 +198,7 @@ pub const ALL: &[(&str, Color, Clamp)] = &[
     ("paper", PAPER, Clamp::WarmPaper),
     ("paper-panel", PAPER_PANEL, Clamp::WarmPaper),
     ("paper-border", PAPER_BORDER, Clamp::WarmPaper),
+    ("amber", WARNING, Clamp::Verdict),
 ];
 
 // The predicates that read this table are in `crate::clamp`, and the

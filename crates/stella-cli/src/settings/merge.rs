@@ -416,6 +416,15 @@ impl Settings {
         if let Some(dirs) = &scope.allowed_dirs {
             self.allowed_dirs = Some(dirs.clone());
         }
+        // The standing set of plugins, and the explicit-listing rule again:
+        // omitted here it parses everywhere and merges to `None`, so every
+        // turn would run bare whatever any file said. Whole-list last-wins on
+        // `allowed_dirs`'s argument — a scope states the whole set it wants,
+        // and a half-inherited one is a set nobody wrote. The order is part of
+        // the statement, so it is kept as written.
+        if let Some(active) = &scope.active_plugins {
+            self.active_plugins = Some(active.clone());
+        }
         // External CGP providers merge per-ENTRY (like `providers`), so a
         // project scope can enable an entry the user scope declared without
         // restating its transport — but a higher scope's entry replaces the
@@ -478,6 +487,16 @@ impl Settings {
         // declared and contributes nothing of its own.
         if !trust.code_execution_trusted() && !project.context_providers.is_empty() {
             merged.context_providers = trusted_only.context_providers.clone();
+        }
+        // `active_plugins` starts a program, so it sits on the same boundary.
+        // A plugin joins every turn through a process this host spawns, which
+        // is the `git clone && stella` case the line above guards. The
+        // `plugins` map needs no such guard because it points the other way:
+        // it can only stop a plugin. An untrusted project scope therefore
+        // keeps whatever the user and managed scopes switched on and adds
+        // nothing.
+        if !trust.code_execution_trusted() && project.active_plugins.is_some() {
+            merged.active_plugins = trusted_only.active_plugins.clone();
         }
         if !trust.credentials {
             for (id, project_entry) in &project.providers {

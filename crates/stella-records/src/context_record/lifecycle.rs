@@ -51,13 +51,24 @@ pub const LIFECYCLE_SCHEMA_VERSION: &str = "1.0-draft";
 /// Where an observation came from. Small: spec §1's "extend before
 /// inventing" applies to vocabularies too, and each of these names evidence the
 /// system *already captures*.
+///
+/// A third option, `MemoryCitation`, paired a memory citation with a model's
+/// usefulness judgement. It is retired. No real turn ever wrote one: the
+/// `cite_memory` tool that collected the judgement is retired
+/// (`RETIRED_TOOL_NAMES`, `crates/stella-tools/src/catalog.rs`). Every other
+/// source only knows a memory was *shown* to the model, never that the model
+/// judged it useful or true. Marking a memory `truthful: true` just because
+/// it was shown would be a guess dressed up as evidence, and `stella-cli`'s
+/// `memory::uses::extract_one` already refuses to make that guess.
+/// `stella-store`'s `memory_citations` table, `MemoryCitationRow`/
+/// `MemoryCitationStats`, `fold_citation_stats`, and the promotion/quarantine
+/// thresholds stay in place, unused, so a later shared holdout sweep can
+/// reuse them without a new migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObservationSource {
     /// A lesson from post-turn reflection.
     ReflectionLesson,
-    /// An explicit memory citation with its usefulness judgment.
-    MemoryCitation,
     /// The outcome of a tool call.
     ToolOutcome,
 }
@@ -67,7 +78,6 @@ impl ObservationSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReflectionLesson => "reflection_lesson",
-            Self::MemoryCitation => "memory_citation",
             Self::ToolOutcome => "tool_outcome",
         }
     }
@@ -191,10 +201,12 @@ pub struct ProposalRecord {
     /// re-deriving anything.
     pub supporting_observations: Vec<String>,
     /// **How strong the evidence behind this proposal actually is** (#2782),
-    /// folded from the observations above at construction and never asserted
+    /// derived from the observations above at construction and never asserted
     /// by the code doing the promoting — see
     /// [`crate::context_record::provenance::EvidencePool`], which is the only
-    /// way to populate it.
+    /// way to populate it. The pool folds the observations' own grades. It
+    /// then counts the distinct tasks they span, so a pattern seen across
+    /// separate tasks is graded as one.
     ///
     /// The proposal has to store it because it keeps only the observations'
     /// `record_id`s and so cannot re-derive the grade later. `None` means a

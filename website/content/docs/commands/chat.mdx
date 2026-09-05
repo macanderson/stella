@@ -87,6 +87,9 @@ These prefixes skip the queue:
   <SpecCard title="Interrupt — `! …`">
     A line that starts with `!` stops the running turn at its next step boundary, keeps the steps it finished, and runs your words next.
   </SpecCard>
+  <SpecCard title="Keep — `!! …` and `!!! …`">
+    The same stop, and the words are kept. `!!` writes them to `.stella/rules/` as guidance the agent should follow; `!!!` writes a rule it must. Later sessions load either one. A session already running does not see it until it restarts.
+  </SpecCard>
   <SpecCard title="Shell — `$ …`">
     A line that starts with `$` runs immediately as a shell command, inline in the transcript, and is never queued. `!cmd` still works for one release.
   </SpecCard>

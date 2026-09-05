@@ -188,7 +188,7 @@ impl<'a> ProgressiveResolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{HostStage, PluginManifest, WrapperStage};
+    use crate::{HostStage, PluginManifest, StageBand, WrapperStage};
 
     /// Every signal at its emptiest, matching `tests/wrapper_program.rs`'s
     /// `bare()` — spelled out because [`SignalValues`] refuses `Default` on
@@ -303,10 +303,12 @@ mod tests {
                 WrapperStage {
                     name: StageName::Host(HostStage::Triage),
                     condition: Some("no-test-command".into()),
+                    band: StageBand::default(),
                 },
                 WrapperStage {
                     name: StageName::Host(HostStage::Research),
                     condition: Some("questions > 0".into()),
+                    band: StageBand::default(),
                 },
             ],
         };

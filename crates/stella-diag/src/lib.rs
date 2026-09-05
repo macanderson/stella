@@ -114,7 +114,8 @@ pub use ring::{
     prune_crash_files,
 };
 pub use sink::{
-    Bound, Capture, FailingSink, JsonlSink, Sink, SinkError, TerminalGated, TerminalHold, TextSink,
+    Bound, Capture, FailingSink, JsonlSink, LazyJsonlSink, Sink, SinkError, TerminalGated,
+    TerminalHold, TextSink,
 };
 
 mod redact;

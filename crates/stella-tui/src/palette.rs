@@ -5,7 +5,7 @@
 //!
 //! ## What is a hex here, and what is not
 //!
-//! Sixteen of these constants are **not values at all** -- they are the
+//! Seventeen of these constants are **not values at all** -- they are the
 //! generated tokens under another name:
 //!
 //! ```text
@@ -14,6 +14,7 @@
 //! TEXT_PRIMARY TEXT_EMPHASIS      ->  token::TEXT SILVER_TYPE
 //! TEXT_SECONDARY TEXT_TERTIARY    ->  token::SILVER MUTED
 //! TEXT_DIM SUCCESS DANGER INK     ->  token::DIM GREEN RED BG
+//! WARNING                         ->  token::WARNING
 //! ```
 //!
 //! They were hand-typed copies of `design/tokens/stella-tokens.json`,
@@ -21,21 +22,21 @@
 //! repository loses limits to -- a number in two places, with a comment
 //! asking the next author to copy carefully. They are re-exports now, so
 //! editing the JSON moves the deck and there is no second value to forget.
+//! `WARNING` is the newest one. `amber` always held the same `verdict`
+//! clamp `SUCCESS`/`DANGER` hold. It just had no `rust` name, so the
+//! generator never made it a constant.
 //!
 //! The rest still carry their own hex, and each is a colour the token system
 //! has no home for yet rather than an oversight (#4058):
 //!
 //! - **The light theme.** `PAPER`, `SNOW`, `PAPER_RAISED`, `PAPER_HAIRLINE`,
-//!   `INK_MUTED`, `INK_DIM`, `INK_EMPHASIS`, and the three ink golds
-//!   (`BRAND_INK`, `BRAND_INK_DEEP`, `GOLD_INK`). The JSON declares four
-//!   `web-light` stops and they disagree with these: its `paper` is pure
-//!   white where the deck paints `#F4F4F6`, and its `ink` is `#141413`
-//!   where this file means the dark ground. Reconciling them is a design
-//!   decision about what the paper theme *is*, not a remap.
-//! - **`WARNING` and the three status inks.** `#E78D54` fails the gold hue
-//!   clamp (`g/r = 0.61`, against `0.78`) and is not a verdict either, so it
-//!   has no clamp role to declare -- and the clamp is exactly the guard that
-//!   should be deciding whether an amber this close to the accent may exist.
+//!   `INK_MUTED`, `INK_DIM`, `INK_EMPHASIS`, the three ink golds (`BRAND_INK`,
+//!   `BRAND_INK_DEEP`, `GOLD_INK`), and the three status inks (`SUCCESS_INK`,
+//!   `WARNING_INK`, `DANGER_INK`). The JSON's `web-light` stops disagree with
+//!   these: its `paper` is pure white where the deck paints `#F4F4F6`, and
+//!   its `ink` is `#141413` where this file means the dark ground.
+//!   Reconciling them is a design call about what the paper theme *is*, not
+//!   a remap. The three status inks wait on that same call.
 //! - **`VOID` and `HAIRLINE_STRONG`,** derived steps either side of the
 //!   declared ramp.
 //!
@@ -215,17 +216,19 @@ pub const TEXT_EMPHASIS: Color = token::SILVER_TYPE;
 /// 7.75:1 on [`RAISED`] -- the safe small-text tone on every dark ground.
 pub const TEXT_SECONDARY: Color = token::SILVER;
 
-/// Labels and captions. 4.47:1 on ground, 4.32:1 on surface, 4.04:1 on
-/// raised -- **just under the 4.5:1 AA body floor on all three**, which is
-/// stated rather than rounded away: this is a UI/large-text tier and a
-/// caption tier, and anything a reader must actually read at 13px takes
+/// Labels and captions. 4.79:1 on ground, 4.64:1 on surface, 4.33:1 on
+/// raised -- clears the 4.5:1 AA body floor on the first two and sits
+/// fractionally under it on the third, which the ratchet never held as a
+/// pairing. This is still a UI/large-text tier and a caption tier by role,
+/// and anything a reader must actually read at 13px on a raised row takes
 /// [`TEXT_SECONDARY`] instead.
 pub const TEXT_TERTIARY: Color = token::MUTED;
 
-/// The dim tier -- 2.30:1 on ground, below every text floor and below the
-/// 3:1 graphical floor too. **Chrome only, never words**: the unfilled
-/// progress groove and nothing else. It is a real token rather than a fifth
-/// ground because it has to stay legible-as-texture against [`HAIRLINE`].
+/// The dim tier -- 3.14:1 on ground, clearing the 3:1 graphical/large-text
+/// floor and still under the 4.5:1 body floor. **Chrome only, never words**:
+/// the unfilled progress groove and nothing else. It is a real token rather
+/// than a fifth ground because it has to stay legible-as-texture against
+/// [`HAIRLINE`].
 pub const TEXT_DIM: Color = token::DIM;
 
 // -- Status ------------------------------------------------------
@@ -248,7 +251,7 @@ pub const SUCCESS: Color = token::GREEN;
 /// lands 39.1 deg from gold and 38.9 deg from danger -- so a reader can tell
 /// a warning from the mark *and* from a failure by hue, not just by glyph.
 /// It carries the same cool pull as its two neighbours (chroma 0.131).
-pub const WARNING: Color = Color::Rgb(0xE7, 0x8D, 0x54);
+pub const WARNING: Color = token::WARNING;
 
 /// Error / failed / removed. 6.06:1 on ground, OKLCH hue 12.8 (78.0 deg from
 /// the gold accent).
@@ -301,10 +304,10 @@ pub const INK: Color = token::BG;
 ///
 /// Named for its ground, like [`INK_DIM`] and [`INK_EMPHASIS`]. It was
 /// `MUTED` until #5001, which put it one word away from
-/// `stella_tui_theme::token::MUTED` `#777782` -- the dark ramp's tier below
-/// silver, a different colour on a different ground, with nothing at a call
-/// site to say which one a line had reached. #4966 removed the third
-/// constant of that name; this is the last of them.
+/// `stella_tui_theme::token::MUTED` -- the dark ramp's tier below silver, a
+/// different colour on a different ground, with nothing at a call site to say
+/// which one a line had reached. #4966 removed the third constant of that
+/// name; this is the last of them.
 pub const INK_MUTED: Color = Color::Rgb(0x5E, 0x5E, 0x69);
 
 /// Tertiary text on paper -- 4.72:1 on [`PAPER`], the counterpart of
