@@ -87,6 +87,9 @@ mod paths;
 // that selects it (`--plain`, `STELLA_PLAIN`, `plain_fallback`); it was
 // `tui` until #2421, which was the one name it is not.
 mod plain;
+// Which installed plugins take part in every turn (`active_plugins`), and the
+// wrapper ids that set resolves to.
+mod plugin_activation;
 // An accepted `[[capabilities]]` list, as the `AuthzGate` rule that refuses
 // the installed plugin everything else (#3482).
 mod plugin_authz;
@@ -960,8 +963,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             require_verdict,
             output_format,
         } => {
-            let pipeline_choice =
-                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
+            // What settings switched on, when the command named nothing. A
+            // `--pipeline` still wins: it says "run with exactly this".
+            let standing = wrapper_plugin::standing_pipeline(&cfg);
+            let pipeline_choice = wrapper_plugin::PipelineChoice::resolve(
+                no_pipeline,
+                pipeline.as_deref().or(standing.as_deref()),
+            )?;
             // A verification flag with nowhere to land is refused before the
             // prompt is even resolved, not silently dropped after a paid call
             // starts (#3696).
@@ -1055,8 +1063,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // The same gate `run` applies, for the same reason: a benchmark
             // adapter that silently ignores `--test-command` reports a number
             // measured without the oracle the runner asked for.
+            let standing = wrapper_plugin::standing_pipeline(&cfg);
             wrapper_plugin::reject_verification_flags_without_pipeline(
-                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?,
+                wrapper_plugin::PipelineChoice::resolve(
+                    no_pipeline,
+                    pipeline.as_deref().or(standing.as_deref()),
+                )?,
                 test_command.as_deref(),
                 false,
                 false,
@@ -1084,8 +1096,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             test_command,
             require_verdict,
         } => {
-            let pipeline_choice =
-                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
+            let standing = wrapper_plugin::standing_pipeline(&cfg);
+            let pipeline_choice = wrapper_plugin::PipelineChoice::resolve(
+                no_pipeline,
+                pipeline.as_deref().or(standing.as_deref()),
+            )?;
             // The raw goal loop runs no oracle of its own, so a
             // `--test-command` with no `--pipeline` names a check nothing
             // would ever run — refused rather than dropped, the same rule
@@ -1155,8 +1170,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             require_verdict,
             output_format,
         } => {
-            let pipeline_choice =
-                wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
+            let standing = wrapper_plugin::standing_pipeline(&cfg);
+            let pipeline_choice = wrapper_plugin::PipelineChoice::resolve(
+                no_pipeline,
+                pipeline.as_deref().or(standing.as_deref()),
+            )?;
             // Honored on `--pipeline <variant>` and meaningless without one,
             // so it is refused here rather than accepted and ignored (#3554,
             // this door #4543).

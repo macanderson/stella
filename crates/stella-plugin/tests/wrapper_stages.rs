@@ -19,7 +19,7 @@
 
 use stella_plugin::{
     CompareOp, Condition, HostStage, MAX_CONTRIBUTED_STAGE_LEN, ManifestError, PluginManifest,
-    Signal, SignalKind, SignalValues, StageName, Wrapper,
+    Signal, SignalKind, SignalValues, StageBand, StageName, Wrapper,
 };
 use stella_protocol::StageKind;
 
@@ -892,4 +892,104 @@ fn a_contributed_stage_round_trips_through_serde() {
     );
     let read_back: Wrapper = serde_json::from_str(&json).expect("deserializes");
     assert_eq!(read_back, wrapper);
+}
+
+// --- The band a stage runs in. ----------------------------------------
+
+/// **Witness.** A stage says which band it runs in, and a stage that says
+/// nothing runs in the middle one.
+///
+/// Fails on the base commit: `band` is not a manifest key there, and
+/// `deny_unknown_fields` refuses a stage that carries one.
+#[test]
+fn a_stage_declares_the_band_it_runs_in() {
+    let wrapper = parse(&wrapper_manifest(
+        "[[wrapper.stages]]\n\
+         name = \"triage\"\n\
+         band = \"early\"\n\
+         [[wrapper.stages]]\n\
+         name = \"execute\"\n\
+         [[wrapper.stages]]\n\
+         name = \"reflect\"\n\
+         band = \"late\"\n",
+    ))
+    .expect("loads")
+    .wrapper
+    .expect("[wrapper]");
+
+    let bands: Vec<StageBand> = wrapper.stages.iter().map(|stage| stage.band).collect();
+    assert_eq!(
+        bands,
+        vec![StageBand::Early, StageBand::Normal, StageBand::Late],
+        "the middle band is what a stage gets by saying nothing"
+    );
+}
+
+/// A stage written above a stage in an earlier band is refused, because a host
+/// walks the bands in order and would run the two the other way round.
+#[test]
+fn a_manifest_that_walks_backwards_through_the_bands_is_refused() {
+    let error = parse(&wrapper_manifest(
+        "[[wrapper.stages]]\n\
+         name = \"reflect\"\n\
+         band = \"late\"\n\
+         [[wrapper.stages]]\n\
+         name = \"triage\"\n\
+         band = \"early\"\n",
+    ))
+    .expect_err("late above early has no one order");
+
+    match error {
+        ManifestError::StageBandOutOfOrder {
+            stage,
+            band,
+            after_band,
+            ..
+        } => {
+            assert_eq!(stage.as_str(), "triage");
+            assert_eq!(band, StageBand::Early);
+            assert_eq!(after_band, StageBand::Late);
+        }
+        other => panic!("expected StageBandOutOfOrder, got {other:?}"),
+    }
+}
+
+/// A stage that names no band writes none back, so a manifest round-trips as
+/// the author wrote it.
+#[test]
+fn an_unnamed_band_stays_unwritten_on_the_wire() {
+    let wrapper = parse(&wrapper_manifest(
+        "[[wrapper.stages]]\n\
+         name = \"execute\"\n",
+    ))
+    .expect("loads")
+    .wrapper
+    .expect("[wrapper]");
+
+    let json = serde_json::to_string(&wrapper).expect("serializes");
+    assert!(
+        !json.contains("band"),
+        "a stage that named no band sends none: {json}"
+    );
+    let read_back: Wrapper = serde_json::from_str(&json).expect("deserializes");
+    assert_eq!(read_back, wrapper);
+}
+
+/// A plugin name holding the seat separator is refused, so `<plugin>/<role>`
+/// has one reading.
+#[test]
+fn a_plugin_name_may_not_carry_the_seat_separator() {
+    let error = parse(
+        "name = \"vera/verifier\"\n\
+         [loop]\n\
+         participation = \"steering\"\n",
+    )
+    .expect_err("a name with a slash makes one seat key mean two things");
+
+    match error {
+        ManifestError::NameHoldsSeatSeparator { name } => {
+            assert_eq!(name, "vera/verifier");
+        }
+        other => panic!("expected NameHoldsSeatSeparator, got {other:?}"),
+    }
 }

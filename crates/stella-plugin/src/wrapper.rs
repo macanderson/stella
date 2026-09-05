@@ -112,6 +112,81 @@ pub struct WrapperStage {
     /// [`PluginManifest::from_toml_str`]: crate::PluginManifest::from_toml_str
     #[serde(rename = "if", default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
+    /// Which band this stage runs in when several plugins compose.
+    ///
+    /// The coarse order over the whole active set. A host walks every
+    /// `early` stage, then every `normal` one, then every `late` one, so a
+    /// plugin says where its stage sits without knowing which other plugins
+    /// are switched on. Absent means [`StageBand::Normal`].
+    ///
+    /// A band is three words rather than a number so two authors cannot bid
+    /// each other up. Within a band the order is the one the user wrote down,
+    /// and a pair of stages the members order against each other is a load
+    /// error rather than a silent winner.
+    #[serde(default, skip_serializing_if = "StageBand::is_normal")]
+    pub band: StageBand,
+}
+
+/// Where a stage sits when the stages of several plugins are put in one order.
+///
+/// Three words, and the gap between them is what a plugin buys: a stage marked
+/// `early` runs before every `normal` one whichever plugin declared it, so the
+/// order comes from the manifests rather than from the order somebody switched
+/// the plugins on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum StageBand {
+    /// Runs before the middle band. Grounding work: recall, triage, research.
+    Early,
+    /// The middle band, and what a stage gets when the manifest says nothing.
+    #[default]
+    Normal,
+    /// Runs after the middle band. Work that reads what the turn produced.
+    Late,
+}
+
+impl StageBand {
+    /// The bands in the order a turn walks them.
+    pub const ALL: [Self; 3] = [Self::Early, Self::Normal, Self::Late];
+
+    /// Whether this is the band a manifest gets by saying nothing.
+    ///
+    /// Read by serde, so a manifest that named no band round-trips back to a
+    /// manifest that names no band.
+    #[must_use]
+    pub const fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal)
+    }
+
+    /// This band's place in the walk, counting from zero.
+    ///
+    /// The key a host sorts on. Sorting on the word itself would put `early`
+    /// after a band that starts with a letter before `e`.
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Early => 0,
+            Self::Normal => 1,
+            Self::Late => 2,
+        }
+    }
+
+    /// The word this band is written as in a manifest.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Early => "early",
+            Self::Normal => "normal",
+            Self::Late => "late",
+        }
+    }
+}
+
+impl std::fmt::Display for StageBand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl WrapperStage {
@@ -1036,6 +1111,11 @@ impl Wrapper {
         let mut published: Vec<Signal> = Vec::new();
         let mut at_risk: Vec<Signal> = Vec::new();
         let mut seen: Vec<StageName> = Vec::with_capacity(self.stages.len());
+        // The band of the last stage read, so a manifest that walks backwards
+        // through the bands is caught. The check below says why that has to be
+        // a load error.
+        let mut band_so_far = StageBand::Early;
+        let mut band_set_by: Option<StageName> = None;
         for stage in &self.stages {
             stage.name.validate_contributed()?;
             if seen.contains(&stage.name) {
@@ -1044,6 +1124,26 @@ impl Wrapper {
                 });
             }
             seen.push(stage.name.clone());
+
+            // A manifest's stages are read in the order they are written, and
+            // the signal check below leans on that: a condition may only read
+            // what an earlier stage published. A host walks the bands in
+            // order, so a manifest that writes `late` above `early` would have
+            // its two stages swapped at run time and the check above would
+            // have proved nothing. Writing them in band order costs the author
+            // one move and keeps the two orders the same order.
+            if stage.band.rank() < band_so_far.rank() {
+                return Err(ManifestError::StageBandOutOfOrder {
+                    stage: stage.name.clone(),
+                    band: stage.band,
+                    after: band_set_by.clone().unwrap_or_else(|| stage.name.clone()),
+                    after_band: band_so_far,
+                });
+            }
+            if stage.band.rank() > band_so_far.rank() {
+                band_so_far = stage.band;
+            }
+            band_set_by = Some(stage.name.clone());
 
             let condition = stage.condition()?;
             if let Some(condition) = condition {

@@ -18,14 +18,17 @@
 //! manifest declared and no user consented to at install, taken at the exact
 //! moment it is least visible.
 //!
-//! **Two** disagreements, and the fact that it is two rather than four is the
-//! interesting part:
+//! What it refuses:
 //!
 //! - **Stage order** ([`WrapperError::ConflictingStageOrder`]). The merged
 //!   order decides what a later stage can read, because a stage's
 //!   contribution reaches the next one through `BeforeTurnRequest::published`.
 //!   Picking one member's order over another's would silently decide whose
 //!   grounding the other one plans against.
+//! - **One stage in two bands**
+//!   ([`WrapperError::ConflictingStageBand`]). The band is the coarse order
+//!   over the whole set, so one stage sits in one band; taking either answer
+//!   moves that stage for the plugin that asked for the other one.
 //! - **Two arbiters** ([`WrapperError::TwoArbiters`]) — two things holding one
 //!   turn open and deciding when it is done.
 //!
@@ -50,7 +53,7 @@
 
 use std::collections::BTreeMap;
 
-use stella_plugin::{LoopGrant, Participation, PluginManifest, StageName, VerdictRule};
+use stella_plugin::{LoopGrant, Participation, PluginManifest, StageBand, StageName, VerdictRule};
 
 use super::error::WrapperError;
 
@@ -82,9 +85,8 @@ pub(crate) struct Composition {
 ///
 /// # Errors
 ///
-/// [`WrapperError::EmptyComposition`] for no members, and one of the four
-/// conflict cases in this module's header for members that cannot be
-/// reconciled.
+/// [`WrapperError::EmptyComposition`] for no members, and one of the refusals
+/// in this module's header for members that cannot be reconciled.
 pub(crate) fn compose(manifests: &[PluginManifest]) -> Result<Composition, WrapperError> {
     if manifests.is_empty() {
         return Err(WrapperError::EmptyComposition);
@@ -121,8 +123,24 @@ pub(crate) fn compose(manifests: &[PluginManifest]) -> Result<Composition, Wrapp
 /// the contradiction. A stage not yet placed is inserted at the cursor, which
 /// is the only position consistent with both what this member said and
 /// everything already agreed.
+///
+/// # The band is the coarse order over the whole set
+///
+/// The weave can only order two stages that one member named together. Two
+/// plugins that share no stage leave the order to whichever the selection
+/// named first, and that is the order somebody typed rather than one a
+/// manifest asked for. So each stage carries a [`StageBand`], and the merged
+/// order is sorted by it at the end. The sort is stable: the weave decides
+/// everything inside a band, and the band decides everything across bands.
+///
+/// The sort cannot break the weave's answer. A manifest has to write its own
+/// stages in band order — `stella_plugin`'s `Wrapper::validate` refuses one
+/// that does not — so no member's constraints run against the bands, and the
+/// sort only separates stages the weave placed side by side with nothing to
+/// say about them.
 fn merge_stage_order(manifests: &[PluginManifest]) -> Result<Vec<StageName>, WrapperError> {
-    let mut order: Vec<StageName> = Vec::new();
+    // The order so far, each stage beside the band it was declared in.
+    let mut order: Vec<(StageName, StageBand)> = Vec::new();
     // Which member first placed each stage — carried only so a conflict can
     // name both sides rather than only the one that noticed. An association
     // list rather than a map because `StageName` is not `Ord`
@@ -139,24 +157,41 @@ fn merge_stage_order(manifests: &[PluginManifest]) -> Result<Vec<StageName>, Wra
 
         for stage in &wrapper.stages {
             let name = &stage.name;
-            match order.iter().position(|placed| placed == name) {
+            let first_named_by = |placed_by: &[(StageName, String)]| {
+                placed_by
+                    .iter()
+                    .find(|(placed, _)| placed == name)
+                    .map_or_else(|| manifest.name.clone(), |(_, by)| by.clone())
+            };
+            match order.iter().position(|(placed, _)| placed == name) {
                 Some(position) if position < cursor => {
                     // `previous` is Some whenever the cursor has moved, and the
                     // cursor has moved whenever `position < cursor` can hold.
                     let second = previous.clone().unwrap_or_else(|| name.clone());
                     return Err(WrapperError::ConflictingStageOrder {
-                        wrapper: placed_by
-                            .iter()
-                            .find(|(placed, _)| placed == name)
-                            .map_or_else(|| manifest.name.clone(), |(_, by)| by.clone()),
+                        wrapper: first_named_by(&placed_by),
                         other: manifest.name.clone(),
                         first: name.to_string(),
                         second: second.to_string(),
                     });
                 }
-                Some(position) => cursor = position + 1,
+                Some(position) => {
+                    // One stage, one band. Two members asking for two bands is
+                    // refused here rather than settled, on this module's rule.
+                    let declared = order[position].1;
+                    if declared != stage.band {
+                        return Err(WrapperError::ConflictingStageBand {
+                            wrapper: first_named_by(&placed_by),
+                            other: manifest.name.clone(),
+                            stage: name.to_string(),
+                            band: declared.to_string(),
+                            other_band: stage.band.to_string(),
+                        });
+                    }
+                    cursor = position + 1;
+                }
                 None => {
-                    order.insert(cursor, name.clone());
+                    order.insert(cursor, (name.clone(), stage.band));
                     placed_by.push((name.clone(), manifest.name.clone()));
                     cursor += 1;
                 }
@@ -164,7 +199,10 @@ fn merge_stage_order(manifests: &[PluginManifest]) -> Result<Vec<StageName>, Wra
             previous = Some(name.clone());
         }
     }
-    Ok(order)
+    // Stable, so a band separates stages the weave left in one run while the
+    // weave keeps every pair it did order.
+    order.sort_by_key(|(_, band)| band.rank());
+    Ok(order.into_iter().map(|(name, _)| name).collect())
 }
 
 /// The union of the members' requirements, plus the one oracle among them.

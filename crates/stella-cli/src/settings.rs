@@ -336,6 +336,37 @@ pub struct Settings {
     /// you own, deliberately.
     #[serde(default)]
     pub plugins: BTreeMap<String, Toggle>,
+    /// `active_plugins` — which installed plugins take part in every turn, in
+    /// the order they run.
+    ///
+    /// Installing a plugin puts it on disk and records what a person agreed
+    /// to. It leaves the plugin inert. A name in this list is what makes the
+    /// plugin join each turn, and taking the name out puts the turn back
+    /// exactly as it was. `--pipeline <id>` still wins for one run: it says
+    /// "run with this and nothing else", so a measured run never picks up
+    /// whatever a machine happens to have switched on.
+    ///
+    /// The list is ordered, and the order is what a host runs the plugins in.
+    /// It is written down rather than worked out from the order somebody
+    /// installed things, because install order is invisible, differs per
+    /// machine, and would make the prompt depend on the order a person typed
+    /// commands. A stage's band is the coarse order over the whole list
+    /// (`stella_plugin::StageBand`); this list settles the rest.
+    ///
+    /// Whole-list last-wins across scopes, like `allowed_dirs`: a project
+    /// states the set it wants rather than inheriting half of somebody
+    /// else's. It sits **inside** the project trust boundary, unlike
+    /// `plugins`, and the direction is why. `plugins` can only take a plugin
+    /// away, so a cloned repository can do nothing with it but stop a program
+    /// running. This list starts one, which is the same code-execution grant
+    /// `hooks` and `context_providers` are held to, so an untrusted project
+    /// scope keeps the trusted scopes' list and adds nothing of its own.
+    ///
+    /// A name here that is not installed, or that `plugins` has switched off,
+    /// runs nothing and says so once at start-up. A quiet miss would read as
+    /// "the plugin ran and did nothing".
+    #[serde(default)]
+    pub active_plugins: Option<Vec<String>>,
     /// Authority ceilings are honored only from the org-managed settings
     /// file. The serde name is intentionally short because the containing
     /// file is already the policy source.
@@ -1242,6 +1273,7 @@ fn project_trust() -> ProjectTrust {
 /// |---|---|
 /// | Project-scope lifecycle hooks — an untrusted scope keeps only what the user/managed scopes declared | `settings::merge::merge_captured_scopes` |
 /// | Project-scope `context_providers` — a stdio entry spawns its `command` at admission, an http entry supplies its own `egress_consent` for a payload carrying workspace content | the same function, immediately below hooks |
+/// | Project-scope `active_plugins` — a name here makes the host spawn that plugin's program on every turn, so an untrusted scope keeps the user/managed list and adds nothing | the same function, immediately below `context_providers` |
 /// | The MCP servers declared in `.stella/mcp.toml` — an arbitrary stdio `command` run at session start, or an attacker-chosen http endpoint | `agent::load_mcp_plan` |
 /// | `<workspace>/.stella/plugins/` — a plugin declares a program the host spawns and can arbitrate the agent loop | `plugin_cmd::roster::read_project_tier` |
 /// | `stella self-driving`'s issue work — refused outright when the workspace declares context records that would not reach the turn, because unsteered work is indistinguishable from steered work in the pull request it produces | `self_driving_cmd::work::refuse_if_unsteered` |

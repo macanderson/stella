@@ -114,12 +114,18 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         .set(recorder.clone())
         .map_err(|_| "arena recorder installed twice in one process".to_string())?;
 
+    // The same standing set every other door reads, so an arm measured here
+    // runs the turn `stella run` would have run.
+    let standing = crate::wrapper_plugin::standing_pipeline(&cfg);
     let result = crate::agent::run_one_shot(
         &cfg,
         &prompt,
         None,
         OutputFormat::StreamJson,
-        crate::wrapper_plugin::PipelineChoice::resolve(args.no_pipeline, args.pipeline.as_deref())?,
+        crate::wrapper_plugin::PipelineChoice::resolve(
+            args.no_pipeline,
+            args.pipeline.as_deref().or(standing.as_deref()),
+        )?,
         args.test_command.as_deref(),
         // The arena scores from its journal rather than the process exit
         // (see the comment below), so a wrapper's verdict has nothing to

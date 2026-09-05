@@ -553,6 +553,14 @@ impl PluginManifest {
             return Err(ManifestError::EmptyName);
         }
         crate::drawable::validate_plugin_name(&self.name)?;
+        // The seat key a host builds is `<plugin>/<role>`, so the plugin's own
+        // half must hold no `/`. Checked here rather than at install alone,
+        // because a plugin already on disk is read by every later run.
+        if self.name.contains('/') {
+            return Err(ManifestError::NameHoldsSeatSeparator {
+                name: self.name.clone(),
+            });
+        }
 
         let grant = &self.loop_grant;
         let participation = grant.participation;

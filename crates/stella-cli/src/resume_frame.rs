@@ -453,14 +453,17 @@ mod tests {
                 stella_plugin::WrapperStage {
                     name: stella_plugin::StageName::Host(stella_plugin::HostStage::Triage),
                     condition: None,
+                    band: stella_plugin::StageBand::default(),
                 },
                 stella_plugin::WrapperStage {
                     name: stella_plugin::StageName::Host(stella_plugin::HostStage::Execute),
                     condition: None,
+                    band: stella_plugin::StageBand::default(),
                 },
                 stella_plugin::WrapperStage {
                     name: stella_plugin::StageName::Host(stella_plugin::HostStage::Verify),
                     condition: Some("diff-lines > 0".into()),
+                    band: stella_plugin::StageBand::default(),
                 },
             ],
         };

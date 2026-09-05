@@ -140,6 +140,47 @@ id = "disagree-v1"
 name = "execute"
 "#;
 
+/// A plugin whose one stage asks for the `late` band. Shares no stage with
+/// [`EARLY_TRIAGER`], so nothing but the band can order the two.
+const LATE_REFLECTOR: &str = r#"
+name = "toy-reflector"
+[loop]
+participation = "steering"
+points = ["before_turn"]
+[wrapper]
+id = "reflect-v1"
+[[wrapper.stages]]
+name = "reflect"
+band = "late"
+"#;
+
+/// A plugin whose one stage asks for the `early` band.
+const EARLY_TRIAGER: &str = r#"
+name = "toy-triager"
+[loop]
+participation = "steering"
+points = ["before_turn"]
+[wrapper]
+id = "triage-v1"
+[[wrapper.stages]]
+name = "triage"
+band = "early"
+"#;
+
+/// The same stage [`RECALLER`] declares, in another band. One stage cannot sit
+/// in two places at once.
+const OTHER_BAND: &str = r#"
+name = "toy-other-band"
+[loop]
+participation = "steering"
+points = ["before_turn"]
+[wrapper]
+id = "other-band-v1"
+[[wrapper.stages]]
+name = "recall"
+band = "early"
+"#;
+
 /// Echoes which plugin and which stage it was asked about, so the fold is
 /// readable off the messages the turn receives rather than inferred.
 fn manifest(text: &str) -> PluginManifest {
@@ -549,4 +590,80 @@ async fn the_two_shipped_plugins_compose_into_one_selection() {
         "grounding before planning, which is the whole reason to compose these \
          two rather than choose between them: {stages:?}"
     );
+}
+
+/// **Witness.** A stage's band, not the order the selection names the plugins
+/// in, decides which stage runs first.
+///
+/// Two members that share no stage give the weave nothing to work with, so
+/// before the band the answer came from the selection. Asked both ways round
+/// here, because one answer per ordering is what a selection-shaped rule
+/// produces and one answer for both is what a manifest-shaped rule produces.
+///
+/// Fails on the base commit twice over: `band` is not a manifest key there, so
+/// both fixtures refuse to load, and the merged order follows the selection,
+/// which answers `["reflect", "triage"]` for one of the two orderings below.
+#[tokio::test]
+async fn a_band_orders_two_plugins_that_share_no_stage() {
+    for triager_first in [true, false] {
+        let members = if triager_first {
+            vec![
+                (manifest(EARLY_TRIAGER), plugin(&["echo-stage", "triager"])),
+                (
+                    manifest(LATE_REFLECTOR),
+                    plugin(&["echo-stage", "reflector"]),
+                ),
+            ]
+        } else {
+            vec![
+                (
+                    manifest(LATE_REFLECTOR),
+                    plugin(&["echo-stage", "reflector"]),
+                ),
+                (manifest(EARLY_TRIAGER), plugin(&["echo-stage", "triager"])),
+            ]
+        };
+        let dispatch = WrapperDispatch::bind_composed(members)
+            .expect("two members with one stage each compose");
+
+        let mut driver = Recorder::default();
+        dispatch
+            .run(input("anything"), &mut driver)
+            .await
+            .expect("the composed stage order resolves");
+
+        let stages: Vec<String> = driver.stages.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            stages,
+            vec!["triage", "reflect"],
+            "the early band runs first whichever member the selection named \
+             first (triager first: {triager_first}), so the order is the \
+             manifests' and not the selection's: {stages:?}"
+        );
+    }
+}
+
+/// One stage put in two bands is refused at bind time, named, rather than
+/// taking either answer.
+#[test]
+fn one_stage_in_two_bands_is_refused_at_bind_time() {
+    let error = WrapperDispatch::bind_composed(vec![
+        (manifest(RECALLER), plugin(&["exit", "0", ""])),
+        (manifest(OTHER_BAND), plugin(&["exit", "0", ""])),
+    ])
+    .expect_err("`recall` cannot be both normal and early");
+
+    match error {
+        WrapperError::ConflictingStageBand {
+            stage,
+            band,
+            other_band,
+            ..
+        } => {
+            assert_eq!(stage, "recall");
+            assert_eq!(band, "normal");
+            assert_eq!(other_band, "early");
+        }
+        other => panic!("expected ConflictingStageBand, got {other:?}"),
+    }
 }

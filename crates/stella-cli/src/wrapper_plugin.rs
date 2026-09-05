@@ -653,6 +653,35 @@ impl ResolvedWrapper {
     }
 }
 
+/// The wrapper selection this workspace has standing, or `None` for a bare
+/// turn.
+///
+/// Reads `active_plugins` and looks each name up in the installed roster, so a
+/// person who switched a plugin on gets it on every door that takes
+/// `--pipeline`. The flag still wins where it is given: a caller passes this
+/// as the fallback, never as an override.
+///
+/// Every line it produces goes to stderr here rather than being returned,
+/// because each door already prints its own start-up notices that way and a
+/// second channel would put half of them somewhere else. The decision itself
+/// is `plugin_activation::standing`, which is pure and tested.
+pub(crate) fn standing_pipeline(cfg: &Config) -> Option<String> {
+    let settings = crate::settings::Settings::load(&cfg.workspace_root).unwrap_or_default();
+    let active = settings.active_plugins.clone().unwrap_or_default();
+    if active.is_empty() {
+        return None;
+    }
+    let (roster, notices) = PluginRoster::load(&cfg.workspace_root, &settings);
+    for notice in notices {
+        eprintln!("  ! {}", notice.trim_start_matches(" ! "));
+    }
+    let standing = crate::plugin_activation::standing(&active, &roster);
+    for notice in standing.notices {
+        eprintln!("  ! {notice}");
+    }
+    standing.pipeline
+}
+
 /// Read what is installed and resolve the wrapper `variant` names.
 ///
 /// The impure half — it reads the two plugin tiers and the settings that

@@ -12,7 +12,7 @@ use crate::package::ContributionKind;
 use crate::panel::{PanelDenial, PanelSurface};
 use crate::runtime::ProcessBlock;
 use crate::wire::WrapperPoint;
-use crate::wrapper::{HostStage, Signal, SignalKind, StageName};
+use crate::wrapper::{HostStage, Signal, SignalKind, StageBand, StageName};
 
 /// A manifest failed to parse or failed validation.
 ///
@@ -669,6 +669,22 @@ pub enum ManifestError {
         code: u32,
     },
 
+    /// The manifest's `name` carried a `/`.
+    ///
+    /// A seat is written `<plugin>/<role>` in a user's settings, and the host
+    /// is what joins the two halves. A name with a `/` of its own gives one
+    /// seat key two readings, so the host could hand a role the model somebody
+    /// picked for a different plugin. The name has to hold no separator for
+    /// the join to have one meaning.
+    #[error(
+        "manifest name \"{name}\" carries a \"/\": a seat is written <plugin>/<role> in \
+         settings, so a name holding the separator makes one seat key mean two things"
+    )]
+    NameHoldsSeatSeparator {
+        /// The name that was refused.
+        name: String,
+    },
+
     /// A `[[capabilities]]` entry named no tool. The tool name is what a gate
     /// rule keys on and what the consent prompt shows; a blank one is a
     /// request for nothing that still reads as a request.
@@ -874,6 +890,29 @@ pub enum ManifestError {
     DuplicateWrapperStage {
         /// The stage that appeared twice.
         stage: StageName,
+    },
+
+    /// A stage in an earlier band was written below one in a later band.
+    ///
+    /// A host walks the bands in order, so this manifest's own two stages
+    /// would run in the opposite order to the one it wrote them in. The
+    /// graph check that follows reads the written order, so it would be
+    /// proving something about an order the run does not take. Moving the
+    /// line up is the whole fix.
+    #[error(
+        "[wrapper] declares stage \"{stage}\" in band {band} after \"{after}\" in band \
+         {after_band}: write the stages in band order (early, then normal, then late), \
+         because that is the order a turn runs them in"
+    )]
+    StageBandOutOfOrder {
+        /// The stage written out of band order.
+        stage: StageName,
+        /// The band it asked for.
+        band: StageBand,
+        /// The stage above it.
+        after: StageName,
+        /// The band that stage is in.
+        after_band: StageBand,
     },
 
     /// A `[[wrapper.stages]]` entry named a blank stage.
