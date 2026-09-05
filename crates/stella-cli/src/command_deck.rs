@@ -715,7 +715,7 @@ pub async fn run_deck_session(
     for notice in crate::engine_config::boot_notices(cfg) {
         let _ = deck_tx.send(system_notice(notice));
     }
-    steering::announce_withheld(cfg, &in_tx);
+    steering::announce_session_steering(cfg, &in_tx);
     let whistle = whistle::DeckWhistle::spawn(&session_record.id, sub_tx.clone());
     // An idle lead is waiting on the human, not queued behind a supervisor —
     // asserted outright, since the startup chrome above no longer folds it to

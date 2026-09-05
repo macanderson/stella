@@ -411,3 +411,93 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
         "a re-mine of the same lesson must not undo the demotion"
     );
 }
+
+/// **The holdout witness.** With the plane control off, a scheduled holdout
+/// turn withholds the one matched skill and writes its control-arm trial.
+///
+/// Nothing before this could produce that row. A matched skill reaches the
+/// without-skill arm in exactly three other ways — the plane control's coin,
+/// steering switched off, and losing the last top-k seat — and this fixture
+/// closes all three: the plane rate is `0`, steering is on, and the workspace
+/// holds one skill, so there is no seat to lose. Every turn here injected the
+/// skill until the per-artifact holdout existed.
+#[tokio::test]
+async fn a_holdout_turn_writes_a_control_arm_trial_for_the_skill_it_withheld() {
+    let dir = workspace_with_log();
+    set_gate(dir.path(), false);
+
+    let mut miner = session(dir.path());
+    miner.auto_create_skills(&log_path(dir.path()), true);
+    let written = skill_files(dir.path());
+    assert_eq!(written.len(), 1, "one skill, so no top-k seat to lose");
+    let name = written[0].trim_end_matches(".md").to_string();
+
+    let mut memory = session(dir.path());
+
+    // Turn 1: the holdout's own schedule has not come round yet.
+    assert!(
+        !memory.arm_controls_at(0, 2),
+        "the plane control is switched off for this fixture"
+    );
+    let injected = memory.note_turn_skills(MATCHING_PROMPT);
+    assert!(
+        injected.iter().any(|(n, _)| *n == name),
+        "turn 1 injects the skill: {injected:?}"
+    );
+    memory
+        .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+
+    // Turn 2: the holdout fires, and it is the only thing that could.
+    assert!(
+        !memory.arm_controls_at(0, 2),
+        "still no plane control on turn 2"
+    );
+    assert!(
+        memory.note_turn_skills(MATCHING_PROMPT).is_empty(),
+        "the holdout withholds the one matched skill"
+    );
+    memory
+        .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+
+    assert_eq!(
+        trials(dir.path(), &name),
+        vec![true, false],
+        "the withheld turn is recorded in the without-skill arm"
+    );
+}
+
+/// **The two schedules cannot land on the same turn.** A turn the plane
+/// control already took claims no holdout number, so the holdout's counter
+/// advances only over the turns it could act on.
+///
+/// Share one counter and the two schedules stay in lockstep: every holdout
+/// would fall on a turn where the plane had already withheld everything, and
+/// the per-artifact arm would carry nothing the plane arm did not.
+#[test]
+fn a_plane_control_turn_claims_no_holdout_number() {
+    let dir = workspace_with_log();
+    set_gate(dir.path(), false);
+
+    let mut memory = session(dir.path());
+    let plane: Vec<bool> = (1..=4).map(|_| memory.arm_controls_at(2, 2)).collect();
+    assert_eq!(plane, vec![false, true, false, true], "the plane schedule");
+
+    let counted = |experiment: &str| {
+        memory
+            .store
+            .ab_control_turns_so_far(experiment)
+            .expect("counter readable")
+    };
+    assert_eq!(
+        counted(crate::memory::recall::AB_RECALL_EXPERIMENT),
+        4,
+        "the plane control counts every turn"
+    );
+    assert_eq!(
+        counted(crate::memory::recall::ARTIFACT_HOLDOUT_EXPERIMENT),
+        2,
+        "the holdout counts only the turns the plane control left alone"
+    );
+}

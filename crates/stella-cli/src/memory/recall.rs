@@ -248,6 +248,13 @@ pub(super) const RECORD_CHANNEL_BUDGET: usize = 2_000;
 /// and so a reader of `ab_control_counter` can tell what the row counts.
 pub(super) const AB_RECALL_EXPERIMENT: &str = "recall_suppression";
 
+/// The name the per-artifact holdout's durable turn counter is filed under.
+///
+/// Its own row, not a share of [`AB_RECALL_EXPERIMENT`]'s: the two schedules
+/// count different populations, since a plane-control turn advances the first
+/// and is skipped by the second.
+pub(super) const ARTIFACT_HOLDOUT_EXPERIMENT: &str = "artifact_holdout";
+
 impl SessionMemory {
     /// Hand this session the resolved record registry behind the volatile
     /// channel.
@@ -659,7 +666,54 @@ impl SessionMemory {
     /// armed them, which is also the unit the episode is recorded in, so the
     /// arm and its attribution describe the same thing.
     pub fn arm_recall_control(&mut self) -> bool {
-        self.maybe_suppress_recall(self.retrieval.ab_recall_rate)
+        self.arm_controls(
+            self.retrieval.ab_recall_rate,
+            self.retrieval.artifact_holdout_rate,
+        )
+    }
+
+    /// Arm both of this turn's controls, plane first, and report whether the
+    /// plane one fired.
+    ///
+    /// Order is the whole point. The per-artifact holdout is skipped on a turn
+    /// that injects nothing anyway, and whether this is one is not settled
+    /// until the plane arm is.
+    fn arm_controls(&mut self, recall_rate: u32, holdout_rate: u32) -> bool {
+        let suppressed = self.maybe_suppress_recall(recall_rate);
+        self.arm_artifact_holdout(holdout_rate);
+        suppressed
+    }
+
+    /// Arm this turn's per-artifact holdout
+    /// (`context.retrieval.artifact_holdout_rate`).
+    ///
+    /// Its own durable counter, under its own experiment name, so the two
+    /// schedules can be read apart afterwards.
+    ///
+    /// **A turn that injects nothing claims no number here.** Both counters
+    /// advance once per turn, so two schedules counting every turn stay in
+    /// lockstep: a plane rate of 10 and a holdout rate of 20 would land every
+    /// holdout on a turn where the plane had already withheld everything, and
+    /// the per-artifact arm would carry no measurement the plane arm did not
+    /// already carry. Skipping instead means this counter advances only over
+    /// turns the holdout could act on — which rules out a session with
+    /// steering switched off for the same reason.
+    ///
+    /// Degrades exactly as [`Self::maybe_suppress_recall`] does: a store that
+    /// cannot hand out a number falls back to the in-session tally, which on a
+    /// one-turn process means no holdout. A lost holdout costs one sample;
+    /// holding a skill back on a turn the schedule did not choose costs the
+    /// user that skill for nothing.
+    fn arm_artifact_holdout(&mut self, rate: u32) {
+        self.holdout_ordinal = None;
+        if rate <= 1 || self.injection_suppressed() {
+            return;
+        }
+        self.holdout_turn = match self.store.next_ab_control_turn(ARTIFACT_HOLDOUT_EXPERIMENT) {
+            Ok(turn) => turn,
+            Err(_) => self.holdout_turn.wrapping_add(1),
+        };
+        self.holdout_ordinal = stella_learn::holdout::ordinal(self.holdout_turn, rate);
     }
 
     /// A/B recall control (Proposal 4): suppress recall for this turn on a
@@ -707,7 +761,15 @@ impl SessionMemory {
     /// configured rate.
     #[cfg(test)]
     pub(crate) fn arm_recall_control_at(&mut self, rate: u32) -> bool {
-        self.maybe_suppress_recall(rate)
+        self.arm_controls(rate, 0)
+    }
+
+    /// Arm both controls at explicit rates, for the same reason
+    /// [`Self::arm_recall_control_at`] exists. A test that wants only the
+    /// per-artifact holdout passes `0` for the plane rate.
+    #[cfg(test)]
+    pub(crate) fn arm_controls_at(&mut self, recall_rate: u32, holdout_rate: u32) -> bool {
+        self.arm_controls(recall_rate, holdout_rate)
     }
 
     /// Whether recall was suppressed this turn.
@@ -992,7 +1054,7 @@ pub(super) fn frame_drop(
 /// Pure so the schedule is property-testable independent of the (heavy)
 /// [`SessionMemory`] it lives on.
 pub(super) fn ab_control_turn(turn: u64, rate: u32) -> bool {
-    rate > 1 && turn.is_multiple_of(u64::from(rate))
+    stella_learn::holdout::is_scheduled(turn, rate)
 }
 
 /// Path-shaped tokens the prompt names (`deny.toml`, `src/api/mod.rs`), for

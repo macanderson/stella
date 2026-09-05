@@ -119,7 +119,7 @@ pub(crate) use skill_files::{
 };
 // Phase 2 (#713): the engine-config builder reads the lifecycle switch through
 // here, so exactly one place in the crate resolves a `context.*` sub-block.
-pub use tuning::session_lifecycle_enabled;
+pub use tuning::{session_artifact_holdout_rate, session_lifecycle_enabled};
 
 /// Marker prefixing a recalled-context message so
 /// [`recall::inject_recall_block`] can find the newest one for dedup. Blocks
@@ -361,6 +361,21 @@ pub struct SessionMemory {
     /// somewhere and because it is what the arm is derived from
     /// (`recall::ab_control_turn`).
     ab_turn: u64,
+    /// The turn number this session last claimed from the per-artifact
+    /// holdout's own schedule (`recall::ARTIFACT_HOLDOUT_EXPERIMENT`), or the
+    /// in-session tally when the store could not hand one out. Kept beside
+    /// `ab_turn` and never shared with it: a plane-control turn advances that
+    /// counter and is skipped by this one, so the two run over different
+    /// populations.
+    holdout_turn: u64,
+    /// Which holdout this turn is, counting from zero, or `None` when this
+    /// turn holds nothing back. Set by `arm_recall_control()` alongside
+    /// `ab_suppressed`, read by [`Self::note_turn_skills`] when it picks the
+    /// skill to withhold.
+    ///
+    /// The ordinal rather than the rate and the turn, so the pick cannot
+    /// disagree with the arm about which schedule it is on.
+    holdout_ordinal: Option<u64>,
     /// Phase 3 (#714): `context.lifecycle.enabled`, read once at open. While
     /// this is off the learning loop runs exactly the lexical path that ships
     /// today and writes nothing to the lifecycle ledger.
@@ -635,6 +650,8 @@ impl SessionMemory {
                     ab_suppressed: false,
                     steering_enabled: true,
                     ab_turn: 0,
+                    holdout_turn: 0,
+                    holdout_ordinal: None,
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
                     task_id,
@@ -791,6 +808,19 @@ impl SessionMemory {
         )
     }
 
+    /// The one skill this turn holds back, when the schedule armed a holdout.
+    ///
+    /// Picked from the skills that *would* have been injected. The rest of the
+    /// turn is untouched, so the trial this leaves behind is about one skill
+    /// rather than about recall as a whole — which is the measurement the
+    /// plane-wide control cannot make. A turn that injects nothing holds
+    /// nothing back: there is no arm to withhold.
+    fn holdout_skill(&self, selected: &[skills::SelectedSkill]) -> Option<String> {
+        let ordinal = self.holdout_ordinal?;
+        let eligible: Vec<&str> = selected.iter().map(|s| s.skill.name.as_str()).collect();
+        stella_learn::holdout::pick(ordinal, &eligible).map(str::to_string)
+    }
+
     /// Render selected skills as `(name, why)` — the matched domains and terms
     /// that put each one in the prompt.
     fn describe_selection(selected: Vec<skills::SelectedSkill>) -> Vec<(String, String)> {
@@ -825,11 +855,16 @@ impl SessionMemory {
     /// question nobody asked.
     ///
     /// Matched-but-not-injected turns are what the without-skill arm is made
-    /// of, and there are three ways to be one: the A/B control's coin, steering
-    /// switched off, and losing the last top-k seat to a higher-scoring
-    /// sibling. All three are recorded, which is why this reads the selection
-    /// pass rather than `selected_skills` — that one returns nothing at
-    /// all on a suppressed turn, by design.
+    /// of, and there are four ways to be one: the plane control's coin,
+    /// steering switched off, losing the last top-k seat to a higher-scoring
+    /// sibling, and the per-artifact holdout naming this skill
+    /// ([`Self::holdout_skill`]). All four are recorded, which is why this
+    /// reads the selection pass rather than `selected_skills` — that one
+    /// returns nothing at all on a suppressed turn, by design.
+    ///
+    /// Only the fourth is a *paired* control: the other three either withhold
+    /// everything or withhold on a reason of their own, so the turn they leave
+    /// behind cannot say which artifact the outcome belongs to.
     pub(crate) fn note_turn_skills(&self, prompt: &str) -> Vec<(String, String)> {
         let selection = self.skill_selection(prompt);
         // The trigger-matched population: the survivors plus the ones the
@@ -844,7 +879,15 @@ impl SessionMemory {
         let injected = if self.injection_suppressed() {
             Vec::new()
         } else {
-            Self::describe_selection(selection.selected)
+            let mut selected = selection.selected;
+            if let Some(held) = self.holdout_skill(&selected) {
+                selected.retain(|s| s.skill.name != held);
+                eprintln!(
+                    "  {} holding back skill `{held}` this turn, to measure whether it helps",
+                    "!".yellow()
+                );
+            }
+            Self::describe_selection(selected)
         };
         if let Ok(mut join) = self.turn_skill_join.lock() {
             *join = Some(TurnSkillJoin {
