@@ -88,6 +88,14 @@ pub(crate) fn record_request<T: serde::Serialize>(url: &str, provider: &str, bod
     let _ = file.flush();
 }
 
+/// Unix milliseconds now, or `0` on a clock before the epoch.
+///
+/// A real clock is correct here rather than a caller-supplied instant. This
+/// stamps a capture row at the moment a request goes out on the wire, so the
+/// reading is the observation the row exists to record — no caller is better
+/// placed to supply it, the way `stella-mcp` is for a usage record. Nothing
+/// branches on the value either: it reaches the log as `ts_ms` and is read by a
+/// human afterwards, so no test needs to place it at a chosen instant.
 fn now_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
