@@ -1,0 +1,60 @@
+name: main-red-clear
+
+# Clear the merge hold once `main` is not known-broken any more (#5913).
+#
+# `main-red-hold.yml` reports the required check `main is not known-broken` on
+# every pull request. Branch protection reads the last check run for that name
+# on that commit, so a hold that failed during an outage is still the answer
+# after the outage ends. On 2026-09-05, ten pull requests stayed unmergeable
+# on a check whose own question had already changed its answer.
+#
+# `scripts/clear-main-red-holds.sh` re-runs those holds. This workflow is one
+# of its two callers, and covers the recovery a person performs by hand:
+# closing the `main-red` issue, or taking the label off it.
+#
+# ── Why the canary calls the script too ──────────────────────────────────────
+#
+# The other caller is `main-canary.yml`, on the run that closes the issue
+# itself — which is the ordinary path, and one this workflow cannot see. The
+# canary closes with `GITHUB_TOKEN`, and GitHub starts no workflow from an
+# event raised by that token. Both callers run the same script, and running it
+# twice re-runs nothing the first pass already cleared.
+
+on:
+  issues:
+    types: [closed, unlabeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  # To re-run the stale hold. This is the one job in the repository that
+  # needs it, which is why the clean-up lives here rather than in a workflow
+  # that already does something else.
+  actions: write
+
+# One sweep at a time. A cancelled sweep costs nothing: the next one asks the
+# same questions and re-runs whatever is still stale.
+concurrency:
+  group: main-red-clear
+  cancel-in-progress: true
+
+jobs:
+  clear:
+    name: clear the hold a recovered main left behind
+    # `closed` still carries the label on the issue; `unlabeled` no longer
+    # does, and names the removed label instead.
+    if: >-
+      github.event_name != 'issues'
+      || contains(github.event.issue.labels.*.name, 'main-red')
+      || github.event.label.name == 'main-red'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Re-run the hold on every open pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/clear-main-red-holds.sh
