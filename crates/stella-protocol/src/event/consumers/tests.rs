@@ -144,6 +144,29 @@ fn the_observatory_view_of_the_ledger_is_a_strict_subset() {
     }
 }
 
+/// The ledger can now say "interactive mode reads this" for three tags.
+/// Each one reaches a *selecting* stella-tui reader, not just the
+/// exhaustive `Model::apply`/`textline`/`deck::trace_of` matchers: the
+/// Files tab (`file_change`), the SUB-AGENTS overlay (`sub_agent`), and the
+/// ask card (`ask_user`).
+///
+/// This is a witness by construction. `Surface::Interactive` did not exist
+/// before this test was written. So this test, and the three rows it
+/// checks, failed to build without them — the same way a missing
+/// `AgentEvent` consumer row is a build error, not a red test.
+#[test]
+fn the_interactive_surface_names_the_three_selecting_readers() {
+    let selected = tags_surfaced_by(Surface::Interactive);
+    for tag in ["file_change", "sub_agent", "ask_user"] {
+        assert!(
+            selected.contains(&tag),
+            "`{tag}` is read by a specific interactive-mode feature (the \
+             Files tab, the SUB-AGENTS overlay, or the ask card), but the \
+             ledger does not record Surface::Interactive for it: {selected:?}"
+        );
+    }
+}
+
 // ---- negative controls: the audit must be able to fail -----------------
 
 /// A minimal well-formed ledger, so each control below alters exactly one
