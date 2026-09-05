@@ -805,7 +805,8 @@ fn a_forgotten_lesson_cannot_return_as_a_rule() {
         crate::memory::proposals::all_proposals(&memory.store, 500)
             .into_iter()
             .filter(|proposal| {
-                proposal.proposal_kind == stella_records::context_record::RecordProposalKind::Directive
+                proposal.proposal_kind
+                    == stella_records::context_record::RecordProposalKind::Directive
             })
             .count()
     };

@@ -100,7 +100,7 @@ mod scoreboard_cmd;
 mod self_driving_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
 mod profile;
-// Where a publication path asks the evidence gate before writing (#4865).
+// Where a publication path asks the evidence gate before writing.
 mod promotion_gate;
 // Phase 3 (#714): the adaptive-context proposal review surface.
 mod prompt_source;
