@@ -254,7 +254,7 @@ fn extract_calls(query: &Query, root: Node, src: &[u8]) -> Vec<CallSite> {
     let mut out = Vec::new();
     let mut matches = cursor.matches(query, root, src);
     while let Some(m) = matches.next() {
-        for cap in m.captures {
+        for cap in m.captures() {
             if names[cap.index as usize] != "callee" {
                 continue;
             }
@@ -308,7 +308,7 @@ fn extract_symbols(query: &Query, root: Node, src: &[u8]) -> Vec<Symbol> {
         let mut kind: Option<SymbolKind> = None;
         let mut span: Option<(u32, u32)> = None;
 
-        for cap in m.captures {
+        for cap in m.captures() {
             let cap_name = names[cap.index as usize];
             if cap_name == "name" {
                 name = cap.node.utf8_text(src).ok();
@@ -358,7 +358,7 @@ fn extract_rust_imports(query: &Query, root: Node, src: &[u8]) -> Vec<ImportSpec
     let mut out = Vec::new();
     let mut matches = cursor.matches(query, root, src);
     while let Some(m) = matches.next() {
-        for cap in m.captures {
+        for cap in m.captures() {
             let Ok(text) = cap.node.utf8_text(src) else {
                 continue;
             };
@@ -384,7 +384,7 @@ fn extract_ts_imports(query: &Query, root: Node, src: &[u8]) -> Vec<ImportSpec> 
     while let Some(m) = matches.next() {
         let mut source_text: Option<&str> = None;
         let mut callee: Option<&str> = None;
-        for cap in m.captures {
+        for cap in m.captures() {
             match names[cap.index as usize] {
                 "source" => source_text = cap.node.utf8_text(src).ok(),
                 "callee" => callee = cap.node.utf8_text(src).ok(),
@@ -430,7 +430,7 @@ fn extract_python_imports(query: &Query, root: Node, src: &[u8]) -> Vec<ImportSp
     let mut out = Vec::new();
     let mut matches = cursor.matches(query, root, src);
     while let Some(m) = matches.next() {
-        for cap in m.captures {
+        for cap in m.captures() {
             match names[cap.index as usize] {
                 "import" => decode_py_import(cap.node, src, &mut out),
                 "from_import" => decode_py_from_import(cap.node, src, &mut out),
@@ -558,7 +558,7 @@ fn extract_rust_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
             }
         }
 
-        for idx in (0..node.child_count() as u32).rev() {
+        for idx in (0..node.child_count()).rev() {
             if let Some(child) = node.child(idx) {
                 stack.push(child);
             }
@@ -594,7 +594,7 @@ fn extract_python_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
             }
         }
 
-        for idx in (0..node.child_count() as u32).rev() {
+        for idx in (0..node.child_count()).rev() {
             if let Some(child) = node.child(idx) {
                 stack.push(child);
             }
@@ -829,7 +829,7 @@ fn each_import_node(
     let mut out = Vec::new();
     let mut matches = cursor.matches(query, root, src);
     while let Some(m) = matches.next() {
-        for cap in m.captures {
+        for cap in m.captures() {
             if let Ok(text) = cap.node.utf8_text(src) {
                 out.extend(decode(text));
             }

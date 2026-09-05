@@ -40,6 +40,25 @@ sha2.workspace = true
 # what this crate already does correctly.
 tempfile.workspace = true
 
+# `tests/credential_prompt_dev_tty.rs`'s fixture binary — prints
+# `TerminalPrompt.can_prompt(true)` from inside a real pseudo-terminal the
+# test harness constructs, which is the only way to observe `/dev/tty`
+# reachability (rather than `stdin`/`stdout`) without risking the whole
+# suite blocking on a real keystroke. `tests/` locate it with
+# `env!("CARGO_BIN_EXE_tty-probe")`; cargo builds it for them.
+[[bin]]
+name = "tty-probe"
+path = "tests/fixtures/tty_probe.rs"
+
+# A test fixture, never a shipped surface — keep it out of dist.
+[package.metadata.dist]
+dist = false
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 wiremock.workspace = true
+# `tests/credential_prompt_dev_tty.rs` hand-rolls its pty harness on
+# `libc::openpty`/`setsid`/`TIOCSCTTY` — the same construction
+# `stella-tui`'s `tests/deck_pty_smoke.rs` uses, already a workspace
+# dependency; integration tests only see dev-dependencies.
+libc.workspace = true

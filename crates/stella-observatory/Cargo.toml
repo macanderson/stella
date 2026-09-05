@@ -15,6 +15,12 @@ publish.workspace = true
 # all, so depending on it costs none of the isolation the dev-dependency note
 # below protects — it is path arithmetic over env vars and opens nothing.
 stella-home = { path = "../stella-home" }
+# Strip ANSI escapes from tool output before it reaches the journal route's
+# `<pre>` — a colourised child process's output otherwise shows visible
+# escape-sequence garbage in a browser, which does not interpret them. A
+# dependency-free leaf, same shape as `stella-home` above, so depending on it
+# costs none of this crate's isolation.
+stella-ansi = { path = "../stella-ansi" }
 # `stella_records::context_record`'s types, for the code-graph selection-health
 # view (`src/context_db.rs`) — read-only, no I/O of its own from this crate's
 # side; the isolation note on the dev-dependency below is about the WRITE

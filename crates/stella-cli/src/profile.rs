@@ -17,8 +17,9 @@
 //! The independence *idea* is not gone: `stella goal`'s
 //! `resolve_cross_family_verifier` still groups by family at the point of use.
 //! What went is the attempt to pre-commit that choice in a settings file, for
-//! a role core no longer has. A profile that should tune a plugin's seat is
-//! #3936.
+//! a role core no longer has. A profile does not tune a plugin's seat either.
+//! Nothing reads a profile-picked seat model today. So the key that carried
+//! the idea (`auto_mode`) is retired, not reused.
 //!
 //! # Why price is the tier signal
 //!
@@ -41,12 +42,17 @@
 //! `effort_auto` is a convenience that pins a middle rung and **overrides any
 //! per-agent effort**. Left on, it would cap `/profile ultra` at medium — the
 //! profile would print one thing and run another. So applying a profile turns
-//! `effort_auto`, `reasoning_auto`, and `auto_mode` off and writes the values
-//! explicitly. What the confirmation prints is what the next session runs.
+//! `effort_auto` and `reasoning_auto` off and writes the values explicitly.
+//! What the confirmation prints is what the next session runs.
 //!
 //! That would be a one-way door on its own, so [`restore_auto`] is the way
-//! back: it switches all three on again and drops the per-role pins, handing
+//! back: it switches both on again and drops the per-role pins, handing
 //! the dials to the engine's own ladder.
+//!
+//! A third switch, `auto_mode`, sat here beside these two. It named a role
+//! core does not have. A profile has nothing left to hold it off *from*, so
+//! it is retired rather than kept as a switch that steers nothing. The auto
+//! state below is `effort_auto`/`reasoning_auto` alone.
 //!
 //! # Effort is clamped to what the provider actually exposes
 //!
@@ -409,7 +415,6 @@ pub fn plan(profile: Profile, candidates: &[Candidate]) -> Plan {
 pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
     // The profile is now the authority on effort and model selection; the
     // auto switches would override it. See the module docs.
-    engine.auto_mode = Some(Toggle::Off);
     engine.effort_auto = Some(Toggle::Off);
     engine.reasoning_auto = Some(Toggle::Off);
 
@@ -438,19 +443,18 @@ pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
 /// Hand the intensity dials back to Stella's own ladder — the inverse of
 /// [`apply`], and the way out of a profile.
 ///
-/// Applying a profile has to switch `effort_auto`, `reasoning_auto` and
-/// `auto_mode` off, or they would override the levels it just chose. Without
-/// this that is a one-way door: nothing puts a preference back once a profile
-/// has claimed it. This restores all three and drops the per-role effort,
-/// thinking, verbosity and service-tier pins a profile writes, so the engine
-/// goes back to choosing them (verifier high, worker medium, triage low).
+/// Applying a profile has to switch `effort_auto` and `reasoning_auto` off,
+/// or they would override the levels it just chose. Without this that is a
+/// one-way door: nothing puts a preference back once a profile has claimed
+/// it. This restores both and drops the per-role effort, thinking, verbosity
+/// and service-tier pins a profile writes, so the engine goes back to
+/// choosing them (verifier high, worker medium, triage low).
 ///
 /// It deliberately leaves **model** choices alone. The switches are what a
 /// profile took away; a model pin may well predate it — set by `/model` or by
 /// hand — and clearing that would be destroying something this command never
 /// owned.
 pub fn restore_auto(engine: &mut AgentEngineConfig) {
-    engine.auto_mode = Some(Toggle::On);
     engine.effort_auto = Some(Toggle::On);
     engine.reasoning_auto = Some(Toggle::On);
     let Some(agents) = engine.agents.as_mut() else {
@@ -483,7 +487,7 @@ pub fn restore_auto(engine: &mut AgentEngineConfig) {
 /// — the state [`restore_auto`] leaves behind, and the honest answer to "which
 /// profile is this?" when none is.
 pub fn is_auto(engine: &AgentEngineConfig) -> bool {
-    if !(engine.auto_mode_on() && engine.effort_auto_on() && engine.reasoning_auto_on()) {
+    if !(engine.effort_auto_on() && engine.reasoning_auto_on()) {
         return false;
     }
     engine.agents.as_ref().is_none_or(|agents| {

@@ -237,7 +237,6 @@ fn agent_engine_config_parses_the_full_schema() {
             "default_model": "anthropic/claude-fable-5",
             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
             "seat_models": {"vera/verifier": "openrouter/anthropic/claude-opus-5"},
-            "auto_mode": "on",
             "effort_auto": "off",
             "reasoning_auto": "on",
             "agents": {
@@ -267,7 +266,6 @@ fn agent_engine_config_parses_the_full_schema() {
     let engine = merged.agent_engine_config.expect("engine config");
     // The per-agent model beats the flat `default_model`.
     assert_eq!(engine.model_for(), Some("openai/gpt-5.5"));
-    assert!(engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
     assert!(engine.reasoning_auto_on());
     // The seat plane carries a model for a participant the session does not
@@ -336,7 +334,7 @@ fn agent_engine_config_save_preserves_other_keys_and_roundtrips() {
     );
     let engine = AgentEngineConfig {
         default_model: Some("anthropic/claude-fable-5".to_string()),
-        auto_mode: Some(Toggle::Off),
+        effort_auto: Some(Toggle::Off),
         ..AgentEngineConfig::default()
     };
     engine.save_to(&path).unwrap();
@@ -680,7 +678,7 @@ fn a_typoed_toggle_is_a_loud_parse_error() {
     let bad = write(
         dir.path(),
         "toggle.json",
-        r#"{"agent_engine_config": {"auto_mode": "enabled"}}"#,
+        r#"{"agent_engine_config": {"effort_auto": "enabled"}}"#,
     );
     let err = Settings::load_from(&[bad]).unwrap_err();
     assert!(err.contains("invalid settings file"), "{err}");

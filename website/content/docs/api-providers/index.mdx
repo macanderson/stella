@@ -354,8 +354,9 @@ With no configuration at all, an OpenRouter instance runs:
 | triage | `z-ai/glm-5.2` | fast and cheap, and it runs on every turn |
 
 Note the verifier is a different family from the driver. stella already treats
-cross-family judging as the goal (see `auto_mode`) — this default just does that without
-asking you to configure anything.
+cross-family judging as the goal (see `stella goal`'s
+`resolve_cross_family_verifier`) — this default just does that without asking
+you to configure anything.
 
 This is a starting point, not a lock. It sits underneath the whole
 [`agent_engine_config`](/docs/configuration/agent-engine-config) scope chain, so any

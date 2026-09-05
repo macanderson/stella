@@ -7,8 +7,8 @@
 //! ```text
 //!   GLOBAL     default                                             modified
 //!
-//! ▸ auto_mode            on
-//!   effort_auto          off
+//! ▸ effort_auto          on
+//!   reasoning_auto       off
 //!   allowed_models       anthropic/claude-fable-5, openai/gpt-6
 //!
 //!   saved to user settings
@@ -478,7 +478,7 @@ pub(crate) mod fixtures {
             providers: vec!["anthropic".into(), "openrouter".into()],
             catalog_models: vec!["zai/glm-5".into()],
             agents: vec![EngineAgentState::default(); 4],
-            // The rest defaults empty: the three auto toggles, the per-model
+            // The rest defaults empty: the two auto toggles, the per-model
             // effort vocabularies, and the resolved `roles` that ride this
             // snapshot for `/models` but that nothing this panel edits reads.
             ..Default::default()
@@ -586,7 +586,7 @@ mod tests {
 
         // A refresh over an OPEN, dirty overlay must not eat local edits…
         ui.engine.focused = true;
-        ui.engine.state.as_mut().unwrap().auto_mode = true;
+        ui.engine.state.as_mut().unwrap().minimal_prompt = true;
         let mut other = sample_state();
         other.effort_auto = true;
         ingest_inbound(
@@ -598,7 +598,7 @@ mod tests {
             &mut ui,
         );
         let state = ui.engine.state.as_ref().unwrap();
-        assert!(state.auto_mode, "the local edit survives the refresh");
+        assert!(state.minimal_prompt, "the local edit survives the refresh");
         assert!(!state.effort_auto, "the conflicting snapshot was held off");
         assert!(ui.engine.dirty());
 
@@ -618,7 +618,7 @@ mod tests {
         // A CLOSED overlay always adopts the next snapshot (the
         // discard path for edits abandoned by closing).
         ui.engine.focused = false;
-        ui.engine.state.as_mut().unwrap().auto_mode = false; // stale local edit
+        ui.engine.state.as_mut().unwrap().minimal_prompt = false; // stale local edit
         let mut newest = sample_state();
         newest.reasoning_auto = true;
         ingest_inbound(

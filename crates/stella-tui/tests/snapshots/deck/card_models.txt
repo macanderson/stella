@@ -21,7 +21,7 @@
 
 ── EXECUTE ─────────────────────────────────╭ models  resolved routing ────────────────────────────────────────────╮────────────────────────────────────────────
                                             │session   glm-5.2                                                     │
- │ ⊙ apps/app/automations/page.tsx          │auto      model off · effort on · thinking off                        │                                      ⚡ 42ms
+ │ ⊙ apps/app/automations/page.tsx          │auto      effort on · thinking off                                    │                                      ⚡ 42ms
  │ ⎿ 312 lines                              │                                                                      │                         42ms
                                             │lead      zai/glm-5.2-air                                             │
  │ ● edit apps/app/automations/page.tsx +4 -│          medium · thinking on · from default_model                   │                                      ⚡ 18ms

@@ -40,9 +40,9 @@
 //! mid-session settings edit as though it were in force would misreport the
 //! exact thing the dialog exists to answer.
 //!
-//! But saying nothing about a saved edit was its own way of lying. Someone who
-//! changed `pipeline_verifier_model` in the ENGINE panel, saved, and opened
-//! this dialog saw their **old** pin with no explanation — and the panel's own
+//! But saying nothing about a saved edit was its own way of lying. Someone
+//! who changed a model pin in the ENGINE panel, saved, and opened this dialog
+//! saw the **old** one, with no note — and the panel's own
 //! "applies to runs started from now on" line is one tab away and gone by
 //! then. The dialog read as having ignored the save (#1521).
 //!
@@ -272,8 +272,7 @@ fn header_rows(
     let dim = Style::new().fg(token::MUTED);
     let on_off = |on: bool| if on { "on" } else { "off" };
     let autos = format!(
-        "model {} · effort {} · thinking {}",
-        on_off(state.auto_mode),
+        "effort {} · thinking {}",
         on_off(state.effort_auto),
         on_off(state.reasoning_auto),
     );
@@ -524,10 +523,7 @@ mod tests {
     #[test]
     fn the_header_states_which_auto_modes_are_deciding() {
         let text = rendered(&WorkspaceModel::new(), false);
-        assert!(
-            text.contains("model off · effort on · thinking off"),
-            "{text}"
-        );
+        assert!(text.contains("effort on · thinking off"), "{text}");
     }
 
     /// Intent must never read as evidence. A verifier that was configured and

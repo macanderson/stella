@@ -37,7 +37,6 @@ use super::*;
 ///     "default_model": "anthropic/claude-fable-5",
 ///     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
 ///     "seat_models": {"planner": "openrouter/openai/gpt-5.5"},
-///     "auto_mode": "off",
 ///     "effort_auto": "on",
 ///     "reasoning_auto": "on",
 ///     "agents": {
@@ -73,16 +72,16 @@ pub struct AgentEngineConfig {
     /// [`seat_models`](Self::seat_models).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
-    /// The model vocabulary the TUI pickers offer and `auto_mode` selects
-    /// from. Entries are `provider/slug` strings. Empty/absent = no
-    /// restriction (pickers fall back to the seed catalog).
+    /// The model vocabulary the TUI pickers offer. Entries are `provider/slug`
+    /// strings. Empty/absent = no restriction (pickers fall back to the seed
+    /// catalog).
     ///
     /// It is the ceiling on every model chosen **while a session is running**,
     /// and not only on what a picker will offer. Four surfaces answer to it,
     /// through one matching rule and one refusal sentence
     /// ([`crate::settings::allowed_models`]):
     ///
-    /// - the pickers' vocabulary, and `auto_mode`'s selection from it;
+    /// - the pickers' vocabulary;
     /// - `/model <spec>`, the typed twin of the picker;
     /// - `/model default <spec>`, which persists the session default;
     /// - **seat assignments** — a seat naming a model outside a non-empty list
@@ -170,28 +169,6 @@ pub struct AgentEngineConfig {
     /// gets a correct default the moment the entry is removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_output_caps: Option<std::collections::BTreeMap<String, u32>>,
-    /// `on` = leave model selection to Stella rather than to a pin.
-    ///
-    /// **It no longer selects a model, and that is a declared gap rather than
-    /// an oversight (#3936).** It used to pick the verifier out of
-    /// `allowed_models`, preferring a different family than the worker's and
-    /// ranking by catalog list price; #3908 retired the role that pin
-    /// staffed, and the selector (`engine_config::auto_verifier_spec`) went
-    /// with it rather than being left as code nothing calls. The live
-    /// second-model path — `stella goal`'s `resolve_cross_family_verifier` —
-    /// groups by family at the point of use and has never read this key.
-    ///
-    /// What it still does is real but narrow: it is one of the three switches
-    /// [`crate::profile`] reads and writes, so it participates in "is this
-    /// config in the auto state, or has a profile claimed it?"
-    /// (`profile::is_auto`, `restore_auto`, `detect`). That is why it is a
-    /// *diminished* key rather than a retired one — and why retiring it is a
-    /// decision rather than a cleanup: `bench/harbor_adapter`'s registered
-    /// postures write it, so removing it re-hashes published benchmark
-    /// digests (see `super::unknown`'s `RETIRED_ENGINE_ROOT`). Wiring it to
-    /// choose models for unassigned seats, or retiring it, is #3936.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_mode: Option<Toggle>,
     /// `on` = the agent's reasoning effort is chosen automatically, overriding
     /// any `agents.default.effort`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -440,7 +417,6 @@ impl AgentEngineConfig {
                 target.insert(model.clone(), *cap);
             }
         }
-        take!(auto_mode);
         take!(effort_auto);
         take!(reasoning_auto);
         take!(minimal_prompt);
@@ -522,10 +498,6 @@ impl AgentEngineConfig {
             .or_else(|| caps.get(slug))
             .copied()
             .filter(|cap| *cap > 0)
-    }
-
-    pub fn auto_mode_on(&self) -> bool {
-        self.auto_mode.is_some_and(Toggle::is_on)
     }
 
     pub fn effort_auto_on(&self) -> bool {

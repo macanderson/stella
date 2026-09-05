@@ -55,7 +55,7 @@ consequence that follows from it.
 
 1. **One file, in a format that can hold its own documentation.** The
    semantics of `settings.json` currently live in Rust doc comments the user
-   never sees — why `auto_mode` picks a different model family, what
+   never sees — why `effort_auto` overrides a pinned per-agent effort, what
    `ann_enabled` trades away, and (the sharpest case) that
    `headless_scope_bypass` is inert and setting it accomplishes nothing. JSON
    cannot carry any of it. That knowledge belongs next to the knob: a user
@@ -487,7 +487,7 @@ that set.
 names, enforced at load with a named error. The list is exactly
 `ENGINE_ROOT_FIELDS` minus `agents` (which disappears in the flattening):
 `default_model`, `seat_models`, `allowed_models`, `model_output_caps`,
-`auto_mode`, `effort_auto`, `reasoning_auto`, `headless_scope_bypass`,
+`effort_auto`, `reasoning_auto`, `headless_scope_bypass`,
 `model_timeout_secs`, `compaction_budget_tokens`,
 `tool_result_horizon_steps`.
 
@@ -500,6 +500,11 @@ name is chosen by whatever the operator installed, so folding seats in would
 have opened the set that makes the flattening safe. The retired keys are still
 recognized and reported by name (`settings::unknown`), so a file carrying one
 loads and says so.
+
+**A later update retires `auto_mode` the same way.** It picked the verifier's
+model, that role collapsed away with the five keys above, and the selector
+went with it. It is recognized and reported by name like those five, rather
+than kept as a struct field nothing reads.
 
 `allowed_models` stays reserved even though §6.1 moves it to
 `[models].allowed` — it remains readable at the old location through the

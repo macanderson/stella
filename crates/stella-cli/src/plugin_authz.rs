@@ -26,7 +26,7 @@
 //!
 //! # What it decides, and what it deliberately does not
 //!
-//! Two rules, and they are the two #3482's definition of done names:
+//! The rules it applies:
 //!
 //! - a tool **absent** from the accepted list is denied;
 //! - a tool graded **above** what was accepted is denied.
@@ -65,8 +65,9 @@
 //! The rule is therefore *undeclared-within-a-declared-grant is denied*, not
 //! *silence is denial*. Declaring a list is a plugin opting into being bounded
 //! by it. The residual hole — a plugin that declares nothing is not narrowed
-//! here at all — is real and is tracked separately: closing it needs a default
-//! grant a user accepts, which is a decision, not an implementation.
+//! here at all — is real, and #6060 is where it is being decided: closing it
+//! needs a default grant a user accepts, which is a decision, not an
+//! implementation.
 //!
 //! # It answers about one plugin
 //!

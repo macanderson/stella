@@ -246,17 +246,13 @@ to user scope, `S` to project scope); there are no per-agent slash commands.
     // "<plugin-id>/<role>". Unset seats run on the session's model.
     "seat_models": { "vera/verifier": "openrouter/openai/gpt-5.5" },
 
-    // The vocabulary the model pickers offer and auto_mode selects from.
+    // The vocabulary the model pickers offer.
     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
 
-    // "on" picks the verifier automatically from allowed_models (prefer a
-    // different family than the worker's, then the highest price tier).
-    "auto_mode": "off",
-    // "on" chooses per-agent effort for you: verifier high, worker and plan
-    // medium, triage and research low, overriding any per-agent "effort".
+    // "on" chooses the session's effort for you, overriding any per-agent
+    // "effort".
     "effort_auto": "off",
-    // "on" turns thinking on everywhere except triage and research, which
-    // read rather than deliberate.
+    // "on" turns thinking on, overriding any per-agent "reasoning".
     "reasoning_auto": "off",
 
     // Per-agent deep config. Every field is optional — set it and it goes on
@@ -634,6 +630,7 @@ the rules it enforces, its gotchas, and the recipe for extending it.
 | [`stella-parity`](crates/stella-parity/README.md)           | The CLI-vs-API capability matrix: every capability declares a witnessed posture on both surfaces, so a feature cannot ship on one and silently miss the other |
 | [`stella-autonomy`](crates/stella-autonomy/README.md)       | The self-driving loop's decision core: AIMD controller, aperture ladder, dry-streak oracle, ledger folds — pure, shared by the CLI and the Observatory      |
 | [`stella-diff`](crates/stella-diff/README.md)               | A pure line-oriented unified diff with git's exact hunk shape and no dependencies                                                                           |
+| [`stella-ansi`](crates/stella-ansi/README.md)                | Strips ANSI codes from tool output, no dependencies                                                                                                           |
 | [`stella-embed`](crates/stella-embed/README.md)             | The embedding seam: the `Embedder` trait, the fingerprint stamped on every stored vector, and cosine ranking                                                |
 | [`stella-plugin`](crates/stella-plugin/README.md)           | Parses and validates a plugin's manifest and the wrapper socket's wire shapes, with no I/O                                                                  |
 | [`stella-transcript`](crates/stella-transcript/README.md)   | The shared transcript model plus its two renderers: HTML for the Observatory, a character grid for the terminal                                             |

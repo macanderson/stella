@@ -424,7 +424,7 @@ any repo, delivered by MDM, that every stella install on the machine picks up.
 | Key | Effect |
 | --- | --- |
 | `STELLA_MANAGED_SETTINGS` | Overrides the platform path with an explicit file — the CI and container route |
-| `allowed_models` | Constrains model pickers and `auto_mode`. **Replaces wholesale** across scopes |
+| `allowed_models` | Constrains model pickers and seats. **Replaces wholesale** across scopes |
 | `hooks` | Always load from this scope, no trust flag needed. Concatenate across scopes; no scope can remove another's |
 | `tools` | A managed `off` is a **ceiling** — no lower scope can grant it back, even a trusted project |
 | `authority.project_prompts` | `off` keeps a repo from replacing an agent's system prompt. Honoured only from this file |

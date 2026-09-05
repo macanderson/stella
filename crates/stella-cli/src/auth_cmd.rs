@@ -19,7 +19,7 @@
 //! next run failed on a value the command had no way to accept.
 
 use colored::Colorize as _;
-use stella_model::credential::{ApiKey, CredentialsFile};
+use stella_model::credential::{ApiKey, CredentialPrompt, CredentialsFile, TerminalPrompt};
 use zeroize::Zeroizing;
 
 use crate::config::{AuxField, ProviderConfig, settable_aux_fields};
@@ -94,6 +94,18 @@ fn read_key_value(provider: &str, key: Option<&str>, use_stdin: bool) -> Result<
             return Err("empty key read from stdin".to_string());
         }
         return Ok(trimmed);
+    }
+    // `TerminalPrompt` is `stella_model::credential`'s own gate on this exact
+    // question: it probes what `rpassword` actually opens — `/dev/tty` on
+    // Unix, `CONIN$`/`CONOUT$` on Windows — rather than `stdin`/`stdout`.
+    // Reused here rather than re-derived so this command and the provider
+    // credential chain can never disagree about whether a human is there to
+    // answer.
+    if !TerminalPrompt.can_prompt(true) {
+        return Err(format!(
+            "no terminal available to prompt for `{provider}`'s API key — pass \
+             `stella auth set {provider} --stdin` (pipe the key) or `--key` instead"
+        ));
     }
     let value = Zeroizing::new(
         rpassword::prompt_password(format!("  API key for `{provider}`: "))
@@ -171,6 +183,14 @@ fn prompt_for_fields(
         };
         let label = format!("  {}{suffix}: ", field.prompt);
         let entered = if field.secret {
+            // Same gate as `read_key_value` above — see its comment.
+            if !TerminalPrompt.can_prompt(true) {
+                return Err(format!(
+                    "no terminal available to prompt for `{}` — pass \
+                     --field {}=VALUE instead",
+                    field.prompt, field.name
+                ));
+            }
             Zeroizing::new(
                 rpassword::prompt_password(&label)
                     .map_err(|e| format!("cannot read secret from terminal: {e}"))?,

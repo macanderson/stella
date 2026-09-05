@@ -164,10 +164,6 @@ allowed = ["anthropic/claude-fable-5", "openrouter/moonshotai/kimi-k3"]
 # The model every turn runs on, as `provider/slug`.
 default_model = "anthropic/claude-fable-5"
 
-# on | off (default off) — let stella pick the model per turn from the catalog
-# rather than always using `default_model`.
-auto_mode = "off"
-
 # on | off (default off) — let stella pick reasoning effort per turn. Overrides
 # an explicit `effort` under [agents.default] when on.
 effort_auto = "off"
@@ -237,7 +233,7 @@ max_tokens = 8192
 # Its own top-level table rather than part of [agents] on purpose: the [agents]
 # set is CLOSED (its names are struct fields), which is what makes flattening
 # safe there. Seat names are an OPEN set chosen by whatever you installed, so a
-# plugin author could ship a seat called `auto_mode` tomorrow.
+# plugin author could ship a seat called `effort_auto` tomorrow.
 # -----------------------------------------------------------------------------
 [seats]
 "vera/verifier" = "anthropic/claude-opus-5"

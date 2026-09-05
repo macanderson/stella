@@ -864,7 +864,7 @@ fn collect_kind<'a>(node: Node<'a>, kind: &str, out: &mut Vec<Node<'a>>) {
         if node.kind() == kind {
             out.push(node);
         }
-        for idx in (0..node.child_count() as u32).rev() {
+        for idx in (0..node.child_count()).rev() {
             if let Some(child) = node.child(idx) {
                 stack.push(child);
             }

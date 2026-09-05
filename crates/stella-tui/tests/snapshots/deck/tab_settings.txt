@@ -7,11 +7,11 @@
   AGENTS  │  TOOLS  │  SEATS   ←/→
    GLOBAL   default
 
-▸ auto_mode           off
-  effort_auto         on
+▸ effort_auto         on
   reasoning_auto      off
   minimal_prompt      off
   allowed_models      (none — pickers offer the catalog)
+
 
 
 
