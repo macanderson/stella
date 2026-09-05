@@ -501,7 +501,15 @@ pub(super) fn handle_supervisor_msg(
             // would open its record to be told nothing. One `git show` against
             // one lane's own history, on the driver loop for the same reason
             // the board mirror below is — it is per dead lane, not per step.
-            if !matches!(end, subsession::WorkerEnd::Done(_))
+            //
+            // Silent when the user's own keystroke ended the lane: `/clear`
+            // already names every lane it stopped, and a Delete just took the
+            // row away. `session_clear::settle_worker_task` holds the same
+            // line for a cleared worker's task note — a note there would
+            // narrate the keystroke back at the person who typed it.
+            let user_ended_it = deleted || subs.was_cleared(&lane);
+            if !user_ended_it
+                && !matches!(end, subsession::WorkerEnd::Done(_))
                 && let Some(note) = subsession::terminal_frame::parent_report(
                     &ctx.cfg.workspace_root,
                     session_id,

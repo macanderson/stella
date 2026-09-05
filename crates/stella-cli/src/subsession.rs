@@ -259,6 +259,13 @@ impl SubSessions {
         ended
     }
 
+    /// Whether `/clear` stopped `lane` and its `Ended` has not been settled
+    /// yet. The read side of [`Self::finish_cleared`], which consumes the
+    /// entry — a caller that must ask before that point asks here.
+    pub(crate) fn was_cleared(&self, lane: &str) -> bool {
+        self.cleared.contains(lane)
+    }
+
     /// Whether `lane` was stopped by `/clear` and has now ended: `true` once,
     /// with the lane's spec dropped, so the caller deregisters its row.
     /// `false` while the worker is still live — its terminal status is still
