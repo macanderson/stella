@@ -65,9 +65,19 @@ fn every_observation_source_grades_to_one_named_thing() {
         observation_grade(ObservationSource::ReflectionLesson),
         ProvenanceGrade::ModelCritique
     );
-    assert_eq!(
-        observation_grade(ObservationSource::MemoryCitation),
-        ProvenanceGrade::ModelCritique
+}
+
+/// `ObservationSource::MemoryCitation` is retired: this payload once
+/// deserialized to `Ok(MemoryCitation)`, the one option only tests could ever
+/// construct, since nothing wrote a real one. The same bytes are now a parse
+/// error, which states plainly that the source does not exist to name.
+#[test]
+fn memory_citation_is_retired_and_no_longer_parses() {
+    let parsed: Result<ObservationSource, _> = serde_json::from_str(r#""memory_citation""#);
+    assert!(
+        parsed.is_err(),
+        "MemoryCitation was retired, since no real turn ever produced one — \
+         the wire form must not resurrect it"
     );
 }
 
