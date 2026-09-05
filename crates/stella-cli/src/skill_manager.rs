@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn enumerate_names_the_evidence_grade_of_a_learned_skill() {
         use stella_context::{ContextStore, LedgerAppend};
-        use stella_core::context_record::{
+        use stella_records::context_record::{
             ContextRecordKind, EvidencePool, LIFECYCLE_SCHEMA_VERSION, ObservationRecord,
             ObservationSource, ProposalRecord, ProposalScore, RecordProposalKind,
             RecordProposalStatus, confidence_from_score,

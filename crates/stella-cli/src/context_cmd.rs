@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use clap::Subcommand;
 use colored::Colorize;
 
-use stella_core::ingest::record::{ContextFile, Proposal};
+use stella_records::ingest::record::{ContextFile, Proposal};
 
 mod amend;
 mod explain;
@@ -268,7 +268,7 @@ pub(crate) struct FoundProposal {
     /// The record-set slug from that file's header.
     pub set_id: String,
     /// The file's defaults, which the proposal's record inherits on publication.
-    pub defaults: stella_core::ingest::record::Defaults,
+    pub defaults: stella_records::ingest::record::Defaults,
 }
 
 /// Every proposal in `.stella/proposals/*.toml`, file-name order.
