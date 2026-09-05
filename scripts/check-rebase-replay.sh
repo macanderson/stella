@@ -165,9 +165,44 @@ if [ -z "$suspects" ]; then
   exit 0
 fi
 
+# A path can drop out of the net diff for two reasons. One is the hazard.
+#
+#   1. The branch edited the path and undid it. A rebase drops the edit as
+#      already applied and keeps the undo. That is the hazard above.
+#   2. The base does not have the path. Some commit upstream moved or deleted
+#      it, and the branch took that in through a merge. So no copy is left to
+#      revert, and the old commit conflicts instead of applying.
+#
+# Case 2 fires on any branch that edited a path a crate move relocated. Moving
+# three module trees out of `stella-core` tripped it on two branches in one
+# morning. The remedy it prints is a history rewrite that buys nothing.
+#
+# Absence at both ends does not tell the two apart. A file added and then
+# dropped inside the branch is absent at both ends too, and it IS the hazard:
+# rebase onto an upstream that added the same path, and the branch's delete is
+# what lives (R4 in scripts/test-rebase-replay.sh). What tells them apart is
+# who removed the path. A delete in the branch's own non-merge history is the
+# branch undoing its work. No such commit means the merge did it, so the base
+# did, not this branch.
+upstream_removed() {
+  local path="$1"
+  # Present at either end: an upstream copy can exist to be reverted.
+  if git_c cat-file -e "$base:$path" 2>/dev/null; then return 1; fi
+  if git_c cat-file -e "$head:$path" 2>/dev/null; then return 1; fi
+  if [ -n "$(git_c log --no-merges --diff-filter=D --format=%h "$base..$head" -- "$path")" ]; then
+    return 1
+  fi
+  return 0
+}
+
 found=0
+removed_upstream=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
+  if upstream_removed "$path"; then
+    removed_upstream=$((removed_upstream + 1))
+    continue
+  fi
   found=$((found + 1))
   note ""
   note "  $path"
@@ -183,6 +218,17 @@ COMMITS
 done <<EOF
 $suspects
 EOF
+
+# Every suspect turned out to be case 2. Say so rather than printing the bare
+# OK line the no-suspects path prints: a reader who arrived from a red run on
+# an earlier head needs to see that the paths were considered and why they were
+# cleared, not a green line that looks like the guard never saw them.
+if [ "$found" -eq 0 ]; then
+  echo "check-rebase-replay: OK — $removed_upstream path(s) left the branch's diff because the base"
+  echo "check-rebase-replay:      moved or deleted them, not because this branch undid an edit."
+  echo "check-rebase-replay:      No upstream copy exists for a rebase to revert."
+  exit 0
+fi
 
 report="check-rebase-replay: FAIL — $found path(s) edited and then undone inside this branch."$'\n'"$report"
 note ""

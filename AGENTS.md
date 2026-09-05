@@ -382,6 +382,20 @@ guards job checks out at `fetch-depth: 2` — right for `check-deleted-tests.sh`
 which compares two trees, and useless for a question about every commit on a
 branch.
 
+**A path can also leave the net diff without anyone undoing anything**, and the
+guard tells the two apart by asking who removed it. When an upstream commit
+moves or deletes a path and the branch absorbs that through a merge, the path is
+absent from the base as well, so no upstream copy exists for a replayed undo to
+revert and the branch's old commit would conflict rather than apply in silence.
+`upstream_removed` clears exactly that case and the run says which paths it
+cleared. Absence at both ends is not the test on its own: a file created and
+then deleted inside the branch is absent at both ends too, and it is the hazard
+— what separates them is a deletion in the branch's own non-merge history
+(`test-rebase-replay.sh`'s R4 against R9, with R10 holding the pair together so
+the skip stays per-path). This is not a corner: the extraction that moved three
+module trees out of `stella-core` fired the guard on two open branches the same
+morning, each time prescribing a history rewrite that would have bought nothing.
+
 **A partition can also split something atomic**, which per-pull-request CI does
 catch — each branch fails on its own — but only after the plan is already
 wrong. `crates/stella-serve/src/accept.rs` and

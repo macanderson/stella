@@ -208,6 +208,47 @@ git -C "$r" commit -qam "edit f"
 want "R8 an absent base ref is a failure naming the shallow checkout" \
   expect-fail "$r" origin/nonexistent "fetch-depth"
 
+# ── 9. A path the base moved out from under the branch ───────────────────────
+#
+# The branch edits a file. Upstream moves it. The branch merges that and
+# re-lands the work at the new path. The old path is absent at both ends, so
+# it lands in `suspects`. But no copy is left to revert, and the old commit
+# would conflict on rebase instead of applying in silence.
+#
+# Real, not made up: moving three module trees out of `stella-core` fired this
+# on two open branches in one morning. The fix it printed was a history
+# rewrite that would have bought nothing.
+r="$(new_repo moved_upstream)"
+mkdir -p "$r/old"
+printf 'alpha\n' >"$r/old/mod.rs"
+git -C "$r" add old/mod.rs
+git -C "$r" commit -qm "add old/mod.rs"
+git -C "$r" checkout -q -b b
+printf 'beta\n' >"$r/old/mod.rs"
+git -C "$r" commit -qam "edit old/mod.rs"
+git -C "$r" checkout -q main
+mkdir -p "$r/new"
+git -C "$r" mv old/mod.rs new/mod.rs
+git -C "$r" commit -qm "move the module upstream"
+git -C "$r" checkout -q b
+git -C "$r" merge -q --no-edit main >/dev/null 2>&1
+want "R9 a path the base moved away is not read as an undo" \
+  expect-pass "$r" main "moved or deleted them"
+
+# ── 10. The skip is per path, not a waiver ───────────────────────────────────
+#
+# The R9 branch plus a real pair (R4's shape: added and dropped inside the
+# branch, so absent at both ends too). A blanket "absent at both ends is fine"
+# was the first fix proposed. Measured against R4 it fails: this branch would
+# read green and the real hazard would ship.
+printf 'new\n' >"$r/g.txt"
+git -C "$r" add g.txt
+git -C "$r" commit -qm "add g"
+git -C "$r" rm -q g.txt
+git -C "$r" commit -qm "drop g again"
+want "R10 a real pair beside a moved path is still flagged" \
+  expect-fail "$r" main "g.txt"
+
 echo
 echo "passed ${pass}, failed ${fail}"
 [ "$fail" -eq 0 ]
