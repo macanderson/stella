@@ -4,9 +4,11 @@ use super::*;
 
 // ── SKILLS tab ──────────────────────────────────────────────────────────
 
-// `SkillOp`, `SkillScope`, `SkillSearchHit`, `SkillsView` arrive via
-// `use super::*`; only `SkillRow` is not imported at module scope.
-use crate::envelope::SkillRow;
+// `SkillOp` and `SkillPrompt` arrive via `use super::*`. The rest of the
+// SKILLS envelope types are imported here directly, since `deck_ui.rs`
+// itself has none of its own use for them — `SkillsPanel` and its kin live
+// in `skills_state`.
+use crate::envelope::{RejectedSkillRow, SkillRow, SkillScope, SkillSearchHit, SkillsView};
 
 fn skills_ui() -> DeckUi {
     let mut ui = ready_ui();
@@ -97,6 +99,7 @@ fn skills_ctrl_o_on_installed_opens_preview_with_local_body() {
     ui.skills.view = SkillsView {
         rows: vec![r],
         status: None,
+        rejections: vec![],
         busy: false,
         created: None,
     };
@@ -206,6 +209,7 @@ fn skills_space_toggles_and_two_ctrl_x_uninstalls() {
     ui.skills.view = SkillsView {
         rows: vec![a_row("sql-style", SkillScope::Project, true)],
         status: None,
+        rejections: vec![],
         busy: false,
         created: None,
     };
@@ -242,6 +246,7 @@ fn skills_e_opens_edit_overlay_and_ctrl_s_saves() {
     ui.skills.view = SkillsView {
         rows: vec![r],
         status: None,
+        rejections: vec![],
         busy: false,
         created: None,
     };
@@ -277,6 +282,7 @@ fn skills_manage_hotkeys_yield_to_a_nonempty_composer() {
     ui.skills.view = SkillsView {
         rows: vec![r],
         status: None,
+        rejections: vec![],
         busy: false,
         created: None,
     };
@@ -325,6 +331,7 @@ fn skills_p_opens_pin_picker_and_enter_pins() {
     ui.skills.view = SkillsView {
         rows: vec![r],
         status: None,
+        rejections: vec![],
         busy: false,
         created: None,
     };
@@ -416,6 +423,7 @@ fn skills_creating_dialog_becomes_the_preview_of_the_created_skill() {
     let view = SkillsView {
         rows: vec![a_row("other", SkillScope::User, true), created],
         status: Some("created pdf-tables (project) — v1".into()),
+        rejections: vec![],
         busy: false,
         created: Some("pdf-tables".into()),
     };
@@ -446,6 +454,7 @@ fn skills_failed_create_shows_the_error_in_the_dialog() {
     let view = SkillsView {
         rows: vec![],
         status: Some("the model did not return a valid SKILL.md — try again".into()),
+        rejections: vec![],
         busy: false,
         created: None,
     };
@@ -496,6 +505,7 @@ fn skills_creating_dialog_esc_hides_but_creation_still_folds_in() {
     let view = SkillsView {
         rows: vec![a_row("d-skill", SkillScope::User, true)],
         status: Some("created d-skill (user) — v1".into()),
+        rejections: vec![],
         busy: false,
         created: Some("d-skill".into()),
     };
@@ -516,6 +526,7 @@ fn skills_snapshot_ingest_updates_view_and_clears_searching() {
     let view = SkillsView {
         rows: vec![a_row("a", SkillScope::Project, true)],
         status: Some("done".into()),
+        rejections: vec![],
         busy: false,
         created: None,
     };
@@ -805,4 +816,106 @@ fn skills_ctrl_o_on_an_authored_row_still_previews_the_body() {
     let preview = ui.skills.preview.as_ref().expect("preview opened");
     assert_eq!(preview.body.as_deref(), Some("b"));
     assert!(!preview.subtitle.contains("traces"), "{preview:?}");
+}
+
+// ── The rejected-skills review (`!`) ─────────────────────────────────────
+
+fn a_rejection(name: &str, scope: SkillScope) -> RejectedSkillRow {
+    RejectedSkillRow {
+        scope,
+        name: name.to_string(),
+        mined_as: format!("{name}-a1b2c3d4"),
+        rejected_at: 1_700_000_000,
+    }
+}
+
+/// `!` with nothing rejected refuses out loud, instead of opening an empty
+/// picker.
+#[test]
+fn skills_bang_refuses_when_nothing_is_rejected() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    handle_deck_key(ch('!'), &model, &mut ui);
+    assert!(ui.skills.prompt.is_none());
+    assert!(
+        ui.skills
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("nothing rejected")),
+        "{:?}",
+        ui.skills.status
+    );
+}
+
+/// `!` with rejections on record opens the review, at row zero.
+#[test]
+fn skills_bang_opens_the_rejected_review() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rejections = vec![
+        a_rejection("bench-rig-access", SkillScope::Project),
+        a_rejection("prefer-tables", SkillScope::User),
+    ];
+    handle_deck_key(ch('!'), &model, &mut ui);
+    assert_eq!(ui.skills.prompt, Some(SkillPrompt::Rejected { sel: 0 }));
+}
+
+/// **The witness, deck-side.** `↓` moves the selection. `u` dispatches
+/// `Unreject` for the highlighted row, not the first one. That proves
+/// navigation reaches the dispatch.
+#[test]
+fn skills_rejected_review_navigates_and_unrejects_the_highlighted_row() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rejections = vec![
+        a_rejection("bench-rig-access", SkillScope::Project),
+        a_rejection("prefer-tables", SkillScope::User),
+    ];
+    ui.skills.prompt = Some(SkillPrompt::Rejected { sel: 0 });
+
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    assert_eq!(ui.skills.prompt, Some(SkillPrompt::Rejected { sel: 1 }));
+
+    let action = handle_deck_key(ch('u'), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::Skill(SkillOp::Unreject {
+            scope: SkillScope::User,
+            mined_as: "prefer-tables-a1b2c3d4".into(),
+        })),
+        "the SECOND row, which the down-arrow selected"
+    );
+    assert!(ui.skills.prompt.is_none(), "the dialog closes on dispatch");
+}
+
+/// `⏎` is the same verb as `u`. Either one confirms the highlighted row.
+#[test]
+fn skills_rejected_review_enter_also_unrejects() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rejections = vec![a_rejection("bench-rig-access", SkillScope::Project)];
+    ui.skills.prompt = Some(SkillPrompt::Rejected { sel: 0 });
+
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::Skill(SkillOp::Unreject {
+            scope: SkillScope::Project,
+            mined_as: "bench-rig-access-a1b2c3d4".into(),
+        }))
+    );
+}
+
+/// Esc abandons the review with nothing dispatched. Reading the list is not
+/// itself a change.
+#[test]
+fn skills_rejected_review_esc_cancels() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.view.rejections = vec![a_rejection("bench-rig-access", SkillScope::Project)];
+    ui.skills.prompt = Some(SkillPrompt::Rejected { sel: 0 });
+
+    let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert!(ui.skills.prompt.is_none());
 }

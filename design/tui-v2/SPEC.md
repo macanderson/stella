@@ -389,6 +389,7 @@ Turn begin, turn end receipt, skill auto-trigger, memory log and promotion, comp
 - **One search box** hits installed skills and the web registry together. Results split into sections: installed, learned, registry.
 - Installed rows: name, version, scope, one-line summary, and economics right-aligned (`18× · 0.9k` tok per inject). Caption: prune what never fires.
 - **Learned section**: skills stella synthesized from repeated winning traces. Human-named (auto-rename from hash suffixes, keep `was <hash>` provenance), tagged `learned`, showing source trace count and turn. Keys: `r rename · ctrl+o show source traces · x reject teaches the learner`.
+- **Rejected review**: a collapsed `N rejected` line under the learned section, when this workspace has recorded any. `!` opens a picker over every rejection (name, scope, date); `↑`/`↓` choose, `⏎`/`u` reverses one and the miner is free to propose it again on its next pass.
 - Registry results: name, install count, signature status. `signed` green, `unsigned · blocked by policy` red with `v view anyway`. `i install` lands the skill **disabled until previewed and enabled**.
 - Keys: `space on/off · ctrl+o preview · i install · p pin · n new from prompt`.
 

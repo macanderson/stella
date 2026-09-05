@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use stella_core::skills::{Skill, SkillOrigin, skill_from_file_with_origin};
 use stella_tui::{SkillRow, SkillScope};
 
-pub use learned::{record_learned, reject, rejections, rename};
+pub use learned::{record_learned, reject, rejected_rows, rejections, rename, unreject};
 
 /// The per-scope sidecar that records state the `SKILL.md` files don't: which
 /// skills are disabled, (versioning layer) which version each is pinned to,

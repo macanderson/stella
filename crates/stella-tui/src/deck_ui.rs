@@ -34,8 +34,7 @@ use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::gates::handle_focused_gates;
 use crate::envelope::{
     AgentControl, AgentId, AgentScope, AgentStatus, EntityField, EntityHit, Inbound,
-    InstalledAgentEntry, IssueAction, IssueRow, SkillOp, SkillScope, SkillSearchHit, SkillsView,
-    SplashCue, WorkspaceInput,
+    InstalledAgentEntry, IssueAction, IssueRow, SkillOp, SplashCue, WorkspaceInput,
 };
 use crate::graph::GraphSnapshot;
 use crate::input::UserInput;
@@ -183,127 +182,9 @@ impl InstalledPanel {
     }
 }
 
-/// Which pane of the SKILLS tab has the keyboard: the installed list or the
-/// registry search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SkillsFocus {
-    #[default]
-    Installed,
-    Search,
-}
-
-/// An active SKILLS-tab overlay that captures keys ahead of the list/search
-/// panes — the scope picker, the create-description input, the edit buffer, or
-/// the version pin picker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SkillPrompt {
-    /// Choose install/create scope (project or user) before dispatching.
-    Scope {
-        action: ScopeAction,
-        /// Highlighted choice: `false` = project, `true` = user.
-        user: bool,
-    },
-    /// Type a short description for LLM-assisted creation (then the scope
-    /// picker follows).
-    CreateDescription { buffer: String },
-    /// The LLM-assisted creation is running driver-side: the dialog stays
-    /// open with an animated spinner until the refreshed [`Inbound::Skills`]
-    /// snapshot lands. Esc hides the dialog (creation continues); every
-    /// other key is swallowed.
-    Creating {
-        description: String,
-        scope: SkillScope,
-    },
-    /// The LLM-assisted creation failed: the dialog stays open showing the
-    /// driver's error so the outcome can't be missed. Esc / ⏎ / q close it.
-    CreateFailed { error: String },
-    /// Edit a skill's body; saving increments its version and pins the new one.
-    Edit {
-        scope: SkillScope,
-        name: String,
-        buffer: String,
-    },
-    /// Pick a version to pin (no edit, no version bump).
-    Pin {
-        scope: SkillScope,
-        name: String,
-        latest: u32,
-        sel: u32,
-    },
-    /// Give a learned skill a human name (SPEC 9.2's `r rename`).
-    ///
-    /// `was` is the mined `<hash>` the rename keeps, carried into the dialog
-    /// so it can promise that on screen — a rename that silently dropped the
-    /// provenance and one that keeps it look identical at the prompt, and the
-    /// whole point of this verb is that the second is what happens.
-    Rename {
-        scope: SkillScope,
-        name: String,
-        buffer: String,
-        was: String,
-    },
-}
-
-/// The deferred action a [`SkillPrompt::Scope`] picker resolves into once the
-/// user chooses a scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScopeAction {
-    Install { id: String },
-    Create { description: String },
-}
-
-/// The ctrl+o markdown preview overlay: a scrollable, read-only render of a
-/// skill's `SKILL.md`. Opened from either pane — for an installed skill the
-/// body is on hand (`SkillRow::body`, so `body` is `Some` immediately); for a
-/// registry hit it is fetched (`body` starts `None` = loading, filled by
-/// [`Inbound::SkillPreview`] whose `id` must match `pending`).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SkillPreview {
-    /// Heading shown in the popup border (the skill id or name).
-    pub title: String,
-    /// A dim sub-line under the title — the `skills.sh` url or the scope/origin.
-    pub subtitle: String,
-    /// The awaited hit `id` while `body` is `None`; `None` for a local body.
-    pub pending: Option<String>,
-    /// The markdown body once available; `None` renders a loading state.
-    pub body: Option<String>,
-    /// Vertical scroll offset in lines, clamped to content at render time.
-    pub scroll: u16,
-}
-
-/// All SKILLS-tab view state. The installed list + `busy`/`status` come from
-/// [`Inbound::Skills`] snapshots the driver owns; the rest (selection, the
-/// live search query, transient arming, the active overlay) is local.
-#[derive(Debug, Clone, Default)]
-pub struct SkillsPanel {
-    /// The installed-skills read-model, from [`Inbound::Skills`].
-    pub view: SkillsView,
-    pub focus: SkillsFocus,
-    /// Selected row in the installed list.
-    pub sel: usize,
-    /// The live search-query buffer.
-    pub query: String,
-    /// Last search results, from [`Inbound::SkillSearch`].
-    pub hits: Vec<SkillSearchHit>,
-    pub search_sel: usize,
-    /// Query changed since the last search → Enter re-searches, not installs.
-    pub query_dirty: bool,
-    /// An npx search/install is in flight (client-side optimism).
-    pub searching: bool,
-    /// One-line hint (last op outcome / affordance).
-    pub status: Option<String>,
-    /// First `ctrl+x` arms; the second uninstalls.
-    pub uninstall_armed: bool,
-    /// First `x` arms; the second rejects (SPEC 9.2). Armed separately from
-    /// [`Self::uninstall_armed`] because the two verbs make different claims
-    /// and must not be able to complete each other: pressing `ctrl+x` then `x`
-    /// is a user changing their mind, not a confirmed rejection.
-    pub reject_armed: bool,
-    /// An active overlay capturing keys ahead of the panes.
-    pub prompt: Option<SkillPrompt>,
-    /// The ctrl+o markdown preview overlay (modal, scroll + esc), or `None`.
-    pub preview: Option<SkillPreview>,
-}
+// SKILLS-tab view state lives in `skills_state`, not here.
+mod skills_state;
+pub use skills_state::{ScopeAction, SkillPreview, SkillPrompt, SkillsFocus, SkillsPanel};
 
 /// The ISSUES tab's interaction mode. `Browse` is plain tab state (the
 /// composer stays live, like every other tab); every other mode is modal —
@@ -1129,13 +1010,13 @@ impl DeckUi {
                 Some(SkillPrompt::Rename { buffer, .. }) => push_single_line(buffer, text),
                 // The edit buffer is a genuine multi-line surface: verbatim.
                 Some(SkillPrompt::Edit { buffer, .. }) => buffer.push_str(text),
-                // Scope / pin pickers and the creation dialog's in-flight /
-                // failed states hold no text.
+                // None of these hold text.
                 Some(
                     SkillPrompt::Scope { .. }
                     | SkillPrompt::Pin { .. }
                     | SkillPrompt::Creating { .. }
-                    | SkillPrompt::CreateFailed { .. },
+                    | SkillPrompt::CreateFailed { .. }
+                    | SkillPrompt::Rejected { .. },
                 ) => {}
                 None if self.skills.focus == SkillsFocus::Search => {
                     push_single_line(&mut self.skills.query, text);
@@ -3021,6 +2902,11 @@ fn handle_skills_installed_key(
         KeyCode::Char('x') if !ctrl && composer_empty => {
             Some(skills_keys::reject_press(ui, reject_was_armed))
         }
+        // Show what got rejected. Let the user undo one.
+        KeyCode::Char('!') if !ctrl && composer_empty => {
+            ui.skills.open_rejected();
+            Some(DeckAction::Handled)
+        }
         _ => None,
     }
 }
@@ -3236,6 +3122,8 @@ fn handle_skills_prompt_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             }
             _ => DeckAction::Handled,
         },
+        // Pick one row. Then undo it.
+        Some(SkillPrompt::Rejected { sel }) => skills_keys::handle_rejected_key(key, ui, sel),
         None => DeckAction::Ignored,
     }
 }

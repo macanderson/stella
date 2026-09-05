@@ -135,10 +135,33 @@ pub struct SkillSearchHit {
     pub url: String,
 }
 
+/// One learned skill rejected in this workspace (SPEC 9.2's `x`). Read back
+/// for the SKILLS tab's `!` review — the reader/undo half `x` never had.
+///
+/// A row, not the bare `mined_as`/`rejected_at` a rejection is stored as.
+/// The tab shows rejections from both scopes at once, so [`Self::scope`]
+/// tells [`SkillOp::Unreject`] which sidecar to edit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RejectedSkillRow {
+    pub scope: SkillScope,
+    /// What the skill was called when it was rejected — the row's label.
+    /// After a rename this is the old name. [`Self::mined_as`] is what still
+    /// matches.
+    pub name: String,
+    /// The mined identity. This is the key [`SkillOp::Unreject`] names, and
+    /// the one the miner matches a rejection against.
+    pub mined_as: String,
+    /// Unix seconds.
+    pub rejected_at: u64,
+}
+
 /// The full installed-skills read-model rendered by the SKILLS tab.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SkillsView {
     pub rows: Vec<SkillRow>,
+    /// Every learned-skill rejection recorded in this workspace, across both
+    /// scopes — the `!` review's whole read-model.
+    pub rejections: Vec<RejectedSkillRow>,
     /// A one-line status/outcome hint (last op result), or `None`.
     pub status: Option<String>,
     /// True while a driver op (npx search/install, LLM create) is in flight,
@@ -212,4 +235,14 @@ pub enum SkillOp {
     /// "this should never have been learned", and only the second is a fact
     /// about the learner.
     Reject { scope: SkillScope, name: String },
+    /// Reverse a rejection: drop the recorded entry, so the miner's next
+    /// pass over the same unchanged log is free to propose the skill again.
+    ///
+    /// `mined_as`, not the display name. A rejection is keyed on the mined
+    /// identity, so it still matches after a rename.
+    ///
+    /// The file is never restored. The loop rebuilds it on its next mining
+    /// pass — the same property that made the rejection durable in the
+    /// first place.
+    Unreject { scope: SkillScope, mined_as: String },
 }

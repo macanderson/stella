@@ -1352,7 +1352,8 @@ pub use mcp::{
 };
 pub use roles::{RoleTableEntry, role_table};
 pub use skills::{
-    LearnedProvenance, LearnedSource, SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView,
+    LearnedProvenance, LearnedSource, RejectedSkillRow, SkillOp, SkillRow, SkillScope,
+    SkillSearchHit, SkillsView,
 };
 pub use tool_policy::{ToolDenial, ToolPolicyState, ToolRow, ToolScope};
 
