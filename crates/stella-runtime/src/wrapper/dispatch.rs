@@ -79,7 +79,7 @@ use stella_plugin::{
     StageProgram, TamperFinding, TurnOutcome, Verdict, VerdictRule, WrapperPoint,
 };
 use stella_protocol::completion::CompletionMessage;
-use stella_protocol::{GateBoard, LadderSnapshot};
+use stella_protocol::{GateBoard, LadderRung, LadderSnapshot, VerdictEvidence};
 
 use super::stamp::{HostClock, StampTiming};
 use super::{
@@ -1006,6 +1006,41 @@ impl DispatchReport {
             Outcome::Undecided { reason } => {
                 format!("{}: nothing decided it either way — {reason}", self.variant)
             }
+        }
+    }
+
+    /// This report, as the evidence an `AgentEvent::Verdict` carries.
+    ///
+    /// This crate sends no events (module doc, "the dispatcher owns the
+    /// loop, the host owns the turn"). The host builds the event and sends
+    /// it. But the evidence *inside* the event comes from this report, so it
+    /// is built once, here.
+    ///
+    /// `deterministic` is [`VerdictEvidence`]'s own distinction: real oracle
+    /// checks versus a model verifier's opinion. `judge` never calls a model
+    /// (`super::judge`'s module doc), so nothing here is ever a model's
+    /// opinion. But not every rung is oracle evidence either.
+    /// [`LadderRung::SubmitFast`] and [`LadderRung::Revise`] are the two
+    /// rungs `stamp`'s `rung` reaches when the oracle's checks actually
+    /// decided every requirement, met or unmet. Every other rung — `Waived`
+    /// (nothing was declared to check), `Unverified`/`Unverifiable`/
+    /// `WitnessUnsatisfiable` (the oracle could not decide) — carries no such
+    /// evidence, and says so.
+    ///
+    /// `evidence_refs` is left empty. The oracle wire contract names no
+    /// artifact today (`stella_plugin::ObservedEvidence`), so there is
+    /// nothing here to point at.
+    #[must_use]
+    pub fn verdict_evidence(&self) -> VerdictEvidence {
+        let deterministic = matches!(
+            self.snapshot.rung,
+            Some(LadderRung::SubmitFast | LadderRung::Revise)
+        );
+        VerdictEvidence {
+            summary: self.summary(),
+            deterministic,
+            evidence_refs: Vec::new(),
+            ladder: Some(Box::new(self.snapshot.clone())),
         }
     }
 }
