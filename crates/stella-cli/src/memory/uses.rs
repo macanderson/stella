@@ -223,18 +223,12 @@ fn extract_one(store: &Store, context: &ContextStore, execution: &FinishedExecut
         }
     }
 
-    // Deliverable 2: the same citations also become observations, so the miner
-    // that learns from reflection prose learns from them too. Every citation is
-    // considered — including ones naming a record this frame never carried,
-    // which have no use to attach feedback to but are still a real remark about
-    // a real memory.
-    for citation in &citations {
-        if super::evidence::citation_observation(context, citation, &task, &at)
-            == Some(AppendOutcome::Appended)
-        {
-            appended += 1;
-        }
-    }
+    // Deliverable 2 mined the same citations into observations here too.
+    // That source, `ObservationSource::MemoryCitation`, is retired: nothing
+    // ever wrote a real citation, so this loop only ever mined test
+    // fixtures. See `evidence.rs`'s module doc for the full account; the
+    // feedback loop above is untouched — it stays declared, inert plumbing
+    // on the same empty table.
 
     // The third source. Declared in Phase 1, unwritten until now.
     if let Ok(failures) = store.failed_tool_calls_for_execution(execution.execution_id) {
