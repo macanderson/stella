@@ -220,6 +220,7 @@ pub(super) async fn aggregate_openai_stream(
                     if let Some(observer) = observer
                         && let Some(acc) = tool_calls.get(&output_index)
                         && !acc.call_id.is_empty()
+                        && !acc.name.is_empty()
                     {
                         // Never announce a call whose input failed to parse —
                         // speculation on a malformed call would execute
@@ -338,18 +339,37 @@ pub(super) async fn aggregate_openai_stream(
         });
     }
 
-    let tool_calls = tool_calls
-        .into_values()
-        .map(|acc| ToolCall {
+    let mut calls = Vec::with_capacity(tool_calls.len());
+    for (index, acc) in tool_calls {
+        // The id is what the next turn's `function_call_output` is matched
+        // against, and the name is the tool to run. Neither can be invented
+        // here. Two calls in one turn both keyed `""` pair up with the wrong
+        // results in `stella-core`'s loop evidence, and a result sent under
+        // an empty id matches nothing the provider holds. The announce site
+        // above already skips such a call, so committing one here would
+        // contradict it.
+        let mut missing = Vec::new();
+        if acc.call_id.is_empty() {
+            missing.push("call_id");
+        }
+        if acc.name.is_empty() {
+            missing.push("name");
+        }
+        if !missing.is_empty() {
+            return Err(
+                http::malformed_tool_call_error("OpenAI", index, &acc.name, &missing).into(),
+            );
+        }
+        calls.push(ToolCall {
             call_id: acc.call_id,
             name: acc.name,
             input: tool_call_input(&acc.arguments),
-        })
-        .collect();
+        });
+    }
 
     Ok(OpenAiStreamOutcome {
         text,
-        tool_calls,
+        tool_calls: calls,
         usage,
         truncated_at_limit,
     })

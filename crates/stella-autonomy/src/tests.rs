@@ -404,13 +404,16 @@ fn the_supply_rungs_decide_the_tier() {
         ("normal", true, 2, "impacted", "loop", 20, "deep"),
     );
 
+    // A worktree checkout costs disk with or without a build, so the
+    // disk-starved plan drops to one worker exactly like the other degraded
+    // branches below.
     assert_plan(
         Supply {
             disk_free_gb: 5,
             ..base_supply()
         },
         d,
-        ("light", false, 2, "ci", "off", 5, "deep"),
+        ("light", false, 1, "ci", "off", 5, "deep"),
     );
     // The floor outranks heavy-class hardware — the first rung wins.
     assert_plan(
@@ -419,7 +422,7 @@ fn the_supply_rungs_decide_the_tier() {
             ..big
         },
         d,
-        ("light", false, 2, "ci", "off", 5, "deep"),
+        ("light", false, 1, "ci", "off", 5, "deep"),
     );
     assert_plan(
         Supply {

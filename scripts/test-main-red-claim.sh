@@ -38,12 +38,14 @@ bad() { printf '  \033[31m✗\033[0m %s\n' "$*"; fail=$((fail + 1)); }
 # An expected block must also name its reason, because "exit 1" is satisfied
 # by a typo in the script just as well as by the case's own subject — the
 # discipline test-main-red-hold.sh applies to its blocking branch.
-want() { # want <name> <expect-proceed|expect-block> <want-substring> <mode> <issues> <login> <claims>
+want() { # want <name> <expect-proceed|expect-block> <want-substring> <mode> <issues> <login> <claims> [session]
   local name="$1" expect="$2" want_text="$3" mode="$4" issues="$5" login="$6" claims="$7"
+  local session="${8-s-self}"
   local out rc
   out="$("$SCRIPT" "$mode" \
     --fixture-open-issues "$issues" \
     --fixture-login "$login" \
+    --fixture-session "$session" \
     --fixture-claims "$claims" 2>&1)"
   rc=$?
   if [ "$expect" = "expect-proceed" ] && [ "$rc" -ne 0 ]; then
@@ -64,19 +66,20 @@ echo "main-red-claim:"
 
 # The incident. Three sessions, one break: the second and third must stand down.
 want "a fresh claim by somebody else stands this session down" \
-  expect-block "claimed by @grace" check "4671" "ada" "grace 300"
+  expect-block "claimed by @grace" check "4671" "ada" "grace s1 300"
 
 want "and it names the window it judged against" \
-  expect-block "window: 20m" check "4671" "ada" "grace 300"
+  expect-block "window: 20m" check "4671" "ada" "grace s1 300"
 
 # The lapse. A session that died mid-repair must not hold the repair shut.
 want "a claim past the window has lapsed" \
-  expect-proceed "unclaimed" check "4671" "ada" "grace 1500"
+  expect-proceed "unclaimed" check "4671" "ada" "grace s1 1500"
 
 # The window is a knob, so a case has to move it: 5m old is claimed at the
 # default and lapsed at a one-minute window.
 out="$("$SCRIPT" check --window-minutes 1 \
-  --fixture-open-issues 4671 --fixture-login ada --fixture-claims "grace 300" 2>&1)"
+  --fixture-open-issues 4671 --fixture-login ada \
+  --fixture-session s-self --fixture-claims "grace s1 300" 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ]; then
   ok "a shorter window lapses a claim the default still honours"
@@ -87,11 +90,39 @@ fi
 # A session's own claim is not a reason to stand it down: re-running the
 # pre-flight is what a session does when it returns to a repair it started.
 want "this session's own claim does not block it" \
-  expect-proceed "unclaimed" check "4671" "ada" "ada 60"
+  expect-proceed "unclaimed" check "4671" "ada" "ada s-self 60"
 
 want "the freshest OTHER claim decides, not the freshest claim" \
-  expect-block "claimed by @grace" check "4671" "ada" "ada 10
-grace 300"
+  expect-block "claimed by @grace" check "4671" "ada" "ada s-self 10
+grace s1 300"
+
+# One person runs several agent sessions, so the login cannot answer "did I
+# write this?". The second session must stand down naming the first.
+want "a second session of the same author stands this one down" \
+  expect-block "claimed by @ada (session s1)" check "4671" "ada" "ada s1 300"
+
+want "and it says the collision is with a session of your own" \
+  expect-block "another of your own sessions" check "4671" "ada" "ada s1 300"
+
+want "the freshest claim decides across two sessions of one author" \
+  expect-block "session s2" check "4671" "ada" "ada s1 900
+ada s2 120"
+
+# The unknowns on both sides of the comparison. Each proceeds, because a claim
+# check that can block a repair is worse than the duplication it prevents.
+want "a run with no session word of its own proceeds on its own login" \
+  expect-proceed "unclaimed" check "4671" "ada" "ada s1 300" ""
+
+want "and says why it could not tell them apart" \
+  expect-proceed "no session word" check "4671" "ada" "ada s1 300" ""
+
+want "a claim with no session word does not block its own author" \
+  expect-proceed "unclaimed" check "4671" "ada" "ada - 300"
+
+# ...but it is still somebody else's claim when the login differs, and the
+# stand-down says which half it could not read.
+want "a claim with no session word still blocks a different author" \
+  expect-block "session unknown" check "4671" "ada" "grace - 300"
 
 # Every unknown proceeds. One case per branch, because each is a separate
 # early return and a regression in one is invisible from the others.
@@ -99,20 +130,23 @@ want "no open main-red issue proceeds" \
   expect-proceed "not known-broken" check "" "ada" ""
 
 want "two open main-red issues are ambiguous, so it proceeds" \
-  expect-proceed "ambiguous" check "4671 4672" "ada" "grace 60"
+  expect-proceed "ambiguous" check "4671 4672" "ada" "grace s1 60"
 
 want "an unreadable identity proceeds" \
-  expect-proceed "identity unknown" check "4671" "" "grace 60"
+  expect-proceed "identity unknown" check "4671" "" "grace s1 60"
 
 want "an unparseable claim age is ignored rather than trusted" \
-  expect-proceed "unclaimed" check "4671" "ada" "grace soon"
+  expect-proceed "unclaimed" check "4671" "ada" "grace s1 soon"
 
 want "no claims at all proceeds" \
   expect-proceed "unclaimed" check "4671" "ada" ""
 
 # `claim` is `check` plus a post, so it must inherit the block.
 want "claim stands down on somebody else's fresh claim" \
-  expect-block "claimed by @grace" claim "4671" "ada" "grace 300"
+  expect-block "claimed by @grace" claim "4671" "ada" "grace s1 300"
+
+want "claim stands down on another session of the same author" \
+  expect-block "claimed by @ada" claim "4671" "ada" "ada s1 300"
 
 want "claim takes an unclaimed issue" \
   expect-proceed "claimed #4671 as @ada" claim "4671" "ada" ""
@@ -163,6 +197,74 @@ else
     ok "an unknown argument is a usage error"
   else
     bad "an unknown argument should exit 2, got $rc"
+  fi
+fi
+
+# The fixtures above pin the session word, so the thing that produces one for
+# real is covered here, in throwaway clones. `session` is the seam: it reads
+# and mints exactly what `check` and `claim` do, and asks the tracker nothing.
+if ! command -v git >/dev/null 2>&1; then
+  bad "the suite needs git on PATH to cover the session word"
+else
+  clone_a="$(mktemp -d)"
+  clone_b="$(mktemp -d)"
+  no_repo="$(mktemp -d)"
+  trap 'rm -rf "$gh_less" "$clone_a" "$clone_b" "$no_repo"' EXIT
+  git -C "$clone_a" init -q
+  git -C "$clone_b" init -q
+
+  word_a="$(cd "$clone_a" && STELLA_CLAIM_SESSION="" "$SCRIPT" session 2>/dev/null)"
+  again_a="$(cd "$clone_a" && STELLA_CLAIM_SESSION="" "$SCRIPT" session 2>/dev/null)"
+  word_b="$(cd "$clone_b" && STELLA_CLAIM_SESSION="" "$SCRIPT" session 2>/dev/null)"
+
+  if [ -n "$word_a" ] && [ "$word_a" = "$again_a" ]; then
+    ok "one clone reads back the word it minted"
+  else
+    bad "a clone's session word did not survive a second run: '$word_a' then '$again_a'"
+  fi
+
+  if [ -n "$word_b" ] && [ "$word_a" != "$word_b" ]; then
+    ok "two clones mint two different words"
+  else
+    bad "two clones shared a session word: '$word_a' and '$word_b'"
+  fi
+
+  # The token is state, not content: it must stay inside the git dir, where no
+  # commit can pick it up.
+  if [ -f "$clone_a/.git/main-red-claim-session" ] &&
+    [ -z "$(git -C "$clone_a" status --porcelain)" ]; then
+    ok "the word is kept in the git dir, so the work tree stays clean"
+  else
+    bad "minting a session word dirtied the work tree"
+  fi
+
+  out="$(cd "$clone_a" && STELLA_CLAIM_SESSION="fleet-7" "$SCRIPT" session 2>/dev/null)"
+  if [ "$out" = "fleet-7" ]; then
+    ok "STELLA_CLAIM_SESSION wins over the clone's own word"
+  else
+    bad "STELLA_CLAIM_SESSION was ignored: got '$out'"
+  fi
+
+  # A value that is not one word would split a claim line into a column the
+  # parse does not have, so it is refused and the clone's own word is used.
+  out="$(cd "$clone_a" && STELLA_CLAIM_SESSION="two words" "$SCRIPT" session 2>&1)"
+  case "$out" in
+  *"not one plain word"*"$word_a") ok "a session word with a space is refused" ;;
+  *) bad "a session word with a space was not refused: $out" ;;
+  esac
+
+  # Nowhere near a clone: an unwalkable ceiling, so the answer cannot depend on
+  # where the runner's temp directory happens to sit.
+  out="$(cd "$no_repo" && GIT_CEILING_DIRECTORIES="$no_repo" \
+    STELLA_CLAIM_SESSION="" "$SCRIPT" session 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    case "$out" in
+    *"no session word"*) ok "outside a clone there is no word to print" ;;
+    *) bad "outside a clone it failed for the wrong reason: $out" ;;
+    esac
+  else
+    bad "outside a clone it printed a word anyway: $out"
   fi
 fi
 

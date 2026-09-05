@@ -354,13 +354,15 @@ want_plan "...but only when it is actually idle (load at cpu/2 is not)" \
   g-h2 "normal 1 2 impacted loop 20 deep" \
   SELF_DRIVING_PROBE_MEM_TOTAL_GB=64 SELF_DRIVING_PROBE_MEM_FREE_GB=32 SELF_DRIVING_PROBE_DISK_FREE_GB=200 \
   SELF_DRIVING_PROBE_LOAD1=4
+# A worktree costs disk whether or not it builds. So a disk-starved plan
+# drops to one worker, the same as the other degraded branches below.
 want_plan "a breached disk floor forbids the local build and sheds the bench" \
-  g-d1 "light 0 2 ci off 5 deep" SELF_DRIVING_PROBE_DISK_FREE_GB=5
+  g-d1 "light 0 1 ci off 5 deep" SELF_DRIVING_PROBE_DISK_FREE_GB=5
 want_plan "the floor outranks heavy-class hardware — the first rung wins" \
-  g-d2 "light 0 2 ci off 5 deep" \
+  g-d2 "light 0 1 ci off 5 deep" \
   SELF_DRIVING_PROBE_MEM_TOTAL_GB=64 SELF_DRIVING_PROBE_MEM_FREE_GB=32 SELF_DRIVING_PROBE_DISK_FREE_GB=5
 want_plan "the floor itself is a knob — raised above real free space it trips" \
-  g-d3 "light 0 2 ci off 5 deep" SELF_DRIVING_DISK_FLOOR_GB=999999
+  g-d3 "light 0 1 ci off 5 deep" SELF_DRIVING_DISK_FLOOR_GB=999999
 want_plan "a busy box gives up the build AND drops to serial" \
   g-b1 "light 0 1 ci off 5 deep" SELF_DRIVING_PROBE_CONTENTION=1
 want_plan "a breached memory floor reads like a busy box" \

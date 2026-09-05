@@ -375,6 +375,10 @@ impl Composer {
             self.cursor = 0;
             return;
         }
+        // This is a char index, not a screen-column budget. No pane width
+        // is checked here. `byte_at_char_col` clamps to the line's own
+        // length, so a CJK line cannot crash it. It just picks a slightly
+        // different landing glyph, same as most editors do.
         let col = self.buffer[start..self.cursor].chars().count();
         let prev_start = line_start(&self.buffer, start - 1);
         let prev_line = &self.buffer[prev_start..start - 1];
@@ -389,6 +393,7 @@ impl Composer {
             return;
         };
         let start = line_start(&self.buffer, self.cursor);
+        // Same as `move_up` above: a char index, not a column budget.
         let col = self.buffer[start..self.cursor].chars().count();
         let next_start = self.cursor + newline + 1;
         let next_end = self.buffer[next_start..]

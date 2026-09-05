@@ -246,6 +246,12 @@ fn attachment_parts(message: &CompletionMessage) -> Vec<GeminiOutboundPart> {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct GeminiFunctionCall {
+    /// Defaulted so a part that leaves it out still parses. Without the
+    /// default the whole chunk fails to deserialize, and the arm that
+    /// tolerates a keep-alive frame drops it. The call goes with the frame,
+    /// and so does any `finishReason` riding beside it. `GeminiAssembly`'s
+    /// `absorb` refuses an empty name by name instead.
+    #[serde(default)]
     pub(crate) name: String,
     #[serde(default)]
     pub(crate) args: Value,
@@ -786,6 +792,19 @@ impl GeminiAssembly {
             for part in content.parts {
                 if let Some(call) = part.function_call {
                     let ordinal = self.tool_calls.len();
+                    // The name is the tool to run, and it cannot be invented
+                    // here. The call id is minted below from the ordinal, so
+                    // the name is the one dispatch field this wire can drop.
+                    // Committing a call named `""` would send the engine
+                    // looking for a tool no registry holds.
+                    if call.name.is_empty() {
+                        return Err(http::malformed_tool_call_error(
+                            label,
+                            ordinal,
+                            "",
+                            &["name"],
+                        ));
+                    }
                     let call_id = match &part.thought_signature {
                         Some(sig) => format!("call_{ordinal}{SIGNATURE_SEPARATOR}{sig}"),
                         None => format!("call_{ordinal}"),
@@ -976,5 +995,7 @@ fn map_gemini_finish_reason(raw: Option<&str>, has_tool_calls: bool) -> Option<F
     }
 }
 
+#[cfg(test)]
+mod malformed_tool_call;
 #[cfg(test)]
 mod tests;
