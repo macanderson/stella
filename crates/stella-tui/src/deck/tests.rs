@@ -1055,7 +1055,7 @@ fn shell_result(call_id: &str, out: &str) -> AgentEvent {
 
 #[test]
 fn bang_shell_output_lands_in_the_focused_session_transcript() {
-    // The whole point of `ShellEvent`: `! pwd` answers where it was asked.
+    // The whole point of `ShellEvent`: `$ pwd` answers where it was asked.
     // `views::session::render` draws only `agents[ui.focused]`, so output
     // routed to any other lane is output the user never sees.
     let mut w = WorkspaceModel::new();
@@ -1084,7 +1084,7 @@ fn bang_shell_output_lands_in_the_focused_session_transcript() {
 
 #[test]
 fn bang_shell_output_never_disturbs_the_agent_it_borrows() {
-    // A `!` command is user-initiated local shell, not agent activity. The
+    // A `$` command is user-initiated local shell, not agent activity. The
     // lane lends its transcript and nothing else: `status_from_event` maps
     // ToolStart/ToolResult to `Running`, and an agent flipped Running by a
     // shell command would spin forever — no engine turn exists to park it.

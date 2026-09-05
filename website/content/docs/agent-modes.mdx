@@ -114,8 +114,10 @@ The full slash-command set, including `/inspect` and `/context`, is on
 
 `⏎` inserts a line break. `⌘⏎` or `⌃⏎` submits. Prompts queue while a turn runs, so you
 never have to wait for the agent to finish before typing the next thing (`Ctrl-T` opens
-the queue editor). A line that starts with `!` runs a shell command right away, inline in
-the session transcript, skipping the queue. A single `Esc` cancels the turn in progress.
+the queue editor). A line that starts with `$` runs a shell command right away, inline in
+the session transcript, skipping the queue. A line that starts with `!` interrupts the
+running turn: it stops at the next step boundary, keeps every step it finished, and runs
+your words next. A single `Esc` cancels the turn in progress.
 Pressing `Esc` twice cancels and holds dispatch, so whatever you type next runs first.
 Prefer a plain, line-based interface? Use `stella --plain` (or `STELLA_PLAIN=1`).
 

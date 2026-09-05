@@ -309,7 +309,7 @@ pub fn render_hint_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mu
 /// description as a word or two. The sheet has the sentence.
 fn short_hint(b: &crate::keymap::Binding) -> (String, &'static str) {
     let chord = match b.keys {
-        "!cmd" => "!".to_string(),
+        "$cmd" => "$".to_string(),
         keys => keys
             .split(" / ")
             .next()
@@ -321,7 +321,7 @@ fn short_hint(b: &crate::keymap::Binding) -> (String, &'static str) {
         "ctrl-n / ctrl-p" => "failure",
         "ctrl-z" => "fold turn",
         "ctrl-o" => "expand",
-        "!cmd" => "shell",
+        "$cmd" => "shell",
         "/" => "commands",
         _ => b.does.split([' ', '—', '·']).next().unwrap_or(b.does),
     };
