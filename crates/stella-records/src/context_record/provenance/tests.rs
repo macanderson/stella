@@ -367,7 +367,7 @@ fn a_review_lifts_a_critique_and_never_talks_a_pattern_down() {
 ///
 /// A grade nothing constructs neither authorises nor blocks anything; it only
 /// moves where the real boundary sits, and three `ImpactClass` floors sit on
-/// rungs this sweep is what keeps reachable. Each arm below calls a real
+/// rungs only this sweep keeps reachable. Each arm below calls a real
 /// production derivation and asserts what it yields, so a rung that stops
 /// being produced fails here rather than going quiet.
 ///
