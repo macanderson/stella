@@ -639,6 +639,12 @@ impl SessionSubAgents {
                 // propagates the gate as-is and narrows the steering to
                 // `ChildSteering`, so this is what makes a child pausable and
                 // stoppable without letting it steal the parent's messages.
+                //
+                // Still the builder path, and it names no lane on purpose:
+                // this engine never drives a turn of its own. `run_sub_agent`
+                // assembles the child that does, and that child stamps
+                // `BuiltinLane::SubagentFork`. A lane declared here would
+                // reach no `agent.turn.started` at all.
                 let engine = Engine::with_sleeper(&*provider, child_tools, config, &TokioSleeper)
                     .with_turn_controls(&controls);
                 // `catch_unwind` so a panic INSIDE the turn cannot skip the

@@ -195,11 +195,16 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         let hook_runner = HostHookRunner;
         let engine_config = engine_config_for(cfg);
         let state = stella_core::step::TurnState::from_checkpoint(checkpoint, &engine_config);
-        let mut engine = Engine::with_sleeper(&*provider, &tools, engine_config, &TokioSleeper)
-            .with_calibration(&calibration);
-        if let Some(hooks) = &cfg.hooks {
-            engine = engine.with_hooks(hooks, &hook_runner);
-        }
+        // Assembled, not built up by optional builders. This turn is the
+        // `Resume` lane and says so. `lane_capabilities::resume` answers
+        // every seam, so nothing is left to a chain.
+        let engine = Engine::assemble(
+            &*provider,
+            &tools,
+            engine_config,
+            &TokioSleeper,
+            crate::lane_capabilities::resume(cfg.hooks.as_ref(), &hook_runner, &calibration),
+        );
         drive_resumed_turn(&engine, state, &events).await
     };
 

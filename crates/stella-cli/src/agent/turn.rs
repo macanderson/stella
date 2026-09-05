@@ -145,6 +145,12 @@ pub(crate) async fn run_turn(
             // The invoked skill's `effort:` override, for this turn.
             config.effort = Some(effort);
         }
+        // TODO(#6109): still the builder path, so this turn reports no lane.
+        // `stella run` is a door, not one of the seven lanes `BuiltinLane`
+        // names, and `Lead` documents itself as the deck's turn. Until it is
+        // settled whether that definition widens, whether an eighth case
+        // arrives, or whether these doors stay unattributed, guessing here
+        // would make the lane say something its own definition denies.
         let mut engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
             .with_calibration(calibration)
             .with_provider_outcomes(router)
@@ -179,6 +185,8 @@ pub(crate) async fn run_turn(
             // The invoked skill's `effort:` override, for this turn.
             config.effort = Some(effort);
         }
+        // Unattributed for the reason the process-free arm above gives: this
+        // is the same door, waiting on the same decision.
         let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
             .with_calibration(calibration)
             .with_provider_outcomes(router)

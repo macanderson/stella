@@ -971,6 +971,10 @@ pub(crate) async fn run_goal_turn(
             // The skill's `effort:` override, for this arc.
             config.effort = Some(effort);
         }
+        // TODO(#6109): still the builder path, so this turn reports no lane.
+        // `stella goal` is a door rather than one of the seven lanes
+        // `BuiltinLane` names, and `Lead` is documented as the deck's turn —
+        // see `agent::turn`'s own note for the decision this waits on.
         let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
             .with_calibration(calibration)
             // Every round's worker turn drains this, and only those. The
