@@ -1,0 +1,18 @@
+# plain scrollback golden · one turn, width 100
+# TranscriptPrinter's byte-for-byte scrollback for a fixed event
+# sequence — this crate's one shipping caller of
+# stella_transcript::grid::render_turn_lines. The grid golden that
+# pins the renderer itself lives one crate over, in
+# crates/stella-transcript/tests/grid_snapshots.rs. Styling stripped
+# via strip_ansi. Regenerate with:
+#   BLESS=1 cargo test -p stella-cli --bin stella plain::transcript::tests::the_scrollback_a_run_leaves_matches_its_golden
+
+╭─ fix-the-overfull-hbox ──────────────────────────────────────────────────────────────────────── ─╮
+│  you  fix the overfull hbox warnings
+│
+│  agent  ▸ I'll read the file first. …
+│ 0:00 ▸ read_file   app/main.tex                                                       [9ms] [1 ln]
+│      ▸ bash        latexmk main.tex                                                   [9ms] [1 ln]
+│
+│  agent  Read it.
+╰─ ✓ done ────────────────────────────────────────────────────────────────────── [2 steps] [0:00] ─╯

@@ -348,7 +348,7 @@ fn strip_ansi(text: &str) -> String {
 // --------------------------------------------------------- the golden
 
 /// The command quoted in every failure message below.
-const SCROLLBACK_BLESS_CMD: &str = "BLESS=1 cargo test -p stella-cli --lib \
+const SCROLLBACK_BLESS_CMD: &str = "BLESS=1 cargo test -p stella-cli --bin stella \
      plain::transcript::tests::the_scrollback_a_run_leaves_matches_its_golden";
 
 fn scrollback_snapshot_path() -> std::path::PathBuf {
