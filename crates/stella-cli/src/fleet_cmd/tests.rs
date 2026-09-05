@@ -660,10 +660,9 @@ fn steered_config(workspace_root: PathBuf) -> Config {
 /// **Witness (#3947).** A fleet worker's steering carries the volatile block —
 /// the matched context record, the selected skill, and today's date.
 ///
-/// Fails on base, where `worker_recall_block` does not exist because the fleet
-/// door never assembled one: a worker got `build_system_prompt`'s byte-stable
-/// prefix and stopped there, while `stella run`, `/goal`, the REPL and the deck
-/// all got this half too.
+/// Fails on base, where the fleet door assembled no opening block at all: a
+/// worker got `build_system_prompt`'s byte-stable prefix and stopped there,
+/// while `stella run`, `/goal`, the REPL and the deck all got this half too.
 ///
 /// The date assertion is the one that makes this a defect rather than a
 /// preference. `append_session_environment` keeps today's date out of the
@@ -692,9 +691,9 @@ async fn a_fleet_worker_receives_skills_records_and_todays_date() {
     // The injection is the seam now, so the block is read back off the
     // messages it landed in rather than returned beside them.
     let mut messages: Vec<stella_protocol::CompletionMessage> = Vec::new();
-    let _recall = worker_recall_block(
+    let (_steering, _recall) = steering::WorkerSteering::open(
         &root,
-        &cfg,
+        &cfg.authority,
         &active_rules,
         "run the database migration for the billing service",
         &mut messages,
