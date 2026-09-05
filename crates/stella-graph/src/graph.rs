@@ -755,7 +755,20 @@ impl CodeGraph {
     /// Stop the watcher and background tasks. Idempotent. Dropping the watcher
     /// closes the event channel, so the debounce loop exits on its own; task
     /// handles are aborted as a backstop.
+    ///
+    /// This is also the writer's close, so it refreshes the planner's
+    /// statistics (`store::optimize`). An embedding pass writes tens of
+    /// thousands of vector rows through this handle. Nothing else analyzes
+    /// them. Best-effort: a failure here changes no data, and the next close
+    /// tries again. The wait is bounded by `busy_timeout`, and only another
+    /// process's open write can make it pay that.
     pub fn shutdown(&self) {
+        // Before the flag flips, so a handle shut down twice pays once. The
+        // optimize is cheap on an unchanged store, so a second call would
+        // only be a wasted lock.
+        if !self.inner.shutdown.load(Ordering::Relaxed) {
+            let _ = store::optimize(&self.inner.write_guard());
+        }
         // Set the shutdown flag *and* clear the watcher slot under one hold of
         // the watcher lock. `set_watcher` re-checks the flag under this same
         // lock, so install and shutdown serialize: a watcher installed
@@ -928,6 +941,66 @@ mod tests {
             files.len(),
             2,
             "only the first two indexed files may be visited: {files:?}"
+        );
+    }
+
+    /// **The witness for the planner's statistics.** A store that never runs
+    /// `ANALYZE` gives the planner no `sqlite_stat1` to read. An index pass
+    /// leaves statistics for the tables it filled. The writer's close leaves
+    /// them for the vector rows an embedding pass wrote through it, and
+    /// `code_graph_chunk_vectors` is one of those. `ANALYZE` writes no row for
+    /// an empty table. That is why the chunk half stores a vector first: the
+    /// row can only exist once the table holds something.
+    #[test]
+    fn an_index_pass_and_a_close_leave_planner_statistics_behind() {
+        let ws = TempDir::new().unwrap();
+        let dbdir = TempDir::new().unwrap();
+        let db = dbdir.path().join("codegraph.db");
+        std::fs::write(ws.path().join("a.rs"), "pub fn alpha() {}\n").unwrap();
+        let graph = CodeGraph::open(ws.path(), &db).unwrap();
+        graph.index_all().unwrap();
+
+        let stat_tables = |conn: &Connection| -> Vec<String> {
+            let mut stmt = conn
+                .prepare("SELECT DISTINCT tbl FROM sqlite_stat1 ORDER BY tbl")
+                .expect("sqlite_stat1 exists after an index pass");
+            stmt.query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert!(
+            stat_tables(&graph.inner.read_guard()).contains(&"code_graph_files".to_string()),
+            "the index pass analyzed the tables it filled"
+        );
+
+        // The embedding pass writes vectors through the handle and then shuts
+        // it down; the close is what analyzes them.
+        let fingerprint = "test-model@1/4/l2";
+        let scan = graph.chunks_pending_embedding(fingerprint, 10).unwrap();
+        let file = &scan.files[0];
+        let rows: Vec<vectors::chunks::ChunkVector> = file
+            .chunks
+            .iter()
+            .map(|chunk| vectors::chunks::ChunkVector {
+                chunk_sha256: chunk.chunk_sha256.clone(),
+                name: chunk.name.clone(),
+                kind: chunk.kind.clone(),
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                vector: Some(vec![1.0, 0.0, 0.0, 0.0]),
+            })
+            .collect();
+        graph
+            .store_chunk_vectors(fingerprint, &file.path, &file.file_sha256, &rows)
+            .unwrap();
+        graph.shutdown();
+
+        let reopened = Connection::open(&db).unwrap();
+        assert!(
+            stat_tables(&reopened).contains(&"code_graph_chunk_vectors".to_string()),
+            "the writer's close analyzed the vector rows it wrote: {:?}",
+            stat_tables(&reopened)
         );
     }
 
