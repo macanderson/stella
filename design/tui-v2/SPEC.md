@@ -50,8 +50,8 @@ The table is every token `design/tokens/stella-tokens.json` declares on the `tui
 | `silver` | `#A9AAB5` | world coming in: read, skill, memory, secondary emphasis |
 | `silver_type` | `#BFC1CC` | syntax types |
 | `text` | `#E8E8EC` | primary text |
-| `muted` | `#777782` | secondary text |
-| `dim` | `#4B4B56` | hints, keybinding rows, line numbers |
+| `muted` | `#7C7C87` | secondary text |
+| `dim` | `#5F5F6A` | hints, keybinding rows, line numbers |
 | `green` | `#74C991` | pass, `+` diff sign |
 | `red` | `#E0687A` | fail, `-` diff sign, delete events, destructive |
 | `diff_add_bg` | `#10201A` | added diff row background |
@@ -308,7 +308,7 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
   Stated as a constraint because the obvious mechanism violates it. `Line.style` is the one-call way to tint a row and is correct only where the row is *nothing but* diff; on any row carrying a margin it paints the whole row's area, so a green band swallows the rail whose metal says which event the diff belongs to (SPEC 6.2) — the two layers then disagree about what the row is. In the transcript every diff row carries that rail, so the tint rides a per-span `bg` on the code plus one trailing padded span to the pane edge. A surface with no margin may use `Line.style`; a surface with one must not. The reference implementation is `push_diff_line` in `crates/stella-tui/src/render/row.rs`, and `a_rust_diff_renders_add_and_remove_rows_per_spec_64` asserts both halves — the band reaches the pane edge, and the rail span's `bg` stays `None`.
 - Line number gutter in `silver`. Sign column (`+`/`-`) is mandatory and colored; color is never the only diff signal.
 
-  This line read `dim`, and the gutter has never been dim: `crates/stella-tui/src/diff.rs`'s `gutter` paints `theme::text_secondary()`, which is `token::SILVER` `#A9AAB5` — not `token::MUTED` `#777782` and not `dim` `#4B4B56` (#4946). The line is corrected to what ships rather than the gutter recoloured to what it said, because two tiers of difference in a margin is a design call. The call site used to read `theme::muted()`, spelling a tier it did not paint; #4966 removed that name, and `every_text_tier_resolves_to_the_token_it_names` now holds each rung of the ladder to the token it is.
+  This line read `dim`, and the gutter has never been dim: `crates/stella-tui/src/diff.rs`'s `gutter` paints `theme::text_secondary()`, which is `token::SILVER` `#A9AAB5` — not `token::MUTED` `#7C7C87` and not `dim` `#5F5F6A` (#4946). The line is corrected to what ships rather than the gutter recoloured to what it said, because two tiers of difference in a margin is a design call. The call site used to read `theme::muted()`, spelling a tier it did not paint; #4966 removed that name, and `every_text_tier_resolves_to_the_token_it_names` now holds each rung of the ladder to the token it is.
 
 ## 7. Plan and task contracts
 
