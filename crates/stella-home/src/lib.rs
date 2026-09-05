@@ -232,9 +232,9 @@ pub fn resolve_self_driving_root(stella_home: Option<PathBuf>) -> Option<PathBuf
 /// It exists because an agent's **code** and an agent's **learning** do not
 /// belong in the same place when the code is checked out somewhere disposable.
 /// A turn that runs in a throwaway git worktree writes its reflections, its
-/// promoted skills, its telemetry and its code graph into `<worktree>/.stella`,
-/// and then the worktree is removed — so the session's entire record of what it
-/// learned is deleted by the cleanup that follows every unit of work.
+/// promoted skills and its telemetry into `<worktree>/.stella`, and then the
+/// worktree is removed — so the session's entire record of what it learned is
+/// deleted by the cleanup that follows every unit of work.
 ///
 /// That is not hypothetical. A self-driving run against `oxagen-platform`
 /// executed 22 turns across 16 merged pull requests and finished with **no
@@ -244,6 +244,12 @@ pub fn resolve_self_driving_root(stella_home: Option<PathBuf>) -> Option<PathBuf
 /// Setting this to the real repository root makes the worktree's code
 /// disposable and its learning durable, which is the split that was always
 /// intended.
+///
+/// The code graph sits on the other side of that split. It does not follow
+/// this. It is a parsed image of the files under the workspace root. A redirect
+/// wrote one worktree's index over another checkout's. It also gave two turns
+/// at once one writable database. `stella_store::TREE_ANCHORED_STATE` is where
+/// that carve-out is stated.
 pub const WORKSPACE_STATE_ROOT_ENV: &str = "STELLA_WORKSPACE_STATE_ROOT";
 
 /// Where a workspace's `.stella` lives, honouring [`WORKSPACE_STATE_ROOT_ENV`].

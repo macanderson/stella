@@ -201,6 +201,20 @@ pub fn release(conn: &Connection, lease: &Lease) {
     );
 }
 
+/// Drop every lease in this store.
+///
+/// For a store that was **copied** ([`crate::seed_index`]). Each row names a
+/// holder in the process that owns the first file. No one will release the
+/// copy's rows. So the copy would skip its own passes for a whole
+/// [`LEASE_TTL_SECONDS`].
+///
+/// Never call it on a store other processes share. A lease ends with its holder
+/// or with its deadline. Nothing else may take one early.
+pub(crate) fn clear_all(conn: &Connection) -> Result<(), GraphError> {
+    conn.execute("DELETE FROM code_graph_leases", [])?;
+    Ok(())
+}
+
 /// Who holds `purpose` right now, if anyone whose lease has not expired.
 /// Test- and diagnostic-facing; the acquire path does not consult it.
 pub fn current_holder(conn: &Connection, purpose: Purpose) -> Option<String> {

@@ -217,9 +217,10 @@ pub use journal::JournalRecord;
 pub use mcp_usage::{McpUsageRow, McpUsageStat, fold_mcp_usage_stats};
 pub use notify::{Notification, NotificationStore};
 pub use private::{
-    WORKSPACE_PRIVATE_DIR, append_workspace_private_line, existing_workspace_private_sqlite_path,
-    existing_workspace_private_state_path, read_sensitive_file_to_string,
-    workspace_private_sqlite_path, workspace_private_state_path, write_sensitive_file_atomic,
+    TREE_ANCHORED_STATE, WORKSPACE_PRIVATE_DIR, append_workspace_private_line,
+    existing_workspace_private_sqlite_path, existing_workspace_private_state_path,
+    read_sensitive_file_to_string, workspace_private_sqlite_path, workspace_private_state_path,
+    write_sensitive_file_atomic,
 };
 pub(crate) use private::{
     ensure_private_dir, ensure_workspace_generated_ignore, ensure_workspace_state_dir,

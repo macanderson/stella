@@ -1,15 +1,21 @@
-//! **Witness (#4394).** The index build and every graph reader must resolve
-//! `codegraph.db` to the same file under a redirected workspace state root.
+//! **Witness (#4394).** The index build and every graph reader must
+//! resolve `codegraph.db` to the same file, redirect or no redirect — and that
+//! file stays in the tree the index describes.
 //!
 //! `STELLA_WORKSPACE_STATE_ROOT` (`stella_home::WORKSPACE_STATE_ROOT_ENV`) is
 //! what lets a `stella self-driving` turn run in a throwaway worktree while its
-//! private state — the reflection log, the telemetry store, the code graph —
-//! outlives it in the repository. The build resolved through the store and
-//! honoured the redirect; `search::codegraph::graph_db_path` joined the path by
-//! hand and did not. So a redirected session indexed one database and mounted
-//! its watcher, its CGP host and its Command Deck on an empty one at the
-//! literal path, and the agent's own edits were never indexed where the queries
-//! looked.
+//! private state — the reflection log, the telemetry store — outlives it in the
+//! repository. The build resolved through the store and honoured the redirect;
+//! `search::codegraph::graph_db_path` joined the path by hand and did not. So a
+//! redirected session indexed one database and mounted its watcher, its CGP
+//! host and its Command Deck on an empty one at the literal path, and the
+//! agent's own edits were never indexed where the queries looked.
+//!
+//! Routing both through the store fixed that and left the index following the
+//! redirect. The index is a parsed image of the files under the workspace root,
+//! so a redirect wrote the worktree's index over the repository's and gave two
+//! concurrent work units one writable database. Both resolvers still ask the
+//! store, so they still agree — they now agree on the tree.
 //!
 //! Its own test binary because it mutates the process environment: the variable
 //! under test is read from `std::env` deep inside the store's resolver, and a
@@ -26,9 +32,10 @@ fn reader_sees(root: &Path) -> Option<std::path::PathBuf> {
 /// The two resolvers agree — under a redirect, and without one — and neither
 /// asking creates a workspace that was not there.
 ///
-/// Fails on the base, where `graph_db_path` answers
+/// Fails on a base where `graph_db_path` answers
 /// `<worktree>/.stella/private/codegraph.db` while the build writes
-/// `<state root>/.stella/private/codegraph.db`.
+/// `<state root>/.stella/private/codegraph.db`, and on one where the two agree
+/// on the state root instead of on the tree.
 #[test]
 fn the_watcher_mounts_the_database_the_build_writes() {
     let worktree = tempfile::tempdir().expect("worktree");
@@ -57,9 +64,9 @@ fn the_watcher_mounts_the_database_the_build_writes() {
         "resolving a read must never create the workspace store"
     );
 
-    // The control, in the same process: with no redirect the two resolvers
-    // agree trivially, so a pass below has to come from the redirect being
-    // honoured rather than from both answers being the same by default.
+    // The control, in the same process: with no redirect set, this is what both
+    // resolvers answer, so the assertions below say the redirect changed
+    // nothing rather than that two answers happened to match.
     let plain_build = stella_store::workspace_private_sqlite_path(&worktree_real, "codegraph.db")
         .expect("the build resolves a path with no redirect");
     std::fs::write(&plain_build, b"").expect("the build leaves an index behind");
@@ -78,21 +85,28 @@ fn the_watcher_mounts_the_database_the_build_writes() {
 
     let build = stella_store::workspace_private_sqlite_path(&worktree_real, "codegraph.db")
         .expect("the build resolves a path under the redirect");
-    std::fs::write(&build, b"").expect("the redirected build leaves an index behind");
 
     assert_eq!(
         reader_sees(&worktree_real),
         Some(build.clone()),
         "a redirected session must build and read one database, not two"
     );
-    assert!(
-        build.starts_with(&state_root_real),
-        "the redirect must be what decides the location, got {}",
-        build.display()
-    );
-    assert_ne!(
+    assert_eq!(
         build, plain_build,
-        "the literal path under the worktree — which still exists, and still holds the \
-         unredirected index — is the answer this witness exists to reject"
+        "the index describes this tree, so the redirect must not move it"
+    );
+    assert!(
+        !state_root_real.join(".stella").join("private").exists(),
+        "a redirect must not have the worktree write its index into the repository"
+    );
+
+    // The redirect is still read for everything else: a session's telemetry is
+    // what it learned, and outliving the worktree is the point of it.
+    let store = stella_store::workspace_private_sqlite_path(&worktree_real, "store.db")
+        .expect("the telemetry store resolves under the redirect");
+    assert!(
+        store.starts_with(&state_root_real),
+        "the redirect must still move a session's own state, got {}",
+        store.display()
     );
 }

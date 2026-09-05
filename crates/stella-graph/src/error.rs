@@ -49,6 +49,16 @@ pub enum GraphError {
     #[error("code-graph watcher error: {0}")]
     Watch(String),
 
+    /// Copying an existing index into another checkout of the same tree
+    /// failed ([`crate::seed_index`]). `path` names the file that could not be
+    /// read, removed, or written.
+    #[error("cannot seed the code graph at {path}: {source}")]
+    Seed {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     /// The store's `PRAGMA user_version` cannot be reconciled with this
     /// build's schema — it was written by a newer stella, or the shape the
     /// DDL claims to have produced is not there (#617). The message carries
