@@ -61,7 +61,6 @@
 
 pub mod context_use;
 pub mod contract;
-pub mod hash;
 pub mod kind;
 pub mod lifecycle;
 pub mod outcome;
@@ -80,7 +79,6 @@ pub use contract::{
     AppliesWhen, ArtifactContract, ContractValidation, Presentation, Requirement, RequirementKind,
     RequirementResult, RequirementStatus, ValidationStatus,
 };
-pub use hash::{RecordHashError, record_hash};
 pub use kind::{
     ConstraintEffect, ContextRecordKind, DirectiveEnforcement, DirectiveKind, DirectivePriority,
     EffectiveStatus, KnowledgeKind, MemoryKind, Origin, PromotionAction, RecordProposalKind,
@@ -102,6 +100,11 @@ pub use representation::{
 };
 pub use scope::{Scope, SharingScope};
 pub use selection_health::{SelectionHealth, SelectionHealthPolicy, fold_selection_health};
+/// The canonical hash primitive, under the name every caller here already
+/// uses. It lives in `stella-protocol` beside the canonical bytes its preimage
+/// is pinned against, so the agreement is a same-crate fact.
+pub use stella_protocol::hash;
+pub use stella_protocol::hash::{RecordHashError, record_hash};
 pub use temporal::{TemporalInterval, TemporalQuery};
 
 /// A `0..=100` confidence score. The newtype makes the range rule

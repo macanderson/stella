@@ -52,12 +52,12 @@ use std::path::Path;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use stella_context::ContextStore;
-use stella_core::context_record::{PromotionAction, PromotionActor, PromotionEventRecord};
 use stella_core::skills::SkillCandidate;
 use stella_core::skills::appraisal::{
     AppraisalConfig, DemotionDecision, EvalEvidence, SkillAppraisal, SkillTrial, appraise,
     decide_demotion,
 };
+use stella_records::context_record::{PromotionAction, PromotionActor, PromotionEventRecord};
 
 /// Verdicts, newest last. One line per appraisal run.
 pub const APPRAISALS_FILE: &str = "skill_appraisals.jsonl";

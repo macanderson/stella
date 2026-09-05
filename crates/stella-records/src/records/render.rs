@@ -300,7 +300,7 @@ fn render_volatile(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> 
 /// the model a call will be blocked when it will not is the same lie the blank-guard
 /// bug used to tell.
 /// `pub(crate)` for one caller: the steering adapter
-/// (`crate::steering::adapt::record_candidates`) estimates a record's token
+/// (`crate::adapt::record_candidates`) estimates a record's token
 /// cost from this exact line rather than re-deriving the shape — one producer,
 /// the same discipline #3334 established for recall lines.
 pub(crate) fn bullet(input: &RenderInput<'_>) -> String {

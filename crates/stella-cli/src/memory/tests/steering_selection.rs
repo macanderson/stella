@@ -526,7 +526,7 @@ async fn a_second_requery_renders_only_the_frames_the_first_did_not() {
 /// A registry of two records for the dedup witnesses below: one unscoped —
 /// it applies to every turn — and one that applies only when the turn names
 /// `deny.toml`.
-fn two_record_registry() -> stella_core::records::Registry {
+fn two_record_registry() -> stella_records::records::Registry {
     let records = r#"
 schema = "context-record/v0.1"
 set_id = "acme.web"
@@ -552,14 +552,14 @@ statement = "New dependencies must clear the deny.toml allowlist."
 force = "may"
 applies_to = { paths = ["deny.toml"] }
 "#;
-    stella_core::records::registry::load(
+    stella_records::records::registry::load(
         &[],
         &[stella_core::rules::RuleFile {
             path: ".stella/rules/acme.web.toml".to_string(),
             contents: records.to_string(),
             contributed_by: None,
         }],
-        &stella_core::records::Facts {
+        &stella_records::records::Facts {
             now: "2026-07-20T00:00:00Z",
             ..Default::default()
         },

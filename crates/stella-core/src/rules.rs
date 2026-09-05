@@ -156,9 +156,9 @@ pub struct RuleFile {
     ///
     /// Set by the caller that **chose** the directory, never from anything the
     /// file says about itself — the same rule
-    /// [`crate::records::LoadedRecord::trust`] is stamped under, and the same
-    /// one `stella_tools::custom::CustomTool::contributed_by` follows for the
-    /// tool surface: a package cannot name itself something it is not.
+    /// `stella_records::records::LoadedRecord::trust` is stamped under, and the
+    /// same one `stella_tools::custom::CustomTool::contributed_by` follows for
+    /// the tool surface: a package cannot name itself something it is not.
     ///
     /// It exists so a caller can answer "which plugin gave me this?" as a
     /// field. The answer was recoverable before only by matching

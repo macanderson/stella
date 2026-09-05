@@ -564,7 +564,7 @@ applies_to = { paths = [".git/*"], keywords = ["fsck", "reflog"] }
 "#;
 
     fn registry_of(corpus: &str) -> registry::Registry {
-        let files = [crate::rules::RuleFile {
+        let files = [stella_core::rules::RuleFile {
             path: ".stella/rules/tb.rescue.toml".to_string(),
             contents: corpus.to_string(),
             contributed_by: None,
@@ -786,7 +786,7 @@ expect = "present"
         verdict: Option<Verdict>,
         last_checked: &str,
     ) -> registry::Registry {
-        let files = [crate::rules::RuleFile {
+        let files = [stella_core::rules::RuleFile {
             path: ".stella/rules/tb.rescue.toml".to_string(),
             contents: AGED_RECORD.to_string(),
             contributed_by: None,
@@ -944,7 +944,7 @@ mode = "hard"
 guard_tool = "Bash"
 guard_deny_command = "git push --force*"
 "#;
-    let files = [crate::rules::RuleFile {
+    let files = [stella_core::rules::RuleFile {
         path: ".stella/rules/acme.web.toml".to_string(),
         contents: corpus.to_string(),
         contributed_by: None,

@@ -3,7 +3,7 @@
 //! it untouched.
 
 use stella_context::{ContextDelta, ContextStore, MemoryInput};
-use stella_core::context_record::{
+use stella_records::context_record::{
     ContextEvaluationMethod, ContextRecordKind, ContextUseEvaluation, ContextUseFeedback,
     PromotionAction, PromotionActor, PromotionEventRecord,
 };
@@ -123,7 +123,7 @@ fn protected_memories_are_refused_and_reaffirm_restores() {
             lineage_id: &event.lineage_id,
             record_kind: ContextRecordKind::PromotionEvent.as_str(),
             record_hash: &event.record_hash,
-            schema_version: stella_core::context_record::LIFECYCLE_SCHEMA_VERSION,
+            schema_version: stella_records::context_record::LIFECYCLE_SCHEMA_VERSION,
             body: &body,
             observed_at: &event.occurred_at,
             supersedes: None,

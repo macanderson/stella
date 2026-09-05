@@ -36,7 +36,7 @@ use std::path::Path;
 
 use colored::Colorize;
 
-use stella_core::records::{Disposition, Entry, Registry};
+use stella_records::records::{Disposition, Entry, Registry};
 
 /// `stella context explain <rule>`.
 pub fn run_explain(root: &Path, needle: &str) -> Result<(), String> {
