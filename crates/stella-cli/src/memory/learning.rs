@@ -680,6 +680,7 @@ impl SessionMemory {
 
         for (appraisal, decision) in super::appraisals::sweep(
             &self.workspace_root,
+            stella_learn::ledger::ArtifactKind::Skill,
             &origins,
             &stella_learn::skills::appraisal::AppraisalConfig::default(),
         ) {

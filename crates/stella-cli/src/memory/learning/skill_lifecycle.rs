@@ -83,13 +83,15 @@ fn session(root: &Path) -> SessionMemory {
 
 /// The `selected` flag of every trial the ledger holds for `skill`, in the
 /// order they were appended. Read as raw JSON rather than through
-/// `appraisals`' private row type, so the test reads the file the sweep reads.
+/// `appraisals`' row type, so the test reads the file the sweep reads — the
+/// kind and the id included, because a row filed under the wrong kind would
+/// still fold under the right id.
 fn trials(root: &Path, skill: &str) -> Vec<bool> {
     std::fs::read_to_string(root.join(".stella/private").join(appraisals::TRIALS_FILE))
         .unwrap_or_default()
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|row| row["skill"].as_str() == Some(skill))
+        .filter(|row| row["kind"].as_str() == Some("skill") && row["id"].as_str() == Some(skill))
         .map(|row| row["selected"].as_bool().unwrap_or(false))
         .collect()
 }

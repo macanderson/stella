@@ -941,6 +941,7 @@ impl SessionMemory {
         }
         appraisals::record_turn(
             &self.workspace_root,
+            stella_learn::ledger::ArtifactKind::Skill,
             &join.trigger_matched,
             &join.selected,
             &stella_learn::skills::appraisal::SkillTrial {

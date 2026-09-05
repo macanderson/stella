@@ -2,7 +2,7 @@
 
 What the agent learns, and what steers it.
 
-Five module trees do the work.
+These module trees do the work.
 
 - `skills` — the skill catalog. Read a `SKILL.md` file. Pick the skills a
   prompt needs. Render the block the prompt carries. Mine new ones out of
@@ -17,6 +17,9 @@ Five module trees do the work.
 - `holdout` — the schedule that makes the arm they compare against. On some
   turns it names one item to leave out, so that item gets a control arm. The
   item is an opaque id, so one schedule serves skills, memories and rules.
+- `ledger` — one row of the trial ledger, and the key it is filed under: a
+  kind and an id. A row can name a memory, a rule or a skill, so the three
+  surfaces share one ledger rather than keeping one each.
 - `redact` — strip secrets out of text before it leaves the machine.
 
 ## Boundary
@@ -58,6 +61,7 @@ clause (b). `stella-records` needs the rule parser and the redactor, and
 | Change the A/B report shape | `src/comparison/report.rs` |
 | Change the stats test | `src/self_tuning.rs` |
 | Change how often a holdout fires, or which item it picks | `src/holdout.rs` |
+| Add a kind of artifact the trial ledger can hold | `src/ledger.rs` |
 
 ## God files — do not add lines
 

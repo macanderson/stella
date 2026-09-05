@@ -1,7 +1,7 @@
-//! The skill-appraisal ledger — the durable half of the measured promote/retire
+//! The appraisal ledgers — the durable half of the measured promote/retire
 //! gate (#1067, #1068).
 //!
-//! `stella-core`'s [`stella_learn::skills::appraisal`] decides; this module is
+//! [`stella_learn::skills::appraisal`] decides; this module is
 //! where the evidence lives between sessions, because neither direction of that
 //! gate can be answered from one turn:
 //!
@@ -15,10 +15,25 @@
 //!   trigger matched — and the join is recorded explicitly, never inferred
 //!   from the work a turn produced.
 //!
-//! Both files are append-only JSONL under `.stella/private/` (0700, files
+//! Every file here is append-only JSONL under `.stella/private/` (0700, files
 //! 0600), for the same reason `trace.rs` is: they carry prompts' worth of
 //! context about what a workspace does, and nothing here reaches a store table
 //! an egress path reads (AGENTS.md invariant 3).
+//!
+//! # One trial ledger, three kinds
+//!
+//! [`TRIALS_FILE`] holds a row per artifact per turn, keyed by
+//! [`stella_learn::ledger::ArtifactKind`] and an id. Skills are the only kind
+//! with a producer today. A memory record and a mined rule are recalled by
+//! `memory::recall`, which reports no join, so each needs a seam of its own
+//! before it can be written here. The key is shared so that when those seams
+//! land there is one ledger to read rather than three.
+//!
+//! [`LEGACY_TRIALS_FILE`] holds the rows a build that only knew skills wrote:
+//! a `skill` field and no kind. [`sweep`] reads both files and
+//! [`stella_learn::ledger::ArtifactTrial`] reads both field names, so a
+//! workspace keeps the window it already paid for. Nothing rewrites that
+//! file. An append-only ledger is not edited; it simply stops growing.
 //!
 //! # How the loop closes
 //!
@@ -52,6 +67,7 @@ use std::path::Path;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use stella_context::ContextStore;
+use stella_learn::ledger::{ArtifactKind, ArtifactTrial};
 use stella_learn::skills::SkillCandidate;
 use stella_learn::skills::appraisal::{
     AppraisalConfig, DemotionDecision, EvalEvidence, SkillAppraisal, SkillTrial, appraise,
@@ -65,8 +81,12 @@ pub const APPRAISALS_FILE: &str = "skill_appraisals.jsonl";
 /// Candidates the eval gate held, newest last.
 pub const QUEUE_FILE: &str = "skill_candidates.jsonl";
 
-/// The selection→outcome join, one line per skill per turn.
-pub const TRIALS_FILE: &str = "skill_trials.jsonl";
+/// The selection→outcome join, one line per artifact per turn.
+pub const TRIALS_FILE: &str = "artifact_trials.jsonl";
+
+/// The same join as [`TRIALS_FILE`], written by a build that only knew
+/// skills. Read, never written, and never rewritten in place.
+pub const LEGACY_TRIALS_FILE: &str = "skill_trials.jsonl";
 
 /// The shared pairing key live trials are recorded under.
 ///
@@ -189,29 +209,33 @@ pub fn queued_candidates(workspace_root: &Path) -> Vec<QueuedCandidate> {
     out
 }
 
-/// Append this turn's trigger→outcome join: one trial per skill whose trigger
-/// matched this turn, `selected` set from the selection the turn actually ran
+/// Append this turn's offered→outcome join: one trial per artifact of `kind`
+/// this turn could have used, `selected` set from what the turn actually ran
 /// with.
 ///
-/// `trigger_matched` is the population, and it has to be exactly that — every
-/// skill the prompt matched, not only the ones injected and not every skill on
-/// disk. Narrower and there is no control arm, so a skill can only be measured
-/// against itself. Wider and the baseline fills with turns the skill's trigger
-/// never matched, which measures those turns rather than the skill.
+/// `offered` is the population, and it has to be exactly that — every artifact
+/// the turn could have injected, not only the ones it did and not everything on
+/// disk. Narrower and there is no control arm, so an artifact can only be
+/// measured against itself. Wider and the baseline fills with turns the
+/// artifact could not have affected, which measures those turns rather than the
+/// artifact. For a skill that population is the skills whose trigger matched
+/// the prompt.
 pub fn record_turn(
     workspace_root: &Path,
-    trigger_matched: &[String],
+    kind: ArtifactKind,
+    offered: &[String],
     selected: &[String],
     trial: &SkillTrial,
 ) {
-    for name in trigger_matched {
+    for id in offered {
         append(
             workspace_root,
             TRIALS_FILE,
-            &StoredTrial {
-                skill: name.clone(),
+            &ArtifactTrial {
+                kind,
+                id: id.clone(),
                 trial: SkillTrial {
-                    selected: selected.iter().any(|s| s == name),
+                    selected: selected.iter().any(|s| s == id),
                     ..trial.clone()
                 },
             },
@@ -219,40 +243,52 @@ pub fn record_turn(
     }
 }
 
-/// One stored trial, keyed by the skill it is evidence about.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredTrial {
-    skill: String,
-    #[serde(flatten)]
-    trial: SkillTrial,
+/// Every trial row the workspace holds, oldest first — the current file after
+/// the legacy one, so a fold that keeps the last write keeps the newest.
+fn stored_trials(workspace_root: &Path) -> Vec<ArtifactTrial> {
+    let mut rows = read_jsonl::<ArtifactTrial>(&path(workspace_root, LEGACY_TRIALS_FILE));
+    rows.extend(read_jsonl::<ArtifactTrial>(&path(
+        workspace_root,
+        TRIALS_FILE,
+    )));
+    rows
 }
 
-/// Appraise every skill the trial ledger has evidence for, and return the
-/// demotion decisions for the ones whose origin allows it.
+/// Appraise every artifact of `kind` the trial ledger has evidence for, and
+/// return the demotion decisions for the ones whose origin allows it.
 ///
-/// `origins` maps a skill name to its origin; a skill absent from it is
-/// treated as hand-authored, which is the fail-safe direction — an unknown
-/// provenance must never be enough to retire something.
+/// The kind is a filter rather than a fan-out because each surface retires on
+/// its own terms: a skill leaves selection, a memory record is retired, a rule
+/// is retracted. One sweep returning all three would hand its caller a list it
+/// has to sort back out.
+///
+/// `origins` maps an id to its origin; an id absent from it is treated as
+/// hand-authored, which is the fail-safe direction — an unknown provenance must
+/// never be enough to retire something.
 pub fn sweep(
     workspace_root: &Path,
+    kind: ArtifactKind,
     origins: &HashMap<String, stella_learn::skills::SkillOrigin>,
     config: &AppraisalConfig,
 ) -> Vec<(SkillAppraisal, DemotionDecision)> {
-    let mut by_skill: HashMap<String, Vec<SkillTrial>> = HashMap::new();
-    for stored in read_jsonl::<StoredTrial>(&path(workspace_root, TRIALS_FILE)) {
-        by_skill.entry(stored.skill).or_default().push(stored.trial);
+    let mut by_id: HashMap<String, Vec<SkillTrial>> = HashMap::new();
+    for stored in stored_trials(workspace_root) {
+        if stored.kind != kind {
+            continue;
+        }
+        by_id.entry(stored.id).or_default().push(stored.trial);
     }
     // Sorted so a sweep's output — and the ledger lines it writes — do not
     // depend on a hash seed.
-    let mut names: Vec<String> = by_skill.keys().cloned().collect();
-    names.sort();
+    let mut ids: Vec<String> = by_id.keys().cloned().collect();
+    ids.sort();
 
     let mut out = Vec::new();
-    for name in names {
-        let trials = by_skill.remove(&name).unwrap_or_default();
-        let appraisal = appraise(&name, &trials, config);
+    for id in ids {
+        let trials = by_id.remove(&id).unwrap_or_default();
+        let appraisal = appraise(&id, &trials, config);
         let origin = origins
-            .get(&name)
+            .get(&id)
             .copied()
             .unwrap_or(stella_learn::skills::SkillOrigin::Workspace);
         let decision = decide_demotion(origin, &appraisal);
