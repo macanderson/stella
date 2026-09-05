@@ -755,7 +755,8 @@ impl Engine<'_> {
         let Some(handle) = self.hooks else {
             return;
         };
-        let outcome = run_hooks(handle.runner, Some(handle.hooks), &payload).await;
+        let (hooks, runner) = handle.parts();
+        let outcome = run_hooks(runner, Some(hooks), &payload).await;
         if !outcome.diagnostics.is_empty() {
             let _ = events.send(AgentEvent::Error {
                 message: format!(
