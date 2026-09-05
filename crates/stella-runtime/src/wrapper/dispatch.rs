@@ -71,18 +71,20 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use stella_core::ports::Clock;
 use stella_plugin::{
     AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceProvenance,
     EvidenceSet, FlipObservation, LoopGrant, ObservedEvidence, Outcome, PROTOCOL_VERSION,
     Participation, PluginManifest, PublishedSignal, RoundState, SignalValues, StageName,
     StageProgram, TamperFinding, TurnOutcome, Verdict, VerdictRule, WrapperPoint,
 };
-use stella_protocol::GateBoard;
 use stella_protocol::completion::CompletionMessage;
+use stella_protocol::{GateBoard, LadderSnapshot};
 
+use super::stamp::{HostClock, StampTiming};
 use super::{
     ArbiterClaim, Arbitration, TurnHoldBudget, TurnWrapper, WrapperError, admissible, again,
-    fold_stamps, judge,
+    fold_stamps, judge, stamp,
 };
 
 /// The host's own ceiling on completion holds, when a caller states none.
@@ -255,6 +257,18 @@ pub struct DispatchReport {
     /// It re-decides nothing: every row is read out of `verdict` above, so the
     /// two cannot disagree.
     pub board: GateBoard,
+    /// The final round as the ladder's own record, carrying one stamp.
+    ///
+    /// The board above is for a person to look at. This is for a reader who
+    /// comes back later and asks who decided, against what, and when. The
+    /// stamp's name is read from the manifest the host loaded, never from
+    /// anything the plugin sends, and its hash covers this record with the
+    /// stamp list dropped — so a second observer can add a claim without
+    /// breaking the first one. See `super::stamp`.
+    ///
+    /// It decides nothing. The rung here is the same rung the record would
+    /// carry with no stamp on it at all.
+    pub snapshot: LadderSnapshot,
     /// How the loop ended.
     pub outcome: Outcome,
     /// Every point that failed, in the order it failed. Empty in the ordinary
@@ -299,6 +313,10 @@ pub struct WrapperDispatch {
     /// cannot hold. See `super::compose::Composition::hold_grant`.
     hold_grant: LoopGrant,
     host_max_holds: u32,
+    /// Where a stamp's two times come from. A port rather than a call to the
+    /// system clock, so a test can pin both numbers and read the whole record
+    /// back byte for byte.
+    clock: Arc<dyn Clock>,
 }
 
 /// One plugin inside a composition: what it declared, and the process that
@@ -399,6 +417,16 @@ impl Faults {
             &error,
             &member.manifest.loop_grant,
         ));
+        self.errors.push(error);
+    }
+
+    /// Record a failure that is the host's own, not a member's.
+    ///
+    /// No claim rides with it, and that is the point of a second method. A
+    /// member that fell silent lost its say. The host that could not hash a
+    /// record kept its answer and lost only the name on it, so a row reading
+    /// "did not answer" would report a silence that never happened.
+    fn push_host(&mut self, error: WrapperError) {
         self.errors.push(error);
     }
 }
@@ -511,6 +539,7 @@ impl WrapperDispatch {
             rule: composition.rule,
             hold_grant: composition.hold_grant,
             host_max_holds: DEFAULT_HOST_MAX_HOLDS,
+            clock: Arc::new(HostClock),
         })
     }
 
@@ -519,6 +548,17 @@ impl WrapperDispatch {
     #[must_use]
     pub fn with_host_max_holds(mut self, holds: u32) -> Self {
         self.host_max_holds = holds;
+        self
+    }
+
+    /// Read the stamp's times from this clock instead of the host's own.
+    ///
+    /// The default counts from the Unix epoch, so two stamps from two runs can
+    /// be compared. A test passes a clock it controls and gets a record whose
+    /// every field it can name.
+    #[must_use]
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = clock;
         self
     }
 
@@ -582,7 +622,7 @@ impl WrapperDispatch {
         input: RoundInput,
         driver: &mut dyn TurnDriver,
     ) -> Result<DispatchReport, WrapperError> {
-        let variant = self.variant();
+        let pipeline_id = self.variant();
         // Every member resolves its own conditions, then the union is walked in
         // the order they all agreed to at bind time. A stage no member resolved
         // this round simply does not appear.
@@ -628,6 +668,11 @@ impl WrapperDispatch {
             }
 
             let driven = driver.run_turn(prelude).await;
+            // The clock starts where this round's observer starts work, so the
+            // stamp's duration covers gathering the evidence and settling the
+            // answer. The turn itself is the worker's time, not the observer's.
+            let observing_from_ms = self.clock.now_ms();
+            let faults_before = faults.errors.len();
             let observed = self
                 .close_round(round, &input, &program, driven.outcome, &mut faults)
                 .await;
@@ -652,6 +697,16 @@ impl WrapperDispatch {
             };
 
             let verdict = judge(&self.rule, &evidence).with_detail(detail);
+            let decided_at_ms = self.clock.now_ms();
+            let timing = StampTiming {
+                decided_at_ms,
+                duration_ms: decided_at_ms.saturating_sub(observing_from_ms),
+                // Only this round's faults. An earlier round that timed out
+                // says nothing about the observer that answered this one.
+                timed_out: faults.errors[faults_before..]
+                    .iter()
+                    .any(|fault| matches!(fault, WrapperError::Timeout { .. })),
+            };
             let state = RoundState {
                 holds_spent,
                 host_max_holds: self.host_max_holds,
@@ -662,6 +717,14 @@ impl WrapperDispatch {
                         &self.rule,
                         &verdict,
                         input.candidate.as_ref().map(|c| c.handle.to_string()),
+                    );
+                    let snapshot = self.stamp_round(
+                        &evidence,
+                        &verdict,
+                        &pipeline_id,
+                        input.candidate.as_ref(),
+                        timing,
+                        &mut faults,
                     );
                     // The record the gate leaves. Every claim this run
                     // stood aside on, in the order it happened. Then the
@@ -674,6 +737,12 @@ impl WrapperDispatch {
                         &self.hold_grant,
                         holds_spent,
                     ));
+                    // The rung stays `None`, as it was before the stamp
+                    // producer landed. `snapshot.rung` is an answer this
+                    // dispatch now holds, and feeding it here would arm
+                    // `Arbitration::refutes_done` on the live path for the
+                    // first time. That is a decision of its own, with its
+                    // own tests, and it is not what this change is.
                     let arbitration = fold_stamps(
                         None,
                         &claims,
@@ -683,10 +752,11 @@ impl WrapperDispatch {
                         },
                     );
                     return Ok(DispatchReport {
-                        variant,
+                        variant: pipeline_id,
                         rounds,
                         verdict,
                         board,
+                        snapshot,
                         outcome,
                         faults: std::mem::take(&mut faults.errors),
                         arbitration,
@@ -853,6 +923,45 @@ impl WrapperDispatch {
             }
         }
         merged
+    }
+
+    /// The round as the ladder's own record, with one stamp on it.
+    ///
+    /// The name on the stamp comes from the manifests this dispatch was bound
+    /// to, so a plugin cannot sign another one's name. `super::stamp` holds the
+    /// rest of the rule.
+    ///
+    /// A record that cannot be hashed keeps its answer and loses its stamp.
+    /// The hash is taken after the verdict is settled and can change nothing
+    /// about it, so failing the whole run over one would throw away a good
+    /// answer. The failure joins `faults`, where every other silence here is
+    /// reported.
+    fn stamp_round(
+        &self,
+        evidence: &EvidenceSet,
+        verdict: &Verdict,
+        pipeline_id: &str,
+        candidate: Option<&CandidateGrant>,
+        timing: StampTiming,
+        faults: &mut Faults,
+    ) -> LadderSnapshot {
+        // The workspace the evidence was gathered in is the one thing here a
+        // reader can go and look at, so it is the one pointer the stamp
+        // carries. The board names the same handle as its patch.
+        let refs: Vec<String> = candidate
+            .iter()
+            .map(|grant| format!("candidate:{}", grant.handle))
+            .collect();
+        match stamp::stamped(&self.rule, evidence, verdict, pipeline_id, refs, timing) {
+            Ok(snapshot) => snapshot,
+            Err(source) => {
+                faults.push_host(WrapperError::Unstampable {
+                    wrapper: pipeline_id.to_string(),
+                    source,
+                });
+                stamp::snapshot(&self.rule, evidence, verdict)
+            }
+        }
     }
 }
 

@@ -44,13 +44,20 @@ fn faulted_report() -> stella_runtime::wrapper::DispatchReport {
     stella_runtime::wrapper::DispatchReport {
         variant: "vera".to_string(),
         rounds: 1,
-        verdict,
+        verdict: verdict.clone(),
         outcome: stella_plugin::Outcome::Undecided {
             reason: stella_plugin::UndecidedReason::NoOracle,
         },
         // A rule with no requirements draws no rows: nothing was declared, so
         // there is no gate to report on.
         board: stella_protocol::GateBoard::default(),
+        // Built by the same fold a real round uses, so this fixture cannot
+        // drift from the record a dispatch actually hands back.
+        snapshot: stella_runtime::wrapper::stamp::snapshot(
+            &stella_plugin::VerdictRule::default(),
+            &stella_plugin::EvidenceSet::unobserved(),
+            &verdict,
+        ),
         faults: vec![fault],
         arbitration,
     }
