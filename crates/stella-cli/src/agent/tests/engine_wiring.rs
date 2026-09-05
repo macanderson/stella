@@ -262,11 +262,6 @@ fn an_explicit_model_flag_outranks_the_settings_model() {
         model_ref,
         "worker turns must run on the flag-pinned model"
     );
-    assert_eq!(
-        router.resolve(Role::Plan).unwrap().model_ref,
-        model_ref,
-        "plan/witness turns ride the worker and must follow the flag too"
-    );
 
     // Silently dropping a configured setting is its own bug — say so.
     assert!(
@@ -322,10 +317,6 @@ fn worker_model_unset_falls_back_to_the_session_default() {
     assert!(
         wiring.pins.get(Role::Worker).is_none(),
         "no worker pin is recorded when unconfigured"
-    );
-    assert!(
-        wiring.pins.get(Role::Plan).is_none(),
-        "no plan pin is recorded when unconfigured"
     );
 }
 

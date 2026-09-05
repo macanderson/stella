@@ -121,7 +121,8 @@ From the draft, three principles carry over intact:
   it carries is an anecdote. (Fixes D3, D4.)
 - **P1 — Separation of authorship.** Whatever writes the code does not author
   what grades it. Stella already routes the witness author and verifier through
-  `Role::Verifier`'s cross-family preference; this document does not weaken that.
+  `Router::resolve_cross_family`'s cross-family preference; this document does
+  not weaken that.
 
 ## 4. The Feedback Airlock
 
