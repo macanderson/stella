@@ -115,6 +115,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)
                          #   + left-behind + role-names
+                         #   + retired-model-keys (no shipping Rust
+                         #     spells a key #3908 retired)
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
                          #     reachable from the engine's step path; down-only)

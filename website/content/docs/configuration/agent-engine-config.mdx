@@ -128,6 +128,35 @@ Or in `stella.toml`, where it is a section of its own:
 Quote the key in TOML. `vera.verifier` is dotted-key syntax and would parse as
 a table `vera` containing `verifier`.
 
+## Retired keys
+
+Older settings files pinned a model per pipeline role. That pipeline is gone,
+and so are its keys. stella still recognises each one, names it on stderr, and
+reads nothing from it. Delete the key. Where a plugin declares the role,
+assign its seat instead.
+
+| Retired key | Write this now |
+| --- | --- |
+| `pipeline_worker_model` | `default_model` |
+| `pipeline_verifier_model` | `[seats]` — `"<plugin-id>/verifier"` |
+| `pipeline_triage_model` | `[seats]` — `"<plugin-id>/triage"` |
+| `pipeline_research_model` | `[seats]` — `"<plugin-id>/research"` |
+| `pipeline_plan_model` | `[seats]` — `"<plugin-id>/plan"` |
+| `agents.worker` | `agents.default` |
+| `agents.verifier`, `agents.triage`, `agents.research`, `agents.plan` | the seat above |
+
+Each key gets its own line, because the reason differs:
+
+```text
+  ! .stella/settings.json: `agent_engine_config.pipeline_verifier_model` is
+    retired and reads nothing — it pinned a model for a role the core loop
+    does not have — it was a pin on the staged pipeline deleted in #3865 and
+    has read nothing since. assign the seat the verification plugin declares:
+    `[seats] "<plugin-id>/verifier" = "…"`. Delete the key.
+```
+
+A retired key never fails a run. It is reported, then ignored.
+
 ## Model precedence
 
 **The session's model.** First hit wins:

@@ -2,7 +2,7 @@
 //! slice). It sits beside [`crate::memory::rules_mining`]: the pure selection
 //! math is [`stella_learn::self_tuning`]; this module reads loop-bench results,
 //! folds each trial into a reward sample, asks the core which arm won, and — on
-//! a confident win — writes the winning worker reasoning-effort to settings and
+//! a confident win — writes the winning reasoning effort to settings and
 //! appends a reversible [`RollbackRecord`] to an append-only ledger under
 //! `.stella/private/`.
 //!
@@ -12,11 +12,11 @@
 //! rewards. The shipping CLI does **not** depend on the dev-only `loop-bench`
 //! crate — it parses the JSON with the minimal [`BenchTrial`] view below.
 //!
-//! **The `effort_auto` gotcha.** A pinned `agents.worker.effort` is ignored
+//! **The `effort_auto` gotcha.** A pinned `agents.default.effort` is ignored
 //! while `effort_auto: on` (the auto table picks the effort instead). So a
 //! promotion also turns `effort_auto` off in the target scope, and the rollback
 //! record captures the prior `effort_auto` so a rollback restores it exactly.
-//! Worker effort is not safety-relevant policy (authority, scope-review, and
+//! The effort knob is not safety-relevant policy (authority, scope-review, and
 //! budget are), so this is within the allowed blast radius — and it is fully
 //! reversible.
 
@@ -35,7 +35,22 @@ use crate::settings::{
 
 /// The settings path the effort knob lives at — the `knob` field of every
 /// ledger record, and what a rollback restores.
-pub(crate) const WORKER_EFFORT_KNOB: &str = "agent_engine_config.agents.worker.effort";
+pub(crate) const EFFORT_KNOB: &str = "agent_engine_config.agents.default.effort";
+
+/// The path this ledger wrote before the `worker` persona was retired.
+///
+/// [`promote`] has always written `agents.default.effort`; only the recorded
+/// name said `worker`. So the ledger named a key the settings file does not
+/// have, and an operator undoing a promotion by hand edited a key that reads
+/// nothing. New records carry [`EFFORT_KNOB`]; this spelling is still read,
+/// because a ledger on disk keeps whatever name it was written with and a
+/// rollback must still find it.
+const RETIRED_WORKER_EFFORT_KNOB: &str = "agent_engine_config.agents.worker.effort";
+
+/// Whether `knob` names this module's effort knob, in either spelling.
+fn is_effort_knob(knob: &str) -> bool {
+    knob == EFFORT_KNOB || knob == RETIRED_WORKER_EFFORT_KNOB
+}
 
 /// The append-only self-tuning ledger, under `.stella/private/` (git-ignored).
 const LEDGER: &str = "self_tuning.jsonl";
@@ -250,7 +265,7 @@ pub(crate) fn run_experiment(
     let candidate = ArmStats::from_samples(&candidate_arm);
     let decision = select_winner(&[baseline_arm, candidate_arm], "baseline", config);
     ExperimentReport {
-        knob: WORKER_EFFORT_KNOB.to_string(),
+        knob: EFFORT_KNOB.to_string(),
         decision,
         baseline,
         candidate,
@@ -314,10 +329,10 @@ fn active_promotion(
                 previous_effort_auto,
                 scope,
                 ..
-            } if rollback.knob == WORKER_EFFORT_KNOB => {
+            } if is_effort_knob(&rollback.knob) => {
                 active = Some((rollback, previous_effort_auto, scope));
             }
-            LedgerEntry::Rolledback { knob, .. } if knob == WORKER_EFFORT_KNOB => {
+            LedgerEntry::Rolledback { knob, .. } if is_effort_knob(&knob) => {
                 active = None;
             }
             _ => {}
@@ -347,7 +362,7 @@ pub(crate) struct PriorState {
     pub effort_auto: Option<bool>,
 }
 
-/// Write `chosen` worker effort to `scope`, disabling `effort_auto` so the
+/// Write `chosen` effort to `scope`, disabling `effort_auto` so the
 /// pinned value binds, and append a promotion record. Returns the prior state
 /// captured for rollback. `save_to` preserves every other settings key.
 pub(crate) fn promote(
@@ -366,15 +381,14 @@ pub(crate) fn promote(
     let prior_auto = cfg.effort_auto.map(Toggle::is_on);
 
     let agents = cfg.agents.get_or_insert_with(Default::default);
-    let worker = agents.default.get_or_insert_with(AgentEngineAgent::default);
-    worker.effort = Some(chosen);
+    let agent = agents.default.get_or_insert_with(AgentEngineAgent::default);
+    agent.effort = Some(chosen);
     // Disable auto-effort so the pinned effort actually takes effect.
     cfg.effort_auto = Some(Toggle::Off);
 
     cfg.save_to(&path)?;
 
-    let record =
-        RollbackRecord::from_promotion(WORKER_EFFORT_KNOB, prior_effort.clone(), promotion);
+    let record = RollbackRecord::from_promotion(EFFORT_KNOB, prior_effort.clone(), promotion);
     append_entry(
         workspace_root,
         &LedgerEntry::Promotion {
@@ -395,8 +409,8 @@ pub(crate) fn promote(
 pub(crate) enum RollbackOutcome {
     /// Nothing to roll back — no active promotion.
     Nothing,
-    /// Restored the worker effort to the given prior value (`None` = cleared
-    /// back to auto/default), in the named scope.
+    /// Restored the effort to the given prior value (`None` = cleared back to
+    /// auto/default), in the named scope.
     Restored {
         knob: String,
         restored: Option<String>,
@@ -404,8 +418,8 @@ pub(crate) enum RollbackOutcome {
     },
 }
 
-/// Revert the last effort promotion: restore the worker effort and the
-/// `effort_auto` value that were in place before it, in the scope it wrote.
+/// Revert the last effort promotion: restore the effort and the `effort_auto`
+/// value that were in place before it, in the scope it wrote.
 pub(crate) fn rollback(workspace_root: &Path) -> Result<RollbackOutcome, String> {
     let Some((record, prior_auto, scope)) = active_promotion(workspace_root) else {
         return Ok(RollbackOutcome::Nothing);
@@ -413,14 +427,14 @@ pub(crate) fn rollback(workspace_root: &Path) -> Result<RollbackOutcome, String>
     let path = scope.path(workspace_root)?;
     let mut cfg = load_scope_engine_config(&path);
 
-    // Restore worker effort to its prior value (or clear it entirely).
+    // Restore the effort to its prior value (or clear it entirely).
     let restored_effort = match &record.previous_value {
         Some(label) => Some(parse_effort(label)?),
         None => None,
     };
     let agents = cfg.agents.get_or_insert_with(Default::default);
-    let worker = agents.default.get_or_insert_with(AgentEngineAgent::default);
-    worker.effort = restored_effort;
+    let agent = agents.default.get_or_insert_with(AgentEngineAgent::default);
+    agent.effort = restored_effort;
 
     // Restore effort_auto exactly (absent stays absent).
     cfg.effort_auto = prior_auto.map(|on| if on { Toggle::On } else { Toggle::Off });
@@ -465,7 +479,7 @@ mod tests {
         rewards.iter().copied().map(trial).collect()
     }
 
-    fn worker_effort_in(path: &Path) -> Option<String> {
+    fn pinned_effort_in(path: &Path) -> Option<String> {
         let cfg = load_scope_engine_config(path);
         cfg.agent()
             .and_then(|a| a.effort)
@@ -593,10 +607,10 @@ mod tests {
         };
         let chosen = parse_effort(&p.winner.value).unwrap();
         let prior = promote(root, SettingsScope::Project, chosen, p).unwrap();
-        assert_eq!(prior.effort, None, "worker effort was unset before");
+        assert_eq!(prior.effort, None, "no effort was pinned before");
 
         let settings = project_settings_path(root);
-        assert_eq!(worker_effort_in(&settings).as_deref(), Some("high"));
+        assert_eq!(pinned_effort_in(&settings).as_deref(), Some("high"));
         // effort_auto was forced off so the pinned effort binds.
         let cfg = load_scope_engine_config(&settings);
         assert_eq!(cfg.effort_auto, Some(Toggle::Off));
@@ -609,13 +623,13 @@ mod tests {
                 .any(|e| matches!(e, LedgerEntry::Promotion { .. }))
         );
 
-        // Rollback restores the prior (unset) worker effort.
+        // Rollback restores the prior (unset) effort.
         match rollback(root).unwrap() {
             RollbackOutcome::Restored { restored, .. } => assert_eq!(restored, None),
             RollbackOutcome::Nothing => panic!("expected a rollback"),
         }
         assert_eq!(
-            worker_effort_in(&settings),
+            pinned_effort_in(&settings),
             None,
             "effort cleared on rollback"
         );
@@ -630,7 +644,7 @@ mod tests {
         let root = dir.path();
         let settings = project_settings_path(root);
 
-        // Seed a prior worker effort of "low".
+        // Seed a prior pinned effort of "low".
         let mut seed = AgentEngineConfig::default();
         let agents = seed.agents.get_or_insert_with(Default::default);
         agents
@@ -658,11 +672,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(prior.effort.as_deref(), Some("low"));
-        assert_eq!(worker_effort_in(&settings).as_deref(), Some("high"));
+        assert_eq!(pinned_effort_in(&settings).as_deref(), Some("high"));
 
         rollback(root).unwrap();
         assert_eq!(
-            worker_effort_in(&settings).as_deref(),
+            pinned_effort_in(&settings).as_deref(),
             Some("low"),
             "rollback restores the pre-promotion effort"
         );
@@ -698,5 +712,107 @@ mod tests {
             !report.decision.is_promotion(),
             "overlapping noisy arms must not promote"
         );
+    }
+
+    /// The ledger names the key the settings file carries.
+    ///
+    /// Before this test it recorded `agents.worker.effort` while [`promote`]
+    /// wrote `agents.default.effort`. The `worker` persona is retired, so the
+    /// recorded name was a key the file does not have: an operator undoing a
+    /// promotion by hand edited a key that reads nothing, and the settings
+    /// kept the pin.
+    #[test]
+    fn a_promotion_records_the_key_the_settings_carry() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let report = run_experiment(
+            &trials(&[Some(0.0); 6]),
+            "medium",
+            &trials(&[Some(1.0); 6]),
+            "high",
+            &RewardWeights::default(),
+            &SelectionConfig::default(),
+        );
+        let Decision::Promote(p) = &report.decision else {
+            panic!("expected promotion")
+        };
+        promote(
+            root,
+            SettingsScope::Project,
+            parse_effort(&p.winner.value).unwrap(),
+            p,
+        )
+        .unwrap();
+
+        assert_eq!(report.knob, EFFORT_KNOB, "the receipt names the live key");
+        let knobs: Vec<String> = read_ledger(root)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                LedgerEntry::Promotion { rollback, .. } => Some(rollback.knob),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            knobs,
+            vec![EFFORT_KNOB.to_string()],
+            "the promotion record names the live key"
+        );
+    }
+
+    /// A ledger written before that fix keeps the retired name, and a rollback
+    /// still has to find it. Reading only the live spelling would strand the
+    /// pin an upgraded workspace is already running under.
+    #[test]
+    fn a_ledger_naming_the_retired_worker_key_still_rolls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let settings = project_settings_path(root);
+
+        let report = run_experiment(
+            &trials(&[Some(0.0); 6]),
+            "low",
+            &trials(&[Some(1.0); 6]),
+            "high",
+            &RewardWeights::default(),
+            &SelectionConfig::default(),
+        );
+        let Decision::Promote(p) = &report.decision else {
+            panic!("expected promotion")
+        };
+
+        // The state the older build left: the pin it wrote to settings, and
+        // the ledger line it recorded under the retired name.
+        let mut seed = AgentEngineConfig::default();
+        seed.agents
+            .get_or_insert_with(Default::default)
+            .default
+            .get_or_insert_with(AgentEngineAgent::default)
+            .effort = Some(ReasoningEffort::High);
+        seed.effort_auto = Some(Toggle::Off);
+        seed.save_to(&settings).unwrap();
+        append_entry(
+            root,
+            &LedgerEntry::Promotion {
+                rollback: RollbackRecord::from_promotion(
+                    RETIRED_WORKER_EFFORT_KNOB,
+                    Some("low".to_string()),
+                    p,
+                ),
+                previous_effort_auto: None,
+                scope: SettingsScope::Project,
+                at_ms: 0,
+            },
+        )
+        .unwrap();
+
+        match rollback(root).unwrap() {
+            RollbackOutcome::Restored { knob, restored, .. } => {
+                assert_eq!(knob, RETIRED_WORKER_EFFORT_KNOB);
+                assert_eq!(restored.as_deref(), Some("low"));
+            }
+            RollbackOutcome::Nothing => panic!("an older ledger must still roll back"),
+        }
+        assert_eq!(pinned_effort_in(&settings).as_deref(), Some("low"));
     }
 }

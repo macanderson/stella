@@ -40,9 +40,9 @@
 //! mid-session settings edit as though it were in force would misreport the
 //! exact thing the dialog exists to answer.
 //!
-//! But saying nothing about a saved edit was its own way of lying. Someone who
-//! changed `pipeline_verifier_model` in the ENGINE panel, saved, and opened
-//! this dialog saw their **old** pin with no explanation — and the panel's own
+//! But saying nothing about a saved edit was its own way of lying. Someone
+//! who changed a model pin in the ENGINE panel, saved, and opened this dialog
+//! saw the **old** one, with no note — and the panel's own
 //! "applies to runs started from now on" line is one tab away and gone by
 //! then. The dialog read as having ignored the save (#1521).
 //!

@@ -41,7 +41,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
                     guard-trigger-coverage priority-scheme left-behind \
-                    role-names stat-portability module-reachability core-reachability \
+                    role-names retired-model-keys \
+                    stat-portability module-reachability core-reachability \
                     typed-errors \
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
@@ -818,6 +819,14 @@ left-behind-update: ## Regenerate the left-behind baseline (it should stay empty
 .PHONY: role-names
 role-names: ## Assert the agent-config role names match across Rust, Python and JS (#1449)
 	@./scripts/check-role-names.sh
+
+.PHONY: retired-model-keys
+retired-model-keys: ## Assert no shipping Rust spells a retired pipeline_<role>_model key (#6061)
+	@python3 ./scripts/check-retired-model-keys.py
+
+.PHONY: retired-model-keys-test
+retired-model-keys-test: ## Test the retired-key guard's directions (hermetic; not part of `gate`)
+	./scripts/test-retired-model-keys.sh
 
 .PHONY: stat-portability
 stat-portability: ## Assert file identity is read through MetadataExt, not a raw libc::stat (#1758)

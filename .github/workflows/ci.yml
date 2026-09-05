@@ -291,6 +291,15 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-role-names.sh
 
+      # The other half of that story. `check-role-names.sh` holds four
+      # languages to one SPELLING of the role words; this asks whether Rust
+      # still uses them. #3908 retired the five `pipeline_<role>_model` keys,
+      # and a live string naming one is inert configuration that reads like a
+      # capability — the defect that retirement ended (#6061).
+      - name: no shipping Rust spells a retired role model key
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-retired-model-keys.py
+
       # Also toolchain-free, and the reason it must be: `dev_t` is signed on
       # macOS and unsigned on Linux, so a raw `libc::stat` identity comparison
       # compiles on the author's machine and fails on this runner — or the
