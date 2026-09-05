@@ -72,6 +72,19 @@ pub(super) fn report_lines(
     for fault in &report.faults {
         lines.push(wrapper_line(scope, fault));
     }
+    // What the gate made of those faults. The lines above cannot say it. An
+    // arbiter that crashed did not block the turn. The run must still read
+    // apart from a run whose arbiter was happy. Only an arbiter's silence is
+    // drawn here. A steering plugin that fell silent had no say to lose.
+    for row in report.arbitration.unanswered().filter(|row| row.may_hold) {
+        lines.push(wrapper_line(
+            scope,
+            &format!(
+                "arbiter {} did not answer — recorded as inconclusive, and nothing was held open",
+                row.author
+            ),
+        ));
+    }
     // Every member's refusals, in selection order: a composition has one gate
     // per plugin (`ResolvedWrapper::serving`), and reading only the first
     // would be silent about exactly the plugin whose ask went unanswered.
