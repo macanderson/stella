@@ -180,7 +180,7 @@ one does is checked, by `gate-parity` against every `run:` in
 says nothing about which files reach it, so a `paths:` filter narrowing
 `guard-self-tests.yml`'s `pull_request:` trigger to `docs/**` would still read
 as green, and the three steps would run nowhere for a scripts-only pull
-request (#5448). Nothing held that absence in place except a comment.
+request. Nothing held that absence in place except a comment.
 `guard-trigger-coverage` reads the trigger back: each of the three must run
 with no `paths:`/`paths-ignore:` filter in at least one workflow, so a later
 edit narrowing this one cannot reopen the gap silently. That workflow's
