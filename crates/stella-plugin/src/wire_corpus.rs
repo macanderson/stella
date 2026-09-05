@@ -78,8 +78,8 @@ use serde_json::{Value, json};
 use stella_protocol::candidate::CandidateHandle;
 
 use crate::{
-    AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse,
-    BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs, CandidateFanoutResult,
+    AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse, BacklogEntry,
+    BacklogPage, BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs, CandidateFanoutResult,
     CandidateGrant, ChildTurnArgs, ChildTurnResult, DriveNext, DriveRequest, DriveResponse,
     DriverCall, DriverCallRequest, DriverCallResponse, DriverOk, FanoutCandidate, FlipObservation,
     HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest,
@@ -324,10 +324,28 @@ fn driver_calls() -> Result<Value, serde_json::Error> {
 /// The host's answers to those asks.
 fn driver_results() -> Result<Value, serde_json::Error> {
     Ok(Value::Array(vec![
-        // The empty `ok` table is the contract, not an omission: a host
-        // answering with a payload the driver's reader denies is a decode
-        // error, so this case going non-empty is a wire change.
-        case("ok", &DriverCallResponse::ok(1, DriverOk {}))?,
+        // The empty `ok` table is what a verb reporting nothing answers, and
+        // it is still the bytes every driver written against B0 reads: every
+        // member of `DriverOk` is omitted when absent.
+        case("ok/empty", &DriverCallResponse::ok(1, DriverOk::default()))?,
+        // The one verb this host serves. A member appearing here is a wire
+        // change, which is what the corpus exists to put on the screen.
+        case(
+            "ok/backlog",
+            &DriverCallResponse::ok(
+                4,
+                DriverOk {
+                    backlog: Some(BacklogPage {
+                        issues: vec![BacklogEntry {
+                            key: "1234".into(),
+                            title: "the queue is read over a port".into(),
+                            labels: vec!["bug".into(), "P1".into()],
+                            url: "https://example.invalid/1234".into(),
+                        }],
+                    }),
+                },
+            ),
+        )?,
         case(
             "err/undeclared",
             &DriverCallResponse::err(
@@ -342,7 +360,10 @@ fn driver_results() -> Result<Value, serde_json::Error> {
             "err/unsupported",
             &DriverCallResponse::err(
                 3,
-                HostCallFailure::new(HostCallRefusal::Unsupported, "B0 serves no capability yet"),
+                HostCallFailure::new(
+                    HostCallRefusal::Unsupported,
+                    "this host does not perform \"work_start\" yet",
+                ),
             ),
         )?,
     ]))

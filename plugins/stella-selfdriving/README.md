@@ -1,14 +1,16 @@
-# stella-selfdriving — the consent document, not yet the extraction
+# stella-selfdriving — the perpetual delivery loop, as a driver Stella starts
 
-This directory holds one file that matters: `plugin.toml`, the declaration of
-everything the perpetual delivery loop does to your machine.
+Two files matter here: `plugin.toml`, the declaration of everything the loop
+does to your machine, and `main.py`, the program Stella runs against it.
 
 ```bash
 stella plugin install plugins/stella-selfdriving
+stella plugin drive stella-selfdriving
 ```
 
-That prints the whole grant and asks. With no terminal attached it prints the
-same text and refuses instead of assuming an answer.
+The install prints the whole grant and asks. With no terminal attached it
+prints the same text and refuses instead of assuming an answer. The drive
+opens one session against the program.
 
 ## What this is
 
@@ -16,49 +18,68 @@ same text and refuses instead of assuming an answer.
 package is built to both.
 
 **It is a host, not a wrapper (option 2).** The loop does not participate in a
-turn — it *drives* Stella from outside, calling the verbs
-`stella self-driving surface` declares, exactly as `scripts/self-driving.sh`
-already does (#1548). Forcing it through the turn-granularity wrapper socket
-would widen that socket for a single caller. So the manifest declares
-`participation = "none"` and no `[runtime]`, no `[oracle]`, no `[wrapper]`:
-Stella never starts this program. A person does, and then it starts Stella.
-
-Since #3783 a driver *can* be started by Stella — `[driver.process]` names the
-program and `stella plugin drive <name>` opens one session against it. This
-package declares no such block, because there is no program here to name (see
-below), and the install prompt says so in as many words.
+turn — it *drives* Stella from outside. Forcing it through the
+turn-granularity wrapper socket would widen that socket for a single caller.
+So the manifest declares `participation = "none"` and no `[runtime]`, no
+`[oracle]`, no `[wrapper]`. Its process is named in `[driver.process]`
+instead, which is the block for a program that is never invoked inside a turn.
 
 **The authority question is settled** (run playbook §3, D-3). The loop already
 holds `gh`, the AWS CLI, `brew`, a line in `~/.zshrc` and a daemon, today, as
 a shell script running with your full authority. Packaging it **relocates**
 that authority; it grants nothing new. What D-3 requires instead is that the
-grant be *expressible* and *showable before install* — which is what this
-directory is, and all it is.
+grant be *expressible* and *showable before install* — which the manifest is.
+
+## What the program does
+
+`main.py` speaks the driver channel: one JSON message per line, an ask at a
+time, and a `next` that ends the session. It holds no forge token, no provider
+key and no worktree. Every capability it needs, it asks Stella for.
+
+One cycle today: read the ranked queue (`backlog_next`), and if there is work
+at the top of it, ask to claim it (`backlog_claim`). The claim is refused,
+because no host serves it yet, and the program stops rather than working an
+issue it cannot know is unclaimed. Two loops taking one issue is what a claim
+prevents, and proceeding without one would trade a correct refusal for a
+silent race.
+
+## The grant binds
+
+An ask outside `[driver] calls` comes back `err` with `refusal: "undeclared"`
+and the session keeps going. That is the channel's own gate.
+
+The tracker read goes through a second one. Stella performs it as
+`Principal::Plugin("stella-selfdriving")`, and asks the rule
+`crates/stella-cli/src/plugin_authz.rs` built out of the `[[capabilities]]`
+list you accepted at install whether that principal was granted `bash` — the
+capability that shells out to `gh`. A manifest without it is refused the read,
+and the refusal names the plugin.
 
 ## What this is not
 
-**It is not the extraction.** `scripts/self-driving.sh` is still the working
-driver and is deliberately untouched: §10's rule is that the shell driver is
-not deleted until its replacement is proven, and no replacement has been
-written. Installing this copies a declaration and this README. It starts
-nothing.
+**It is not the whole extraction.** `scripts/self-driving.sh` is still the
+working driver and is deliberately untouched: §10's rule is that the shell
+driver is not deleted until its replacement is proven.
 
-**Nothing here is enforced.** Binding a declared capability to an `AuthzGate`
-rule under `Principal::Plugin` is the loader's job
-(`doc:pipeline-as-plugins` §A4) and has not landed for a host plugin. Read the
-capability list as "what this loop does to your machine today, written down",
-because that is exactly what it is — and read the install prompt's own
-sentence about claimed limits, which says the same thing in Stella's words.
+What has moved onto the channel: reading the ranked defect queue. What has
+not: the claim, the worktree, the turn, the pull request, the merge, the
+benchmark, the `brew` upgrade, the `~/.zshrc` line and the daemon. All of
+those are still the shell script's, running as you, which is why the
+`[[capabilities]]` list still declares them.
 
 ## What keeps it honest
 
 `crates/stella-cli/tests/self_driving_consent.rs` renders this manifest
 through the real `stella plugin install` and requires every power §10 names to
-appear on **both** sides: in the text a user reads, and in
-`scripts/self-driving.sh`, which is the program the text is a claim about. A
-power the driver drops must leave the grant; a power the grant drops must
-leave the driver.
+appear on **both** sides: in the text a user reads, and in the file that does
+it. A power the loop drops must leave the grant; a power the grant drops must
+leave the loop.
 
-That check is an enumeration, so it catches drift in a power somebody already
-thought of. A driver that grew a capability nobody listed would pass it — the
-fix for that is the loader gate above, not a longer list.
+`crates/stella-cli/src/driver_plugin/tests.rs` drives `main.py` through the
+real transport twice: once with the shipped grant, where the queue read is
+served, and once with a grant that omits `backlog_next`, where the host refuses
+it and the session still ends with a `next` instead of a crash.
+
+The consent check is an enumeration, so it catches drift in a power somebody
+already thought of. A driver that grew a capability nobody listed would pass
+it — which is what the capability rule above exists to refuse.

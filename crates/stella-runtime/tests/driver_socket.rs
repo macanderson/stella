@@ -57,7 +57,7 @@ struct Serves;
 #[async_trait]
 impl DriverCapabilities for Serves {
     async fn perform(&self, _call: DriverCall) -> Result<DriverOk, HostCallFailure> {
-        Ok(DriverOk {})
+        Ok(DriverOk::default())
     }
 }
 
@@ -183,12 +183,12 @@ async fn an_undeclared_capability_is_refused_to_the_driver_and_the_session_conti
     assert_eq!(refusals[0].refusal, HostCallRefusal::Undeclared);
 }
 
-/// The host that ships today performs no verb at all, and says so to the driver
-/// rather than to a log nobody reads. A driver bound to it keeps running.
+/// A host that performs a verb says so to the driver rather than to a log
+/// nobody reads, and a driver bound to it keeps running.
 ///
-/// This is the answer a real `plugins/stella-selfdriving` gets until B1-B6 land,
-/// so it is worth a test rather than a comment: the degradation path is the
-/// shipping path.
+/// This is the answer a real `plugins/stella-selfdriving` still gets for every
+/// verb but the tracker read, so it is worth a test rather than a comment: the
+/// degradation path is the shipping path.
 #[tokio::test]
 async fn the_shipping_host_performs_no_capability_yet_and_the_driver_is_told() {
     let gate = gate(

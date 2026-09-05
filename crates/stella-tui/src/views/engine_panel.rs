@@ -325,10 +325,16 @@ pub struct ModelPicker {
 /// interaction state. The panel is the full-width body of the SETTINGS tab
 /// (no popup, no `/engine` command): `focused` is what routes the keyboard
 /// to it.
+///
+/// **Shared with the SEATS pane** (`crate::views::seats`). Both panes edit
+/// the same driver-owned `state`, so the fields below are one modal editor,
+/// not two. A seat save takes the same path an agent save does.
+/// `ui.settings_pane` says which pane's rows are showing.
 #[derive(Debug, Clone, Default)]
 pub struct EngineOverlay {
-    /// Whether the panel owns the keyboard (modal while set, on the AGENT
-    /// ENGINE tab only — `e` focuses, Esc returns focus to the left column).
+    /// Whether the panel owns the keyboard (modal while set, on the SETTINGS
+    /// tab's AGENTS or SEATS pane). `e` focuses whichever is showing; Esc
+    /// returns focus to the tab.
     pub focused: bool,
     /// The working copy being edited. `None` until the first snapshot lands.
     pub state: Option<EngineConfigState>,
@@ -415,6 +421,9 @@ pub fn focus_panel(ui: &mut DeckUi) -> DeckAction {
     e.row = 0;
     e.edit = None;
     e.picker = None;
+    // The two panes share this field (`crate::views::seats::focus_panel`). A
+    // stale SEATS status must not read as this pane's own outcome.
+    e.status = None;
     e.busy = true;
     DeckAction::Send(WorkspaceInput::EngineConfigRefresh)
 }

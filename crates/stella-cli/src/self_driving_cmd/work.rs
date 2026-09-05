@@ -10,10 +10,11 @@
 //! `work start` **spawns a coding agent** in the worktree rather than
 //! dispatching a turn in-process. That is the design's shape, not a
 //! convenience: `doc:pipeline-as-plugins` §10 settles that self-driving is a
-//! *host*, not a wrapper — *"Stella never starts this program — a person does,
-//! and then it starts Stella"* — and `plugins/stella-selfdriving/plugin.toml`
-//! already declares exactly this capability, so a human has read and granted
-//! it.
+//! *host*, not a wrapper — it drives Stella from outside a turn rather than
+//! sitting inside one — and `plugins/stella-selfdriving/plugin.toml` already
+//! declares exactly this capability, so a human has read and granted it.
+//! Stella can start that package's own driver program over the driver channel;
+//! what a `work start` spawns is still a coding agent, for the same reason.
 //!
 //! Which agent is [`WorkerKind`], and `stella run` is the default. The seam is
 //! here and nowhere else: ranking, claiming, worktree isolation, the pull

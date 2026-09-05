@@ -34,13 +34,14 @@
 //!    an undeclared capability into a crashed loop, and a loop that dies on a
 //!    refusal teaches its author nothing.
 //!
-//! # What this host can actually do at B0
+//! # What a host can actually do, and how it says what it cannot
 //!
-//! Nothing yet, and that is stated rather than implied: [`NoDriverCapabilities`]
-//! answers every verb [`HostCallRefusal::Unsupported`], which is AGENTS.md #10's
-//! discipline pointed at capabilities — a declared gap delivered *to* the
-//! driver, never a silence. B1–B6 (#3599) implement the verbs, one family at a
-//! time; this module is what makes it possible for any of them to be held.
+//! [`DriverCapabilities`] is the port, and an implementor answers
+//! [`HostCallRefusal::Unsupported`] for every verb it does not serve — AGENTS.md
+//! #10's discipline pointed at capabilities, a declared gap delivered *to* the
+//! driver rather than a silence. [`NoDriverCapabilities`] is the whole of that
+//! answer for a host that serves nothing. `stella-cli` serves the `backlog`
+//! read (#6063); the rest of #3599's B2–B6 verbs are still refused that way.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -71,10 +72,10 @@ pub const DEFAULT_DRIVER_MAX_CALLS: u32 = 128;
 ///
 /// This is the port the *gate* calls **after** it has checked the grant, so an
 /// implementor is never the thing that decides whether a driver may ask. It
-/// takes no arguments and returns no payload today for the reason
-/// `stella_plugin::driver` states: no verb is implemented at B0, so there is
-/// nothing honest for either shape to carry. The phase that implements a
-/// family widens this signature along with the wire.
+/// still takes no arguments: no served verb needs one yet, and
+/// `stella_plugin::driver` states the rule both halves follow — an argument
+/// table lands with the verb that reads it. The result already carries what a
+/// served verb reports ([`DriverOk`]).
 #[async_trait]
 pub trait DriverCapabilities: Send + Sync {
     /// Perform `call`, or say why not.
@@ -322,7 +323,7 @@ mod tests {
     #[async_trait]
     impl DriverCapabilities for Serves {
         async fn perform(&self, _call: DriverCall) -> Result<DriverOk, HostCallFailure> {
-            Ok(DriverOk {})
+            Ok(DriverOk::default())
         }
     }
 
@@ -364,7 +365,7 @@ mod tests {
         // half that makes the refusal a value rather than a death.
         assert_eq!(
             session.call(DriverCall::BacklogNext).await,
-            DriverCallOutcome::Ok(DriverOk {})
+            DriverCallOutcome::Ok(DriverOk::default())
         );
         assert_eq!(session.spent(), 1);
 

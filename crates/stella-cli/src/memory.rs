@@ -87,6 +87,10 @@ mod steering;
 pub(crate) use steering::SessionRequery;
 pub(crate) use steering::requery_for_turn;
 mod suppression;
+// The offered->selected join for the two kinds recall renders — a memory
+// record and a mined rule — and the turn-end write into the shared trial
+// ledger.
+mod trials;
 pub(crate) mod tuning;
 // Phase 4 (#715): context-use extraction — what a finished turn's frame
 // carried, and what the turn then said about it.
@@ -370,11 +374,14 @@ pub struct SessionMemory {
     holdout_turn: u64,
     /// Which holdout this turn is, counting from zero, or `None` when this
     /// turn holds nothing back. Set by `arm_recall_control()` alongside
-    /// `ab_suppressed`, read by [`Self::note_turn_skills`] when it picks the
-    /// skill to withhold.
+    /// `ab_suppressed`, and read wherever the withheld item is picked —
+    /// [`Self::note_turn_skills`] for a skill, `trials` for a memory or a
+    /// record.
     ///
     /// The ordinal rather than the rate and the turn, so the pick cannot
-    /// disagree with the arm about which schedule it is on.
+    /// disagree with the arm about which schedule it is on. It also says
+    /// which kind this holdout is for: the three take the schedule in turn
+    /// (`trials::HOLDOUT_ARMS`).
     holdout_ordinal: Option<u64>,
     /// Phase 3 (#714): `context.lifecycle.enabled`, read once at open. While
     /// this is off the learning loop runs exactly the lexical path that ships
@@ -418,6 +425,15 @@ pub struct SessionMemory {
     /// than a plain field because the consumer runs behind `&self` on the
     /// async episode path; it is touched twice a turn and never contended.
     turn_skill_join: std::sync::Mutex<Option<TurnSkillJoin>>,
+    /// The same join for the two kinds recall renders, plus the id this
+    /// turn's holdout settled on ([`trials`]).
+    ///
+    /// Its own cell rather than a share of [`Self::turn_skill_join`] because
+    /// the two are armed in different places: a skill join is noted once, by
+    /// the selection pass at turn start, while a memory or a record is noted
+    /// by every render the turn makes. A `Mutex` for the reason that one has
+    /// one — the consumer runs behind `&self` on the async episode path.
+    context_trials: std::sync::Mutex<trials::TurnContextTrials>,
     /// The session's time source (#2320) — the only one the learning loop is
     /// allowed to read.
     ///
@@ -657,6 +673,7 @@ impl SessionMemory {
                     task_id,
                     execution_id: None,
                     turn_skill_join: std::sync::Mutex::new(None),
+                    context_trials: std::sync::Mutex::new(trials::TurnContextTrials::default()),
                     clock,
                 })
             }
@@ -826,10 +843,16 @@ impl SessionMemory {
     /// shares, rather than the shortlist in front of it, which they do not. A
     /// turn whose pick was not going to be injected anyway holds nothing back:
     /// that costs the experiment samples and cannot cost it correctness. The
-    /// catalog is read only on a turn the schedule armed, which is one turn in
-    /// `context.retrieval.artifact_holdout_rate`.
+    /// catalog is read only on a turn the schedule armed and pointed at
+    /// skills, which is one holdout in the length of `trials::HOLDOUT_ARMS`.
     fn apply_holdout(&self, selection: &mut skills::SkillSelection) -> Option<String> {
         let ordinal = self.holdout_ordinal?;
+        // One item goes per turn, and three kinds share the schedule
+        // (`trials::HOLDOUT_ARMS`), so a turn the schedule points at a
+        // memory or a record holds no skill back.
+        if trials::holdout_kind(ordinal) != Some(stella_learn::ledger::ArtifactKind::Skill) {
+            return None;
+        }
         let loaded = self.load_skills();
         let names: Vec<&str> = loaded.iter().map(|s| s.name.as_str()).collect();
         let held = stella_learn::holdout::pick(ordinal, &names)?;
@@ -944,19 +967,7 @@ impl SessionMemory {
             stella_learn::ledger::ArtifactKind::Skill,
             &join.trigger_matched,
             &join.selected,
-            &stella_learn::skills::appraisal::SkillTrial {
-                task: appraisals::LIVE_WINDOW_TASK.to_string(),
-                // Overwritten per skill by `record_turn`; the value here is
-                // never read.
-                selected: false,
-                outcome: stella_learn::self_tuning::TaskOutcome {
-                    succeeded,
-                    cost_usd: 0.0,
-                    tokens: 0,
-                    retries: 0,
-                },
-                turns: 1,
-            },
+            &trials::live_trial(succeeded),
         );
     }
 
@@ -988,6 +999,10 @@ impl SessionMemory {
         // through here with the settled outcome, which makes this the one
         // seam that can turn the turn-start selection note into a trial.
         self.record_skill_trials(outcome == EpisodeOutcome::Success);
+        // The same seam for the two kinds recall renders. Beside the skill
+        // call rather than inside it: a turn can render a record without
+        // matching any skill trigger, and the reverse.
+        self.record_context_trials(outcome == EpisodeOutcome::Success);
 
         let mut summary: String = prompt.chars().take(240).collect();
         if prompt.chars().count() > 240 {

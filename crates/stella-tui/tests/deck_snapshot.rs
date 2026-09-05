@@ -156,8 +156,10 @@ fn deck_renders_every_tab_with_real_content() {
             ],
         ),
         (
+            // The demo driver resolves one role — `default`, worded `lead`.
+            // The dialog has no word for a role the driver cannot send.
             stella_tui::deck_ui::cards::Card::Models,
-            &["models", "think", "work", "verify"],
+            &["models", "lead"],
         ),
         (
             stella_tui::deck_ui::cards::Card::Budget,

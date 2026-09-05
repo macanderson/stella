@@ -57,12 +57,12 @@ HOMES = {
 
 # Down-only. Each line is what a file held before this guard. Never raise a
 # number here. Never add a file. Delete the spelling instead.
-DEBT = {
-    # The demo session behind `stella deck` shots and the `/models` golden
-    # frame. It still draws six rows from retired keys. A rebuild on seats
-    # redraws the golden frame, so it lands with the settings pane.
-    "crates/stella-tui/src/scenario.rs": 2,
-}
+#
+# Empty: the six-row `/models` demo fixture in `crates/stella-tui/src/
+# scenario.rs` that held the last two hits now draws the one row `resolve`
+# can actually send. Add an entry here only for debt that predates this
+# guard, never for new code.
+DEBT: dict[str, int] = {}
 
 
 def strip_cfg_test(src: str) -> str:
