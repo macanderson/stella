@@ -161,7 +161,7 @@ mod tests {
     }
 
     fn leaf_schema(index: usize) -> ToolSchema {
-        let name = if index % 2 == 0 {
+        let name = if index.is_multiple_of(2) {
             format!("builtin_{index:02}")
         } else {
             format!("mcp__server__tool_{index:02}")

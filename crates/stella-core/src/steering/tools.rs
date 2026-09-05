@@ -185,9 +185,9 @@ mod tests {
 
     /// Forty tools, twenty of them from one MCP server.
     fn forty() -> Vec<ToolSchema> {
-        (0..40)
+        (0..40usize)
             .map(|i| {
-                if i % 2 == 0 {
+                if i.is_multiple_of(2) {
                     schema(&format!("builtin_{i:02}"), 400)
                 } else {
                     schema(&format!("mcp__server__tool_{i:02}"), 400)
