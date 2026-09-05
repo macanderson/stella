@@ -167,6 +167,31 @@ name = "triage"
 band = "early"
 "#;
 
+/// One stage, no band, shared with nobody. Pairs with [`PLAIN_SCOPER`] for the
+/// same-band case, where only the selection can decide.
+const PLAIN_RESEARCHER: &str = r#"
+name = "toy-researcher"
+[loop]
+participation = "steering"
+points = ["before_turn"]
+[wrapper]
+id = "research-toy-v1"
+[[wrapper.stages]]
+name = "research"
+"#;
+
+/// The other half of the same-band pair.
+const PLAIN_SCOPER: &str = r#"
+name = "toy-scoper"
+[loop]
+participation = "steering"
+points = ["before_turn"]
+[wrapper]
+id = "scope-toy-v1"
+[[wrapper.stages]]
+name = "scope"
+"#;
+
 /// The same stage [`RECALLER`] declares, in another band. One stage cannot sit
 /// in two places at once.
 const OTHER_BAND: &str = r#"
@@ -638,6 +663,42 @@ async fn a_band_orders_two_plugins_that_share_no_stage() {
              manifests' and not the selection's: {stages:?}"
         );
     }
+}
+
+/// Two members in one band that share no stage run in the order the selection
+/// named them.
+///
+/// The band cannot separate them and neither manifest says anything about the
+/// other, so something has to answer. The answer is the `--pipeline` text or
+/// the `active_plugins` list — written down, and the same on every clone.
+///
+/// **Witness.** Fails on the base commit, which answers with the **reverse**
+/// of the selection: a member sharing no stage started its walk at the front
+/// of the order and put its whole list ahead of everything already agreed.
+#[tokio::test]
+async fn one_band_and_no_shared_stage_runs_in_the_order_the_selection_named() {
+    let researcher: (PluginManifest, Arc<dyn TurnWrapper>) = (
+        manifest(PLAIN_RESEARCHER),
+        plugin(&["echo-stage", "researcher"]),
+    );
+    let scoper: (PluginManifest, Arc<dyn TurnWrapper>) =
+        (manifest(PLAIN_SCOPER), plugin(&["echo-stage", "scoper"]));
+    let dispatch = WrapperDispatch::bind_composed(vec![researcher, scoper])
+        .expect("two members in one band compose");
+
+    let mut driver = Recorder::default();
+    dispatch
+        .run(input("anything"), &mut driver)
+        .await
+        .expect("the composed stage order resolves");
+
+    let stages: Vec<String> = driver.stages.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        stages,
+        vec!["research", "scope"],
+        "the selection named the researcher first, and nothing in either \
+         manifest contradicts that: {stages:?}"
+    );
 }
 
 /// One stage put in two bands is refused at bind time, named, rather than

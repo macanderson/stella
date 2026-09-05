@@ -292,6 +292,16 @@ so `<plugin>/<role>` has one reading.
 The key is spelled `active_plugins` in `.stella/settings.json` and
 `[run] active_plugins` in `stella.toml`, and the same list answers both.
 
+**Inside one band the list is the tiebreak, and that is the decision rather
+than an accident of the sort.** Two members in one band that share no stage
+have said nothing about each other, and something still has to answer. §8.3
+disqualifies install order for being machine-local and invisible; the list is
+neither, so the composed prompt is the same on every clone and a benchmark run
+reproduces elsewhere. `compose::merge_stage_order` starts a member that shares
+no stage at the **end** of the order built so far for exactly this reason —
+starting it at the front, which is right for a member read against a stage
+already placed, answered with the reverse of what somebody wrote.
+
 Still ahead: `stella plugin enable`/`disable`, which would write the list for
 you and pick the insertion point from the band with a lexicographic tie-break
 on plugin id; consent text and `stella plugin list` rendering the stages and

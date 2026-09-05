@@ -138,6 +138,22 @@ pub(crate) fn compose(manifests: &[PluginManifest]) -> Result<Composition, Wrapp
 /// that does not — so no member's constraints run against the bands, and the
 /// sort only separates stages the weave placed side by side with nothing to
 /// say about them.
+///
+/// # Inside one band, the selection decides, and that is a decision
+///
+/// Two members in one band that share no stage have expressed no preference
+/// about each other. Something still has to answer, and the answer is the
+/// order the selection named them: the `--pipeline` text, or the
+/// `active_plugins` list. Both are written down and travel with the
+/// repository, so the composed prompt is the same on every clone and a
+/// benchmark run reproduces elsewhere — which is what `doc:roleless-core` §8.3
+/// disqualifies install order for failing.
+///
+/// This is why a member sharing no stage starts its walk at the **end** of the
+/// order so far. Starting at the front, which is right for a member read
+/// against a stage already placed, would put the whole of an unrelated
+/// member's list ahead of everything agreed — answering with the reverse of
+/// what somebody wrote.
 fn merge_stage_order(manifests: &[PluginManifest]) -> Result<Vec<StageName>, WrapperError> {
     // The order so far, each stage beside the band it was declared in.
     let mut order: Vec<(StageName, StageBand)> = Vec::new();
@@ -152,7 +168,18 @@ fn merge_stage_order(manifests: &[PluginManifest]) -> Result<Vec<StageName>, Wra
         let Some(wrapper) = manifest.wrapper.as_ref() else {
             continue;
         };
-        let mut cursor = 0usize;
+        // Where this member's first unplaced stage goes. A member that names
+        // a stage the order already holds is read against that stage, so its
+        // walk starts at the front. A member that shares nothing constrains
+        // nothing, and starting it at the front would put its whole list
+        // *ahead* of everything agreed so far — the reverse of the order the
+        // selection named. Starting at the end keeps that pair in the order
+        // somebody wrote down, which is the tiebreak this module documents.
+        let shares_a_stage = wrapper
+            .stages
+            .iter()
+            .any(|stage| order.iter().any(|(placed, _)| placed == &stage.name));
+        let mut cursor = if shares_a_stage { 0 } else { order.len() };
         let mut previous: Option<StageName> = None;
 
         for stage in &wrapper.stages {
