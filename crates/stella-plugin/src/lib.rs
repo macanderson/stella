@@ -104,6 +104,7 @@
 mod candidate_grant;
 mod configure;
 mod consent;
+mod drawable;
 mod driver;
 mod error;
 mod evidence;
