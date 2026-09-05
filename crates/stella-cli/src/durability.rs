@@ -386,6 +386,36 @@ impl SessionDurability {
         self.journal()?.checkpoint()
     }
 
+    /// Write this record's terminal frame: what a lane that died mid-turn
+    /// hands its parent to report (`stella_store::lane_frame`).
+    ///
+    /// Only a lane whose handle is its own may call this — the lead's record
+    /// is a resume point, and a frame there would claim a session died that
+    /// is still running. `crate::subsession::terminal_frame` is the one
+    /// caller, and it holds the lane's own handle.
+    ///
+    /// Best-effort and silent, like the sink: a lane that ended is not made
+    /// less ended by an unwritable report.
+    pub fn record_terminal_frame(&self, json: &str) {
+        if let Some(journal) = self.journal() {
+            let _ = stella_store::lane_frame::record(&journal, json);
+        }
+    }
+
+    /// The terminal frame this record's last dead attempt left, or `None`
+    /// when it has none — the read side of [`Self::record_terminal_frame`].
+    pub fn terminal_frame(&self) -> Option<String> {
+        stella_store::lane_frame::read(&self.journal()?)
+    }
+
+    /// Retract the terminal frame: this lane finished, so it has no
+    /// unfinished attempt for its parent to report.
+    pub fn clear_terminal_frame(&self) {
+        if let Some(journal) = self.journal() {
+            let _ = stella_store::lane_frame::clear(&journal);
+        }
+    }
+
     /// Mark the state at the end of a turn, so the work can later be read back
     /// by turn number rather than by commit id
     /// ([`WorkJournal::read_at_turn`]).

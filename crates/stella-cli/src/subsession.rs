@@ -24,6 +24,7 @@
 
 mod closeout;
 mod notify;
+pub(crate) mod terminal_frame;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1018,6 +1019,13 @@ async fn run_worker(
         });
     }
 
+    // This lane's terminal frame: what it hands the lead if it dies mid-turn.
+    // The engine retires the resume point on every terminal path, so without
+    // this the transcript of a failed lane is gone before anything can read it
+    // — see [`terminal_frame`], and `doc:turn-lane-assembly` §6 for why a lane
+    // whose parent does the reading owes a frame rather than a resume point.
+    let recorder = terminal_frame::LaneRecorder::new(&lane_durability, &spec.lane);
+
     // A checkpoint on THIS lane's own key means a prior spawn of it was
     // killed mid-turn — re-enter it rather than starting over from
     // `spec.prompt` and losing what ran.
@@ -1122,7 +1130,7 @@ async fn run_worker(
             // checkpoint sink, and this worker runs concurrently with the lead
             // turn. `lane_durability` is this lane's own record instead — see
             // `subsession_engine_config_for`.
-            agent::subsession_engine_config_for(cfg, &lane_durability),
+            recorder.wrap(agent::subsession_engine_config_for(cfg, &lane_durability)),
             &TokioSleeper,
         )
         .with_calibration(&calibration)
@@ -1187,6 +1195,11 @@ async fn run_worker(
             WorkerEnd::Stopped,
         ),
     };
+    // The lane's one durable record of how it ended: a lane that died leaves
+    // its parent a frame, a lane that finished retires any frame an earlier
+    // attempt on this lane left. Before `close_worker_execution`, so a lane
+    // killed during closeout has already handed its transcript over.
+    recorder.settle(&end);
     // Audit record only — deliberately NO task-board mirror. The worker's
     // private board is scaffolding for this one run, and the session's
     // `tasks` rows have exactly one writer: the driver, whose `/clear` seal

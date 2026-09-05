@@ -495,6 +495,24 @@ pub(super) fn handle_supervisor_msg(
             if freed && !deleted && pending_controls.restarts.remove(&lane) {
                 let _ = subsession::respawn(&lane, subs, ctx);
             }
+            // A lane that died mid-turn left a terminal frame; the lead reads
+            // it and says how far the lane got. Only for a lane that died: a
+            // lane that finished retires its frame at its own end, so asking
+            // would open its record to be told nothing. One `git show` against
+            // one lane's own history, on the driver loop for the same reason
+            // the board mirror below is — it is per dead lane, not per step.
+            if !matches!(end, subsession::WorkerEnd::Done(_))
+                && let Some(note) = subsession::terminal_frame::parent_report(
+                    &ctx.cfg.workspace_root,
+                    session_id,
+                    &lane,
+                )
+            {
+                let _ = in_tx.send(Inbound::ShellEvent {
+                    agent: LEAD.to_string(),
+                    event: AgentEvent::Text { text: note },
+                });
+            }
             // Worker spend reaches the session's parent budget guard (the
             // L-E9 discipline). The guard is mutably borrowed by any in-
             // flight lead turn, so the driver accumulates here and meters at
