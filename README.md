@@ -246,17 +246,13 @@ to user scope, `S` to project scope); there are no per-agent slash commands.
     // "<plugin-id>/<role>". Unset seats run on the session's model.
     "seat_models": { "vera/verifier": "openrouter/openai/gpt-5.5" },
 
-    // The vocabulary the model pickers offer and auto_mode selects from.
+    // The vocabulary the model pickers offer.
     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
 
-    // "on" picks the verifier automatically from allowed_models (prefer a
-    // different family than the worker's, then the highest price tier).
-    "auto_mode": "off",
-    // "on" chooses per-agent effort for you: verifier high, worker and plan
-    // medium, triage and research low, overriding any per-agent "effort".
+    // "on" chooses the session's effort for you, overriding any per-agent
+    // "effort".
     "effort_auto": "off",
-    // "on" turns thinking on everywhere except triage and research, which
-    // read rather than deliberate.
+    // "on" turns thinking on, overriding any per-agent "reasoning".
     "reasoning_auto": "off",
 
     // Per-agent deep config. Every field is optional — set it and it goes on

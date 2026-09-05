@@ -272,8 +272,7 @@ fn header_rows(
     let dim = Style::new().fg(token::MUTED);
     let on_off = |on: bool| if on { "on" } else { "off" };
     let autos = format!(
-        "model {} · effort {} · thinking {}",
-        on_off(state.auto_mode),
+        "effort {} · thinking {}",
         on_off(state.effort_auto),
         on_off(state.reasoning_auto),
     );
@@ -524,10 +523,7 @@ mod tests {
     #[test]
     fn the_header_states_which_auto_modes_are_deciding() {
         let text = rendered(&WorkspaceModel::new(), false);
-        assert!(
-            text.contains("model off · effort on · thinking off"),
-            "{text}"
-        );
+        assert!(text.contains("effort on · thinking off"), "{text}");
     }
 
     /// Intent must never read as evidence. A verifier that was configured and

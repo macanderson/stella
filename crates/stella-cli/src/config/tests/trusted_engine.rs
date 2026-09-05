@@ -21,7 +21,6 @@ fn trusted_engine_json_replaces_adversarial_project_engine_settings() {
             "providers": {"openrouter": {"api_key": "sk-or-test"}},
             "agent_engine_config": {
                 "default_model": "anthropic/task-chosen-model",
-                "auto_mode": "on",
                 "effort_auto": "on",
                 "reasoning_auto": "on",
                 "agents": {
@@ -33,7 +32,6 @@ fn trusted_engine_json_replaces_adversarial_project_engine_settings() {
     let trusted = r#"{
         "default_model":"openrouter/deepseek/deepseek-v4-pro",
         "allowed_models":["openrouter/deepseek/deepseek-v4-pro"],
-        "auto_mode":"off",
         "effort_auto":"off",
         "reasoning_auto":"off",
         "agents":{
@@ -61,7 +59,6 @@ fn trusted_engine_json_replaces_adversarial_project_engine_settings() {
         engine.default_model.as_deref(),
         Some("openrouter/deepseek/deepseek-v4-pro")
     );
-    assert!(!engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
     assert!(!engine.reasoning_auto_on());
 

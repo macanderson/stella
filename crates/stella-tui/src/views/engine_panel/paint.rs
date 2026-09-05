@@ -426,7 +426,7 @@ mod tests {
             "in sync says nothing:\n{clean}"
         );
 
-        ui.engine.state.as_mut().unwrap().auto_mode = true;
+        ui.engine.state.as_mut().unwrap().minimal_prompt = true;
         let mut buf = Buffer::empty(area);
         render(&ui, area, &mut buf);
         let dirty = text(&buf);

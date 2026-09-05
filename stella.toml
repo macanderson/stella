@@ -20,7 +20,6 @@ scope = "project"
 
 [agents]
 default_model = "openrouter/moonshotai/kimi-k3"
-auto_mode = "off"
 effort_auto = "off"
 reasoning_auto = "off"
 

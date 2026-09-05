@@ -69,15 +69,13 @@ impl EngineTab {
 /// The GLOBAL tab's rows, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum GlobalRow {
-    AutoMode,
     EffortAuto,
     ReasoningAuto,
     MinimalPrompt,
     AllowedModels,
 }
 
-pub(super) const GLOBAL_ROWS: [GlobalRow; 5] = [
-    GlobalRow::AutoMode,
+pub(super) const GLOBAL_ROWS: [GlobalRow; 4] = [
     GlobalRow::EffortAuto,
     GlobalRow::ReasoningAuto,
     GlobalRow::MinimalPrompt,
@@ -87,7 +85,6 @@ pub(super) const GLOBAL_ROWS: [GlobalRow; 5] = [
 impl GlobalRow {
     pub(super) fn label(self) -> &'static str {
         match self {
-            GlobalRow::AutoMode => "auto_mode",
             GlobalRow::EffortAuto => "effort_auto",
             GlobalRow::ReasoningAuto => "reasoning_auto",
             GlobalRow::MinimalPrompt => "minimal_prompt",
@@ -102,7 +99,6 @@ impl GlobalRow {
     /// the panel.
     pub(super) fn flag(self, state: &EngineConfigState) -> Option<bool> {
         match self {
-            GlobalRow::AutoMode => Some(state.auto_mode),
             GlobalRow::EffortAuto => Some(state.effort_auto),
             GlobalRow::ReasoningAuto => Some(state.reasoning_auto),
             GlobalRow::MinimalPrompt => Some(state.minimal_prompt),
@@ -115,7 +111,6 @@ impl GlobalRow {
     /// sit adjacent so an arm added to one is visibly missing from the other.
     fn flag_mut(self, state: &mut EngineConfigState) -> Option<&mut bool> {
         match self {
-            GlobalRow::AutoMode => Some(&mut state.auto_mode),
             GlobalRow::EffortAuto => Some(&mut state.effort_auto),
             GlobalRow::ReasoningAuto => Some(&mut state.reasoning_auto),
             GlobalRow::MinimalPrompt => Some(&mut state.minimal_prompt),

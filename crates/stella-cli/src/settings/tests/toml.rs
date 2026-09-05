@@ -35,7 +35,6 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
           "agent_engine_config": {
             "default_model": "openrouter/openai/gpt-5.5",
             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
-            "auto_mode": "off",
             "effort_auto": "on",
             "headless_scope_bypass": "off",
             "agents": {
@@ -81,7 +80,6 @@ allowed = ["anthropic/claude-fable-5", "zai/glm-5.2"]
 
 [agents]
 default_model = "openrouter/openai/gpt-5.5"
-auto_mode = "off"
 effort_auto = "on"
 headless_scope_bypass = "off"
 
@@ -670,7 +668,6 @@ fn the_document_round_trips_through_parse_without_losing_a_field() {
         r#"
 [agents]
 default_model = "a/b"
-auto_mode = "on"
 effort_auto = "off"
 reasoning_auto = "on"
 minimal_prompt = "on"
@@ -694,7 +691,6 @@ headless_scope_bypass = "on"
         Some("e/f"),
         "the seat plane is part of the round trip too"
     );
-    assert!(engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
     assert!(engine.reasoning_auto_on());
     assert!(engine.minimal_prompt_on());

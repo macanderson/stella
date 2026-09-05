@@ -311,7 +311,6 @@ fn applying_a_profile_turns_the_auto_switches_off() {
     // Left on, `/profile ultra` would print `max` and run `medium` — the
     // profile must be the authority.
     let mut engine = AgentEngineConfig {
-        auto_mode: Some(Toggle::On),
         effort_auto: Some(Toggle::On),
         reasoning_auto: Some(Toggle::On),
         ..AgentEngineConfig::default()
@@ -319,7 +318,6 @@ fn applying_a_profile_turns_the_auto_switches_off() {
     apply(&plan(Profile::Ultra, &spread()), &mut engine);
     assert_eq!(engine.effort_auto, Some(Toggle::Off));
     assert_eq!(engine.reasoning_auto, Some(Toggle::Off));
-    assert_eq!(engine.auto_mode, Some(Toggle::Off));
     let agent = engine.agents.as_ref().unwrap().default.as_ref().unwrap();
     assert_eq!(agent.effort, Some(ReasoningEffort::Max));
 }
@@ -477,7 +475,6 @@ fn restore_auto_undoes_what_a_profile_claimed() {
     assert!(is_auto(&engine));
     assert_eq!(engine.effort_auto, Some(Toggle::On));
     assert_eq!(engine.reasoning_auto, Some(Toggle::On));
-    assert_eq!(engine.auto_mode, Some(Toggle::On));
     // Everything a profile wrote into `agents` is gone — and the emptied
     // objects go with it rather than leaving `"params": {}` husks in the file.
     assert_eq!(engine.agents, None);
@@ -565,6 +562,22 @@ fn restore_auto_preserves_a_custom_prompt_and_temperature() {
         Some("You are a strict reviewer.")
     );
     assert_eq!(verifier.params.as_ref().unwrap().temperature, Some(0.2));
+}
+
+/// **Witness.** Fails on the code before this change. `is_auto` checked a
+/// third field, `auto_mode`, on top of `effort_auto`/`reasoning_auto`. Its
+/// accessor read an unset `auto_mode` as off. So this exact config — both
+/// switches on, `auto_mode` unset — failed the check back then.
+/// `AgentEngineConfig` has no `auto_mode` field now, so the auto state is
+/// `effort_auto`/`reasoning_auto` alone.
+#[test]
+fn is_auto_no_longer_depends_on_auto_mode() {
+    let engine = AgentEngineConfig {
+        effort_auto: Some(Toggle::On),
+        reasoning_auto: Some(Toggle::On),
+        ..AgentEngineConfig::default()
+    };
+    assert!(is_auto(&engine));
 }
 
 #[test]

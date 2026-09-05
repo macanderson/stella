@@ -522,7 +522,7 @@ impl Serialize for CandidateIsolation {
 }
 
 /// An `on`/`off` switch. A dedicated enum rather than `bool` because the
-/// JSON reads as configuration prose (`"auto_mode": "on"`) and because a
+/// JSON reads as configuration prose (`"effort_auto": "on"`) and because a
 /// typo'd value must be a loud parse error, not a silently-false bool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -322,6 +322,10 @@ recognized, ignored, and reported once with the seat assignment that replaces
 them — never a silent drop, because these keys currently read like capabilities
 and a silent removal keeps them reading that way.
 
+`auto_mode` did not stay a live key for long: it kept selecting nothing, since
+the role it staffed collapsed away in the same slice, and a follow-up decision
+retired it the same named-deprecation way.
+
 Two constraints that are not obvious from the code:
 
 - **The bench harness writes `pipeline_verifier_model` into Stella's settings**

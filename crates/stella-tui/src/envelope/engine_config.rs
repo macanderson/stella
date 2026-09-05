@@ -131,9 +131,6 @@ pub struct RoleWiringRow {
 /// [`WorkspaceInput::EngineConfigSave`](super::WorkspaceInput::EngineConfigSave)).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EngineConfigState {
-    /// Auto verifier-model selection: pick the best allowed model for the
-    /// verifier (preferring a different family than the worker's).
-    pub auto_mode: bool,
     /// Auto per-agent effort (verifier high, worker medium, triage low).
     pub effort_auto: bool,
     /// Auto per-agent reasoning (on for verifier/worker, off for triage).

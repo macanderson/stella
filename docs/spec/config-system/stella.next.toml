@@ -171,7 +171,6 @@ default_model           = "anthropic/claude-fable-5"
 # `[seats]` is what replaces them — see stella.today.toml. A seat key is
 # `<plugin-id>/<role>`, so the role word belongs to the plugin that declared it
 # rather than to core, which is the whole point of `doc:roleless-core`.
-auto_mode               = "off"
 effort_auto             = "on"
 reasoning_auto          = "on"
 # Inert (the scope-review stage it steered is gone); reserved rather than
