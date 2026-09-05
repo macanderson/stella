@@ -113,7 +113,7 @@ pub fn set_auto() -> Result<String, String> {
         .map_err(|e| format!("could not save: {e}"))?;
     Ok(format!(
         "profile cleared — {AUTO_TAGLINE}.\n\
-         effort_auto, reasoning_auto and auto_mode are back on, and the per-role effort, \
+         effort_auto and reasoning_auto are back on, and the per-role effort, \
          thinking, verbosity and service-tier pins a profile had written are gone.\n\
          Model choices were left alone: a pin may predate the profile."
     ))
@@ -282,7 +282,7 @@ pub fn set_profile(cfg: &Config, name: &str) -> Result<String, String> {
         "profile set to {name} — {tagline}.\n\
          Applies to sessions started from now on (this session keeps {provider}/{model}).\n\n\
          {rows}{shared}\n\
-         effort_auto, reasoning_auto and auto_mode are now off, so these are the levels that \
+         effort_auto and reasoning_auto are now off, so these are the levels that \
          actually run. Per-agent prompts, providers, temperatures and your model list were \
          left as they were.{notes}"
     ))

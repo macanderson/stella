@@ -202,7 +202,7 @@ impl ModelsSection {
 /// exact reason [`AgentsSection`]'s doc gives for why it may flatten: that set
 /// is closed, because its agent names are struct fields that cannot collide
 /// with a root key. Seats are the opposite — the names are chosen by whatever
-/// plugin the user installed, so a seat called `auto_mode` or `default_model`
+/// plugin the user installed, so a seat called `effort_auto` or `default_model`
 /// is a thing a plugin author can write tomorrow. Flattening an open set into a
 /// table that also holds root keys is a collision waiting for its first
 /// unlucky name; a table of its own cannot collide with anything.
@@ -234,14 +234,12 @@ impl SeatsSection {
 /// **This is exactly why plugin seats went to their own `[seats]` table** and
 /// not into this one: seat names are chosen by whatever the operator
 /// installed, so folding them here would put user-chosen keys in the same
-/// namespace as `auto_mode` and `default_model`. The closed set is what keeps
+/// namespace as `effort_auto` and `default_model`. The closed set is what keeps
 /// the flattening safe, and #3908 shrank it to one rather than opening it.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_mode: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort_auto: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1008,7 +1006,6 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection, S
     let per_agent = cfg.agents.clone().unwrap_or_default();
     let agents = AgentsSection {
         default_model: cfg.default_model.clone(),
-        auto_mode: cfg.auto_mode,
         effort_auto: cfg.effort_auto,
         reasoning_auto: cfg.reasoning_auto,
         minimal_prompt: cfg.minimal_prompt,
@@ -1088,7 +1085,6 @@ fn lower_agents(
         // that meant to say nothing.
         seat_models: (!seats.is_empty()).then_some(seats.models),
         model_output_caps: models.output_caps,
-        auto_mode: agents.auto_mode,
         effort_auto: agents.effort_auto,
         reasoning_auto: agents.reasoning_auto,
         minimal_prompt: agents.minimal_prompt,

@@ -219,6 +219,24 @@ const RETIRED: &[(&str, &str)] = &[
          waited before aborting itself; the scope-review gate it timed is gone, \
          so there is no park for it to bound",
     ),
+    (
+        "agent_engine_config.auto_mode",
+        "picked a model for the verifier role out of allowed_models, preferring \
+         a family different from the worker's and ranking by catalog list \
+         price; the role and its selector are gone with the rest of the role \
+         collapse above. The live second-model path is `stella goal`'s \
+         `resolve_cross_family_verifier`, which groups by family at the point \
+         of use and does not read this key",
+    ),
+    (
+        "agents.auto_mode",
+        "picked a model for the verifier role out of allowed_models, preferring \
+         a family different from the worker's and ranking by catalog list \
+         price; the role and its selector are gone with the rest of the role \
+         collapse above. The live second-model path is `stella goal`'s \
+         `resolve_cross_family_verifier`, which groups by family at the point \
+         of use and does not read this key",
+    ),
 ];
 
 /// The retired role vocabulary (#3908), as `(dotted path, replacement)`.
@@ -385,7 +403,6 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "seat_models",
     "allowed_models",
     "model_output_caps",
-    "auto_mode",
     "effort_auto",
     "reasoning_auto",
     "minimal_prompt",
@@ -396,8 +413,8 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "agents",
 ];
 
-/// The `agent_engine_config` keys #3908 retired, still **recognized** by the
-/// trusted-launcher seam.
+/// The `agent_engine_config` keys #3908 and #3936 retired, still
+/// **recognized** by the trusted-launcher seam.
 ///
 /// Deliberately not simply dropped from [`ENGINE_ROOT_FIELDS`], which is the
 /// shape the other two retirements above took. That allowlist is shared with
@@ -413,10 +430,11 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
 /// bought *attempts*, so a posture naming one is an arm being charged for
 /// something it does not receive. These name a *model for a role that no longer
 /// exists*, and they have already been inert for the whole life of the posture
-/// that writes them — nothing has read `pipeline_verifier_model` since #3865.
-/// Refusing them now would not un-spend anything; naming them in every door
-/// they pass through is what actually ends the silence. The fail-closed
-/// tightening lands with slice 6 (#3910), once the Python stops writing them.
+/// that writes them — nothing has read `pipeline_verifier_model`, or
+/// `auto_mode` for model selection, since #3865. Refusing them now would not
+/// un-spend anything; naming them in every door they pass through is what
+/// actually ends the silence. The fail-closed tightening lands with slice 6
+/// (#3910), once the Python stops writing them.
 ///
 /// Recognized, ignored, reported — never silently accepted, and never
 /// silently dropped.
@@ -426,6 +444,7 @@ pub(crate) const RETIRED_ENGINE_ROOT: &[&str] = &[
     "pipeline_triage_model",
     "pipeline_research_model",
     "pipeline_plan_model",
+    "auto_mode",
 ];
 
 /// `agent_engine_config.agents` — [`super::AgentEngineAgents`]. One key,
@@ -556,7 +575,6 @@ const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
 /// `agent_engine_config.agents.<name>` up one level.
 pub(super) const TOML_AGENTS_FIELDS: &[&str] = &[
     "default_model",
-    "auto_mode",
     "effort_auto",
     "reasoning_auto",
     "minimal_prompt",
@@ -899,6 +917,43 @@ mod tests {
         assert!(
             joined.contains("[seats]"),
             "the other four point at the seat plane: {joined}"
+        );
+    }
+
+    /// **Witness.** `auto_mode` selected a model for the verifier role; the
+    /// role and its selector are gone, and this is the settings key's own
+    /// retirement rather than the role's. Fails on the code before this
+    /// change, where `auto_mode` is still a live field of `AgentEngineConfig`
+    /// and this scan reports nothing at all for it.
+    #[test]
+    fn auto_mode_is_reported_as_retired_not_unrecognized() {
+        let found = scan(
+            r#"{ "agent_engine_config": {
+                   "default_model": "zai/glm-5.2",
+                   "auto_mode": "on" } }"#,
+        );
+        assert_eq!(found, vec!["agent_engine_config.auto_mode".to_string()]);
+        let reason = retirement("agent_engine_config.auto_mode")
+            .expect("auto_mode must carry a retirement reason, not read as a typo");
+        assert!(
+            reason.contains("verifier"),
+            "the reason should say what the key picked: {reason}"
+        );
+
+        let lines = notices("settings.json", found);
+        assert_eq!(lines.len(), 1, "{lines:#?}");
+        assert!(lines[0].contains("is retired and reads nothing"));
+        assert!(!lines[0].contains("check the spelling"));
+    }
+
+    /// The same key spelled the way `stella.toml` spells it
+    /// (`agents.auto_mode`), so a TOML user gets the same explanation a JSON
+    /// user does.
+    #[test]
+    fn the_toml_spelling_of_auto_mode_is_reported_too() {
+        assert!(
+            retirement("agents.auto_mode").is_some(),
+            "agents.auto_mode must be recognized in its TOML spelling"
         );
     }
 
