@@ -541,8 +541,16 @@ impl SessionRegistry {
             .max_by_key(|r| r.updated_at_ms)
     }
 
-    /// Sweep terminal records older than `max_age_ms` (registry hygiene —
-    /// called opportunistically by the deck driver at startup).
+    /// Sweep terminal records older than `max_age_ms` as of `now_ms`
+    /// (registry hygiene — called opportunistically by the deck driver at
+    /// startup).
+    ///
+    /// `now_ms` is the caller's clock reading, not read here. The cutoff is
+    /// a window boundary. A function that reads its own clock could only
+    /// place a record far in the past — never at the exact boundary — since
+    /// only real time passing moves it there. The production caller
+    /// (`stella-cli`'s deck driver) is the one place doing the I/O "now"
+    /// represents.
     ///
     /// Terminal is judged on the *presented* status ([`Self::list`]), not the
     /// stored one, so a record still stored `InProgress` whose owning process
@@ -554,8 +562,8 @@ impl SessionRegistry {
     /// ones — a pause is a deliberate promise that the state is kept for
     /// `resume` (its documented contract), so it must not age out from under
     /// the user who made it.
-    pub fn prune(&self, max_age_ms: u64) -> Result<usize> {
-        let cutoff = now_ms().saturating_sub(max_age_ms);
+    pub fn prune(&self, max_age_ms: u64, now_ms: u64) -> Result<usize> {
+        let cutoff = now_ms.saturating_sub(max_age_ms);
         let mut removed = 0;
         for record in self.list() {
             let terminal = !record.status.is_live() && record.status != SessionStatus::Paused;
@@ -599,6 +607,15 @@ pub fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// Milliseconds since the Unix epoch (best-effort; `0` if the clock is
+/// before the epoch).
+///
+/// [`SessionRecord::new`] and [`SessionRegistry::upsert`] call this because
+/// a record's creation and write times really are "now". This module's own
+/// tests call it too, wherever a case does not need a chosen instant.
+/// [`SessionRegistry::prune`] does **not** call it: its cutoff is a window
+/// boundary, so it takes `now_ms` as a parameter, and a test can place a
+/// record on either side of that boundary.
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -933,7 +950,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = reg.prune(60_000).unwrap();
+        let removed = reg.prune(60_000, now_ms()).unwrap();
         assert_eq!(removed, 1);
         assert!(reg.get(&done.id).is_none());
         assert_eq!(reg.get(&live.id).unwrap().id, live.id);
@@ -960,9 +977,55 @@ mod tests {
         )
         .unwrap();
 
-        let removed = reg.prune(60_000).unwrap();
+        let removed = reg.prune(60_000, now_ms()).unwrap();
         assert_eq!(removed, 0, "a paused session must not age out");
         assert!(reg.get(&paused.id).is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `prune` that reads its own clock can only place a record far in
+    /// the past. It cannot test the exact boundary — spared at `T - 1`,
+    /// swept at `T + 1` — because that needs real time to pass. Taking
+    /// `now_ms` as a parameter puts both sides of that boundary at a chosen
+    /// instant.
+    #[test]
+    fn prune_cutoff_is_driven_by_the_caller_supplied_instant_not_the_wall_clock() {
+        let (dir, reg) = temp_registry("prune-boundary");
+
+        let mut done = SessionRecord::new("/w/done", "done");
+        done.status = SessionStatus::Complete;
+        done.updated_at_ms = 1_000;
+        reg.upsert(&done).unwrap();
+        // `upsert` restamps `updated_at_ms` to the real wall clock, so write
+        // the backdated record directly — the same workaround the older
+        // tests above needed, and exactly the pain this witness proves the
+        // fix resolves for `prune` itself.
+        std::fs::write(
+            dir.join(format!("{}.json", done.id)),
+            serde_json::to_string(&done).unwrap(),
+        )
+        .unwrap();
+
+        let max_age_ms = 500;
+        // One millisecond short of the cutoff: spared.
+        assert_eq!(
+            reg.prune(max_age_ms, done.updated_at_ms + max_age_ms - 1)
+                .unwrap(),
+            0,
+            "a record one ms inside its window must survive"
+        );
+        assert!(reg.get(&done.id).is_some());
+
+        // One millisecond past the cutoff: swept. Same record, same
+        // `max_age_ms` — only the caller-supplied instant moved.
+        assert_eq!(
+            reg.prune(max_age_ms, done.updated_at_ms + max_age_ms + 1)
+                .unwrap(),
+            1,
+            "a record one ms past its window must be pruned"
+        );
+        assert!(reg.get(&done.id).is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

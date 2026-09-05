@@ -146,14 +146,16 @@ fn run_effort(
     );
 
     print_report(&report);
-    // Always publish the receipt — a kept baseline is evidence too.
-    engine::publish_experiment(workspace_root, &report)?;
+    // Always publish the receipt — a kept baseline is evidence too. The
+    // clock read happens here, once, at the command's own I/O boundary —
+    // `publish_experiment` only stamps the instant it is handed.
+    engine::publish_experiment(workspace_root, &report, engine::now_ms())?;
 
     match &report.decision {
         Decision::Promote(p) => {
             if promote {
                 let chosen = engine::parse_effort(&p.winner.value)?;
-                let prior = engine::promote(workspace_root, scope, chosen, p)?;
+                let prior = engine::promote(workspace_root, scope, chosen, p, engine::now_ms())?;
                 println!(
                     "\n{} worker effort → {} (was {}) in {} settings.",
                     "promoted".green().bold(),
@@ -190,7 +192,7 @@ fn run_effort(
 }
 
 fn run_rollback(workspace_root: &Path) -> Result<(), String> {
-    match engine::rollback(workspace_root)? {
+    match engine::rollback(workspace_root, engine::now_ms())? {
         RollbackOutcome::Nothing => {
             println!("nothing to roll back — no effort promotion is in effect.");
         }

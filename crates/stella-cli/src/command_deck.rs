@@ -509,7 +509,7 @@ pub async fn run_deck_session(
     // where it stood. A resume request resolves HERE so its errors print on
     // the normal screen instead of dying behind the alternate one.
     let session_registry = stella_store::SessionRegistry::open_default();
-    let _ = session_registry.prune(SESSION_RECORD_MAX_AGE_MS);
+    let _ = session_registry.prune(SESSION_RECORD_MAX_AGE_MS, now_ms());
     let _ = stella_store::NotificationStore::open_default().prune(NOTIFICATION_MAX_AGE_MS);
     let workspace_path = cfg.workspace_root.display().to_string();
     let workspace_name = cfg
