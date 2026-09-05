@@ -108,7 +108,7 @@ use super::subprocess::refuses_env_name;
 ///
 /// A driver session ends by naming what it wants next.
 /// [`DriveNext::Sleep`]'s own doc comment promises that the host clamps this
-/// value. [`clamp_sleep`] is what keeps that promise true.
+/// value. This module's `clamp_sleep` is what keeps that promise true.
 ///
 /// This is not the same bound as [`MAX_WRAPPER_TIMEOUT`]. That one caps how
 /// long one driver process may run. This one caps how long the host may go
