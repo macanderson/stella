@@ -6,13 +6,14 @@
 //! point, its own grant, and no rung on the [`crate::Participation`] ladder,
 //! because drawing is not influence over a turn.
 //!
-//! Two rules from that section are held by the types instead of by a host's
-//! care, and they are the reason this is a contract at all:
+//! Some of that section's rules are held by the types, not by a host's care.
+//! That is why this is a contract at all:
 //!
-//! - **A panel never emits an escape sequence.** [`PanelText`] wraps a private
-//!   `String` whose only constructor refuses every control character, so
-//!   `\x1b[2J` is a decode error on the frame that carries it. The host draws
-//!   the border, the title and every escape byte the terminal ever sees.
+//! - **A panel never emits an escape sequence, and never flips its own text.**
+//!   [`PanelText`] wraps a private `String` whose only constructor turns away
+//!   every control `char` and every bidi one, so `\x1b[2J` and `U+202E` are
+//!   both decode errors on the frame that carries them. The host draws the
+//!   border, the title and every escape byte the terminal ever sees.
 //! - **A panel cannot address a cell it was not leased.** [`PanelRect`] carries
 //!   an extent and no origin, so the coordinates a plugin writes are its own
 //!   rectangle's; there is no number it could put in a frame that names a cell
@@ -30,6 +31,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::drawable::{first_bidi_control, first_control_character};
 use crate::error::ManifestError;
 use crate::runtime::{ProcessBlock, Runtime};
 use crate::wire::PROTOCOL_VERSION;
@@ -788,46 +790,6 @@ impl PanelLine {
     }
 }
 
-/// The first control character in `text`, as `(index in chars, character)`.
-///
-/// One definition of "drawable", read in two places: [`PanelText::new`] holds
-/// it for a panel's own glyphs, and
-/// [`PluginManifest::validate`](crate::PluginManifest) holds it
-/// for the name Stella composes into chrome. A second copy of the predicate
-/// would drift, and the two are the same question — whether a string can reach
-/// a terminal without carrying an escape sequence into it.
-pub(crate) fn first_control_character(text: &str) -> Option<(usize, char)> {
-    text.chars()
-        .enumerate()
-        .find(|(_, found)| found.is_control())
-}
-
-/// Whether a plugin's name is one Stella can print inside its own chrome.
-///
-/// The name is the one string Stella **composes into chrome it owns**: the
-/// `◳ panel · <plugin>` label, the install prompt, a popup's heading, the rules
-/// panel. [`PanelText`] makes a plugin's own glyphs unable to carry an escape
-/// sequence, and that guarantee is worth nothing while the label around them
-/// can — a plugin named `"\x1b[2J"` clears the screen from inside Stella's own
-/// border, through a path no panel frame touches.
-///
-/// Asked once, at load, rather than at each consumer, because every consumer is
-/// a place someone can forget. Here rather than in `manifest.rs` so it sits
-/// beside the predicate it shares with [`PanelText::new`] (#5203).
-///
-/// # Errors
-///
-/// [`ManifestError::NameNotDrawable`], naming the character and where it sits.
-pub(crate) fn validate_plugin_name(name: &str) -> Result<(), ManifestError> {
-    match first_control_character(name) {
-        Some((index, found)) => Err(ManifestError::NameNotDrawable {
-            index,
-            code: found as u32,
-        }),
-        None => Ok(()),
-    }
-}
-
 /// One run of text in a row, drawn in one style.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -886,6 +848,15 @@ impl PanelPatch {
 /// and `\t` go with them: a row's structure is the frame's, and a tab's width
 /// is the terminal's rather than this contract's.
 ///
+/// **And the no-flip rule, held the same way.** The same constructor turns
+/// away the bidi `char`s — `U+061C`, `U+200E`, `U+200F`, `U+202A`–`U+202E`,
+/// `U+2066`–`U+2069`. Each one flips the text after it. A run can then read in
+/// an order its bytes do not have. That is the Trojan Source shape
+/// (`CVE-2021-42574`). None of it leaves the leased box, since the host clips
+/// each blit. It still counts. The box is chrome a person chose to trust. The
+/// rest of `Cf` is fine: `U+200D` builds the emoji runs, and `U+200C` is plain
+/// Persian and `Indic` text. This crate's `drawable.rs` has the case.
+///
 /// The privacy is what makes it a rule and not a request, exactly as
 /// [`crate::VolatileContext`]'s is. A public field would let a host write
 /// `PanelText("\x1b[2J".into())` in one line, change no type, and stay green:
@@ -903,6 +874,7 @@ impl PanelPatch {
 /// assert_eq!(text.as_str(), "gates: 3 green");
 /// assert_eq!(text.cells(), 14);
 /// assert!(PanelText::new("\u{1b}[31mred").is_err());
+/// assert!(PanelText::new("gates: 3 \u{202e}neerg").is_err());
 /// ```
 ///
 /// # What a cell is here, and what it is not
@@ -923,12 +895,19 @@ impl PanelText {
     ///
     /// # Errors
     ///
-    /// [`PanelTextError::ControlCharacter`] when the text carries a control
-    /// character, naming the character and where it sits.
+    /// [`PanelTextError::ControlCharacter`] for a control `char`, and
+    /// [`PanelTextError::BidiControl`] for a bidi one. Each names the `char`
+    /// and where it sits.
     pub fn new(text: impl Into<String>) -> Result<Self, PanelTextError> {
         let text = text.into();
         if let Some((index, found)) = first_control_character(&text) {
             return Err(PanelTextError::ControlCharacter {
+                index,
+                code: found as u32,
+            });
+        }
+        if let Some((index, found)) = first_bidi_control(&text) {
+            return Err(PanelTextError::BidiControl {
                 index,
                 code: found as u32,
             });
@@ -995,6 +974,21 @@ pub enum PanelTextError {
          the terminal sees"
     )]
     ControlCharacter {
+        /// Which character of the text, counted in `char`s from zero.
+        index: usize,
+        /// The Unicode scalar value that was refused.
+        code: u32,
+    },
+
+    /// The text carries a bidi `char`. Its own error, not a reused
+    /// [`PanelTextError::ControlCharacter`]. The two refusals ask different
+    /// things, and a host that printed the wrong one would send an author
+    /// hunting an escape that is not there.
+    #[error(
+        "panel text carries the bidi formatting character U+{code:04X} at position {index}: it \
+         reorders the glyphs after it, so the panel would read one way and mean another"
+    )]
+    BidiControl {
         /// Which character of the text, counted in `char`s from zero.
         index: usize,
         /// The Unicode scalar value that was refused.
