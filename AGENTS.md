@@ -293,6 +293,25 @@ required status checks: a throwaway PR went red and unmergeable while a
 hand-filed, `main-red`-labelled issue stood, and green again once
 `unblocks-main` landed on it.
 
+**A hold outlives the outage unless something clears it.** Branch protection
+reads the last check run for that name on that commit, and the hold fires on
+`pull_request` — so a pull request that is finished and waiting has no event
+left to correct it. On 2026-09-05 `main` broke, a repair landed, the canary
+closed the issue, and ten open pull requests stayed unmergeable on a check
+whose own question now answered the other way. A push to each branch clears
+it; the two moves a session reaches for first, an empty commit and
+close-and-reopen, are the two this repository forbids.
+`scripts/clear-main-red-holds.sh` is what clears them: it asks whether any
+`main-red` issue is still open, and if none is, re-runs the failed hold on
+every open pull request, which reports under the same name on the same commit.
+It has two callers because neither sees every recovery — `main-canary.yml`, on
+the run that closes the issue, since GitHub starts no workflow from an event
+`GITHUB_TOKEN` raised; and `main-red-clear.yml`, when a person closes the issue
+or takes the label off it. Both fail open, and running it twice re-runs nothing
+the first pass cleared. `make clear-main-red-holds` prints what a sweep would
+re-run without re-running it; `make main-red-hold-test` covers the clearing
+half beside the blocking one.
+
 The chain has a third link, and it is not a workflow: **before you repair a
 red `main`, check whether somebody already is.** On 2026-08-24 three sessions
 each wrote the same two-line fix for the same break and merged them 95 seconds

@@ -63,6 +63,12 @@ permissions:
   # To open, comment on, and close the one tracking issue, and to provision its
   # label on first use.
   issues: write
+  # To find the open pull requests whose hold this run has just made stale,
+  # and to re-run it for them (#5913). Closing the issue is what ends the
+  # outage; the hold that failed during it is still the last word on each of
+  # those commits until something re-runs it.
+  pull-requests: read
+  actions: write
 
 # Deliberately cancel-in-progress: this reconciles state rather than reacting to
 # an event, so under a burst of merges the only tree worth judging is the last
@@ -88,6 +94,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/main-canary.sh --announce
+
+      # Recovery has to clear the holds the outage caused, or every pull
+      # request that was blocked stays blocked with no push to it (#5913).
+      # This does nothing while a `main-red` issue is open, so a run that
+      # found the tree still broken pays one tracker query for it.
+      - name: Clear the hold on every open pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/clear-main-red-holds.sh
 
       # The other half of the same question, and the one nothing asked: is
       # there a commit on `main` that nothing VERIFIED — as distinct from one

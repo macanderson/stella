@@ -910,8 +910,15 @@ main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads t
 	@./scripts/check-main-red-hold.sh
 
 .PHONY: main-red-hold-test
-main-red-hold-test: ## Test the red-main hold, blocking branch included (hermetic; not part of `gate`)
+main-red-hold-test: ## Test the red-main hold and its clean-up (hermetic; not part of `gate`)
 	./scripts/test-main-red-hold.sh
+
+# What the hold leaves behind once main recovers: a failed check run that is
+# still the last word on every blocked PR's head (#5913). CI re-runs those
+# holds; this prints what it would re-run, and changes nothing.
+.PHONY: clear-main-red-holds
+clear-main-red-holds: ## List the stale `main is not known-broken` failures a recovery left behind
+	@./scripts/clear-main-red-holds.sh --dry-run
 
 # The third signal in the red-main chain: the canary detects, the hold stops
 # a merge, and this stops a second session writing the same patch (#4680).
