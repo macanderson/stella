@@ -22,7 +22,17 @@ use crate::envelope::{
 
 /// The panel's modal key map, dispatched by [`crate::deck_ui::handle_deck_key`]
 /// while `ui.engine.focused`.
+///
+/// The SEATS pane is a second, unrelated set of rows over this same
+/// [`crate::views::engine_panel::EngineOverlay`]. It reuses `focused`,
+/// `picker`, `row`, `status`, `busy`, and the `save`/`refresh` verbs below —
+/// so a seat save takes the exact path an agent save does
+/// (`crate::views::seats::handle_seats_key`). Checked first and handed off
+/// whole: the AGENTS nav below knows nothing about a seat list.
 pub fn handle_engine_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    if ui.settings_pane == crate::views::settings::SettingsPane::Seats {
+        return crate::views::seats::handle_seats_key(key, ui);
+    }
     if ui.engine.picker.is_some() {
         return handle_picker_key(key, ui);
     }
@@ -378,7 +388,12 @@ fn clear_row(ui: &mut DeckUi) -> DeckAction {
 /// this key) and the reply — a fresh snapshot with the outcome in `status` —
 /// clears `busy` and re-baselines the modified marker via
 /// [`super::ingest_config`].
-fn save(ui: &mut DeckUi, scope: AgentScope) -> DeckAction {
+///
+/// `pub(crate)`, not `pub`: the SEATS pane's `s`/`S`
+/// (`crate::views::seats`) call this same function at the same scope. A seat
+/// lives on `state.seats`, so it rides along on every save no matter which
+/// pane made the edit.
+pub(crate) fn save(ui: &mut DeckUi, scope: AgentScope) -> DeckAction {
     let Some(state) = ui.engine.state.clone() else {
         ui.engine.status = Some(NO_SNAPSHOT_HINT.into());
         return DeckAction::Handled;
@@ -393,7 +408,9 @@ fn save(ui: &mut DeckUi, scope: AgentScope) -> DeckAction {
 /// `r`: ask the driver to re-read the settings chain. The reply is
 /// dirty-guarded ([`super::ingest_config`]), so a reload can never eat unsaved
 /// edits — save or close first to adopt disk truth over them.
-fn refresh(ui: &mut DeckUi) -> DeckAction {
+///
+/// `pub(crate)` for the same reason [`save`] is.
+pub(crate) fn refresh(ui: &mut DeckUi) -> DeckAction {
     ui.engine.busy = true;
     ui.engine.status = Some("reloading engine config…".into());
     ui.pending_inputs.push(WorkspaceInput::EngineConfigRefresh);
