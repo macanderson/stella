@@ -370,6 +370,9 @@ pub(crate) async fn run_goal_wrapped_turn(
         // The skill's `effort:` override, for this arc.
         config.effort = Some(effort);
     }
+    // TODO(#6109): still the builder path, so this turn reports no lane. Same
+    // door as `agent::goal`'s raw arm, under a wrapper plugin, and the same
+    // open question about which lane a non-interactive door runs in.
     let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
         .with_calibration(calibration)
         // The arc's whistle (#4769), opened above and drained at every round's

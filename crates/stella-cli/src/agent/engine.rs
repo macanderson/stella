@@ -52,8 +52,9 @@ fn tuned_engine_config(cfg: &Config, catalog_ref: (&str, &str)) -> EngineConfig 
         // reach that hazard and each is closed at its own end — a dispatched
         // sub-agent by `stella_core::subagent` (which strips the sink it is
         // handed), and a deck sub-session by `subsession_engine_config_for`
-        // (which the engine crate cannot see, because a sub-session is built
-        // through `Engine::with_sleeper` rather than `run_sub_agent`).
+        // (which the engine crate cannot see, because a sub-session assembles
+        // an engine for itself rather than being reached through
+        // `run_sub_agent`).
         //
         // A fleet worker is the third door and is closed the same way: it never
         // binds this handle either, and `crate::fleet_cmd::durability` mints it
@@ -232,9 +233,9 @@ pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
 /// lead's transcript and the lane's terminal path would `discard` the lead's
 /// point while the lead still needs it. `stella_core::subagent` names the same
 /// damage for a dispatched child reached through `run_sub_agent`; a
-/// sub-session reaches it through a different door — it is a full engine
-/// session built via `Engine::with_sleeper`, not a child, so the engine crate
-/// never sees a parent to strip the sink from.
+/// sub-session reaches it through a different door — it assembles a full
+/// engine session of its own, not a child, so the engine crate never sees a
+/// parent to strip the sink from.
 ///
 /// The fix here is to re-key, not strip: `durability` is the lane's OWN
 /// handle, bound by the caller (`crate::subsession::run_worker`) to its own

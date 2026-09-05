@@ -42,6 +42,13 @@ mod guarantees;
 #[cfg(test)]
 mod skill_lifecycle;
 
+/// The memory lifecycle twin: a recorded window demotes a mined memory and
+/// leaves a hand-written one alone. A child module for [`guarantees`]'s
+/// reason — it drives [`SessionMemory::auto_create_skills`] without widening
+/// its visibility.
+#[cfg(test)]
+mod memory_lifecycle;
+
 /// What [`SessionMemory::partition_known`] stores, diverts to the mining log,
 /// and drops. A child module for the same reason as [`guarantees`]: the split
 /// is private, and it is the split itself that needs pinning, not the turn
@@ -816,7 +823,7 @@ impl SessionMemory {
         // have ALL left the tree is stale by a reproducible check, needing no
         // model and no human. It writes the pruning-eligible verdict into the
         // ledger and retires through the same protected, reversible event
-        // writer as the health sweep below.
+        // writer as the measured sweep below.
         let vanished = super::validation::vanished_memories(&self.store, &self.workspace_root);
         if !vanished.is_empty() {
             super::validation::record_vanished_verdicts(&self.store, &vanished, &now);
@@ -837,12 +844,24 @@ impl SessionMemory {
             }
         }
 
-        let policy = super::tuning::selection_health_policy(&self.workspace_root);
-        let health = super::uses::selection_health(&self.store, policy);
-        if health.is_empty() {
+        // The measured half. Every turn's offered→shown join for a
+        // memory record lands in the shared artifact trial ledger, and this is
+        // the same `appraise` + `decide_demotion` pass the skill sweep runs —
+        // one appraisal engine, read through a kind filter. A record the
+        // ledger names but the store does not know gets no origin entry and is
+        // therefore kept, which is where a frame that carried a citation label
+        // instead of an id lands.
+        let origins = super::retirement::origins(&self.store);
+        let decisions = super::appraisals::sweep(
+            &self.workspace_root,
+            stella_learn::ledger::ArtifactKind::Memory,
+            &origins,
+            &stella_learn::skills::appraisal::AppraisalConfig::default(),
+        );
+        if decisions.is_empty() {
             return;
         }
-        let sweep = super::retirement::sweep(&self.store, &health, &now);
+        let sweep = super::retirement::sweep(&self.store, &decisions, &now);
         if quiet {
             return;
         }
@@ -854,7 +873,7 @@ impl SessionMemory {
         }
         for (record_id, protection) in &sweep.refused {
             eprintln!(
-                "memory: {record_id} is failing but is {} — left in place.",
+                "memory: {record_id} earned retirement but is {} — left in place.",
                 protection.as_str()
             );
         }

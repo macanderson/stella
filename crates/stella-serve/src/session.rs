@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use stella_core::EngineConfig;
 use stella_core::event_sender::RunEnding;
 use stella_core::ports::{AuthzGate, NoAuthz, Principal};
-use stella_engine::{BudgetGuard, CancelToken, Engine, EventSender, TurnOutcome};
+use stella_engine::{BudgetGuard, CancelToken, Engine, EventSender, TurnCapabilities, TurnOutcome};
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionResult, ProviderError, ToolContract, ToolOutput,
 };
@@ -736,15 +736,17 @@ fn run_session(
         // Every attachment below is by reference for the engine's lifetime, so
         // the owners have to outlive it — hence the bindings above rather than
         // temporaries here.
-        let mut engine = Engine::with_sleeper(&provider, tool_view, spec.config.clone(), &sleeper)
-            .with_gate(&gate)
-            .with_steering(&*steering);
-        if let Some(bus) = &bus {
-            engine = engine.with_bus(bus);
-        }
-        if let Some(calibration) = &spec.calibration {
-            engine = engine.with_calibration(calibration);
-        }
+        //
+        // Assembled rather than built up by optional builders: this turn is
+        // the `ServeSession` lane and says so, and `served_capabilities`
+        // answers every seam rather than only the ones a chain attached.
+        let engine = Engine::assemble(
+            &provider,
+            tool_view,
+            spec.config.clone(),
+            &sleeper,
+            served_capabilities(spec.calibration.as_deref(), &gate, &*steering, bus.as_ref()),
+        );
 
         // Two mutually exclusive modes: plain turn, judged goal run (#1297).
         let outcome = match &spec.goal {
@@ -830,6 +832,43 @@ fn run_session(
         // registered here is work being thrown away, and `clear` reports it.
         pending.clear();
     });
+}
+
+/// What a served turn binds, and which lane it says it is.
+///
+/// A value rather than a builder chain so both halves are checkable: a test
+/// can hold the seams in its hand, and a slot added to [`TurnCapabilities`]
+/// stops this function compiling until somebody decides what a served turn
+/// does with it — the whole reason that type has no `Default`.
+///
+/// `calibration` and `bus` are `Option`s because the host supplies them or
+/// does not: a map is only useful across turns, and the bus exists only when
+/// the deployment installed an extension.
+fn served_capabilities<'a>(
+    calibration: Option<&'a stella_core::estimator::CalibrationMap>,
+    gate: &'a dyn stella_engine::TurnGate,
+    steering: &'a dyn stella_engine::TurnSteering,
+    bus: Option<&'a stella_core::bus::HookBus>,
+) -> TurnCapabilities<'a> {
+    TurnCapabilities {
+        // The host runs its own hooks on its own side of the wire; this engine
+        // holds no ambient authority to run a command with.
+        hooks: None,
+        hook_approvals: None,
+        calibration,
+        gate: Some(gate),
+        steering: Some(steering),
+        requery: None,
+        bus,
+        outcomes: None,
+        // The host owns the model calls, so re-resolving a provider mid-turn
+        // is its decision rather than this engine's.
+        fallback: None,
+        call_role: stella_protocol::ModelCallRole::Worker,
+        lane: Some(stella_protocol::TurnLane::Builtin(
+            stella_protocol::BuiltinLane::ServeSession,
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -979,5 +1018,75 @@ mod tests {
         };
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert_eq!(text, "ran a second step the halt should have prevented");
+    }
+
+    struct OpenGate;
+
+    #[async_trait]
+    impl stella_engine::TurnGate for OpenGate {
+        async fn wait_if_paused(&self) {}
+    }
+
+    struct QuietSteering;
+
+    impl stella_engine::TurnSteering for QuietSteering {
+        fn drain_steering(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn soft_stop_requested(&self) -> bool {
+            false
+        }
+    }
+
+    /// **The lane witness.** A served turn declares the `ServeSession` lane,
+    /// so a host grouping turns by lane sees this one as its own bucket
+    /// rather than as an unattributed `null`.
+    ///
+    /// Fails on a tree that builds this engine with `Engine::with_sleeper`,
+    /// for a structural reason: that constructor has no parameter that could
+    /// carry a lane and writes `None`, so there is no `served_capabilities`
+    /// to call and nothing that could answer. What the value then does is
+    /// `stella-core`'s `a_turn_stamps_the_lane_that_assembled_it`.
+    #[test]
+    fn a_served_turn_declares_the_serve_session_lane() {
+        let gate = OpenGate;
+        let steering = QuietSteering;
+
+        let seams = served_capabilities(None, &gate, &steering, None);
+
+        assert_eq!(
+            seams.lane,
+            Some(stella_protocol::TurnLane::Builtin(
+                stella_protocol::BuiltinLane::ServeSession
+            )),
+        );
+    }
+
+    /// A served turn must not quietly gain or lose a seam. An engine that
+    /// gained a gate would park where nothing parked before, and one that
+    /// lost the host's calibration map would start every turn from an
+    /// uncorrected estimate.
+    #[test]
+    fn a_served_turn_binds_what_its_call_site_bound_before() {
+        let gate = OpenGate;
+        let steering = QuietSteering;
+
+        let host_supplied_nothing = served_capabilities(None, &gate, &steering, None);
+        assert!(host_supplied_nothing.gate.is_some() && host_supplied_nothing.steering.is_some());
+        assert!(
+            host_supplied_nothing.calibration.is_none() && host_supplied_nothing.bus.is_none(),
+            "a host that supplied neither must not be given one",
+        );
+        assert!(
+            host_supplied_nothing.hooks.is_none(),
+            "the host runs its own hooks; this engine has no authority to",
+        );
+
+        let calibration = stella_core::estimator::CalibrationMap::default();
+        let bus = stella_core::bus::HookBus::new("serve-lane-test");
+        let host_supplied_both =
+            served_capabilities(Some(&calibration), &gate, &steering, Some(&bus));
+        assert!(host_supplied_both.calibration.is_some() && host_supplied_both.bus.is_some());
     }
 }

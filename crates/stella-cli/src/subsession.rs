@@ -1164,7 +1164,11 @@ async fn run_worker(
             .with_steering(tap.clone()),
     );
     let raced = {
-        let engine = Engine::with_sleeper(
+        // Assembled rather than built up by optional builders: this lane is
+        // the `SubSession` lane and says so, and
+        // `lane_capabilities::sub_session` answers every seam — calibration,
+        // gate, steering — rather than only the ones a chain attached.
+        let engine = Engine::assemble(
             &*provider,
             &permitted,
             // Never `engine_config_for`: that attaches the LEAD session's
@@ -1173,10 +1177,8 @@ async fn run_worker(
             // `subsession_engine_config_for`.
             recorder.wrap(agent::subsession_engine_config_for(cfg, &lane_durability)),
             &TokioSleeper,
-        )
-        .with_calibration(&calibration)
-        .with_gate(gate.as_ref())
-        .with_steering(tap.as_ref());
+            crate::lane_capabilities::sub_session(&calibration, gate.as_ref(), tap.as_ref()),
+        );
         // The run-terminal `Complete` this lane's deck row settles on is
         // synthesized by its forwarder when the stream closes (#3379), so this
         // sender needs no ending wrapper — only the lane's task tag, which is

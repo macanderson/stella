@@ -27,10 +27,10 @@
 //! different door — a real engine session on its own OS thread, dispatched
 //! *because* the lead is mid-turn, built from a clone of the lead's `Config` —
 //! but it DOES have an identity of its own: its lane id. So `run_worker`
-//! re-keys the sink to the lane's own handle instead of stripping it (#3233),
-//! and the engine crate still cannot see any of this — a sub-session goes
-//! through `Engine::with_sleeper` rather than `run_sub_agent` — so the line has
-//! to be drawn here, at the seam that builds its config.
+//! re-keys the sink to the lane's own handle instead of stripping it (#3233).
+//! The engine crate still cannot see any of this: a sub-session builds its own
+//! engine, not a child. So the line has to be drawn here, at the seam that
+//! builds its config.
 
 use super::*;
 
@@ -129,9 +129,8 @@ fn a_sub_sessions_turn_cannot_destroy_the_leads_resume_point() {
          so the two must never share one `CHECKPOINT_BLOB` — and the loser \
          would be the turn a human is waiting on. `stella-core::subagent` \
          strips the sink for a dispatched child, which has no identity of its \
-         own to re-key to; a sub-session reaches the same door through \
-         `Engine::with_sleeper` instead of `run_sub_agent`, but DOES have an \
-         identity — its lane id — so it must re-key rather than share.",
+         own to re-key to. A sub-session builds its own engine, and DOES have \
+         an identity — its lane id — so it must re-key rather than share.",
     );
     assert!(
         lane_record.checkpoint().is_none(),

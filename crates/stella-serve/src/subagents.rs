@@ -259,6 +259,11 @@ impl SubAgentDispatcher for ServedSubAgents {
                     // prompt — and the reason nesting is structurally capped
                     // at one level: `delegate` is not in this view.
                     let read_only = ReadOnlyTools::new(&*tools);
+                    // The builder path, naming no lane on purpose: this engine
+                    // never drives a turn of its own. `run_sub_agent` assembles
+                    // the child that does, and that child stamps
+                    // `BuiltinLane::SubagentFork` — a lane declared here would
+                    // reach no `agent.turn.started` at all.
                     let engine = Engine::with_sleeper(
                         &*provider,
                         &read_only,

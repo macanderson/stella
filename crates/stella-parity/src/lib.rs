@@ -41,6 +41,7 @@
 //! `docs/spec/engine-embedding.md`.
 
 pub mod evolution;
+pub mod lane;
 
 /// How one capability ships on one surface.
 #[derive(Debug)]

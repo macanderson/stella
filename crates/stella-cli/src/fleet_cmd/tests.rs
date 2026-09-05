@@ -974,9 +974,15 @@ fn a_fleet_attempt_reflects_before_its_spend_is_read() {
 /// `seed_calibration` is called somewhere in the file.
 ///
 /// Before this fix, `fleet_cmd.rs` never called `seed_calibration` in
-/// shipping code. Its `Engine::with_sleeper` construction never chained
-/// `.with_calibration(...)` either. This test fails on both counts against
-/// that tree.
+/// shipping code, and the engine it built was handed no calibration map.
+/// This test fails on both counts against that tree.
+///
+/// The anchor is the capability call the attempt builds its seams with. The
+/// property is the one it always was: the seeded map has to reach the seams
+/// *this* attempt runs with, not merely appear somewhere in the file. Which
+/// lane those seams declare, and which of them they carry, is
+/// `crate::lane_capabilities`'s own pair of tests — a value a test can hold
+/// rather than a string it has to read.
 #[test]
 fn a_fleet_worker_seeds_and_applies_token_drift_calibration() {
     const FLEET: &str = include_str!("../fleet_cmd.rs");
@@ -988,33 +994,33 @@ fn a_fleet_worker_seeds_and_applies_token_drift_calibration() {
              resolved config, the same call every other door onto Engine makes",
         );
 
-    // Anchored on the exact `Engine::with_sleeper` construction `run_task`
-    // builds inside its raced block, not a copy-pasted reference elsewhere in
-    // the file — a rename of this call site breaks the compile as well as
-    // this find.
-    let engine_ctor = FLEET
-        .find("Engine::with_sleeper(&*provider, &scoped, config, &TokioSleeper)")
-        .expect("run_task must still build its engine through Engine::with_sleeper");
+    // Anchored on the exact call `run_task` builds its seams with, not a
+    // reference elsewhere in the file — a rename breaks the compile as well
+    // as this find.
+    let seams = FLEET
+        .find("lane_capabilities::fleet_attempt(")
+        .expect("run_task must build its seams through lane_capabilities::fleet_attempt");
     assert!(
-        seed < engine_ctor,
-        "calibration must be seeded before the engine that consumes it is built"
+        seed < seams,
+        "calibration must be seeded before the seams that carry it are built"
     );
 
-    // The chain this construction opens runs to its first `;` — `with_hooks`
-    // reassigns `engine` in a separate statement below, so bounding the
-    // search there is what keeps this from passing on a `.with_calibration(...)`
-    // written anywhere later in the function instead of on this construction.
-    let chain_end = engine_ctor
-        + FLEET[engine_ctor..]
-            .find(';')
-            .expect("the Engine::with_sleeper statement terminates");
-    let chain = &FLEET[engine_ctor..chain_end];
+    let call_end = seams
+        + FLEET[seams..]
+            .find(");")
+            .expect("the fleet_attempt call terminates");
+    let call = &FLEET[seams..call_end];
     assert!(
-        chain.contains(".with_calibration(&calibration)"),
-        "run_task's own Engine::with_sleeper(...) construction must chain \
-         .with_calibration(&calibration) — every other door onto Engine does, \
-         and a fleet worker hitting the same providers needs the same \
-         output-ceiling correction. Chain was:\n{chain}"
+        call.contains("&calibration"),
+        "run_task's own fleet_attempt(...) call must hand the seeded map to \
+         the engine — every other door onto Engine does, and a fleet worker \
+         hitting the same providers needs the same output-ceiling correction. \
+         Call was:\n{call}"
+    );
+
+    assert!(
+        FLEET.contains("Engine::assemble(&*provider, &scoped, config, &TokioSleeper, seams)"),
+        "the seams built above must be the ones the attempt's engine runs with"
     );
 }
 
