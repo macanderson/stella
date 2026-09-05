@@ -29,6 +29,7 @@ pure module beside the adapter, so the adapter keeps one line per concern.
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any
 
 #: The step did not run at all. A real state, and deliberately spelled the
@@ -125,6 +126,16 @@ _NONZERO_EXIT_PATTERN = re.compile(
     re.DOTALL,
 )
 
+#: The ``stdout:`` section of the same message, lifted by a pattern of its own
+#: rather than by a third group on the one above. Each field then survives on
+#: its own: a Harbor release that reorders the sections or renames one prefix
+#: costs the field it touched, where one pattern spanning all three would
+#: match nothing and drop the exit code with it.
+_STDOUT_SECTION_PATTERN = re.compile(
+    r"\nstdout: (?P<stdout>.*?)\nstderr: ",
+    re.DOTALL,
+)
+
 
 def unavailable(error: BaseException) -> dict[str, str]:
     """The step raised. Best-effort by construction, so never fatal — but a
@@ -147,4 +158,89 @@ def unavailable(error: BaseException) -> dict[str, str]:
     if match:
         result["exit_code"] = match.group("exit_code")
         result["stderr"] = match.group("stderr")
+    stdout_match = _STDOUT_SECTION_PATTERN.search(message)
+    if stdout_match:
+        result["stdout"] = stdout_match.group("stdout")
     return result
+
+
+#: Characters of a failing init's own output kept in the trial's metadata.
+#: The same length Harbor cuts at, so the two paths disclose the same amount.
+_OUTPUT_LIMIT = 1000
+
+#: Prefix on a kept tail that had something in front of it.
+_CUT_MARKER = "[earlier output cut] "
+
+#: The states that mean the step did not build a graph. Both are printed by
+#: :func:`disclose`; the rest are ordinary outcomes.
+_FAILED_STATES = frozenset({"unavailable", "nonzero_exit"})
+
+
+def _tail(text: str | None) -> str:
+    """The last :data:`_OUTPUT_LIMIT` characters, marked when anything was cut.
+
+    The tail, where Harbor's own formatter keeps the head. A command that
+    prints progress for a while and then fails puts the reason on its last
+    lines, so keeping the head of a long init is keeping the part that says
+    nothing had gone wrong yet.
+    """
+    if not text:
+        return ""
+    if len(text) <= _OUTPUT_LIMIT:
+        return text
+    return _CUT_MARKER + text[-_OUTPUT_LIMIT:]
+
+
+def from_result(result: Any) -> dict[str, Any]:
+    """Classify an exec that returned instead of raising.
+
+    Harbor's own ``exec_as_agent`` raises on a non-zero exit, so the
+    credential-free branch of ``_build_code_graph`` reaches this function only
+    on a clean exit. The credential branch reaches it either way: it drives the
+    Compose client itself and hands back an ``ExecResult`` whose
+    ``return_code`` is the command's, non-zero included.
+
+    So the code is read here, and a failed init gets a state of its own.
+    Classifying it from stdout alone lands it in ``no_summary_line``, the state
+    a clean init that printed no graph line also gets — one state for two
+    opposite events, which is the thing this module exists to prevent. It is
+    the credential branch that a bench rig takes, since a rig sets an
+    embedding key.
+
+    A missing ``return_code`` is read as a clean exit. It is what an older
+    Harbor's result object or a test double may leave off, and the states below
+    it are about what init *said*, which is still readable.
+    """
+    return_code = getattr(result, "return_code", None)
+    stdout = getattr(result, "stdout", None)
+    if not return_code:
+        return from_stdout(stdout)
+    return {
+        "state": "nonzero_exit",
+        "exit_code": str(return_code),
+        "detail": f"`stella init` exited {return_code}",
+        "stdout": _tail(stdout),
+        "stderr": _tail(getattr(result, "stderr", None)),
+    }
+
+
+def disclose(summary: dict[str, Any]) -> dict[str, Any]:
+    """Print a failed step to stderr, and hand the summary back unchanged.
+
+    The trial's metadata is the durable record of what init did; the run log is
+    the live one, and a bench session should not have to wait for the
+    trajectory to learn that the step failed. Both ways the step can fail
+    announce through this one call, so neither can go quiet while the other
+    stays loud.
+    """
+    if summary.get("state") not in _FAILED_STATES:
+        return summary
+    note = str(summary.get("detail", ""))
+    captured = summary.get("stderr") or summary.get("stdout") or ""
+    # Harbor's own message already quotes both streams, so a caught exception
+    # needs nothing appended; a returned non-zero exit carries a short detail
+    # and the output beside it.
+    if captured and captured not in note:
+        note = f"{note}: {captured}"
+    print(f"stella-adapter: code graph unavailable: {note}", file=sys.stderr)
+    return summary
