@@ -723,3 +723,4 @@ is a separate project and stays permissive — **MIT OR Apache-2.0**, at your
 option — so depending on it does not put your project under the AGPL.
 
 Contributions require a [CLA](CLA.md); you keep your copyright.
+
