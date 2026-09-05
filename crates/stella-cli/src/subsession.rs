@@ -38,7 +38,9 @@ use tokio::sync::{oneshot, watch};
 
 use self::notify::worker_notification;
 use crate::agent;
-use crate::command_deck::{LEAD, close_turn_stream, now_ms, prompt_line, spawn_forwarder};
+use crate::command_deck::{
+    LEAD, SharedRevisions, close_turn_stream, now_ms, prompt_line, spawn_forwarder,
+};
 use crate::config::Config;
 use crate::runtime::TokioSleeper;
 
@@ -1065,6 +1067,10 @@ async fn run_worker(
         in_tx.clone(),
         spec.lane.clone(),
         Some(registry.task_board()),
+        // A worker lane has no plan gate to read this, so its gate is its
+        // own: the proposals it authors reach the deck the way they always
+        // did, and nothing on this lane is held back by one.
+        SharedRevisions::default(),
     );
 
     /// How the raced turn resolved, before store closeout.

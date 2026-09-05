@@ -103,6 +103,10 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
             row_style = row_style.bg(token::HL).add_modifier(Modifier::BOLD);
             ordinal_style = ordinal_style.bg(token::HL);
         }
+        // `ordinal` is this file's own `"{n}. "` — decimal digits and ASCII
+        // punctuation, so `chars().count()` already equals its display
+        // width. `item.text` is the queued prompt itself and is already
+        // elided by `cards::truncate_cols`, the column-correct helper.
         let room = inner_w.saturating_sub(ordinal.chars().count() + 2);
         lines.push(Line::from(vec![
             Span::raw(" "),

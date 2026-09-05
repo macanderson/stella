@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Two ways a tool call is lost on this dialect while the turn still ends
-//! `Ok`.
+//! How a tool call is lost on this dialect while the turn still ends `Ok`.
 //!
-//! Both come from a server that leaves out a field the wire normally
-//! carries. So both reach us through the same gateways as the `tool_use`
+//! Each case comes from a server that leaves out a field the wire normally
+//! carries. So each reaches us through the same gateways as the `tool_use`
 //! block the sibling `anthropic` module covers.
 //!
 //! Declared from `zai.rs`, not from `zai/tests.rs`. That file is a god file
@@ -11,7 +10,7 @@
 
 use super::*;
 use stella_protocol::CompletionRequest;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Two whole tool calls, one per frame, neither with an `index`. This is what
@@ -116,5 +115,47 @@ async fn a_tool_call_whose_id_never_arrives_ends_the_turn() {
         message.contains("bash"),
         "the error names the tool the model asked for: {message}"
     );
+    assert!(!error.is_retryable(), "{error:?}");
+}
+
+/// The same gap on the non-streaming path, which the session takes once its
+/// streaming path has proven broken. Here the id already defaulted, so the
+/// call parsed and the turn committed it keyed `""`. The two delivery paths
+/// have to refuse it alike.
+#[tokio::test]
+async fn a_unary_tool_call_whose_id_never_arrives_ends_the_turn_too() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("\"stream\":true"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("", "text/event-stream"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("\"stream\":false"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"id":"chatcmpl-1","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"index":0,"type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+    let provider =
+        ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+
+    // An empty stream arms the latch, so the retry goes out non-streaming.
+    let armed = provider
+        .complete(request())
+        .await
+        .expect_err("an empty stream is a fault, never an empty Ok");
+    assert!(armed.is_retryable(), "{armed:?}");
+
+    let error = provider
+        .complete(request())
+        .await
+        .expect_err("a unary call with no id must not be committed either");
+    let message = error.to_string();
+    assert!(message.contains("`id`"), "{message}");
+    assert!(message.contains("bash"), "{message}");
     assert!(!error.is_retryable(), "{error:?}");
 }

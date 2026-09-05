@@ -26,9 +26,10 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget, Wra
 use stella_tui_theme::token;
 
 use crate::deck_ui::{DeckUi, ScopeAction, SkillPrompt};
+use crate::render::columns;
 use crate::syntax::{self, HighlightSpans as _};
 
-use super::{centered_row, truncate};
+use super::centered_row;
 
 /// Widest dialog, in columns. The pin picker and the scope picker are lists of
 /// short labels; anything wider reads as a pane rather than a question.
@@ -123,7 +124,7 @@ pub fn render_prompt(ui: &DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
                 ]),
                 Line::default(),
                 Line::from(Span::styled(
-                    format!("“{}”", truncate(description, 70)),
+                    format!("“{}”", columns::head(description, 70)),
                     muted,
                 )),
                 Line::default(),
@@ -203,7 +204,10 @@ pub fn render_prompt(ui: &DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
             name, buffer, was, ..
         }) => {
             let mut lines = vec![
-                Line::from(Span::styled(format!("Rename {}", truncate(name, 44)), text)),
+                Line::from(Span::styled(
+                    format!("Rename {}", columns::head(name, 44)),
+                    text,
+                )),
                 Line::default(),
                 Line::from(vec![
                     Span::styled("> ", Style::new().fg(token::GOLD)),
@@ -288,7 +292,7 @@ pub fn render_preview(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let h = area.height.saturating_sub(2).clamp(6, 32);
     let rect = centered(area, w, h);
     Clear.render(rect, buf);
-    let title = truncate(&preview.title, (w as usize).saturating_sub(20).max(8));
+    let title = columns::head(&preview.title, (w as usize).saturating_sub(20).max(8));
     let block = framed(title, "↑/↓ scroll · esc close");
     let inner = block.inner(rect);
     block.render(rect, buf);
@@ -299,7 +303,7 @@ pub fn render_preview(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let bands = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(inner);
     if !preview.subtitle.is_empty() {
         Paragraph::new(Line::from(Span::styled(
-            truncate(&preview.subtitle, inner.width as usize),
+            columns::head(&preview.subtitle, inner.width as usize),
             Style::new().fg(token::MUTED),
         )))
         .render(bands[0], buf);

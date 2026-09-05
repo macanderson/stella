@@ -53,6 +53,11 @@ pub(super) fn cap_middle(text: &str, budget: usize) -> String {
 /// [`cap_middle`] with a caller-chosen elision marker. Slices at
 /// `char_indices` boundaries instead of materializing a `Vec<char>`, so a
 /// multi-megabyte payload costs no allocation beyond the capped result.
+///
+/// `budget` caps how much raw text this model keeps. It is not a screen
+/// width. No `Rect` is read here. Whatever view paints this text later
+/// cuts it again, by columns, at that point. So `marker.chars().count()`
+/// is fine as written.
 pub(super) fn cap_middle_with(text: &str, budget: usize, marker: &str) -> String {
     // Byte length bounds char count, so an in-budget payload returns without
     // scanning; an over-budget one probes just past the boundary instead.
@@ -205,6 +210,11 @@ pub(super) fn format_tool_input(input: &serde_json::Value) -> String {
 /// slicing the raw text first yields the identical result without copying a
 /// multi-megabyte `content`/`old_string` argument in full (the same reason
 /// [`cap_middle_with`] walks `char_indices` instead of materializing chars).
+///
+/// Every caller passes a fixed number, never a pane width. This shapes a
+/// short **headline** string. The transcript renders it later and cuts it
+/// again, by columns, at that point. A char cap is the right unit for a
+/// headline's own length.
 pub(super) fn truncate_field(s: &str, max: usize) -> String {
     // `nth(max)` is `None` exactly when the text is `max` chars or shorter.
     if s.char_indices().nth(max).is_none() {

@@ -87,7 +87,11 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     are declared, and ci.yml's filter is built
                          #     from that declaration)
                          #   + god-files
-                         #   + gate-parity + left-behind + role-names
+                         #   + gate-parity
+                         #   + guard-trigger-coverage (prose, hue-separation
+                         #     and transcript-surfaces each run with no
+                         #     paths: filter in at least one workflow)
+                         #   + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
                          #     reachable from the engine's step path; down-only)
@@ -172,8 +176,16 @@ ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
 `prose` exists to judge — alongside the hermetic suites that prove a guard can
 still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
 one does is checked, by `gate-parity` against every `run:` in
-`.github/workflows/`. That workflow's `gate-steps` job — named `gate steps no
-other workflow runs` — is now one of `main`'s required status checks too,
+`.github/workflows/`. That check stops at "does some workflow run it" — it
+says nothing about which files reach it, so a `paths:` filter narrowing
+`guard-self-tests.yml`'s `pull_request:` trigger to `docs/**` would still read
+as green, and the three steps would run nowhere for a scripts-only pull
+request. Nothing held that absence in place except a comment.
+`guard-trigger-coverage` reads the trigger back: each of the three must run
+with no `paths:`/`paths-ignore:` filter in at least one workflow, so a later
+edit narrowing this one cannot reopen the gap silently. That workflow's
+`gate-steps` job — named `gate steps no other workflow runs` — is now one of
+`main`'s required status checks too,
 added after a red run of it merged into `main` and reddened every open PR.
 
 A fifth workflow, `deck-fit.yml`, owns the decks under
@@ -264,6 +276,17 @@ loudly: no `gh`, an unreachable tracker, an unreadable identity, two open
 a claim check that can block a repair is worse than the duplication it
 prevents. `make main-red-claim` asks by hand; `make main-red-claim-test`
 covers it, standing-down branch included.
+
+A claim carries a third fact, a session word, because one person runs several
+agent sessions and the login cannot tell them apart. On 2026-09-02 three
+sessions of one author each read the others' claims as their own, each
+proceeded, and each opened a pull request splitting the same file the same
+way, eight minutes apart. The word is `STELLA_CLAIM_SESSION` when a fleet sets
+it, and otherwise a token kept in the clone's git dir, which answers per
+worktree; `./scripts/main-red-claim.sh session` prints the one this clone
+claims under. A run that has no word, and a claim comment written before the
+word existed, both proceed on the old author-only rule, since an unknown here
+proceeds like every other.
 
 **The same collision happens over an issue, and `scripts/issue-claim.sh` is
 the same mechanic pointed at one.** Two sessions implemented #5045 in

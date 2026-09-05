@@ -103,6 +103,7 @@ pub enum SubAgentPhase {
         /// The USD ceiling actually carved for this child, after clamping
         /// the request against the parent's remaining headroom. `None` when
         /// no axis anywhere bounds it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         budget_usd: Option<f64>,
         /// Whether the child may mutate the workspace. `false` (the
         /// default) means it ran behind a read-only view of the parent's
@@ -241,6 +242,34 @@ mod tests {
         assert!(!json.contains("seat"), "{json}");
         assert_eq!(
             serde_json::from_str::<SubAgentPhase>(&json).unwrap(),
+            started
+        );
+    }
+
+    #[test]
+    fn an_unbounded_child_omits_budget_usd_and_old_journals_with_a_null_still_parse() {
+        // `budget_usd` is `None` for the ordinary unbounded-child case, so
+        // this fires routinely. An unbounded child must not write a null,
+        // and a journal line from before this fix, which does carry the
+        // literal `null`, must still parse.
+        let started = SubAgentPhase::Started {
+            agent_id: "search-1".into(),
+            instruction_preview: String::new(),
+            budget_usd: None,
+            write_access: false,
+            depth: 1,
+            effort: None,
+        };
+        let json = serde_json::to_string(&started).unwrap();
+        assert!(!json.contains("budget_usd"), "{json}");
+        assert_eq!(
+            serde_json::from_str::<SubAgentPhase>(&json).unwrap(),
+            started
+        );
+
+        let legacy = r#"{"phase":"started","agent_id":"search-1","instruction_preview":"","budget_usd":null,"write_access":false,"depth":1}"#;
+        assert_eq!(
+            serde_json::from_str::<SubAgentPhase>(legacy).unwrap(),
             started
         );
     }

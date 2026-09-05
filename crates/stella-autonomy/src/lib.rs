@@ -668,6 +668,12 @@ pub fn plan_cycle(
         local_build = false;
         scope = BuildScope::Ci;
         bench = BenchArm::Off;
+        // A worktree checkout costs disk whether or not it ever builds, so
+        // several parallel agents each holding one worktree open works
+        // against the reason this branch fired in the first place. Every
+        // other degraded branch below (busy, low memory, on battery,
+        // saturated load) already drops to one worker.
+        parallel = 1;
         reason = format!(
             "disk {}GB < {}GB floor — a workspace build needs 10-20GB and would die as a killed compiler",
             supply.disk_free_gb, floors.disk_gb
