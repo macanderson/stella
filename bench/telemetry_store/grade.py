@@ -95,8 +95,7 @@ DETERMINISTIC_CONFIDENCE = 1.0
 # The shell tool: the one tool that can change the workspace without emitting a
 # `file_change`, which is why `_is_no_op` names it rather than copying a
 # read-only list out of `crates/stella-tools/src/catalog.rs`. A tool table
-# duplicated into a second language is the drift `scripts/check-role-names.sh`
-# exists to catch.
+# copied into a second language drifts. The Rust compiler cannot see the copy.
 SHELL_TOOL = "bash"
 
 # Command shapes rule 4 treats as a check: a build, a test run, or a lint.

@@ -304,7 +304,40 @@ def _role_to_purpose(role: Any) -> str | None:
     return _ROLE_TO_PURPOSE.get(role, role)
 
 
-def _call_to_step(call: _ModelCall, step_id: int, default_model: str | None) -> Step:
+def _seats_by_agent(events: list[Any]) -> dict[str, str]:
+    """Map each child turn's ``agent_id`` to the seat it was asked to run at.
+
+    ``step_usage.role`` says which of the jobs Stella's own engine performs
+    bought a call.  Every call the host spends for a plugin books at the one
+    role ``plugin``, because the enum is closed and a plugin's word is not in
+    it.  The word itself rides on the ``sub_agent`` bracket, and this is what
+    reads it back: a metering row names a child, the child's bracket names a
+    seat, and the export publishes that.
+
+    Nothing here knows what a seat may be called.  The plugin chose it, so a
+    name this analyzer has never met publishes exactly like one it has.  A
+    child that named no seat — a ``delegate``, or a run recorded before seats
+    existed — is simply absent from the map.
+    """
+    seats: dict[str, str] = {}
+    for raw_event in events:
+        if not isinstance(raw_event, dict) or raw_event.get("type") != "sub_agent":
+            continue
+        phase = raw_event.get("phase")
+        if not isinstance(phase, dict) or phase.get("phase") != "started":
+            continue
+        agent_id, seat = phase.get("agent_id"), phase.get("seat")
+        if isinstance(agent_id, str) and agent_id and isinstance(seat, str) and seat:
+            seats[agent_id] = seat
+    return seats
+
+
+def _call_to_step(
+    call: _ModelCall,
+    step_id: int,
+    default_model: str | None,
+    seats: dict[str, str] | None = None,
+) -> Step:
     """Convert one folded Stella call into a validated ATIF agent step."""
     usage = call.usage
     embedded_output = usage.get("output_text") if usage is not None else None
@@ -426,6 +459,14 @@ def _call_to_step(call: _ModelCall, step_id: int, default_model: str | None) -> 
         purpose = _role_to_purpose(usage.get("role"))
         if purpose is not None:
             step_extra["stella_purpose"] = purpose
+        # The seat beside the purpose, when this call was spent for a child
+        # that ran at one. `plugin` alone says a plugin bought the call; the
+        # seat says which job of that plugin's it bought.
+        agent_id = usage.get("sub_agent_id")
+        if isinstance(agent_id, str) and seats:
+            seat = seats.get(agent_id)
+            if seat is not None:
+                step_extra["stella_seat"] = seat
     else:
         step_extra["usage_missing"] = True
 
@@ -492,8 +533,9 @@ def envelope_to_trajectory(
 
     steps: list[Step] = [Step(step_id=1, source="user", message=instruction)]
     calls = _fold_model_calls(raw_events)
+    seats = _seats_by_agent(raw_events)
     for call in calls:
-        steps.append(_call_to_step(call, len(steps) + 1, model))
+        steps.append(_call_to_step(call, len(steps) + 1, model, seats))
 
     # If an old/malformed envelope omitted events, retain its final answer as
     # an explicitly unmetered call instead of producing an instruction-only

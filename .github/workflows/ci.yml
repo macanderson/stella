@@ -281,21 +281,15 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-god-files.sh
 
-      # Also toolchain-free. #1394 renamed an agent-config role and the Rust
-      # compiler found every Rust call site and none of the others — a Python
-      # dict and a JavaScript literal kept the old spelling, and the arenabench
-      # one failed *silently*: the seat ran with the verifier inheriting the
-      # worker baseline while the scoreboard reported it as configured. A wrong
-      # measurement, not a crash (#1449).
-      - name: role names agree across Rust, Python and JavaScript
-        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        run: ./scripts/check-role-names.sh
-
-      # The other half of that story. `check-role-names.sh` holds four
-      # languages to one SPELLING of the role words; this asks whether Rust
-      # still uses them. #3908 retired the five `pipeline_<role>_model` keys,
-      # and a live string naming one is inert configuration that reads like a
-      # capability — the defect that retirement ended (#6061).
+      # Also toolchain-free. #3908 retired the five `pipeline_<role>_model`
+      # keys, and a live string naming one is inert configuration that reads
+      # like a capability — the defect that retirement ended (#6061).
+      #
+      # A sibling guard used to run beside this one, holding four languages to
+      # one SPELLING of those role words (#1449). It is retired (#3910): the
+      # names it pinned configure nothing on either side, and the one word a
+      # reader still needs — the seat a plugin's child ran at — travels with
+      # the run as trace data instead of being compiled into the reader.
       - name: no shipping Rust spells a retired role model key
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-retired-model-keys.py

@@ -2991,6 +2991,7 @@ function renderSubagentFocus(d, agents, i) {
     <h2 class="tx-prompt">${esc(a.instruction_preview ?? a.agent_id)}</h2>
     <p class="tx-meta">${badge(a.status ?? (d.finished_at == null ? "running" : "unfinished"))}
       <span>sub-agent ${fmtInt(i + 1)} of ${fmtInt(agents.length)}</span><span class="sep">·</span>
+      ${a.seat ? `<span>seat ${esc(a.seat)}</span><span class="sep">·</span>` : ""}
       <span>${a.model
         ? `${esc(a.model)}${num(a.models) > 1 ? ` (+${fmtInt(a.models - 1)} more)` : ""}`
         : "no calls metered"}</span>
@@ -3229,7 +3230,11 @@ async function openTranscript(id, full = false, sub = "") {
         const vendor = modelVendor(a.model);
         return `<div class="step-row sub-row" data-sub="${esc(a.agent_id)}" role="link"
           tabindex="0" style="cursor:pointer">
-        <span class="name">${esc(a.agent_id)}</span>
+        <span class="name">${esc(a.agent_id)}${
+          /* The seat is the requester's own word for this child's job, read
+             from the bracket. A plugin picks it, so no list here can hold the
+             ones this page will meet; it draws whatever the trace says. */
+          a.seat ? ` <span class="badge dim">${esc(a.seat)}</span>` : ""}</span>
         <span>${esc(a.status ?? (stillRunning ? "running" : "unfinished"))}${
           a.model ? ` · ${esc(a.model)}` : ""}${
           vendor ? ` <span class="badge dim">${esc(vendor)}</span>` : ""}${
@@ -3913,7 +3918,15 @@ function renderConfig(cfg) {
     s.settings && s.settings.agent_engine_config
       ? deepMerge(acc, s.settings.agent_engine_config) : acc, {});
   const agents = engine.agents ?? {};
-  const names = ["default", "worker", "verifier", "triage", "research", "plan"].filter(n => agents[n]);
+  /* Every name the merged settings actually carry, in a stable order.
+     This used to be a literal list of six words, and a seventh agent name
+     drew no row at all — a settings file that configured something, showing
+     as a settings file that configured nothing. The keys are the truth, and
+     `Object.keys` reads only the object's own, so a `__proto__` in a
+     settings file cannot invent a row. */
+  const names = Object.keys(agents)
+    .filter(n => pick(agents, n, null) != null)
+    .sort();
   $("cfg-engine").innerHTML = names.length
     ? `<table><thead><tr><th scope="col">agent</th><th scope="col">model</th>
         <th scope="col">effort</th><th scope="col">reasoning</th>
