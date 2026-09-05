@@ -201,10 +201,10 @@ pub struct ProposalRecord {
     /// The proposal has to store it because it keeps only the observations'
     /// `record_id`s and so cannot re-derive the grade later. `None` means a
     /// record written before provenance was carried: absent, not weak — and
-    /// meant to be refused by [`stella_protocol::provenance::authorises`]
-    /// rather than rounded down to a grade it never earned, once that gate
-    /// is wired into the publication paths (today nothing calls it on any of
-    /// them; #4865 tracks the wiring).
+    /// refused by [`stella_protocol::provenance::authorises`] rather than
+    /// rounded down to a grade it never earned. The rule publication paths ask
+    /// that gate before they write; the skill and foundry-tool paths do not
+    /// yet, because the grades they would need have no producer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<ProvenanceGrade>,
     pub score: ProposalScore,

@@ -256,6 +256,22 @@ failing run is a **verified** commit and stays the canary's business; this
 reports only the absence of an answer, and fails open at every unknown so it
 can never be the thing blocking a repair.
 
+One cause of that absence is a push that raised no event, and the canary
+cannot see it from the inside: it is suppressed by the same rule.
+`auto-tag.yml` merges the release version write-back with the token GitHub
+hands a workflow run, and a push made with that token starts no workflow at
+all. So `ci.yml` and `main-canary.yml` both stayed quiet on every
+`chore(release): sync versions` commit, and the daily schedule was the only
+thing that ever asked. `scripts/dispatch-main-verification.sh`
+(`make dispatch-main-verification`) asks for the run instead: it reads the tip
+of `main`, counts the `ci` runs for that exact commit, and starts `ci.yml` and
+then `main-canary.yml` only when there are none. `auto-tag.yml` runs it after
+every merge attempt, which is safe because a tip that already has a run gets
+nothing. It fails open like its sibling. The run it starts carries the event
+`workflow_dispatch`, and `auto-tag.yml` acts only on a `ci` run whose event
+was a push, so it cannot loop. `make dispatch-main-verification-test` covers
+it, the case where the tip already has a run included.
+
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`, asks the tracker whether a `main-red`
@@ -392,6 +408,20 @@ path goes from empty to a live revert, and it squash-merges cleanly. Merging B
 than a merge one — and this repository rebases constantly, because branches go
 stale behind required checks. It happened to #4954 against #4951, and
 `check-rebase-replay.sh` fires on #4939's merged head today.
+
+**A path can drop out of the branch's diff for two reasons, and only one is
+this hazard.** The branch removed it — an edit undone, or a file created and
+deleted. Or the base branch renamed or deleted it and the branch absorbed that
+through a merge, which is the ordinary way a long-lived branch survives a
+refactor. Tree state cannot tell them apart: a file the branch created and
+deleted is absent at the merge base and at the head, exactly like an inherited
+rename. What differs is who removed it, so the guard asks that instead — a
+suspect is dropped only when it is gone at the head *and* no non-merge commit
+of the branch's own deleted it. An inherited removal is not in the range at
+all, because merging the base advances the merge base past it. The record-plane
+extraction is what forced this: it fired the guard on every open branch that
+had correctly followed the move, and the printed remedy would have charged each
+one a history rewrite for a hazard that was not there.
 
 **The remedy is to flatten**, so the path is absent from the branch's history
 rather than present as an edit and an undo. The branch's tree is identical

@@ -105,9 +105,10 @@ one rule in two places. The two counts it is computed from ride the row instead.
 - An untagged event is in no task's ledger. That is the failure mode by design:
   a host that builds a second sender over the same channel, or a lane whose board
   is empty, under-reports rather than misattributes.
-- A `task_assign` worker lane runs on its own, empty board and therefore emits
-  untagged events today. Its source should be a constant rather than a board
-  read; tracked in [#5158](https://github.com/macanderson/stella/issues/5158).
+- A `task_assign` worker lane runs on its own, empty board. Its source is the
+  one task it was spawned to work, not a board read
+  ([#5158](https://github.com/macanderson/stella/issues/5158)). Board ids are
+  per-session ordinals, so its `"1"` is not the lead's `"1"`.
 - `TaskItem::id` remains a `String` while the tag is a `TaskId`, which is a seam
   rather than a design; tracked in
   [#5159](https://github.com/macanderson/stella/issues/5159).

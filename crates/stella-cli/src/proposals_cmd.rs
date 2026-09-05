@@ -40,6 +40,8 @@ use stella_records::context_record::{
     published_grade,
 };
 
+use crate::memory::rules_mining::RulePublication;
+
 /// Subcommands under `stella proposals`.
 #[derive(Subcommand, Clone)]
 pub enum ProposalsCmd {
@@ -472,23 +474,42 @@ fn materialize_directive(
         guard: None,
         score: 0,
     };
-    // Carried onto the published record so the rule on disk still says what it
-    // stands on (#2782).
+    // The stronger of what the evidence folded to and what the reviewer's own
+    // decision earns, carried onto the published record so the rule on disk
+    // still says what it stands on (#2782) — and asked against the evidence
+    // gate on the way. `LocalHuman` because a person typed this command; the
+    // authority does not lift a weak grade, and is not meant to. The refusal is
+    // printed where the keep was typed, so a person who decided to publish
+    // learns that nothing was published and why.
     let grade = published_grade(
         proposal.provenance,
         decision_grade(event.actor, event.action),
     );
-    match crate::memory::rules_mining::write_rule(workspace_root, &candidate, grade) {
-        Ok(Some(path)) => {
+    match crate::memory::rules_mining::write_rule(
+        workspace_root,
+        &candidate,
+        grade,
+        stella_protocol::provenance::PublicationAuthority::LocalHuman,
+    ) {
+        Ok(RulePublication::Written(path)) => {
             println!("    {} wrote {}", "·".dimmed(), path.display());
             if let Some(grade) = grade {
                 println!("    {} {}", "evidence:".dimmed(), grade.as_str().bold());
             }
         }
-        Ok(None) => println!(
+        Ok(RulePublication::AlreadyPresent) => println!(
             "    {} a rule file for `{}` already exists — left untouched",
             "·".dimmed(),
             candidate.id
+        ),
+        Ok(RulePublication::Refused(refusal)) => println!(
+            "    {} {}",
+            "✗".red(),
+            crate::promotion_gate::refusal_line(
+                crate::promotion_gate::Published::Rule,
+                &candidate.id,
+                &refusal,
+            )
         ),
         Err(reason) => println!(
             "    {} could not publish `{}`: {reason}",

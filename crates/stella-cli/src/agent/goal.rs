@@ -133,6 +133,13 @@ pub(crate) async fn run_raw_one_shot(
     // before the verb existed.
     invoked_skill: Option<crate::extensions::InvokedSkill>,
 ) -> Result<(), crate::failure::CliFailure> {
+    // Fired before anything else is built: a provider, a tool registry, an
+    // MCP connection. So a denied prompt costs nothing but the hook itself.
+    let prompt_owned = match user_prompt_submit_hook(full_cfg, prompt).await {
+        Ok(prompt) => prompt,
+        Err(reason) => return Err(crate::failure::CliFailure::error(reason)),
+    };
+    let prompt: &str = &prompt_owned;
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
     // Resolved before the provider is built and before a single paid call: a

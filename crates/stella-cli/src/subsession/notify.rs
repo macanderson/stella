@@ -60,6 +60,7 @@ mod tests {
             prompt: "count the rows in the ledger".into(),
             notify_title: "task #1 done".into(),
             dispatched_by: None,
+            board_task: Some(stella_protocol::TaskId::new("1")),
         }
     }
 

@@ -13,14 +13,13 @@
 //!
 //! # The table is per event, because the payload is
 //!
-//! One `HookPayload` type serves seven events and populates a different subset
-//! of its fields for each: `PreToolUse` carries the tool's raw arguments,
-//! `PostToolUse` adds the whole unclipped tool output, `Stop` carries the
-//! model's whole final reply, the issue events carry the tracker's identifiers,
-//! and `SessionStart`/`PreCompact` carry the workspace path and nothing else.
-//! A per-*type* table would have to disclose the union to everyone, which
-//! over-states what a `SessionStart` observer receives by the widest margin in
-//! the set — so the rows are keyed on the event that carries them.
+//! One `HookPayload` type serves every event in [`HookEvent::ALL`]. Each
+//! fills a different subset: `PreToolUse`/`PostToolUse` carry the tool call
+//! and result, `Stop` the final reply, `UserPromptSubmit` the typed prompt,
+//! `Subagent` a child's task and report, the issue events tracker ids, and
+//! `SessionStart`/`PreCompact` only the workspace path. A per-*type* table
+//! would disclose the union to everyone — over-stating what `SessionStart`
+//! gets by the widest margin — so rows key on the event that carries them.
 //!
 //! # What holds this to the truth
 //!
@@ -341,6 +340,91 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::PreCompact,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::UserPromptSubmit,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::UserPromptSubmit,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::UserPromptSubmit,
+        path: "prompt",
+        disclosure: Some("the prompt you just typed, in full, before it becomes part of any turn"),
+    },
+    HookField {
+        event: HookEvent::SubagentStart,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::SubagentStart,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::SubagentStart,
+        path: "subagent.agentId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::SubagentStart,
+        path: "subagent.instructionPreview",
+        disclosure: Some("the child agent's task, truncated for display"),
+    },
+    HookField {
+        event: HookEvent::SubagentStart,
+        path: "subagent.depth",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "subagent.agentId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "subagent.instructionPreview",
+        disclosure: Some("the child agent's task, truncated for display"),
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "subagent.depth",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "subagentResult.status",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "subagentResult.summary",
+        disclosure: Some("the child's report, handed back to the parent"),
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "subagentResult.costUsd",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "subagentResult.steps",
+        disclosure: None,
     },
     HookField {
         event: HookEvent::PreIssueWork,

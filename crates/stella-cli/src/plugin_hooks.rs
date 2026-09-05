@@ -147,6 +147,9 @@ fn slot_for(hooks: &mut Hooks, event: HookEvent) -> &mut Vec<HookMatcher> {
         HookEvent::PostToolUse => &mut hooks.post_tool_use,
         HookEvent::Stop => &mut hooks.stop,
         HookEvent::PreCompact => &mut hooks.pre_compact,
+        HookEvent::UserPromptSubmit => &mut hooks.user_prompt_submit,
+        HookEvent::SubagentStart => &mut hooks.subagent_start,
+        HookEvent::SubagentStop => &mut hooks.subagent_stop,
         // Unreachable through the roster: `EVENT_ORDER` holds the in-turn
         // events alone, and `ManifestError::HookNotAvailableToPlugins` refuses
         // a manifest declaring anything `HookEvent::in_turn` places outside a

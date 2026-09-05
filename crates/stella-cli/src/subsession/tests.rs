@@ -62,6 +62,7 @@ fn dummy_spec(lane: &str) -> SubSessionSpec {
         prompt: "p".into(),
         notify_title: "n".into(),
         dispatched_by: None,
+        board_task: None,
     }
 }
 
