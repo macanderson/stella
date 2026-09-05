@@ -339,7 +339,7 @@ fn promote_in(workspace_root: &std::path::Path, id: &str) -> Result<(), String> 
     }
     let path = crate::context_records::publication_path(
         workspace_root,
-        stella_core::ingest::record::SharingScope::Repository,
+        stella_records::ingest::record::SharingScope::Repository,
         &record.lineage_id,
     )
     .ok_or_else(|| "cannot determine where to publish this record".to_string())?;
@@ -957,14 +957,14 @@ mod tests {
         crate::context_records::write_record(&path, "acme.web", &record).expect("written");
         let contents = std::fs::read_to_string(&path).unwrap();
         let loaded =
-            stella_core::records::load_context_file(&path.display().to_string(), &contents)
+            stella_records::records::load_context_file(&path.display().to_string(), &contents)
                 .expect("a loadable record file");
         assert_eq!(loaded.len(), 1);
         let loaded = &loaded[0].record;
         assert_eq!(loaded.statement, candidate.text);
         assert_eq!(
             loaded.origin,
-            Some(stella_core::context_record::Origin::Inferred)
+            Some(stella_records::context_record::Origin::Inferred)
         );
         assert!(
             loaded.enforcement.is_none(),
@@ -1084,7 +1084,7 @@ mod tests {
         );
         let raw = std::fs::read_to_string(record_path).expect("promoted record written");
         let loaded =
-            stella_core::records::load_context_file(&record_path.display().to_string(), &raw)
+            stella_records::records::load_context_file(&record_path.display().to_string(), &raw)
                 .expect("the record loader loads the promoted file");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].record.statement, lesson);

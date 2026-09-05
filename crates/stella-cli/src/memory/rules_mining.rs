@@ -37,12 +37,12 @@
 use std::path::Path;
 
 use stella_context::ContextStore;
-use stella_core::context_record::{
+use stella_core::rules::{self, EvidenceSource, MineConfig, RawObservation, Rule, RuleCandidate};
+use stella_protocol::provenance::ProvenanceGrade;
+use stella_records::context_record::{
     EvidencePool, ObservationRecord, ProposalRecord, ProposalScore, RecordProposalKind,
     RecordProposalStatus, confidence_from_score,
 };
-use stella_core::rules::{self, EvidenceSource, MineConfig, RawObservation, Rule, RuleCandidate};
-use stella_protocol::provenance::ProvenanceGrade;
 
 use super::proposals::record_proposal;
 
@@ -230,7 +230,7 @@ pub(crate) fn write_rule(
     }
     let Some(path) = crate::context_records::publication_path(
         workspace_root,
-        stella_core::ingest::record::SharingScope::Repository,
+        stella_records::ingest::record::SharingScope::Repository,
         &record.lineage_id,
     ) else {
         return Err("cannot determine where to publish this record".to_string());

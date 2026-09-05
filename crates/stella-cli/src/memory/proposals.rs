@@ -30,12 +30,12 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use stella_context::{ContextStore, LedgerAppend};
-use stella_core::context_record::{
+use stella_core::skills::{self, Skill, SkillCandidate, SkillMineConfig, SkillObservation};
+use stella_protocol::provenance::ProvenanceGrade;
+use stella_records::context_record::{
     ContextRecordKind, EvidencePool, LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ProposalRecord,
     ProposalScore, RecordProposalKind, RecordProposalStatus, confidence_from_score,
 };
-use stella_core::skills::{self, Skill, SkillCandidate, SkillMineConfig, SkillObservation};
-use stella_protocol::provenance::ProvenanceGrade;
 
 /// A mined candidate together with the durable proposal recorded for it.
 pub(crate) struct InducedProposal {
@@ -240,7 +240,7 @@ const GRADE_PEEK_READ_LIMIT: usize = 5_000;
 /// whole guard: it stats one path and creates nothing, mirroring
 /// `stella_store::rules_peek::existing_store_db`'s reasoning for `store.db`.
 /// No legacy fallback: `context.db`'s records are "born canonical"
-/// (`stella_core::context_record::lifecycle`'s module doc) with no
+/// (`stella_records::context_record::lifecycle`'s module doc) with no
 /// pre-`private/` layout to have moved from.
 fn existing_context_db(workspace_root: &Path) -> Option<std::path::PathBuf> {
     let path = workspace_root

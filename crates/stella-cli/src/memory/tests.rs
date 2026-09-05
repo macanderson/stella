@@ -602,10 +602,10 @@ force = "may"
         .to_string(),
         contributed_by: None,
     };
-    memory.set_record_registry(stella_core::records::registry::load(
+    memory.set_record_registry(stella_records::records::registry::load(
         &[],
         &[record_file],
-        &stella_core::records::Facts::default(),
+        &stella_records::records::Facts::default(),
     ));
 
     let full = memory
@@ -904,10 +904,10 @@ fn a_matched_record_evicted_by_the_budget_is_reported() {
         contents,
         contributed_by: None,
     };
-    memory.set_record_registry(stella_core::records::registry::load(
+    memory.set_record_registry(stella_records::records::registry::load(
         &[],
         &[record_file],
-        &stella_core::records::Facts::default(),
+        &stella_records::records::Facts::default(),
     ));
 
     let mut reports = Vec::new();

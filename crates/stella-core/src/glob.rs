@@ -1,5 +1,5 @@
-//! Shared glob matcher for rule guards (`rules.rs`) and hook matchers
-//! (`hooks.rs`) — ports `matchGlob` from
+//! Shared glob matcher for rule guards (`rules.rs`), hook matchers
+//! (`hooks.rs`) and `stella_records::records::select` — ports `matchGlob` from
 //! `packages/mcp-config/src/permissions.ts`: `*` is the only wildcard,
 //! every other character is a literal. No `regex` dependency: this crate
 //! has none, and the language is small enough that a hand-written segment
@@ -14,7 +14,7 @@
 /// match. This is the classic single-wildcard glob algorithm, and it is
 /// exactly what the TS source's `pattern.replace(/\*/g, ".*")` regex
 /// compiles down to.
-pub(crate) fn match_glob(pattern: &str, value: &str) -> bool {
+pub fn match_glob(pattern: &str, value: &str) -> bool {
     if !pattern.contains('*') {
         return pattern == value;
     }

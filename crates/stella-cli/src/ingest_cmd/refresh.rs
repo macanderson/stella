@@ -1,6 +1,6 @@
 //! The I/O half of `stella ingest --refresh` (#2708, second slice of #2683).
 //!
-//! [`stella_core::ingest::refresh`] owns the decision — which published
+//! [`stella_records::ingest::refresh`] owns the decision — which published
 //! records the re-read source still asserts, which changed, which are gone.
 //! This module supplies what the decision needs and carries out its one
 //! mutating verdict:
@@ -30,9 +30,9 @@
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
-use stella_core::ingest::ContextFile;
-use stella_core::ingest::record::SCHEMA_TAG;
-use stella_core::ingest::refresh::{AssertedClaim, PublishedClaim, RefreshPlan, plan};
+use stella_records::ingest::ContextFile;
+use stella_records::ingest::record::SCHEMA_TAG;
+use stella_records::ingest::refresh::{AssertedClaim, PublishedClaim, RefreshPlan, plan};
 
 use crate::context_records::RULES_DIR;
 
@@ -170,7 +170,7 @@ fn published_from_source(root: &Path, rel: &str) -> Vec<PublishedFile> {
                 == Some(rel);
             let live = matches!(
                 record.status,
-                None | Some(stella_core::context_record::RecordStatus::Active)
+                None | Some(stella_records::context_record::RecordStatus::Active)
             );
             let Some(record_id) = record.record_id.clone() else {
                 // An unstamped record has no identity a supersession or a
@@ -214,7 +214,7 @@ fn record_retirement(root: &Path, rel: &str, claim: &PublishedClaim) -> Result<(
     )?;
     crate::context_records::append_promotion(
         root,
-        stella_core::records::promotion::PromotionEvent {
+        stella_records::records::promotion::PromotionEvent {
             seq: 0,
             prev: String::new(),
             at: crate::context_records::now_rfc3339(),
@@ -229,7 +229,7 @@ fn record_retirement(root: &Path, rel: &str, claim: &PublishedClaim) -> Result<(
                 claim.lineage_id, claim.record_id
             ),
             mode: governance.mode.as_str().to_string(),
-            action: stella_core::records::promotion::LedgerAction::Retired,
+            action: stella_records::records::promotion::LedgerAction::Retired,
         },
     )
     .map(|_| ())
@@ -258,7 +258,7 @@ fn retire(entries: &[&PublishedFile]) -> Result<(), String> {
         if !retired_here {
             continue;
         }
-        record.status = Some(stella_core::context_record::RecordStatus::Archived);
+        record.status = Some(stella_records::context_record::RecordStatus::Archived);
         record.supersedes_record_id = record.record_id.clone();
         record
             .stamp(&defaults)

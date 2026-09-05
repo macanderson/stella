@@ -8,7 +8,6 @@
 event_stream
 extensions
 goal
-ingest
 mcp_usage
 plan_graph
 redact

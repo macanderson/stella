@@ -2,7 +2,7 @@
 //! turn said about it, become immutable ledger records.
 
 use stella_context::ContextStore;
-use stella_core::context_record::{
+use stella_records::context_record::{
     ContextRecordKind, ContextUse, ContextUseEvaluation, ContextUseFeedback, ContextUseKind,
     SelectionHealth,
 };
@@ -326,7 +326,7 @@ fn a_record_rendered_twice_in_one_turn_is_one_use() {
 /// the sweep acts on it (D5) under opportunity-aware rules (D3).
 #[test]
 fn citations_alone_never_retire_and_a_strong_verdict_retires_restorably() {
-    use stella_core::context_record::SelectionHealthPolicy;
+    use stella_records::context_record::SelectionHealthPolicy;
 
     let (_dir, store, context) = workspace();
 

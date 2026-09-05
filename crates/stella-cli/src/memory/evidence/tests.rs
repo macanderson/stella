@@ -2,7 +2,7 @@
 //! alongside reflection lessons — without changing what citation already means.
 
 use stella_context::{AppendOutcome, ContextStore};
-use stella_core::context_record::{ContextRecordKind, ObservationRecord, ObservationSource};
+use stella_records::context_record::{ContextRecordKind, ObservationRecord, ObservationSource};
 use stella_store::MemoryCitationRow;
 
 use super::*;

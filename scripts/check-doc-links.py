@@ -470,7 +470,7 @@ def heal(moves, rust_files, md_files, extra_remap=None, toml_files=()):
     Scoped to exactly the lines `scan_citations` would read, and for a reason
     paid for once already: an earlier version substituted across whole files,
     so it rewrote a `docs/…md` inside a Rust *string literal* in
-    `crates/stella-core/src/ingest/tests.rs` -- a fixture, not a citation, which the
+    `crates/stella-records/src/ingest/tests.rs` -- a fixture, not a citation, which the
     checker deliberately ignores. The longer path pushed the line past
     rustfmt's width and turned the fmt gate red for a "fix" nothing had asked
     for. A fixer must never touch more than its checker can see.
