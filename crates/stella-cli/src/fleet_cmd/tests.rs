@@ -812,7 +812,7 @@ fn mined_friction() -> crate::memory::TurnFriction {
 /// tree the attempt ran in.
 ///
 /// Fails on base, where `mine_attempt_lesson` does not exist because a fleet
-/// attempt mined nothing at all: `worker_recall_block` opened a `SessionMemory`,
+/// attempt mined nothing at all: the fleet door opened a `SessionMemory`,
 /// recalled through it and dropped it before the turn ran, so the fan-out read
 /// the workspace's accumulated lessons and contributed none back.
 ///
