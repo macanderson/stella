@@ -170,7 +170,7 @@ impl Sink for JsonlSink {
 /// `docs/spec/diagnostics.md` §6's durable-target list needs a sink like
 /// this one: a plain `stella --version` in a bare directory must not leave
 /// behind an empty `.stella/private/` it never needed. This sink calls
-/// [`private::open_append`] on the first write its [`Bound`] filter admits,
+/// `private::open_append` on the first write its [`Bound`] filter admits,
 /// and not before, so a run that never fires under a bound target never
 /// touches disk.
 pub struct LazyJsonlSink {
