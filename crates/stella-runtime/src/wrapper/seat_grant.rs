@@ -71,14 +71,14 @@ impl SeatGrant {
 
     /// The seat this plugin's turns are booked at when the host binds none.
     ///
-    /// Core has a word for this now: [`ModelCallRole::Plugin`] says a plugin
-    /// asked for the call, and the plugin's own name for the job rides beside
-    /// it on the child's `sub_agent` bracket. So every plugin gets it, judging
-    /// or not, and no receipt claims a job core did.
+    /// Every plugin gets [`ModelCallRole::Plugin`], judging or not. That word
+    /// says a plugin asked for the call, and the plugin's own name for the job
+    /// rides beside it on the child's `sub_agent` bracket, so no receipt
+    /// claims a job core did.
     ///
-    /// This used to guess — a verdict seat for a judging plugin and a research
-    /// seat for the rest — and the guess is what `doc:roleless-core` slice 2
-    /// retires.
+    /// Picking a seat from the manifest's declared job instead — a verdict
+    /// seat for a judging plugin, a research seat for the rest — is the guess
+    /// `doc:roleless-core` slice 2 retires.
     ///
     /// Not a routing decision. Which model runs the turn comes from the user's
     /// own seat map, keyed on the plugin's word
