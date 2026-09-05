@@ -792,24 +792,51 @@ fn pr_event_from_a_pre_ci_stream_still_parses() {
     }
 }
 
-/// The research stage's two wire tokens (#1778), pinned in both directions
-/// (AGENTS.md #4): the snake_case token is what a recorded stream carries, and
-/// a role addition is one-directional (`ModelCallRole` has no catch-all), so
+/// The research stage's wire token (#1778), pinned in both directions
+/// (AGENTS.md #4): the snake_case token is what a recorded stream carries, so
 /// what this build writes is exactly what a future build must read.
+///
+/// The call role once pinned beside it is retired. What a recorded
+/// `research` role reads as now has its own witness below,
+/// `a_step_usage_recorded_under_a_retired_role_still_parses_whole`.
 #[test]
-fn research_stage_and_role_roundtrip_with_snake_case_tokens() {
+fn research_stage_roundtrips_with_its_snake_case_token() {
     let stage = serde_json::to_string(&StageKind::Research).unwrap();
     assert_eq!(stage, "\"research\"");
     assert_eq!(
         serde_json::from_str::<StageKind>(&stage).unwrap(),
         StageKind::Research
     );
-    let role = serde_json::to_string(&ModelCallRole::Research).unwrap();
-    assert_eq!(role, "\"research\"");
-    assert_eq!(
-        serde_json::from_str::<ModelCallRole>(&role).unwrap(),
-        ModelCallRole::Research
-    );
+}
+
+/// **The retirement witness.** A metering row recorded while the staged
+/// pipeline ran still parses whole. The measurement it carries outlives the
+/// words that named it.
+///
+/// It fails without the aliases. `ModelCallRole` has no catch-all, so a
+/// `step_usage` naming one of the six fails the **whole event**. Its cost,
+/// its tokens and its model go with the label.
+#[test]
+fn a_step_usage_recorded_under_a_retired_role_still_parses_whole() {
+    let recorded = r#"{"type":"step_usage","step":4,"turn_instance":0,"call_seq":2,
+        "role":"witness_author","provider":"anthropic","model":"claude-sonnet-4-5",
+        "input_tokens":18000,"output_tokens":900,"cached_input_tokens":16000,
+        "cost_usd":0.0731,"duration_ms":9100,"retries":0,"tool_calls":0,"complete":true}"#;
+    match serde_json::from_str::<AgentEvent>(recorded).expect("a recorded row still parses") {
+        AgentEvent::StepUsage {
+            role,
+            model,
+            input_tokens,
+            cost_usd,
+            ..
+        } => {
+            assert_eq!(role, ModelCallRole::Plugin);
+            assert_eq!(model, "claude-sonnet-4-5");
+            assert_eq!(input_tokens, 18_000);
+            assert!((cost_usd - 0.0731).abs() < f64::EPSILON);
+        }
+        other => panic!("a recorded step_usage must stay one: {other:?}"),
+    }
 }
 
 #[test]
@@ -841,7 +868,7 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
         step: 3,
         turn_instance: Some(2),
         call_seq: Some(1),
-        role: ModelCallRole::Plan,
+        role: ModelCallRole::Plugin,
         provider: "openrouter".into(),
         // A gateway call: the pair must survive the round trip together, since
         // the gateway id alone cannot answer who served the call.
@@ -874,7 +901,7 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"type\":\"step_usage\""), "{json}");
-    assert!(json.contains("\"role\":\"plan\""), "{json}");
+    assert!(json.contains("\"role\":\"plugin\""), "{json}");
     assert!(json.contains("\"cache_write_tokens\":2500"), "{json}");
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
     match back {
@@ -902,7 +929,7 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
             // `(turn_instance, step)` holds more than one.
             assert_eq!(turn_instance, Some(2));
             assert_eq!(call_seq, Some(1));
-            assert_eq!(role, ModelCallRole::Plan);
+            assert_eq!(role, ModelCallRole::Plugin);
             assert_eq!(upstream_provider.as_deref(), Some("Amazon Bedrock"));
             assert_eq!(output_text.as_deref(), Some(r#"["inspect", "patch"]"#));
             assert_eq!(cached_input_tokens, 9_000);
@@ -1039,12 +1066,21 @@ fn goal_verdict_roundtrips_both_outcomes() {
     }
 }
 
+/// A `step_usage` row keeps the role, the provider and the completeness flag
+/// across a round trip.
+///
+/// The role here has to be one the enum still names. A retired spelling is a
+/// deserialize-only alias onto `Plugin`, so it reads back as `"plugin"` and
+/// this assertion would be testing the retirement rather than the identity.
+/// That retirement has its own witnesses: `every_retired_spelling_still_parses`
+/// beside the enum, and `a_step_usage_recorded_under_a_retired_role_still_parses_whole`
+/// in this file for the measurement a recorded row carries.
 #[test]
 fn step_usage_preserves_call_identity_and_completeness() {
-    let json = r#"{"type":"step_usage","step":3,"role":"plan_repair","provider":"anthropic","model":"claude-sonnet-4-5","input_tokens":12000,"output_tokens":300,"cached_input_tokens":9000,"cache_write_tokens":12,"estimated_input_tokens":11000,"cost_usd":0.09,"duration_ms":1400,"retries":1,"tool_calls":0,"complete":true}"#;
+    let json = r#"{"type":"step_usage","step":3,"role":"worker","provider":"anthropic","model":"claude-sonnet-4-5","input_tokens":12000,"output_tokens":300,"cached_input_tokens":9000,"cache_write_tokens":12,"estimated_input_tokens":11000,"cost_usd":0.09,"duration_ms":1400,"retries":1,"tool_calls":0,"complete":true}"#;
     let event: AgentEvent = serde_json::from_str(json).unwrap();
     let roundtrip = serde_json::to_value(event).unwrap();
-    assert_eq!(roundtrip["role"], "plan_repair");
+    assert_eq!(roundtrip["role"], "worker");
     assert_eq!(roundtrip["provider"], "anthropic");
     assert_eq!(roundtrip["complete"], true);
 }

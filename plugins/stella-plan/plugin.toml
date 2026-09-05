@@ -74,9 +74,9 @@ max_calls = 1
 
 # The one role intent this plugin names. The word is this plugin's own: the
 # host compares it, asks the user's seat map about it, and reads nothing into
-# it (`ChildTurns::resolve`). Where the spend is booked comes from the
-# grant instead — this manifest declares no `[oracle]`, so the turn lands on
-# the receipt as the read-only child call it is.
+# it (`ChildTurns::resolve`). Where the spend is booked comes from the grant
+# instead — the turn lands on the receipt as a plugin's call, with this word
+# beside it.
 [roles.planner]
 tier = "plan"
 

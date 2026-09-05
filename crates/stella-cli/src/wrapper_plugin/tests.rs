@@ -684,9 +684,11 @@ async fn a_declared_child_turn_runs_on_this_hosts_dispatcher() {
         1,
         "the host's dispatcher ran the turn — the plugin has no way to run one itself"
     );
+    assert_eq!(specs[0].role, stella_protocol::event::ModelCallRole::Plugin);
     assert_eq!(
-        specs[0].role,
-        stella_protocol::event::ModelCallRole::Research
+        specs[0].seat.as_deref(),
+        Some("reviewer"),
+        "the plugin's own word is the attribution, and it reaches the trace"
     );
     assert!(
         !specs[0].write_access,
@@ -704,10 +706,7 @@ async fn a_declared_child_turn_runs_on_this_hosts_dispatcher() {
         1,
         "what a plugin spent is readable after the run"
     );
-    assert_eq!(
-        spends[0].seat,
-        stella_protocol::event::ModelCallRole::Research
-    );
+    assert_eq!(spends[0].seat, "research");
     let line = spend_lines(&spends).remove(0);
     assert!(line.contains("reviewer"), "{line}");
     assert!(
@@ -964,8 +963,8 @@ async fn a_tier_spelled_like_the_workers_never_reaches_the_workers_seat() {
     );
     assert_eq!(
         specs[0].role,
-        stella_protocol::event::ModelCallRole::Research,
-        "this manifest declares no [oracle], so the grant books it as a read-only child call"
+        stella_protocol::event::ModelCallRole::Plugin,
+        "the grant books a plugin's call as a plugin's call, whatever job it declared"
     );
     assert_eq!(
         specs[0].seat.as_deref(),
@@ -1001,10 +1000,10 @@ fn shipped_goal_manifest() -> PluginManifest {
 /// refused, evidence always empty, `judge` abstaining on `MeasurementMissing`,
 /// and the loop ending `Undecided` after one round on every run, forever.
 ///
-/// Asserts the seat is `verdict` and not merely "something resolved", because
-/// the attribution is the claim being made: this plugin declares an
-/// `[oracle]`, so its grant books its turns against the same responsibility
-/// `stella_core::goal` books its own independent verifier call against.
+/// Asserts the seat is `verifier` and not merely "something resolved",
+/// because the attribution is the claim being made: the receipt names the
+/// plugin and the seat it declared, never a case of core's own vocabulary
+/// that would say core did the work.
 #[tokio::test]
 async fn the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane() {
     use stella_plugin::ChildTurnArgs;
@@ -1038,9 +1037,9 @@ async fn the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane()
 
     assert_eq!(result.role, "verifier", "the plugin's own intent, echoed");
     assert_eq!(
-        result.seat, "verdict",
-        "booked against the responsibility stella_core::goal books its own \
-         verifier call against, so the spend is visible as what it is"
+        result.seat, "verifier",
+        "the tier the manifest declared, echoed back as the plugin's own word, \
+         so the spend is visible as what it is"
     );
     assert!(
         result.report.contains("assess whether the goal"),
@@ -1057,8 +1056,13 @@ async fn the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane()
     );
     assert_eq!(
         specs[0].role,
-        stella_protocol::event::ModelCallRole::Verdict,
-        "and the receipt says so"
+        stella_protocol::event::ModelCallRole::Plugin,
+        "and the receipt says a plugin spent it"
+    );
+    assert_eq!(
+        specs[0].seat.as_deref(),
+        Some("verifier"),
+        "at the seat the plugin declared, which is what the receipt names"
     );
     assert!(
         !specs[0].write_access,
@@ -1252,10 +1256,7 @@ printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":
 
     let specs = dispatcher.specs();
     assert_eq!(specs.len(), 1, "the host made the call, not the plugin");
-    assert_eq!(
-        specs[0].role,
-        stella_protocol::event::ModelCallRole::Research
-    );
+    assert_eq!(specs[0].role, stella_protocol::event::ModelCallRole::Plugin);
     assert_eq!(specs[0].instruction, "does the diff drop the retry?");
     assert!(!specs[0].write_access);
     assert_eq!(wrapper.child_spends().len(), 1);

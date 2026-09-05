@@ -327,7 +327,7 @@
             <tr><th>Field</th><th>Source</th><th>Why it matters</th></tr>
             <tr><td><code>execution_id</code></td><td>Engine turn receipt</td><td>Groups steps into one task</td></tr>
             <tr><td><code>model_ref</code></td><td><code>CompletionRequest</code></td><td>Which model produced this</td></tr>
-            <tr><td><code>role</code></td><td><code>ModelCallRole</code></td><td>triage / worker / verdict / witness-author</td></tr>
+            <tr><td><code>role</code></td><td><code>ModelCallRole</code></td><td>worker / verdict / summarization / plugin</td></tr>
             <tr><td><code>prompt_messages</code></td><td>Engine accumulator</td><td>The exact input (for SFT)</td></tr>
             <tr><td><code>tool_calls[]</code></td><td>Router events</td><td>What the model chose to do</td></tr>
             <tr><td><code>stage_trajectory</code></td><td><code>StageKind</code> sequence</td><td>evaluate→…→verdict path taken</td></tr>

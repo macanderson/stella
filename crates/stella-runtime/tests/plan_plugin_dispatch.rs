@@ -240,15 +240,15 @@ async fn the_host_sequence_drives_the_plugin_and_the_host_runs_its_child_turn() 
     );
     assert_eq!(
         specs[0].role,
-        ModelCallRole::Research,
-        "this plugin declares no [oracle], so its grant books the turn as the read-only child \
-         call it is; core holds no table of role words to say anything finer, and slice 2 of \
-         `doc:roleless-core` is where a receipt carries the plugin's own word"
+        ModelCallRole::Plugin,
+        "a plugin's child turn is booked to the plugin, never to a stage this \
+         engine does not run"
     );
     assert_eq!(
         specs[0].seat.as_deref(),
         Some("planner"),
-        "the plugin's own word is what routes the turn to a model"
+        "the plugin's own word both routes the turn to a model and says which \
+         job this call was"
     );
     assert!(
         !specs[0].write_access,

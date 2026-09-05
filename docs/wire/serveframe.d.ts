@@ -1948,8 +1948,14 @@ export type MessageRole = "system" | "user" | "assistant" | "tool";
 
 /**
  * Concrete purpose of one provider call. This is more precise than the
- * router's tier role: repair and guidance calls must remain distinguishable
- * in the paid-call ledger even when they share a provider/model.
+ * router's tier role: an auxiliary call and the worker's own must stay
+ * distinguishable in the paid-call ledger even when they share a
+ * provider/model.
+ *
+ * It names the calls the engine itself makes. A call the host spends for a
+ * plugin is [`Self::Plugin`]. The seat name the plugin chose rides beside
+ * it as data. A closed list cannot hold words it does not know, and a cost
+ * report over an open one stops being auditable.
  *
  * This vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]
  * is the `serde(default)` for an *absent* `role`, not a `serde(other)`
@@ -1960,7 +1966,7 @@ export type MessageRole = "system" | "user" | "assistant" | "tool";
  * one-directional change in a way adding an [`AgentEvent`] case no longer
  * is.
  */
-export type ModelCallRole = "unknown" | "triage" | "research" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "verdict" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
+export type ModelCallRole = "unknown" | "worker" | "distress_guidance" | "verdict" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization" | "plugin";
 
 /**
  * One flip-oracle observation, in the order the pipeline made it — together
@@ -2406,6 +2412,23 @@ export type SubAgentPhase = {
    */
   instruction_preview: string;
   phase: "started";
+  /**
+   * The seat this child was asked to run at.
+   *
+   * The requester's own word, and the key a user assigns a model to.
+   * This is where the name of a plugin's job lives. The metering row
+   * says only that some other participant spent the call. This word
+   * says which one, and at which seat.
+   *
+   * `None` when nobody named a seat. A `delegate` sub-agent names
+   * none. Nor does a child dispatched before seats existed, hence
+   * `serde(default)`.
+   *
+   * Opaque by contract. It is compared, never parsed or matched
+   * against a literal. A word no one has used before travels as well
+   * as one shipped in an example.
+   */
+  seat?: string | null;
   /**
    * Whether the child may mutate the workspace. `false` (the
    * default) means it ran behind a read-only view of the parent's

@@ -207,8 +207,13 @@ async fn a_plugin_asks_for_a_model_call_at_a_declared_role_and_the_host_makes_it
     );
     assert_eq!(
         specs[0].role,
-        ModelCallRole::Research,
-        "the role intent resolved to a seat, and the seat is the receipt's attribution"
+        ModelCallRole::Plugin,
+        "the receipt books it to the plugin, and the seat rides beside it"
+    );
+    assert_eq!(
+        specs[0].seat.as_deref(),
+        Some("reviewer"),
+        "the plugin's own word travels with the child, and onto its bracket"
     );
     assert_eq!(specs[0].instruction, "does the diff drop the retry?");
     assert!(
@@ -219,7 +224,8 @@ async fn a_plugin_asks_for_a_model_call_at_a_declared_role_and_the_host_makes_it
     let spends = plane.spends();
     assert_eq!(spends.len(), 1, "the spend is visible, not hidden");
     assert_eq!(spends[0].role, "reviewer");
-    assert_eq!(spends[0].seat, ModelCallRole::Research);
+    assert_eq!(spends[0].plugin, "grading-wrapper");
+    assert_eq!(spends[0].seat, "research");
     assert!((spends[0].cost_usd - 0.02).abs() < f64::EPSILON);
 
     assert!(

@@ -71,26 +71,21 @@ impl SeatGrant {
 
     /// The seat this plugin's turns are booked at when the host binds none.
     ///
-    /// A plugin that judges the turn gets the seat a verdict call is booked at,
-    /// which is where `stella_core::goal` books its own verifier call, so the
-    /// two read the same on one receipt. Every other plugin gets the seat a
-    /// read-only sub-agent call is booked at, which is what a child turn is:
-    /// the host runs it with no write arm and hands back an answer.
+    /// Core has a word for this now: [`ModelCallRole::Plugin`] says a plugin
+    /// asked for the call, and the plugin's own name for the job rides beside
+    /// it on the child's `sub_agent` bracket. So every plugin gets it, judging
+    /// or not, and no receipt claims a job core did.
     ///
-    /// Neither is a routing decision. Which model runs the turn comes from the
-    /// user's own seat map, keyed on the plugin's word
+    /// This used to guess — a verdict seat for a judging plugin and a research
+    /// seat for the rest — and the guess is what `doc:roleless-core` slice 2
+    /// retires.
+    ///
+    /// Not a routing decision. Which model runs the turn comes from the user's
+    /// own seat map, keyed on the plugin's word
     /// (`stella_cli::agent::seats`), and nothing here is consulted for it.
-    ///
-    /// The receipt is coarser than it should be while core has no word for "a
-    /// call this plugin asked for". Slice 2 of `doc:roleless-core` gives a
-    /// receipt the plugin's own name and retires the guess.
     #[must_use]
     pub fn default_seat(self) -> ModelCallRole {
-        if self.judges {
-            ModelCallRole::Verdict
-        } else {
-            ModelCallRole::Research
-        }
+        ModelCallRole::Plugin
     }
 
     /// Whether this plugin may spend at `seat`.
@@ -106,11 +101,9 @@ impl SeatGrant {
             // let the plugin grade itself.
             ModelCallRole::Worker => SeatPermission::Never,
 
-            // These three say "a call decided whether the work is done". Only a
-            // plugin that declared that job may spend at one.
-            ModelCallRole::WitnessAuthor
-            | ModelCallRole::WitnessRepair
-            | ModelCallRole::Verdict => {
+            // This one says "a call decided whether the work is done". Only a
+            // plugin that declared that job may spend at it.
+            ModelCallRole::Verdict => {
                 if self.judges {
                     SeatPermission::Granted
                 } else {
@@ -118,14 +111,14 @@ impl SeatGrant {
                 }
             }
 
-            // Reading, planning, summarising and the rest. A child turn is
-            // read-only and bounded, so a wrong label here costs a line on a
-            // cost report and nothing else.
+            // A plugin's own seat, and the one every child turn lands at when
+            // the host binds nothing.
+            ModelCallRole::Plugin => SeatPermission::Granted,
+
+            // Summarising, reflection and the rest. A child turn is read-only
+            // and bounded, so a wrong label here costs a line on a cost report
+            // and nothing else.
             ModelCallRole::Unknown
-            | ModelCallRole::Triage
-            | ModelCallRole::Research
-            | ModelCallRole::Plan
-            | ModelCallRole::PlanRepair
             | ModelCallRole::DistressGuidance
             | ModelCallRole::AgentAuthor
             | ModelCallRole::SkillAuthor
@@ -175,33 +168,20 @@ mod tests {
 
     #[test]
     fn a_verdict_seat_needs_a_declared_oracle() {
-        for seat in [
-            ModelCallRole::Verdict,
-            ModelCallRole::WitnessAuthor,
-            ModelCallRole::WitnessRepair,
-        ] {
-            assert_eq!(
-                SeatGrant::of(&steering()).permits(seat),
-                SeatPermission::Undeclared,
-                "{seat:?}"
-            );
-            assert_eq!(
-                SeatGrant::of(&judging()).permits(seat),
-                SeatPermission::Granted,
-                "{seat:?}"
-            );
-        }
+        assert_eq!(
+            SeatGrant::of(&steering()).permits(ModelCallRole::Verdict),
+            SeatPermission::Undeclared
+        );
+        assert_eq!(
+            SeatGrant::of(&judging()).permits(ModelCallRole::Verdict),
+            SeatPermission::Granted
+        );
     }
 
     #[test]
     fn every_other_seat_is_granted() {
         let grant = SeatGrant::of(&steering());
-        let refused = [
-            ModelCallRole::Worker,
-            ModelCallRole::Verdict,
-            ModelCallRole::WitnessAuthor,
-            ModelCallRole::WitnessRepair,
-        ];
+        let refused = [ModelCallRole::Worker, ModelCallRole::Verdict];
         for &seat in ModelCallRole::ALL {
             if refused.contains(&seat) {
                 continue;
@@ -210,15 +190,18 @@ mod tests {
         }
     }
 
+    /// A plugin's call is booked to the seat that says a plugin asked for it,
+    /// whatever job the manifest declared. Reading `judges` here would pick a
+    /// seat that names a job core does.
     #[test]
-    fn the_default_seat_follows_the_declared_job() {
+    fn every_grant_books_a_plugins_own_seat() {
         assert_eq!(
             SeatGrant::of(&steering()).default_seat(),
-            ModelCallRole::Research
+            ModelCallRole::Plugin
         );
         assert_eq!(
             SeatGrant::of(&judging()).default_seat(),
-            ModelCallRole::Verdict
+            ModelCallRole::Plugin
         );
     }
 

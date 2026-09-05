@@ -972,13 +972,11 @@ fn stage_name(stage: StageKind) -> &'static str {
 fn role_name(role: ModelCallRole) -> &'static str {
     match role {
         ModelCallRole::Unknown => "unknown",
-        ModelCallRole::Triage => "triage",
-        ModelCallRole::Research => "research",
-        ModelCallRole::Plan => "plan",
-        ModelCallRole::PlanRepair => "plan_repair",
-        ModelCallRole::WitnessAuthor => "witness_author",
-        ModelCallRole::WitnessRepair => "witness_repair",
         ModelCallRole::Worker => "worker",
+        // The seat that spent it rides on the child's `sub_agent` bracket.
+        // A diagnostic field holds a closed set of words. A plugin picks
+        // its own, so it cannot be one of them.
+        ModelCallRole::Plugin => "plugin",
         ModelCallRole::DistressGuidance => "distress_guidance",
         ModelCallRole::Verdict => "verifier",
         ModelCallRole::AgentAuthor => "agent_author",
