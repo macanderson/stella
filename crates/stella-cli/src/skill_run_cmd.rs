@@ -90,8 +90,8 @@ pub(crate) fn plan(
 
     let directives = crate::extensions::invoke_directives_for(skill);
     let arguments = args.join(" ");
-    let body = invoke::substitute_arguments(&skill.body, arguments.trim());
-    let prompt = invoke::render_invocation_message(&skill.name, &body);
+    let body = skill_invocation::substitute_arguments(&skill.body, arguments.trim());
+    let prompt = skill_invocation::render_invocation_message(&skill.name, &body);
     Ok(SkillRunPlan {
         model: directives.model.clone(),
         mode: directives.mode,
@@ -244,7 +244,8 @@ mod tests {
         .expect("the skill resolves");
 
         assert!(
-            plan.prompt.starts_with(invoke::SKILL_INVOCATION_PREFIX),
+            plan.prompt
+                .starts_with(skill_invocation::SKILL_INVOCATION_PREFIX),
             "the prompt is the invocation message: {}",
             plan.prompt
         );
