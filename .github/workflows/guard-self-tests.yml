@@ -239,6 +239,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-issue-claim.sh
 
+      - name: the CodeQL canary opens, refreshes and closes a codeql-red issue
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-codeql-canary.sh
+
       - name: the retired-hex ban in every notation, and the citation check
         if: ${{ !cancelled() }}
         run: ./scripts/test-tokens.sh
