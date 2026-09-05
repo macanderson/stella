@@ -36,7 +36,8 @@ use colored::Colorize;
 use stella_context::{ContextStore, LedgerAppend};
 use stella_records::context_record::{
     ContextRecordKind, DirectiveEnforcement, LIFECYCLE_SCHEMA_VERSION, PromotionAction,
-    PromotionActor, PromotionEventRecord, ProposalRecord, RecordProposalKind,
+    PromotionActor, PromotionEventRecord, ProposalRecord, RecordProposalKind, decision_grade,
+    published_grade,
 };
 
 /// Subcommands under `stella proposals`.
@@ -424,7 +425,7 @@ fn decide_in(
     if let (Some(root), RecordProposalKind::Directive, PromotionAction::Confirmed) =
         (workspace_root, proposal.proposal_kind, action)
     {
-        materialize_directive(root, &proposal, event.edited_body.as_deref());
+        materialize_directive(root, &proposal, &event);
     }
 
     println!(
@@ -446,14 +447,24 @@ fn decide_in(
 ///
 /// An edit replaces the body and nothing else; the id is unchanged, so editing
 /// does not orphan the proposal's lineage.
+///
+/// **The published grade is the stronger of two answers.** A person got
+/// here by reading the statement and confirming it. A rule that recorded only
+/// what the mining folded to would drop that reading. Then no path could ever
+/// reach `ProvenanceGrade::HumanReview`. `published_grade` keeps the stronger
+/// half, so a mined proposal is not talked down by being read.
 fn materialize_directive(
     workspace_root: &std::path::Path,
     proposal: &ProposalRecord,
-    edited_body: Option<&str>,
+    event: &PromotionEventRecord,
 ) {
     let candidate = stella_learn::rules::RuleCandidate {
         id: proposal.candidate_id.clone(),
-        text: edited_body.unwrap_or(&proposal.body).to_string(),
+        text: event
+            .edited_body
+            .as_deref()
+            .unwrap_or(&proposal.body)
+            .to_string(),
         description: proposal.title.clone(),
         occurrences: proposal.score.occurrences as usize,
         salient: proposal.score.salient,
@@ -461,10 +472,19 @@ fn materialize_directive(
         guard: None,
         score: 0,
     };
-    // The grade the proposal was folded to, carried onto the published record
-    // so the rule on disk still says what it stands on (#2782).
-    match crate::memory::rules_mining::write_rule(workspace_root, &candidate, proposal.provenance) {
-        Ok(Some(path)) => println!("    {} wrote {}", "·".dimmed(), path.display()),
+    // Carried onto the published record so the rule on disk still says what it
+    // stands on (#2782).
+    let grade = published_grade(
+        proposal.provenance,
+        decision_grade(event.actor, event.action),
+    );
+    match crate::memory::rules_mining::write_rule(workspace_root, &candidate, grade) {
+        Ok(Some(path)) => {
+            println!("    {} wrote {}", "·".dimmed(), path.display());
+            if let Some(grade) = grade {
+                println!("    {} {}", "evidence:".dimmed(), grade.as_str().bold());
+            }
+        }
         Ok(None) => println!(
             "    {} a rule file for `{}` already exists — left untouched",
             "·".dimmed(),

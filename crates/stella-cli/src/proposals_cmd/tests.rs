@@ -315,3 +315,118 @@ fn list_shows_one_row_per_lineage() {
         "and it is the newest revision"
     );
 }
+
+// ---- what a kept directive is published on ----
+
+/// Seed a directive proposal whose evidence spans `tasks` distinct tasks, so
+/// the fixture's grade is the one the mining path would derive for it.
+fn seed_directive(store: &ContextStore, candidate_id: &str, tasks: &[&str]) -> ProposalRecord {
+    let score = ProposalScore {
+        occurrences: tasks.len() as u32,
+        distinct_tasks: tasks.len() as u32,
+        salient: false,
+        rank: 30.0,
+    };
+    let proposal = ProposalRecord::new(
+        RecordProposalKind::Directive,
+        RecordProposalStatus::Eligible,
+        candidate_id,
+        "Prefer rg over grep",
+        "Use ripgrep instead of grep in this repository.",
+        vec!["tooling".into()],
+        pool_of(&supporting_observations(tasks)),
+        score,
+        confidence_from_score(&score).expect("confidence"),
+        "2026-07-26T12:00:00Z",
+    )
+    .expect("proposal");
+    crate::memory::proposals::record_proposal(store, &proposal).expect("record");
+    proposal
+}
+
+/// Every `.stella/rules/` file this workspace holds, concatenated.
+fn published_rules(workspace_root: &std::path::Path) -> String {
+    let dir = workspace_root.join(".stella").join("rules");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return String::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// **The witness for `human_review`.** A person read this statement and
+/// confirmed it, and the rule that confirmation publishes says so.
+///
+/// Before the keep path derived a grade from the decision, nothing in the
+/// workspace constructed `ProvenanceGrade::HumanReview` on any path, so a
+/// reviewer's sign-off changed no artifact anywhere. Here the proposal's own
+/// evidence is one reflection lesson from one task — `model_critique`, the
+/// weakest rung — and the published record has to read stronger than that.
+#[test]
+fn a_kept_directive_is_published_on_the_reviewers_own_grade() {
+    let (dir, store) = store();
+    let root = dir.path();
+    let proposal = seed_directive(&store, "prefer-rg-abcd1234", &["task-a"]);
+    assert_eq!(
+        proposal.provenance,
+        Some(stella_protocol::provenance::ProvenanceGrade::ModelCritique),
+        "the fixture must start below human review, or the assertion below \
+         proves nothing"
+    );
+
+    decide_in(
+        &store,
+        Some(root),
+        "prefer-rg-abcd1234",
+        PromotionAction::Confirmed,
+        Some(DirectiveEnforcement::Advisory),
+        None,
+        "kept",
+    )
+    .expect("keep");
+
+    let published = published_rules(root);
+    assert!(
+        published.contains("human_review"),
+        "a rule a person read and confirmed was published on the model's \
+         opinion alone:\n{published}"
+    );
+}
+
+/// …and a proposal already mined across three tasks is not talked *down* by
+/// being read. The published grade is the stronger of the two derivations, so
+/// `trajectory_abstraction` survives a keep that supplies `human_review`.
+#[test]
+fn keeping_a_mined_directive_does_not_cost_it_the_rung_it_earned() {
+    let (dir, store) = store();
+    let root = dir.path();
+    let proposal = seed_directive(
+        &store,
+        "prefer-rg-beef5678",
+        &["task-a", "task-b", "task-c"],
+    );
+    assert_eq!(
+        proposal.provenance,
+        Some(stella_protocol::provenance::ProvenanceGrade::TrajectoryAbstraction)
+    );
+
+    decide_in(
+        &store,
+        Some(root),
+        "prefer-rg-beef5678",
+        PromotionAction::Confirmed,
+        Some(DirectiveEnforcement::Advisory),
+        None,
+        "kept",
+    )
+    .expect("keep");
+
+    let published = published_rules(root);
+    assert!(
+        published.contains("trajectory_abstraction"),
+        "a keep must not weaken the grade the evidence earned:\n{published}"
+    );
+}

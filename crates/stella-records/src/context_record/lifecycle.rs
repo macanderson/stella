@@ -191,10 +191,12 @@ pub struct ProposalRecord {
     /// re-deriving anything.
     pub supporting_observations: Vec<String>,
     /// **How strong the evidence behind this proposal actually is** (#2782),
-    /// folded from the observations above at construction and never asserted
+    /// derived from the observations above at construction and never asserted
     /// by the code doing the promoting — see
     /// [`crate::context_record::provenance::EvidencePool`], which is the only
-    /// way to populate it.
+    /// way to populate it. The pool folds the observations' own grades. It
+    /// then counts the distinct tasks they span, so a pattern seen across
+    /// separate tasks is graded as one.
     ///
     /// The proposal has to store it because it keeps only the observations'
     /// `record_id`s and so cannot re-derive the grade later. `None` means a
