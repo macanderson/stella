@@ -35,24 +35,27 @@ this page is where a user sees whether they are running one.
 Nearly a leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
 `sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and these
 `stella-*` dependencies: [`stella-home`](../stella-home), which has no
-dependencies of its own; [`stella-autonomy`](../stella-autonomy), a leaf crate
-with no workspace-crate dependencies, for the self-driving fold and its signal
-thresholds; [`stella-diff`](../stella-diff), another zero-dependency leaf, for
-the unified differ; [`stella-transcript`](../stella-transcript), a near-leaf
-over `stella-diff`, for the `/transcript` page; and
-[`stella-core`](../stella-core), for `context_record`'s types alone.
-Everything heavier is excluded: `stella_store::Store::open` creates `.stella/`
-and runs schema migrations, and an observer that migrates what it observes is
-not an observer.
+dependencies of its own; [`stella-ansi`](../stella-ansi), another
+dependency-free leaf, to strip a tool's colourised output before the journal
+route serves it; [`stella-autonomy`](../stella-autonomy), a leaf crate with
+no workspace-crate dependencies, for the self-driving fold and its signal
+thresholds; [`stella-diff`](../stella-diff), also zero-dependency, for the
+unified differ; [`stella-transcript`](../stella-transcript), a near-leaf over
+`stella-diff`, for the `/transcript` page; and
+[`stella-records`](../stella-records), for `context_record`'s types alone —
+a `stella-core` edge until the record plane left the engine, the types
+unchanged. Everything heavier is excluded: `stella_store::Store::open`
+creates `.stella/` and runs schema migrations, and an observer that migrates
+what it observes is not an observer.
 
 **The rule is about the write path, not about the dependency count.** This
 crate re-reads artifacts instead of linking the crates that produce them, which
 is why it opens `store.db` with `rusqlite` rather than linking `stella-store`.
 The `stella-*` dependencies it does take are all the opposite shape and none of
-them opens anything: `stella-home` is path arithmetic over environment
-variables, `stella-autonomy` is decision logic over owned data (no I/O) with
-the clock passed in as a parameter, and `stella-diff` and `stella-transcript`
-are pure renderers over borrowed text.
+them opens anything: `stella-home` and `stella-ansi` are pure functions over
+borrowed strings, `stella-autonomy` is decision logic over owned data (no I/O)
+with the clock passed in as a parameter, and `stella-diff` and
+`stella-transcript` are pure renderers over borrowed text.
 
 The price is a small set of acknowledged copies. Two of them are gone:
 `global::data_dir` is shared through `stella-home` now (#1139), and

@@ -1021,7 +1021,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-seven crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-eight crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -1046,6 +1046,7 @@ the files you must plan around (see below).
 | Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
+| Strip ANSI escape sequences from tool output | [`stella-ansi`](crates/stella-ansi/README.md) | **A leaf with NO dependencies at all** — one pure function over a borrowed `&str`, extracted from `stella-tui` so [`stella-observatory`](crates/stella-observatory/README.md) could strip a colourised tool's output before it reaches the journal route's `<pre>` without linking `ratatui`. `stella-tui`'s `ansi` module re-exports it and keeps only the `ratatui`-shaped emission half. |
 | Render a session transcript — folds, digests, diffs, chips — on the web or a character grid | [`stella-transcript`](crates/stella-transcript/README.md) | **Near-leaf: [`stella-diff`](crates/stella-diff/README.md) is its only workspace dependency.** One information model, two renderers, no I/O. Both surfaces render from the same folds and the same diff rows — the Observatory used to re-implement the TUI's painter in JavaScript, and that copy had drifted to having no diff rendering at all. |
 | Turn text into a vector, or compare two vectors honestly | [`stella-embed`](crates/stella-embed/README.md) | **A leaf with NO workspace-crate dependencies** — the `Embedder` seam, the fingerprint every stored vector is stamped with, the `SimilarityPosture` a backend must declare, and a pure deterministic ranker. Shared by [`stella-context`](crates/stella-context/README.md) (retrieval) and [`stella-graph`](crates/stella-graph/README.md) (semantic code search) so neither has to depend on the other. |
 | Change the record plane — the typed record taxonomy, the ingestion boundary, or the registry that merges markdown rules and TOML records | [`stella-records`](crates/stella-records/README.md) | Pure value logic, no I/O. It left `stella-core` because the engine reached the whole plane through one hash call, which now goes to `stella_protocol::hash::record_hash`. It takes the markdown rule parser and the redactor from `stella-learn`, and still depends on `stella-core` for the steering candidate types `adapt` maps onto; the re-layering epic tracks inverting that last edge. |
@@ -1163,7 +1164,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs` |
 
-The other twenty-two crates carry no god files — keep it that way. Each crate's
+The other twenty-three crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

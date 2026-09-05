@@ -3183,6 +3183,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "stella-ansi"
+version = "0.9.337"
+
+[[package]]
 name = "stella-autonomy"
 version = "0.9.337"
 dependencies = [
@@ -3445,6 +3449,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "sha2 0.11.0",
+ "stella-ansi",
  "stella-autonomy",
  "stella-context",
  "stella-diff",
@@ -3625,6 +3630,7 @@ dependencies = [
  "proptest",
  "ratatui",
  "serde_json",
+ "stella-ansi",
  "stella-diag",
  "stella-diff",
  "stella-plugin",
