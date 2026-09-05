@@ -1036,9 +1036,19 @@ mod tests {
 
     /// The whole loop against real stores in a temp workspace: seed a
     /// memory (context.db), cite it (store.db), watch the strict >10 gate
-    /// hold at exactly 10, tip it at 11, promote, and parse the written
-    /// rule back through the rules engine. No cwd mutation — the `_in`/
-    /// `list_rows` seams take the root directly.
+    /// hold at exactly 10, tip it at 11, and then watch the evidence gate
+    /// refuse the publication the citation streak just made eligible. No cwd
+    /// mutation — the `_in`/`list_rows` seams take the root directly.
+    ///
+    /// The two gates are independent and this proves both: eligibility is
+    /// earned by citations, and it buys the right to *ask*, not the right to
+    /// publish. `promote_in` mints `ProvenanceGrade::ModelCritique` as a
+    /// constant — a citation is a model's judgement, and counting citations is
+    /// aggregation, which never promotes a grade — so no streak, and no
+    /// `LocalHuman` typing the command, can carry this path to the
+    /// `EnvironmentObservation` a steering directive costs. The write half is
+    /// unreachable here by construction rather than by configuration, which is
+    /// why this asserts the refusal instead of a written record.
     #[tokio::test]
     async fn promotion_gate_and_rule_write_work_end_to_end() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -1085,30 +1095,37 @@ mod tests {
         cite(&store);
         drop(store);
         assert!(list_rows(root).unwrap()[0].eligible);
-        promote_in(root, &id).unwrap();
 
+        // Eligible, and still refused: the citation streak cleared the
+        // promotion gate and the evidence gate priced the directive above what
+        // a memory can offer. The refusal names both grades, so the person who
+        // typed the command learns what it would take rather than that it
+        // failed.
+        let err = promote_in(root, &id).unwrap_err();
+        assert!(
+            err.contains("steering_directive requires environment_observation"),
+            "the refusal names the grade the artifact costs: {err}"
+        );
+        assert!(
+            err.contains("model_critique"),
+            "the refusal names the grade actually offered: {err}"
+        );
+
+        // Nothing is written on a refusal — the gate is asked before the
+        // record is built, so a refused promotion leaves no file behind and no
+        // directory to hold one.
         let rules_dir = root.join(".stella").join("rules");
         let written: Vec<std::path::PathBuf> = std::fs::read_dir(&rules_dir)
-            .expect("rules dir created")
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .collect();
-        assert_eq!(written.len(), 1, "exactly one record written: {written:?}");
-        let record_path = &written[0];
-        assert_eq!(
-            record_path.extension().and_then(|e| e.to_str()),
-            Some("toml"),
-            "promotion publishes a TOML context record"
+            .map(|entries| entries.filter_map(|e| e.ok().map(|e| e.path())).collect())
+            .unwrap_or_default();
+        assert!(
+            written.is_empty(),
+            "a refused promotion writes no record: {written:?}"
         );
-        let raw = std::fs::read_to_string(record_path).expect("promoted record written");
-        let loaded =
-            stella_records::records::load_context_file(&record_path.display().to_string(), &raw)
-                .expect("the record loader loads the promoted file");
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].record.statement, lesson);
 
-        // Idempotence: re-promotion never clobbers the written record.
-        let err = promote_in(root, &id).unwrap_err();
-        assert!(err.contains("already exists"), "{err}");
+        // Stability: asking twice changes neither the answer nor the tree.
+        let again = promote_in(root, &id).unwrap_err();
+        assert_eq!(again, err, "the refusal is stable across repeated asks");
     }
 
     #[test]
