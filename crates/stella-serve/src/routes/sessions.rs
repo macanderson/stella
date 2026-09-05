@@ -308,6 +308,19 @@ pub(crate) async fn handle_session_turn(
     res.json("200 OK", &body).await
 }
 
+/// Response to `DELETE /v1/sessions/{id}`.
+///
+/// `checkpoint` is present only when the discard failed — see
+/// `handle_session_delete`'s own comment for why `status` never varies. A
+/// caller that never reads `checkpoint` parses the same
+/// `{"status":"deleted"}` every existing integration already expects.
+#[derive(Debug, Serialize)]
+struct SessionDeleted {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkpoint: Option<&'static str>,
+}
+
 /// `GET /v1/sessions/{id}` — history, cost to date, and the live turn if any.
 pub(crate) async fn handle_session_get(
     res: &mut Responder<'_>,
@@ -376,21 +389,29 @@ pub(crate) async fn handle_session_delete(
     // key is the session id, and that id now answers `404` everywhere else.
     // Leaving it would make `DELETE` the one operation that grows the store.
     //
-    // This routes the discard through the same `TurnCheckpoint::sink` the
-    // engine's own persist and discard calls use, instead of dropping the
-    // `Result` on the floor. A failing store now reports itself the same
-    // way any other checkpoint failure does: a `CheckpointFailed` event and
-    // a `checkpoints_failed_total` bump. The response still says
-    // `"deleted"`, because the session itself is gone either way. The
-    // reference id is the turn that was live at delete time, if any —
-    // otherwise the session id, stripped of its prefix.
+    // `status` stays `"deleted"` no matter what happens next. The registry
+    // entry is gone. A `500` here would only make a caller retry a delete
+    // that already worked.
+    //
+    // A failed discard is still reported: one `CheckpointFailed` event, one
+    // `checkpoints_failed_total` bump, same as any other checkpoint
+    // failure. The body also carries a new field on that failure —
+    // `"checkpoint":"retained"` — so a host that just ended a session is
+    // told its checkpoint outlived it, not just that the session is gone.
+    //
+    // The reference id is the live turn at delete time, if any. Otherwise
+    // it is the session id with its prefix stripped.
+    let mut checkpoint_retained = false;
     if let Some(checkpoint) = state.checkpoint_for(id) {
         let reference = live_turn_id
             .as_deref()
             .unwrap_or_else(|| id.strip_prefix("session-").unwrap_or(id));
-        checkpoint
-            .sink(state.observer().clone(), TurnRef::new(reference))
-            .discard();
+        checkpoint_retained = !checkpoint.discard_now(state.observer(), TurnRef::new(reference));
     }
-    res.json("200 OK", br#"{"status":"deleted"}"#).await
+    let body = serde_json::to_vec(&SessionDeleted {
+        status: "deleted",
+        checkpoint: checkpoint_retained.then_some("retained"),
+    })
+    .unwrap_or_default();
+    res.json("200 OK", &body).await
 }

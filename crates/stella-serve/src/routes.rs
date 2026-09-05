@@ -1133,6 +1133,13 @@ pub(crate) async fn handle_checkpoint_get(
 /// deleting what is not there is a `200`, because a host recovering from a
 /// crash cannot be expected to know which of its turns got far enough to write
 /// one.
+///
+/// A store error here is a genuine `500`, unlike `handle_session_delete`'s
+/// `200 {"checkpoint":"retained"}` on the same failure. This route's only
+/// job is the checkpoint, so a failure to remove it *is* the whole outcome.
+/// `handle_session_delete`'s discard is a side effect of ending a session
+/// that is already gone by the time the discard runs; a `500` there would
+/// ask a caller to retry a delete that already happened.
 pub(crate) async fn handle_checkpoint_delete(
     res: &mut Responder<'_>,
     state: &Arc<ServerState>,
