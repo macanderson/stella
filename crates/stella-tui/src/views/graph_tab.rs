@@ -49,6 +49,7 @@ use stella_tui_theme::{glyph, token};
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
 use crate::graph::{FileTouch, GraphSnapshot, SessionTouch};
+use crate::render::columns;
 
 /// The SPEC 4 glyph for a node kind: file, type, fn — anything else a plain
 /// bullet.
@@ -252,11 +253,11 @@ pub fn paint(
     };
     let used: usize = query.iter().map(Span::width).sum();
     let inner_w = bands[0].width.saturating_sub(2) as usize;
-    if used + right.chars().count() < inner_w {
-        query.push(Span::styled(
-            " ".repeat(inner_w - used - right.chars().count()),
-            dim,
-        ));
+    // `right` is a node count, a timing, and static ASCII words joined by
+    // `·`. Every glyph is one column, so `chars().count()` is the width.
+    let right_w = right.chars().count();
+    if used + right_w < inner_w {
+        query.push(Span::styled(" ".repeat(inner_w - used - right_w), dim));
         query.push(Span::styled(right, muted));
     }
     Paragraph::new(Line::from(query))
@@ -364,6 +365,8 @@ fn hot_mark(touch: &SessionTouch, width: usize) -> String {
     // Longest first; `width` is the pane, and a rung is affordable when the
     // label keeps its floor. The `+ 4` matches `label_w`'s own arithmetic
     // below — the glyph cell, its spaces, and the gap before this column.
+    // `rung` is `MARK` (one bullet, ASCII words) plus a turn number.
+    // Every glyph is one column wide, so `chars().count()` is the width.
     for rung in [format!("{MARK} · turn {turn}"), format!("{MARK} {turn}")] {
         if width.saturating_sub(rung.chars().count() + 4) >= MIN_LABEL_COLS {
             return rung;
@@ -410,12 +413,13 @@ fn render_list(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Bu
             Some(touch) => hot_mark(touch, width),
             None => snapshot.degree(i).to_string(),
         };
-        let label_w = width.saturating_sub(right.chars().count() + 4);
-        let mut label = node.label.clone();
-        if label.chars().count() > label_w {
-            label = label.chars().take(label_w.saturating_sub(1)).collect();
-            label.push('…');
-        }
+        // `right` is `hot_mark`'s output or a decimal count — both one
+        // column per glyph. `node.label` is a code-graph symbol or path,
+        // and it can be any language, so its elide and this fill both
+        // spend their budget in display columns.
+        let right_w = columns::width(&right);
+        let label_w = width.saturating_sub(right_w + 4);
+        let label = columns::head(&node.label, label_w);
         let mut spans = vec![
             Span::styled(
                 format!(" {} ", kind_glyph(&node.kind)),
@@ -423,9 +427,9 @@ fn render_list(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Bu
             ),
             Span::styled(label.clone(), Style::new().fg(token::TEXT)),
         ];
-        let used = 3 + label.chars().count();
-        if used + right.chars().count() < width {
-            spans.push(Span::raw(" ".repeat(width - used - right.chars().count())));
+        let used = 3 + columns::width(&label);
+        if used + right_w < width {
+            spans.push(Span::raw(" ".repeat(width - used - right_w)));
         }
         spans.push(Span::styled(
             right,
@@ -573,6 +577,7 @@ mod tests {
     use super::*;
 
     use crate::envelope::{AgentMeta, Inbound};
+    use crate::graph::GraphNode;
     use stella_protocol::{AgentEvent, FileChangeKind};
 
     fn touched(turn: Option<u32>) -> SessionTouch {
@@ -627,6 +632,42 @@ mod tests {
     fn a_touch_with_no_turn_names_none_however_wide_the_pane() {
         assert_eq!(hot_mark(&touched(None), 200), "● hot");
         assert_eq!(hot_mark(&touched(None), 20), "● hot");
+    }
+
+    /// A CJK node label keeps the edge count on screen, not past the pane.
+    ///
+    /// Old code checked `label.chars().count() > label_w`. `label_w` is a
+    /// **column** budget, but the check read it as a char count. A 20-glyph
+    /// CJK label is 40 columns but only 20 chars. Against a 30-column
+    /// `label_w`, `20 > 30` was false, so the old check kept the label
+    /// whole — 10 columns over budget. That is what pushes the edge count
+    /// off screen.
+    #[test]
+    fn a_wide_character_label_keeps_the_edge_count_on_screen() {
+        let snapshot = GraphSnapshot {
+            nodes: vec![GraphNode {
+                label: "圈".repeat(20),
+                kind: "function".into(),
+                location: None,
+                touch: None,
+            }],
+            ..GraphSnapshot::default()
+        };
+        // `inner.width` 35: label_w = 35 - 1 (the "0" edge count) - 4 = 30.
+        let area = Rect::new(0, 0, 37, 5);
+        let mut buf = Buffer::empty(area);
+        render_list(&snapshot, 0, area, &mut buf);
+        let last_col = area.width - 2; // one column inside the right border
+        let row_y = area.y + 1; // one row inside the top border
+        let row: String = (0..area.width)
+            .map(|x| buf.cell((x, row_y)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+        assert_eq!(
+            buf.cell((last_col, row_y)).map(|c| c.symbol()),
+            Some("0"),
+            "the edge count for a node with no edges should still land on \
+             the last content column, not be clipped past the pane:\n{row:?}"
+        );
     }
 
     /// The ledger the tab reads is the lane's own `files` vector, carrying the

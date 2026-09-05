@@ -397,6 +397,9 @@ async fn a_host_can_reclaim_a_resume_point_it_has_recovered() {
 
 /// Ending a conversation takes its resume point with it — otherwise `DELETE`
 /// would be the one operation that grows the store.
+///
+/// This also checks the body, not just the status. A successful discard
+/// keeps the same shape it has always had.
 #[tokio::test]
 async fn deleting_a_session_takes_its_resume_point_with_it() {
     let (addr, store) = start_durable_server().await;
@@ -406,6 +409,10 @@ async fn deleting_a_session_takes_its_resume_point_with_it() {
 
     let (status, body) = delete_checkpoint(addr, &format!("/v1/sessions/{session_id}")).await;
     assert!(status.contains("200"), "delete session: {status} {body}");
+    assert_eq!(
+        body, r#"{"status":"deleted"}"#,
+        "a discard that succeeds must not mention the checkpoint at all"
+    );
     assert_eq!(
         store.get(&key).unwrap(),
         None,
@@ -431,16 +438,13 @@ impl CheckpointStore for BrokenStore {
     }
 }
 
-/// A bare `let _ = store.remove(&key);` drops the error on the floor. The
-/// response still says `{"status":"deleted"}`. Nothing else — not a
-/// `CheckpointFailed` event, not `checkpoints_failed_total` — hears about
-/// it. This test fails on that discarded `Result` by construction: a store
-/// whose `remove` always errs leaves `Capture` holding no `CheckpointFailed`
-/// event, because the error never reached anything that could observe it.
-///
-/// The session itself is gone either way, so the response staying `200` is
-/// correct. What changes is that the failing discard now gets reported the
-/// same way a failing persist already does.
+/// A bare `let _ = store.remove(&key);` drops the error on the floor. This
+/// test guards against that: a discard failure at session-delete time must
+/// show up two ways. One `CheckpointFailed` event, which feeds
+/// `checkpoints_failed_total`. And `"checkpoint":"retained"` in the
+/// response body. `status` stays `"deleted"` either way: the session is
+/// gone, and a `500` would only make a caller retry a delete that already
+/// worked.
 #[tokio::test]
 async fn a_failed_checkpoint_removal_at_session_delete_is_reported() {
     let store: Arc<dyn CheckpointStore> = Arc::new(BrokenStore);
@@ -458,6 +462,11 @@ async fn a_failed_checkpoint_removal_at_session_delete_is_reported() {
     assert!(
         status.contains("200"),
         "the session itself is genuinely gone: {status} {body}"
+    );
+    assert_eq!(
+        body, r#"{"status":"deleted","checkpoint":"retained"}"#,
+        "a caller that cleaned up this session must be told the checkpoint \
+         outlived it, not just that the session is gone"
     );
 
     assert!(

@@ -510,6 +510,13 @@ Conflicts at equal precedence are never silently resolved: the compiled frame
 carries a conflict record and enforcement falls back to the less restrictive
 behavior until an owner resolves it.
 
+Overlap is asked on three things: two records whose path globs reach a common
+path, two records that share a task or keyword trigger, and one record whose
+trigger names a path the other's globs match. A path scope and a trigger scope
+with no such link are left alone. A turn that selects both can be written for
+any glob and any trigger, so reporting the pair would suspend a guard on every
+path-scoped record in the set.
+
 ### Running the checks as a PR check
 
 `stella context validate` computes the findings above locally and exits
