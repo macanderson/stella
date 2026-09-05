@@ -19,10 +19,11 @@
 //! current-thread runtime, and the store row that worker opens) only exists
 //! once the fan-out has genuinely run a task end to end.
 //!
-//! The plan is one **shared-tree** task (`Task::new`'s default, which is what
-//! a positional prompt builds), so the worker's tree is the workspace itself
-//! and the assertions can read one store. The fixture plugin lives in the
-//! invocation workspace's project tier, which is where
+//! Every plan here names `shared_tree`, so the worker's tree is the workspace
+//! itself and the assertions can read one store. It has to be named: a task
+//! gets its own worktree by default (ADR 0027), and the store an isolated
+//! attempt opens is the worktree's, not this one. The fixture plugin lives in
+//! the invocation workspace's project tier, which is where
 //! `fleet_cmd::wrapped::bind_for_attempt` reads the roster from for every
 //! attempt — including an isolated one, whose fresh worktree would not carry
 //! an untracked `.stella/plugins/` at all.
@@ -264,11 +265,19 @@ async fn a_fleet_worker_dispatches_its_attempt_through_the_bound_wrapper() {
     let rounds_log = install_fixture_wrapper(workspace.path());
     let server = mock_worker_provider().await;
 
+    let plan = workspace.path().join("plan.json");
+    std::fs::write(
+        &plan,
+        r#"{"tasks":[{"id":"one","title":"one","prompt":"do the thing, then stop",
+            "isolation":"shared_tree"}]}"#,
+    )
+    .expect("plan file");
+
     run_fleet_ok(
         workspace.path(),
         data.path(),
         &server.uri(),
-        &["do the thing, then stop", "--pipeline", VARIANT],
+        &["--plan", "plan.json", "--pipeline", VARIANT],
     )
     .await;
 
@@ -345,7 +354,7 @@ async fn a_plan_files_per_task_test_command_reaches_the_plugin_as_a_test_plan() 
     std::fs::write(
         &plan,
         r#"{"tasks":[{"id":"witnessed","title":"decide me",
-            "prompt":"do the thing, then stop",
+            "prompt":"do the thing, then stop", "isolation":"shared_tree",
             "test_command":"sh tests/witness_flip.sh"}]}"#,
     )
     .expect("plan file");
@@ -396,7 +405,7 @@ async fn a_refused_test_command_fails_that_tasks_dispatch_by_name() {
     std::fs::write(
         &plan,
         r#"{"tasks":[{"id":"refused","title":"not a runner",
-            "prompt":"do the thing, then stop",
+            "prompt":"do the thing, then stop", "isolation":"shared_tree",
             "test_command":"rm -rf /"}]}"#,
     )
     .expect("plan file");

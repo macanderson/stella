@@ -1,6 +1,6 @@
 //! `stella fleet` — multi-agent fan-out from the CLI, wired through
 //! `stella-fleet`'s one dispatch seam: a DAG of tasks (from positional
-//! prompts or a `--plan` file), a git worktree per isolated task, wave
+//! prompts or a `--plan` file), a git worktree per task, wave
 //! scheduling with bounded concurrency, and every attempt/commit/dollar
 //! stamped into the SQLite ledger (`.stella/private/fleet.db`). A task that declares
 //! `claims` (workspace-relative paths it will touch) holds them as
@@ -31,9 +31,8 @@
 //! roots differ, what an unattended lane is and is not allowed to teach, and
 //! how the extra call stays inside the `--spend-limit` below.
 //!
-//! The
-//! parent `--spend-limit` is enforced twice, per the fleet's contract: each child
-//! runs under its own enforced guard, and the fleet stops launching new
+//! The parent `--spend-limit` is enforced twice, per the fleet's contract: each
+//! child runs under its own enforced guard, and the fleet stops launching new
 //! waves once the metered total crosses the cap (in-flight siblings settle
 //! first, never a mid-tool kill).
 //!
@@ -160,6 +159,7 @@ pub async fn run_fleet(
         &base_sha[..12.min(base_sha.len())],
         max_concurrency.max(1),
     );
+    println!("  {}\n", isolation_notice::line(&plan));
     for task in &plan.tasks {
         let deps = if task.depends_on.is_empty() {
             String::new()
@@ -405,10 +405,9 @@ fn effective_concurrency(flag: Option<usize>, governor: impl FnOnce() -> u32) ->
     }
 }
 
-/// Build the plan: an explicit `--plan` file (JSON or TOML, deserializing
-/// straight into `stella_fleet::Plan`), or one independent shared-tree task
-/// per positional prompt (`Task::new` shares by default; a worktree per task
-/// is a plan-file opt-in).
+/// Build the plan: a `--plan` file (JSON or TOML, deserializing straight into
+/// `stella_fleet::Plan`), or one task per positional prompt. Either way a task
+/// gets its own worktree unless the plan names `shared_tree` (ADR 0027).
 fn load_plan(prompts: &[String], plan_file: Option<&Path>) -> Result<Plan, String> {
     if let Some(path) = plan_file {
         let raw = std::fs::read_to_string(path)
@@ -1492,6 +1491,7 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
 
 mod branch_watch;
 mod durability;
+mod isolation_notice;
 mod wrapped;
 
 /// Where the fleet command's plan-shape belongs in docs/tests: a plan file is

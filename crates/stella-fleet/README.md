@@ -1,8 +1,8 @@
 # stella-fleet
 
 The multi-agent fleet layer: it takes a DAG of tasks, dispatches them wave by
-wave to worker agents running in one shared repository tree (a dedicated git
-worktree only where a plan opts in), and records every attempt, commit and
+wave to worker agents, each in a dedicated git worktree (one shared repository
+tree only where a plan asks for it), and records every attempt, commit and
 dollar in an embedded SQLite ledger. It is the engine behind `stella fleet`;
 the command wiring, the real worker, and the `--spend-limit` split live in
 [`../stella-cli/src/fleet_cmd.rs`](../stella-cli/src/fleet_cmd.rs).
@@ -191,7 +191,7 @@ paths, and expiry is the only difference between them (#4300).
 
 **What `dispatch` does, in order** ([`Fleet::dispatch`](src/fleet.rs)): check the
 aggregate parent budget; take the task's dispatch lease; claim its declared paths; allocate the
-workspace (a worktree only for `Isolation::Isolated`, otherwise the repo root);
+workspace (a worktree, or the repo root for `Isolation::SharedTree`);
 record task + lineage + attempt-open; register the worker's control lines and
 run it; meter the child's cost into the parent `BudgetGuard`; stamp the outcome
 atomically. Metering precedes the stamp so that a ledger write which fails
@@ -203,12 +203,18 @@ statement, because a panicking worker or a dropped dispatch future skips the
 statement — and `file_locks` rows are durable, so a missed release outlives the
 process.
 
-**Share by default, isolate on purpose.** `Isolation::SharedTree` is the
-default: every worker runs in the one repository root, coordinated by
+**Isolate by default, share on purpose.** `Isolation::Isolated` is the
+default (ADR 0027): every worker gets a `git worktree` of its own, so no two
+can revert each other's uncommitted files. It costs a cold build cache per
+tree and defers conflicts to integration time. `Isolation::SharedTree` is the
+named opt-in — every worker in the one repository root, coordinated by
 cooperative claims, so conflicts surface at write time with the rival named and
-the build cache stays warm. `Isolation::Isolated` is the explicit opt-in for
-genuinely divergent work (best-of-N, checkout-state mutation) and costs a cold
-build cache plus conflicts deferred to integration time.
+the cache stays warm.
+
+A plan that declares `claims` and names no isolation gets worktrees, where
+the claims coordinate nothing anybody shares. Claims are the shared root's
+tool, so such a plan wants `isolation = "shared_tree"` beside them.
+`stella fleet` prints which mode a run uses before it dispatches anything.
 
 **Long waits are capped, not global.** `Monitor::watch_ci`
 ([`Monitor::watch_ci`](src/monitor.rs)) polls CI and extends the wait *only* on
@@ -216,6 +222,43 @@ fresh evidence (a changed run-set fingerprint, or a job actively in progress).
 The arithmetic is a pure function, `decide` ([`decide`](src/monitor.rs)),
 so the 2h cumulative cap, the 20m stall window and the 10m startup grace are
 table-tested with an injected `Clock` instead of a real wait (L-E4).
+
+## Session isolation — what a dispatch grants, and what it does not
+
+Two agent sessions in one working tree are one branch switch away from losing
+each other's work. The switch puts the tracked files back and leaves the
+untracked ones alone. What is left is a tree holding a new module that nothing
+declares, and no error anywhere saying why.
+
+Isolation belongs to whoever hands out the working directory, because a session
+cannot take a tree it was not given. Two dispatchers here do hand one out:
+
+- A fleet task gets a `git worktree` of its own, cut by
+  `WorktreeManager::create` before its worker starts. Nothing a sibling does to
+  its own checkout can reach it. A plan gives that up by naming
+  `isolation = "shared_tree"`.
+- Each unit of `stella self-driving work` gets one too, through the same
+  manager in a namespace of its own
+  (`crates/stella-cli/src/self_driving_cmd/work.rs`).
+
+`scripts/test-session-isolation.sh` is the witness. It dispatches two workers
+against a throwaway repository through the real fleet path, then runs the loss
+against the trees the dispatch handed out: an uncommitted edit in one tree, a
+forced branch switch in the other, and a look at whether the edit is still
+there. Give both workers one tree and the suite goes red. Its first case names
+no isolation at all, so it is the default that answers.
+
+Two gaps:
+
+- **A shared-tree plan still shares.** Path claims stop two workers writing one
+  file. They say nothing about `git checkout`, which rewrites every tracked
+  file at once. A plan that names `isolation = "shared_tree"` is accepting
+  that.
+- **An outside harness has to isolate at launch.** Nothing here decides where a
+  person, or another tool, starts `stella`. An interactive deck that finds a
+  live peer in its checkout prints one line naming it and the branch it holds
+  (`crates/stella-cli/src/command_deck/shared_checkout.rs`). It never refuses,
+  because a session told to stop has nowhere to go.
 
 ## Gotchas
 

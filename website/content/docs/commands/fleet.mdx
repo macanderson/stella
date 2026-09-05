@@ -1,9 +1,9 @@
 ---
 title: stella fleet
-description: Fan a batch of tasks out to a fleet of worker agents in one shared tree, coordinated by cooperative file claims.
+description: Fan a batch of tasks out to a fleet of worker agents, each in its own git worktree.
 ---
 
-Run many tasks in parallel in **one shared working tree**, coordinated by cooperative file claims and scheduled in dependency-ordered waves. A task only gets its own git worktree when a plan file opts it in with `isolation = "isolated"`. Every attempt, commit, and dollar spent is recorded in `.stella/private/fleet.db`, and any isolated worktrees and their `fleet/<slug>-<hash>` branches are left in place for you to review.
+Run many tasks in parallel, **each in its own git worktree**, scheduled in dependency-ordered waves. A task runs in your checkout only when a plan file asks for it with `isolation = "shared_tree"`, where cooperative file claims coordinate the writers instead. Every attempt, commit, and dollar spent is recorded in `.stella/private/fleet.db`, and the worker worktrees and their `fleet/<slug>-<hash>` branches are left in place for you to review.
 
 ## Synopsis
 
@@ -19,25 +19,25 @@ A prompt whose **first word** exactly matches a subcommand name (`clean`, `claim
 
 ## What it does
 
-Each task prompt becomes an independent task running **in the shared repository root**. Workers coordinate through cooperative file claims: paths declared upfront in a plan (`claims`), plus a claim taken the first time a tool writes to a file. A conflict surfaces in under a second at write time, naming the other task involved, and commits interleave on one branch with no merge-back needed. A task a plan file opts into `isolation = "isolated"` gets a dedicated git worktree instead, under `.stella/worktrees/<slug>`. It branches from the current `HEAD` (or `--base-ref`), pinned to a commit at the start, onto a `fleet/<slug>-<hash>` branch (the hash suffix keeps re-runs from colliding with branches you kept).
+Each task prompt becomes an independent task in **a dedicated git worktree** under `.stella/worktrees/<slug>`. It branches from the current `HEAD` (or `--base-ref`), pinned to a commit at the start, onto a `fleet/<slug>-<hash>` branch (the hash suffix keeps re-runs from colliding with branches you kept). A task a plan file opts into `isolation = "shared_tree"` runs in the repository root instead, where workers coordinate through cooperative file claims: paths declared upfront in a plan (`claims`), plus a claim taken the first time a tool writes to a file. A conflict surfaces in under a second at write time, naming the other task involved, and commits interleave on one branch with no merge-back needed.
 
 Tasks run in dependency-ordered waves, up to `--max-concurrency` at once within a wave. Each worker is a full engine run through the plain step loop, or, with `--pipeline <variant>`, through an installed wrapper plugin bound once per worker attempt. The plugin comes from the workspace you invoked `stella fleet` in, and is granted the tree the attempt actually runs in. Every attempt's execution row records which variant it used. Unlike [`stella goal`](/docs/commands/goal), a fleet run applies no separate approval step of its own: a fleet attempt's result is its turn's own outcome, so only a wrapper's own hold logic can pause a round.
 
 Progress, attempts, commits, and cost are saved to `.stella/private/fleet.db` and appear on the [Observatory dashboard](/docs/telemetry/dashboard)'s Fleet runs card.
 
-Isolated worktrees and fleet branches are **not** cleaned up automatically. They stay on disk so you can inspect, test, and merge each result yourself. Reclaim the finished ones with [`stella fleet clean`](#stella-fleet-clean) once you're done reviewing. A failed task is never retried automatically, and any tasks that depend on it end the run marked `skipped`.
+Worker worktrees and fleet branches are **not** cleaned up automatically. They stay on disk so you can inspect, test, and merge each result yourself. Reclaim the finished ones with [`stella fleet clean`](#stella-fleet-clean) once you're done reviewing. A failed task is never retried automatically, and any tasks that depend on it end the run marked `skipped`.
 
 **A task can only be run by one session at a time.** Before starting a worker, the fleet takes a *dispatch claim* on the task: a short-lived lease in `.stella/private/fleet.db`, held under the run's id. If a second `stella fleet` in the same workspace reaches the same task while the first is still working on it, that task is reported as a dispatch failure naming the run that holds it, instead of running twice. The claim is a **lease, not a lock**. A live run renews it while its worker runs and releases it the instant the attempt finishes. A run that gets killed outright loses its claim automatically once the lease runs out, after 15 minutes. Nothing needs to be cleaned up by hand, and there's no override flag.
 
 <Callout type="info">
-For anything beyond a handful of independent prompts, use a plan file (`--plan`). It lets you declare a task `id`, `title`, `prompt`, `depends_on` (to order the waves), `isolation` (`shared_tree`, the default, runs in the repo root under the claim rules above; `isolated` gives a task its own worktree and branch, for work that genuinely diverges, like best-of-N attempts on the same files), `claims` (file paths held as cooperative locks while a task runs, so two tasks never edit the same file at once), and `test_command` (the check that decides that task under `--pipeline <variant>`). A plan file is the only way to declare a test command: a plain prompt on the command line builds a task with none, so a wrapper plugin has nothing to check against it. See [Agent Fleets](/docs/agent-fleets) for the full plan format.
+For anything beyond a handful of independent prompts, use a plan file (`--plan`). It lets you declare a task `id`, `title`, `prompt`, `depends_on` (to order the waves), `isolation` (`isolated`, the default, gives a task its own worktree and branch; `shared_tree` runs it in the repo root under the claim rules above, for tasks that touch different files and never switch branches), `claims` (file paths held as cooperative locks while a task runs, so two tasks never edit the same file at once), and `test_command` (the check that decides that task under `--pipeline <variant>`). A plan file is the only way to declare a test command: a plain prompt on the command line builds a task with none, so a wrapper plugin has nothing to check against it. See [Agent Fleets](/docs/agent-fleets) for the full plan format.
 </Callout>
 
 ## Flags
 
 <CardGrid size="md">
   <OptionCard name="<task>...">
-    One or more task prompts, each an independent shared-tree task. Required unless
+    One or more task prompts, each an independent task in its own worktree. Required unless
     `--plan` is given.
   </OptionCard>
   <OptionCard name="--plan <FILE>">
@@ -52,7 +52,7 @@ For anything beyond a handful of independent prompts, use a plan file (`--plan`)
     choosing a width.
   </OptionCard>
   <OptionCard name="--base-ref <ref>" defaultValue="current HEAD">
-    Git ref the isolated worktrees branch from. The default is pinned to a commit at the
+    Git ref the worker worktrees branch from. The default is pinned to a commit at the
     start, so commits made mid-run can't move the base.
   </OptionCard>
   <OptionCard name="--watch">
@@ -96,7 +96,7 @@ stella --spend-limit 5 fleet --plan release-prep.toml
 
 ## stella fleet clean
 
-Isolated worktrees and their `fleet/*` branches build up over time: every isolated task in every run leaves behind a directory under `.stella/worktrees/` and a branch, and nothing removes them on its own. `stella fleet clean` is the explicit way to remove them. No part of a fan-out calls it for you.
+Worker worktrees and their `fleet/*` branches build up over time: every isolated task in every run leaves behind a directory under `.stella/worktrees/` and a branch, and nothing removes them on its own. `stella fleet clean` is the explicit way to remove them. No part of a fan-out calls it for you.
 
 A worktree is reclaimed only when **all** of these are true, and anything kept is printed along with the reason:
 
