@@ -703,8 +703,17 @@ async fn backfill_vectors_quietly(
 
     // Settled, whatever happened — including a failure. A gate that outlives
     // the pass behind it is a wedge: a workspace whose embedder is down must
-    // still take prompts (`search_cmd::readiness`).
-    readiness(settled_readiness(root, embedder.as_ref()));
+    // still take prompts (`search_cmd::readiness`). The report opens the
+    // graph store. That is SQLite, so it runs on the blocking pool and not
+    // on this task's worker. A report that could not run settles as unknown,
+    // and unknown holds nothing. That is how `measure` fails too.
+    let fingerprint = stella_embed::Embedder::fingerprint(embedder.as_ref()).id();
+    let report_root = root.to_path_buf();
+    let measured =
+        tokio::task::spawn_blocking(move || settled_readiness(&report_root, &fingerprint))
+            .await
+            .unwrap_or_else(|_| IndexReadiness::unknown());
+    readiness(measured);
 }
 
 /// The workspace's index coverage, marked settled — what the prompt gate
@@ -714,18 +723,14 @@ async fn backfill_vectors_quietly(
 /// have failed before it opened one at all, and this report is owed either
 /// way. An unopenable graph reports [`IndexReadiness::unknown`], which holds
 /// nothing — the direction `readiness::measure` argues for.
-fn settled_readiness(
-    root: &std::path::Path,
-    embedder: &dyn stella_embed::Embedder,
-) -> IndexReadiness {
+fn settled_readiness(root: &std::path::Path, fingerprint: &str) -> IndexReadiness {
     let Ok(db_path) = stella_store::workspace_private_sqlite_path(root, "codegraph.db") else {
         return IndexReadiness::unknown();
     };
     let Ok(graph) = stella_graph::CodeGraph::open(root, &db_path) else {
         return IndexReadiness::unknown();
     };
-    let measured =
-        crate::search_cmd::readiness::measure(&graph, &embedder.fingerprint().id(), true);
+    let measured = crate::search_cmd::readiness::measure(&graph, fingerprint, true);
     graph.shutdown();
     measured
 }
