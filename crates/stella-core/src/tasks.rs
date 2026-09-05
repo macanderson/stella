@@ -95,7 +95,7 @@ pub struct SpawnRequest {
 /// A `task_assign` worker is the other shape — its own session, its own board,
 /// and that board is empty, so a read of it answers `None`. Its host attaches
 /// a **constant** source instead, naming the one task the lane was spawned to
-/// work (`stella-cli`'s `subsession::lane_events`, #5158). Constant rather
+/// work (`stella-cli`'s `subsession::lane_events`). Constant rather
 /// than a read for the same reason the lead's is a read: each names the
 /// authority that actually knows, and the worker's own board is not it — board
 /// ids are per-session ordinals, so its `"1"` is a different task from the
