@@ -587,6 +587,29 @@ impl UsageStore {
         Ok(out)
     }
 
+    /// Project ids the data tables carry with no `projects` row: telemetry
+    /// replicated under an id nothing ever registered, or rows a rekey left
+    /// behind. An orphan has no root to check, so the CLI's gone-checkout scan
+    /// can never name it. It is GC-eligible on its own, and [`Self::prune`]'s
+    /// org-row guard still holds for it.
+    pub fn orphan_project_ids(&self) -> Result<Vec<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT project_id FROM telemetry \
+             WHERE project_id NOT IN (SELECT project_id FROM projects) \
+             UNION \
+             SELECT project_id FROM execution_rollup \
+             WHERE project_id NOT IN (SELECT project_id FROM projects) \
+             ORDER BY 1",
+        )?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// Bound the hub's growth per a [`PrunePolicy`] — the engine behind
     /// `stella usage prune`. Runs, in order: project GC → age cutoff → row
     /// ceiling, all in one transaction, then (optionally) `VACUUM`.
@@ -1470,6 +1493,49 @@ mod tests {
         assert_eq!(report.aged_out, 2, "acked org + NULL-org rows both drop");
         assert_eq!(report.protected_unacked, 0);
         assert_eq!(telemetry_rows(&hub), 0);
+    }
+
+    /// **The witness for orphan GC.** `replicate_telemetry` writes rows under
+    /// a project id; `sync_execution` is what registers the project. Rows that
+    /// only ever came through the first path have no `projects` row, so the
+    /// CLI's gone-checkout scan never names them. `orphan_project_ids` does,
+    /// and `prune` clears them under the same org-row guard: a NULL-org orphan
+    /// goes, an org-scoped one stays for the drain.
+    #[test]
+    fn telemetry_with_no_registered_project_is_an_orphan_the_prune_reaches() {
+        let hub = UsageStore::in_memory().unwrap();
+        let mut ghost = scope(None, None);
+        ghost.project_id = "proj_ghost".into();
+        hub.replicate_telemetry(&ghost, &[source_row(1, 0.01), source_row(2, 0.01)])
+            .unwrap();
+        let mut acme = scope(Some("acme"), Some("ws-1"));
+        acme.project_id = "proj_acme_ghost".into();
+        hub.replicate_telemetry(&acme, &[source_row(1, 0.05)])
+            .unwrap();
+        // A registered project is never an orphan.
+        hub.sync_execution(&rollup(1, vec![])).unwrap();
+
+        let orphans = hub.orphan_project_ids().unwrap();
+        assert_eq!(
+            orphans,
+            vec!["proj_acme_ghost".to_string(), "proj_ghost".to_string()]
+        );
+
+        let report = hub
+            .prune(&PrunePolicy {
+                gc_project_ids: orphans,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            report.gc_projects, 1,
+            "the org-scoped orphan is kept for the drain"
+        );
+        assert_eq!(report.gc_rows, 2);
+        assert_eq!(
+            hub.orphan_project_ids().unwrap(),
+            vec!["proj_acme_ghost".to_string()]
+        );
     }
 
     #[test]

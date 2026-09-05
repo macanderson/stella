@@ -13,7 +13,7 @@
 //! keep its token) and mints the durable, committable per-workspace
 //! `workspace_id`. Until registration, hub rows carry NULL org/workspace ids.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use colored::Colorize as _;
@@ -550,12 +550,48 @@ pub(crate) fn parse_age_window(s: &str) -> Result<String, String> {
     Ok(modifier)
 }
 
-/// Whether a project's checkout looks *deleted* (GC-eligible) rather than merely
-/// unreachable. The root being gone while its parent still exists is a deletion;
-/// a missing parent usually means the whole volume/mount is absent (an unplugged
-/// drive, a down network share), which must not trigger GC of local history.
+/// Whether a project's checkout is deleted, rather than on a volume that is
+/// not mounted right now.
+///
+/// A root that is gone while its parent still stands was deleted. A root
+/// whose parent is gone too is ambiguous on its own: an unplugged drive or a
+/// down share looks the same as a whole tree removed at once. The tie is
+/// broken by [`mounted_anchors`]: the home directory and the OS temp
+/// directory exist for this process to be running at all, so anything
+/// missing beneath either was deleted, never unmounted. A bench harness
+/// leaves thousands of trial workspaces under the temp directory and removes
+/// each series whole, which is the shape the parent rule alone could not
+/// reach: on 2026-09-05 one hub held 2,311 such projects it would never GC.
 fn checkout_is_deleted(root: &Path) -> bool {
-    !root.exists() && root.parent().is_some_and(Path::exists)
+    checkout_is_deleted_under(root, &mounted_anchors())
+}
+
+/// [`checkout_is_deleted`] against an explicit anchor list, so the rule can
+/// be tested with directories a test owns.
+fn checkout_is_deleted_under(root: &Path, anchors: &[PathBuf]) -> bool {
+    if root.exists() {
+        return false;
+    }
+    if root.parent().is_some_and(Path::exists) {
+        return true;
+    }
+    anchors
+        .iter()
+        .any(|anchor| anchor.exists() && root.starts_with(anchor))
+}
+
+/// Directories that are present whenever this process runs. Each is listed
+/// as spelled and as canonicalized, because a hub records the canonical
+/// path (`/private/var/...` on macOS) while `temp_dir` reports the symlink.
+fn mounted_anchors() -> Vec<PathBuf> {
+    let mut anchors = vec![std::env::temp_dir()];
+    anchors.extend(stella_home::home_dir());
+    let canonical: Vec<PathBuf> = anchors
+        .iter()
+        .filter_map(|anchor| anchor.canonicalize().ok())
+        .collect();
+    anchors.extend(canonical);
+    anchors
 }
 
 fn prune(
@@ -580,14 +616,21 @@ fn prune(
     let hub = open_hub()?;
 
     // The store enforces the "unregistered" invariant; the CLI owns the
-    // filesystem check for "the checkout is gone".
+    // filesystem check for "the checkout is gone". An id with no project row
+    // has no checkout to check and joins the set as it is.
     let gc_project_ids = if gc_deleted {
-        hub.registered_projects()
+        let mut ids: Vec<String> = hub
+            .registered_projects()
             .map_err(|e| format!("cannot list hub projects: {e}"))?
             .into_iter()
             .filter(|(_, _, root)| checkout_is_deleted(Path::new(root)))
             .map(|(id, _, _)| id)
-            .collect()
+            .collect();
+        ids.extend(
+            hub.orphan_project_ids()
+                .map_err(|e| format!("cannot list orphan hub rows: {e}"))?,
+        );
+        ids
     } else {
         Vec::new()
     };
@@ -879,7 +922,9 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{checkout_is_deleted, parse_age_window, register_transition};
+    use std::path::PathBuf;
+
+    use super::{checkout_is_deleted_under, parse_age_window, register_transition};
 
     /// The org-change ruling (#465): same org is idempotent, a different org
     /// is refused until an explicit deregister, unregistered registers freely.
@@ -924,18 +969,44 @@ mod tests {
         assert!(parse_age_window("0d").is_err(), "zero window is a footgun");
     }
 
+    /// With no anchor to consult, the parent rule stands alone: a gone root
+    /// under a standing parent is deleted, and a root whose parent is gone too
+    /// is unreachable, which must not GC local history.
     #[test]
     fn checkout_is_deleted_distinguishes_gone_from_unreachable() {
         let tmp = tempfile::tempdir().unwrap();
         let present = tmp.path().join("repo");
         std::fs::create_dir(&present).unwrap();
-        // Parent (tempdir) exists, child gone → a real deletion.
-        assert!(checkout_is_deleted(&present.join("missing-child")));
-        // The path itself exists → not deleted.
-        assert!(!checkout_is_deleted(&present));
-        // Parent also absent (whole volume/mount gone) → NOT a deletion.
-        assert!(!checkout_is_deleted(
-            &present.join("gone-parent").join("repo")
+        let no_anchors: Vec<PathBuf> = Vec::new();
+        assert!(checkout_is_deleted_under(
+            &present.join("missing-child"),
+            &no_anchors
         ));
+        assert!(!checkout_is_deleted_under(&present, &no_anchors));
+        assert!(!checkout_is_deleted_under(
+            &present.join("gone-parent").join("repo"),
+            &no_anchors
+        ));
+    }
+
+    /// **The witness for the anchors.** A bench series removed whole leaves a
+    /// root with no parent. Beneath a directory this process can see, that is
+    /// a deletion, not a missing volume. An anchor that is itself gone says
+    /// nothing, and a root outside every anchor keeps the unreachable ruling.
+    #[test]
+    fn a_tree_removed_whole_under_a_standing_anchor_is_deleted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("series-005").join("work").join("trial-3");
+        assert!(checkout_is_deleted_under(
+            &root,
+            &[tmp.path().to_path_buf()]
+        ));
+        assert!(!checkout_is_deleted_under(
+            &root,
+            &[tmp.path().join("nowhere")]
+        ));
+        let other = tmp.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        assert!(!checkout_is_deleted_under(&root, &[other]));
     }
 }
