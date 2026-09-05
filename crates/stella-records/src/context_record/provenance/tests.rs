@@ -205,7 +205,6 @@ fn three_restatements_inside_one_task_do_not_lift() {
         .expect("constructor-built observations hash clean")
         .expect("a non-empty pool");
 
-    assert_eq!(pool.distinct_tasks(), 1);
     assert_eq!(pool.grade(), ProvenanceGrade::ModelCritique);
 }
 
@@ -222,7 +221,6 @@ fn the_lift_never_weakens_a_pool_of_measurements() {
         .expect("constructor-built observations hash clean")
         .expect("a non-empty pool");
 
-    assert_eq!(pool.distinct_tasks(), 3);
     assert_eq!(pool.grade(), ProvenanceGrade::EnvironmentObservation);
 }
 

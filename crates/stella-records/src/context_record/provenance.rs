@@ -112,7 +112,6 @@ pub struct EvidenceIntegrityError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidencePool {
     grade: ProvenanceGrade,
-    distinct_tasks: u32,
     observation_ids: Vec<String>,
 }
 
@@ -157,8 +156,8 @@ impl EvidencePool {
     ) -> Result<Option<Self>, EvidenceIntegrityError> {
         let mut grade: Option<ProvenanceGrade> = None;
         let mut observation_ids = Vec::new();
-        // Borrowed rather than cloned: the set is dropped at the end of the
-        // fold, and only its size outlives it.
+        // Borrowed rather than cloned, and never stored: only the size
+        // outlives the fold, and only to decide the lift.
         let mut tasks: BTreeSet<&str> = BTreeSet::new();
         for observation in observations {
             let recomputed = record_hash(observation).map_err(|err| EvidenceIntegrityError {
@@ -188,7 +187,6 @@ impl EvidencePool {
             } else {
                 folded
             },
-            distinct_tasks,
             observation_ids,
         }))
     }
@@ -197,16 +195,6 @@ impl EvidencePool {
     #[must_use]
     pub fn grade(&self) -> ProvenanceGrade {
         self.grade
-    }
-
-    /// How many distinct `task_id`s the observations behind this pool span.
-    ///
-    /// The number the lift reads, exposed so a caller reporting on a pool
-    /// quotes the count the grade was actually derived from rather than the
-    /// one a [`crate::context_record::ProposalScore`] happens to carry.
-    #[must_use]
-    pub fn distinct_tasks(&self) -> u32 {
-        self.distinct_tasks
     }
 
     /// The `record_id`s of the observations behind the pool, in the order they
