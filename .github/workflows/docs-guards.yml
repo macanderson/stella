@@ -89,6 +89,14 @@ name: docs-guards
 #     PR that edits only it is the diff ci.yml's Rust job is skipped for. The
 #     in-repo reference is generated and could not drift; the website copy is
 #     hand-picked prose and could, which is the whole gap this closes.
+# 12. priority-scheme (scripts/check-priority-scheme.py): the issue priority
+#     scheme is stated once, in SCR-005, and the regex in triage-guard.yml
+#     covers exactly the levels it names (#5216). Four documents each named a
+#     scheme of their own and no two agreed. The regex is code, so the gap had
+#     teeth: an issue labelled `P4` read as triaged to a person and as
+#     unprioritised to the guard. It runs in ci.yml too; it runs here because
+#     the home and every former copy are markdown, which is the diff ci.yml's
+#     Rust job is skipped for.
 #
 # Rust sources are in the path filter because the first three read them: a
 # citation added to a .rs comment is exactly how one goes stale, and the
@@ -107,6 +115,8 @@ on:
       - "scripts/check-brand-case.sh"
       - "scripts/check-gate-parity.sh"
       - "scripts/check-god-files.sh"
+      - "scripts/check-priority-scheme.py"
+      - ".github/workflows/triage-guard.yml"
       - "scripts/check-design-refs.sh"
       - "scripts/check-website-inputs.sh"
       - "scripts/website-rust-inputs.txt"
@@ -140,6 +150,8 @@ on:
       - "scripts/check-brand-case.sh"
       - "scripts/check-gate-parity.sh"
       - "scripts/check-god-files.sh"
+      - "scripts/check-priority-scheme.py"
+      - ".github/workflows/triage-guard.yml"
       - "scripts/check-design-refs.sh"
       - "scripts/check-website-inputs.sh"
       - "scripts/website-rust-inputs.txt"
@@ -269,6 +281,14 @@ jobs:
       - name: the god-file prose matches the baseline
         if: ${{ !cancelled() }}
         run: bash scripts/check-god-files.sh
+
+      # The docs-only direction again: the scheme's home is a markdown
+      # document, and the four sources that used to restate it were markdown
+      # too, so the diff that reopens this is one ci.yml's Rust job skips
+      # (#5216).
+      - name: the priority scheme is stated once
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-priority-scheme.py
 
       # The direction that bites is the docs-only one: a document moved into
       # the scratchpad turns every Rust comment citing it into a violation,

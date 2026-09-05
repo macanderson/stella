@@ -104,7 +104,7 @@ Do all of this before touching a single issue.
    env -u CLICOLOR_FORCE gh label list -R "$REPO" --limit 300 --json name,description > "$WORK/labels.json"
    ```
    Classify what exists into five buckets and record the result:
-   - **priority** — `P0`…`P4` (some repos stop at `P3`)
+   - **priority** — the `P` levels SCR-005 names.
    - **type** — `bug`, `feature`, `chore`, `epic`, `documentation`, `duplicate`,
      `invalid`, `wontfix`, `tech-debt`
    - **area** — `area:*` (and `@package/*` / `@app/*` where the repo uses them)

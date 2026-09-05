@@ -374,6 +374,16 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-gate-parity.sh
 
+      # Also toolchain-free. Four documents and one workflow regex each named
+      # a priority scheme, and no two agreed; the regex is code, so a `P4`
+      # issue read as triaged to a person and as unprioritised to the guard
+      # (#5216). SCR-005 is the home now, the regex is the one derived copy,
+      # and this holds it there. It runs in docs-guards.yml too, because a
+      # diff confined to prose is exactly the diff this job is skipped for.
+      - name: the priority scheme is stated once
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-priority-scheme.py
+
       # The five below were in `GATE_GUARDS_FAST` and in no workflow at all
       # (#4089). `gate-parity` above holds AGENTS.md and CONTRIBUTING.md to
       # `GATE_STEPS`, which is a question about the prose — it says nothing
