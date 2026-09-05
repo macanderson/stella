@@ -9,8 +9,10 @@
 //! - **TOOLS** ([`crate::views::tools`]): which of this session's tools are
 //!   switched off.
 //! - **SEATS** ([`crate::views::seats`]): which model each role runs on. The
-//!   role this session resolved, then one row per plugin-declared role. It
-//!   draws them; nothing writes them yet.
+//!   role this session resolved, then one row per plugin-declared role.
+//!   Editing a plugin's row writes `agent_engine_config.seat_models`, through
+//!   the AGENTS pane's own save path. The session's own row is read-only —
+//!   edit that one on the AGENTS pane instead.
 //! - **one pane per installed plugin** that declares
 //!   `PanelSurface::Settings` (SPEC 12.2), drawn from the last frame that
 //!   plugin sent and labelled with the name its installer consented to.
@@ -190,13 +192,12 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     match ui.settings_pane {
         SettingsPane::Agents => crate::views::engine_panel::render(ui, body, buf),
         SettingsPane::Tools => crate::views::tools::render_panel(ui, body, buf),
-        // Through the pane's own fold, never the raw seat slice: the list is
-        // the session's resolved roles followed by the plugin-declared ones,
-        // and handing over `state.seats` alone drops the first half.
-        SettingsPane::Seats => {
-            let rows = ui.engine.state.as_ref().map(crate::views::seats::rows);
-            crate::views::seats::render(rows.as_deref(), body, buf);
-        }
+        // `ui` itself, not just the fold: the pane is modal now, like AGENTS
+        // and TOOLS, so it also draws the focus/selection/picker state on
+        // `ui.engine`. It still folds the rows itself (the session's
+        // resolved roles, then the plugin-declared ones), never the raw
+        // `state.seats` slice alone.
+        SettingsPane::Seats => crate::views::seats::render(ui, body, buf),
         // The plugin's own rectangle, drawn from the last frame it sent. The
         // chrome round it is the host's (`crate::plugin_panel::chrome`), so a
         // pane a plugin fills is still labelled by the name its installer read.
@@ -240,17 +241,16 @@ pub fn handle_key(
             DeckAction::Handled
         }),
         // `e` edits what you are looking at — the one key every pane shares,
-        // rather than a per-pane letter to remember. SEATS has no editor yet
-        // (`crate::views::seats`), so it claims the key and does nothing
-        // rather than silently focusing a different pane's editor.
+        // rather than a per-pane letter to remember.
         KeyCode::Char('e') => Some(match ui.settings_pane {
             SettingsPane::Agents => crate::views::engine_panel::focus_panel(ui),
             SettingsPane::Tools => crate::views::tools::focus_panel(ui),
+            SettingsPane::Seats => crate::views::seats::focus_panel(ui),
             // A plugin's pane has no editor of Stella's to focus, and the
             // keyboard is not the deck's to hand over: SPEC 12 leases a panel
             // a rectangle, never a keystroke. It claims the key so `e` never
             // opens a different pane's editor from here.
-            SettingsPane::Seats | SettingsPane::Plugin(_) => DeckAction::Handled,
+            SettingsPane::Plugin(_) => DeckAction::Handled,
         }),
         KeyCode::Char('t') => Some(crate::views::tools::focus_panel(ui)),
         _ => None,
