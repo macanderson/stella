@@ -99,7 +99,7 @@ fn tier(provider: &str) -> ModelRef {
 /// Two configured providers, `primary` preferred — the router every test
 /// resolves against while turns feed its breaker.
 fn router() -> Router {
-    let profile = |id: &str| ProviderProfile::new(id, tier(id), tier(id), tier(id));
+    let profile = |id: &str| ProviderProfile::new(id, tier(id), tier(id));
     Router::new(
         RoleTable::new(),
         vec![profile("primary"), profile("standby")],
