@@ -251,6 +251,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-verified.sh
 
+      - name: the main-tip dispatcher, and that it starts nothing twice
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-dispatch-main-verification.sh
+
       - name: the session-scratch boundary
         if: ${{ !cancelled() }}
         run: ./scripts/test-no-scratch.sh
