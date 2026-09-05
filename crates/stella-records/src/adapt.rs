@@ -4,7 +4,7 @@
 //! What the record channel picked, as steering candidates.
 //!
 //! An adapter maps what the channel already chose. It does not choose, rank,
-//! or draw again. Each cost is read off the bytes [`records::render`] will
+//! or draw again. Each cost is read off the bytes [`crate::records::render`] will
 //! emit, through that same call. So the cost the budget sees and the bytes
 //! the prompt pays for cannot drift.
 //!
