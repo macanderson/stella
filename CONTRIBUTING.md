@@ -87,6 +87,7 @@ python3 ./scripts/check-adr-numbering.py
 ./scripts/check-file-size.sh
 ./scripts/check-god-files.sh
 ./scripts/check-gate-parity.sh
+./scripts/check-schema-tier-parity.sh
 python3 ./scripts/check-guard-trigger-coverage.py
 python3 ./scripts/check-priority-scheme.py
 ./scripts/check-left-behind.sh
