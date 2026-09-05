@@ -158,16 +158,28 @@ pub(super) async fn run_lead_turn(
             // The scoped skill's `effort:` override, for this turn.
             engine_config.effort = Some(effort);
         }
-        let mut engine = Engine::with_sleeper(provider, &scoped_tap, engine_config, &TokioSleeper)
-            .with_calibration(calibration)
-            .with_steering(steering.as_ref())
-            .with_gate(pause.turn_gate());
-        if let Some(hooks) = &cfg.hooks {
-            engine = engine.with_hooks(hooks, &hook_runner);
-        }
-        if let Some(requery) = &requery {
-            engine = engine.with_requery(requery); // #3243 Phase 3
-        }
+        // Assembled rather than built up by optional builders (#6056): this
+        // turn is the `Lead` lane and now says so, and every seam it does not
+        // take is a written `None` in `lane_capabilities::lead` rather than
+        // whatever the builder chain happened not to attach. The conditional
+        // `with_hooks` / `with_requery` calls this replaces bound exactly the
+        // same two seams, which is why both arrive as `Option`s.
+        let engine = Engine::assemble(
+            provider,
+            &scoped_tap,
+            engine_config,
+            &TokioSleeper,
+            crate::lane_capabilities::lead(
+                cfg.hooks.as_ref(),
+                &hook_runner,
+                calibration,
+                pause.turn_gate(),
+                &**steering,
+                requery
+                    .as_ref()
+                    .map(|requery| requery as &dyn stella_core::ports::SteeringRequery),
+            ),
+        );
         let outcome = engine.run_turn_with_sender(messages, budget, &events).await;
         // The turn's plan graph, mirrored beside the board it was built from
         // (#5037): every revision, the `[:NEXT]` chain each of them authored,
