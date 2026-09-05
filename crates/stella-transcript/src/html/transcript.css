@@ -88,7 +88,7 @@
   --line2: #35353d;
   --ink: #e8e8ec;
   --dim: #a9aab5;
-  --faint: #777782;
+  --faint: #7c7c87;
   /* Categorical — see the header note; deliberately not instrument values,
      and deliberately outside the parity matrix. */
   --gold: #efc53f;
@@ -169,8 +169,8 @@
     --line: #e9e9ee;
     --line2: #d0d0d8;
     --ink: #0a0a0c;
-    --dim: #4b4b56;
-    --faint: #777782;
+    --dim: #5f5f6a;
+    --faint: #7c7c87;
     --green: #006933;
     --red: #96213c;
     --amber: #8a3f00;
