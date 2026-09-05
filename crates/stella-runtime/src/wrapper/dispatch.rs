@@ -60,6 +60,13 @@
 //! blame the worker for evidence nobody collected. Every one of them is
 //! reported on [`DispatchReport::faults`]; silence is what this whole apparatus
 //! exists to refuse.
+//!
+//! A fault list on its own is too quiet at the gate. Nothing ties it to the
+//! verdict. A run whose arbiter died would leave the same trace as a run
+//! whose arbiter was happy. So each fault also becomes a claim that the
+//! member stood aside ([`super::ArbiterClaim::did_not_answer`]).
+//! [`DispatchReport::arbitration`] holds those, beside the arbiter's own
+//! claim.
 
 use std::sync::Arc;
 
@@ -68,14 +75,17 @@ use stella_core::ports::Clock;
 use stella_plugin::{
     AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceProvenance,
     EvidenceSet, FlipObservation, LoopGrant, ObservedEvidence, Outcome, PROTOCOL_VERSION,
-    PluginManifest, PublishedSignal, RoundState, SignalValues, StageName, StageProgram,
-    TamperFinding, TurnOutcome, Verdict, VerdictRule, WrapperPoint,
+    Participation, PluginManifest, PublishedSignal, RoundState, SignalValues, StageName,
+    StageProgram, TamperFinding, TurnOutcome, Verdict, VerdictRule, WrapperPoint,
 };
 use stella_protocol::completion::CompletionMessage;
 use stella_protocol::{GateBoard, LadderSnapshot};
 
 use super::stamp::{HostClock, StampTiming};
-use super::{TurnWrapper, WrapperError, admissible, again, judge, stamp};
+use super::{
+    ArbiterClaim, Arbitration, TurnHoldBudget, TurnWrapper, WrapperError, admissible, again,
+    fold_stamps, judge, stamp,
+};
 
 /// The host's own ceiling on completion holds, when a caller states none.
 ///
@@ -265,6 +275,20 @@ pub struct DispatchReport {
     /// case; each entry is a round where the wrapper abstained rather than
     /// answered.
     pub faults: Vec<WrapperError>,
+    /// What the completion gate recorded: one row per claim, in arrival
+    /// order — an abstention for every fault above, attributed to the member
+    /// that produced it, and the arbiter's own claim from the final verdict.
+    ///
+    /// [`Self::faults`] says what broke. This says what the gate made of
+    /// it. Failing open says nothing on its own. A run whose arbiter died
+    /// would leave the same trace as one whose arbiter was happy.
+    ///
+    /// The fold does not decide this loop's rounds. [`again`] does, over the
+    /// one arbiter a composition may have
+    /// ([`WrapperError::TwoArbiters`]). `wrapper_arbitration.rs` proves the
+    /// two agree on every single-arbiter input. So this record is the same
+    /// law the loop ran under, not a second opinion.
+    pub arbitration: Arbitration,
 }
 
 /// One installed wrapper plugin, and the sequence that drives it.
@@ -368,9 +392,48 @@ fn fold_evidence(into: Option<ObservedEvidence>, next: ObservedEvidence) -> Obse
     merged
 }
 
+/// A run's faults, each attributed to the member that produced it.
+///
+/// Two lists, not one. They answer different questions. `errors` is what
+/// broke, in the words [`WrapperError`] writes for a person to act on.
+/// `claims` is what the gate made of it. One struct, so a push cannot fill
+/// one and forget the other.
+#[derive(Default)]
+struct Faults {
+    errors: Vec<WrapperError>,
+    claims: Vec<ArbiterClaim>,
+}
+
+impl Faults {
+    /// Record one member's failure at one point.
+    ///
+    /// The author is the member's own `[wrapper] id`, not the whole
+    /// composition's. The grant is that member's own. A line that says
+    /// "arbiter X did not answer" must name the plugin that fell silent. It
+    /// must say "arbiter" only of a plugin that had a say to lose.
+    fn push(&mut self, member: &Member, error: WrapperError) {
+        self.claims.push(ArbiterClaim::did_not_answer(
+            member.id(),
+            &error,
+            &member.manifest.loop_grant,
+        ));
+        self.errors.push(error);
+    }
+
+    /// Record a failure that is the host's own, not a member's.
+    ///
+    /// No claim rides with it, and that is the point of a second method. A
+    /// member that fell silent lost its say. The host that could not hash a
+    /// record kept its answer and lost only the name on it, so a row reading
+    /// "did not answer" would report a silence that never happened.
+    fn push_host(&mut self, error: WrapperError) {
+        self.errors.push(error);
+    }
+}
+
 impl Member {
     /// This member's own `[wrapper] id`.
-    fn variant(&self) -> &str {
+    fn id(&self) -> &str {
         // `bind_composed` refused a manifest without one, so the fallback is
         // unreachable — written as a fallback rather than an `expect` because
         // AGENTS.md #5 does not make an exception for "I checked earlier".
@@ -397,7 +460,7 @@ impl Member {
             }
         }
         .map_err(|source| WrapperError::Unresolvable {
-            wrapper: self.variant().to_string(),
+            wrapper: self.id().to_string(),
             source: Box::new(source),
         })
     }
@@ -509,9 +572,22 @@ impl WrapperDispatch {
     pub fn variant(&self) -> String {
         self.members
             .iter()
-            .map(Member::variant)
+            .map(Member::id)
             .collect::<Vec<_>>()
             .join(",")
+    }
+
+    /// The id this run's verdict is filed under at the gate.
+    ///
+    /// The arbiter's own `[wrapper] id`, when the composition has one. That
+    /// is the plugin whose terms decided what done means. With no arbiter it
+    /// falls back to the composition's id. Nothing held anything open, and
+    /// naming a steering member would read as a grade it lacks.
+    fn arbiter_id(&self) -> String {
+        self.members
+            .iter()
+            .find(|member| member.manifest.loop_grant.participation == Participation::Arbiter)
+            .map_or_else(|| self.variant(), |member| member.id().to_string())
     }
 
     /// Every composed member's manifest, in the order the selection named them.
@@ -574,7 +650,7 @@ impl WrapperDispatch {
             per_member,
         };
 
-        let mut faults = Vec::new();
+        let mut faults = Faults::default();
         let mut holds_spent = 0u32;
         let mut rounds = 0u32;
         let mut correction = None;
@@ -596,7 +672,7 @@ impl WrapperDispatch {
             // stamp's duration covers gathering the evidence and settling the
             // answer. The turn itself is the worker's time, not the observer's.
             let observing_from_ms = self.clock.now_ms();
-            let faults_before = faults.len();
+            let faults_before = faults.errors.len();
             let observed = self
                 .close_round(round, &input, &program, driven.outcome, &mut faults)
                 .await;
@@ -627,7 +703,7 @@ impl WrapperDispatch {
                 duration_ms: decided_at_ms.saturating_sub(observing_from_ms),
                 // Only this round's faults. An earlier round that timed out
                 // says nothing about the observer that answered this one.
-                timed_out: faults[faults_before..]
+                timed_out: faults.errors[faults_before..]
                     .iter()
                     .any(|fault| matches!(fault, WrapperError::Timeout { .. })),
             };
@@ -650,6 +726,31 @@ impl WrapperDispatch {
                         timing,
                         &mut faults,
                     );
+                    // The record the gate leaves. Every claim this run
+                    // stood aside on, in the order it happened. Then the
+                    // arbiter's own claim, from the verdict that stopped the
+                    // loop.
+                    let mut claims = faults.claims.clone();
+                    claims.push(ArbiterClaim::from_verdict(
+                        self.arbiter_id(),
+                        &verdict,
+                        &self.hold_grant,
+                        holds_spent,
+                    ));
+                    // The rung stays `None`, as it was before the stamp
+                    // producer landed. `snapshot.rung` is an answer this
+                    // dispatch now holds, and feeding it here would arm
+                    // `Arbitration::refutes_done` on the live path for the
+                    // first time. That is a decision of its own, with its
+                    // own tests, and it is not what this change is.
+                    let arbitration = fold_stamps(
+                        None,
+                        &claims,
+                        TurnHoldBudget {
+                            turn_holds_spent: holds_spent,
+                            host_max_holds: self.host_max_holds,
+                        },
+                    );
                     return Ok(DispatchReport {
                         variant: pipeline_id,
                         rounds,
@@ -657,7 +758,8 @@ impl WrapperDispatch {
                         board,
                         snapshot,
                         outcome,
-                        faults,
+                        faults: std::mem::take(&mut faults.errors),
+                        arbitration,
                     });
                 }
                 Continuation::Again { correction: next } => {
@@ -684,7 +786,7 @@ impl WrapperDispatch {
         round: u32,
         input: &RoundInput,
         program: &RunningProgram,
-        faults: &mut Vec<WrapperError>,
+        faults: &mut Faults,
     ) -> TurnPrelude {
         let mut prelude = TurnPrelude {
             round,
@@ -733,7 +835,7 @@ impl WrapperDispatch {
                     // asked as itself, and a manifest that keys behaviour on
                     // the wrapper id would otherwise see a name it never
                     // declared.
-                    wrapper: member.variant().to_string(),
+                    wrapper: member.id().to_string(),
                     stage: stage.clone(),
                     round,
                     goal: input.goal.clone(),
@@ -744,12 +846,12 @@ impl WrapperDispatch {
                     Ok(response) => match admissible(&member.manifest, response) {
                         Ok(admitted) => admitted,
                         Err(error) => {
-                            faults.push(error);
+                            faults.push(member, error);
                             continue;
                         }
                     },
                     Err(error) => {
-                        faults.push(error);
+                        faults.push(member, error);
                         continue;
                     }
                 };
@@ -795,7 +897,7 @@ impl WrapperDispatch {
         input: &RoundInput,
         program: &RunningProgram,
         outcome: TurnOutcome,
-        faults: &mut Vec<WrapperError>,
+        faults: &mut Faults,
     ) -> Option<ObservedEvidence> {
         let mut merged: Option<ObservedEvidence> = None;
         for member in &self.members {
@@ -808,7 +910,7 @@ impl WrapperDispatch {
             }
             let request = AfterTurnRequest {
                 protocol_version: PROTOCOL_VERSION,
-                wrapper: member.variant().to_string(),
+                wrapper: member.id().to_string(),
                 stage: program.stages.last().cloned(),
                 round,
                 goal: input.goal.clone(),
@@ -817,7 +919,7 @@ impl WrapperDispatch {
             };
             match member.wrapper.after_turn(request).await {
                 Ok(response) => merged = Some(fold_evidence(merged, response.evidence)),
-                Err(error) => faults.push(error),
+                Err(error) => faults.push(member, error),
             }
         }
         merged
@@ -841,7 +943,7 @@ impl WrapperDispatch {
         pipeline_id: &str,
         candidate: Option<&CandidateGrant>,
         timing: StampTiming,
-        faults: &mut Vec<WrapperError>,
+        faults: &mut Faults,
     ) -> LadderSnapshot {
         // The workspace the evidence was gathered in is the one thing here a
         // reader can go and look at, so it is the one pointer the stamp
@@ -853,7 +955,7 @@ impl WrapperDispatch {
         match stamp::stamped(&self.rule, evidence, verdict, pipeline_id, refs, timing) {
             Ok(snapshot) => snapshot,
             Err(source) => {
-                faults.push(WrapperError::Unstampable {
+                faults.push_host(WrapperError::Unstampable {
                     wrapper: pipeline_id.to_string(),
                     source,
                 });

@@ -743,7 +743,7 @@ mod tests {
     /// only after the whole payload had already been allocated.
     #[tokio::test]
     async fn capped_capture_bounds_a_runaway_child() {
-        let mut cmd = Command::new("bash");
+        let mut cmd = crate::shell_resolve::bash_command().expect("a real shell is on PATH");
         cmd.arg("-c").arg("yes stella | head -c 4000000");
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
@@ -772,7 +772,7 @@ mod tests {
     /// is spent on a call already lost.
     #[tokio::test]
     async fn a_refusing_capture_stops_the_read_and_leaves_the_child_to_kill() {
-        let mut cmd = Command::new("bash");
+        let mut cmd = crate::shell_resolve::bash_command().expect("a real shell is on PATH");
         // Unbounded on purpose: only a refusal can end this read.
         cmd.arg("-c").arg("yes stella");
         cmd.stdin(std::process::Stdio::null());

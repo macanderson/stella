@@ -21,7 +21,7 @@ use stella_tools::hook_runner::HostHookRunner;
 use stella_tui::{AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
 
-use super::task_tap::{PlanSetup, TaskTap};
+use super::task_tap::{PlanSetup, SharedRevisions, TaskTap};
 use super::{LEAD, agent, close_turn_stream, forwarder, lead_control, spawn_forwarder};
 use crate::claims::{ClaimTap, ShellWatch};
 use crate::config::Config;
@@ -83,6 +83,11 @@ pub(super) async fn run_lead_turn(
         tx.clone().into(),
         recall.produced,
     );
+    // This turn's plan-change gate. The forwarder writes to it, because a
+    // gate board reaches this host on that stream and nowhere else; the plan
+    // gate below reads it, because the turn's plan graph lives there and
+    // nowhere else (`task_tap::plan_gate::revision`).
+    let revisions = SharedRevisions::default();
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
@@ -90,6 +95,7 @@ pub(super) async fn run_lead_turn(
         in_tx.clone(),
         LEAD.to_string(),
         Some(registry.task_board()),
+        Arc::clone(&revisions),
     );
     // Park it where the driver's cancel arm can reach it, and take it back on
     // the path that ends normally — whichever of the two runs, exactly one
@@ -138,7 +144,7 @@ pub(super) async fn run_lead_turn(
         // Both read before the engine borrows `messages` mutably: the plan
         // gate's setup (`task_tap::plan_gate`, #4594/#4611) and this turn's
         // id, which every lane it spawns records (#4628).
-        let plan = PlanSetup::for_turn(messages, cfg);
+        let plan = PlanSetup::for_turn(messages, cfg, Arc::clone(&revisions));
         let turn = execution.as_ref().map(|(_, id)| *id);
         let tap = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx), plan, turn);
         // The invocation plane rides outermost: the grant narrows
