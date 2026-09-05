@@ -349,7 +349,7 @@ fn payload_for(event: HookEvent, root: &std::path::Path) -> HookPayload {
             HookIssueInfo::new("4310"),
             HookIssueOutcome::NoChange,
         ),
-        // The gate and the in-turn five never come through `report`, and a
+        // The gate and the in-turn events never come through `report`, and a
         // total match is what keeps a new event from silently landing in a
         // default arm that reports nothing.
         HookEvent::PreIssueWork
@@ -357,7 +357,10 @@ fn payload_for(event: HookEvent, root: &std::path::Path) -> HookPayload {
         | HookEvent::PreToolUse
         | HookEvent::PostToolUse
         | HookEvent::Stop
-        | HookEvent::PreCompact => {
+        | HookEvent::PreCompact
+        | HookEvent::UserPromptSubmit
+        | HookEvent::SubagentStart
+        | HookEvent::SubagentStop => {
             panic!("{event} is not dispatched by the loop")
         }
     }
