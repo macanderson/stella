@@ -256,6 +256,22 @@ failing run is a **verified** commit and stays the canary's business; this
 reports only the absence of an answer, and fails open at every unknown so it
 can never be the thing blocking a repair.
 
+One cause of that absence is a push that raised no event, and the canary
+cannot see it from the inside: it is suppressed by the same rule.
+`auto-tag.yml` merges the release version write-back with the token GitHub
+hands a workflow run, and a push made with that token starts no workflow at
+all. So `ci.yml` and `main-canary.yml` both stayed quiet on every
+`chore(release): sync versions` commit, and the daily schedule was the only
+thing that ever asked. `scripts/dispatch-main-verification.sh`
+(`make dispatch-main-verification`) asks for the run instead: it reads the tip
+of `main`, counts the `ci` runs for that exact commit, and starts `ci.yml` and
+then `main-canary.yml` only when there are none. `auto-tag.yml` runs it after
+every merge attempt, which is safe because a tip that already has a run gets
+nothing. It fails open like its sibling. The run it starts carries the event
+`workflow_dispatch`, and `auto-tag.yml` acts only on a `ci` run whose event
+was a push, so it cannot loop. `make dispatch-main-verification-test` covers
+it, the case where the tip already has a run included.
+
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`, asks the tracker whether a `main-red`

@@ -26,6 +26,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget, Wra
 use stella_tui_theme::token;
 
 use crate::deck_ui::{DeckUi, ScopeAction, SkillPrompt};
+use crate::envelope::RejectedSkillRow;
 use crate::render::columns;
 use crate::syntax::{self, HighlightSpans as _};
 
@@ -234,7 +235,101 @@ pub fn render_prompt(ui: &DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
             );
         }
         Some(SkillPrompt::Edit { name, buffer, .. }) => render_edit(name, buffer, area, buf),
+        // The rejected-skills review: name and date, per rejection. `⏎`/`u`
+        // reverses the highlighted row. `open_rejected` refuses an empty
+        // list. So an empty one here means a driver round-trip closed it
+        // out from under an open dialog. Rendered, not assumed unreachable.
+        Some(SkillPrompt::Rejected { sel }) => {
+            render_rejected(&ui.skills.view.rejections, *sel, now_ms, area, buf);
+        }
         None => {}
+    }
+}
+
+/// The rejected-skills review's body: one row per rejection, in the order
+/// `SkillsView::rejections` arrives in. That order is stable across a
+/// reversal, so the row a reader was just looking at does not jump.
+fn render_rejected(
+    rows: &[RejectedSkillRow],
+    sel: usize,
+    now_ms: u64,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+    if rows.is_empty() {
+        dialog(
+            "rejected skills",
+            "esc close",
+            vec![
+                Line::from(Span::styled("nothing rejected in this workspace", muted)),
+                Line::default(),
+            ],
+            area,
+            buf,
+        );
+        return;
+    }
+    let sel = sel.min(rows.len() - 1);
+    let plural = if rows.len() == 1 { "" } else { "s" };
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("{} learned skill{plural} rejected here:", rows.len()),
+            text,
+        )),
+        Line::default(),
+    ];
+    for (i, row) in rows.iter().enumerate() {
+        let selected = i == sel;
+        let marker = if selected { "▸ " } else { "  " };
+        let style = if selected {
+            Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
+        } else {
+            text
+        };
+        let mut line = Line::from(vec![
+            Span::styled(marker, Style::new().fg(token::GOLD)),
+            Span::styled(columns::pad(&row.name, 32), style),
+            Span::styled(
+                format!(
+                    "  {} · {}",
+                    row.scope.label(),
+                    rejected_age(now_ms, row.rejected_at)
+                ),
+                muted,
+            ),
+        ]);
+        if selected {
+            line.style = Style::new().bg(token::HL);
+        }
+        lines.push(line);
+    }
+    lines.push(Line::default());
+    dialog(
+        "rejected skills",
+        "↑/↓ choose · ⏎ / u reverse · esc close",
+        lines,
+        area,
+        buf,
+    );
+}
+
+/// A short "3d ago" age for a rejection's timestamp, measured against the
+/// deck clock (`now_ms`), not the system clock. That keeps it deterministic
+/// under `--no-anim` and in the golden suite. A clock that runs backwards
+/// shows `now`, never a negative age.
+fn rejected_age(now_ms: u64, rejected_at_secs: u64) -> String {
+    let now_secs = now_ms / 1_000;
+    let secs = now_secs.saturating_sub(rejected_at_secs);
+    if secs < 60 {
+        "now".to_string()
+    } else if secs < 3_600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3_600)
+    } else {
+        format!("{}d ago", secs / 86_400)
     }
 }
 

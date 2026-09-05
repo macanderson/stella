@@ -19,9 +19,10 @@
 //!
 //! * the per-session cap, counted across the loop's own accounting;
 //! * a hand-edited file surviving a re-mine of the same lesson.
-//! * a rejected learned skill is not learned again (#5046) — the negative
-//!   signal is written by the SKILLS tab and read by the loop, and only a test
-//!   holding both ends shows the two mean the same fact.
+//! * a rejected learned skill is not learned again (#5046), and reversing
+//!   that rejection lets it be learned again. The SKILLS tab writes both
+//!   signals; the loop reads them. Only a test holding both ends shows they
+//!   mean the same fact.
 //!
 //! ## Every guarantee runs under BOTH loops
 //!
@@ -334,6 +335,66 @@ fn a_rejected_skill_is_not_learned_again() {
         assert!(
             skill_files(dir.path()).is_empty(),
             "{path:?}: the miner wrote a rejected skill straight back: {:?}",
+            skill_files(dir.path())
+        );
+    });
+}
+
+/// **The witness, the mirror of the test above.** Reversing a rejection from
+/// the SKILLS tab (`skill_manager::unreject`) teaches the learner the
+/// opposite fact. The very next mining pass, over the same log, writes the
+/// skill back.
+///
+/// A row reappearing would not prove that on its own — a hand-restored file
+/// would look the same on disk. Only the miner re-minting it from the log
+/// proves the *signal* was reversed, not just the file.
+#[test]
+fn reversing_a_rejection_lets_the_skill_be_learned_again() {
+    each_path(|path| {
+        let dir = workspace_with_log(&three_occurrences_of(RECURRING));
+        let mut memory = session(dir.path(), path);
+        memory.auto_create_skills(&log_path(dir.path()), true);
+        let mined = "prefer-updating-witness-test-assertions-e2010443";
+        assert_eq!(
+            skill_files(dir.path()),
+            vec![format!("{mined}.md")],
+            "{path:?}: the control must mine"
+        );
+
+        crate::skill_manager::reject(
+            stella_tui::SkillScope::Project,
+            mined,
+            1_700_000_000,
+            dir.path(),
+        )
+        .expect("reject");
+        assert!(
+            skill_files(dir.path()).is_empty(),
+            "{path:?}: the file is gone after rejecting"
+        );
+
+        // A later session must not write it back — the control for the
+        // reversal below, proving the rejection alone still holds.
+        let mut still_rejected = session(dir.path(), path);
+        still_rejected.auto_create_skills(&log_path(dir.path()), true);
+        assert!(
+            skill_files(dir.path()).is_empty(),
+            "{path:?}: control: a rejection with no reversal must still hold"
+        );
+
+        // Exactly what `!` → `u` does, driver-side.
+        crate::skill_manager::unreject(stella_tui::SkillScope::Project, mined, dir.path())
+            .expect("unreject");
+
+        // A THIRD session, over the same unchanged log: the reversal must
+        // reach the miner, not just the SKILLS tab's own list.
+        let mut later = session(dir.path(), path);
+        later.auto_create_skills(&log_path(dir.path()), true);
+        assert_eq!(
+            skill_files(dir.path()),
+            vec![format!("{mined}.md")],
+            "{path:?}: reversing the rejection did not let the skill be learned \
+             again: {:?}",
             skill_files(dir.path())
         );
     });
@@ -791,22 +852,37 @@ fn reversing_a_decline_lets_the_proposal_promote_again() {
 #[test]
 fn a_forgotten_lesson_cannot_return_as_a_rule() {
     let strong = "Always run the database migration before the integration suite starts.";
-    // Five turns, so the proposal would clear the auto-activation bar and
-    // actually be written — otherwise this could pass because the confidence
-    // gate stopped it rather than the tombstone.
+    // Five turns, so the proposal clears the eligibility gate and the
+    // confidence bar. Otherwise this could pass because one of those stopped
+    // it, rather than the tombstone.
     let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
 
-    // Control: without a tombstone it really does write a rule.
+    // The observable is the directive PROPOSAL, not a rule file: the evidence
+    // gate refuses to publish a directive mined from reflection prose, so the
+    // file half would be empty in both arms and the tombstone would prove
+    // nothing. The proposal is where the tombstone has to bite anyway — it is
+    // the door a later Keep would come through.
+    let directives = |memory: &SessionMemory| -> usize {
+        crate::memory::proposals::all_proposals(&memory.store, 500)
+            .into_iter()
+            .filter(|proposal| {
+                proposal.proposal_kind
+                    == stella_records::context_record::RecordProposalKind::Directive
+            })
+            .count()
+    };
+
+    // Control: without a tombstone the lesson really does induce one.
     let dir = workspace_with_log(&lessons);
     let mut memory = session(dir.path(), Loop::Typed);
     memory.auto_create_skills(&log_path(dir.path()), true);
-    let rules_dir = dir.path().join(".stella/rules");
     assert!(
-        rules_dir.exists() && std::fs::read_dir(&rules_dir).into_iter().flatten().count() > 0,
-        "the control case must write a rule, or the suppression below proves nothing"
+        directives(&memory) > 0,
+        "the control case must induce a directive, or the suppression below proves nothing"
     );
 
-    // With a tombstone on the lesson, nothing is written.
+    // With a tombstone on the lesson, nothing is induced and nothing is
+    // written.
     let dir = workspace_with_log(&lessons);
     stella_store::Store::open(dir.path())
         .expect("store")
@@ -814,6 +890,11 @@ fn a_forgotten_lesson_cannot_return_as_a_rule() {
         .expect("forget");
     let mut memory = session(dir.path(), Loop::Typed);
     memory.auto_create_skills(&log_path(dir.path()), true);
+    assert_eq!(
+        directives(&memory),
+        0,
+        "a forgotten lesson came back as a directive proposal"
+    );
     let written: Vec<String> = std::fs::read_dir(dir.path().join(".stella/rules"))
         .map(|e| {
             e.flatten()
@@ -827,30 +908,11 @@ fn a_forgotten_lesson_cannot_return_as_a_rule() {
     );
 }
 
-/// A well-evidenced rule auto-activates and lands where the loader reads it —
-/// which is the only thing that makes wiring the miner observable at all.
-#[test]
-fn a_well_evidenced_rule_activates_and_reaches_the_loader() {
-    let strong = "Always run the database migration before the integration suite starts.";
-    let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
-    let dir = workspace_with_log(&lessons);
-    let mut memory = session(dir.path(), Loop::Typed);
-    memory.auto_create_skills(&log_path(dir.path()), true);
-
-    let loaded = crate::rules::load_workspace_rules_unfiltered(dir.path());
-    let mined = loaded
-        .iter()
-        .find(|r| r.text.contains("database migration"))
-        .expect("the mined rule reached the loader");
-
-    // Advisory, always. A mined rule that could deny a tool call would be an
-    // inferred directive reaching blocking — the thing the gate forbids.
-    assert!(
-        mined.guard.is_none(),
-        "a mined rule arrived with a guard: {mined:?}"
-    );
-    assert_eq!(mined.tier(), stella_learn::rules::RuleTier::Prompt);
-}
+// A published rule reaching the loader as Tier 1 is asserted where a rule can
+// still be published, now that the evidence gate refuses one mined from
+// reflection prose: `rules_mining::tests` holds
+// `mined_rules_land_where_the_loader_reads` for the landing and
+// `a_written_rule_file_is_prompt_only` for the tier.
 
 /// The rules miner is off with the flag off, exactly like the rest of the
 /// typed path. Nothing appears in `.stella/rules` when a user opts out.
@@ -867,93 +929,51 @@ fn the_lexical_path_mines_no_rules() {
     );
 }
 
-/// **The witness (#5032).** A rule that auto-activates announces itself as
-/// SPEC 6.3's `memory` (promote), and the record the announcement cites is
-/// really in the ledger.
+/// **The witness.** A rule mined from reflection prose is not auto-activated,
+/// announces no promotion, and writes no file — however strongly the
+/// observations recur.
 ///
-/// The ledger half closes a gap this path had since it shipped:
-/// auto-activation wrote a rule file into `.stella/rules/`
-/// and recorded **no** `promotion_event`, so the lifecycle's own contract —
-/// that replaying those records in order reproduces the loop's governance
-/// state — did not hold for anything the loop activated on its own: a replay
-/// rebuilt a workspace with every user-kept rule and none of the automatic
-/// ones. The review surface's `keep` has always recorded one.
+/// A rule steers whoever runs the next turn, so the policy prices it at
+/// `EnvironmentObservation`. A reflection lesson is a model's judgement about
+/// its own run and grades `ModelCritique`, and the pool folds by minimum, so
+/// no number of lessons reaches the bar. Before the gate was wired this exact
+/// corpus published a rule and announced a promotion on the first pass.
 ///
-/// The event's `audit_event_id` is checked against the ledger rather than
-/// merely being non-empty, because `audit event <id>` is printed on a screen
-/// as the handle a reader looks the promotion up by, and an id no ledger holds
-/// is worse than a promotion that renders nothing.
+/// The loop is run twice, because the ledger has to hold a record for every
+/// promotion the loop announces, and the cheapest way to break that is to
+/// announce one nothing recorded. Zero on both passes is the answer while the
+/// evidence stays this weak, and re-running proves the refusal is stable
+/// rather than a first-turn accident.
 #[test]
-fn an_auto_activated_rule_announces_a_promotion_the_ledger_holds() {
+fn auto_activation_is_refused_when_the_evidence_is_only_reflection_prose() {
     let strong = "Always run the database migration before the integration suite starts.";
     // Five distinct turns, so the mined proposal clears both the eligibility
-    // gate (distinct tasks) and the confidence bar auto-activation adds.
+    // gate (distinct tasks) and the confidence bar auto-activation adds. What
+    // it cannot clear is the evidence gate.
     let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
     let dir = workspace_with_log(&lessons);
-    let mut memory = session(dir.path(), Loop::Typed);
-    let events = memory.auto_create_skills(&log_path(dir.path()), true);
 
-    let promoted: Vec<_> = events
-        .iter()
-        .filter_map(|event| match event {
-            stella_protocol::AgentEvent::MemoryPromoted {
-                from,
-                to,
-                confidence,
-                audit_event_id,
-                ..
-            } => Some((*from, *to, *confidence, audit_event_id.clone())),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        promoted.len(),
-        1,
-        "one rule auto-activated, so exactly one promotion is owed: {events:?}"
-    );
-    let (from, to, confidence, audit_event_id) = &promoted[0];
-    assert_eq!(*from, stella_protocol::MemoryClass::Observation);
-    assert_eq!(*to, stella_protocol::MemoryClass::Rule);
-    assert!(
-        *confidence >= 85,
-        "a rule activated below the bar it is gated on: conf {confidence}"
-    );
-
-    let recorded = crate::proposals_cmd::promotion_events(&memory.store);
-    assert!(
-        recorded
+    for pass in 1..=2 {
+        let mut memory = session(dir.path(), Loop::Typed);
+        let events = memory.auto_create_skills(&log_path(dir.path()), true);
+        let promoted: Vec<_> = events
             .iter()
-            .any(|event| &event.record_id == audit_event_id),
-        "the row cites `audit event {audit_event_id}`, which is in no ledger: {recorded:?}"
-    );
+            .filter(|event| matches!(event, stella_protocol::AgentEvent::MemoryPromoted { .. }))
+            .collect();
+        assert!(
+            promoted.is_empty(),
+            "pass {pass} announced a promotion the evidence does not pay for: {promoted:?}"
+        );
+        assert!(
+            crate::proposals_cmd::promotion_events(&memory.store)
+                .iter()
+                .all(|event| event.actor != stella_records::context_record::PromotionActor::System),
+            "pass {pass} recorded an automatic promotion in the ledger"
+        );
+    }
 
-    // And the projection the event describes really landed.
     assert!(
-        dir.path().join(".stella/rules").exists(),
-        "a promotion was announced with no rule behind it"
-    );
-}
-
-/// A rule that was already on disk is not promoted again.
-///
-/// The loop re-reads the whole append-only log every reflection turn, so it
-/// re-mines the same candidate for as long as the lesson is in it. Announcing
-/// a promotion each time would be a row claiming a change that stopped
-/// happening turns ago — and, worse, a ledger filling with `auto_activated`
-/// events for one decision.
-#[test]
-fn a_rule_already_on_disk_is_not_promoted_a_second_time() {
-    let strong = "Always run the database migration before the integration suite starts.";
-    let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
-    let dir = workspace_with_log(&lessons);
-    let mut memory = session(dir.path(), Loop::Typed);
-    let first = memory.auto_create_skills(&log_path(dir.path()), true);
-    assert!(!first.is_empty(), "the first pass promoted nothing");
-
-    let mut later = session(dir.path(), Loop::Typed);
-    let second = later.auto_create_skills(&log_path(dir.path()), true);
-    assert!(
-        second.is_empty(),
-        "the same rule was promoted twice: {second:?}"
+        !dir.path().join(".stella/rules").exists(),
+        "a refused rule reached the workspace"
     );
 }

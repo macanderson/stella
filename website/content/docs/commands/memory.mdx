@@ -62,6 +62,13 @@ A memory only qualifies after being cited successfully **more than 10** times in
 last negative mark. One negative citation resets that count back to zero.
 </Callout>
 
+<Callout type="warn">
+The evidence gate turns this down today, and says so. A rule steers every later turn, so it costs
+a measured result: an exit status, a build, a number. Citations are the model's own judgement, so
+a long streak of them still does not pay. The command names the grade it needed and writes
+nothing.
+</Callout>
+
 ### `stella memory validate`
 
 Check old memories against your current code. stella scans each memory for file paths it mentions, for example `crates/stella-cli/src/agent.rs`, and checks whether those files still exist. If a memory's file is gone, that's a strong sign the memory is about deleted code, and it could mislead you.
