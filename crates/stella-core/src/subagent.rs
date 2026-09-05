@@ -5,18 +5,14 @@
 //! transcript, run to completion, returning only its summary to the parent
 //! (#922).
 //!
-//! # The value is context economy, not parallelism
+//! # The value is context economy
 //!
-//! `stella fleet` already fans work across processes. What this adds is
-//! different and compounds with everything else in the loop: a parent that
-//! needs to answer "which of these 40 files defines the retry policy"
-//! currently reads all 40 results into its own history, where they stay for
-//! the rest of the session and are re-sent on *every* subsequent step. A
-//! sub-agent absorbs that cost in a transcript that is discarded and hands
-//! back a paragraph.
-//!
-//! Compaction exists because transcripts grow. The cheapest growth is the
-//! growth that never happens.
+//! A parent answering "which of these 40 files defines the retry policy"
+//! reads all 40 results into its own history, where they stay for the rest
+//! of the session and are re-sent on *every* subsequent step. A sub-agent
+//! absorbs that cost in a transcript that is discarded and hands back a
+//! paragraph. `stella fleet` fans work across processes; this is the other
+//! axis, and the two compound.
 //!
 //! # Why the engine barely needed changing
 //!
@@ -52,21 +48,17 @@
 //! produced — salvaged from the transcript being discarded — so paid work is
 //! not thrown away with the context it lived in.
 //!
-//! **The report is capped, and the cap is enforced.** A summary that could
-//! be arbitrarily long defeats the entire premise; intent is not a
-//! mechanism. [`SubAgentSpec::max_report_chars`] clamps what crosses back,
-//! and `truncated` says so rather than hiding it.
+//! **The report is capped, and the cap is enforced.** An unbounded summary
+//! would cost the parent the context the child saved it.
+//! [`SubAgentSpec::max_report_chars`] clamps what crosses back, and
+//! `truncated` says so rather than hiding it.
 //!
 //! **Every seam the parent has, the child has** — except the one it must
-//! not. [`Engine::with_sleeper`] leaves `gate`/`steering`/`hooks` unset, and
-//! each is turned on by its own further builder call, so a caller that means
-//! to carry them and forgets one gets an engine that quietly does less —
-//! which is how `goal.rs::assess` silently dropped all three when it
-//! hand-rolled a verifier engine. (The builders are public and work; the
-//! defect was that nothing *required* them. #3387 is the fix: this fork is
-//! built through [`Engine::assemble`], whose [`TurnCapabilities`] has no
-//! `Default`, so a seam added later cannot reach a child as an unexamined
-//! `None`.) What the child carries:
+//! not. This fork is built through [`Engine::assemble`], whose
+//! [`TurnCapabilities`] has no `Default`, so a seam added later cannot reach
+//! a child as an unexamined `None` (#3387). The per-`with_*` builders leave
+//! each seam unset, which is how a hand-rolled verifier engine once dropped
+//! all three. What the child carries:
 //!
 //! - The pause gate propagates. A child that ignored it would keep spending
 //!   through a pause.
@@ -89,26 +81,19 @@
 //! it is the metering record, and dropping it is exactly how child cost
 //! would vanish from `stella stats` and quietly falsify `$/resolved task`.
 //!
-//! Beside the event stream, a `SubagentStart`/`SubagentStop` shell hook
-//! gets the same bracket, observe-only: nothing a hook prints can veto or
-//! rewrite a child, on `PostToolUse`'s posture rather than `PreToolUse`'s.
-//! Not fired on the cancel-drop path (`CancelBracket`), which is a `Drop`
-//! impl with no async context to spawn a hook's subprocess from.
+//! Beside the event stream, a `SubagentStart`/`SubagentStop` shell hook rides
+//! the same bracket, observe-only on `PostToolUse`'s posture: nothing it
+//! prints can veto or rewrite a child. `CancelBracket`'s drop path does not
+//! fire it, having no async context to spawn a subprocess from.
 //!
-//! **Four events are the exception, and they earn it** (#4383, #4624).
-//! `StepUsage`, `UsageIncomplete`, `ToolStart` and `ToolResult` carry a
-//! `sub_agent_id`, stamped by `child_sender`. The bracket cannot answer for
-//! them, because independent delegates are dispatched *concurrently*: several
-//! children's events interleave on the parent's one stream, so no
-//! `Started`/`Finished` pair encloses any particular call. Until the metering
-//! field existed, a turn's whole cost landed under the lead — ninety telemetry
-//! rows all reading `worker` in session `ses-1787465453163-60967`, five of
-//! them a parallel delegate fan-out completing within one second — and the
-//! `(role, model)` census AGENTS.md tells a bench reader to run could not
-//! separate a lead from its delegates. The tool records have the same shape of
-//! consequence one table over: `tool_calls` projects from them, so a
-//! delegate's calls sat under the parent's execution id with nothing naming
-//! the child, and "which tools did child X run" had no answer at all.
+//! **Four events are the exception** (#4383, #4624). `StepUsage`,
+//! `UsageIncomplete`, `ToolStart` and `ToolResult` carry a `sub_agent_id`,
+//! stamped by `child_sender`. The bracket cannot answer for them: independent
+//! delegates are dispatched *concurrently*, so their events interleave on the
+//! parent's one stream and no `Started`/`Finished` pair encloses any
+//! particular call. Without the field a turn's whole cost reads as the lead's,
+//! and `tool_calls` — which projects from the tool pair — cannot say which
+//! child ran a call.
 //!
 //! The bracket survives cancellation (#1954): a caller that drops the
 //! future mid-flight — a latency ceiling, a hard cancel — still gets a
