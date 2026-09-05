@@ -5,9 +5,9 @@
 
  SESSION AGENTS TRACES GRAPH FILES SKILLS MCP ISSUES   SETTINGS                                                                                         stella*
   AGENTS  │  TOOLS  │  SEATS   ←/→
- seats · 2 · read-only
- default         zai/glm-5.2-air   from default_model
- acme/reviewer   default           from acme
+ seats · 2
+  default         zai/glm-5.2-air   from default_model
+  acme/reviewer   default           from acme
 
 
 
@@ -38,7 +38,7 @@
 
 
 
-
+ e edit seats
  ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
  ⏎ queue · ↓ 2 sub-agents · $ shell · / commands

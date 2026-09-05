@@ -700,7 +700,19 @@ fn seat_rows(
 /// canonical simple form — with `agents.<k>.model` cleared, so a TUI save
 /// never leaves the two sources disagreeing. Empty agent objects and an
 /// empty allowed list are omitted entirely (the file stays minimal).
+///
+/// `state.seats` round-trips the same way: an assigned seat writes its
+/// `<plugin-id>/<role>` key into `seat_models`, and a seat left at `None`
+/// (the SEATS pane's "default" row) writes no key at all — that is the
+/// difference between "nobody has an opinion" and "pinned to the model that
+/// happens to match the default today" ([`seat_rows`] states the same rule
+/// for the read side).
 pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
+    let seat_models: std::collections::BTreeMap<String, String> = state
+        .seats
+        .iter()
+        .filter_map(|seat| Some((seat.key.clone(), seat.model.clone()?)))
+        .collect();
     let mut engine = AgentEngineConfig {
         effort_auto: Some(if state.effort_auto {
             Toggle::On
@@ -718,6 +730,7 @@ pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
             Toggle::Off
         }),
         allowed_models: (!state.allowed_models.is_empty()).then(|| state.allowed_models.clone()),
+        seat_models: (!seat_models.is_empty()).then_some(seat_models),
         ..AgentEngineConfig::default()
     };
     let mut agents = AgentEngineAgents::default();
@@ -1298,5 +1311,96 @@ mod tests {
         );
         assert_eq!(state2.agents, state.agents);
         assert_eq!(state2.allowed_models, state.allowed_models);
+    }
+
+    /// **The witness for #6086.** Assigning a model to a plugin-declared seat
+    /// must survive the save round trip: `state.seats[i].model = Some(...)`
+    /// → `settings_from_state` → `seat_models` → `state_from_settings` reads
+    /// it back on the same key. Before this fix `settings_from_state` never
+    /// looked at `state.seats` at all, so every seat assignment the SEATS
+    /// pane could make was silently dropped on save.
+    #[test]
+    fn a_seat_assignment_survives_the_save_round_trip() {
+        let declared = [
+            ("acme/reviewer".to_string(), "acme".to_string()),
+            ("vera/verifier".to_string(), "vera".to_string()),
+        ];
+        let mut state = state_from_settings(
+            &AgentEngineConfig::default(),
+            Vec::new(),
+            Vec::new(),
+            Default::default(),
+            Vec::new(),
+            &declared,
+        );
+        assert_eq!(state.seats.len(), 2);
+        assert!(
+            state.seats.iter().all(|s| s.model.is_none()),
+            "a fresh install starts with every seat unassigned"
+        );
+
+        // Assign one seat, leave the other alone — the same edit the SEATS
+        // pane's picker makes on `Enter`.
+        state.seats[0].model = Some("anthropic/claude-opus-5".into());
+
+        let saved = settings_from_state(&state);
+        assert_eq!(
+            saved
+                .seat_models
+                .as_ref()
+                .and_then(|m| m.get("acme/reviewer")),
+            Some(&"anthropic/claude-opus-5".to_string()),
+            "the assigned seat's key lands in seat_models"
+        );
+        assert!(
+            saved
+                .seat_models
+                .as_ref()
+                .is_none_or(|m| !m.contains_key("vera/verifier")),
+            "an unassigned seat writes no key at all — never the default model"
+        );
+
+        // Reload: the driver rebuilds the snapshot from the saved settings
+        // plus the same declared seats, and the assignment reads back on the
+        // row it was made on.
+        let reloaded = state_from_settings(
+            &saved,
+            Vec::new(),
+            Vec::new(),
+            Default::default(),
+            Vec::new(),
+            &declared,
+        );
+        assert_eq!(
+            reloaded.seats[0].model.as_deref(),
+            Some("anthropic/claude-opus-5")
+        );
+        assert_eq!(reloaded.seats[1].model, None);
+    }
+
+    /// Clearing a seat (`x` in the pane) must remove its key rather than
+    /// writing the current default model into it — an unassigned seat and one
+    /// pinned to today's default are different facts, and only one of them
+    /// survives a later change to the default.
+    #[test]
+    fn clearing_a_seat_removes_its_key_rather_than_writing_the_default() {
+        let declared = [("acme/reviewer".to_string(), "acme".to_string())];
+        let mut state = state_from_settings(
+            &AgentEngineConfig::default(),
+            Vec::new(),
+            Vec::new(),
+            Default::default(),
+            Vec::new(),
+            &declared,
+        );
+        state.seats[0].model = Some("zai/glm-5.2".into());
+        assert!(settings_from_state(&state).seat_models.is_some());
+
+        state.seats[0].model = None; // `x` clears the row
+        let saved = settings_from_state(&state);
+        assert!(
+            saved.seat_models.is_none(),
+            "clearing the only assigned seat drops the map entirely: {saved:?}"
+        );
     }
 }
