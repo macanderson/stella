@@ -1055,6 +1055,42 @@ mod tests {
         }
     }
 
+    /// The other half of the drift guard. `every_privileged_name_is_refused`
+    /// checks one direction only: every rollback name is refused. It never
+    /// checks the other way: is every name that moves the whole user tier
+    /// also on the rollback list? `STELLA_HOME` was refused here but never
+    /// rolled back. So if any future caller ever skipped `is_refused` — a new
+    /// loader, a case-folding bug, a refactor — a cloned repository could set
+    /// `STELLA_HOME` and point the trusted user tier (settings, credentials,
+    /// skills) anywhere it liked, with nothing left to put it back.
+    ///
+    /// This checks a small named set, not the full `DENIED_EXACT` list.
+    /// `DENIED_EXACT` is much bigger (`PATH`, `LD_*`, `GIT_*`, …) and most of
+    /// those names have nothing to roll back. These four are the whole
+    /// `stella_home` user-tier chain: `HOME` and `USERPROFILE` set the
+    /// default `~/.stella` root, `STELLA_HOME` moves that root, and
+    /// `STELLA_DATA_DIR` moves the data tier alone and wins over it. Each one
+    /// must be both refused and restored.
+    #[test]
+    fn every_user_tier_anchor_is_refused_and_rolled_back() {
+        for name in [
+            stella_home::HOME_ENV,
+            stella_home::USERPROFILE_ENV,
+            stella_home::STELLA_HOME_ENV,
+            stella_home::STELLA_DATA_DIR_ENV,
+        ] {
+            assert!(
+                is_refused(name),
+                "{name} moves the stella user tier and must be in DENIED_EXACT"
+            );
+            assert!(
+                crate::enterprise_telemetry::PRIVILEGED_ENV_NAMES.contains(&name),
+                "{name} moves the stella user tier and must be in PRIVILEGED_ENV_NAMES \
+                 too — a caller that ever bypasses is_refused has nothing to roll it back"
+            );
+        }
+    }
+
     #[test]
     fn deny_list_matches_namespaces_and_case_but_spares_ordinary_names() {
         // Loader namespaces are refused wholesale, in any case.
