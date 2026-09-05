@@ -51,3 +51,52 @@ fn every_code_execution_gate_is_reachable_by_one_grep() {
          doc comment and its file here, in the same change"
     );
 }
+
+/// **Witness.** A cloned repository cannot switch a plugin on.
+///
+/// A name in `active_plugins` starts a program on every turn. So the key sits
+/// on the code-execution gate, beside `hooks` and `context_providers`. An
+/// untrusted project scope keeps what the user and managed scopes set, and
+/// adds nothing. The trusted case is here too: a gate that refuses everything
+/// proves nothing.
+///
+/// Fails on the base commit. The key does not exist there, so a project scope
+/// had nothing to grant.
+#[test]
+fn an_untrusted_project_cannot_switch_a_plugin_on() {
+    let project = crate::settings::Settings {
+        active_plugins: Some(vec!["vera".to_string()]),
+        ..Default::default()
+    };
+    let user = crate::settings::Settings::default();
+    let managed = crate::settings::Settings::default();
+
+    let untrusted = crate::settings::Settings::merge_captured_scopes(
+        &user,
+        &managed,
+        &project,
+        crate::settings::ProjectTrust {
+            credentials: false,
+            hooks: false,
+        },
+    );
+    assert_eq!(
+        untrusted.active_plugins, None,
+        "an untrusted project scope contributes no standing plugin"
+    );
+
+    let trusted = crate::settings::Settings::merge_captured_scopes(
+        &user,
+        &managed,
+        &project,
+        crate::settings::ProjectTrust {
+            credentials: true,
+            hooks: true,
+        },
+    );
+    assert_eq!(
+        trusted.active_plugins,
+        Some(vec!["vera".to_string()]),
+        "a trusted project may switch a plugin on for the team"
+    );
+}

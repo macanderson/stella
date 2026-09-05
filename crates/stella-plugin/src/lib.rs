@@ -191,6 +191,6 @@ pub use wire::{
     WrapperPoint, WrapperRequest, WrapperResponse, hook_disclosures_for,
 };
 pub use wrapper::{
-    CompareOp, Condition, HostStage, MAX_CONTRIBUTED_STAGE_LEN, Signal, SignalKind, StageName,
-    Wrapper, WrapperStage,
+    CompareOp, Condition, HostStage, MAX_CONTRIBUTED_STAGE_LEN, Signal, SignalKind, StageBand,
+    StageName, Wrapper, WrapperStage,
 };

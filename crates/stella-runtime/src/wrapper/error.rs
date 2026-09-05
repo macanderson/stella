@@ -397,6 +397,31 @@ pub enum WrapperError {
         second: String,
     },
 
+    /// Two composed manifests put one stage in two bands.
+    ///
+    /// The band is the coarse order over the whole active set, so one stage
+    /// sits in one band. Taking either answer would move that stage for the
+    /// plugin that asked for the other one, which is a change to its turn that
+    /// nobody wrote down. Refused for the reason above it: a composition that
+    /// picks a winner picks it where no one can see.
+    #[error(
+        "plugins `{wrapper}` and `{other}` put the stage \"{stage}\" in different bands \
+         ({band} and {other_band}), so the composed order has no one place for it — the \
+         members have to agree on the band of every stage they share"
+    )]
+    ConflictingStageBand {
+        /// The member that named the stage first.
+        wrapper: String,
+        /// The member that named it in another band.
+        other: String,
+        /// The stage the two disagree about.
+        stage: String,
+        /// The band `wrapper` asked for.
+        band: String,
+        /// The band `other` asked for.
+        other_band: String,
+    },
+
     /// Two composed manifests are both arbiter-grade.
     ///
     /// One turn has one thing deciding when it is finished. This is the only

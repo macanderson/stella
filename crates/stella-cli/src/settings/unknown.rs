@@ -79,6 +79,7 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "context",
     "context_providers",
     "plugins",
+    "active_plugins",
     "authority",
     "enterprise_telemetry",
 ];
@@ -541,6 +542,7 @@ const RUN_FIELDS: &[&str] = &[
     "create_worktrees",
     "ignore_gitignore",
     "auto_trust_project",
+    "active_plugins",
 ];
 /// `[workspace]` — closed, like `[run]`: a mistyped `allowed_dir` grants
 /// nothing and looks exactly like a granted directory until a tool refuses a

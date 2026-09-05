@@ -257,15 +257,58 @@ way, so `[[wrapper.stages]] name = "triage-lite"` loads, resolves and
 dispatches — `stella_runtime`'s dispatcher asks `before_turn` for it by name,
 and dropping the entry from the manifest drops the stage from the turn.
 
-What that pair does **not** settle is the rest of this slice, and
-the reason is §8.2/§8.3: it opens the vocabulary *within one wrapper's declared
-order*. Composing the stages of **several** enabled plugins — the coarse band,
-the resolved order written into settings, the tie-break on plugin id — is still
-ahead, and so is the `points`/band metadata a stage would carry to attach
-itself to something other than the position its manifest lists it in. A
-contributed stage also publishes no signal: the signal vocabulary stayed closed
-on purpose, because a plugin minting a fact for another plugin's condition to
-read is a decision this slice has not made.
+**Landed next — the band, and the standing set.** A
+`[[wrapper.stages]]` entry declares `band = "early" | "normal" | "late"`, and
+`stella_runtime`'s `compose::merge_stage_order` sorts the merged order by it
+with a stable sort. So the weave decides the order inside a band and the band
+decides it across bands, which is what takes the order off the selection and
+puts it on the manifests. Two members putting one stage in two bands is a new
+refusal (`WrapperError::ConflictingStageBand`), on that module's own rule that
+a composition names a disagreement rather than picking a winner.
+`ConflictingStageOrder` survives §8.3 unchanged and answers the narrower
+question: a contradiction *within* one band.
+
+A manifest has to write its own stages in band order, or it does not load
+(`ManifestError::StageBandOutOfOrder`). `Wrapper::validate`'s signal-graph
+check reads declaration order, so a manifest allowed to write `late` above
+`early` would have its two stages swapped at run time and the check would have
+proved nothing about the order that ran.
+
+The standing set is §8.1's enable, as a new settings key rather than an
+inverted one: `active_plugins` is an ordered list of plugin names, and every
+door that takes `--pipeline` falls back to it. `plugins` keeps its meaning and
+its posture — sticky-`off`, safe outside the project trust boundary because it
+can only take a plugin away — while `active_plugins` starts one and therefore
+sits on the code-execution boundary beside `hooks` and `context_providers`: an
+untrusted project scope keeps the trusted scopes' list and adds nothing.
+`--pipeline` still wins for one run. The list's order is the resolved order
+§8.3 asks to be written down; it is diffable, it travels with the repository,
+and it never depends on install order.
+
+§8.4's follow-on is enforced where a manifest loads rather than only at
+install: a plugin name holding `/` is `ManifestError::NameHoldsSeatSeparator`,
+so `<plugin>/<role>` has one reading.
+
+The key is spelled `active_plugins` in `.stella/settings.json` and
+`[run] active_plugins` in `stella.toml`, and the same list answers both.
+
+**Inside one band the list is the tiebreak, and that is the decision rather
+than an accident of the sort.** Two members in one band that share no stage
+have said nothing about each other, and something still has to answer. §8.3
+disqualifies install order for being machine-local and invisible; the list is
+neither, so the composed prompt is the same on every clone and a benchmark run
+reproduces elsewhere. `compose::merge_stage_order` starts a member that shares
+no stage at the **end** of the order built so far for exactly this reason —
+starting it at the front, which is right for a member read against a stage
+already placed, answered with the reverse of what somebody wrote.
+
+Still ahead: `stella plugin enable`/`disable`, which would write the list for
+you and pick the insertion point from the band with a lexicographic tie-break
+on plugin id; consent text and `stella plugin list` rendering the stages and
+roles a package adds; and interactive mode, which offers no `--pipeline` and so
+runs no wrapper at all. A contributed stage also publishes no signal — the
+signal vocabulary stays closed, because a plugin minting a fact for another
+plugin's condition to read is a decision nothing here has made.
 
 ### Slice 4 — the config collapse (gap D)
 

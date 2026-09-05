@@ -510,8 +510,9 @@ impl WrapperDispatch {
     /// [`WrapperError::NotAWrapper`] when any member declares no `[wrapper]`
     /// block — a composition of a wrapper and a non-wrapper is a caller
     /// mistake, not a degraded composition. [`WrapperError::EmptyComposition`]
-    /// for no members. Otherwise one of the two conflicts `super::compose`
-    /// documents: a contradictory stage order, or two arbiters.
+    /// for no members. Otherwise one of the conflicts `super::compose`
+    /// documents: a contradictory stage order, one stage put in two bands, or
+    /// two arbiters.
     pub fn bind_composed(
         members: Vec<(PluginManifest, Arc<dyn TurnWrapper>)>,
     ) -> Result<Self, WrapperError> {
