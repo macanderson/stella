@@ -33,10 +33,10 @@
 //!
 //! Paths are half a scope. A record can also be scoped by `tasks` and
 //! `keywords`, and two records scoped that way collide on every turn that names
-//! a trigger they share — a `hard` record and an advisory one over the same
-//! task, with no path anywhere between them. So overlap falls back to
-//! [`super::select::shared_triggers`] rather than growing a second matcher, and
-//! the conflict is judged by the code that decides whether both records fire.
+//! a trigger they share, so overlap falls back to
+//! [`super::select::shared_triggers`] rather than growing a second matcher. A
+//! path scope crosses a trigger scope only where one turn proves it: that is
+//! `crossing_scopes`, whose doc comment carries the rule and why it is narrow.
 
 use super::super::ingest::gate::atomicity_validation;
 use super::super::ingest::record::{AppliesTo, EnforcementMode, Record};
