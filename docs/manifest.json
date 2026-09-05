@@ -145,6 +145,11 @@
       "status": "implemented",
       "title": "ADR 0028: A panel cell is a glyph in the contract and a column in the host"
     },
+    "adr/0029-branch-protection-stays-non-strict": {
+      "path": "docs/adr/0029-branch-protection-stays-non-strict.md",
+      "status": "implemented",
+      "title": "ADR 0029: Branch protection stays non-strict"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
