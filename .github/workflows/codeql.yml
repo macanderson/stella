@@ -46,20 +46,22 @@
 # `.github/workflows/`). `ruby` is dropped — the repository's only `.rb` file
 # is `packaging/homebrew/stella.rb`, not worth its own CodeQL extractor pass.
 #
-# ── Why `rust` gets `build-mode: manual` and the rest get `none` ─────────────
+# ── Why every language here gets `build-mode: none` ─────────────────────────
 #
-# CodeQL's compiled-language extractors work by tracing the compiler
-# invocations a real build makes, so `rust` needs one. `python` and
-# `javascript-typescript` are interpreted and `actions` parses YAML directly —
-# none of the three need a build step, hence `build-mode: none`.
+# CodeQL's Rust extractor accepts one build mode, `none`: it extracts from
+# source with the workspace resolved by cargo, rather than tracing a compiler
+# the way the C/C++/Java extractors do. `manual` is refused outright by
+# `codeql database init` — "Rust does not support the manual build mode.
+# Please try using one of the following build modes instead: none" — so the
+# rust leg carries no build step. `python` and `javascript-typescript` are
+# interpreted and `actions` parses YAML directly, so none of those needs one
+# either.
 #
-# The build command is `cargo check --workspace --all-targets --locked` — not
-# `cargo build` — because CodeQL's Rust extractor only needs the compiler
-# front end (parsing, type-checking, MIR) that `check` already runs; skipping
-# codegen keeps this from paying for a release build it has no use for. It is
-# also the exact command `scripts/main-canary.sh`'s `compile` row already uses
-# to answer "does this workspace build", so a CodeQL-only build failure and a
-# main-canary compile failure are diagnosed the same way.
+# The rust leg still installs the toolchain `rust-toolchain.toml` pins,
+# because the extractor resolves the workspace through cargo before it
+# extracts; a runner with no toolchain hands it an unresolved dependency
+# graph. Whether this workspace *compiles* is `ci.yml`'s question, not this
+# file's.
 #
 # ── Why this stays advisory (#3260 DoD item 4) ───────────────────────────────
 #
@@ -103,7 +105,7 @@ jobs:
       matrix:
         include:
           - language: rust
-            build-mode: manual
+            build-mode: none
           - language: python
             build-mode: none
           - language: javascript-typescript
@@ -113,8 +115,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Only the rust leg needs a toolchain; rust-toolchain.toml pins the
-      # version cargo below picks up.
+      # Only the rust leg needs a toolchain — CodeQL's extractor resolves the
+      # workspace through cargo. The pin comes from rust-toolchain.toml.
       - name: Install Rust (rustup; the pin comes from rust-toolchain.toml)
         if: matrix.language == 'rust'
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -127,12 +129,6 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-
-      # The manual build CodeQL's rust extractor traces. See the header above
-      # for why `check` rather than `build`.
-      - name: Build the Rust workspace for CodeQL to trace
-        if: matrix.language == 'rust'
-        run: cargo check --workspace --all-targets --locked
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
