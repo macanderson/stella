@@ -42,22 +42,23 @@
 //! about what the driver is doing, and believing one of them silently is how a
 //! session ends in the wrong place (#3500).
 //!
-//! # What a call carries at B0, and what it does not
+//! # What a call carries, and what it does not
 //!
-//! **No arguments, and no result payload.** Every one of the eighteen verbs in
-//! [`DriverCall`] is named by `doc:backlog-self-driving` §3.1–§3.5 and
-//! implemented by none of them yet — B0 is the phase that makes a driver able
-//! to *hold* a capability, and B1–B6 are the phases that give each one
-//! something to do. Inventing eighteen argument tables and eighteen result
-//! tables here would be writing a wire contract for behaviour no host code can
-//! typecheck against, and every one of them would change at the phase that
-//! implemented it. So the argument and result shapes land **with the verb that
-//! needs them**, and what B0 pins down is the part consent depends on: which
-//! capabilities exist, which of them this driver declared, and what happens
+//! **An argument or result table lands with the verb that reads it**, never
+//! ahead of it. The verbs in [`DriverCall`] are named by
+//! `doc:backlog-self-driving` §3.1–§3.5 and most of them are implemented by no
+//! host; writing eighteen argument tables and eighteen result tables here would
+//! be pinning a wire contract to behaviour no host code can typecheck against,
+//! and every one of them would change at the phase that implemented it.
+//!
+//! So no call carries arguments today — no served verb reads one — and
+//! [`DriverOk`] carries one optional member per verb the host reports on, of
+//! which [`BacklogPage`] is the first. Every member is omitted when absent, so
+//! a verb that reports nothing still answers `{}`.
+//!
+//! What this pins independently of any of that is the part consent depends on:
+//! which capabilities exist, which of them a driver declared, and what happens
 //! when it asks for one it did not.
-//!
-//! [`DriverOk`] is consequently an empty table today — "the host performed it"
-//! — and grows a field per verb that has something to report.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -325,9 +326,10 @@ pub struct DriverGrant {
     /// slice of the operator's environment it may see.
     ///
     /// **Absent means the host cannot start this driver**, which is a state a
-    /// manifest may want rather than a gap: `plugins/stella-selfdriving` is a
-    /// consent document for a loop a person starts by hand, so it declares the
-    /// grant and no process, and installing it still starts nothing.
+    /// manifest may want rather than a gap: a package can be a consent document
+    /// for a loop a person starts by hand, declaring the grant and no process,
+    /// and installing it then starts nothing. The install prompt says so, so a
+    /// reader can tell that from a driver the host will spawn.
     ///
     /// # Why this is not `[runtime]`
     ///
@@ -733,15 +735,71 @@ pub enum DriverCallOutcome {
 
 /// What a successful capability ask returned.
 ///
-/// **Empty today, and that is the honest shape rather than a placeholder.** No
-/// verb is implemented at B0 (this module's header says why), so there is
-/// nothing for a result table to describe. The phase that implements a verb
-/// adds the field it reports — and because this table denies unknown fields, a
-/// host answering with a payload the contract does not have is a decode error
-/// on the driver's side rather than a value silently dropped.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// One member per verb the host performs, and nothing for the verbs it does
+/// not. That is the rule this module's header sets, and [`BacklogPage`] is the
+/// first thing to land under it: a result shape is written when the verb
+/// reporting it is served, so no field here describes behaviour no host code
+/// can produce.
+///
+/// Every member is omitted when absent, so an answer to a verb that reports
+/// nothing is `{}` on the wire — the bytes every driver written against B0
+/// already reads. The table denies unknown fields, so a host answering with a
+/// payload the contract does not have is a decode error on the driver's side
+/// rather than a value silently dropped.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DriverOk {}
+pub struct DriverOk {
+    /// What [`DriverCall::BacklogNext`] answered with: the tracker's open
+    /// queue, in the order the loop should take it.
+    ///
+    /// Absent for every other verb. An `Option` rather than an empty page
+    /// because "no queue was asked for" and "the queue is empty" are different
+    /// facts, and a loop branches on both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backlog: Option<BacklogPage>,
+}
+
+/// The ranked queue one [`DriverCall::BacklogNext`] read produced.
+///
+/// A page rather than a single issue, because a loop that skips a unit it
+/// cannot take needs the next one without spending a second ask, and because a
+/// driver seeing only the top of the ranking could not tell one unit of work
+/// from a backlog with one issue in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BacklogPage {
+    /// The open issues the host read, most-ready first. Empty means the
+    /// tracker answered and had nothing ready — a failed read is a
+    /// [`HostCallFailure`], never an empty page.
+    #[serde(default)]
+    pub issues: Vec<BacklogEntry>,
+}
+
+/// One issue, as the driver channel carries it.
+///
+/// Four fields, and not `stella_protocol::Issue`. A plugin holds
+/// no forge token, so what it needs is the identity to name in its next ask,
+/// the line a human reads in its log, and the labels its own policy branches
+/// on. The body is the field this must not carry: issue text is written by
+/// whoever can file an issue, and pushing it through a plugin's process would
+/// make untrusted prose the plugin's problem to handle rather than the host's
+/// (`doc:agent-native-delivery` §10.2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BacklogEntry {
+    /// The tracker's own identifier, as the tracker spells it — `"1234"`,
+    /// `"STELLA-42"`. Opaque: a driver hands it back and never parses it.
+    pub key: String,
+    /// The issue's one-line title.
+    pub title: String,
+    /// The labels the tracker carries, verbatim. Priority and area live here.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Where a human would go to read it, or empty when the tracker offers no
+    /// address.
+    #[serde(default)]
+    pub url: String,
+}
 
 #[cfg(test)]
 mod tests {
@@ -881,5 +939,65 @@ mod tests {
             }
             DriverCallOutcome::Ok(_) => panic!("a refusal decoded as a success"),
         }
+    }
+
+    /// A verb the host does not report on still answers `{}`, so every driver
+    /// written against the empty table keeps reading the same bytes.
+    #[test]
+    fn an_answer_that_reports_nothing_is_still_the_empty_table() {
+        let json = serde_json::to_string(&DriverCallResponse::ok(1, DriverOk::default()))
+            .expect("an empty answer serializes");
+        assert!(json.contains(r#""ok":{}"#), "{json}");
+    }
+
+    /// The backlog page round-trips byte-for-byte, and a driver reads the keys
+    /// back in the order the host ranked them.
+    #[test]
+    fn a_backlog_page_round_trips_and_keeps_the_hosts_order() {
+        let answered = DriverCallResponse::ok(
+            4,
+            DriverOk {
+                backlog: Some(BacklogPage {
+                    issues: vec![
+                        BacklogEntry {
+                            key: "1234".into(),
+                            title: "the queue is read over a port".into(),
+                            labels: vec!["bug".into(), "P1".into()],
+                            url: "https://example.invalid/1234".into(),
+                        },
+                        BacklogEntry {
+                            key: "STELLA-42".into(),
+                            title: "a second tracker spells its keys differently".into(),
+                            labels: Vec::new(),
+                            url: String::new(),
+                        },
+                    ],
+                }),
+            },
+        );
+        let json = serde_json::to_string(&answered).expect("a backlog page serializes");
+        let back: DriverCallResponse = serde_json::from_str(&json).expect("and reads back");
+        assert_eq!(back, answered);
+        match back.outcome {
+            DriverCallOutcome::Ok(ok) => {
+                let page = ok.backlog.expect("the page survived the wire");
+                let keys: Vec<&str> = page.issues.iter().map(|issue| issue.key.as_str()).collect();
+                assert_eq!(keys, ["1234", "STELLA-42"]);
+            }
+            DriverCallOutcome::Err(failure) => {
+                panic!("a served answer decoded as a refusal: {failure}")
+            }
+        }
+    }
+
+    /// A page the host never sent is `None`, not an empty one — the two are
+    /// different answers and a loop branches on both.
+    #[test]
+    fn an_answer_with_no_page_is_not_an_empty_page() {
+        let ok: DriverOk = serde_json::from_str("{}").expect("the empty table reads back");
+        assert_eq!(ok.backlog, None);
+        let empty: DriverOk =
+            serde_json::from_str(r#"{"backlog":{"issues":[]}}"#).expect("an empty page reads back");
+        assert_eq!(empty.backlog, Some(BacklogPage::default()));
     }
 }

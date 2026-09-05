@@ -69,15 +69,16 @@ first extraction, not a claim about the state after this branch.
   slice) has not started either — the reference count grew, not shrank, in
   the same work (§7 of the plan).
 - **Phase 5 (Track D, self-driving as a plugin).** Started, not finished.
-  `plugins/stella-selfdriving/plugin.toml` exists as the settled D-3 consent
+  `plugins/stella-selfdriving/plugin.toml` is the settled D-3 consent
   declaration — the widest grant self-driving needs, written out and provable
-  expressible/showable before install — but its own header states plainly
-  what it is not: "installing this copies a declaration and a README, and
-  starts nothing." No command surface drives it, and no `Principal::Plugin`
-  grant binds its declared capabilities to an `AuthzGate` rule yet.
-  `scripts/self-driving.sh` remains the sole working driver, untouched, per
-  this phase's own instruction not to delete it before a replacement is
-  proven.
+  expressible/showable before install — and the package also ships
+  `main.py`, the program `stella plugin drive stella-selfdriving` starts. It
+  asks over the driver channel and holds nothing it did not declare; the host
+  serves the tracker read as `Principal::Plugin("stella-selfdriving")`, against
+  the `AuthzGate` rule the install-time capability list builds, and refuses
+  every other verb as `unsupported`. `scripts/self-driving.sh` still holds
+  every power after the claim and remains untouched, per this phase's own
+  instruction not to delete it before a replacement is proven.
 - **Phase 6 (Documentation).** In progress, across more than one pass. This
   document, `doc:pipeline-as-plugins`, and `crates/stella-pipeline/README.md`
   were rewritten to the post-flip state in this pass; `crates/stella-plugin/README.md`

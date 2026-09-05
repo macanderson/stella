@@ -41,7 +41,7 @@ mod lifecycle;
 mod parallel;
 pub(crate) mod probes;
 mod query;
-mod ready;
+pub(crate) mod ready;
 mod report;
 pub(crate) mod residue;
 pub(crate) mod state;
