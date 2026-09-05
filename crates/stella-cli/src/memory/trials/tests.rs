@@ -16,18 +16,23 @@ use crate::memory::{SessionMemory, appraisals};
 /// The lesson stored as a memory, and the prompt that recalls it.
 const LESSON: &str = "always use the obsolete frobnicator for database migrations";
 
-/// The handle of the one record the fixture registry holds.
-const RECORD_HANDLE: &str = "ctx.acme.staging-url";
-
 /// A workspace with a session memory over an empty context store.
 fn session(dir: &std::path::Path) -> SessionMemory {
     std::fs::create_dir_all(dir.join(".stella")).expect("stella dir");
     SessionMemory::open(dir, false).expect("session memory")
 }
 
-/// Hand the session one volatile record. It is unscoped, so it applies to
-/// every turn. The rule population is then one handle.
-fn with_one_record(memory: &mut SessionMemory) {
+/// Hand the session one volatile record, and give back the `^handle` the
+/// ledger files it under.
+///
+/// The handle is read off the loaded registry rather than spelled here. It
+/// is derived from the lineage and widens on a collision, so a literal in
+/// this file would be a second copy of a rule that lives in
+/// `stella_records::records::handle`.
+///
+/// The record is unscoped, so it applies to every turn. The rule population
+/// is then one handle.
+fn with_one_record(memory: &mut SessionMemory) -> String {
     let file = stella_learn::rules::RuleFile {
         path: ".stella/rules/ctx.acme.staging.toml".to_string(),
         contents: r#"
@@ -47,11 +52,18 @@ force = "may"
         .to_string(),
         contributed_by: None,
     };
-    memory.set_record_registry(stella_records::records::registry::load(
+    let registry = stella_records::records::registry::load(
         &[],
         &[file],
         &stella_records::records::Facts::default(),
-    ));
+    );
+    let handle = registry
+        .entries
+        .first()
+        .map(|entry| entry.record.handle.clone())
+        .expect("the fixture loads one record");
+    memory.set_record_registry(registry);
+    handle
 }
 
 /// Store the lesson as a recallable memory.
@@ -121,7 +133,7 @@ async fn a_recalled_memory_writes_a_treatment_arm_trial() {
 async fn a_rendered_record_writes_a_treatment_arm_trial() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut memory = session(dir.path());
-    with_one_record(&mut memory);
+    let handle = with_one_record(&mut memory);
 
     assert!(!memory.arm_controls_at(0, 0), "no control fires here");
     let block = memory
@@ -146,7 +158,7 @@ async fn a_rendered_record_writes_a_treatment_arm_trial() {
         .await;
 
     assert_eq!(
-        rows(dir.path(), "rule", RECORD_HANDLE),
+        rows(dir.path(), "rule", &handle),
         vec![true],
         "the rendered record is one row, in the with-rule arm"
     );
@@ -163,7 +175,7 @@ async fn a_rendered_record_writes_a_treatment_arm_trial() {
 async fn the_rule_arm_withholds_a_record_and_writes_its_control_arm() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut memory = session(dir.path());
-    with_one_record(&mut memory);
+    let handle = with_one_record(&mut memory);
 
     let mut rendered = Vec::new();
     for turn in 1..=6 {
@@ -197,7 +209,7 @@ async fn the_rule_arm_withholds_a_record_and_writes_its_control_arm() {
         "the third holdout is the rule arm, and it withholds the record"
     );
     assert_eq!(
-        rows(dir.path(), "rule", RECORD_HANDLE),
+        rows(dir.path(), "rule", &handle),
         vec![true, true, true, true, true, false],
         "the withheld turn is recorded in the without-rule arm"
     );
