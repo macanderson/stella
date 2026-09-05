@@ -1,0 +1,16 @@
+# grid golden · mixed_turn_zoom_turns
+# a bash call, a read and a file edit, at Zoom::Turns — turn headers only
+# width 100 · rendered through grid::to_plain, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-transcript --test grid_snapshots
+
+╭─ widen-offset ───────────────────────────────────────────────────────────────────────────────── ─╮
+│  you  widen the offset gutter so a five-digit step count still lines up
+│
+│  agent  ▸ I'll check the current width, run the suite, then widen the constant. …
+│ 0:00 ▸ bash        cargo test -p stella-transcript                        [226ms] [2 ln] [$0.0006]
+│      ▸ read_file   crates/stella-transcript/src/grid.rs                     [4ms] [1 ln] [$0.0006]
+│      ▸ edit_file   crates/stella-transcript/src/grid.rs  +1 −1                     [9ms] [$0.0006]
+│
+│  agent  Widened OFFSET_W from 5 to 6; the suite still passes.
+╰─ ✓ done ──────────────────────────────────────────────── [3 steps] [0:04] [12.0k→360] [$0.0018] ─╯
+1 turns · 3 steps · $0.0018                    j/k step  ←/→ fold  z zoom [Turns]  e outputs  c copy

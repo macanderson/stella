@@ -146,6 +146,9 @@ pub const PAPER_PANEL: Color = Color::Rgb(0xF9, 0xF6, 0xEF);
 /// Light border. `#E6E3DD`
 pub const PAPER_BORDER: Color = Color::Rgb(0xE6, 0xE3, 0xDD);
 
+/// Warning: the one status the core palette does not name. `#E78D54`
+pub const WARNING: Color = Color::Rgb(0xE7, 0x8D, 0x54);
+
 // ── The walkable table ─────────────────────────────────────────────
 
 /// Which predicate a token's value is held to.
@@ -195,6 +198,7 @@ pub const ALL: &[(&str, Color, Clamp)] = &[
     ("paper", PAPER, Clamp::WarmPaper),
     ("paper-panel", PAPER_PANEL, Clamp::WarmPaper),
     ("paper-border", PAPER_BORDER, Clamp::WarmPaper),
+    ("amber", WARNING, Clamp::Verdict),
 ];
 
 // The predicates that read this table are in `crate::clamp`, and the

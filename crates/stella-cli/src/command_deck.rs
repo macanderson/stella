@@ -78,7 +78,7 @@ use stella_tools::ToolRegistry;
 use stella_tools::registry::approval::ApprovalResponse;
 use stella_tui::{
     AgentMeta, AgentScope, AgentStatus, DeckOptions, Inbound, SkillOp, SkillScope, SkillSearchHit,
-    SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
+    SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput,
 };
 use tokio::sync::mpsc::{self, UnboundedSender};
 
@@ -89,6 +89,7 @@ use crate::{agent, rules};
 mod add_dir;
 mod authoring;
 mod command_side;
+mod deck_thread;
 mod driver_support;
 mod dropped_turn;
 pub(crate) mod forwarder;
@@ -117,9 +118,9 @@ mod voice_cmd;
 mod whistle;
 mod worker_control;
 use driver_support::{
-    handle_supervisor_msg, service_approve_revision, service_edit_memory, service_registry_action,
-    service_reject_memory, service_rerun_gate, service_undo_delete, spawn_mcp_connect,
-    spawn_notification_poller, spawn_pr_monitor,
+    graph_ready_callback, handle_supervisor_msg, service_approve_revision, service_edit_memory,
+    service_registry_action, service_reject_memory, service_rerun_gate, service_undo_delete,
+    spawn_mcp_connect, spawn_notification_poller, spawn_pr_monitor,
 };
 use lead_turn::run_lead_turn;
 use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
@@ -135,6 +136,9 @@ use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
+
+/// Where a `!!`/`!!!` interrupt's saved record is written.
+mod keep_record;
 
 /// ISSUES-tab requests, served by the workspace's issue provider.
 mod issues;
@@ -808,9 +812,10 @@ pub async fn run_deck_session(
         voice_enabled: voice::enabled(cfg),
         voice_mode: voice::mode(cfg),
     };
-    // The deck owns its channel ends and runs on its own task so rendering
-    // never waits on the driver (and vice versa).
-    let deck = tokio::spawn(run_deck(opts, deck_rx, sub_tx));
+    // The deck owns its channel ends and runs on its own thread, so nothing
+    // the driver blocks on can hold a keystroke (`deck_thread`).
+    let deck =
+        deck_thread::spawn(opts, deck_rx, sub_tx).map_err(|e| format!("deck thread: {e}"))?;
 
     // The launch cinematic: hold the splash's battle loop open over session
     // init and release it once BOTH async legs — the background code-graph
@@ -841,25 +846,14 @@ pub async fn run_deck_session(
     // every boot, so journaling it would replay stale "indexing…" lines on
     // top of every resumed transcript.
     let status_tx = deck_tx.clone();
-    let ready_tx = deck_tx.clone();
-    let ready_root = cfg.workspace_root.clone();
     let (_session_graph, _graph_build) = agent::spawn_session_graph(
         &cfg.workspace_root,
         Box::new(agent::deck_notice_narrator(status_tx, LEAD)),
-        Box::new(move || {
-            // Populate the Graph tab now the index exists (it opened on the
-            // "run stella init" hint), and assert the lead is idle — the
-            // index progress above no longer folds it to `Running`.
-            if let Some(snapshot) = agent::graph_snapshot(&ready_root) {
-                let _ = ready_tx.send(Inbound::GraphSnapshot(snapshot));
-            }
-            let _ = ready_tx.send(Inbound::Status {
-                agent: LEAD.to_string(),
-                status: AgentStatus::WaitingInput,
-            });
-            // One of the two init legs the launch splash waits on.
-            release_on_graph_ready();
-        }),
+        Box::new(graph_ready_callback(
+            cfg.workspace_root.clone(),
+            deck_tx.clone(),
+            release_on_graph_ready,
+        )),
         Box::new(agent::deck_readiness_reporter(deck_tx.clone())),
     );
 
@@ -1067,7 +1061,7 @@ pub async fn run_deck_session(
                     }
                     IdleWake::Input(input) => input,
                 };
-                match input {
+                match keep_record::intercept(input, &cfg.workspace_root, &in_tx) {
                     None => break 'session,
                     Some(WorkspaceInput::Quit) => break 'session,
                     // Worker controls work between lead turns too — the
@@ -1153,7 +1147,7 @@ pub async fn run_deck_session(
                     // the same "run this now" path.
                     Some(
                         WorkspaceInput::Steer { agent, texts }
-                        | WorkspaceInput::Interrupt { agent, texts },
+                        | WorkspaceInput::Interrupt { agent, texts, .. },
                     ) if !texts.is_empty() => {
                         match steer::steer_idle(&agent, &subs, &mut queue, texts, &in_tx) {
                             Some(first) => {
@@ -1956,7 +1950,7 @@ pub async fn run_deck_session(
                             },
                         );
                     }
-                    input = sub_rx.recv() => match input {
+                    input = sub_rx.recv() => match keep_record::intercept(input, &cfg.workspace_root, &in_tx) {
                         None | Some(WorkspaceInput::Quit) => break TurnEnd::Quit,
                         // The lead is busy — the prompt does NOT wait for it.
                         // It backlogs and immediately drains to a dedicated
@@ -2050,10 +2044,10 @@ pub async fn run_deck_session(
                         // The composer's red mode: stop at the boundary, run the
                         // words next. At a worker lane it lands as a steer — see
                         // the envelope's `Interrupt` doc.
-                        Some(WorkspaceInput::Interrupt { agent, texts }) if agent == LEAD =>
+                        Some(WorkspaceInput::Interrupt { agent, texts, .. }) if agent == LEAD =>
                             steer::interrupt_lead(&steering, &lead_pause, &mut queue, texts, &in_tx),
                         Some(WorkspaceInput::Steer { agent, texts }
-                            | WorkspaceInput::Interrupt { agent, texts }) =>
+                            | WorkspaceInput::Interrupt { agent, texts, .. }) =>
                             steer::steer_worker(&subs, &mut queue, &agent, texts, &in_tx),
                         // An explicit front-insert stays a front-insert even
                         // if a turn started before it arrived — the deck's
@@ -2753,14 +2747,14 @@ pub async fn run_deck_session(
     // already quit (the journal tee drains, fsyncs, and forwards the close);
     // then wait for it to restore the terminal.
     drop(in_tx);
-    let deck_result = deck.await;
+    let deck_result = deck.join().await;
     if let Some(set) = mcp_slot.get() {
         set.close_all().await;
     }
     match deck_result {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(format!("deck terminal error: {e}")),
-        Err(e) => Err(format!("deck task failed: {e}")),
+        Err(e) => Err(format!("deck thread failed: {e}")),
     }
 }
 

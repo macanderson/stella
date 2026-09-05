@@ -45,7 +45,7 @@ mod amend;
 mod explain;
 mod govern;
 mod propose;
-mod review;
+pub(crate) mod review;
 // `pub(crate)` for one reason: the retirement handshake spans two commands, so its
 // witness has to drive both halves. `ingest --refresh` archives a record in place and
 // `context validate` decides whether that is a finding — the bug they had (#3254) was

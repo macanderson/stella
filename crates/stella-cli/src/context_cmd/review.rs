@@ -535,7 +535,7 @@ pub fn run_keep(
 /// the `record_id` the file actually carries, not one recomputed today.
 /// `None` when the file cannot be read or parsed — the caller then falls back
 /// to the plain refusal rather than superseding something it cannot see.
-fn published_record_at(path: &Path) -> Option<stella_records::ingest::record::Record> {
+pub(crate) fn published_record_at(path: &Path) -> Option<stella_records::ingest::record::Record> {
     let contents = std::fs::read_to_string(path).ok()?;
     let file: stella_records::ingest::record::ContextFile = toml::from_str(&contents).ok()?;
     file.records.first().cloned()

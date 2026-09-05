@@ -279,6 +279,10 @@ before it crosses.
   where each line sits: what a screen runs (`Cc`), and what reorders the text
   after it (the bidi `char`s). `PanelText::new` asks both; a plugin's `name`
   asks the first.
+- `src/seat.rs` — `seat_key`, the one place a `<plugin>/<role>` seat key is
+  built (`doc:roleless-core` §8.4). The host joins the two halves; a plugin
+  sends only its bare role name, so no plugin can name a seat another plugin
+  owns. `manifest.rs` refuses a `/` in either half at load.
 - `src/error.rs` — `ManifestError`, typed per rule (AGENTS.md #5).
 - `tests/manifest_grades.rs` + `tests/fixtures/*.toml` — slice A's
   acceptance: one fixture per grade, round-tripped through both TOML and

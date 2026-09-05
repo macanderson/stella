@@ -239,6 +239,90 @@ fn a_seat_name_core_has_never_heard_of_routes_the_same_as_any_other() {
     );
 }
 
+/// A dispatcher that records the spec it was handed and answers with a fixed
+/// report, so a test can read the seat the *host* built.
+struct RecordingDispatcher(Arc<Mutex<Vec<SubAgentSpec>>>);
+
+#[async_trait]
+impl SubAgentDispatcher for RecordingDispatcher {
+    async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(spec);
+        SubAgentOutcome::Completed(stella_core::subagent::SubAgentReport {
+            summary: "answered".to_string(),
+            truncated: false,
+            cost_usd: 0.0,
+            steps: 1,
+            absorbed_messages: 0,
+        })
+    }
+}
+
+/// **The seat-assignment witness.** A `[seats]` entry keyed `<plugin>/<role>`
+/// reaches the child turn that plugin asks for.
+///
+/// Both real halves are here, which is what makes it a witness rather than two
+/// agreeing test doubles: `ChildTurns` — the host code a plugin's `child_turn`
+/// ask lands in — builds the spec, and this session dispatcher looks the seat
+/// up the way `dispatch` does. A spec carrying the bare `reviewer` misses the
+/// `grader/reviewer` key the settings pane writes, and the child then runs on
+/// the session's model with no notice.
+#[tokio::test]
+async fn a_seat_assigned_to_a_plugins_role_reaches_that_plugins_child_turn() {
+    let manifest = stella_plugin::PluginManifest::from_toml_str(
+        "name = \"grader\"\n\n[loop]\nparticipation = \"steering\"\npoints = \
+         [\"after_turn\"]\ncalls = [\"child_turn\"]\n\n[subloop]\nstages = \
+         [\"research\"]\n\n[roles.reviewer]\ntier = \"research\"\n",
+    )
+    .expect("the manifest loads");
+
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let plane = stella_runtime::wrapper::ChildTurns::declare(
+        &manifest,
+        RecordingDispatcher(Arc::clone(&recorded)),
+    );
+    stella_runtime::wrapper::ChildTurnPlane::child_turn(
+        &plane,
+        stella_plugin::ChildTurnArgs {
+            role: "reviewer".to_string(),
+            instruction: "does the diff drop the retry?".to_string(),
+        },
+    )
+    .await
+    .expect("a declared, resolvable role runs");
+
+    let seat = recorded
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)[0]
+        .seat
+        .clone();
+
+    let registry = registry();
+    let mut seats = crate::agent::seats::SeatProviders::new();
+    // Exactly what `[seats]` holds and what the settings pane offers: the
+    // plugin's name, then the role it declared.
+    seats.insert(
+        stella_plugin::seat_key("grader", "reviewer"),
+        Arc::new(NamedProvider("reviewer-model")),
+    );
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NamedProvider("session-model")),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_seats(seats);
+
+    assert_eq!(
+        dispatcher.provider_for(seat.as_deref()).id(),
+        "reviewer-model",
+        "the user's `grader/reviewer` assignment must reach that plugin's reviewer; the seat \
+         the host built was {seat:?}"
+    );
+}
+
 /// **The decorator-forwarding witness.**
 ///
 /// The deck stacks executors between the engine and the registry

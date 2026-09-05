@@ -769,6 +769,35 @@ pub(super) fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
     });
 }
 
+/// The session graph's on-ready callback: fill the Graph tab now the index
+/// exists (it opened on the "run stella init" hint), mark the lead idle, and
+/// release the splash leg that waited on the index.
+///
+/// The snapshot opens the graph store and reads a file neighbourhood, which is
+/// SQLite on whichever thread calls it. The callback fires on the graph task,
+/// a task on the shared runtime, so the read runs on the blocking pool rather
+/// than holding a worker. The three sends follow the read on that same
+/// thread: the tab must not be told the lead is idle before the snapshot it
+/// idles over has arrived.
+pub(super) fn graph_ready_callback(
+    root: PathBuf,
+    deck_tx: UnboundedSender<Inbound>,
+    release_splash: impl FnOnce() + Send + 'static,
+) -> impl FnOnce() + Send + 'static {
+    move || {
+        tokio::task::spawn_blocking(move || {
+            if let Some(snapshot) = agent::graph_snapshot(&root) {
+                let _ = deck_tx.send(Inbound::GraphSnapshot(snapshot));
+            }
+            let _ = deck_tx.send(Inbound::Status {
+                agent: LEAD.to_string(),
+                status: AgentStatus::WaitingInput,
+            });
+            release_splash();
+        });
+    }
+}
+
 #[cfg(test)]
 mod undo_delete_tests {
     use super::*;

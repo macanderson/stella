@@ -42,7 +42,8 @@
 //!   usefulness score, whether the memory's content still held true, and a
 //!   short remark. Aggregated by [`Store::memory_citation_stats`] into the
 //!   rule-promotion eligibility gate `stella memory` surfaces. No shipped
-//!   tool writes new rows today.
+//!   tool writes new rows today — declared, inert plumbing, see
+//!   [`MemoryCitationRow`]'s own doc comment.
 //! - **rules** — extension-authored workspace rules: one row per rule id,
 //!   holding the full rule markdown in the `.stella/rules/*.md` authoring
 //!   format (the store never parses it — `stella_learn::rules` does).
@@ -134,6 +135,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 mod ddl;
 mod dispatch;
 mod error;
+mod git_env;
 mod migrations;
 mod private;
 mod receipts;
@@ -275,6 +277,21 @@ pub struct FileTouchRow {
 /// id (the `nod_…` id the recall block showed the model), the agent's
 /// usefulness score (1–5), whether the memory's content still held true this
 /// turn, and a short free-text remark.
+///
+/// **Declared, inert plumbing today.** The row shape, [`Self::is_positive`],
+/// [`fold_citation_stats`], and the promotion/quarantine thresholds below are
+/// all still here and still correct, but nothing in a real turn writes one:
+/// the `cite_memory` tool that collected the judgement is retired, and
+/// [`Store::record_memory_citations`] has no production caller — only tests
+/// construct rows to exercise this fold. `quarantined_memory_ids` and
+/// `stella memory`'s eligibility column are therefore always empty/false, and
+/// real memory retirement runs entirely on deterministic path-anchor
+/// validation (`stella-cli`'s `memory::validation`), not this table.
+/// `ObservationSource::MemoryCitation`, the source that paired a citation
+/// with a mined observation, was removed for the same reason
+/// (`stella-records`' `ObservationSource` doc comment). This stays rather
+/// than being deleted so a later shared holdout sweep can repoint memory
+/// retirement here without a second schema migration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryCitationRow {
     pub memory_id: String,
@@ -299,6 +316,10 @@ pub const POSITIVE_SCORE_MIN: i64 = 3;
 /// A memory must be cited successfully STRICTLY MORE THAN this many times to
 /// become rule-promotion eligible (spec: "more than 10 times" — exactly 10
 /// is not enough).
+///
+/// Declared, inert plumbing today — see [`MemoryCitationRow`]'s doc comment.
+/// Unreachable in practice: nothing writes a citation, so no memory's streak
+/// ever advances past zero.
 pub const PROMOTION_CITATIONS_REQUIRED: i64 = 10;
 
 /// A memory cited untruthful this many times (total, across its history) is
@@ -308,6 +329,10 @@ pub const PROMOTION_CITATIONS_REQUIRED: i64 = 10;
 /// untruthful citation counts regardless of score, and one fresh truthful
 /// citation does NOT clear quarantine — only `stella memory unquarantine`
 /// (or deleting the stale memory) does.
+///
+/// Declared, inert plumbing today — see [`MemoryCitationRow`]'s doc comment.
+/// Unreachable in practice: nothing writes an untruthful citation, so no
+/// memory is ever quarantined by this path.
 pub const QUARANTINE_NEGATIVES_THRESHOLD: i64 = 2;
 
 /// One tombstone as stored — what a person chose to forget, the text it
@@ -335,6 +360,10 @@ pub struct ForgottenRow {
 
 /// Per-memory citation aggregate — the data behind `stella memory` and the
 /// rule-promotion eligibility gate.
+///
+/// Declared, inert plumbing today — see [`MemoryCitationRow`]'s doc comment.
+/// Folded from an always-empty citation table, so every row this type ever
+/// produces has `eligible == false` and `quarantined == false`.
 ///
 /// Eligibility semantics (deliberately strict, per spec): a memory is
 /// eligible once its **positive streak** — consecutive positive citations
@@ -902,6 +931,10 @@ impl Store {
 
     /// Persist one citation row per execution/memory pair. One transaction —
     /// see [`Self::record_files_touched`].
+    ///
+    /// No production caller today — see [`MemoryCitationRow`]'s doc comment.
+    /// Callable and correct so a future producer, or a test exercising the
+    /// fold below, has a real write path.
     pub fn record_memory_citations(
         &self,
         execution_id: i64,
@@ -1573,6 +1606,11 @@ impl Store {
 /// negative one; eligibility is a STRICT `> PROMOTION_CITATIONS_REQUIRED` on
 /// that streak, so one negative remark disqualifies the memory until it
 /// re-earns more than 10 fresh all-positive citations.
+///
+/// Declared, inert plumbing today — see [`MemoryCitationRow`]'s doc comment.
+/// `Store::memory_citation_stats` always calls this with an empty slice in
+/// production, so it always folds to nothing; kept correct against a real
+/// input for the day a producer exists.
 pub fn fold_citation_stats(rows: &[MemoryCitationRow]) -> Vec<MemoryCitationStats> {
     let mut stats: Vec<MemoryCitationStats> = Vec::new();
     let mut score_sum: i64 = 0;

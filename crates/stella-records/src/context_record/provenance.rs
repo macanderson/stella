@@ -62,18 +62,15 @@ pub const TRAJECTORY_ABSTRACTION_MIN_DISTINCT_TASKS: u32 = 3;
 /// - [`ObservationSource::ReflectionLesson`] is a model's judgement about a
 ///   run it just took, which is [`ProvenanceGrade::ModelCritique`] however
 ///   confident the prose sounds.
-/// - [`ObservationSource::MemoryCitation`] pairs an observed retrieval with a
-///   model's usefulness judgement. The retrieval is observed and the judgement
-///   is not, so the pair is graded at the weaker half. Splitting the citation
-///   into its observed and judged parts would promote it; counting
-///   citations would not, and that is the door this grading closes.
+///
+/// A third source, `MemoryCitation`, paired an observed retrieval with a
+/// model's usefulness judgement here. It is retired — see
+/// [`ObservationSource`]'s own doc comment for why.
 #[must_use]
 pub fn observation_grade(source: ObservationSource) -> ProvenanceGrade {
     match source {
         ObservationSource::ToolOutcome => ProvenanceGrade::EnvironmentObservation,
-        ObservationSource::ReflectionLesson | ObservationSource::MemoryCitation => {
-            ProvenanceGrade::ModelCritique
-        }
+        ObservationSource::ReflectionLesson => ProvenanceGrade::ModelCritique,
     }
 }
 

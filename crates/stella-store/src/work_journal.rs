@@ -55,6 +55,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::git_env::sealed_git;
 use crate::{Result, StoreError};
 
 pub mod lane;
@@ -305,7 +306,12 @@ impl WorkJournal {
         if self.git_dir.join("HEAD").exists() {
             return Ok(());
         }
-        run(Command::new("git").args(["init", "-q", "--bare", &self.git_dir.to_string_lossy()]))?;
+        run(sealed_git(&self.git_dir).args([
+            "init",
+            "-q",
+            "--bare",
+            &self.git_dir.to_string_lossy(),
+        ]))?;
         // A bare repo refuses a work tree. Everything else about bare — no
         // checkout of its own, no branch to confuse — is exactly what is
         // wanted, so flip only this one bit.
@@ -318,17 +324,13 @@ impl WorkJournal {
     }
 
     fn git(&self, args: &[&str]) -> Result<String> {
-        let mut cmd = Command::new("git");
+        let mut cmd = sealed_git(&self.git_dir);
         cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .arg("--work-tree")
             .arg(&self.work_tree)
             .args(args)
-            .env("GIT_INDEX_FILE", &self.index_file)
-            // The work tree is the user's; a hook or config of theirs must
-            // never run as a side effect of stella recording history.
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", &self.git_dir);
+            .env("GIT_INDEX_FILE", &self.index_file);
         run(&mut cmd)
     }
 
@@ -468,26 +470,22 @@ impl WorkJournal {
     /// cost of storing one extra file is trivial next to silently dropping a
     /// real one from the durable record.
     fn is_ignored(&self, path: &str) -> bool {
-        Command::new("git")
-            .arg("--git-dir")
+        let mut cmd = sealed_git(&self.git_dir);
+        cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .arg("--work-tree")
             .arg(&self.work_tree)
             .args(["check-ignore", "-q", "--", path])
             .env("GIT_INDEX_FILE", &self.index_file)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", &self.git_dir)
-            .current_dir(&self.work_tree)
-            .status()
-            .is_ok_and(|s| s.success())
+            .current_dir(&self.work_tree);
+        cmd.status().is_ok_and(|s| s.success())
     }
 
     fn hash_blob(&self, content: &str) -> Result<String> {
-        let mut cmd = Command::new("git");
+        let mut cmd = sealed_git(&self.git_dir);
         cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .args(["hash-object", "-w", "--stdin"])
-            .env("GIT_CONFIG_NOSYSTEM", "1")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -952,12 +950,10 @@ impl WorkJournal {
             input.push_str(name);
             input.push('\n');
         }
-        let mut cmd = Command::new("git");
+        let mut cmd = sealed_git(&self.git_dir);
         cmd.arg("--git-dir")
             .arg(&self.git_dir)
             .args(["update-ref", "--stdin"])
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", &self.git_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -1028,6 +1024,37 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         let store = guard.path().join("store");
         (guard, ws, store)
+    }
+
+    /// **Witness.** See [`crate::git_env`] for the mechanism this pins. A
+    /// race against another thread cannot itself be run as a clean
+    /// pass/fail test. So this test picks one fixed cause instead: an
+    /// ambient `GIT_CONFIG_GLOBAL` naming a bad file breaks every command
+    /// here, `record_checkpoint` included. That is the same silent failure
+    /// `CheckpointSink::persist` hides in real use — which is why this
+    /// checks the `Result` itself, not that sink.
+    #[test]
+    fn a_hostile_ambient_git_config_global_cannot_reach_a_sealed_git_spawn() {
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["GIT_CONFIG_GLOBAL"]);
+
+        let (_guard, ws, store) = scratch();
+        let hostile = tempfile::tempdir().unwrap();
+        let config = hostile.path().join("hostile.gitconfig");
+        std::fs::write(&config, "this is not a valid git config file\n").unwrap();
+        // SAFETY: `test_env::lock()` is held for `_restore`'s whole
+        // lifetime, which outlives every git spawn below.
+        unsafe { std::env::set_var("GIT_CONFIG_GLOBAL", &config) };
+
+        let journal = WorkJournal::open_in(&store, &ws, "ses-hostile-config")
+            .expect("opening the journal must not depend on the ambient environment");
+        assert!(
+            journal
+                .record_checkpoint(r#"{"lane":"req:1"}"#, None)
+                .is_ok(),
+            "a hostile ambient GIT_CONFIG_GLOBAL must not reach this \
+             module's own git subprocesses"
+        );
     }
 
     #[test]

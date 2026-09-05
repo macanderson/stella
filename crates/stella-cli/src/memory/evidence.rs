@@ -1,56 +1,42 @@
-//! Generalizing the citation loop — Phase 4 deliverable 2 (#715).
+//! Observation sources beyond reflection lessons — Phase 4 deliverable 2
+//! (#715).
 //!
-//! [`ObservationSource`] has always had three variants. Only one of them,
-//! `ReflectionLesson`, had a constructor: `MemoryCitation` and `ToolOutcome`
+//! [`ObservationSource`] started with three variants. Only one,
+//! `ReflectionLesson`, had a constructor — `MemoryCitation` and `ToolOutcome`
 //! were declared in Phase 1 and written by nothing, so the typed loop learned
 //! from reflection prose and from no other evidence at all. This module fills
-//! the other two, which is what turns explicit citation from *the* evidence
-//! source into *one* of them.
+//! `ToolOutcome`, the one source left standing beside `ReflectionLesson`.
 //!
-//! # What does not change
+//! # Why `MemoryCitation` is gone
 //!
-//! The deliverable is explicit that the citation loop keeps its semantics, and
-//! it does — untouched. `fold_citation_stats` still derives quarantine at
-//! [`stella_store::QUARANTINE_NEGATIVES_THRESHOLD`] untruthful citations and
-//! promotion eligibility at a streak past
-//! [`stella_store::PROMOTION_CITATIONS_REQUIRED`], still recomputed on every
-//! read, still never stored. Nothing here reads those thresholds, changes
-//! them, or adds a second path to quarantine.
-//!
-//! What changes is that a citation now *also* leaves an observation, so the
-//! same miner that learns from reflection prose can learn from what the model
-//! said about a memory while using it. Two evidence sources feeding one loop,
-//! rather than one source feeding the loop and another feeding a separate
-//! quarantine counter that nothing else can see.
-//!
-//! # Why only negative citations become observations
-//!
-//! A positive citation says "this memory was right", which the memory already
-//! claims — mining it produces an observation that restates its own evidence,
-//! and spec §7's second anti-poisoning rule is that a proposal may not cite
-//! itself. A *negative* citation says something the corpus does not already
-//! contain: that a stored belief is wrong. That is new information and is worth
-//! learning from.
+//! It shipped here too, pairing an observed retrieval with a model's
+//! usefulness judgement — and the judgement half had no producer. The
+//! `cite_memory` tool that collected it is retired, and every replacement
+//! source checked only knows a memory was *rendered* into the prompt, never
+//! that it was judged useful or truthful. Writing `truthful: true` for "the
+//! handle appeared somewhere" would fabricate a judgement no evidence
+//! earned. See [`ObservationSource`]'s own doc comment for the full account;
+//! the citation-derived quarantine loop it fed
+//! (`fold_citation_stats`/thresholds in `stella-store`) stays as declared,
+//! inert plumbing rather than being deleted with it.
 //!
 //! # Why only failed tool calls
 //!
-//! Same asymmetry. A tool that worked is the expected case; mining it would
-//! bury the signal under thousands of successes. A failure is a fact about this
-//! workspace that the next turn could use.
+//! A tool that worked is the expected case; mining it would bury the signal
+//! under thousands of successes. A failure is a fact about this workspace
+//! that the next turn could use.
 
 use stella_context::{AppendOutcome, ContextStore, LedgerAppend};
 use stella_learn::redact::redact_secrets;
 use stella_records::context_record::{
     ContextRecordKind, LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ObservationSource,
 };
-use stella_store::MemoryCitationRow;
 
-/// The longest observation text either source will emit.
+/// The longest observation text this source will emit.
 ///
-/// A citation remark is at most 300 characters by the ledger's own contract,
-/// but a tool error is unbounded — a stack trace or a wall of compiler output would
-/// otherwise become one enormous "observation" that the miner cannot cluster
-/// and a person cannot read.
+/// A tool error is unbounded — a stack trace or a wall of compiler output
+/// would otherwise become one enormous "observation" that the miner cannot
+/// cluster and a person cannot read.
 const MAX_OBSERVATION_CHARS: usize = 300;
 
 /// Truncate on a character boundary, marking that it happened.
@@ -64,40 +50,6 @@ fn bounded(text: &str) -> String {
     }
     let kept: String = text.chars().take(MAX_OBSERVATION_CHARS - 1).collect();
     format!("{kept}…")
-}
-
-/// Append an observation for one negative citation. `None` if there is nothing
-/// worth recording or the write failed.
-///
-/// The candidate id is the cited memory rather than the citation, so repeated
-/// negative citations of the same memory across different tasks cluster —
-/// which is exactly the recurrence the proposal miner counts.
-pub(super) fn citation_observation(
-    store: &ContextStore,
-    citation: &MemoryCitationRow,
-    task_id: &str,
-    observed_at: &str,
-) -> Option<AppendOutcome> {
-    // Positive citations are self-confirming; see the module docs.
-    if citation.is_positive() {
-        return None;
-    }
-    if citation.remark.trim().is_empty() {
-        return None;
-    }
-    let text = format!(
-        "memory {} was cited unhelpful: {}",
-        citation.memory_id,
-        citation.remark.trim()
-    );
-    append(
-        store,
-        ObservationSource::MemoryCitation,
-        format!("citation:{}", citation.memory_id),
-        task_id,
-        &text,
-        observed_at,
-    )
 }
 
 /// Append an observation for one failed tool call.

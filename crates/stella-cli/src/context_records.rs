@@ -1064,5 +1064,7 @@ pub(crate) fn inferred_rule_record(
     Ok(record)
 }
 
+pub(crate) mod decree;
+
 #[cfg(test)]
 mod tests;
