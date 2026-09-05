@@ -445,8 +445,9 @@
       "hex": "#E78D54",
       "clamp": "verdict",
       "css": "--st-amber",
+      "rust": "WARNING",
       "role": "warning: the one status the core palette does not name",
-      "surfaces": ["web-dark"],
+      "surfaces": ["tui", "web-dark"],
       "paint": "painted"
     },
     {
