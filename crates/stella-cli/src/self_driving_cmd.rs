@@ -34,6 +34,7 @@ mod convention;
 mod deliver;
 mod drive;
 pub(crate) mod governor;
+mod graph_seed;
 mod hooks;
 mod learning;
 mod lifecycle;

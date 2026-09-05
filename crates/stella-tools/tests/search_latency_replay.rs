@@ -32,9 +32,9 @@
 //! and is off this path by design (#4043) — a replay against an empty index
 //! measures the name and scan rungs, which is not what #4385 is about, so the
 //! harness refuses rather than reporting a fast meaningless number.
-//! `STELLA_WORKSPACE_STATE_ROOT` (`stella_home::WORKSPACE_STATE_ROOT_ENV`)
-//! redirects where that index is read from, which is how a run measures
-//! against a copy instead of a live session's database.
+//! Point it at a copy of the checkout rather than at a live session's: the
+//! index is read from the replay root's own `.stella/private/`, which the
+//! state-root redirect does not move.
 //!
 //! # What it does not measure
 //!

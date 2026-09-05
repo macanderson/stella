@@ -332,6 +332,17 @@ impl FleetWorker for TurnWorker {
         // wave.
         let settled = tokio::task::spawn_blocking(move || {
             let mut budget = RunBudget::new(flags);
+            // Warm, like a serial unit. Every worker in a wave is cut from the
+            // same base ref, so each one would otherwise parse the whole tree
+            // to rebuild rows the repository already holds. Each keeps its own
+            // copy: a wave is the case where sharing one writable index would
+            // hurt.
+            if let Err(error) = super::graph_seed::seed_from_parent(&state_root, &dir) {
+                eprintln!(
+                    "warning: could not seed the code graph for {}: {error}",
+                    dir.display()
+                );
+            }
             let turn = super::work::run_turn(&dir, &state_root, &prompt, &mut budget);
             (turn, budget.spent())
         })

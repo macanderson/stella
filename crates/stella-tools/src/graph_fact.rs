@@ -86,9 +86,9 @@ pub struct Codegraph;
 impl Codegraph {
     /// The index, or `None` when this workspace has none.
     ///
-    /// The read-only resolver, never a bare join: `.stella/private/` moves
-    /// under `STELLA_WORKSPACE_STATE_ROOT` and a legacy layout is migrated on
-    /// the way past (#4394). A mutation must create no index it did not find
+    /// The read-only resolver, never a bare join. The store picks the root a
+    /// private file belongs to. It also moves a legacy layout on the way past.
+    /// A mutation must create no index it did not find
     /// — a `write_file` in a directory nobody has indexed leaves the tree as
     /// it found it.
     fn open(root: &Path) -> Option<stella_graph::CodeGraph> {

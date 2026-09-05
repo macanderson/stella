@@ -695,7 +695,24 @@ pub(super) fn start(
 
     let prompt = prompt_for(issue, &attribution.commit);
     let turn = match worker.kind {
-        WorkerKind::Stella => run_turn(&created.path, root, &prompt, budget),
+        WorkerKind::Stella => {
+            // Warm, not cold. The worktree holds the same tree the repository
+            // does, so the index it is about to build from scratch already
+            // exists next door — and building it again costs wall clock and
+            // spend the turn needs for the work. Only this arm: a
+            // Claude Code worker reads no `codegraph.db`, so copying one for it
+            // would be a large file written for nothing.
+            if let Err(error) = super::graph_seed::seed_from_parent(root, &created.path) {
+                // Reported, never fatal. A turn with a cold index is slower,
+                // never wrong, so this may not be the thing that stops a unit
+                // of work.
+                eprintln!(
+                    "warning: could not seed the code graph for {}: {error}",
+                    created.path.display()
+                );
+            }
+            run_turn(&created.path, root, &prompt, budget)
+        }
         // A spend limit is refused rather than ignored. Claude Code reports no
         // number this loop can read, so `RunBudget` would charge every turn
         // nothing and the ceiling would never be reached — a cap that is
