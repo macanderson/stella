@@ -384,6 +384,15 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-priority-scheme.py
 
+      # A `-schema` gate step and its base step have to agree on whether
+      # `check` (GATE=fast git push, and a hand-run `make check`) runs them,
+      # or the schema-gated crates can silently drop out of the rung most
+      # pushes actually use — which is how `lint` ran at `check` while
+      # `lint-schema` did not.
+      - name: a schema-tier gate step runs at the same rung as its base step
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-schema-tier-parity.sh
+
       # The five below were in `GATE_GUARDS_FAST` and in no workflow at all
       # (#4089). `gate-parity` above holds AGENTS.md and CONTRIBUTING.md to
       # `GATE_STEPS`, which is a question about the prose — it says nothing

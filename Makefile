@@ -39,6 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity \
+                    schema-tier-parity \
                     guard-trigger-coverage priority-scheme left-behind \
                     role-names stat-portability module-reachability core-reachability \
                     typed-errors \
@@ -66,6 +67,16 @@ GATE_NO_BUILD := lockfile-sync format-check
 # added here and the prose kept the old count (#1437).
 GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings doc-warnings-schema \
                lint lint-schema test tool-docs self-driving-test
+
+# `check`'s own step list, named for the reason GATE_STEPS is: a guard that
+# re-parsed the `check:` target's prerequisites with a regex would be one more
+# hand-maintained copy of the thing it is guarding. `check` is `guards` plus
+# clippy — and clippy means BOTH feature configurations, `lint` and
+# `lint-schema`, or the schema-gated crates silently drop out of the rung
+# `GATE=fast git push` (and a hand-run `make check`) actually runs (#5139).
+# `doc-warnings`/`doc-warnings-schema` stay out on purpose: `check`'s contract
+# is "no rustdoc", for both feature configurations alike.
+CHECK_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) lint lint-schema
 
 # The hermetic guard self-tests — `scripts/test-*.sh` — that deliberately run
 # in NO workflow, and why each one does not. Every other suite runs server-side
@@ -613,8 +624,24 @@ SCHEMA_FEATURES := stella-protocol/schema,stella-plugin/schema,stella-serve/sche
 # uncovered is exactly the modules the default run skips, and the feature is
 # additive, so this costs seconds. `--keep-going` for `doc-warnings`' reason —
 # one failing crate must not mask the ones behind it.
+# `cargo clean --doc` first: cargo's own freshness check for a `doc` unit can
+# mark it up to date — and print nothing — off a stale prior build even though
+# the source changed, which let a broken intra-doc link introduced by moving a
+# function between modules in `stella-plugin` survive a local
+# `make doc-warnings-schema` and reproduce only under a hand-run
+# `rm -rf target/doc` (#5139). `cargo clean --doc` is the package-scoped,
+# cargo-native version of that same fix: it drops the rustdoc output AND the
+# fingerprints cargo used to call the stale build fresh, for exactly the three
+# crates this recipe documents, so the two invocations below always run
+# rustdoc for real rather than trusting a cache that has already been wrong
+# once. Scoped to $(SCHEMA_CRATES) rather than the whole `target/doc` tree —
+# `doc-warnings` below has the same theoretical exposure, but cleaning its
+# workspace-wide output before every gate run would force a full rustdoc
+# rebuild every time, which is the "correct but slow" option #5139 weighed
+# against for a hole this recipe's own repro is what actually demonstrated.
 .PHONY: doc-warnings-schema
 doc-warnings-schema: ## Assert rustdoc is clean for the `schema`-gated wire-contract modules (#4584)
+	cargo clean --doc $(SCHEMA_CRATES)
 	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
 	  --features $(SCHEMA_FEATURES) --no-deps --keep-going
 	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
@@ -695,7 +722,9 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 #   guards-fast  the toolchain-free guards + the lock resolve + rustfmt.
 #                Nothing compiles at all.
 #   guards       ...plus wire-schema, whose two schema exporters do compile.
-#   check        ...plus clippy. The graduated fallback: a reduced gate, not no gate.
+#   check        ...plus clippy, over BOTH feature configurations — `lint`
+#                and `lint-schema`. The graduated fallback: a reduced gate,
+#                not no gate.
 #   gate         ...plus rustdoc and the test suite. What CI runs, unscoped.
 #
 # `guards-fast` exists for the one push shape where `guards` is provably
@@ -730,6 +759,11 @@ gate: $(GATE_STEPS) ## Full CI gate: guards + rustdoc + fmt-check + clippy + tes
 print-gate-steps:
 	@echo $(GATE_STEPS)
 
+# Consumed by scripts/check-schema-tier-parity.sh, for the same reason.
+.PHONY: print-check-steps
+print-check-steps:
+	@echo $(CHECK_STEPS)
+
 # Consumed by the same guard, for the same reason.
 .PHONY: print-unhosted-self-tests
 print-unhosted-self-tests:
@@ -742,6 +776,14 @@ gate-parity: ## Assert AGENTS.md and CONTRIBUTING.md list the real gate steps (#
 .PHONY: gate-parity-test
 gate-parity-test: ## Test the gate-parity guard's failure directions (hermetic; not part of `gate`)
 	@./scripts/test-gate-parity.sh
+
+.PHONY: schema-tier-parity
+schema-tier-parity: ## Assert a `-schema` gate step runs at the same rung as its base step (#5139)
+	@./scripts/check-schema-tier-parity.sh
+
+.PHONY: schema-tier-parity-test
+schema-tier-parity-test: ## Test the schema-tier-parity guard's failure directions (hermetic; not part of `gate`)
+	@./scripts/test-schema-tier-parity.sh
 
 .PHONY: guard-trigger-coverage
 guard-trigger-coverage: ## Assert prose/hue-separation/transcript-surfaces each run unfiltered somewhere (#5448)
@@ -879,7 +921,7 @@ issue-claim-test: ## Test the issue-claim pre-flight, standing-down branch inclu
 	./scripts/test-issue-claim.sh
 
 .PHONY: check
-check: $(GATE_GUARDS) $(GATE_NO_BUILD) lint ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy, no rustdoc and no tests
+check: $(CHECK_STEPS) ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy (default and schema features), no rustdoc and no tests
 	@./scripts/check-hooks-installed.sh
 
 .PHONY: impacted

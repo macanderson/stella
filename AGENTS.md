@@ -106,6 +106,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     from that declaration)
                          #   + god-files
                          #   + gate-parity
+                         #   + schema-tier-parity (a -schema step runs at the
+                         #     same rung as its base step; #5139)
                          #   + guard-trigger-coverage (prose, hue-separation
                          #     and transcript-surfaces each run with no
                          #     paths: filter in at least one workflow)
@@ -434,8 +436,26 @@ Four rungs, each a superset of the one above:
 | --- | --- | --- |
 | `make guards-fast` | the toolchain-free guards + `lockfile-sync` + `fmt --check` — nothing compiles at all | — |
 | `make guards` | ...plus `wire-schema`, whose two schema exporters do compile | — |
-| `make check` | ...plus clippy | clippy |
-| `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
+| `make check` | ...plus clippy — `lint` and `lint-schema`, both. No rustdoc at all | clippy |
+| `make gate` | ...plus rustdoc and the tests — `doc-warnings` and `doc-warnings-schema`, both | clippy, rustdoc, test |
+
+A `-schema` step and its base step move together across `check`. Both run
+there, or neither does. That rule went unwritten, and it broke: `lint` ran
+at `check`; `lint-schema` did not. So `GATE=fast git push`, and a hand-run
+`make check`, never reached the three `schema`-gated crates. A broken
+import there passed here and failed only in CI.
+`schema-tier-parity` (`scripts/check-schema-tier-parity.sh`) now holds every
+such pair to that rule. It reads `GATE_STEPS`/`CHECK_STEPS`, so a future pair
+that splits the same way fails here first, not in CI. `doc-warnings-schema`
+stays `gate`-only on purpose, paired with `doc-warnings`: at `check`, rustdoc
+never runs, for either feature set.
+
+`doc-warnings-schema` also wipes its own doc output before each run
+(`cargo clean --doc`, for the three schema crates only). `cargo doc`'s own
+freshness check can call a stale prior run "up to date" — and print nothing
+— even after the source changed. That let a broken doc link in
+`stella-plugin` pass a local `make doc-warnings-schema`, and show up only
+after a hand-run `rm -rf target/doc`.
 
 **Every rung needs `shellcheck` on `PATH`, and it is not vendored.** It is the
 gate's one external binary, so a machine or container image without it stops at
