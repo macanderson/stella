@@ -84,6 +84,10 @@
 //! probes got worse and are bolded**, both of them files the rung was never
 //! reaching anyway — see [`PROBES`] for what each one costs and why it is
 //! recorded rather than tuned away.
+//!
+//! `name_rung_calibration.rs` reads the same corpus against a larger labelled
+//! set, and asks a different question: what the ranker's four weights are
+//! worth. This file holds the ranking still; that one sweeps it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -215,24 +219,47 @@ fn fixture_path() -> PathBuf {
 }
 
 /// The frozen corpus, in the fixture's own order.
+///
+/// The fixture's first line has no `path` key. It is the header that tells a
+/// reader of the file itself that the paths below are labels rather than
+/// citations, so a row without one is skipped instead of parsed.
 fn corpus() -> Vec<IndexedNames> {
     let raw = std::fs::read_to_string(fixture_path()).expect("the probe corpus fixture");
     raw.lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| {
+        .filter_map(|line| {
             let row: serde_json::Value = serde_json::from_str(line).expect("a corpus row");
-            IndexedNames {
-                path: row["path"].as_str().expect("a path").to_string(),
+            let path = row.get("path")?.as_str().expect("a path").to_string();
+            Some(IndexedNames {
+                path,
                 symbols: row["symbols"]
                     .as_array()
                     .expect("a symbol list")
                     .iter()
                     .map(|symbol| symbol.as_str().expect("a symbol name").to_string())
                     .collect(),
-            }
+            })
         })
         .collect()
 }
+
+/// The header line the fixture opens with, re-emitted on every harvest.
+///
+/// A corpus that says what it is in the file is what the drift reports asked
+/// for: readers kept finding paths in it that the tree does not have, and
+/// reading them as stale citations rather than as a sample of an older tree.
+const CORPUS_HEADER: &str = concat!(
+    r#"{"corpus": "name rung ranking probe set", "frozen": true, "note": "#,
+    r#""A frozen sample of one tree at one moment. Every path below is a "#,
+    r#"label, not a citation: some name files the workspace has since moved "#,
+    r#"or deleted, and that is the sample working as intended. Re-harvesting "#,
+    r#"invalidates every number recorded in "#,
+    r#"crates/stella-tools/tests/search_recall.rs and "#,
+    r#"crates/stella-tools/tests/name_rung_calibration.rs, so it is done "#,
+    r#"on purpose and those numbers are re-recorded in the same commit. "#,
+    r#"Rows carry a `path` key; this one does not, which is how a reader "#,
+    r#"skips it."}"#,
+);
 
 /// Where `target` ranks for `query`, 1-based, or `None` if it does not appear
 /// in the answer at all.
@@ -241,6 +268,18 @@ fn rank_of(corpus: &[IndexedNames], query: &str, target: &str) -> Option<usize> 
         .iter()
         .position(|hit| hit.path == target)
         .map(|index| index + 1)
+}
+
+/// The fixture carries its own header, so a reader who opens the data before
+/// reading this file still learns that its paths are labels.
+#[test]
+fn the_corpus_says_in_the_file_that_its_paths_are_labels() {
+    let raw = std::fs::read_to_string(fixture_path()).expect("the probe corpus fixture");
+    let first = raw.lines().next().expect("a first line");
+    assert_eq!(
+        first, CORPUS_HEADER,
+        "the fixture's header drifted from the one the harvest writes"
+    );
 }
 
 /// The fixture must be the thing the probes think it is. A corpus that
@@ -449,6 +488,7 @@ fn harvest_the_probe_corpus_from_this_repository() {
         .collect();
     graph.shutdown();
     rows.sort();
+    rows.insert(0, CORPUS_HEADER.to_string());
     std::fs::write(fixture_path(), rows.join("\n") + "\n").expect("write the corpus");
-    println!("harvested {} files", rows.len());
+    println!("harvested {} files", rows.len() - 1);
 }
