@@ -514,8 +514,9 @@ that splits the same way fails here first, not in CI. `doc-warnings-schema`
 stays `gate`-only on purpose, paired with `doc-warnings`: at `check`, rustdoc
 never runs, for either feature set.
 
-`doc-warnings-schema` also wipes its own doc output before each run
-(`cargo clean --doc`, for the three schema crates only). `cargo doc`'s own
+`doc-warnings-schema` also wipes the doc output before each run
+(`cargo clean --doc`, which takes no package filter — cargo refuses `--doc`
+alongside `-p`, so the whole `target/doc` tree goes). `cargo doc`'s own
 freshness check can call a stale prior run "up to date" — and print nothing
 — even after the source changed. That let a broken doc link in
 `stella-plugin` pass a local `make doc-warnings-schema`, and show up only

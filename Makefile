@@ -629,19 +629,21 @@ SCHEMA_FEATURES := stella-protocol/schema,stella-plugin/schema,stella-serve/sche
 # the source changed, which let a broken intra-doc link introduced by moving a
 # function between modules in `stella-plugin` survive a local
 # `make doc-warnings-schema` and reproduce only under a hand-run
-# `rm -rf target/doc` (#5139). `cargo clean --doc` is the package-scoped,
-# cargo-native version of that same fix: it drops the rustdoc output AND the
-# fingerprints cargo used to call the stale build fresh, for exactly the three
-# crates this recipe documents, so the two invocations below always run
-# rustdoc for real rather than trusting a cache that has already been wrong
-# once. Scoped to $(SCHEMA_CRATES) rather than the whole `target/doc` tree —
-# `doc-warnings` below has the same theoretical exposure, but cleaning its
-# workspace-wide output before every gate run would force a full rustdoc
-# rebuild every time, which is the "correct but slow" option #5139 weighed
-# against for a hole this recipe's own repro is what actually demonstrated.
+# `rm -rf target/doc` (#5139). It drops the rustdoc output and the fingerprints
+# cargo called that stale build fresh from, so the two invocations below run
+# rustdoc for real.
+#
+# It takes no package filter: cargo refuses the pair outright — `--doc cannot
+# be used with -p` — so the whole `target/doc` tree goes and there is no scoped
+# spelling to reach for. #5947 shipped `cargo clean --doc $(SCHEMA_CRATES)`,
+# which made this recipe exit 2 on its first line every time it ran, and the
+# `wire-schema` job red on every PR reaching it. What the unscoped clean costs
+# is a later `doc-warnings` rebuilding rustdoc it could have cached; inside one
+# `make gate` that step has already run by the time this one cleans, and
+# `wire-schema.yml` runs this step without `doc-warnings` at all.
 .PHONY: doc-warnings-schema
 doc-warnings-schema: ## Assert rustdoc is clean for the `schema`-gated wire-contract modules (#4584)
-	cargo clean --doc $(SCHEMA_CRATES)
+	cargo clean --doc
 	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
 	  --features $(SCHEMA_FEATURES) --no-deps --keep-going
 	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
