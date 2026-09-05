@@ -80,6 +80,13 @@ impl HostDriverCapabilities {
     }
 
     /// Who every ask here is run as.
+    ///
+    /// Only a test reads it back: the shipping path uses the field itself, in
+    /// [`Self::may_shell`]. `#[cfg(test)]` rather than an `allow` because the
+    /// lint is right — nothing ships a call to this — and this way a later
+    /// production caller is a build error instead of a suppression somebody
+    /// has to re-justify (AGENTS.md, "Code style and conventions").
+    #[cfg(test)]
     pub(crate) fn principal(&self) -> &Principal {
         &self.principal
     }
