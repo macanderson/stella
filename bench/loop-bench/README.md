@@ -78,7 +78,7 @@ harbor knew something the harness did not (#1299) — see
 | `solved` | reward `1.0` — a solved task did the work by definition, so reward beats every other signal | no |
 | `NOT-RUN` | requested, but harbor produced no trial dir for it | **yes** |
 | `UNREADABLE` | the stream had lines, none of them an event — plumbing, not loop evidence | no |
-| `STUCK-LOOP` | the engine's own `loop_detected` fired on a non-pass | **yes** |
+| `STUCK-LOOP` | the engine's loop ladder aborted the turn on a non-pass | **yes** |
 | `BUDGET-CAP` | `STELLA_SPEND_LIMIT` denied the turn — a cost decision, not a loop defect | no |
 | `SILENT-DEATH` | zero tool calls *and* no terminal event — it vanished with no explanation, the worst mode | **yes** |
 | `ZERO-WORK` | zero tool calls, but it said why | **yes** |
@@ -87,6 +87,13 @@ harbor knew something the harness did not (#1299) — see
 
 **The gate is loop health, not pass rate.** The process exits `1` if any trial's
 `loop_broken()` matches, even when others passed.
+
+A `loop_detected` event carrying `aborted: false` is the engine warning the
+model and letting the turn run on. That is the ladder working, so it does not
+gate: the row prints `steered off N detected loop(s)` and the JSON carries the
+warnings in `loop_detected` beside the gating `loop_aborted`. An event with no
+`aborted` field counts as an abort — a stream that does not say the turn
+recovered is not evidence that it did.
 
 `CRASHED` is the lowest-precedence verdict above `ran (unsolved)`, and that is
 the whole design. It never displaces a red verdict: a trial that did nothing and
