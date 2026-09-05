@@ -89,6 +89,12 @@
 //! it is the metering record, and dropping it is exactly how child cost
 //! would vanish from `stella stats` and quietly falsify `$/resolved task`.
 //!
+//! Beside the event stream, a `SubagentStart`/`SubagentStop` shell hook
+//! gets the same bracket, observe-only: nothing a hook prints can veto or
+//! rewrite a child, on `PostToolUse`'s posture rather than `PreToolUse`'s.
+//! Not fired on the cancel-drop path (`CancelBracket`), which is a `Drop`
+//! impl with no async context to spawn a hook's subprocess from.
+//!
 //! **Four events are the exception, and they earn it** (#4383, #4624).
 //! `StepUsage`, `UsageIncomplete`, `ToolStart` and `ToolResult` carry a
 //! `sub_agent_id`, stamped by `child_sender`. The bracket cannot answer for
@@ -136,6 +142,7 @@ use crate::bus::HookBus;
 use crate::driver::capabilities::TurnCapabilities;
 use crate::driver::{Engine, EngineConfig, HooksHandle, TurnOutcome};
 use crate::event_sender::EventSender;
+use crate::hooks::{HookPayload, HookSubAgentInfo, HookSubAgentResult, run_hooks};
 use crate::ports::{ReadOnlyTools, ToolExecutor, TurnControls, TurnSteering};
 
 /// How deep sub-agents may nest. A child of the top-level turn is depth 1.
@@ -636,10 +643,11 @@ impl Engine<'_> {
         events: &EventSender,
     ) -> SubAgentOutcome {
         let mut carve = budget.carve(spec.budget_usd);
+        let instruction_preview = truncate_chars(&spec.instruction, INSTRUCTION_PREVIEW_CHARS);
         let _ = events.send(AgentEvent::SubAgent {
             phase: SubAgentPhase::Started {
                 agent_id: spec.agent_id.clone(),
-                instruction_preview: truncate_chars(&spec.instruction, INSTRUCTION_PREVIEW_CHARS),
+                instruction_preview: instruction_preview.clone(),
                 budget_usd: carve.session_limit_usd(),
                 write_access: spec.write_access,
                 depth: spec.depth,
@@ -649,6 +657,16 @@ impl Engine<'_> {
                 effort: spec.effort.or(self.config.effort),
             },
         });
+        let subagent_info = HookSubAgentInfo {
+            agent_id: spec.agent_id.clone(),
+            instruction_preview,
+            depth: spec.depth,
+        };
+        self.run_subagent_hooks(
+            HookPayload::subagent_start(self.config.cwd.clone(), subagent_info.clone()),
+            events,
+        )
+        .await;
         // The committed tally, owned HERE rather than inside the child turn
         // so the cancel bracket below can report it after the turn future is
         // gone (#1954). Written by `child_sender` as each `StepUsage` passes
@@ -705,7 +723,49 @@ impl Engine<'_> {
                 reason: outcome.reason().map(str::to_string),
             },
         });
+        // Not fired on the cancel-drop path (`CancelBracket::drop`): that is
+        // a `Drop` impl, and firing a hook there would mean spawning a
+        // subprocess with no async context to await it in — the same "no I/O
+        // in the engine" boundary this crate holds everywhere else. A
+        // dropped child's own `Finished` event still reaches the transcript
+        // (`CancelBracket`); only the observer hook is skipped for it.
+        self.run_subagent_hooks(
+            HookPayload::subagent_stop(
+                self.config.cwd.clone(),
+                subagent_info,
+                HookSubAgentResult {
+                    status: outcome.status(),
+                    summary: outcome.summary().to_string(),
+                    cost_usd: outcome.cost_usd(),
+                    steps: outcome.report().map_or(0, |report| report.steps),
+                },
+            ),
+            events,
+        )
+        .await;
         outcome
+    }
+
+    /// Run one `SubagentStart`/`SubagentStop` chain — observe-only, on
+    /// [`PostToolUse`](crate::hooks::HookEvent::PostToolUse)'s posture
+    /// rather than `PreToolUse`'s: the parent already decided to delegate,
+    /// so nothing here may veto or rewrite the child. A failing hook is a
+    /// diagnostic, never a block.
+    async fn run_subagent_hooks(&self, payload: HookPayload, events: &EventSender) {
+        let Some(handle) = self.hooks else {
+            return;
+        };
+        let outcome = run_hooks(handle.runner, Some(handle.hooks), &payload).await;
+        if !outcome.diagnostics.is_empty() {
+            let _ = events.send(AgentEvent::Error {
+                message: format!(
+                    "{} hook problem(s) (non-blocking): {}",
+                    payload.event,
+                    outcome.diagnostics.join("; ")
+                ),
+                retryable: true,
+            });
+        }
     }
 
     /// The child turn proper: build it, run it, settle it. Split out so

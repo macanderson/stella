@@ -357,6 +357,57 @@ pub(crate) async fn with_session_hook_context(mut system_prompt: String, cfg: &C
 pub(crate) const SESSION_HOOK_CONTEXT_HEADER: &str =
     "\n\nSession context (from SessionStart hooks):\n";
 
+/// Fire `UserPromptSubmit` hooks for one prompt the user is about to send.
+/// This runs before any turn is built. No `Engine` exists yet, so this is
+/// where the event fires, not `driver::user_hooks`.
+///
+/// `Ok(prompt)` is what the turn should run with: the caller's prompt as-is,
+/// or a hook's `modify` rewrite. `Err(reason)` means a hook denied it. The
+/// caller must reject the prompt, show `reason` to whoever typed it, and
+/// build no turn at all. This is the same fail-closed posture `PreToolUse`
+/// takes, one step earlier: a hook that never ran, or exited non-zero, is
+/// also a deny, through the shared [`resolve_precedence`] ladder.
+///
+/// A `require_approval` decision is denied too, the same way `PreToolUse`
+/// answers one with no [`ApprovalRoute`] attached: this call site is
+/// host-side and has no route to park on yet.
+///
+/// [`ApprovalRoute`]: stella_core::hooks::decision::ApprovalRoute
+/// [`resolve_precedence`]: stella_core::hooks::decision::resolve_precedence
+pub(crate) async fn user_prompt_submit_hook(cfg: &Config, prompt: &str) -> Result<String, String> {
+    use stella_core::hooks::decision::{GateVerdict, OperatorPosture, run_decision_hooks};
+
+    let Some(hooks) = cfg.hooks.as_ref() else {
+        return Ok(prompt.to_string());
+    };
+    let run = run_decision_hooks(
+        &HostHookRunner,
+        Some(hooks),
+        &stella_core::hooks::HookPayload::user_prompt_submit(
+            cfg.workspace_root.display().to_string(),
+            prompt,
+        ),
+    )
+    .await;
+    for diagnostic in &run.diagnostics {
+        eprintln!("  ! UserPromptSubmit {diagnostic}");
+    }
+    match run.verdict(&OperatorPosture::NoOpinion, false) {
+        GateVerdict::Deny { reason } => Err(reason),
+        GateVerdict::RequireApproval { reason } => Err(format!(
+            "a UserPromptSubmit hook requires approval ({reason}), and no interactive surface \
+             is attached here to answer it; grant it via policy or edit the hook"
+        )),
+        GateVerdict::Allow => Ok(run
+            .modify_payload
+            .as_ref()
+            .and_then(|payload| payload.get("prompt"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| prompt.to_string())),
+    }
+}
+
 // Pipeline port adapters
 
 /// Everything `agent_engine_config` resolves for one pipeline run: the

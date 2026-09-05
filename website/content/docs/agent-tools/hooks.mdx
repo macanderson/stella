@@ -15,7 +15,7 @@ Each hook receives the event payload as **JSON on stdin**, so your command can r
 
 Hook events fall into two groups. Which group an event is in decides who fires it, and whether it can say no.
 
-**Inside a turn** are five events, fired by the engine as it runs. Two of them can block.
+**Inside a turn** are events fired by the engine as it runs. Two more fire before a turn even exists: `SessionStart` and `UserPromptSubmit`. Two fire around a child turn: `SubagentStart` and `SubagentStop`. Each card below says whether it can say no.
 
 **Outside every turn** are the rest, fired by the [self-driving loop](/docs/self-improvement) as it works through a backlog: a run, a cycle, an issue, a pull request, a set of checks. Only one of these can block, `PreIssueWork`. The naming tells you why: a `Pre` event happens before something takes effect, and everything else is a Start, an End, or something that already happened, where a deny would arrive too late to matter.
 
@@ -38,6 +38,15 @@ Both groups live in the same `hooks` block and use the same vocabulary. Only a t
   </OptionCard>
   <OptionCard name="PreCompact">
     Runs before an overflow-summarization round. A `deny` decision vetoes the round. A `modify` decision can steer the summarizer. The matcher is ignored.
+  </OptionCard>
+  <OptionCard name="UserPromptSubmit">
+    Runs when you submit a prompt, before any turn is built. **Blocking**: a `deny` rejects the prompt and no turn runs. A `modify` decision can rewrite the prompt text. The matcher is ignored.
+  </OptionCard>
+  <OptionCard name="SubagentStart">
+    Runs when a sub-agent's turn is about to start. **Never blocks** — observe-only, the same posture as `PostToolUse`. The matcher is ignored.
+  </OptionCard>
+  <OptionCard name="SubagentStop">
+    Runs when a sub-agent's turn has finished, whatever the outcome. **Never blocks**. The matcher is ignored.
   </OptionCard>
   <OptionCard name="PreIssueWork">
     Runs before the self-driving loop works an issue. **Blocking**: a `deny` makes the loop skip that issue and move on. The matcher is ignored.
@@ -133,6 +142,20 @@ Runs when a turn is about to complete, with the would-be final text in the paylo
 
 Runs before each overflow-summarization round (the model-written summary that replaces the oldest span once the conversation outgrows its context budget). Print `{"action":"deny","reason":"…"}` and the round is vetoed. The transcript stays intact, at the risk of a harder overflow later. Print `{"action":"modify","payload":{"instructions":"…"}}` and your instructions are appended to the summarizer's prompt, for example "keep every file path verbatim." A failing `PreCompact` hook lets the round proceed unvetoed, so a broken hook can't block compaction forever. The matcher is **ignored**.
 
+### `UserPromptSubmit`
+
+Runs when you submit a prompt, before any turn is built. The prompt is in the payload's `prompt`. Print `{"action":"deny","reason":"…"}` and the prompt is rejected. No turn runs. Your reason is shown in its place. Print `{"action":"modify","payload":{"prompt":"…"}}` and the turn runs with the new text instead. Use this to log every prompt, redact something before a model sees it, or block a prompt that matches a pattern you don't want run at all.
+
+This runs **host-side**, before any `Engine` exists, the same job `SessionStart` already does. A hook that never ran, timed out, or exited non-zero **rejects the prompt too**. This is a permission gate like `PreToolUse`, so it fails closed instead of waving a broken hook through. A `require_approval` decision is refused the same way: like a `PreToolUse` call with no one there to answer it.
+
+### `SubagentStart`
+
+Runs when a sub-agent is about to start. A sub-agent is a bounded child turn spawned by the `delegate` tool. The child is under the payload's `subagent`: its `agentId`, an `instructionPreview` of its task, and its nesting `depth`. **Never blocks.** This has `PostToolUse`'s posture, not `PreToolUse`'s: the parent already chose to delegate, so this is a window into that choice, not a second gate on it. The matcher is **ignored**.
+
+### `SubagentStop`
+
+Runs when that child's turn has finished, whatever happened. The payload carries the same `subagent` plus a `subagentResult`: `status` (`"completed"`, `"incomplete"`, or `"refused"`), the child's `summary`, its `costUsd`, and its `steps`. **Never blocks.** It does not fire when the child is cancelled mid-flight by a latency limit or a hard cancel. Its `Finished` event still reaches the transcript, but there is no place left to run a hook from. The matcher is **ignored**.
+
 ### `PreIssueWork`
 
 Runs before the self-driving loop works an issue, **before the worktree exists and before any model call**, so a skip costs nothing and leaves nothing behind. The payload carries the issue under `issue`. Print `{"action":"deny","reason":"…"}` and the loop **skips that issue and continues to the next one**. The reason is printed for the operator to see. The matcher is **ignored**.
@@ -167,7 +190,7 @@ Every hook receives one JSON document on stdin. Here's its shape:
 
 <CardGrid size="md">
   <OptionCard name="event">
-    String, always present. `"SessionStart"`, `"PreToolUse"`, `"PostToolUse"`, `"Stop"`, `"PreCompact"`, `"PreIssueWork"`, `"PostIssueWork"`, or any of the loop's own event names above. These are the same PascalCase names used as the config keys.
+    String, always present. `"SessionStart"`, `"PreToolUse"`, `"PostToolUse"`, `"Stop"`, `"PreCompact"`, `"UserPromptSubmit"`, `"SubagentStart"`, `"SubagentStop"`, `"PreIssueWork"`, `"PostIssueWork"`, or any of the loop's own event names above. These are the same PascalCase names used as the config keys.
   </OptionCard>
   <OptionCard name="cwd">
     String, always present. The workspace root, which is also the hook's working directory.
@@ -180,6 +203,15 @@ Every hook receives one JSON document on stdin. Here's its shape:
   </OptionCard>
   <OptionCard name="finalText">
     String, present on `Stop` only. The text the turn is about to finish with, whole and unshortened just like `toolResult`.
+  </OptionCard>
+  <OptionCard name="prompt">
+    String, present on `UserPromptSubmit` only. The prompt you just typed, whole and unshortened, before it becomes part of any turn.
+  </OptionCard>
+  <OptionCard name="subagent">
+    Object, present on `SubagentStart` and `SubagentStop`. `{ "agentId": …, "instructionPreview": …, "depth": … }`. The child's stable id, its task cut short for display, and its nesting depth.
+  </OptionCard>
+  <OptionCard name="subagentResult">
+    Object, present on `SubagentStop` only. `{ "status": …, "summary": …, "costUsd": …, "steps": … }`. How the child's turn ended (`"completed"`, `"incomplete"`, or `"refused"`), its report back to the parent, what it spent, and how many model calls it made.
   </OptionCard>
   <OptionCard name="issue">
     Object, present on `PreIssueWork`, `PostIssueWork`, and the three tracker events. `{ "number": …, "title": …, "branch": … }`. Only `number` is guaranteed. The rest is whatever the loop had already read. If a hook needs more, have it fetch it directly (`gh issue view` is one line), rather than have every loop pay for a tracker round trip that most hooks don't need.
@@ -250,7 +282,7 @@ esac
 exit 0
 ```
 
-Blocking is **fail-closed** on `PreToolUse`. A hook that times out, fails to start, exits non-zero, or prints a malformed decision blocks the tool, with the failure message as the reason. A missing or broken guard script never quietly waves a call through, and no setting changes that. (`PostToolUse` and `SessionStart` never block on either kind of failure, and `Stop` and `PreCompact` fail open — see their sections above.)
+Blocking is **fail-closed** on `PreToolUse` and `UserPromptSubmit`. A hook that times out, fails to start, exits non-zero, or prints a bad decision blocks the call. The failure message becomes the reason. A missing or broken guard script never quietly lets a call through, and no setting changes that. (`PostToolUse`, `SessionStart`, `SubagentStart` and `SubagentStop` never block on either kind of failure. `Stop` and `PreCompact` fail open. See their sections above.)
 
 ## Decisions on stdout
 
@@ -263,9 +295,9 @@ A hook that exits `0` can print **one JSON decision document** on stdout, either
 { "action": "modify", "payload": { "input": { … } } }
 ```
 
-- **`deny`** blocks the call with your reason (on `PreToolUse`), holds the turn open (on `Stop`), or vetoes the round (on `PreCompact`).
-- **`require_approval`** (on `PreToolUse`) parks the call on the same approval flow the extension bus's gates use. The question is shown before the wait, a person answers through the interactive surface, and the wait has a limit. In an interactive session, you get a yes/no prompt. A headless run refuses with a message naming the grant path instead.
-- **`modify`** rewrites the tool input (`payload.input`, on `PreToolUse`; later hooks in the chain see the rewritten input) or steers the summarizer (`payload.instructions`, on `PreCompact`).
+- **`deny`** blocks the call with your reason (on `PreToolUse`), rejects the prompt outright (on `UserPromptSubmit`), holds the turn open (on `Stop`), or vetoes the round (on `PreCompact`).
+- **`require_approval`** (on `PreToolUse`) parks the call on the same approval flow the extension bus's gates use. The question is shown before the wait, a person answers through the interactive surface, and the wait has a limit. In an interactive session, you get a yes/no prompt. A headless run refuses with a message naming the grant path instead. `UserPromptSubmit` refuses this way every time today: the CLI does not yet park a submitted prompt on that flow.
+- **`modify`** rewrites the tool input (`payload.input`, on `PreToolUse`; later hooks in the chain see the new input), the prompt text (`payload.prompt`, on `UserPromptSubmit`), or steers the summarizer (`payload.instructions`, on `PreCompact`).
 - **`allow`**, or any stdout that isn't a decision document, lets the chain continue. A chain that only modifies still ends up allowed. Precedence is fixed: an operator's deny beats everything, and `require_approval` beats any allow.
 
 If your stdout parses as JSON with an `action` key, it **must** be a well-formed decision. A typo there fails the check and denies the call, rather than silently allowing it.
