@@ -112,6 +112,7 @@ is nearest today — split it before it crosses.
 | [`src/ledger.rs`](src/ledger.rs) | `fleet.db`: schema, migrations, and every read/write of runs, tasks, attempts, commits, lineage and spend. |
 | [`src/ledger/lease.rs`](src/ledger/lease.rs) | Dispatch claims (#1136): the check-and-set, expiring lease on one unit of dispatch — `claim_dispatch` / `renew_dispatch` / `release_dispatch` and the reads a human or a dispatcher asks "who is on this?" with. |
 | [`src/git.rs`](src/git.rs) | The `GitCli` port, `SystemGitCli`, and `WorktreeManager` — worktree create/remove/discard/list plus the pathspec-only commit helper. `with_worktrees_root`/`with_branch_prefix` move a caller out of the `.stella/worktrees/` + `fleet/` namespace `gc.rs` reclaims by, and `discard` force-removes where `remove` refuses: both exist for `stella-cli`'s best-of-N candidate substrate (#3892), whose output is uncommitted bytes by construction and whose losers are meant to be thrown away. |
+| [`src/git/worktree_lock.rs`](src/git/worktree_lock.rs) | The one door every `git worktree …` command in this crate goes through. Git takes no lock on `.git/worktrees/`, so two overlapping `worktree add` calls can read each other's half-written bookkeeping; this holds them apart with a per-repo-root mutex in the process and an `O_CREAT|O_EXCL` lock file under `.stella/private/` across processes, and retries once on git's transient signatures. |
 | [`src/gc.rs`](src/gc.rs) | `Gc::sweep` — the conservative reclaim of finished worktrees and `fleet/*` branches behind `stella fleet clean` (#1217). Nothing in flight, dirty, or unmerged goes without `--force`; every kept candidate carries a `KeepReason`. |
 | [`src/monitor.rs`](src/monitor.rs) | The `GhCli` port and `Monitor`: live PR reconciliation, the CI poll loop, the pure `decide` cap state machine, and the `AgentEvent` emit-shape helpers. |
 | [`src/cache_schedule.rs`](src/cache_schedule.rs) | `warmest_first` — the pure, no-I/O ordering heuristic for equal-priority runnable sessions. |
@@ -323,6 +324,16 @@ Two gaps:
   integration ref as `contained_in`, since it has no `Worktree` value to
   read a `base_ref` from. Every other caller leaves `contained_in` at its
   default, which falls back to `Worktree::base_ref`.
+- **One `git worktree` command at a time per repository.** `WorktreeManager::create`,
+  `discard`, `remove_worktree_and_branch` and `Gc::sweep`'s prune and list all run
+  through `git/worktree_lock.rs`'s `run_worktree`, which holds a per-repository lock
+  for the length of the command. Concurrent callers of `create` are therefore safe:
+  a wave of width N issues its adds one at a time. What stays concurrent is the
+  work — the workers themselves take no lock, and only the tree cutting is
+  exclusive. The in-process half is a guarantee; the lock file that extends it to a
+  second `stella` process is best effort and proceeds rather than failing a
+  dispatch when it cannot be taken.
+
 - **`WorktreeManager::commit_paths` has no product caller yet.** It is
   exercised only by this crate's own tests, and it ships anyway because it is
   the only place here that encodes the pathspec discipline — `git add --

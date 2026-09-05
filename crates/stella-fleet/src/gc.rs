@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 
 use crate::git::{
     GitCli, RemoveOutcome, WorktreeError, ensure_ok, is_contained_in, parse_worktree_list,
-    remove_worktree_and_branch,
+    remove_worktree_and_branch, worktree_lock,
 };
 
 /// Milliseconds in a day — the unit [`GcOptions::min_age_days`] is expressed
@@ -283,11 +283,12 @@ impl<G: GitCli> Gc<G> {
         // deleted: without this they are listed forever and every later
         // `git worktree add` reasons about a checkout that is not there.
         if !opts.dry_run {
-            let out = self
-                .git
-                .run(&self.repo_root, &["worktree", "prune"])
-                .await
-                .map_err(WorktreeError::from)?;
+            // Under the worktree lock: prune rewrites the same
+            // `.git/worktrees` directory a concurrent dispatch is adding to.
+            let out =
+                worktree_lock::run_worktree(&self.git, &self.repo_root, &["worktree", "prune"])
+                    .await
+                    .map_err(WorktreeError::from)?;
             ensure_ok(out, "worktree prune").map_err(GcError::from)?;
         }
 
@@ -313,11 +314,15 @@ impl<G: GitCli> Gc<G> {
         base_ref: &str,
         now_ms: u64,
     ) -> Result<Vec<WorktreeVerdict>, GcError> {
-        let out = self
-            .git
-            .run(&self.repo_root, &["worktree", "list", "--porcelain"])
-            .await
-            .map_err(WorktreeError::from)?;
+        // Under the lock as well: the read of `.git/worktrees` is the half
+        // that lost run 9255, not the write.
+        let out = worktree_lock::run_worktree(
+            &self.git,
+            &self.repo_root,
+            &["worktree", "list", "--porcelain"],
+        )
+        .await
+        .map_err(WorktreeError::from)?;
         let out = ensure_ok(out, "worktree list --porcelain").map_err(GcError::from)?;
         let entries = parse_worktree_list(&out.stdout);
 

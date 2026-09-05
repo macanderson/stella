@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use tokio::process::Command;
 
+pub(crate) mod worktree_lock;
+
 /// The port every git command goes through. The real implementation
 /// ([`SystemGitCli`]) spawns `git`; tests inject fakes that record the
 /// invocation and return canned output.
@@ -403,13 +405,15 @@ impl<G: GitCli> WorktreeManager<G> {
         let dir = self.worktrees_root.join(&slug);
         let branch = format!("{}{slug}", self.branch_prefix);
         let dir_str = path_arg(&dir)?;
-        let out = self
-            .git
-            .run(
-                &self.repo_root,
-                &["worktree", "add", dir_str, "-b", &branch, base_ref],
-            )
-            .await?;
+        // Through the worktree lock, never straight to `GitCli`: two adds
+        // that overlap read each other's half-written `.git/worktrees`
+        // bookkeeping and one of them dies.
+        let out = worktree_lock::run_worktree(
+            &self.git,
+            &self.repo_root,
+            &["worktree", "add", dir_str, "-b", &branch, base_ref],
+        )
+        .await?;
         ensure_ok(
             out,
             &format!("worktree add {dir_str} -b {branch} {base_ref}"),
@@ -471,13 +475,12 @@ impl<G: GitCli> WorktreeManager<G> {
         // No `?` on either arm — that is the whole point. A `?` on the first
         // would skip the second on a spawn failure, which is precisely the
         // case where both are most likely to be needed.
-        let removed = match self
-            .git
-            .run(
-                &self.repo_root,
-                &["worktree", "remove", "--force", path_str],
-            )
-            .await
+        let removed = match worktree_lock::run_worktree(
+            &self.git,
+            &self.repo_root,
+            &["worktree", "remove", "--force", path_str],
+        )
+        .await
         {
             Ok(out) => ensure_ok(out, &format!("worktree remove --force {path_str}")).map(|_| ()),
             Err(error) => Err(error.into()),
@@ -598,7 +601,10 @@ pub(crate) async fn remove_worktree_and_branch(
         args.push("--force");
     }
     args.push(path_str);
-    let out = git.run(repo_root, &args).await?;
+    // `worktree remove` rewrites the same `.git/worktrees` directory a
+    // concurrent `worktree add` is laying down, so it takes the same lock —
+    // this covers `WorktreeManager::remove` and `Gc`'s sweep in one place.
+    let out = worktree_lock::run_worktree(git, repo_root, &args).await?;
     ensure_ok(out, &args.join(" "))?;
 
     // A branch outside the caller's own namespace is never a delete
