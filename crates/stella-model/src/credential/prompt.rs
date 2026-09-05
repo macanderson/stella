@@ -133,8 +133,11 @@ impl TerminalPrompt {
     /// only adds the check that was missing: a redirected stdout must decline
     /// exactly as a redirected stdin does, not just print a prompt nobody
     /// reads before blocking on an answer nobody can give. `can_prompt` feeds
-    /// this the [`rpassword_tty`] probes (#3052), so `can_answer`/
+    /// this the `rpassword_tty` probes (#3052), so `can_answer`/
     /// `prompt_is_visible` are the exact condition rather than a stand-in.
+    /// That module is private, so this names it without linking it: a public
+    /// item's intra-doc link to a private one resolves only under
+    /// `--document-private-items` and is a `-D warnings` error without it.
     pub fn decide(interactive: bool, can_answer: bool, prompt_is_visible: bool) -> bool {
         stella_tty::human_can_answer(interactive, can_answer, prompt_is_visible)
     }
