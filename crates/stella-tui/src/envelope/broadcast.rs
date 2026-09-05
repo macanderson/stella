@@ -16,8 +16,8 @@
 //!
 //! The three arrows are deep by construction, so there is no flag to
 //! remember. The bang run says how hard the words push, and it is the run
-//! [`crate::deck_ui::sigil`] reads at the head of a plain line. One grammar,
-//! so `!!!` cannot mean two things in one composer.
+//! `deck_ui::sigil` reads at the head of a plain line. One grammar, so `!!!`
+//! cannot mean two things in one composer.
 //!
 //! `@agents` and `@all` both name the room. Any other word after the `@` is
 //! one session id.
