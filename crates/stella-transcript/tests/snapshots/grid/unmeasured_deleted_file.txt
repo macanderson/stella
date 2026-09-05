@@ -1,0 +1,13 @@
+# grid golden · unmeasured_deleted_file
+# a delete_file call whose extent nothing measured — the header draws no count
+# width 100 · rendered through grid::to_plain, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-transcript --test grid_snapshots
+
+╭─ drop-legacy-printer ────────────────────────────────────────────────────────────────────────── ─╮
+│  you  delete the dead legacy printer
+│
+│ 0:00 ▾ delete_file crates/stella-cli/src/plain/legacy.rs  deleted                  [3ms] [$0.0006]
+│        │ ✗ crates/stella-cli/src/plain/legacy.rs  ▾
+│
+│  agent  Removed the dead legacy printer.
+╰─ ✓ done ───────────────────────────────────────────────── [1 steps] [0:00] [4.0k→120] [$0.0006] ─╯
