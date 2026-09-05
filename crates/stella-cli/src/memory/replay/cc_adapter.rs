@@ -60,7 +60,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use stella_core::redact::redact_secrets;
+use stella_learn::redact::redact_secrets;
 
 use super::trace::{
     Provenance, ScriptedReflection, TRACE_VERSION, Trace, TraceSession, TraceShell, TraceTurn,

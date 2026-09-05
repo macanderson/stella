@@ -10,7 +10,7 @@
 //! bag of per-trial reward samples — so the same engine generalizes to any
 //! future knob (prompt templates, routing, effort defaults) without change.
 //!
-//! Like [`crate::scoreboard`] and [`crate::loop_detect`], this module does no
+//! Like `stella_core::scoreboard` and `stella_core::loop_detect`, this module does no
 //! I/O: the caller (the CLI) runs the benchmark, folds each trial into a reward
 //! ([`reward`]), and hands the per-arm samples to [`select_winner`]. The result
 //! is a typed [`Decision`] the caller acts on — write the winning overlay to

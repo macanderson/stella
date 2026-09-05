@@ -1,14 +1,14 @@
 //! Filesystem-backed skill discovery for session recall and extension menus.
 //!
-//! This is where a real path turns into the text `stella_core::skills` reads.
+//! This is where a real path turns into the text `stella_learn::skills` reads.
 //! That text is split on `/`. So every path that leaves here goes through
 //! [`slash_path`] first.
 
 use std::path::Path;
 
 #[cfg(test)]
-use stella_core::skills::Skill;
-use stella_core::skills::{self, LoadSkillsOptions, SkillSource};
+use stella_learn::skills::Skill;
+use stella_learn::skills::{self, LoadSkillsOptions, SkillSource};
 
 /// A real path as the text the skills module reads, split on `/`.
 ///
@@ -71,7 +71,7 @@ pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
 }
 
 /// Every `*.md` file physically present in `dir`, as the exact path strings
-/// [`stella_core::skills::decide_auto_creation`] builds and compares against.
+/// [`stella_learn::skills::decide_auto_creation`] builds and compares against.
 ///
 /// A directory read rather than a view of the loaded skill list, because
 /// a file can sit on disk and still be absent from [`load_workspace_skills_with_authority`]

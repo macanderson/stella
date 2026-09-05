@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use stella_context::{ContextDelta, MemoryInput};
-use stella_core::skills::appraisal::EvalEvidence;
-use stella_core::skills::{
+use stella_learn::skills::appraisal::EvalEvidence;
+use stella_learn::skills::{
     self, AutoCreateConfig, AutoCreateDecision, SkillMineConfig, SkillObservation,
 };
 use stella_protocol::{AgentEvent, MemoryClass, Provider};
@@ -575,7 +575,7 @@ impl SessionMemory {
 
     /// Mine the whole reflection log for recurring lessons and auto-create
     /// skills for any that qualify (threshold + session cap + no-clobber
-    /// enforced by `stella_core::skills`).
+    /// enforced by `stella_learn::skills`).
     ///
     /// The log is append-only and re-read in full every reflection turn, so
     /// lines written before a tombstone existed are still in it. Filtering
@@ -681,7 +681,7 @@ impl SessionMemory {
         for (appraisal, decision) in super::appraisals::sweep(
             &self.workspace_root,
             &origins,
-            &stella_core::skills::appraisal::AppraisalConfig::default(),
+            &stella_learn::skills::appraisal::AppraisalConfig::default(),
         ) {
             if already_demoted.contains(&appraisal.skill) {
                 // Its trials are still in the ledger, but a demoted skill is
@@ -689,7 +689,7 @@ impl SessionMemory {
                 // verdict that demoted it, forever.
                 continue;
             }
-            use stella_core::skills::appraisal::SkillVerdict;
+            use stella_learn::skills::appraisal::SkillVerdict;
             if matches!(appraisal.verdict, SkillVerdict::Insufficient { .. }) {
                 continue;
             }
@@ -1059,7 +1059,7 @@ impl SessionMemory {
 
         // 6. The rules half, over the SAME observations (#714 deliverable 5).
         //    Its miner is the structural twin of the skills one and shares
-        //    `stella_core::mining`; running both from one observation pool is
+        //    `stella_learn::mining`; running both from one observation pool is
         //    what makes that sharing pay off rather than being decorative.
         self.induce_rules(&observations, &declined, quiet)
     }
@@ -1095,7 +1095,7 @@ impl SessionMemory {
             &self.store,
             observations,
             &existing,
-            &stella_core::rules::MineConfig::default(),
+            &stella_learn::rules::MineConfig::default(),
         );
         let promotion = super::tuning::inferred_directive_promotion(&self.workspace_root);
         let mut promoted = Vec::new();

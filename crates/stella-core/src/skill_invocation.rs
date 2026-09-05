@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! Skill invocation — the pure half of the skill-invocation vocabulary
-//! (#2682).
+//! (#2682). The catalog is `stella_learn::skills`.
 //!
 //! Skills have been *context* since they existed: selected, rendered, and
 //! followed, never executed. This module gives them an execution vocabulary
@@ -106,7 +106,7 @@ pub struct InvokeDirectives {
 /// construction: no frontmatter, unknown keys, and unusable values all
 /// produce a usable [`InvokeDirectives`] — never an error, never a panic.
 pub fn parse_invoke_directives(raw: &str) -> InvokeDirectives {
-    let fm = crate::rules::parse_frontmatter(raw);
+    let fm = stella_protocol::frontmatter::parse_frontmatter(raw);
     let mut directives = InvokeDirectives::default();
 
     match fm
@@ -339,12 +339,10 @@ mod tests {
         );
         // Parsing is idempotent over the same bytes — the "round-trip" half.
         assert_eq!(parse_invoke_directives(raw), directives);
-        // And the existing skill parser still accepts the file whole: the new
-        // keys ride beside name/description/body without disturbing them.
-        let skill = crate::skills::skill_from_file("skills/release-notes/SKILL.md", raw)
-            .expect("directive keys must not break skill parsing");
-        assert_eq!(skill.name, "release-notes");
-        assert!(skill.body.contains(ARGUMENTS_PLACEHOLDER));
+        // That the skill parser still reads the same file whole is the other
+        // half, and it is checked where that parser lives:
+        // `stella_learn::skills`'s
+        // `skill_parsing_tolerates_every_invocation_directive_key`.
     }
 
     /// **The skill-invocation directive parse table.** Every directive key, both

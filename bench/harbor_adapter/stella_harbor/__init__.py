@@ -976,7 +976,8 @@ class StellaAgent(BaseInstalledAgent):
         otherwise, and best-effort is by construction — a workspace with
         nothing indexable (or no tree-sitter grammar) is this benchmark's
         normal case, not a failure, and must never block a run. All of it is
-        off the agent's clock.
+        off the agent's clock. Both ways it can fail — a raise, or a non-zero
+        exit that returns — are recorded in the trial and printed to stderr.
         """
         cwd = getattr(environment.task_env_config, "workdir", None)
         embedding = optional_embedding_credentials(self._configured_value)
@@ -996,10 +997,9 @@ class StellaAgent(BaseInstalledAgent):
                     environment, command=command, timeout_sec=300
                 )
         except Exception as exc:  # noqa: BLE001 - discovery aid, never fatal
-            print(f"stella-adapter: code graph unavailable: {exc}", file=sys.stderr)
-            self._code_graph_summary = code_graph.unavailable(exc)
+            self._code_graph_summary = code_graph.disclose(code_graph.unavailable(exc))
             return
-        self._code_graph_summary = code_graph.from_stdout(getattr(result, "stdout", None))
+        self._code_graph_summary = code_graph.disclose(code_graph.from_result(result))
 
     @with_prompt_template
     async def run(

@@ -78,6 +78,7 @@
 //! clamped per-point allowance, so what the plugin gets is what a human
 //! consented to at install and nothing more.
 
+mod arbitration;
 mod candidate_fanout;
 mod child_turn;
 mod compose;
@@ -89,6 +90,9 @@ mod framing;
 mod host_call;
 mod in_process;
 mod seat_grant;
+// Public, unlike its siblings: a host that reads a report's record also
+// wants the clock and the timing type that produced it.
+pub mod stamp;
 mod subprocess;
 mod test_run;
 mod verdict;
@@ -100,6 +104,9 @@ use stella_plugin::{
 };
 use stella_protocol::completion::CompletionMessage;
 
+pub use arbitration::{
+    ArbiterClaim, ArbiterRow, Arbitration, HoldStop, TurnHoldBudget, fold_stamps,
+};
 pub use candidate_fanout::{
     CandidateFanoutError, CandidateFanoutPlane, CandidateFanoutSpend, CandidateFanouts,
     CandidateReport, CandidateWork, CandidateWorkspace, CandidateWorkspaces,

@@ -443,7 +443,7 @@ fn matcher_applies(event: HookEvent, matcher: &HookMatcher, tool_name: Option<&s
     let Some(name) = tool_name else {
         return false;
     };
-    crate::glob::match_glob(matcher.matcher.as_deref().unwrap_or("*"), name)
+    stella_protocol::glob::match_glob(matcher.matcher.as_deref().unwrap_or("*"), name)
 }
 
 /// Which matchers apply for `event` + the tool under consideration.

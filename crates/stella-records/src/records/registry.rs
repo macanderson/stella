@@ -6,7 +6,7 @@
 //! [`RuleSource`][src] produced, in directory-precedence order, and resolves both
 //! `.md` rules and `.toml` records into one answer about what steers this session.
 //!
-//! [src]: stella_core::rules::RuleSource
+//! [src]: stella_learn::rules::RuleSource
 //!
 //! # Why the two formats do not get two pipelines
 //!
@@ -59,7 +59,7 @@ use super::{
     RenderedChannel, SweepInput, Trust, assign_handles, declared_hard_guard, load_context_file,
     render_channel,
 };
-use stella_core::rules::{Rule, RuleFile, rule_from_file_checked};
+use stella_learn::rules::{Rule, RuleFile, rule_from_file_checked};
 
 /// One parsed entry: the record, and the legacy `.md` rule it was projected from
 /// when it was projected from one.
@@ -125,7 +125,7 @@ pub struct Registry {
     pub entries: Vec<Entry>,
     /// The engine's `Rule` view, for [`evaluate_guards`][eg] at the tool boundary.
     ///
-    /// [eg]: stella_core::rules::evaluate_guards
+    /// [eg]: stella_learn::rules::evaluate_guards
     pub rules: Vec<Rule>,
     /// Equal-precedence conflicts. Never resolved silently.
     pub conflicts: Vec<Conflict>,
@@ -389,7 +389,7 @@ fn parse_tier(files: &[RuleFile], trust: Trust, diagnostics: &mut Vec<Diagnostic
             // A file with no statement is not a rule and never was; saying so for
             // every README in a rules directory would be noise. The nesting and
             // missing-id refusals are real defects and get reported.
-            Err(stella_core::rules::RuleFileError::EmptyStatement) => {}
+            Err(stella_learn::rules::RuleFileError::EmptyStatement) => {}
             Err(err) => diagnostics.push(Diagnostic {
                 source: file.path.clone(),
                 detail: err.to_string(),

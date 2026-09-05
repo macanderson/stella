@@ -33,7 +33,7 @@ use stella_context::{
     Clock, ContextDelta, ContextStore, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion,
     HashEmbedder, NodeInput, NodeKind, RecallTier, SystemClock, format_rfc3339,
 };
-use stella_core::skills::{self, SelectionConfig, Skill};
+use stella_learn::skills::{self, SelectionConfig, Skill};
 
 use crate::domains::Domains;
 
@@ -881,12 +881,12 @@ impl SessionMemory {
             &self.workspace_root,
             &join.trigger_matched,
             &join.selected,
-            &stella_core::skills::appraisal::SkillTrial {
+            &stella_learn::skills::appraisal::SkillTrial {
                 task: appraisals::LIVE_WINDOW_TASK.to_string(),
                 // Overwritten per skill by `record_turn`; the value here is
                 // never read.
                 selected: false,
-                outcome: stella_core::self_tuning::TaskOutcome {
+                outcome: stella_learn::self_tuning::TaskOutcome {
                     succeeded,
                     cost_usd: 0.0,
                     tokens: 0,

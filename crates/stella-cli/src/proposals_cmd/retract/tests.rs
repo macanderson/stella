@@ -9,7 +9,7 @@
 
 use super::*;
 
-use stella_core::rules::RuleCandidate;
+use stella_learn::rules::RuleCandidate;
 use stella_records::records::Channel;
 
 const LESSON: &str = "Always run the database migration before starting the integration suite.";

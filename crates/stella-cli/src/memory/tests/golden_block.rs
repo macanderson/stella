@@ -30,7 +30,7 @@ fn fixture() -> (tempfile::TempDir, SessionMemory) {
     .unwrap();
     let mut memory =
         SessionMemory::open_with_workspace_skills(dir.path(), false, true).expect("session memory");
-    let record_file = stella_core::rules::RuleFile {
+    let record_file = stella_learn::rules::RuleFile {
         path: ".stella/rules/ctx.acme.staging.toml".to_string(),
         contents: r#"
 schema = "context-record/v0.1"

@@ -318,11 +318,11 @@ async fn a_frame_the_host_merge_evicted_reaches_the_ledger() {
         "a merge eviction keeps its stable id and the cost the budget refused"
     );
 
-    let empty = stella_core::skills::select_skills_reporting(
+    let empty = stella_learn::skills::select_skills_reporting(
         &[],
         goal,
         &[],
-        &stella_core::skills::SelectionConfig::default(),
+        &stella_learn::skills::SelectionConfig::default(),
     );
     let signal = stella_core::steering::TurnSignal {
         prompt: goal,
@@ -554,7 +554,7 @@ applies_to = { paths = ["deny.toml"] }
 "#;
     stella_records::records::registry::load(
         &[],
-        &[stella_core::rules::RuleFile {
+        &[stella_learn::rules::RuleFile {
             path: ".stella/rules/acme.web.toml".to_string(),
             contents: records.to_string(),
             contributed_by: None,

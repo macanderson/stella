@@ -503,7 +503,7 @@ pub(crate) const MEMORIES_OMITTED_PREFIX: &str =
 
 /// Assemble the session's system prompt from a `base` instruction set plus
 /// the workspace's saved memories and the workspace rules section (Tier 1
-/// soft adherence, `stella_core::rules`). Both are loaded ONCE per session
+/// soft adherence, `stella_learn::rules`). Both are loaded ONCE per session
 /// and concatenated deterministically so the resulting prefix is
 /// byte-stable across every model call — that stability is what lets the
 /// whole prompt (instructions + memories + rules) ride the provider's

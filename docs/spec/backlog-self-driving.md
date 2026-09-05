@@ -428,6 +428,18 @@ An escalated issue with no record stays out of the queue. The label alone
 says nothing about what went wrong or when, and a person who applied it by
 hand meant it.
 
+**The record write never carries a stale body.** Writing the record means
+sending a whole issue body, because that is the only shape a tracker edit
+takes. A work turn runs for minutes, and the text a person is reading can
+change while it does. So `backlog::record::write` reads the issue itself,
+right before it writes, and builds the record from that read. A body it
+cannot read is one it will not replace: the read failing aborts the write and
+the loop reports it as a transient tracker failure. After the write it reads
+once more, and if the record is gone it stamps the same record onto the newer
+text, once. GitHub offers no compare-and-set on an issue body, so an edit
+saved inside that one round trip is still lost; the gap is one call wide
+rather than one turn wide.
+
 **The deploy watch.** Beside the base watch, each poll may also read the
 release workflow's latest completed run, through the same forge pathway. On
 a red conclusion with no open report, the loop files one and adopts it. The

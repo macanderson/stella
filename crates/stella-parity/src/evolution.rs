@@ -510,7 +510,7 @@ fn evolution_sources() -> [&'static str; 13] {
         include_str!("../../stella-cli/src/memory/rules_mining/tests.rs"),
         include_str!("../../stella-cli/src/memory/uses/tests.rs"),
         include_str!("../../stella-cli/src/memory/validation/tests.rs"),
-        include_str!("../../stella-core/src/skills/appraisal/tests.rs"),
+        include_str!("../../stella-learn/src/skills/appraisal/tests.rs"),
         include_str!("../../stella-cli/src/memory/learning/skill_lifecycle.rs"),
         include_str!("../../stella-cli/src/tool_foundry/adopt/tests.rs"),
         include_str!("../../stella-cli/src/tool_foundry/autonomy.rs"),

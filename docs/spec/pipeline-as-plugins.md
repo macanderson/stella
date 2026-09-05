@@ -1169,7 +1169,7 @@ Four surfaces, no fifth — the fourth landed with #4733, and the file is a file
 rather than a directory because a server is a table entry and `.stella/mcp.toml`
 is the unit the loader already reads. Each is handed to the loader that already
 reads that surface as an additional source — a plugin's tool *is* a custom tool
-(`stella_tools::custom`), its skill *is* a skill (`stella_core::skills`), its
+(`stella_tools::custom`), its skill *is* a skill (`stella_learn::skills`), its
 record *is* a context record (`crate::context_records`), its servers *are* MCP
 servers (`stella_mcp`).
 

@@ -67,8 +67,8 @@ mode does differently inside the engine, see
       { label: "Verified by", value: "per task, independently", mono: false },
     ]}
   >
-    Many tasks running in parallel: one shared tree with cooperative file claims by
-    default, or a separate worktree per task if you opt in.
+    Many tasks at once: a worktree per task by default, or one shared tree
+    with file claims if you ask.
   </SpecCard>
 </CardGrid>
 
@@ -238,10 +238,9 @@ judged-loop process as goal mode, with "all CI checks pass" as the objective.
 ## Parallel: fleets
 
 When the work is many tasks rather than one, [`stella fleet`](/docs/agent-fleets)
-spreads a dependency-ordered set of tasks out to parallel workers in one shared tree.
-Cooperative file claims keep two agents from fighting over the same file. Setting
-`isolation = "isolated"` on a task gives it its own git worktree on its own branch
-instead.
+spreads a set of tasks out to parallel workers. Each gets its own git worktree on
+its own branch. Setting `isolation = "shared_tree"` on a task puts it in your
+checkout instead. There, file claims keep two agents off the same file.
 
 ## Choosing
 

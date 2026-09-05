@@ -1,0 +1,21 @@
+[package]
+name = "stella-learn"
+description = "The learning plane: skills, rules, the shared text miner behind both, secret redaction, A/B comparison, and the bandit that picks a winner. Pure value logic, no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Token estimates for the skill section budget, the frontmatter parser both
+# rules and skills read a file with, and the glob a rule guard matches on.
+stella-protocol = { path = "../stella-protocol" }
+serde = { workspace = true }
+
+[dev-dependencies]
+# Test-only: the serde round-trips AGENTS.md #4 asks of every crossing type.
+# Nothing here serializes at run time — a caller does.
+serde_json = { workspace = true }
+proptest = { workspace = true }

@@ -26,7 +26,7 @@
 crates/stella-autonomy 38.25
 crates/stella-cli 23.45
 crates/stella-context 18.11
-crates/stella-core 28.44
+crates/stella-core 30.15
 crates/stella-diag 25.12
 crates/stella-diff 27.80
 crates/stella-embed 18.00
@@ -34,12 +34,13 @@ crates/stella-engine 71.00
 crates/stella-fleet 24.15
 crates/stella-graph 21.56
 crates/stella-home 33.00
+crates/stella-learn 21.64
 crates/stella-mcp 18.73
 crates/stella-model 18.08
 crates/stella-observatory 22.28
 crates/stella-parity 35.00
 crates/stella-plugin 35.08
-crates/stella-protocol 27.21
+crates/stella-protocol 25.91
 crates/stella-records 24.33
 crates/stella-runtime 35.64
 crates/stella-serve 25.96

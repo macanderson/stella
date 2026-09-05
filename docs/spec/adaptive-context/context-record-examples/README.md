@@ -98,7 +98,7 @@ each, and no record is stored twice.
 A memory is fetched per turn by relevance and is not cached. A context record is
 a file: the project's git tree for `repository` and `organization` scope,
 `~/.stella/rules/` for `personal` scope — which the loader already reads
-(`rule_search_dirs`, `crates/stella-core/src/rules.rs:345`). `sharing_scope` chooses
+(`rule_search_dirs`, `crates/stella-learn/src/rules.rs:345`). `sharing_scope` chooses
 *which* file location, not whether it is a file at all.
 
 Promotion is how a memory becomes a context record.

@@ -47,7 +47,7 @@
 //!
 //! ## Relationship to the legacy `rules::metadata` types (subsumed, retired)
 //!
-//! `stella-core::rules::metadata` once carried a parallel enum set
+//! `stella-learn::rules::metadata` once carried a parallel enum set
 //! (`RuleRecordKind` / `RuleEnforcement` / `RuleOrigin`) parsed from markdown
 //! rule frontmatter. `doc:adr/0009-enum-freeze-resolutions` (ratified
 //! 2026-07-24) settled the two mapping edges this doc used to flag as open —

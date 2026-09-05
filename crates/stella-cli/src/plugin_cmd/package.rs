@@ -27,7 +27,7 @@
 //! directory is handed to the loader that already reads that surface, as an
 //! additional source. A plugin's tool is a custom tool
 //! ([`stella_tools::custom`]); its skill is a skill
-//! (`stella_core::skills`); its record is a context record
+//! (`stella_learn::skills`); its record is a context record
 //! (`crate::context_records`); its MCP servers are MCP servers
 //! (`stella_mcp`). A parallel plane would be a second set of precedence
 //! rules, a second set of diagnostics, and a second thing to remember to
@@ -101,7 +101,7 @@ use crate::settings::Settings;
 /// [`stella_tools::custom`] documents.
 pub(crate) const TOOLS_DIR: &str = "tools";
 /// `<plugin_dir>/skills` — `<slug>/SKILL.md` files, the layout
-/// `stella_core::skills` reads.
+/// `stella_learn::skills` reads.
 pub(crate) const SKILLS_DIR: &str = "skills";
 /// `<plugin_dir>/rules` — context records, the format
 /// [`crate::context_records`] reads. Named `rules` rather than `records`
@@ -457,7 +457,7 @@ fn mcp_servers(file: &Path) -> Vec<String> {
 /// absent or unreadable.
 ///
 /// The slug *is* the filesystem identity here, unlike a tool's name or a
-/// record's lineage: `stella_core::skills` names a skill by its directory, so
+/// record's lineage: `stella_learn::skills` names a skill by its directory, so
 /// there is nothing inside the file to read it from.
 fn skill_slugs(dir: &Path) -> Vec<String> {
     let Ok(read) = std::fs::read_dir(dir) else {

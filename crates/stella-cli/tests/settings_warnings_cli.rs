@@ -546,9 +546,10 @@ fn a_trusted_checkouts_goal_run_records_no_withheld_notice() {
 /// A one-task `stella fleet` fan-out in `dir`, against the same closed
 /// loopback port [`run_stream_json`] uses and for the same reason: the notice
 /// goes on the attempt's channel when it opens, before a provider is asked
-/// for anything. A positional prompt is a SHARED-tree task, so the attempt's
-/// journal is the invocation workspace's own store —
-/// [`withheld_events_in_journal`] reads it unchanged.
+/// for anything. The plan names `shared_tree`, so the attempt's journal is
+/// the invocation workspace's own store — [`withheld_events_in_journal`]
+/// reads it unchanged. A task gets its own worktree otherwise (ADR 0027),
+/// and the journal would be that tree's.
 ///
 /// The fleet pins its base to a sha before dispatching anything, so the
 /// workspace has to be a git repository with one commit first.
@@ -574,6 +575,12 @@ fn fleet_run(dir: &tempfile::TempDir, home: &tempfile::TempDir, extra_env: &[(&s
             .expect("run git");
         assert!(status.success(), "git {args:?} failed");
     }
+    std::fs::write(
+        dir.path().join("plan.json"),
+        r#"{"tasks":[{"id":"one","title":"one","prompt":"say hi and stop",
+            "isolation":"shared_tree"}]}"#,
+    )
+    .expect("plan file");
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
         .without_embedder_backend()
@@ -589,7 +596,8 @@ fn fleet_run(dir: &tempfile::TempDir, home: &tempfile::TempDir, extra_env: &[(&s
             "fleet",
             "--output-format",
             "json",
-            "say hi and stop",
+            "--plan",
+            "plan.json",
         ])
         .current_dir(dir.path())
         .env("HOME", home.path())
