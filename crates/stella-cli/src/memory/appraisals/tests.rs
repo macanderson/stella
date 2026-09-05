@@ -1,6 +1,7 @@
 //! Tests for the skill-appraisal ledger: the gate's evidence source, the
 //! held-candidate queue, and the retirement sweep.
 
+use stella_learn::ledger::ArtifactKind;
 use stella_learn::self_tuning::TaskOutcome;
 use stella_learn::skills::SkillOrigin;
 use stella_learn::skills::appraisal::{DemotionReason, KeepSkillReason, SkillVerdict};
@@ -51,7 +52,15 @@ fn an_absent_ledger_yields_no_verdicts() {
     let root = workspace("absent");
     assert!(latest_verdicts(&root).is_empty());
     assert!(queued_candidates(&root).is_empty());
-    assert!(sweep(&root, &HashMap::new(), &AppraisalConfig::default()).is_empty());
+    assert!(
+        sweep(
+            &root,
+            ArtifactKind::Skill,
+            &HashMap::new(),
+            &AppraisalConfig::default()
+        )
+        .is_empty()
+    );
 }
 
 /// The newest appraisal per skill wins: a skill that stopped helping must not
@@ -114,16 +123,26 @@ fn a_held_candidate_is_queued_exactly_once() {
 fn the_turn_join_records_the_control_arm_too() {
     let root = workspace("join");
     let matched = vec!["helper".to_string(), "bystander".to_string()];
-    record_turn(&root, &matched, &["helper".to_string()], &trial(true));
-    record_turn(&root, &matched, &[], &trial(false));
+    record_turn(
+        &root,
+        ArtifactKind::Skill,
+        &matched,
+        &["helper".to_string()],
+        &trial(true),
+    );
+    record_turn(&root, ArtifactKind::Skill, &matched, &[], &trial(false));
 
-    let stored = read_jsonl::<StoredTrial>(&path(&root, TRIALS_FILE));
+    let stored = stored_trials(&root);
     assert_eq!(stored.len(), 4, "two skills × two turns");
-    let helper: Vec<&StoredTrial> = stored.iter().filter(|s| s.skill == "helper").collect();
+    assert!(
+        stored.iter().all(|s| s.kind == ArtifactKind::Skill),
+        "the skill seam writes skill rows"
+    );
+    let helper: Vec<&ArtifactTrial> = stored.iter().filter(|s| s.id == "helper").collect();
     assert_eq!(helper.len(), 2);
     assert!(helper[0].trial.selected, "turn one injected it");
     assert!(!helper[1].trial.selected, "turn two is its control");
-    let bystander: Vec<&StoredTrial> = stored.iter().filter(|s| s.skill == "bystander").collect();
+    let bystander: Vec<&ArtifactTrial> = stored.iter().filter(|s| s.id == "bystander").collect();
     assert!(bystander.iter().all(|s| !s.trial.selected));
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -138,15 +157,20 @@ fn the_sweep_demotes_only_the_auto_created_regressor() {
     // Eight turns with both skills injected and failing, eight without them
     // and passing: removing either confidently wins.
     for _ in 0..8 {
-        record_turn(&root, &known, &known, &trial(false));
-        record_turn(&root, &known, &[], &trial(true));
+        record_turn(&root, ArtifactKind::Skill, &known, &known, &trial(false));
+        record_turn(&root, ArtifactKind::Skill, &known, &[], &trial(true));
     }
 
     let origins = HashMap::from([
         ("auto-stale".to_string(), SkillOrigin::AutoCreated),
         ("house-style".to_string(), SkillOrigin::Workspace),
     ]);
-    let swept = sweep(&root, &origins, &AppraisalConfig::default());
+    let swept = sweep(
+        &root,
+        ArtifactKind::Skill,
+        &origins,
+        &AppraisalConfig::default(),
+    );
     assert_eq!(swept.len(), 2);
     // Sorted by skill name, so the order is not a hash seed's.
     let (auto, auto_decision) = &swept[0];
@@ -181,10 +205,15 @@ fn an_unknown_origin_is_never_demoted() {
     let root = workspace("unknown-origin");
     let known = vec!["mystery".to_string()];
     for _ in 0..8 {
-        record_turn(&root, &known, &known, &trial(false));
-        record_turn(&root, &known, &[], &trial(true));
+        record_turn(&root, ArtifactKind::Skill, &known, &known, &trial(false));
+        record_turn(&root, ArtifactKind::Skill, &known, &[], &trial(true));
     }
-    let swept = sweep(&root, &HashMap::new(), &AppraisalConfig::default());
+    let swept = sweep(
+        &root,
+        ArtifactKind::Skill,
+        &HashMap::new(),
+        &AppraisalConfig::default(),
+    );
     assert_eq!(swept.len(), 1);
     assert_eq!(
         swept[0].1,
@@ -226,5 +255,88 @@ fn the_ledgers_are_owner_only() {
         .mode()
         & 0o777;
     assert_eq!(mode, 0o600);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The witness for the shared key.** Two artifacts of different kinds can
+/// share an id, and the sweep for one kind must not read the other's turns.
+///
+/// This cannot be written against the ledger that came before: a row was
+/// filed under a skill name and nothing else, so there was no way to record a
+/// memory trial at all, and no second kind for a skill sweep to pick up by
+/// mistake. The memory rows below say the opposite of the skill rows, so a
+/// sweep that mixed them would find no lift instead of harm.
+#[test]
+fn a_sweep_reads_only_its_own_kind() {
+    let root = workspace("kinds");
+    let shared = vec!["shared-id".to_string()];
+    for _ in 0..8 {
+        // The skill hurts: injected turns fail, withheld turns pass.
+        record_turn(&root, ArtifactKind::Skill, &shared, &shared, &trial(false));
+        record_turn(&root, ArtifactKind::Skill, &shared, &[], &trial(true));
+        // The memory under the same id does the reverse.
+        record_turn(&root, ArtifactKind::Memory, &shared, &shared, &trial(true));
+        record_turn(&root, ArtifactKind::Memory, &shared, &[], &trial(false));
+    }
+
+    let origins = HashMap::from([("shared-id".to_string(), SkillOrigin::AutoCreated)]);
+    let skills = sweep(
+        &root,
+        ArtifactKind::Skill,
+        &origins,
+        &AppraisalConfig::default(),
+    );
+    assert_eq!(skills.len(), 1);
+    assert!(
+        matches!(skills[0].0.verdict, SkillVerdict::Harms { .. }),
+        "the skill's own turns say it hurts: {:?}",
+        skills[0].0.verdict
+    );
+
+    let memories = sweep(
+        &root,
+        ArtifactKind::Memory,
+        &origins,
+        &AppraisalConfig::default(),
+    );
+    assert_eq!(memories.len(), 1);
+    assert!(
+        matches!(memories[0].0.verdict, SkillVerdict::Helps { .. }),
+        "and the memory's say it helps: {:?}",
+        memories[0].0.verdict
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A workspace with history keeps it. The rows a build before this one wrote
+/// live in another file, under another field name, with no kind on them —
+/// and the skill sweep still reads them as the skill turns they are.
+#[test]
+fn the_sweep_still_reads_the_rows_an_older_build_wrote() {
+    let root = workspace("legacy");
+    let mut lines = String::new();
+    for _ in 0..8 {
+        for (selected, succeeded) in [(true, false), (false, true)] {
+            lines.push_str(&format!(
+                r#"{{"skill":"old-timer","task":"live-window","selected":{selected},"outcome":{{"succeeded":{succeeded},"cost_usd":0.1,"tokens":1000,"retries":0}},"turns":4}}"#
+            ));
+            lines.push('\n');
+        }
+    }
+    let target = path(&root, LEGACY_TRIALS_FILE);
+    std::fs::create_dir_all(target.parent().expect("a parent")).expect("the private dir");
+    std::fs::write(&target, lines).expect("the legacy ledger");
+
+    let origins = HashMap::from([("old-timer".to_string(), SkillOrigin::AutoCreated)]);
+    let swept = sweep(
+        &root,
+        ArtifactKind::Skill,
+        &origins,
+        &AppraisalConfig::default(),
+    );
+    assert_eq!(swept.len(), 1, "the old file is still a window");
+    assert_eq!(swept[0].0.skill, "old-timer");
+    assert!(matches!(swept[0].0.verdict, SkillVerdict::Harms { .. }));
+    assert!(swept[0].1.is_demotion());
     let _ = std::fs::remove_dir_all(&root);
 }
