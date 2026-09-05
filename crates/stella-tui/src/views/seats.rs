@@ -133,10 +133,12 @@ const GAP: usize = 3;
 /// column promises -- where `roles`' entry would name the *settings key*
 /// instead. Without the filter every seat would draw twice.
 ///
-/// The editable rows start at [`resolved_row_count`], **not**
+/// The editable rows start at `resolved_row_count`'s answer, **not**
 /// `state.roles.len()`: that count is what the filter above actually kept,
-/// and [`seat_at`]/[`seat_at_mut`] share it so a combined row index always
-/// finds the right seat.
+/// and `seat_at`/`seat_at_mut` share it so a combined row index always finds
+/// the right seat. Named rather than linked: `rows` is public and those three
+/// are not, and a link from a public item to a private one is exactly the
+/// broken-doc shape `rustdoc::private_intra_doc_links` exists to catch.
 #[must_use]
 pub fn rows(state: &EngineConfigState) -> Vec<SeatRow> {
     let seat_keys = declared_seat_keys(state);
