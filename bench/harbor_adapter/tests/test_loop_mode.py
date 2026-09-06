@@ -8,6 +8,12 @@ last is the one nothing would have caught before #4023 — a manifest is read
 long after the process that wrote it is gone, and every published Stella arm
 was claiming `staged_pipeline` for a binary with no staged pipeline to run.
 
+A second selector, `STELLA_PIPELINE`, names an installed wrapper plugin's id
+(`--pipeline <id>`). It gets the same three-level treatment: the selector
+(blank and unset must agree), the argv (the flag appears with exactly the
+named id, and only then), and the manifest (its published name matches what
+the argv actually carried).
+
 Lives beside ``test_adapter.py`` rather than inside it for the reason
 :mod:`stella_harbor.loop_mode` lives beside the package root: both files sit
 on the repository's file-size ratchet, and separable new code becomes its own
@@ -24,6 +30,7 @@ from stella_harbor import StellaAgent  # noqa: E402
 from stella_harbor.loop_mode import (  # noqa: E402
     BARE_STEP_LOOP,
     NO_PIPELINE_ENV,
+    PIPELINE_ENV,
     bare_loop_selected,
     is_truthy,
     loop_argv,
@@ -38,18 +45,38 @@ SPELLED_ON = ("1", "true", "TRUE", "  True  ", "yes", "on")
 #: non-empty string, and the arm would silently run the loop it declined.
 SPELLED_OFF = (None, "", "  ", "0", "false", "False", "no", "off", "nope")
 
+#: Blank spellings of "no plugin named" — unset itself is covered separately,
+#: since a reader stand-in has no environment to omit a key from.
+BLANK_PIPELINE = ("", "  ", "\t")
 
-def _reader(value: str | None):
-    """A stand-in for ``StellaAgent._configured_value`` over one key."""
-    return lambda key: value if key == NO_PIPELINE_ENV else None
+
+def _reader(value: str | None = None, pipeline: str | None = None):
+    """A stand-in for ``StellaAgent._configured_value`` over both selectors."""
+
+    def read(key: str) -> str | None:
+        if key == NO_PIPELINE_ENV:
+            return value
+        if key == PIPELINE_ENV:
+            return pipeline
+        return None
+
+    return read
 
 
-def _agent(monkeypatch: pytest.MonkeyPatch, value: str | None) -> StellaAgent:
-    """An agent whose only configured input is the loop selector."""
+def _agent(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None = None,
+    pipeline: str | None = None,
+) -> StellaAgent:
+    """An agent whose only configured input is the two loop selectors."""
     if value is None:
         monkeypatch.delenv(NO_PIPELINE_ENV, raising=False)
     else:
         monkeypatch.setenv(NO_PIPELINE_ENV, value)
+    if pipeline is None:
+        monkeypatch.delenv(PIPELINE_ENV, raising=False)
+    else:
+        monkeypatch.setenv(PIPELINE_ENV, pipeline)
     agent = StellaAgent.__new__(StellaAgent)
     agent.model_name = "openrouter/anthropic/claude-opus-5"
     return agent
@@ -173,21 +200,89 @@ class TestManifest:
 
         `crates/stella-cli/src/wrapper_plugin.rs::PipelineChoice::resolve`
         refuses `--pipeline classic` outright and, with no `--pipeline` flag
-        at all — which is all this adapter ever passes — resolves every
-        remaining case to the raw step loop. That Rust decision cannot be
-        called from here, so this pins the one fact this suite can check
-        instead: this adapter never emits `--pipeline`, so `resolve` always
-        lands on the raw step loop, and the manifest must say exactly that
-        for every value the loop selector can take.
+        at all — which is what this arm passes when `STELLA_PIPELINE` is
+        unset — resolves every remaining case to the raw step loop. That
+        Rust decision cannot be called from here, so this pins the one fact
+        this suite can check instead: an arm naming no plugin never emits
+        `--pipeline`, so `resolve` always lands on the raw step loop, and the
+        manifest must say exactly that for every value the bare-loop
+        selector can take. `TestPipelineSelector` below covers the arm that
+        does name one.
         """
         agent = _agent(monkeypatch, value)
         cmd = agent._build_command("Fix the bug")
 
         assert "--pipeline" not in cmd, (
-            "this adapter names no plugin, so PipelineChoice::resolve sees "
+            "this arm names no plugin, so PipelineChoice::resolve sees "
             "no --pipeline flag and cannot land anywhere but the raw step loop"
         )
         assert self._loop_mode(agent) == BARE_STEP_LOOP
+
+
+class TestPipelineSelector:
+    """`STELLA_PIPELINE`: the one selector that can move an arm off the raw
+    step loop, by naming an installed wrapper plugin's id.
+    """
+
+    @pytest.mark.parametrize("pipeline", BLANK_PIPELINE)
+    def test_a_blank_pipeline_id_reads_as_unset(self, pipeline: str) -> None:
+        """`STELLA_PIPELINE=""` must not select a plugin with an empty id."""
+        assert loop_argv(_reader(pipeline=pipeline)) == ()
+        assert loop_mode_name(_reader(pipeline=pipeline)) == BARE_STEP_LOOP
+
+    def test_unset_pipeline_leaves_argv_and_manifest_unchanged(self) -> None:
+        """No `STELLA_PIPELINE` at all: byte-identical to every trial before
+        this selector existed."""
+        assert loop_argv(_reader()) == ()
+        assert loop_mode_name(_reader()) == BARE_STEP_LOOP
+
+    @pytest.mark.parametrize("plugin_id", ["witness-v1", "classic", "a-future-plugin"])
+    def test_a_named_plugin_emits_the_flag_and_publishes_a_matching_name(
+        self, plugin_id: str
+    ) -> None:
+        """The argv and the manifest name must carry the identical id.
+
+        `classic` is included because this adapter does not special-case it —
+        `PipelineChoice::resolve` is what refuses it, on the Stella side, and
+        an adapter-level guess at the installed roster would be a second copy
+        of a decision that already lives there.
+        """
+        reader = _reader(pipeline=plugin_id)
+        assert loop_argv(reader) == ("--pipeline", plugin_id)
+        assert loop_mode_name(reader) == f"PLUGIN:{plugin_id}"
+
+    @pytest.mark.parametrize("value", SPELLED_ON + SPELLED_OFF)
+    def test_the_bare_loop_selector_never_gates_the_pipeline_selector(
+        self, value: str | None
+    ) -> None:
+        """`STELLA_NO_PIPELINE` and `STELLA_PIPELINE` are independent.
+
+        The bare-loop selector's declared intent stopped changing `loop_argv`
+        or `loop_mode_name` once the built-in staged pipeline was removed
+        (see the module docstring); it must not suppress or require a named
+        plugin either.
+        """
+        reader = _reader(value, pipeline="witness-v1")
+        assert loop_argv(reader) == ("--pipeline", "witness-v1")
+        assert loop_mode_name(reader) == "PLUGIN:witness-v1"
+
+    def test_the_built_command_and_manifest_agree_on_the_named_plugin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end through `_build_command`/`populate_context_post_run`.
+
+        The unit-level assertions above pin `loop_argv`/`loop_mode_name`
+        directly; this pins the same fact through the real seam the trial
+        actually calls, closing the same gap two prior published-result
+        defects were each a version of: a projection that agrees with itself
+        but not with what ran.
+        """
+        agent = _agent(monkeypatch, pipeline="witness-v1")
+        cmd = agent._build_command("Fix the bug")
+
+        assert "--pipeline" in cmd
+        assert cmd[cmd.index("--pipeline") + 1] == "witness-v1"
+        assert TestManifest._loop_mode(agent) == "PLUGIN:witness-v1"
 
 
 if __name__ == "__main__":
