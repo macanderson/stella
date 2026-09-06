@@ -442,6 +442,23 @@ impl BoundWrapper {
         self.dispatch.variant()
     }
 
+    /// Hold this wrapper's text to the session's steering allowance. With the
+    /// plane off there is no ceiling to hold it to.
+    ///
+    /// Every door that binds a wrapper calls it, right after
+    /// [`ResolvedWrapper::serving`]. So a plugin's text buys from the same
+    /// tokens the turn's records, skills and frames bought from.
+    #[must_use]
+    pub(crate) fn with_context_allowance(
+        mut self,
+        allowance: Option<stella_core::steering::plugins::ContextAllowance>,
+    ) -> Self {
+        if let Some(allowance) = allowance {
+            self.dispatch = self.dispatch.with_context_allowance(allowance);
+        }
+        self
+    }
+
     /// Every child turn this host ran on the plugin's behalf, in order.
     ///
     /// Empty both when the plugin never asked and when no plane was installed;
@@ -1042,6 +1059,9 @@ impl TurnDriver for RawTurnDriver<'_> {
         // declare more as it learns more; already-pinned artifacts keep their
         // first baseline, so a later round cannot launder an earlier rewrite.
         self.watch.pin_declared(prelude.witness());
+        // Whatever the steering allowance refused, named where every other
+        // steering source names its cuts.
+        crate::plugin_steering::report_drops(&prelude);
         // Invariant 7, at the one call site that spends it: `into_messages`
         // hands back user messages, and they are appended *after* the
         // byte-stable system prefix the conversation already opens with.

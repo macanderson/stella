@@ -1295,8 +1295,9 @@ fn record_section_text(rendered: RenderedChannel) -> Option<String> {
 /// capability change (`crate::tool_lean`), so the advice is to widen what the
 /// session may spend on schemas, or to turn the lever off.
 ///
-/// `None` for a plugin-contributed candidate, which nothing produces yet.
-/// Silence there is the absence of a producer, not a withheld report.
+/// A plugin drop names the plugin and the stage it spoke at, because the
+/// handle is `<plugin>/<stage>` and both halves are things a person can act on.
+/// The remedy is the allowance or the plugin, and never the stage.
 fn drop_message(
     drop: &stella_core::steering::DroppedCandidate,
     still_selected: bool,
@@ -1324,7 +1325,12 @@ fn drop_message(
              is called; raise `context.steering.max_tokens`, or set \
              `context.steering.tools.lean` false to advertise every tool"
         )),
-        SteeringSource::Plugin => None,
+        SteeringSource::Plugin => Some(format!(
+            "a plugin's contribution did not fit what this turn's records, skills and frames \
+             left of the steering allowance, and was not put in front of the model: {handle} \
+             — the plugin still ran; raise `context.steering.max_tokens`, or take the plugin \
+             out of `active_plugins`"
+        )),
     }
 }
 

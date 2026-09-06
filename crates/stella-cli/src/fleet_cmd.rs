@@ -881,7 +881,7 @@ async fn run_task(
     // The second moment of binding (#3882): a plugin's `child_turn` is spent
     // by this attempt's own dispatcher, which needs the provider built above.
     let wrapped = match resolved_wrapper {
-        Some(resolved) => Some(resolved.serving(&invocation_root, sub_agents)?),
+        Some(resolved) => Some(resolved.serving(&invocation_root, sub_agents, &cfg)?),
         None => None,
     };
     let active_rules = rules::enforce_workspace_rules(

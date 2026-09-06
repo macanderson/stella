@@ -72,6 +72,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use stella_core::ports::Clock;
+use stella_core::steering::SteeringSet;
+use stella_core::steering::plugins::ContextAllowance;
 use stella_plugin::{
     AfterTurnRequest, BeforeTurnRequest, CandidateGrant, Continuation, EvidenceProvenance,
     EvidenceSet, FlipObservation, LoopGrant, ObservedEvidence, Outcome, PROTOCOL_VERSION,
@@ -126,6 +128,7 @@ pub struct TurnPrelude {
     role: Option<String>,
     scope: Vec<String>,
     witness: Vec<String>,
+    steering: SteeringSet,
 }
 
 impl TurnPrelude {
@@ -174,6 +177,18 @@ impl TurnPrelude {
     #[must_use]
     pub fn witness(&self) -> &[String] {
         &self.witness
+    }
+
+    /// What the steering plane decided about this round. It holds one row per
+    /// plugin per stage, priced over the text below. What the turn's allowance
+    /// could not hold sits in `dropped`.
+    ///
+    /// A host reports it through the writer every steering source uses. So a
+    /// cut text reaches the operator by name. It is a record and not a second
+    /// choice. The messages here are already the ones that fit.
+    #[must_use]
+    pub fn steering(&self) -> &SteeringSet {
+        &self.steering
     }
 
     /// The contributions, as the volatile messages they are.
@@ -313,6 +328,13 @@ pub struct WrapperDispatch {
     /// cannot hold. See `super::compose::Composition::hold_grant`.
     hold_grant: LoopGrant,
     host_max_holds: u32,
+    /// What this session may still spend on a plugin's text. `None` is a host
+    /// that named no ceiling.
+    ///
+    /// A handle on the session's steering ledger, not a number. The block a
+    /// turn has drawn spends the same allowance, and the tool list takes what
+    /// is left.
+    context: Option<ContextAllowance>,
     /// Where a stamp's two times come from. A port rather than a call to the
     /// system clock, so a test can pin both numbers and read the whole record
     /// back byte for byte.
@@ -540,6 +562,7 @@ impl WrapperDispatch {
             rule: composition.rule,
             hold_grant: composition.hold_grant,
             host_max_holds: DEFAULT_HOST_MAX_HOLDS,
+            context: None,
             clock: Arc::new(HostClock),
         })
     }
@@ -549,6 +572,18 @@ impl WrapperDispatch {
     #[must_use]
     pub fn with_host_max_holds(mut self, holds: u32) -> Self {
         self.host_max_holds = holds;
+        self
+    }
+
+    /// Hold this session's plugin text to `allowance`.
+    ///
+    /// Without it, text is measured and reported and never cut. That is what a
+    /// host that named no allowance is owed. With it, what a plugin puts in
+    /// front of the model buys from the same tokens this turn's records,
+    /// skills and frames bought from.
+    #[must_use]
+    pub fn with_context_allowance(mut self, allowance: ContextAllowance) -> Self {
+        self.context = Some(allowance);
         self
     }
 
@@ -796,8 +831,14 @@ impl WrapperDispatch {
             role: None,
             scope: Vec::new(),
             witness: Vec::new(),
+            steering: SteeringSet::default(),
         };
 
+        // What each member said at each stage, priced over the exact messages.
+        // Gathered rather than appended as it arrives. The allowance is
+        // decided over the whole round. Packing each answer as it lands would
+        // let the first stage spend it all and hide that the last was cut.
+        let mut contributions: Vec<super::contribution::StageContribution> = Vec::new();
         let mut published: Vec<PublishedSignal> = Vec::new();
         // Stage-major, then member within a stage: a later stage must see what
         // an earlier one published *from every member*, which is the whole
@@ -880,9 +921,24 @@ impl WrapperDispatch {
                     }
                 }
                 published.extend(admitted.published().iter().copied());
-                prelude.messages.extend(admitted.into_messages());
+                // The plugin's own name, not the `[wrapper] id`. A drop report
+                // is read by whoever can act on it. What they act on is the
+                // word in `active_plugins`.
+                contributions.extend(super::contribution::StageContribution::measured(
+                    &member.manifest.name,
+                    stage,
+                    admitted.into_messages(),
+                ));
             }
         }
+        // One pack over the whole round, through the plane's own budgeter.
+        // What the allowance cannot hold is left out of the prompt and named.
+        // The plugin still ran. What it published still reached the stage
+        // after it.
+        let (messages, steering) =
+            super::contribution::afford(contributions, self.context.as_ref());
+        prelude.messages = messages;
+        prelude.steering = steering;
         prelude
     }
 

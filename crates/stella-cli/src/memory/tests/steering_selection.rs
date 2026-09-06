@@ -745,9 +745,10 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
             // `crate::tool_lean` produces these: the session's tool
             // allowance, and what it could not afford.
             dropped(SteeringSource::Tool, "bash"),
-            // The plugin arm still has none, and its silence is the absence
-            // of a producer rather than a withheld report.
-            dropped(SteeringSource::Plugin, "stella-research"),
+            // `stella_runtime::wrapper` produces these: text a plugin
+            // offered at one of its stages that the allowance could not
+            // hold. The handle is `<plugin>/<stage>`.
+            dropped(SteeringSource::Plugin, "stella-research/research"),
         ],
     };
 
@@ -756,7 +757,7 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
 
     assert_eq!(
         lines.len(),
-        5,
+        6,
         "one summary for the memory drops, then one line per remaining \
          reportable source: {lines:?}"
     );
@@ -796,8 +797,11 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
          callable, and names the knob that would have advertised it: {joined}"
     );
     assert!(
-        !joined.contains("stella-research"),
-        "no source invents a line it has no producer for: {joined}"
+        lines[5].contains("stella-research/research")
+            && lines[5].contains("the plugin still ran")
+            && lines[5].contains("active_plugins"),
+        "a plugin's cut text names the plugin and the stage, says the plugin \
+         still ran, and names the two knobs that would have kept it: {joined}"
     );
 }
 

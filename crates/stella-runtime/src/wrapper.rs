@@ -82,6 +82,7 @@ mod arbitration;
 mod candidate_fanout;
 mod child_turn;
 mod compose;
+mod contribution;
 mod dispatch;
 mod driver_call;
 mod driver_subprocess;

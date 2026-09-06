@@ -38,6 +38,7 @@
 use std::collections::BTreeMap;
 
 pub mod ledger;
+pub mod plugins;
 pub mod tools;
 
 /// What is happening in this turn, as a selector needs to see it.
@@ -80,11 +81,6 @@ pub struct TurnSignal<'a> {
 }
 
 /// Which plane a candidate came from.
-///
-/// `Plugin` is declared now and produced by nothing yet: #3246
-/// sequences plugins last, and the whole cost of a fifth source arriving
-/// later is whether this enum and [`SteeringSet`] anticipated it. A case
-/// costs nothing today and a second seam costs a migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SteeringSource {
     /// A context record — a rule, fact, or directive (`.stella/rules/`).
@@ -95,7 +91,8 @@ pub enum SteeringSource {
     Skill,
     /// A tool schema competing for advertisement space.
     Tool,
-    /// A plugin-contributed candidate. Nothing produces one yet (#3246).
+    /// Context an installed plugin contributed at one of its declared stages.
+    /// See [`plugins`] for the producer.
     Plugin,
 }
 
@@ -152,7 +149,14 @@ fn source_rank(source: SteeringSource) -> u8 {
         SteeringSource::Tool => 1,
         SteeringSource::Skill => 2,
         SteeringSource::Memory => 3,
-        // Last until #3246 gives it an authority story.
+        // Last. It sits below every source this repository publishes. A
+        // plugin is code from outside that a person switched on. A record, a
+        // skill and a frame are this workspace's own. Let a plugin outrank a
+        // record and a `must` rule loses its seat to a package author. That
+        // is a governance failure, not a ranking nit. It sits below `Tool`
+        // for the same reason one rung down. A tool the model cannot see is
+        // one it will not pick. So a chatty plugin must not hide the working
+        // surface.
         SteeringSource::Plugin => 4,
     }
 }
