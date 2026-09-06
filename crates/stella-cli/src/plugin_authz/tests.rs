@@ -414,6 +414,7 @@ async fn a_plugin_is_refused_through_the_assembled_stack_and_the_user_is_not() {
         &leaf,
         stella_tools::policy::ToolPolicy::allow_all(),
         stella_core::steering::tools::ToolAdvertisement::Full,
+        &stella_core::steering::ledger::SteeringLedger::default(),
         gate.clone(),
         Principal::Plugin("p".into()),
     )
@@ -442,6 +443,7 @@ async fn a_plugin_is_refused_through_the_assembled_stack_and_the_user_is_not() {
         &leaf,
         stella_tools::policy::ToolPolicy::allow_all(),
         stella_core::steering::tools::ToolAdvertisement::Full,
+        &stella_core::steering::ledger::SteeringLedger::default(),
         gate,
         Principal::User,
     )

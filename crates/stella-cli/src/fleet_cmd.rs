@@ -861,6 +861,11 @@ async fn run_task(
     let attempt_durability = durability::bind(&invocation_root, claim_holder);
     let mut cfg = cfg.clone();
     cfg.workspace_root = root.to_path_buf();
+    // Each attempt is its own session in its own worktree, and it recalls its
+    // own block below, so it spends its own steering allowance. Sharing the
+    // dispatcher's cell would let N parallel workers charge one allowance N
+    // times and advertise almost no tools to whichever one asked last.
+    cfg.steering_ledger = Default::default();
     let provider = agent::build_provider(&cfg)?;
     // `Arc` because the worker's sub-agent dispatcher holds a `Weak` back to
     // it (`crate::subagent`) — the registry is the child's tool set.
@@ -902,18 +907,6 @@ async fn run_task(
         crate::claims::ClaimTap::new(&committed, claims_store, claim_holder).with_shell_watch(
             crate::claims::ShellWatch::for_attempt(task.isolation, SystemGitCli, root),
         );
-    // A fleet worker runs the operator's tool policy and the authorization
-    // gate, same as every other driver — an isolated worktree is not a
-    // different trust posture. Deliberately NOT `session_stack`:
-    // `.stella/tools` customs are withheld from autonomous workers on
-    // purpose (#3339, see `policy_stack`'s docs). The principal names the
-    // dispatched task.
-    let permitted = agent::tool_stack::policy_stack(
-        &claims,
-        &cfg,
-        stella_core::ports::Principal::SubAgent(task.id.to_string()),
-        registry.hook_bus(),
-    );
     // Every fleet attempt owns the same durable event/accounting envelope as
     // a one-shot or deck turn. The store is rooted in the task worktree so
     // parallel workers never contend on a single SQLite writer.
@@ -966,8 +959,26 @@ async fn run_task(
         &active_rules,
         &task.prompt,
         &mut messages,
+        &cfg.steering_ledger,
     )
     .await;
+    // A fleet worker runs the operator's tool policy and the authorization
+    // gate, same as every other driver — an isolated worktree is not a
+    // different trust posture. Deliberately NOT `session_stack`:
+    // `.stella/tools` customs are withheld from autonomous workers on
+    // purpose (#3339, see `policy_stack`'s docs). The principal names the
+    // dispatched task.
+    //
+    // Assembled after the recall above, not before it: the tool allowance is
+    // what the block left of the shared steering allowance, so a stack built
+    // first would settle its array against a spend that had not happened yet
+    // (#6110).
+    let permitted = agent::tool_stack::policy_stack(
+        &claims,
+        &cfg,
+        stella_core::ports::Principal::SubAgent(task.id.to_string()),
+        registry.hook_bus(),
+    );
     // This attempt's directive-carrying skills, mounted for the whole turn
     // beside the stack they narrow — the same seam every other door takes.
     // The guards drop with this function, so the narrowing lifts

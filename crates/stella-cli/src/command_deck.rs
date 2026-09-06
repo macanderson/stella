@@ -1819,7 +1819,8 @@ pub async fn run_deck_session(
             let touched =
                 stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
             let recalled = m.recall_block_reported(&prompt, &touched).await;
-            recall = crate::memory::inject_opening_recall(&mut messages, recalled);
+            recall =
+                crate::memory::inject_opening_recall(&mut messages, recalled, &cfg.steering_ledger);
         }
         recall.note_invoked_skill(invoked_skill);
         let turn_base = messages.len();

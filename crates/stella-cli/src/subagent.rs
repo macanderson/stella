@@ -638,6 +638,12 @@ impl SessionSubAgents {
                         base,
                         policy,
                         stella_core::steering::tools::ToolAdvertisement::Full,
+                        // Unread on the `Full` arm above, and a fresh cell
+                        // rather than the parent's for the same reason that
+                        // arm is `Full`: what a child inherits is the open
+                        // question named there, not one to answer by accident
+                        // here.
+                        &stella_core::steering::ledger::SteeringLedger::default(),
                         gate,
                         principal,
                     )

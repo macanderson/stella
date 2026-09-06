@@ -204,25 +204,28 @@ pub(super) fn frame_handle(frame: &RecalledFrame) -> String {
 /// the pack contributes today is the union, the deterministic cross-source
 /// order, and the one drop ledger.
 ///
-/// The tool arm joined the plane in #6057, and it spends its own allowance
-/// (`stella_core::steering::tools`) rather than this one: the tools array is
-/// assembled per model call, inside the engine, while this block is rendered
-/// once before the turn opens, so there is no moment at which both costs are
-/// known and one number could bind them both. Collapsing the per-source caps
-/// into a single running total across the turn is #6110.
+/// The tool arm joined the plane in #6057 and shares this turn's allowance
+/// since #6110. The two costs are still known at different moments — this
+/// block renders before the turn opens, the tools array is assembled after —
+/// so they meet in a shared cell rather than in one pack:
+/// `stella_core::steering::ledger::SteeringLedger` takes the block's spend
+/// from `memory::inject_opening_recall` and hands `agent::tool_stack` what is
+/// left. One number now decides both, which is what makes a rule and a tool
+/// schema comparable at all.
 pub(super) struct GatheredSteering {
     pub candidates: Vec<SteeringCandidate>,
     /// Drops the sources' own budgets already decided, from all three sources
     /// since #3358: the record channel's named evictions, the recall host's
     /// merge report, and the skills selector's top-k and section cuts.
     ///
-    /// One asymmetry is deliberate and worth stating, because `by_source`
-    /// counts it: a skill omitted by `render_skills_section`'s own token
-    /// budget appears in **both** `selected` and `dropped`. The plane
-    /// authorized it and the section renderer then left it out — those are two
-    /// true facts about one skill, and the plane suppressing it instead would
-    /// change the rendered bytes, which is the Phase 4 budget merge (#3243),
-    /// not this ledger slice.
+    /// One asymmetry is deliberate, because `by_source` counts it: a skill
+    /// omitted by `render_skills_section`'s own token budget appears in
+    /// **both** `selected` and `dropped`. The plane authorized it and the
+    /// section renderer then left it out — two true facts about one skill.
+    /// The shared allowance above does not change that: it measures what the
+    /// block cost, and the section renderer still decides what the block
+    /// contains. Retiring the per-source caps in favour of one pack is the
+    /// remaining half of #3243, and it changes the rendered bytes.
     pub source_drops: Vec<DroppedCandidate>,
 }
 

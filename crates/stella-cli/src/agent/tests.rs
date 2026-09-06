@@ -1205,6 +1205,7 @@ async fn stack_names_and_execute(
         root.to_path_buf(),
         policy,
         stella_core::steering::tools::ToolAdvertisement::Full,
+        &stella_core::steering::ledger::SteeringLedger::default(),
         tool_stack::session_gate(root),
         Principal::User,
     );

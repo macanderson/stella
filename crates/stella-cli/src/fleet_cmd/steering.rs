@@ -61,12 +61,17 @@ impl WorkerSteering {
     /// `crate::memory::inject_opening_recall`. So this worker cannot be the
     /// one door where a chosen skill's `allowed-tools` grant and `effort` get
     /// dropped.
+    ///
+    /// `ledger` is the attempt's share of the steering allowance: the block
+    /// spends here, and the attempt's tool stack — assembled after this call
+    /// returns — takes what is left.
     pub(super) async fn open(
         root: &Path,
         authority: &AuthorityPolicy,
         active_rules: &ResolvedRules,
         prompt: &str,
         messages: &mut Vec<CompletionMessage>,
+        ledger: &stella_core::steering::ledger::SteeringLedger,
     ) -> (Self, OpeningRecall) {
         // `warn: false`, the choice the live grid makes. With `--watch` a
         // grid owns the terminal, and a store warning per worker would paint
@@ -81,7 +86,7 @@ impl WorkerSteering {
         // no talk yet to read touched paths from, so the empty anchor set is
         // the right argument. It is the scope the prompt alone always gave.
         let recalled = memory.recall_block_reported(prompt, &[]).await;
-        let recall = crate::memory::inject_opening_recall(messages, recalled);
+        let recall = crate::memory::inject_opening_recall(messages, recalled, ledger);
         (
             Self {
                 memory: Some(memory),

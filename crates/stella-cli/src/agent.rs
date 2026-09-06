@@ -494,7 +494,11 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 let touched =
                     stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
                 let recalled = m.recall_block_reported(goal, &touched).await;
-                recall = crate::memory::inject_opening_recall(&mut messages, recalled);
+                recall = crate::memory::inject_opening_recall(
+                    &mut messages,
+                    recalled,
+                    &cfg.steering_ledger,
+                );
             }
             // Everything the goal loop appends past here is this turn's work,
             // gating reflection on it (see `turn_warrants_reflection`).
@@ -601,7 +605,8 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             let touched =
                 stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
             let recalled = m.recall_block_reported(input, &touched).await;
-            recall = crate::memory::inject_opening_recall(&mut messages, recalled);
+            recall =
+                crate::memory::inject_opening_recall(&mut messages, recalled, &cfg.steering_ledger);
         }
         recall.note_invoked_skill(invoked_skill);
 
