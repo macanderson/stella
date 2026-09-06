@@ -1,97 +1,30 @@
-//! What a lane hands its parent when it dies mid-turn.
+//! What a deck lane hands its parent when it dies mid-turn.
 //!
-//! A sub-session lane runs beside the lead chat. It does not resume itself.
-//! `doc:turn-lane-assembly` §6 calls that `ResumeAuthority::Parent`. The lead
-//! reads the lane's history to report it, and no one re-enters it. So the lane
-//! owes one record: the **terminal frame**. It holds the steps the lane got
-//! through and the messages that got it there. It is written once, when the
-//! lane dies.
+//! A sub-session lane runs beside the lead chat and is never re-entered:
+//! [`stella_protocol::ResumeAuthority::Parent`] is the answer
+//! `BuiltinLane::SubSession` gives. So the lane owes one record, the terminal
+//! frame, and the lead reads it to report how far the lane got.
 //!
-//! # Why the lane's sink keeps a copy
-//!
-//! [`stella_core::Engine::drive`] drops the resume point at every end of a
-//! turn, an abort too. It does not say which end it is on. So the engine
-//! deleted a failed lane's messages before a reader existed. The file edits
-//! stayed in the shared tree. The talk that made them did not.
-//!
-//! [`LaneSink`] keeps what that drop throws away. [`LaneRecorder::settle`] is
-//! where a lane that finished and a lane that died part ways. The first clears
-//! its frame. The second writes one.
-//!
-//! The copy is taken at the drop, not at every `persist`. That is one
-//! `git show` per turn, in place of a copy of the whole talk per step.
-//!
-//! # What this is not
-//!
-//! Not a resume path. Nothing here re-opens a lane's turn from a running deck.
-//! A lane holds no session record, so nothing can turn a lane key back into a
-//! turn. The frame's reader is the lead's report.
+//! The writer is shared with the fleet's `Redispatch` lane and lives in
+//! [`crate::lane_frame`]. What stays here is the sub-session's own half: the
+//! reader the deck driver calls, and the mapping from [`WorkerEnd`] — which
+//! carries a finished worker's answer, and so is richer than a frame needs —
+//! onto [`LaneEnd`].
 
 use std::path::Path;
-use std::sync::{Arc, RwLock};
-
-use serde::{Deserialize, Serialize};
-use stella_core::EngineConfig;
-use stella_core::step::CheckpointSink;
-use stella_protocol::CompletionMessage;
 
 use super::{WorkerEnd, lane_journal_key};
 use crate::durability::SessionDurability;
+use crate::lane_frame::{LaneEnd, TerminalFrame, report_line};
 
-/// How a lane died. A lane that finished writes no frame, so there is no third
-/// arm here — these are the two ends a parent has something to say about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Ending {
-    /// The turn gave up: a provider error, the step cap, a budget stop.
-    Failed,
-    /// The user stopped the lane (Agents tab `s`, or Esc on its lane).
-    Stopped,
-}
-
-impl Ending {
-    /// The word the parent's report uses.
-    fn word(self) -> &'static str {
-        match self {
-            Self::Failed => "failed",
-            Self::Stopped => "was stopped",
+impl From<&WorkerEnd> for LaneEnd {
+    fn from(end: &WorkerEnd) -> Self {
+        match end {
+            WorkerEnd::Done(_) => Self::Done,
+            WorkerEnd::Failed(reason) => Self::Failed(reason.clone()),
+            WorkerEnd::Stopped => Self::Stopped,
         }
     }
-}
-
-/// The record a dead lane leaves for its parent to report from.
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct TerminalFrame {
-    /// Which lane this was (`req:1`, `sub:42`).
-    pub(crate) lane: String,
-    /// How many steps the lane got through before it died. It comes from the
-    /// checkpoint's own `step`, the index of the step that would have run
-    /// next, which is the count of the steps that did run.
-    pub(crate) committed_steps: usize,
-    pub(crate) ending: Ending,
-    /// Why the turn gave up, in the engine's words. Empty for a lane the user
-    /// stopped.
-    pub(crate) reason: String,
-    /// The talk as of that step, copied from the checkpoint written there. A
-    /// killed lane's file edits stand in the shared tree. This is the talk that
-    /// made them.
-    pub(crate) messages: Vec<CompletionMessage>,
-}
-
-/// One line for the lead's own transcript: which lane ended, how, and how far
-/// it got.
-///
-/// The abort reason stays off this line. `subsession::spawn` prints it on the
-/// lane itself, and the user has both in view.
-pub(crate) fn report_line(frame: &TerminalFrame) -> String {
-    let steps = frame.committed_steps;
-    let plural = if steps == 1 { "step" } else { "steps" };
-    format!(
-        "note: lane {} {} after {steps} committed {plural} — its transcript up to \
-         that point is saved.",
-        frame.lane,
-        frame.ending.word(),
-    )
 }
 
 /// The report for a lane that just ended. `None` when it left no frame, which
@@ -126,126 +59,16 @@ pub(crate) fn parent_report_in(
     if crate::durability::bind_session_in(&durability, store_root, workspace_root, &key).is_some() {
         return None;
     }
-    let frame = serde_json::from_str::<TerminalFrame>(&durability.terminal_frame()?).ok()?;
-    Some(report_line(&frame))
-}
-
-/// The lane's end of the frame. It holds the lane's own durability handle,
-/// hands the engine a sink that keeps what the engine drops, and settles the
-/// frame once, at the lane's end.
-pub(crate) struct LaneRecorder {
-    lane: String,
-    durability: SessionDurability,
-    retired: Arc<RwLock<Option<String>>>,
-}
-
-impl LaneRecorder {
-    /// A recorder over `durability`, which must be the lane's OWN handle.
-    /// Never the lead's `cfg.durability`: that record is a live session's
-    /// resume point, not a lane's report.
-    pub(crate) fn new(durability: &SessionDurability, lane: &str) -> Self {
-        Self {
-            lane: lane.to_string(),
-            durability: durability.clone(),
-            retired: Arc::new(RwLock::new(None)),
-        }
-    }
-
-    /// Point `config`'s checkpoint sink at this recorder, so the talk the
-    /// engine drops at the end of the turn is kept. The sink underneath is
-    /// still the lane's own. This wraps it; where a checkpoint goes is
-    /// unchanged.
-    pub(crate) fn wrap(&self, config: EngineConfig) -> EngineConfig {
-        EngineConfig {
-            checkpoint_sink: self.sink(),
-            ..config
-        }
-    }
-
-    fn sink(&self) -> Option<Arc<dyn CheckpointSink>> {
-        let inner = self.durability.sink()?;
-        Some(Arc::new(LaneSink {
-            inner,
-            durability: self.durability.clone(),
-            retired: self.retired.clone(),
-        }))
-    }
-
-    /// Settle this lane's frame, once, at its end.
-    ///
-    /// A lane that finished drops any frame an earlier try on the same lane
-    /// left. The parent must not report a death the lane has come back from. A
-    /// lane that died writes a frame, as long as it got through a step. A turn
-    /// that fell over before its first step has no talk worth keeping, and it
-    /// says so by leaving no frame.
-    pub(crate) fn settle(&self, end: &WorkerEnd) {
-        let (ending, reason) = match end {
-            WorkerEnd::Done(_) => {
-                self.durability.clear_terminal_frame();
-                return;
-            }
-            WorkerEnd::Failed(reason) => (Ending::Failed, reason.clone()),
-            WorkerEnd::Stopped => (Ending::Stopped, String::new()),
-        };
-        let Some(json) = self.last_committed() else {
-            return;
-        };
-        let Ok(checkpoint) = stella_core::step::Checkpoint::from_json(&json) else {
-            return;
-        };
-        let frame = TerminalFrame {
-            lane: self.lane.clone(),
-            committed_steps: checkpoint.step,
-            ending,
-            reason,
-            messages: checkpoint.messages,
-        };
-        if let Ok(json) = serde_json::to_string(&frame) {
-            self.durability.record_terminal_frame(&json);
-        }
-    }
-
-    /// The last checkpoint this lane's turn wrote. That is the one the engine
-    /// dropped on its way out. A stopped turn reaches no end at all, because
-    /// its future is dropped mid-step, so there the answer is the checkpoint
-    /// still standing at the lane's tip.
-    fn last_committed(&self) -> Option<String> {
-        self.retired
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
-            .or_else(|| self.durability.checkpoint())
-    }
-}
-
-/// The lane's [`CheckpointSink`], wrapped so the drop at the end of a turn
-/// does not take the talk with it.
-#[derive(Debug)]
-struct LaneSink {
-    inner: Arc<dyn CheckpointSink>,
-    durability: SessionDurability,
-    retired: Arc<RwLock<Option<String>>>,
-}
-
-impl CheckpointSink for LaneSink {
-    fn persist(&self, json: &str) {
-        self.inner.persist(json);
-    }
-
-    /// Keep, then discard. This runs at every end of a turn the engine has, a
-    /// finished one too, so it decides nothing. [`LaneRecorder::settle`] knows
-    /// how the lane ended; this does not.
-    fn discard(&self) {
-        if let Some(retired) = self.durability.checkpoint() {
-            *self.retired.write().unwrap_or_else(|p| p.into_inner()) = Some(retired);
-        }
-        self.inner.discard();
-    }
+    Some(report_line(&TerminalFrame::read(&durability)?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use stella_protocol::CompletionMessage;
+
+    use crate::lane_frame::{Ending, LaneRecorder};
 
     /// A checkpoint shaped like one a lane wrote at a step boundary: four
     /// steps got through, and the talk that got there.
@@ -299,11 +122,11 @@ mod tests {
         (durability, recorder)
     }
 
-    /// **The witness.** A lane killed mid-turn leaves a terminal frame, and
-    /// the parent's report says how far it got.
+    /// **The witness for the `Parent` arm.** A lane killed mid-turn leaves a
+    /// terminal frame, and the parent's report says how far it got.
     ///
-    /// This cannot pass without the module under it. `Engine::drive` drops the
-    /// resume point at every end of a turn, so the `discard` below is the
+    /// This cannot pass without [`crate::lane_frame`]. `Engine::drive` drops
+    /// the resume point at every end of a turn, so the `discard` below is the
     /// engine deleting the only copy of the talk. The frame still holds four
     /// steps once the checkpoint is gone. With nothing keeping that copy there
     /// is nothing left to read.
@@ -326,10 +149,11 @@ mod tests {
             "the engine retired the resume point, as it does on every terminal path"
         );
 
-        recorder.settle(&WorkerEnd::Failed("provider refused".into()));
+        recorder.settle(&LaneEnd::from(&WorkerEnd::Failed(
+            "provider refused".into(),
+        )));
 
-        let json = durability.terminal_frame().expect("the frame survives");
-        let frame: TerminalFrame = serde_json::from_str(&json).expect("the frame parses");
+        let frame = TerminalFrame::read(&durability).expect("the frame survives");
         assert_eq!(frame.lane, "req:1");
         assert_eq!(frame.committed_steps, 4);
         assert_eq!(frame.ending, Ending::Failed);
@@ -361,10 +185,9 @@ mod tests {
             .expect("the lane's sink")
             .persist(&checkpoint_at_step_4());
         // No `discard`: a dropped future reaches no end of a turn.
-        recorder.settle(&WorkerEnd::Stopped);
+        recorder.settle(&LaneEnd::from(&WorkerEnd::Stopped));
 
-        let json = durability.terminal_frame().expect("the frame is written");
-        let frame: TerminalFrame = serde_json::from_str(&json).expect("the frame parses");
+        let frame = TerminalFrame::read(&durability).expect("the frame is written");
         assert_eq!(frame.ending, Ending::Stopped);
         assert_eq!(frame.committed_steps, 4);
         assert!(
@@ -385,7 +208,9 @@ mod tests {
         let sink = recorder.sink().expect("the lane's sink");
         sink.persist(&checkpoint_at_step_4());
         sink.discard();
-        recorder.settle(&WorkerEnd::Failed("first attempt fell over".into()));
+        recorder.settle(&LaneEnd::from(&WorkerEnd::Failed(
+            "first attempt fell over".into(),
+        )));
         assert!(
             durability.terminal_frame().is_some(),
             "the first death frames"
@@ -396,7 +221,9 @@ mod tests {
         let sink = second.sink().expect("the lane's sink");
         sink.persist(&checkpoint_at_step_4());
         sink.discard();
-        second.settle(&WorkerEnd::Done("here is the answer".into()));
+        second.settle(&LaneEnd::from(&WorkerEnd::Done(
+            "here is the answer".into(),
+        )));
 
         assert_eq!(
             durability.terminal_frame(),
@@ -418,7 +245,9 @@ mod tests {
         let store = tempfile::tempdir().expect("store");
         let (durability, recorder) = lane(store.path(), workspace.path(), "ses-1", "req:4");
 
-        recorder.settle(&WorkerEnd::Failed("the provider would not build".into()));
+        recorder.settle(&LaneEnd::from(&WorkerEnd::Failed(
+            "the provider would not build".into(),
+        )));
 
         assert_eq!(durability.terminal_frame(), None);
     }

@@ -185,6 +185,105 @@ impl BuiltinLane {
             Self::GoalArc => "goal_arc",
         }
     }
+
+    /// How a dead turn on this lane is picked back up.
+    ///
+    /// The match has no `_` arm. A tenth lane does not compile until somebody
+    /// says who resumes it, which is what makes the authority a property of
+    /// the lane rather than of whichever module happens to write a record.
+    #[must_use]
+    pub fn resume_authority(self) -> ResumeAuthority {
+        match self {
+            // Each of these holds a session record of its own, and the deck's
+            // resume path re-enters it.
+            Self::Lead | Self::Resume | Self::RawTurn | Self::GoalArc => ResumeAuthority::Own,
+            // The host that opened the session drives its next turn, so the
+            // record is that session's own resume point.
+            Self::ServeSession => ResumeAuthority::Own,
+            // A lane beside a lead chat, and a child forked by the delegation
+            // tool: nothing re-enters either turn, and what the lead does with
+            // what they left is report it.
+            Self::SubSession | Self::SubagentFork => ResumeAuthority::Parent,
+            // The fleet re-dispatches a task once its attempt settles, and a
+            // staged turn is re-run by whatever staged it.
+            Self::FleetWorker | Self::PipelineStage => ResumeAuthority::Redispatch,
+        }
+    }
+}
+
+/// How a dead turn on a lane is picked back up, and therefore what the lane
+/// owes when it dies (`doc:turn-lane-assembly` §6, approved 2026-08-14).
+///
+/// Before this type the answer was decided per site and written down nowhere,
+/// so a reader had to infer it from which module happened to write a record.
+/// Each arm is an obligation:
+///
+/// - [`Self::Own`] — the lane re-enters its own turn, so its durable record is
+///   a resume point and it owes no report to anyone else.
+/// - [`Self::Parent`] — nothing re-enters the turn. The parent reads what the
+///   lane left in order to *report* it, so the lane owes one **terminal
+///   frame**: the last committed step and the transcript that reached it,
+///   written once when the lane dies.
+/// - [`Self::Redispatch`] — the supervisor re-runs the unit. The record is
+///   evidence for that decision rather than a resume point, and the lane owes
+///   the same terminal frame.
+///
+/// [`Self::Parent`] and [`Self::Redispatch`] differ in who reads the frame,
+/// not in whether one is owed. A report and a re-run are two acts, so a lane
+/// that merged them would leave a frame no reader had asked for.
+///
+/// # Why this lives here
+///
+/// A plugin lane declares its authority in its manifest, and an undeclared one
+/// is a load-time rejection (`doc:turn-lane-assembly` §9). The manifest parser
+/// is `stella-plugin`, whose only workspace dependency is this crate, so the
+/// type has to be here for that rejection to have anything to reject against.
+/// `stella-parity`'s lane matrix carries the *column* — what each builtin lane
+/// therefore owes, and what proves it — and reads the authority back out of
+/// [`BuiltinLane::resume_authority`] rather than restating it.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeAuthority {
+    /// The lane resumes itself.
+    Own,
+    /// The parent reads the lane's record to report it, and never re-enters
+    /// the turn.
+    Parent,
+    /// The supervisor re-runs the unit, and the record is its evidence.
+    Redispatch,
+}
+
+impl ResumeAuthority {
+    /// Every authority, in declaration order.
+    pub const ALL: [Self; 3] = [Self::Own, Self::Parent, Self::Redispatch];
+
+    /// Whether a lane under this authority owes a terminal frame when it dies.
+    ///
+    /// `false` for [`Self::Own`] alone: a lane that comes back to its own turn
+    /// has a resume point, and a frame beside it would offer a dead attempt's
+    /// transcript to the path about to re-enter the live one.
+    #[must_use]
+    pub fn owes_a_terminal_frame(self) -> bool {
+        !matches!(self, Self::Own)
+    }
+
+    /// The authority's wire spelling, written out for the reason
+    /// [`BuiltinLane::as_str`] is.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Own => "own",
+            Self::Parent => "parent",
+            Self::Redispatch => "redispatch",
+        }
+    }
+}
+
+impl std::fmt::Display for ResumeAuthority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl std::fmt::Display for BuiltinLane {
@@ -328,6 +427,64 @@ mod tests {
             let encoded = serde_json::to_string(&lane).expect("serialises");
             assert_eq!(encoded, format!(r#""{}""#, lane.as_str()));
         }
+    }
+
+    /// **The witness for the `Own` arm.** Every lane answers who resumes it,
+    /// and the answer is the one `doc:turn-lane-assembly` §6 approved.
+    ///
+    /// Nothing could ask this before: `ResumeAuthority` existed only in that
+    /// document and in two doc comments naming a type the tree did not have,
+    /// so the five self-resuming lanes had no way to say they owe no frame.
+    #[test]
+    fn every_lane_declares_who_resumes_it() {
+        use BuiltinLane::*;
+        use ResumeAuthority::{Own, Parent, Redispatch};
+
+        for (lane, authority) in [
+            (Lead, Own),
+            (Resume, Own),
+            (ServeSession, Own),
+            (RawTurn, Own),
+            (GoalArc, Own),
+            (SubSession, Parent),
+            (SubagentFork, Parent),
+            (FleetWorker, Redispatch),
+            (PipelineStage, Redispatch),
+        ] {
+            assert_eq!(
+                lane.resume_authority(),
+                authority,
+                "`{lane}` must resume as `{authority}`"
+            );
+        }
+    }
+
+    /// A self-resuming lane owes nothing to a parent; the other two owe a
+    /// frame. The obligation is what the arms are for, so it is asserted
+    /// rather than left to the doc comment.
+    #[test]
+    fn only_a_self_resuming_lane_owes_no_terminal_frame() {
+        for lane in BuiltinLane::ALL {
+            assert_eq!(
+                lane.resume_authority().owes_a_terminal_frame(),
+                lane.resume_authority() != ResumeAuthority::Own,
+                "`{lane}` disagrees with its own authority about owing a frame"
+            );
+        }
+    }
+
+    /// An authority crosses a crate boundary — a plugin manifest declares one
+    /// — so it round-trips byte-for-byte like every other type here
+    /// (AGENTS.md #4).
+    #[test]
+    fn every_resume_authority_round_trips_byte_for_byte() {
+        for authority in ResumeAuthority::ALL {
+            let encoded = serde_json::to_string(&authority).expect("serialises");
+            let decoded: ResumeAuthority = serde_json::from_str(&encoded).expect("parses back");
+            assert_eq!(decoded, authority);
+            assert_eq!(encoded, format!(r#""{}""#, authority.as_str()));
+        }
+        assert_eq!(ResumeAuthority::Redispatch.to_string(), "redispatch");
     }
 
     #[test]
