@@ -3,7 +3,7 @@
 
 //! The turn-lane matrix — which builtin lanes say which lane they are.
 //!
-//! `stella_protocol::BuiltinLane` names seven places a turn runs.
+//! `stella_protocol::BuiltinLane` names every place a turn runs.
 //! `Engine::assemble` lets each of them put its own name on
 //! `agent.turn.started`. Having a name and saying it are two facts. A site
 //! that builds its engine with `Engine::with_sleeper` writes `lane: None` and
@@ -127,6 +127,24 @@ pub const LANES: &[Lane] = &[
             witness: "a_served_turn_declares_the_serve_session_lane",
         },
     },
+    Lane {
+        lane: BuiltinLane::RawTurn,
+        binding: LaneBinding::Bound {
+            site: "crates/stella-cli/src/lane_capabilities.rs",
+            how: "the shared raw turn, assembled in both arms of `agent::turn::run_turn` from \
+                  `lane_capabilities::raw_turn`",
+            witness: "each_door_that_is_not_the_deck_assembles_through_its_lane",
+        },
+    },
+    Lane {
+        lane: BuiltinLane::GoalArc,
+        binding: LaneBinding::Bound {
+            site: "crates/stella-cli/src/lane_capabilities.rs",
+            how: "a judged goal arc, assembled in `agent::goal` and its wrapped arm from \
+                  `lane_capabilities::goal_arc`",
+            witness: "each_door_that_is_not_the_deck_assembles_through_its_lane",
+        },
+    },
 ];
 
 /// The row for `lane`, or `None`. The tests below make every builtin lane
@@ -148,8 +166,8 @@ mod tests {
     /// the list to fix it. It never fails silently.
     fn lane_sources() -> [(&'static str, &'static str); 4] {
         [
-            // Where four of this workspace's lanes declare what they bind,
-            // and where their shared witness lives.
+            // Where most of this workspace's lanes declare what they bind,
+            // and where their shared witnesses live.
             (
                 "crates/stella-cli/src/lane_capabilities.rs",
                 include_str!("../../stella-cli/src/lane_capabilities.rs"),
@@ -198,7 +216,9 @@ mod tests {
                 | BuiltinLane::SubagentFork
                 | BuiltinLane::FleetWorker
                 | BuiltinLane::PipelineStage
-                | BuiltinLane::ServeSession => {}
+                | BuiltinLane::ServeSession
+                | BuiltinLane::RawTurn
+                | BuiltinLane::GoalArc => {}
             }
             let rows = LANES.iter().filter(|row| row.lane == builtin).count();
             assert_eq!(rows, 1, "`{builtin}` must have exactly one row, has {rows}");
