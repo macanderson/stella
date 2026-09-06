@@ -889,8 +889,11 @@ impl<P: CandidateFanoutPlane + ?Sized> CandidateFanoutPlane for std::sync::Arc<P
 }
 
 /// A seat's wire token, as `step_usage` records it — through `serde_json`
-/// rather than a second hand-written table, for [`super::child_turn`]'s reason:
+/// rather than a second hand-written table, for `super::child_turn`'s reason:
 /// a second copy of a closed enum's spellings is a rule in two places.
+/// That module name is a code span, not a link: this item is public and the
+/// module is not, so a link here is a `rustdoc::private_intra_doc_links`
+/// error under `-D warnings`.
 ///
 /// Public so a report renderer outside this crate — `stella-cli`'s
 /// `wrapper_plugin::report` — can print [`CandidateFanoutSpend::seat`] in the
