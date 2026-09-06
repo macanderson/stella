@@ -119,6 +119,26 @@ says "the summary counts what it swept" \
   "named by 3 open pull request(s); ran the dod check again on 2" 6079 \
   "$open_prs" "$failed_runs"
 
+# Third negative control: the unanswered lookup. A 403, a rate limit or a
+# renamed workflow file leaves the run unread, and spelling that the way a
+# green check is spelled makes the sweep announce a verdict it never read. So
+# the seam gives it an answer of its own, `?`, and this pins that the sweep
+# neither claims the check passed nor counts it as swept.
+unread_runs="aaaaaaa ?
+ddddddd 33952811235"
+
+lacks "a lookup that did not answer is not reported as a passing check" \
+  "6046 names the issue and its dod check is not failing" 6079 \
+  "$open_prs" "$unread_runs"
+
+says "...it says the check went unread, so the gap is visible" \
+  "(head aaaaaaa), so nothing was" 6079 \
+  "$open_prs" "$unread_runs"
+
+says "...and it is not counted as swept, while its siblings still are" \
+  "named by 3 open pull request(s); ran the dod check again on 1" 6079 \
+  "$open_prs" "$unread_runs"
+
 # An issue no open pull request names is a state, not an error.
 says "an issue nothing references says so and stops" \
   "named by 0 open pull request(s); ran the dod check again on 0" 4242 \
