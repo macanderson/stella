@@ -528,8 +528,9 @@ some-noisy-observer = "off"
 # the seams you list. Scopes narrow: a project file can take a seam away and can
 # never hand one back.
 #
-# The seam names are the ones `stella plugin doctor` prints: bus, hooks,
-# hook_approvals, calibration, gate, steering, requery, outcomes, fallback.
+# The seam names are the ones `stella plugin doctor` prints, weakest first:
+# bus, calibration, fallback, hook_approvals, hooks, outcomes, requery,
+# steering, gate.
 # -----------------------------------------------------------------------------
 [lanes.custom."acme.replay"]
 capabilities = ["bus"]

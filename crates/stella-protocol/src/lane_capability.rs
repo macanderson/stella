@@ -31,8 +31,9 @@ macro_rules! lane_capabilities {
         /// One optional seam of the turn loop, named so a manifest can ask
         /// for it.
         ///
-        /// The order is the order of the table that defines it, and it is
-        /// the order every report prints in.
+        /// The order is the table's: weakest grade first, then by name.
+        /// `Ord` reads it, so it is also the order a set iterates and the
+        /// order every report prints in.
         #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
         #[derive(
             Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
@@ -83,25 +84,29 @@ macro_rules! lane_capabilities {
     };
 }
 
+// Weakest grade first, then by name inside a grade. The order is what `Ord`
+// reads, so it is the order a set iterates and therefore the order every
+// report prints in: a reader meets the seam that reaches least first, and the
+// one that can hold a turn open last.
 lane_capabilities! {
-    /// Lifecycle hooks and the port that runs them.
-    Hooks => "hooks", Medium;
-    /// Where a hook's approval ask parks until a human answers.
-    HookApprovals => "hook_approvals", Medium;
-    /// Token-drift calibration the lane owns across turns.
-    Calibration => "calibration", Medium;
-    /// The step-boundary pause gate, which can hold a turn open.
-    Gate => "gate", High;
-    /// Mid-turn messages and the soft stop.
-    Steering => "steering", Medium;
-    /// Step-boundary context re-query.
-    Requery => "requery", Medium;
     /// The event bus. Watches; changes nothing.
     Bus => "bus", Low;
-    /// Call-outcome feedback for a router's breaker.
-    Outcomes => "outcomes", Medium;
+    /// Token-drift calibration the lane owns across turns.
+    Calibration => "calibration", Medium;
     /// Provider fallback once the retries run out.
     Fallback => "fallback", Medium;
+    /// Where a hook's approval ask parks until a human answers.
+    HookApprovals => "hook_approvals", Medium;
+    /// Lifecycle hooks and the port that runs them.
+    Hooks => "hooks", Medium;
+    /// Call-outcome feedback for a router's breaker.
+    Outcomes => "outcomes", Medium;
+    /// Step-boundary context re-query.
+    Requery => "requery", Medium;
+    /// Mid-turn messages and the soft stop.
+    Steering => "steering", Medium;
+    /// The step-boundary pause gate, which can hold a turn open.
+    Gate => "gate", High;
 }
 
 impl std::fmt::Display for LaneCapability {
@@ -139,6 +144,22 @@ mod tests {
         assert_eq!(LaneCapability::parse("teleport"), None);
         assert_eq!(LaneCapability::parse(""), None);
         assert_eq!(LaneCapability::parse("Hooks"), None);
+    }
+
+    /// The order is what a report prints in, so it is pinned rather than
+    /// left to whoever edits the table next: weakest grade first, then by
+    /// name inside a grade.
+    #[test]
+    fn the_table_reads_weakest_grade_first_then_by_name() {
+        for pair in LaneCapability::ALL.windows(2) {
+            let [first, second] = pair else {
+                continue;
+            };
+            assert!(
+                (first.risk(), first.as_str()) < (second.risk(), second.as_str()),
+                "`{first}` must sort before `{second}`"
+            );
+        }
     }
 
     /// The list is what every caller walks, so a repeat in it would show up

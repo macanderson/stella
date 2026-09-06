@@ -140,7 +140,7 @@ acme
     asks for: bus, steering
     holds:    bus
     withheld: steering — above the `observer` rung accepted at install, or outside this workspace's `lanes.custom` ceiling
-    nobody decided: calibration, fallback, gate, hook_approvals, hooks, outcomes, requery
+    nobody decided: calibration, fallback, hook_approvals, hooks, outcomes, requery, gate
 ```
 
 "Asks for" is what the plugin's manifest wrote. "Holds" is what it actually gets, once the rung you accepted at install and your own `[lanes]` ceiling have both had their say. "Nobody decided" is the list worth reading: those are parts of the loop the plugin never answered for in either direction. Set a ceiling with the `[lanes]` section of `stella.toml`.
