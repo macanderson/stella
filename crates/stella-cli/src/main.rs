@@ -631,7 +631,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // Reads plugin manifests and copies/removes local directories. No
             // plugin process is started here — install is a consent
             // transaction, not an execution.
-            return plugin_cmd::run_plugin(cmd).map_err(failure::CliFailure::from);
+            return plugin_cmd::run_plugin(cmd, &cli.globals).map_err(failure::CliFailure::from);
         }
         // Reads context-record TOML and the tree, and appends to the local
         // lifecycle ledger on the review actions (Phase 3, #714). `propose
