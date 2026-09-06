@@ -155,6 +155,11 @@
       "status": "implemented",
       "title": "ADR 0030: The wrapper socket is the plugin SDK"
     },
+    "adr/0031-a-turn-has-no-step-cap-by-default": {
+      "path": "docs/adr/0031-a-turn-has-no-step-cap-by-default.md",
+      "status": "implemented",
+      "title": "ADR 0031: A turn has no step cap by default"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

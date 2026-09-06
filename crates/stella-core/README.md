@@ -176,8 +176,9 @@ lib.rs), never as a planning assumption.
 ## Key concepts
 
 **The step loop is a fixed phase sequence.** `run_turn`
-([`src/driver.rs:618`](src/driver.rs)) iterates up to `EngineConfig::max_steps`,
-and each step runs the same phases in the same order: pause gate → drain
+([`src/driver.rs`](src/driver.rs)) loops until the model answers or a bound
+fires. A step cap is one such bound, and the default sets none (ADR 0031).
+Each step runs the same phases in the same order: pause gate → drain
 steering / check soft stop → budget check → snapshot tool-result identities →
 compaction pass → loop detection → model call (wrapped in retry+backoff) →
 committed-step bookkeeping → dispatch → parked wait (when a tool deposited

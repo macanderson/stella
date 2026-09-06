@@ -23,9 +23,9 @@
 //! into a genuinely different loop was killed for a loop it was never told
 //! about (#1743). That is a resolve-rate loss and it is unfair to the
 //! compliant model — but unbounded steers are not the alternative, because a
-//! model alternating between two loops would then burn every step of
-//! `EngineConfig::max_steps`, which is the exact outcome loop detection
-//! exists to prevent. [`MAX_LOOP_STEERS`] is the bound.
+//! model alternating between two loops would then spin until its budget ran
+//! out, which is the exact outcome loop detection exists to prevent.
+//! [`MAX_LOOP_STEERS`] is the bound.
 //!
 //! # The stall rung
 //!
@@ -69,9 +69,9 @@ use super::{EngineConfig, LOOP_STEER_PREFIX, TurnMemos, TurnOutcome};
 /// for it is one additional step.
 ///
 /// Not unbounded, and not larger, for the same reason the abort exists at
-/// all: `crate::loop_detect`'s contract is that it fires orders of magnitude
-/// before `EngineConfig::max_steps`, and a model that alternates between two
-/// loops would earn a fresh warning every time it switched.
+/// all: `crate::loop_detect`'s contract is that it ends a stuck turn within
+/// a handful of calls, and a model that alternates between two loops would
+/// earn a fresh warning every time it switched.
 ///
 /// The cap and [`LoopSteerBudget`]'s single memory slot are one decision, not
 /// two. Comparing only against the MOST RECENT warned loop is sufficient at

@@ -381,7 +381,7 @@ impl Engine<'_> {
             ),
             // A verdict needs a handful of evidence lookups, not a work
             // session.
-            max_steps: 8,
+            max_steps: Some(8),
             max_output_tokens: goal_config.verifier_max_output_tokens,
             temperature: Some(0.0),
             // Sized so a verdict is never clipped: a clipped JSON object

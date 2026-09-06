@@ -97,6 +97,7 @@ open; nothing before Phase 3 forces it.
 | [0028](0028-panel-cells-are-glyphs-in-the-contract.md) | A Panel Cell Is a Glyph in the Contract and a Column in the Host | Accepted |
 | [0029](0029-branch-protection-stays-non-strict.md) | Branch Protection Stays Non-Strict | Accepted |
 | [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
+| [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -164,3 +165,10 @@ the JSON-over-stdio socket, and the three generated declarations under
 decision rests on the plugins under `plugins/` being spawned by tests here, so
 a wire change reddens this repository's CI rather than a stranger's install,
 and `check-plugin-graded.sh` is what holds that in place.
+
+ADR 0031 removes the 200-step default from every turn. A count cannot tell a
+long productive run from a wandering one, so it ended both; what ends a
+wandering turn is loop detection, the stall rung, the budget, the deadline and
+the goal predicate, each of which reads evidence. `max_steps` is now
+`Option<usize>`, `None` by default, and a host that means a count still sets
+one.

@@ -22,16 +22,17 @@
 //! let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel.clone());
 //!
 //! loop {
-//!     // The step cap is the HOST's loop bound when driving steps directly —
-//!     // `run_turn` applies it internally, but `run_step` deliberately does
-//!     // not (the cap is the host's, exposed via [`Engine::max_steps`] so it
-//!     // never keeps a second copy of the number). Without this gate a model
-//!     // that keeps varying its arguments — the shape loop detection
-//!     // deliberately ignores — drives the loop forever. A real host also
-//!     // emits the non-retryable `Error` event `run_turn` pairs with this
-//!     // exit (see `stella-serve`'s session loop for the production pattern).
-//!     if state.step() >= engine.max_steps() {
-//!         eprintln!("turn ended: {}", step_cap_reason(engine.max_steps()));
+//!     // A step cap is the HOST's loop bound when driving steps directly.
+//!     // `run_turn` applies it; `run_step` does not, so the host reads it
+//!     // from [`Engine::max_steps`] rather than keeping its own copy. The
+//!     // default config carries none (ADR 0031): a turn ends on evidence,
+//!     // never on a count. A real host also emits the non-retryable `Error`
+//!     // event `run_turn` pairs with this exit (see `stella-serve`'s
+//!     // session loop for the production pattern).
+//!     if let Some(cap) = engine.max_steps()
+//!         && state.step() >= cap
+//!     {
+//!         eprintln!("turn ended: {}", step_cap_reason(cap));
 //!         return None;
 //!     }
 //!     match engine.run_step(&mut state, events).await {

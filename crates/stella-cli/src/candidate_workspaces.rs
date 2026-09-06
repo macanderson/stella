@@ -752,10 +752,10 @@ async fn dispatch_candidate_turn(
         // is read-only; a candidate that could not write would have
         // nothing to adopt.
         write_access: true,
-        // The session's own cap, not `SubAgentSpec`'s 16: a candidate is
-        // not a searcher summarizing for a parent, it is the work, and
-        // capping it below the turn it stands in for would make best-of-N
-        // structurally worse than the single turn it replaces.
+        // The session's own cap — none, by default — not `SubAgentSpec`'s
+        // 16: a candidate is not a searcher summarizing for a parent, it is
+        // the work, and capping it below the turn it stands in for would
+        // make best-of-N structurally worse than the single turn it replaces.
         max_steps: crate::agent::engine_config_for(cfg).max_steps,
         max_report_chars: CANDIDATE_REPORT_CHARS,
         ..SubAgentSpec::read_only(work.agent_id, work.instruction)

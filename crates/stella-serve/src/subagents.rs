@@ -504,7 +504,7 @@ impl ToolExecutor for DelegatingTools<'_> {
             agent_id: slug(description),
             system_prompt: Some(CHILD_SYSTEM_PROMPT.to_string()),
             instruction: prompt.to_string(),
-            max_steps: self.child_steps,
+            max_steps: Some(self.child_steps),
             max_report_chars: REPORT_CHARS,
             // Not model-settable: this tool delegates *research*. A child that
             // could edit would need the parent's review gates around it.

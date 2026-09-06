@@ -296,7 +296,7 @@ impl Tool for SpawnSubAgent {
             agent_id: self.mint_agent_id(description),
             system_prompt: Some(CHILD_SYSTEM_PROMPT.to_string()),
             instruction: prompt.to_string(),
-            max_steps: MAX_STEPS,
+            max_steps: Some(MAX_STEPS),
             max_report_chars: REPORT_CHARS,
             // Write access is deliberately not model-settable: this tool
             // delegates *research*. A child that could edit would need the

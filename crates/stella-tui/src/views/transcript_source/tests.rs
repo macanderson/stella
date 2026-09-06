@@ -220,9 +220,9 @@ fn a_settled_model_call_renders_its_rate_from_the_drivers_own_metering() {
 ///
 /// `irreducible generation` is a fact about the call. The
 /// `n of m budgeted model calls this turn` clause is elided because
-/// nothing budgets model calls per turn — `EngineConfig::max_steps` is a
-/// declared backstop, not a plan — and a fabricated `m` on the one row
-/// that prices model work would be worse than no clause. See
+/// nothing budgets model calls per turn — `EngineConfig::max_steps` is
+/// `None` unless a host sets a ceiling — and a fabricated `m` on the one
+/// row that prices model work would be worse than no clause. See
 /// `MODEL_FOOTER`.
 #[test]
 fn the_model_footer_claims_no_budget_nobody_set() {

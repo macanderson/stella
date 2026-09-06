@@ -179,8 +179,8 @@ fn default_true() -> bool {
 /// A goal round is a whole agent turn plus a verifier call, so the round cap is
 /// the dominant term in what a goal run can cost and how long it can hold a
 /// thread. The engine's own default is 8; 32 is four times that — past any
-/// run that is still converging — while keeping the worst case bounded, which
-/// is the same argument [`MAX_SERVED_STEPS`] makes one level down.
+/// run that is still converging — while keeping the worst case bounded, the
+/// same argument [`MAX_REVERSE_REQUEST_TIMEOUT`] makes for the deadline.
 const MAX_SERVED_GOAL_ROUNDS: usize = 32;
 
 /// Lower a caller's `goal` block into the engine's own configuration, with
@@ -253,29 +253,24 @@ struct TurnCreated<'a> {
     clamped: Vec<ClampedKnob>,
 }
 
-/// Ceiling on a host-supplied [`TurnRequest::max_steps`].
+/// Validate a host-supplied step cap. `None` when it is unusable: `0` makes a
+/// zero-iteration turn that aborts with the misleading "reached the step cap
+/// (0)". Otherwise the value as asked.
 ///
-/// The step cap is the engine's belt-and-suspenders backstop against a turn
-/// that never terminates, and the host also supplies the budget mode (which may
-/// be `Off`), so an unclamped `max_steps` lets a caller remove the last bound on
-/// a turn that already holds an OS thread. `EngineConfig::default` uses 200;
-/// 10 000 is fifty times that — far above any turn a real agentic task runs,
-/// while still terminating in bounded time.
-const MAX_SERVED_STEPS: usize = 10_000;
-
-/// Validate a host-supplied step cap: `None` when it is unusable (`0` produces
-/// a zero-iteration turn that aborts with the misleading "reached the step cap
-/// (0)"), otherwise the value clamped down to [`MAX_SERVED_STEPS`].
+/// No ceiling. A served turn has no step cap unless the caller sets one (ADR
+/// 0030). A ceiling here would bound only the caller who asked for a bound.
+/// What bounds a served turn is the reverse-request deadline on every call,
+/// the caller's budget, and loop detection.
 fn validate_max_steps(requested: usize) -> Option<usize> {
-    (requested > 0).then(|| requested.min(MAX_SERVED_STEPS))
+    (requested > 0).then_some(requested)
 }
 
 /// Ceiling on a host-supplied reverse-request deadline: one hour.
 ///
-/// Same reasoning as [`MAX_SERVED_STEPS`]. The deadline is what bounds a turn
-/// holding an OS thread on a host that never answers, so letting a caller set it
-/// to `u64::MAX` would hand back the unbounded wait it exists to remove. An hour
-/// is far past any legitimate model call or tool run.
+/// The deadline is what bounds a turn holding an OS thread on a host that
+/// never answers, so letting a caller set it to `u64::MAX` would hand back the
+/// unbounded wait it exists to remove. An hour is far past any legitimate
+/// model call or tool run.
 const MAX_REVERSE_REQUEST_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// Validate a host-supplied reverse-request deadline: `None` when it is unusable
@@ -422,7 +417,7 @@ pub(crate) async fn handle_create(
                 )
                 .await;
         };
-        config.max_steps = effective;
+        config.max_steps = Some(effective);
     }
     let mut reverse_request_timeout = SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT;
     if let Some(requested_ms) = turn.reverse_request_timeout_ms {
@@ -1209,18 +1204,14 @@ mod tests {
         assert_eq!(validate_max_steps(1), Some(1));
     }
 
+    /// A caller who asks for a cap gets the cap it asked for. The served
+    /// default is no cap at all, so lowering an explicit ask would bound only
+    /// the caller who wanted a bound.
     #[test]
-    fn step_cap_is_clamped_to_the_ceiling() {
-        assert_eq!(validate_max_steps(MAX_SERVED_STEPS), Some(MAX_SERVED_STEPS));
-        assert_eq!(
-            validate_max_steps(MAX_SERVED_STEPS + 1),
-            Some(MAX_SERVED_STEPS)
-        );
-        assert_eq!(
-            validate_max_steps(usize::MAX),
-            Some(MAX_SERVED_STEPS),
-            "an unbounded step loop must not be reachable from the wire"
-        );
+    fn a_requested_step_cap_is_honoured_as_asked() {
+        for asked in [1, 200, 10_001, 1_000_000, usize::MAX] {
+            assert_eq!(validate_max_steps(asked), Some(asked), "asked for {asked}");
+        }
     }
 
     #[test]

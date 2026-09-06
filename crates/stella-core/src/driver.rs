@@ -312,7 +312,7 @@ pub struct Engine<'a> {
     pub(crate) provider_override: Arc<std::sync::OnceLock<&'a dyn Provider>>,
 }
 
-/// Why a turn that never produced a terminal step ends. A function rather
+/// Why a turn that reached a host-set step cap ends. A function rather
 /// than an inline `format!` because it is written by two loops —
 /// [`Engine::run_turn_with_sender`] and any host driving
 /// [`Engine::run_step`] itself (`stella-serve`, #1129) — and this string
@@ -321,8 +321,8 @@ pub struct Engine<'a> {
 #[must_use]
 pub fn step_cap_reason(max_steps: usize) -> String {
     format!(
-        "reached the step cap ({max_steps}) without completing — this is the belt-and-suspenders \
-         backstop; loop detection should normally catch a stuck turn first"
+        "reached the step cap ({max_steps}) the host set for this turn without completing; \
+         loop detection normally ends a stuck turn long before a cap does"
     )
 }
 
@@ -473,12 +473,12 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// The step cap this engine enforces — the loop bound a host driving
-    /// [`Engine::run_step`] itself must apply, since the cap belongs to the
-    /// engine's config and a host tracking its own copy is a second source of
-    /// truth for the same number (#1129).
+    /// The step cap this engine enforces, if its config carries one — the
+    /// loop bound a host driving [`Engine::run_step`] itself must apply, since
+    /// the cap belongs to the engine's config and a host tracking its own copy
+    /// is a second source of truth for the same number (#1129).
     #[must_use]
-    pub fn max_steps(&self) -> usize {
+    pub fn max_steps(&self) -> Option<usize> {
         self.config.max_steps
     }
 

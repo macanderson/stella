@@ -968,7 +968,7 @@ fn looping_spec() -> SubAgentSpec {
     SubAgentSpec {
         // Comfortably more than one, so a child that ignored the orphan stop
         // would be visibly distinguishable from one that took it.
-        max_steps: 6,
+        max_steps: Some(6),
         ..SubAgentSpec::read_only("orphan", "investigate")
     }
 }

@@ -104,7 +104,7 @@ sequenceDiagram
     participant T as your ToolExecutor impl
 
     Host->>Engine: new_turn(messages, budget) [+ gate, steering, hooks, calibration]
-    loop until Done / Aborted / your step cap
+    loop until Done / Aborted / a step cap you set
         Host->>Engine: run_step(&mut state, events)
         Engine->>P: complete_observed_ref(request)
         P-->>Engine: streamed completion
@@ -119,8 +119,9 @@ What you get for free at this layer: the step-boundary contract (cancel,
 pause, steer — never mid-tool), compaction and prompt-cache discipline,
 loop detection, budget enforcement, drift calibration, the goal loop and
 sub-agents, and a serde `Checkpoint` that resumes in another process.
-What you owe: the loop bound (`engine.max_steps()` — see the crate docs'
-canonical example), event handling, and persistence.
+What you owe: event handling, persistence, and a loop bound when your config
+sets one. `engine.max_steps()` is that bound, `None` by default (ADR 0031);
+the crate docs' canonical example shows the gate.
 
 Licensing note for this mode: linking the AGPL-3.0-only crates in-process
 carries AGPL obligations for the combined work; the commercial track exists

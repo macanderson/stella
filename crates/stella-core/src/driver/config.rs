@@ -124,13 +124,27 @@ pub struct EngineConfig {
     /// Messages at the conversation tail the summarizer never touches —
     /// the recent work the model is actively reasoning over.
     pub summarize_keep_recent: usize,
-    /// Hard backstop on step count, independent of loop detection — belt
-    /// and suspenders, never the *primary* stuck-loop defense (that's
-    /// `crate::loop_detect`).
-    pub max_steps: usize,
+    /// A ceiling on this turn's step count, or `None` for no ceiling.
+    ///
+    /// `None` is the default (ADR 0031). A count cannot tell a turn that is
+    /// doing ten thousand steps of real work from one that is wandering, and
+    /// a default ceiling ends both. What ends a wandering turn is evidence
+    /// the count never carries: `crate::loop_detect` reads what the calls
+    /// returned, the stall rung reads how long the turn slept, the
+    /// [`BudgetGuard`] reads what it cost, [`Self::turn_budget`] reads how
+    /// long it ran, and [`Self::turn_halt`] reads whether the goal is met.
+    /// Each of those fires on the first evidence of its failure, where a
+    /// count fires only after every step under it has been paid for.
+    ///
+    /// A host still sets one when a count is what it means: a test that must
+    /// end, a served turn whose caller asked for a bound. The turn then ends
+    /// with [`AbortKind::DeliberateStop`] and the reason
+    /// [`super::step_cap_reason`] writes.
+    ///
+    /// [`AbortKind::DeliberateStop`]: crate::step::AbortKind::DeliberateStop
+    pub max_steps: Option<usize>,
     /// Hard backstop on how long one tool dispatch may run, independent of
-    /// each tool's own bound — the same belt-and-suspenders philosophy as
-    /// [`Self::max_steps`], and never the *primary* mechanism.
+    /// each tool's own bound, and never the *primary* mechanism.
     ///
     /// Per-tool bounds are the real defense (bash clamps its own timeout,
     /// scripts cap out, MCP bounds each call), but each is that tool's own
@@ -267,7 +281,7 @@ pub struct EngineConfig {
     ///
     /// `None` — the default — is exactly the behaviour every caller had
     /// before: the turn runs until the model stops asking for tools, the
-    /// budget bites, or the step cap does.
+    /// budget bites, or a step cap the host set does.
     ///
     /// This exists because those are all *external* stopping conditions, and
     /// an agent that has already met its goal will happily keep spending
@@ -392,7 +406,9 @@ impl Default for EngineConfig {
             tool_result_horizon_steps: Some(8),
             summarize_overflow: true,
             summarize_keep_recent: 8,
-            max_steps: 200,
+            // No ceiling: see the field. A turn ends on evidence — a loop,
+            // a stall, the budget, the deadline, the goal — never on a count.
+            max_steps: None,
             tool_timeout: Some(Duration::from_secs(15 * 60)),
             model_timeout: Some(Duration::from_secs(816)),
             // Off by default: only a caller that knows its own deadline can

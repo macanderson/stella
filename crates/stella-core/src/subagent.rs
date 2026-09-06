@@ -258,8 +258,14 @@ pub struct SubAgentSpec {
     pub system_prompt: Option<String>,
     /// The task, seeded as the child's first user message.
     pub instruction: String,
-    /// Hard cap on the child's model calls.
-    pub max_steps: usize,
+    /// Hard cap on the child's model calls, or `None` for none.
+    ///
+    /// A research child gets one (`Default` sets it): its report is what the
+    /// parent wanted, and a bounded search is the whole economy of the
+    /// primitive. A child that *is* the work — a best-of-N candidate standing
+    /// in for the parent's own turn — carries the parent's cap, which by
+    /// default is none (`EngineConfig::max_steps`).
+    pub max_steps: Option<usize>,
     /// Output-token cap per child call.
     pub max_output_tokens: Option<u32>,
     /// Sampling temperature for the child. `Some(0.0)` for anything whose
@@ -333,7 +339,7 @@ impl Default for SubAgentSpec {
             instruction: String::new(),
             // Enough for a real search-and-read task; small enough that a
             // confused child cannot become a work session.
-            max_steps: 16,
+            max_steps: Some(16),
             max_output_tokens: None,
             temperature: None,
             // ~2k tokens: a substantial paragraph plus a code excerpt, and
@@ -898,7 +904,7 @@ impl Engine<'_> {
         // The child's private transcript. It is a local: nothing outside
         // this function can observe it, and it is dropped on return. That
         // is the primitive's whole point, expressed as a scope.
-        let mut messages = Vec::with_capacity(2 + spec.max_steps * 2);
+        let mut messages = Vec::with_capacity(2 + spec.max_steps.unwrap_or(0) * 2);
         if let Some(system) = &spec.system_prompt {
             messages.push(CompletionMessage::system(system.clone()));
         }

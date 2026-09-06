@@ -255,12 +255,13 @@ climbing count means a host is minting per-request provider ids.
   oldest-first to admit a new one, and a reclaimed id answers 404. That is what
   keeps the 32-turn cap a queue rather than a one-way latch — a host that
   abandons turns cannot wedge the server into refusing every later create.
-- **`max_steps` from the wire is validated, not trusted.** `0` is a 400 (it would
+- **`max_steps` from the wire is validated, not clamped.** `0` is a 400 (it would
   produce a zero-iteration turn that aborts with the misleading "reached the step
-  cap (0)"), and anything above `MAX_SERVED_STEPS` (10 000, fifty times
-  `EngineConfig::default`'s 200) is clamped — the host also supplies the budget
-  mode, which may be `Off`, so an unclamped cap would remove the last bound on a
-  turn holding an OS thread.
+  cap (0)"); any other value is the cap the turn runs under. A served turn has
+  no step cap unless the caller sets one (ADR 0031), so a ceiling on the value
+  would bound only the caller who asked for a bound. What bounds a turn holding
+  an OS thread is the reverse-request deadline, the caller's budget, and loop
+  detection.
 - **Chunked request bodies are not decoded.** A chunked POST parses as an empty
   body and fails validation with a 400. That is safe rather than a smuggling hole
   only because this layer serves one request per connection and then closes.

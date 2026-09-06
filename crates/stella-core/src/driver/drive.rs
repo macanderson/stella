@@ -26,8 +26,8 @@
 //!   was a claim about a caller the engine cannot see — it arrived while a
 //!   staged run was in `Witness`, which is why the pipeline had to drop it
 //!   (#3416). Every run owner emits its own;
-//! - **gate on the step cap the state carries** — a turn restored at step 37
-//!   of 40 gets 3 more, not 40;
+//! - **gate on a step cap the host set** — a turn restored at step 37 of 40
+//!   gets 3 more, not 40;
 //! - **run exactly one committed step** through [`Engine::run_step`];
 //! - **persist on every `Continue`** — the checkpoint seam (#971), the one
 //!   moment the transcript is guaranteed well-paired, so a resumed run stays
@@ -71,8 +71,8 @@ use crate::step::{AbortKind, TurnState};
 ///
 /// A cap reached after a step lands on a well-paired transcript, so this
 /// finds nothing to close. A cap already met on entry does not: the transcript
-/// is still the caller's own, and a caller resuming at `max_steps` can hand in
-/// a tail nothing answered. Closing it is the repair every other exit at this
+/// is still the caller's own, and a caller resuming at its cap can hand in a
+/// tail nothing answered. Closing it is the repair every other exit at this
 /// boundary performs.
 const STEP_CAP_TOOL_RESULT: &str = "not executed — turn aborted at the step cap";
 
@@ -122,11 +122,12 @@ impl Engine<'_> {
     /// one of them.
     async fn step_loop(&self, state: &mut TurnState, events: &EventSender) -> TurnOutcome {
         loop {
-            if state.step() >= self.config.max_steps {
-                // The belt-and-suspenders backstop. `DeliberateStop`, not a
-                // failure: the run stopped by policy, it did not fall over
-                // (#1524).
-                let reason = step_cap_reason(self.config.max_steps);
+            if let Some(cap) = self.config.max_steps
+                && state.step() >= cap
+            {
+                // A ceiling the host set. `DeliberateStop`, not a failure:
+                // the run stopped by policy, it did not fall over (#1524).
+                let reason = step_cap_reason(cap);
                 crate::step::close_open_tool_calls(
                     state.messages_mut(),
                     STEP_CAP_TOOL_RESULT,

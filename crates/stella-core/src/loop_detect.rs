@@ -39,7 +39,7 @@
 //!    Invisible to all three above precisely because they read a contiguous
 //!    suffix: an agent alternating a failing `cargo test` with a varying
 //!    `read_file` has period 2 with one varying element, so every one of them
-//!    resets at offset 1 and the turn spins to `max_steps` unsteered. This is
+//!    resets at offset 1 and the turn spins on unsteered. This is
 //!    the shape a real wedge takes — re-run the failing test, peek at a
 //!    different file, repeat. It is guarded by `window_is_progressing` so it
 //!    cannot fire on correct polling, where a repeating spacer sits beside a
@@ -253,10 +253,9 @@ impl Default for LoopDetectionConfig {
     /// rule out coincidence without flagging a legitimately-repeated
     /// read-then-fix-then-verify pattern (which changes some output every
     /// pass and so never matches anyway). These thresholds are the PRIMARY
-    /// stuck-turn defense and fire orders of magnitude before the
-    /// step-driver's belt-and-suspenders backstop
-    /// (`EngineConfig::max_steps`, 200 by default), so a stuck turn costs
-    /// a handful of wasted calls, never a whole cap's worth.
+    /// stuck-turn defense: a turn carries no step cap by default
+    /// (`EngineConfig::max_steps`), so a stuck turn costs a handful of
+    /// wasted calls here or it costs whatever the budget allows.
     ///
     /// Stagnation sits at double the exact-repeat threshold. It is the
     /// backstop for the two above rather than a peer of them: it asks only
@@ -327,7 +326,7 @@ pub enum LoopVerdict {
     /// alternating a failing `cargo test` with a varying `read_file` has
     /// period 2 with one varying element: exact-repeat resets at offset 1,
     /// short-cycle breaks on the mismatched element, stagnation's run ends
-    /// there too — and the turn spins to `max_steps` unsteered. That is what
+    /// there too — and the turn spins on unsteered. That is what
     /// a real wedge looks like: re-run the failing test, peek at a different
     /// file, repeat (#1851).
     InterleavedRepeat {

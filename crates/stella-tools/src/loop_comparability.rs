@@ -11,9 +11,9 @@
 //! `exact_repeat_threshold` counts identical `(name + input + output)` calls,
 //! and the stagnation rung counts byte-identical outputs. One timestamp, one
 //! elapsed-milliseconds figure, one running counter in a `ToolOutput` makes
-//! both rungs permanently blind *for that tool* — the tool's own bytes disarm
-//! the detector, and nothing errors, so the only symptom is a turn that spins
-//! until `max_steps`.
+//! both rungs permanently blind *for that tool*. The tool's own bytes disarm
+//! the detector, and nothing errors, so the only symptom is a turn that never
+//! ends.
 //!
 //! The rule against it existed only as prose in this crate's README plus
 //! scattered discipline: `save_state`'s success line carries a
