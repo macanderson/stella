@@ -687,7 +687,7 @@
     "scr/004-residue-becomes-issues": {
       "path": "docs/scr/SCR-004-residue-becomes-issues.md",
       "status": "living",
-      "title": "File all residue as issues before declaring done"
+      "title": "Fix what you find; file only what cannot ride the PR"
     },
     "scr/005-triage-separation-of-duties": {
       "path": "docs/scr/SCR-005-triage-separation-of-duties.md",

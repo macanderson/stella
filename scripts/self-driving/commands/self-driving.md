@@ -32,9 +32,11 @@ needs must end up on disk or in GitHub before you finish.**
 
 Three rules override everything below.
 
-1. **Nothing left behind.** Every defect you notice and do not fix becomes a
-   GitHub issue *before this cycle ends*, written as a handoff a fresh agent can
-   execute. See `/self-driving:tickets`.
+1. **Fix over file.** Every defect you notice gets fixed in this cycle's PR,
+   even when it is off-topic. File an issue only when a fix cannot ride the
+   PR. File it only if fixing it moves a pillar: stability, reliability,
+   maintainability, innovation, efficiency, or performance. See
+   `/self-driving:tickets`.
 2. **Verified done, not claimed done.** Every behaviour fix ships with a witness
    test that fails on `main` and passes with the change. No witness, no merge —
    label the PR `needs-witness` and say so.
@@ -129,8 +131,8 @@ Phase 4 with what you learned.
 ## Phase 3 — Audit through the current lens
 
 The open aperture is `$SELF_DRIVING_APERTURE`. Audit the **post-fix** tree, and audit
-it *through that lens specifically* — the point of the ladder is that each lens
-sees what the others structurally cannot:
+it *through that lens specifically*. The point of the ladder is that each lens
+sees what the others cannot:
 
 | Aperture | The question it asks | How you look (#1549) |
 |---|---|---|

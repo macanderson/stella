@@ -3,32 +3,37 @@ description: File everything this cycle could not fix as GitHub issues written a
 argument-hint: "[--dry-run]"
 ---
 
-# self-driving:tickets — nothing left behind
+# self-driving:tickets — fix over file
 
-The rule from AGENTS.md, and the one phase of the cycle that has no skip
-condition:
+The rule from AGENTS.md § "Fix over file", and the one phase of the cycle
+that has no skip condition:
 
-> Work is not finished while anything you noticed lives only in your head, a chat
-> transcript, or a worktree that is about to be deleted.
+> A defect you can fix gets fixed in the PR you are already making. File it
+> only when a fix cannot responsibly ride the PR, and only when fixing it
+> moves a pillar.
 
-A cycle that fixed twenty defects and filed nothing about the six it could not
-fix has **destroyed information**. The worktree gets deleted, the context window
-resets, and those six findings are gone.
+A cycle that fixed twenty defects and filed nothing about the six it truly
+could not fix has **destroyed information**. The worktree gets deleted, the
+context window resets, and those six findings are gone. A cycle that filed
+twenty questions has wasted the next cycle's time instead.
 
 ---
 
 ## What gets filed
 
-Everything you noticed and did not fix:
+Only a finding that meets both tests:
 
-- a bug you saw and worked around
-- a defect you fixed only partially, and what is left
-- a missing test
-- dead or unwired code
-- **the logical next step of the work you just did** — if this cycle shipped
-  scaffolding something else must wire up, that wiring is an issue, filed in the
-  same breath as the PR
-- an idea worth keeping
+1. **A fix could not ride the PR** — it needs a decision only the maintainer
+   can make, it needs a rig, a credential or real spend, or it is larger than
+   the cycle. Say which in the issue. A defect you could have fixed is fixed,
+   not filed, even when it is unrelated to the PR's title.
+2. **Fixing it moves a pillar** — stability, reliability, maintainability,
+   innovation, efficiency, or performance. Name which.
+
+Do not file an open design question (decide it in the PR, or write an ADR), a
+record of a choice already in effect, a measurement that cannot change a
+decision, a test for a path nothing reaches, tracker bookkeeping, or a
+follow-up your own change has made moot.
 
 ## The handoff format
 

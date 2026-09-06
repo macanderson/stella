@@ -208,14 +208,22 @@
   entirely. It was restored because an agent that cannot read a file, search,
   or run a command is not an agent; the lesson kept is the single-purpose
   discipline, not the count.
-- **Nothing left behind.** Every bug, defect, idea, missing test, piece of
-  unwired code, or logical next step you notice and do not fix inside your
-  current change MUST be filed as a GitHub issue before you finish — written
-  as a handoff a fresh agent could execute without your session's context
-  (problem, file paths, repro/verify steps, constraints, definition of done).
-  Search for an existing issue first; link, don't duplicate. The full policy
-  is AGENTS.md § "Nothing left behind — every finding becomes a fix or a
-  GitHub issue". Never end a turn with untracked half-finished work.
+- **Fix over file.** A defect you notice while working gets fixed in the PR
+  you are already making. Two unrelated fixes in one PR is fine; a fix
+  deferred to an issue is not, unless it truly cannot ride the PR: it needs a
+  decision only the maintainer can make, it needs a rig or spend, or it is
+  larger than the session. Only then file it, as a handoff a fresh agent
+  could execute (problem, file paths, repro, constraints, definition of done),
+  after searching for an existing issue.
+
+  **File nothing that does not eat at a pillar.** An issue earns its place
+  only if fixing it moves stability, reliability, maintainability,
+  innovation, efficiency, or performance. An open design question with no
+  defect behind it, a record of a choice already in effect, a measurement
+  that cannot change a decision, a test for a path nothing reaches, or
+  tracker bookkeeping is not an issue — decide it in the PR, or drop it. The
+  full policy is AGENTS.md § "Fix over file". Never end a turn with
+  untracked half-finished work.
 - **An issue you file carries the `triage` label and nothing else.** SCR-004
   and SCR-005 (AGENTS.md's standing-decisions block) hold sizing and priority
   for a dedicated triage agent, and `triage-guard` strips a creator-applied
@@ -252,7 +260,7 @@
   - **Answer it** when it does not belong: deliberately out of scope,
     deferred into a filed issue, or a misreading of the diff. Post a PR
     comment naming the row and the reason, and file the follow-up issue
-    where one is owed ("Nothing left behind" above). Sourcery's verdict is
+    where one is owed ("Fix over file" above). Sourcery's verdict is
     a claim like any other review comment and can be wrong about your diff —
     the rebuttal still goes on the PR, where the next reviewer finds it.
 
