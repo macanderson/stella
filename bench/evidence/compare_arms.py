@@ -46,10 +46,19 @@ Three properties, in the order they can invalidate a conclusion:
    same reward as one that fails and reports success, but only the second one
    lies to a caller who then ships it.
 
+**Two builds, when one build cannot ask the question.** The default above
+holds the binary still and moves one setting. Comparing a deleted path against
+the path that replaced it cannot work that way: it takes one build of each.
+That shape is refused unless the caller declares it, names both commits, and
+names the per-trial field that proves the treatment arm ran the path under
+test. Such a comparison is confounded by every commit between the two builds,
+and its report says so. See ``pipeline-ab/README.md``.
+
 Usage::
 
     python compare_arms.py <control-trials.jsonl> <treatment-trials.jsonl> \\
         --tasks 89 [--markdown out.md]
+        [--cross-sut <control-sha>:<treatment-sha> --treatment-fired f=v]
 
 Exit status is 0 only for a comparison that is allowed to mean something. The
 report is printed either way — a refusal with the numbers withheld is a refusal
@@ -63,6 +72,7 @@ import json
 import math
 import random
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -151,9 +161,87 @@ def _uniform(rows: list[dict[str, Any]], field: str) -> Any:
     return {"DISAGREEMENT": [json.loads(value) for value in seen]}
 
 
+@dataclass(frozen=True)
+class CrossSut:
+    """Two arms that are two binaries, declared before the run.
+
+    The default comparison holds the binary still and moves one setting. Some
+    questions cannot be asked that way. Comparing a path that was deleted
+    against the path that replaced it needs one build of each, so the two arms
+    differ by a commit range rather than by a flag.
+
+    That shape is refused by default, and the refusal is right: an unnoticed
+    SUT split is the most expensive way to get a plausible number. So the
+    caller states the split up front. Every field here is fixed in the
+    preregistration, and each one buys a check the default mode cannot make:
+
+    * ``control_commit`` / ``treatment_commit`` — the commit each arm is built
+      from. The arms must report these two and no others, so a build from the
+      wrong tree is caught rather than averaged in.
+    * ``fired_field`` / ``fired_value`` — the per-trial field and value that
+      prove the treatment arm ran the path under test. A binary that *can* run
+      a path is not a run that *did*. Every treatment trial must carry it and
+      no control trial may, or the two arms are one arm twice.
+
+    A comparison declared this way is confounded, and the report says so. The
+    arms differ by every commit between them, so the claim available is "this
+    arm scored better or worse", never "this change caused it".
+    """
+
+    control_commit: str
+    treatment_commit: str
+    fired_field: str
+    fired_value: str
+
+
+#: What a report may claim once its arms are two binaries. Fixed here rather
+#: than written by each report's author, so no run can soften it.
+CROSS_SUT_CONFOUND = (
+    "the two arms are two builds, so they differ by every commit between them; "
+    "this comparison can say which arm scored better, never which change did it"
+)
+
+
+def parse_cross_sut(commits: str, fired: str) -> CrossSut:
+    """Read the two command-line strings into a declaration, or refuse.
+
+    ``commits`` is ``<control>:<treatment>``, full 40-character hashes. Short
+    hashes are refused because a trial records the full one, and a comparison
+    that has to guess whether two spellings mean one commit is guessing about
+    its own identity.
+
+    ``fired`` is ``field=value``. The value may hold ``=``; the field may not.
+    """
+    parts = commits.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"--cross-sut wants <control>:<treatment>; got {commits!r}")
+    control, treatment = (part.strip() for part in parts)
+    for label, sha in (("control", control), ("treatment", treatment)):
+        if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha.lower()):
+            raise ValueError(
+                f"--cross-sut {label} commit must be a full 40-character hash; "
+                f"got {sha!r}"
+            )
+    if control.lower() == treatment.lower():
+        raise ValueError(
+            "--cross-sut names one commit twice; two arms on one build is one "
+            "arm run twice"
+        )
+    field, sep, value = fired.partition("=")
+    if not sep or not field.strip() or not value.strip():
+        raise ValueError(f"--treatment-fired wants field=value; got {fired!r}")
+    return CrossSut(
+        control_commit=control.lower(),
+        treatment_commit=treatment.lower(),
+        fired_field=field.strip(),
+        fired_value=value.strip(),
+    )
+
+
 def check_identity(
     control: dict[str, dict[str, Any]],
     treatment: dict[str, dict[str, Any]],
+    cross_sut: CrossSut | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Confirm the two files are the two arms of one experiment.
 
@@ -189,20 +277,81 @@ def check_identity(
                 " trial(s) do not record an assurance arm — pre-#1007 evidence"
                 " cannot be an arm of this experiment"
             )
-        if arms - {None} != {expected}:
+        if cross_sut is None and arms - {None} != {expected}:
             refusals.append(
                 f"{label} arm should be {expected!r}, trials say "
                 f"{sorted(str(a) for a in arms)}"
             )
 
-    # One SUT, or it is two experiments. Recorded per trial by the adapter, so
-    # this reads what ran rather than what the current checkout would produce.
-    for field in ("source_commit", "binary_sha256"):
-        both = _uniform(control_rows + treatment_rows, field)
-        identity[field] = both
-        if isinstance(both, dict) and "DISAGREEMENT" in both:
+    if cross_sut is None:
+        # One SUT, or it is two experiments. Recorded per trial by the adapter,
+        # so this reads what ran rather than what the checkout would produce.
+        for field in ("source_commit", "binary_sha256"):
+            both = _uniform(control_rows + treatment_rows, field)
+            identity[field] = both
+            if isinstance(both, dict) and "DISAGREEMENT" in both:
+                refusals.append(
+                    f"the two arms did not run the same {field}: "
+                    f"{both['DISAGREEMENT']}"
+                )
+    else:
+        identity["cross_sut"] = {
+            "declared_control_commit": cross_sut.control_commit,
+            "declared_treatment_commit": cross_sut.treatment_commit,
+            "treatment_fired": f"{cross_sut.fired_field}={cross_sut.fired_value}",
+            "confounded": True,
+            "confound": CROSS_SUT_CONFOUND,
+        }
+        # The posture is the thing held still here, so both arms must declare
+        # the same one. The arm label says which verification tiers the posture
+        # asks for; it says nothing about which loop the binary ran, which is
+        # why it cannot serve as the arm and is checked as a held setting.
+        posture_arm = _uniform(control_rows + treatment_rows, "assurance_arm")
+        if isinstance(posture_arm, dict) and "DISAGREEMENT" in posture_arm:
             refusals.append(
-                f"the two arms did not run the same {field}: {both['DISAGREEMENT']}"
+                "the two arms declare different assurance arms "
+                f"({posture_arm['DISAGREEMENT']}), so more than the build moved"
+            )
+        # The declared commit is the arm. A build from another tree is a
+        # different experiment wearing this one's name, and the arms' own rows
+        # are the only place that can be caught.
+        for label, rows, declared in (
+            ("control", control_rows, cross_sut.control_commit),
+            ("treatment", treatment_rows, cross_sut.treatment_commit),
+        ):
+            observed = _uniform(rows, "source_commit")
+            identity[f"{label}_source_commit"] = observed
+            if not rows:
+                continue
+            if not isinstance(observed, str) or observed.lower() != declared:
+                refusals.append(
+                    f"the {label} arm was declared on {declared} and its trials "
+                    f"report {observed!r}"
+                )
+        # Two builds, so two binary hashes. Equal hashes mean one binary ran
+        # both arms, whatever the two commits say.
+        control_binary = _uniform(control_rows, "binary_sha256")
+        treatment_binary = _uniform(treatment_rows, "binary_sha256")
+        identity["control_binary_sha256"] = control_binary
+        identity["treatment_binary_sha256"] = treatment_binary
+        for label, value in (
+            ("control", control_binary),
+            ("treatment", treatment_binary),
+        ):
+            if isinstance(value, dict) and "DISAGREEMENT" in value:
+                refusals.append(
+                    f"the {label} arm did not run one binary: "
+                    f"{value['DISAGREEMENT']}"
+                )
+        if (
+            control_rows
+            and treatment_rows
+            and isinstance(control_binary, str)
+            and control_binary == treatment_binary
+        ):
+            refusals.append(
+                "both arms ran binary "
+                f"{control_binary} — two arms on one build is one arm run twice"
             )
 
     if control and treatment:
@@ -253,6 +402,57 @@ def check_tier_fired(treatment: dict[str, dict[str, Any]]) -> tuple[dict[str, An
             "the treatment arm authored no witness on any task: its trials report "
             f"{states} — a run that declares the rung without exercising it "
             "measures the control arm under a treatment-arm digest (#1147)"
+        )
+    return summary, refusals
+
+
+def check_path_fired(
+    control: dict[str, dict[str, Any]],
+    treatment: dict[str, dict[str, Any]],
+    cross_sut: CrossSut,
+) -> tuple[dict[str, Any], list[str]]:
+    """Did the treatment arm run the path under test, on every task?
+
+    The witness A/B learned this the expensive way: a posture that *declares* a
+    tier is not a run that *fired* it. The same trap is wider when the arms are
+    two builds. A binary that can run the path under test can also run without
+    it — a launcher that drops the selector produces a full, plausible arm that
+    ran the control path twice.
+
+    So the field is checked per trial, in both directions. Every treatment
+    trial must carry the declared value, and no control trial may. Missing is
+    a refusal, not a zero: a run whose evidence cannot say which path it took
+    has not answered the question it was paid to answer.
+    """
+    field, wanted = cross_sut.fired_field, cross_sut.fired_value
+    treatment_seen: dict[str, int] = {}
+    for row in treatment.values():
+        seen = row.get(field)
+        key = "<absent>" if seen is None else str(seen)
+        treatment_seen[key] = treatment_seen.get(key, 0) + 1
+    control_carrying = sorted(
+        task for task, row in control.items() if str(row.get(field)) == wanted
+    )
+    fired = treatment_seen.get(wanted, 0)
+    summary = {
+        "field": field,
+        "expected_in_treatment": wanted,
+        "treatment_trials_by_value": treatment_seen,
+        "treatment_trials_on_the_path": fired,
+        "control_trials_on_the_path": control_carrying,
+    }
+    refusals: list[str] = []
+    off_path = sum(treatment_seen.values()) - fired
+    if treatment and off_path:
+        refusals.append(
+            f"{off_path} treatment trial(s) do not report {field}={wanted!r}: "
+            f"{treatment_seen} — an arm that cannot say it ran the path under "
+            "test did not measure it"
+        )
+    if control_carrying:
+        refusals.append(
+            f"{len(control_carrying)} control trial(s) report {field}={wanted!r} "
+            f"({control_carrying[:5]}) — both arms ran the path under test"
         )
     return summary, refusals
 
@@ -468,10 +668,14 @@ def compare(
     control: dict[str, dict[str, Any]],
     treatment: dict[str, dict[str, Any]],
     tasks: int,
+    cross_sut: CrossSut | None = None,
 ) -> dict[str, Any]:
     """The whole comparison, as one JSON-serializable report."""
-    identity, refusals = check_identity(control, treatment)
-    tier, tier_refusals = check_tier_fired(treatment)
+    identity, refusals = check_identity(control, treatment, cross_sut)
+    if cross_sut is None:
+        tier, tier_refusals = check_tier_fired(treatment)
+    else:
+        tier, tier_refusals = check_path_fired(control, treatment, cross_sut)
     refusals = refusals + tier_refusals
 
     universe = sorted(set(control) | set(treatment))
@@ -562,18 +766,31 @@ def compare(
         if refusals
         else decide(primary, verdicts, cost)
     )
-    return {
-        "schema": "stella-witness-ab-comparison-v1",
+    report = {
+        "schema": (
+            "stella-witness-ab-comparison-v1"
+            if cross_sut is None
+            else "stella-cross-sut-ab-comparison-v1"
+        ),
         "comparable": not refusals,
         "refusals": refusals,
         "identity": identity,
-        "witness_tier": tier,
         "primary_outcome": primary,
         "self_verdict": verdicts,
         "cost": cost,
         "decision": decision,
         "per_task": per_task,
     }
+    # One key per question, never one key with two meanings. `witness_tier`
+    # answers "did a second model write the test"; `path_fired` answers "did
+    # the treatment arm run the build's other path". A reader who finds the
+    # wrong one under a familiar name reads a number about something else.
+    if cross_sut is None:
+        report["witness_tier"] = tier
+    else:
+        report["path_fired"] = tier
+        report["confound"] = CROSS_SUT_CONFOUND
+    return report
 
 
 def _mark(value: Any) -> str:
@@ -583,13 +800,17 @@ def _mark(value: Any) -> str:
 def markdown(report: dict[str, Any]) -> str:
     primary, verdicts = report["primary_outcome"], report["self_verdict"]
     cost, decision = report["cost"], report["decision"]
+    cross = report.get("identity", {}).get("cross_sut")
+    arm = "treatment" if cross else "witness"
     lines = [
-        "# Authored witness on vs off — paired comparison",
+        "# Two builds — paired comparison"
+        if cross
+        else "# Authored witness on vs off — paired comparison",
         "",
         f"**{decision['verdict'].upper()}** — " + "; ".join(decision["reasons"] or ["—"]),
         "",
         f"- tasks passed: control {primary['control_passes']}/{primary['tasks_declared']} "
-        f"→ witness {primary['treatment_passes']}/{primary['tasks_declared']} "
+        f"→ {arm} {primary['treatment_passes']}/{primary['tasks_declared']} "
         f"({primary['delta_passes']:+d})",
         f"- paired: gained {primary['gained']}, lost {primary['lost']}, "
         f"both passed {primary['both_pass']}, both failed {primary['both_fail']}"
@@ -599,7 +820,7 @@ def markdown(report: dict[str, Any]) -> str:
             else ", no discordant pairs"
         ),
         f"- wrong \"this passed\" calls: control {verdicts['control']['false_pass']} "
-        f"→ witness {verdicts['treatment']['false_pass']} "
+        f"→ {arm} {verdicts['treatment']['false_pass']} "
         f"({verdicts['false_pass_delta']:+d})",
         f"- spend: ${cost['control']['usd_total']:.2f} → "
         f"${cost['treatment']['usd_total']:.2f}"
@@ -609,14 +830,29 @@ def markdown(report: dict[str, Any]) -> str:
             if cost["usd_per_additional_task_passed"] is not None
             else ""
         ),
-        f"- witness tier fired on {report['witness_tier']['trials_with_an_authored_witness']} "
-        f"treatment trials ({report['witness_tier']['witnesses_authored_total']} witnesses authored)",
-        "",
     ]
+    if cross:
+        fired = report["path_fired"]
+        lines += [
+            f"- arms: control `{cross['declared_control_commit']}` → treatment "
+            f"`{cross['declared_treatment_commit']}`",
+            f"- the path under test ran on {fired['treatment_trials_on_the_path']} "
+            f"treatment trials ({fired['field']}={fired['expected_in_treatment']})",
+            "",
+            f"> **Confounded.** {cross['confound']}.",
+            "",
+        ]
+    else:
+        tier = report["witness_tier"]
+        lines += [
+            f"- witness tier fired on {tier['trials_with_an_authored_witness']} "
+            f"treatment trials ({tier['witnesses_authored_total']} witnesses authored)",
+            "",
+        ]
     if report["refusals"]:
         lines += ["> **Refused.** " + " · ".join(report["refusals"]), ""]
     lines += [
-        "| task | control | witness | control says | witness says | tier |",
+        f"| task | control | {arm} | control says | {arm} says | tier |",
         "|---|---|---|---|---|---|",
     ]
     for row in report["per_task"]:
@@ -632,22 +868,51 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("control", help="witness-off trials.jsonl")
-    parser.add_argument("treatment", help="witness-on trials.jsonl")
+    parser.add_argument("control", help="control arm trials.jsonl")
+    parser.add_argument("treatment", help="treatment arm trials.jsonl")
     parser.add_argument(
         "--tasks", type=int, required=True, help="preregistered denominator"
     )
     parser.add_argument("--markdown", help="also write the per-task table here")
+    parser.add_argument(
+        "--cross-sut",
+        metavar="CONTROL:TREATMENT",
+        help=(
+            "the two arms are two builds; full commit hash of each, in the "
+            "order the preregistration fixed. Needs --treatment-fired."
+        ),
+    )
+    parser.add_argument(
+        "--treatment-fired",
+        metavar="FIELD=VALUE",
+        help=(
+            "the per-trial field proving the treatment arm ran the path under "
+            "test. Every treatment trial must carry it; no control trial may."
+        ),
+    )
     args = parser.parse_args(argv)
 
+    # Take both flags or neither. A cross-build comparison with no proof the
+    # path under test ran is the one shape this mode exists to refuse, so it
+    # must not be reachable by forgetting a flag.
+    if bool(args.cross_sut) != bool(args.treatment_fired):
+        print(
+            "FATAL: --cross-sut and --treatment-fired are one declaration; "
+            "pass both or neither",
+            file=sys.stderr,
+        )
+        return 2
+    cross_sut = None
     try:
+        if args.cross_sut:
+            cross_sut = parse_cross_sut(args.cross_sut, args.treatment_fired)
         control = load_arm(Path(args.control))
         treatment = load_arm(Path(args.treatment))
     except (OSError, ValueError) as exc:
         print(f"FATAL: {exc}", file=sys.stderr)
         return 1
 
-    report = compare(control, treatment, args.tasks)
+    report = compare(control, treatment, args.tasks, cross_sut)
     print(json.dumps(report, indent=2))
     if args.markdown:
         Path(args.markdown).write_text(markdown(report), encoding="utf-8")
