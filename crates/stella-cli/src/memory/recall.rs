@@ -204,12 +204,21 @@ impl OpeningRecall {
 /// shares with the tool array. The cost is measured over the injected bytes,
 /// so what the plane records and what the provider is sent are one number. It
 /// is charged only when the block is really appended. A block the dedup
-/// refuses is one an earlier turn paid for, and spent here.
+/// refuses costs this turn nothing, since the model already carries it.
+///
+/// **This is the turn boundary the allowance is measured on.** The allowance
+/// is what one turn's volatile block may take. Every driver opens a turn
+/// through this seam, so
+/// [`stella_core::steering::ledger::SteeringLedger::open_turn`] is called
+/// here rather than in each driver. A ledger that added every turn up would
+/// charge one turn for what the whole session spent, and far enough in would
+/// advertise no tools at all.
 pub(crate) fn inject_opening_recall(
     messages: &mut Vec<CompletionMessage>,
     recalled: RecalledBlock,
     ledger: &stella_core::steering::ledger::SteeringLedger,
 ) -> OpeningRecall {
+    ledger.open_turn();
     let events = recalled.telemetry_events();
     let cost = recalled
         .text
