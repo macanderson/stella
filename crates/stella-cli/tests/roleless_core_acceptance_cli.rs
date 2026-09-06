@@ -356,7 +356,7 @@ async fn observe(label: &'static str, server: &MockServer, active: bool, seats: 
         .map(|line| {
             let request: serde_json::Value =
                 serde_json::from_str(line).expect("a before_turn request is a wire message");
-            request["stage"]
+            request["body"]["stage"]
                 .as_str()
                 .expect("every before_turn request names its stage")
                 .to_owned()
